@@ -1902,12 +1902,20 @@
         "a resolver-written caption is never the creator's placement",
         "printable text nobody placed still asks which clip",
         "placeholder and model-written labels are never asked about",
-        "model and vision copy keep the 24-character bound"
+        "model and vision copy keep the 24-character bound",
+        "a server-made caption only when it turns off no other text (positional shot labels, every-clip time/place)",
+        "no 'keep' answer where nothing acts on it (draft backstop, Talking formats)",
+        "typographic apostrophe (iOS smart punctuation)",
+        "many long labels stay inside the 1200-character reply",
+        "text longer than the montage's 120-character creator bound is never kept as written"
       ],
       "neighbours_gap": [
         "The planner and resolver run() replay fixed output through the real parsers; the live model's label-vs-caption choice for this ask is not exercised (no paid calls).",
         "Choosing the shorter suggestion relies on the Main Creator superseding the brief literal from the tapped message (KRI-805 owns brief update failures).",
-        "Prod's own clip-intent planner output for turn 87ecce2f is not recorded (the agent_run row fails to persist, KRI-809), so which of the two covered paths chat 3 took is inferred."
+        "Prod's own clip-intent planner output for turn 87ecce2f is not recorded (the agent_run row fails to persist, KRI-809), so which of the two covered paths chat 3 took is inferred.",
+        "A typed 'keep it as written' (not the tapped answer) is left to the planner model; only the exact answer is matched.",
+        "A converted caption is re-matched to clips on every later turn (KRI-766's kept-label binding reads label rows only).",
+        "Cloud context lane: four 28-character creator labels on one clip exceed its 120-character combined limit (five 24-character ones already did)."
       ],
       "follow_ups": [
         "Phone re-send of Don Julio M1 after deploy"

@@ -36,6 +36,16 @@ Ways this can fail, written down before these tests:
 11. The longer creator bound lets model or vision copy through (it must stay at 24).
 12. A placeholder or a model-written label gets the new question.
 13. A printable text nobody placed stops saying "which clip" (that reply is still right).
+
+Added after review, before the PR merged:
+
+14. A caption the server adds puts the montage in described-shot mode and turns off the
+    other texts the creator asked for (positional shot labels, every-clip time/place).
+15. "Keep it as written" is offered where nothing acts on it (the draft backstop, the
+    Talking formats), so the same question comes back.
+16. iOS types a typographic apostrophe ("Julio’s"), which a label refused.
+17. Several long labels push the reply past the chat's 1200-character limit.
+18. A kept text longer than the montage's own creator bound (120) fails the plan.
 """
 
 from __future__ import annotations
@@ -71,7 +81,11 @@ from app.schemas.clip_intents import (
     shorter_creator_label,
 )
 from app.services import clip_intent_planning as planning
-from app.services.clip_intent_planning import BriefLabel, plan_and_resolve_clip_intents
+from app.services.clip_intent_planning import (
+    BriefLabel,
+    plan_and_resolve_clip_intents,
+    shot_captions_safe,
+)
 from app.services.clip_intent_resolution import IntentClip
 from app.services.creator_label_reply import label_text_reply
 from app.services.creator_render_contract import build_render_contract
@@ -171,7 +185,7 @@ def _flags(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "kria_clip_understanding_enabled", False)
 
 
-async def _plan(monkeypatch, rows, *, messages: list[str], brief_labels=()):  # noqa: ANN001
+async def _plan(monkeypatch, rows, *, messages: list[str], brief_labels=(), **kwargs):  # noqa: ANN001, ANN003
     models = _Models(monkeypatch, rows)
     planned = await plan_and_resolve_clip_intents(
         creator_request="\n".join(messages),
@@ -180,6 +194,7 @@ async def _plan(monkeypatch, rows, *, messages: list[str], brief_labels=()):  # 
         clips=_clips(),
         run_context=MagicMock(),
         brief_labels=list(brief_labels),
+        **kwargs,
     )
     return models, planned
 
@@ -412,7 +427,7 @@ def test_unplaced_words_a_label_cant_print_are_a_text_question_not_which_clip() 
             contract = build_render_contract(
                 {"resolved_clip_intents": []}, generation_id="g", brief=_brief(LONG_PLUS)
             )
-            expected = label_text_reply([LONG_PLUS])
+            expected = label_text_reply([LONG_PLUS], keep=False)
         assert contract is not None and expected is not None
         assert list(contract.unresolved) == [expected.question]
         assert "which clip" not in contract.unresolved[0]
@@ -441,9 +456,10 @@ def test_the_draft_backstop_asks_about_the_words_with_answers_to_tap() -> None:
     plan, reason = blocked
     assert reason == "label_text_unusable"
     assert plan.turn_value == "question"
-    expected = label_text_reply([LONG_PLUS])
+    expected = label_text_reply([LONG_PLUS], keep=False)
     assert expected is not None
-    assert plan.reply_options == list(expected.options)
+    # 15: nothing on this path turns the words into a caption, so no "keep" answer.
+    assert plan.reply_options == [f'Use "{AMP}" instead']
     assert plan.response.startswith(expected.question)
     assert "which clip" not in plan.response
 
@@ -513,3 +529,62 @@ async def test_the_planner_turn_carries_the_answers_the_phone_shows_as_chips(
     assert plan.clip_question is None
     assert plan.reply_options == [KEEP_PLUS, USE_AMP]
     assert 'can\'t show "+"' in (plan.response or "")
+
+
+# 14-18: found in review ---------------------------------------------------------------------
+
+
+def test_captions_are_added_only_when_they_turn_off_no_other_text() -> None:
+    every_clip_hour = BriefRequirement(
+        id="r9", kind="text", scope="per_clip", description="the filming hour on each clip"
+    )
+    assert shot_captions_safe(_brief(PLUS), placed_texts=())
+    assert shot_captions_safe(None, placed_texts=())
+    assert not shot_captions_safe(_brief(PLUS), placed_texts=["Mutfak"])
+    with_hour = CreativeBrief(version=1, requirements=[*_brief(PLUS).requirements, every_clip_hour])
+    assert not shot_captions_safe(with_hour, placed_texts=())
+
+
+@pytest.mark.asyncio
+async def test_without_safe_captions_the_words_stay_a_label_and_keep_is_not_offered(monkeypatch):
+    # The dictated text the planner left out joins as a label, and is asked about.
+    models, planned = await _plan(
+        monkeypatch,
+        [],
+        messages=[_prompt(PLUS)],
+        brief_labels=[BriefLabel(PLUS, SHOT)],
+        shot_captions=False,
+    )
+    assert models.resolved == []
+    assert planned.resolution.error_code == "label_text_unusable"
+    assert planned.resolution.reply_options == (USE_AMP,)
+    # A "keep" message (typed, or tapped earlier) changes nothing: no caption is made.
+    _models, planned = await _plan(
+        monkeypatch,
+        [_row("label", PLUS)],
+        messages=[_prompt(PLUS), KEEP_PLUS],
+        shot_captions=False,
+    )
+    assert [(i.op, i.creator_text) for i in planned.requested_intents] == [("label", PLUS)]
+    assert planned.resolution.reply_options == (USE_AMP,)
+
+
+def test_a_typographic_apostrophe_prints_in_a_label() -> None:
+    assert creator_label_problems("Julio’s chimichurri") == ()
+    assert shorter_creator_label("Julio’s chimichurri + salsa") == "Julio’s chimichurri & salsa"
+
+
+def test_many_long_labels_keep_the_reply_inside_the_chat_limit() -> None:
+    texts = [f"{word} + the longest dish name on the whole menu today" for word in "abcdefgh"]
+    reply = label_text_reply(texts)
+    assert reply is not None
+    assert len(reply.question) <= 1000
+    assert "more of your labels can't be clip labels either" in reply.question
+    assert len(reply.options) <= 4
+
+
+def test_words_longer_than_the_montage_holds_are_never_kept_as_written() -> None:
+    long_text = "+ " + "word " * 30  # 152 characters: a caption intent takes it, the montage not
+    reply = label_text_reply([long_text])
+    assert reply is not None
+    assert not any(option.startswith("Keep") for option in reply.options)

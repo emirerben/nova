@@ -1223,7 +1223,9 @@ def build_render_contract(
                             # holds: the words must be on screen; the caption places them.
                             texts.append(TextRequirement(role="any", text=requirement.literal))
                             continue
-                        label_reply = label_text_reply([requirement.literal])
+                        # Nothing here turns the words into a caption, so the reply offers
+                        # no "keep as written" (the Talking formats never plan clip texts).
+                        label_reply = label_text_reply([requirement.literal], keep=False)
                         if label_reply is not None:
                             # KRI-804: words a label can't print (a "+", too long) are a
                             # question about the TEXT, never "which clip".

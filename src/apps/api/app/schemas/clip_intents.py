@@ -117,7 +117,8 @@ CAPTION_MAX_WORDS = 10
 # line holds 280.
 CREATOR_CAPTION_MAX_CHARS = 200
 
-_LABEL_ALLOWED = re.compile(r"[^\w\s&'\-]", re.UNICODE)
+# KRI-804: the typographic apostrophe too; iOS smart punctuation types "Julio’s".
+_LABEL_ALLOWED = re.compile(r"[^\w\s&'’\-]", re.UNICODE)
 # Captions are ordinary short phrases: allow common sentence punctuation on
 # top of the label charset. Newlines can never survive `_clean` (it collapses
 # all whitespace, including newlines, to single spaces) so no explicit

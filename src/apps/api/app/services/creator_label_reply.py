@@ -30,11 +30,15 @@ from app.schemas.clip_intents import (
     label_blocked_characters,
     shorter_creator_label,
 )
+from app.schemas.edit_proposal import CREATOR_SHOT_LABEL_MAX_CHARS
 from app.text_fold import loose_text
 
 # The reply list the chat shows as tappable chips holds at most four answers.
 MAX_REPLY_OPTIONS = 4
 _QUOTE_MAX_CHARS = 80
+# The chat reply holds 1200 characters (`KriaTurnPlan.response`); the turn may append a
+# line ("Your current draft is unchanged."), so the question stays well inside it.
+_QUESTION_MAX_CHARS = 1000
 
 
 @dataclass(frozen=True)
@@ -70,8 +74,13 @@ def keeps_as_written(text: str, creator_messages: str | None) -> bool:
 
 
 def can_keep_as_written(text: str) -> bool:
-    """The caption lane prints the creator's own words up to its own bound."""
-    return clean_creator_caption_text(text) is not None
+    """The described-shot caption lane prints these words as written.
+
+    Its bound is the montage's for the creator's clip text (``_cap_label`` refuses longer),
+    which is tighter than a caption intent's own.
+    """
+    copy = clean_creator_caption_text(text)
+    return copy is not None and len(copy) <= CREATOR_SHOT_LABEL_MAX_CHARS
 
 
 def _quoted(text: str) -> str:
@@ -151,36 +160,50 @@ def _way_forward(keep: bool, shorter: str | None) -> str:
     )
 
 
-def label_text_reply(texts: Sequence[str]) -> LabelTextReply | None:
+def label_text_reply(texts: Sequence[str], *, keep: bool = True) -> LabelTextReply | None:
     """One answerable question for every creator label text that can't print; None if all can.
 
     Each text gets every reason it can't be a label and its ways forward; the options
     are the tappable answers (keep as written first: it is exactly what they asked for).
+    ``keep=False`` leaves that answer out where nothing would act on it: the caller can't
+    turn the label into the shot's caption.
     """
     parts: list[str] = []
     options: list[str] = []
     seen: set[str] = set()
+    left_out = 0
     for text in texts:
         key = _key(text)
         if not creator_label_problems(text) or key in seen:
             continue
         seen.add(key)
         reasons = _reasons(text)
-        parts.append(
+        keeps = keep and can_keep_as_written(text)
+        shorter = shorter_creator_label(text)
+        about = [
             say(
                 en=f"{_quoted(text)} can't be a clip label: {reasons}.",
                 tr=f"{_quoted(text)} klip etiketi olamaz: {reasons}.",
-            )
-        )
-        keep = can_keep_as_written(text)
-        shorter = shorter_creator_label(text)
-        parts.append(_way_forward(keep, shorter))
-        if keep:
+            ),
+            _way_forward(keeps, shorter),
+        ]
+        if parts and len(" ".join([*parts, *about])) > _QUESTION_MAX_CHARS:
+            left_out += 1
+            continue
+        parts.extend(about)
+        if keeps:
             options.append(keep_as_written_option(text))
         if shorter:
             options.append(shorter_label_option(shorter))
     if not parts:
         return None
+    if left_out:
+        parts.append(
+            say(
+                en=f"{left_out} more of your labels can't be clip labels either.",
+                tr=f"{left_out} etiketin daha klip etiketi olamıyor.",
+            )
+        )
     options = options[:MAX_REPLY_OPTIONS]
     if options:
         # Never "which ...?": this is a question about the words, not about clips (KRI-678).

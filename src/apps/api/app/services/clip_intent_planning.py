@@ -227,14 +227,34 @@ def _creator_label_texts(intents: list[ClipIntent]) -> list[str]:
     ]
 
 
-def unusable_label_reply(intents: list[ClipIntent]) -> LabelTextReply | None:
+def unusable_label_reply(
+    intents: list[ClipIntent], *, shot_captions: bool = True
+) -> LabelTextReply | None:
     """A plain question when the creator's own label words can never be printed (KRI-678).
 
     Such a label can never be grounded, so the clip picker would ask "which clips?"
     again after every answer. The reply names every reason the text can't be a label
     and offers tappable ways forward (KRI-804); None when every creator label can print.
+    "Keep it as written" is offered only when the label may become the shot's caption.
     """
-    return label_text_reply(_creator_label_texts(intents))
+    return label_text_reply(_creator_label_texts(intents), keep=shot_captions)
+
+
+def shot_captions_safe(brief: CreativeBrief | None, placed_texts: Sequence[str]) -> bool:
+    """May the server turn a creator's shot text into the shot's caption (KRI-804)?
+
+    One creator caption puts the montage in described-shot mode
+    (`unified_montage.plan_unified_montage`): positional ``shot_labels`` and the every-clip
+    texts (filming time, place, placeholder) stop printing. So only when the edit asks
+    for none of them; otherwise the words stay a label and the reply asks about them.
+    """
+    if any(str(text).strip() for text in placed_texts):
+        return False
+    return brief is None or all(
+        requirement.is_shot_text
+        for requirement in brief.live()
+        if requirement.kind == "text" and requirement.scope == "per_clip"
+    )
 
 
 def with_labels_kept_as_written(
@@ -518,7 +538,9 @@ def kept_labels_from_strategy(strategy: Mapping[str, Any] | None) -> list[KeptLa
     return [KeptLabel(text=texts[key], media_ids=tuple(ids)) for key, ids in media.items()]
 
 
-def with_brief_labels(intents: list[ClipIntent], asks: Sequence[BriefLabel]) -> list[ClipIntent]:
+def with_brief_labels(
+    intents: list[ClipIntent], asks: Sequence[BriefLabel], *, shot_captions: bool = True
+) -> list[ClipIntent]:
     """Add the dictated shot text the inventory planner left out of this turn's intents (KRI-766).
 
     The planner re-reads the whole thread every turn and may not repeat a label the creator
@@ -529,8 +551,9 @@ def with_brief_labels(intents: list[ClipIntent], asks: Sequence[BriefLabel]) -> 
     wrote a label or a caption for it. Words a label can never print (too long, a "+")
     were valid dictated text, so asking to shorten them would blame the creator (KRI-766)
     and skipping them dead-ended the turn on "which clip" (KRI-804): they join as the
-    shot's caption, the lane that prints the creator's words as written (KRI-296). Only
-    words no lane can print join as a label, whose reply names every reason.
+    shot's caption, the lane that prints the creator's words as written (KRI-296). Words
+    no lane can print, or a caption that would turn off other texts (``shot_captions``
+    False, see ``shot_captions_safe``), join as a label, whose reply names every reason.
     """
     have = {
         label_key(i.creator_text)
@@ -545,7 +568,9 @@ def with_brief_labels(intents: list[ClipIntent], asks: Sequence[BriefLabel]) -> 
             continue
         op = (
             "caption"
-            if creator_label_problem(ask.literal) is not None and can_keep_as_written(ask.literal)
+            if shot_captions
+            and creator_label_problem(ask.literal) is not None
+            and can_keep_as_written(ask.literal)
             else "label"
         )
         intent_id, n = fit_intent_id(f"{op}-{key.replace(' ', '-')}"), 2
@@ -748,6 +773,7 @@ async def plan_and_resolve_clip_intents(
     spoken_text: Sequence[str] = (),
     brief_labels: Sequence[BriefLabel] = (),
     kept_labels: Sequence[KeptLabel] = (),
+    shot_captions: bool = True,
 ) -> PlannedIntentResolution:
     """``describe_clips`` (KRI-612): the Creative Brief asks for a line on each clip saying
     what it shows, so the inventory always carries one description label for it.
@@ -758,7 +784,10 @@ async def plan_and_resolve_clip_intents(
     ``brief_labels`` / ``kept_labels`` (KRI-766): the brief's dictated shot texts the planner may
     not repeat this turn (added to the inventory, so each is resolved or asked with the picker),
     and the labels the current draft already placed (kept on the same clips unless the creator
-    names them again)."""
+    names them again).
+
+    ``shot_captions`` (KRI-804, ``shot_captions_safe``): whether a creator text a label can't
+    print may become the shot's caption, which prints it as written."""
     if len(creator_request) > CREATOR_REQUEST_MAX_CHARS:
         return PlannedIntentResolution(
             [],
@@ -902,14 +931,15 @@ async def plan_and_resolve_clip_intents(
     if describe_clips:
         intents = with_clip_descriptions(intents)
     if brief_labels:
-        intents = with_brief_labels(intents, brief_labels)
-    # KRI-804: the creator's "keep it exactly as written" answer to the question below.
-    intents = with_labels_kept_as_written(
-        intents, "\n".join(t for t in (creator_request, latest_user_message) if t)
-    )
+        intents = with_brief_labels(intents, brief_labels, shot_captions=shot_captions)
+    if shot_captions:
+        # KRI-804: the creator's "keep it exactly as written" answer to the question below.
+        intents = with_labels_kept_as_written(
+            intents, "\n".join(t for t in (creator_request, latest_user_message) if t)
+        )
     # KRI-678: a creator label that can never be printed is a question about the TEXT,
     # never about clips. Asked before the picker, so a tapped answer cannot loop.
-    label_reply = unusable_label_reply(intents)
+    label_reply = unusable_label_reply(intents, shot_captions=shot_captions)
     if label_reply is not None:
         return PlannedIntentResolution(
             intents,

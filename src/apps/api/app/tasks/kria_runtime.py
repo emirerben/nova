@@ -705,7 +705,7 @@ def _label_text_unresolved(unresolved: str, brief: Any) -> LabelTextReply | None
     for requirement in brief.live() if brief is not None else ():
         if not requirement.is_shot_text:
             continue
-        reply = label_text_reply([requirement.literal])
+        reply = label_text_reply([requirement.literal], keep=False)
         if reply is not None and reply.question == unresolved:
             return reply
     return None
