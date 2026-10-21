@@ -1,0 +1,55 @@
+{
+  "pair_id": "slide_cover",
+  "lang": "en",
+  "agent": "nova.plan.slide_post_composer",
+  "prompt_version": "2026-09-09-kria",
+  "message": "Use the sunset photo as the cover.",
+  "input": {
+    "theme": "solo travel",
+    "idea": "a weekend in Lisbon",
+    "notes": "Use the sunset photo as the cover.",
+    "persona_summary": "lowercase, in-the-moment travel creator, second-person voice",
+    "platform_profile": "instagram_carousel",
+    "media": [
+      {
+        "id": "a1",
+        "kind": "image",
+        "description": "airport arrival, golden hour light through terminal windows"
+      },
+      {
+        "id": "a2",
+        "kind": "image",
+        "description": "narrow cobblestone alley in Alfama, laundry lines overhead"
+      },
+      {
+        "id": "a3",
+        "kind": "video",
+        "description": "6s clip riding tram 28 through a curve, hand out the window"
+      },
+      {
+        "id": "a4",
+        "kind": "image",
+        "description": "pastel de nata and coffee on a cafe table, midday"
+      },
+      {
+        "id": "a5",
+        "kind": "image",
+        "description": "sunset over the Tagus river from Miradouro da Senhora do Monte"
+      }
+    ]
+  },
+  "prompt_sha256": "aef485f6013af98468dc54d3f016f83f2e1590f6e8ef9732adbd44a0efcc38ac",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:13:03.058065+00:00",
+  "raw_text": "{\n  \"order\": [\n    \"a1\",\n    \"a4\",\n    \"a3\",\n    \"a2\",\n    \"a5\"\n  ],\n  \"cover_id\": \"a5\",\n  \"caption\": \"you know those weekends where everything just clicks? lisbon, you're a dream for a solo escape.\",\n  \"alt_text\": {\n    \"a1\": \"sunlight streams through airport windows onto a traveler's bag\",\n    \"a3\": \"hand reaching out of tram window as it rounds a curve\",\n    \"a5\": \"vibrant sunset paints the sky over the Tagus river, seen from a viewpoint\"\n  }\n}",
+  "raw_texts": [
+    "{\n  \"order\": [\n    \"a1\",\n    \"a4\",\n    \"a3\",\n    \"a2\",\n    \"a5\"\n  ],\n  \"cover_id\": \"a5\",\n  \"caption\": \"you know those weekends where everything just clicks? lisbon, you're a dream for a solo escape.\",\n  \"alt_text\": {\n    \"a1\": \"sunlight streams through airport windows onto a traveler's bag\",\n    \"a3\": \"hand reaching out of tram window as it rounds a curve\",\n    \"a5\": \"vibrant sunset paints the sky over the Tagus river, seen from a viewpoint\"\n  }\n}"
+  ],
+  "model_used": "gemini-2.5-flash",
+  "tokens": {
+    "in": 513,
+    "out": 155,
+    "thoughts": 478
+  },
+  "computed_cost_usd": 0.001736
+}

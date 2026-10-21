@@ -225,10 +225,11 @@ struct SavedUploadsView: View {
     }
 }
 
-private struct SavedUploadThumbnail: View {
+struct SavedUploadThumbnail: View {
     let asset: SavedMediaAsset
     let owner: String?
     let api: any KriaAPIClient
+    var size = CGSize(width: 58, height: 72)
     let didFindOriginal: () -> Void
     @State private var image: UIImage?
     var body: some View {
@@ -236,7 +237,7 @@ private struct SavedUploadThumbnail: View {
             if let image { Image(uiImage: image).resizable().scaledToFill() }
             else { Image(systemName: asset.kind == "audio" ? "music.note" : asset.kind == "image" ? "photo" : "video").foregroundStyle(KriaColor.mutedInk) }
         }
-        .frame(width: 58, height: 72).background(KriaColor.paper).clipShape(RoundedRectangle(cornerRadius: 8))
+        .frame(width: size.width, height: size.height).background(KriaColor.softZinc).clipShape(RoundedRectangle(cornerRadius: 8))
         .accessibilityHidden(true)
         .task(id: asset.id) {
             let key = "library-\(asset.id)"

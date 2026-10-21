@@ -63,6 +63,7 @@ async def prepare(
     message=None,
     updates_override=None,
     phone=False,
+    no_title=False,
 ):
     user_id, thread_id, _ = seed or _seed_runtime_project()
     with sync_session() as db:
@@ -158,6 +159,8 @@ async def prepare(
         },
         "brief_updates": updates,
     }
+    if no_title:
+        output["action"]["strategy"].pop("opening_title")
     calls = []
 
     class Transport:
@@ -313,6 +316,64 @@ async def test_missing_request_extraction_cannot_certify_an_empty_request(monkey
     assert not (events[-1].payload or {}).get("choice_question"), (
         "Missing request evidence cannot offer a waiver of unnamed requirements"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["Suggest an edit.", "suggest an edit"])
+async def test_stock_open_request_reaches_approval_without_a_brief(monkeypatch, message):
+    """KRI-774: the app's media-only message / chip #1 states no requirement by construction.
+
+    Prod thread fcbdd70d: no brief row existed, so the draft was held back with "I need to
+    establish the requested changes". The creator delegated every choice; nothing is missing.
+    """
+    user_id, thread_id, approvals, events = await prepare(
+        monkeypatch, updates_override=[], message=message, no_title=True
+    )
+    coverage = (events[-1].payload or {}).get("brief_coverage") or {}
+    assert len(approvals) == 1, coverage
+    assert coverage.get("reason") != "approval_requirements_not_ready"
+    approval = approvals[0]
+    with sync_session() as db:
+        draft = db.get(CreatorEditDraft, approval.draft_id)
+        readiness = draft.snapshot_json["brief_coverage"]["approval_readiness"]
+        assert readiness["ready"]
+        assert readiness["requirements"] == []
+        assert draft.snapshot_json["brief_binding"]["state"] == "none"
+        body = {
+            "expected_thread_revision": db.get(CreationThread, thread_id).revision,
+            "expected_draft_revision": approval.draft_revision,
+            "expected_approval_fingerprint": approval_fingerprint(approval),
+        }
+    # The real approval endpoint rechecks readiness from the saved binding alone.
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+        id=user_id, email="qa@test.local"
+    )
+    published = []
+    monkeypatch.setattr("app.routes.kria_runtime._publish_approval", published.append)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        result = await client.post(
+            f"/creation-threads/{thread_id}/approvals/{approval.id}/approve", json=body
+        )
+    assert result.status_code == 200, result.text
+    assert result.json()["status"] == "approved"
+    assert published == [str(approval.id)]
+
+
+@pytest.mark.asyncio
+async def test_only_the_stock_sentence_is_exempt_from_the_empty_request_block(monkeypatch):
+    """Negative control for KRI-774: any other message with no extracted requirements stays
+    blocked (it states a request, so an empty extraction is missing evidence)."""
+    _, _, approvals, events = await prepare(
+        monkeypatch,
+        updates_override=[],
+        message='Use the title "Gameday." and make the edit 6 seconds.',
+    )
+    assert not approvals
+    coverage = (events[-1].payload or {}).get("brief_coverage") or {}
+    assert coverage.get("reason") == "approval_requirements_not_ready"
+    assert not coverage["approval_readiness"]["ready"]
 
 
 @pytest.mark.asyncio

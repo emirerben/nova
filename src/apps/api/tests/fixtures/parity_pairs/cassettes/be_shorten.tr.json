@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_shorten",
+  "lang": "tr",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "çok uzun olmuş, 15 saniyeye indir",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "çok uzun olmuş, 15 saniyeye indir"
+  },
+  "prompt_sha256": "39bfea1d26e40b0b2b80d71dc43bfd76fd99a98aab53e1c4ab4fd1bd700deb78",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:10:25.490443+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"timing\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"15 saniyeye indir\",\n      \"facts\": {\n        \"duration_s\": 15\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"timing\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"15 saniyeye indir\",\n      \"facts\": {\n        \"duration_s\": 15\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3229,
+    "out": 93,
+    "thoughts": 540
+  },
+  "computed_cost_usd": 0.004796
+}

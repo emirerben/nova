@@ -76,6 +76,9 @@ class MontageReviewOutput(BaseModel):
 
 
 class MontageReviewAgent(Agent[MontageReviewInput, MontageReviewOutput]):
+    # KRI-784: language-neutral on purpose. Its notes are never shown to the creator: they
+    # feed the edit-proposal re-plan as `review_feedback` (tasks/edit_proposal_build.py),
+    # and that agent writes the creator-facing copy in the creator's language.
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.montage_reviewer",
         prompt_id="montage_review",

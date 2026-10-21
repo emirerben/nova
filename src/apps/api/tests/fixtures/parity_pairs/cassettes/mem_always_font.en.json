@@ -1,0 +1,35 @@
+{
+  "pair_id": "mem_always_font",
+  "lang": "en",
+  "agent": "nova.plan.creator_memory_extractor",
+  "prompt_version": "2026-10-13-v2",
+  "message": "From now on, always use the Inter font in my videos.",
+  "input": {
+    "candidate_hint": "explicit",
+    "current_memory": [
+      {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "normalized_key": "pacing",
+        "instruction": "Keep the pacing fast",
+        "enforcement": "constraint",
+        "state": "active",
+        "user_locked": false
+      }
+    ],
+    "source_message": "From now on, always use the Inter font in my videos."
+  },
+  "prompt_sha256": "aef2b5761af9e729bca4d0e14945a462e3a07f0a134d96af71647f3e736e7e46",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:12:52.787581+00:00",
+  "raw_text": "{\n  \"operation\": \"activate_explicit\",\n  \"instruction\": \"Always use the Inter font in videos.\",\n  \"category\": \"video_style\",\n  \"enforcement\": \"constraint\",\n  \"normalized_key\": \"font_family\",\n  \"structured_value\": {\n    \"font_family\": \"Inter\"\n  },\n  \"target_item_id\": null,\n  \"confidence\": 1.0,\n  \"reason_code\": \"explicit_durable\"\n}",
+  "raw_texts": [
+    "{\n  \"operation\": \"activate_explicit\",\n  \"instruction\": \"Always use the Inter font in videos.\",\n  \"category\": \"video_style\",\n  \"enforcement\": \"constraint\",\n  \"normalized_key\": \"font_family\",\n  \"structured_value\": {\n    \"font_family\": \"Inter\"\n  },\n  \"target_item_id\": null,\n  \"confidence\": 1.0,\n  \"reason_code\": \"explicit_durable\"\n}"
+  ],
+  "model_used": "gemini-2.5-flash",
+  "tokens": {
+    "in": 1065,
+    "out": 113,
+    "thoughts": 252
+  },
+  "computed_cost_usd": 0.001232
+}

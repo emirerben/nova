@@ -1,0 +1,29 @@
+{
+  "pair_id": "cip_keep_order",
+  "lang": "tr",
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-18.1",
+  "message": "klipleri çektiğim sıraya göre diz",
+  "input": {
+    "candidate_intents": null,
+    "clip_facts": true,
+    "clip_exclusions": true,
+    "creator_request": "klipleri çektiğim sıraya göre diz",
+    "latest_user_message": "klipleri çektiğim sıraya göre diz",
+    "reply_language": "tr"
+  },
+  "prompt_sha256": "a80f9e76bdc612c55a3959d2fd80b4e3fd1a674de14d1b76c74d0701d9ab6771",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:10:19.503914+00:00",
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"order_clips_filming_seq\",\n      \"op\": \"order\",\n      \"attribute\": \"clips\",\n      \"label_source\": null,\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": \"capture_time\",\n      \"source_quote\": \"klipleri çektiğim sıraya göre diz\"\n    }\n  ],\n  \"question\": null\n}",
+  "raw_texts": [
+    "{\n  \"intents\": [\n    {\n      \"intent_id\": \"order_clips_filming_seq\",\n      \"op\": \"order\",\n      \"attribute\": \"clips\",\n      \"label_source\": null,\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": \"capture_time\",\n      \"source_quote\": \"klipleri çektiğim sıraya göre diz\"\n    }\n  ],\n  \"question\": null\n}"
+  ],
+  "model_used": "gemini-2.5-flash",
+  "tokens": {
+    "in": 3575,
+    "out": 137,
+    "thoughts": 382
+  },
+  "computed_cost_usd": 0.00237
+}

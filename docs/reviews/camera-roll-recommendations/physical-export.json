@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "compiled_digest": "33f455a95489f14fa2b3e01ffba28c06cb71e55ca24bf9b84e1f008c4c73fcc3",
+  "provider_calls": 0,
+  "publication": "none",
+  "results": [
+    {
+      "case": "correct",
+      "status": "checked",
+      "expected": "checked",
+      "pass": true,
+      "checks": 17,
+      "sha256": "234ab817763e47a333662cd39e0cf21c8c2ad179d014c5d24483710f0343b9fe"
+    },
+    {
+      "case": "wrong_window",
+      "status": "rejected",
+      "expected": "rejected",
+      "pass": true,
+      "checks": 17,
+      "sha256": "d0970f65fda2c6182f9914fda8042aa626f782802a3fc3a23f0b2b85b3cc29cc"
+    },
+    {
+      "case": "wrong_audio",
+      "status": "rejected",
+      "expected": "rejected",
+      "pass": true,
+      "checks": 17,
+      "sha256": "cc7ef469cfcf4e97fddf1cd13d9e99b66b76b248c52e74df8206eb681704cc4b"
+    },
+    {
+      "case": "wrong_order",
+      "status": "rejected",
+      "expected": "rejected",
+      "pass": true,
+      "checks": 17,
+      "sha256": "b312867f05ade8f0c4c507ab4db3f6b415e0ed08f87c265bf7f23eb89ca60533"
+    }
+  ],
+  "pass": true,
+  "evidence": "internal_synthetic_physical_export",
+  "device": "iPhone 13 Pro",
+  "os_version": "Version 27.0.1 (Build 24A446)",
+  "device_timings": [
+    {
+      "case": "correct",
+      "elapsed_ms": 3158.447208,
+      "status": "exported"
+    },
+    {
+      "case": "wrong_audio",
+      "elapsed_ms": 2563.867792,
+      "status": "exported"
+    },
+    {
+      "case": "wrong_order",
+      "elapsed_ms": 2563.709209,
+      "status": "exported"
+    },
+    {
+      "case": "wrong_window",
+      "elapsed_ms": 2500.592583,
+      "status": "exported"
+    }
+  ],
+  "duration_s": 14,
+  "source_windows_s": [
+    [
+      155,
+      162
+    ],
+    [
+      155,
+      162
+    ]
+  ],
+  "verifier_version": "phone-simple-cut-v2",
+  "human_story_review": "not_performed",
+  "live_model_calls": 0,
+  "source_sha256": {
+    "src/apps/ios/Kria/Features/CameraRollExportProofView.swift": "d769a488cfa268088275de4de2e0fcb5f789e801d86da6e3040e659561c00659",
+    "src/apps/api/app/services/actual_export_verification.py": "447498087182dae05f1555b7d5b44d7b362dc8c1e83fc4dffdaaaec8dd4f4230",
+    "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/Export.swift": "b9cd89251be7c360cf22a5c72596baf552020eec7a6e893ac59c3556f50c43b9"
+  }
+}

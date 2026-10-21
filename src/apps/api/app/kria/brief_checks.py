@@ -61,6 +61,8 @@ from app.services.clip_facts import CAPTURE_ORDER_KEYS
 from app.services.clip_order_sequence import row_relations, sequence_rows
 from app.services.kria_editor_ops_diff import effective_entrance
 from app.services.length_policy import creator_duration_matches, length_owner, natural_length_owner
+from app.text_fold import capitalize, uses_turkish_case
+from app.text_fold import lower as text_lower
 
 if TYPE_CHECKING:
     from app.agents._schemas.creator_agent import ResolvedCreatorManifest
@@ -3364,23 +3366,47 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     return _receipt(req, status, "; ".join(problems) + ".")
 
 
+# KRI-783: each pattern carries its Turkish alternatives too, written Turkish-folded
+# (diacritics stripped); `_speech_cue` also runs it on the `loose_text` form, so
+# "KONUŞMAMI", "konuşmamı" and "konusmami" read alike. Only first-person Turkish forms
+# ("my speech", "what I said"): bare "konuşma"/"ses" also mean "don't talk"/"sound", and a
+# genitive ("konuşmamın yazısı", the text of my speech) is a captions ask, not this one.
 _SPEECH_EXCERPT_RE = re.compile(
     r"\b(?:excerpts?|speech|spoken|my voice|my words|what i (?:say|said|talk)|"
     r"(?:play|use|hear|keep)\s+(?:my|the)\s+(?:\w+\s+){0,3}"
     r"(?:line|lines|sentence|sentences|quote|quotes|"
-    r"talking|speech|voice))\b"
+    r"talking|speech|voice)|"
+    r"(?:konusma|konusmalari|sesi|sozleri|cumleleri)m(?:i|la|le|dan|den)?|"
+    r"(?:konustugum|soyledigim|dedigim)(?:u|i)?|"
+    r"(?:konustuklarim|soylediklerim|dediklerim)(?:i|dan|den)?|alinti\w*)\b"
 )
 _SPEECH_OVER_RE = re.compile(
-    r"\b(?:over|b-?roll|other (?:footage|clips|videos)|while|on top of|under)\b"
+    r"\b(?:over|b-?roll|other (?:footage|clips|videos)|while|on top of|under|"
+    r"ustune|ustunde|uzerine|uzerinde|altinda|arkasinda|"
+    r"diger\s+(?:klip|video|cekim|goruntu)\w*)\b"
 )
 _SPEAKER_RE = re.compile(
-    r"\b(?:cut to me|show me|back to me|cut to the speaker|me talking|on camera|me saying)\b"
+    r"\b(?:cut to me|show me|back to me|cut to the speaker|me talking|on camera|me saying|"
+    r"bana\s+(?:kes|gec|don|geri)\w*|beni\s+(?:de\s+)?goster\w*|konusurken\s+beni|"
+    r"kameraya\s+konus\w*|(?:yuzumu|kendimi)\s+(?:de\s+)?goster\w*)\b"
 )
-_BACK_TO_MONTAGE_RE = re.compile(r"\b(?:back to|return to|then)\b.{0,30}\b(?:montage|cuts|clips)\b")
+# Turkish also puts the back-word after the noun ("montaja geri dön") and says "between
+# my lines" with a postposition ("cümlelerimin arasına hızlı kesimler koy").
+_BACK_TO_MONTAGE_RE = re.compile(
+    r"\b(?:back to|return to|then|sonra|tekrar|geri)\b.{0,30}"
+    r"\b(?:montage|cuts|clips|montaj\w*|kesim\w*|klip\w*)\b"
+    r"|\b(?:montaj|kesim|klip)\w*\s+(?:geri|tekrar)\s+(?:don|gec)\w*"
+    r"|\baras(?:ina|inda)\b.{0,30}\b(?:kesim|montaj)\w*"
+)
+
+
+def _speech_cue(req_text: str, pattern: re.Pattern[str]) -> bool:
+    """The bilingual cue on the folded ask, or on its diacritic-free form."""
+    return bool(pattern.search(req_text) or pattern.search(loose_text(req_text)))
 
 
 def _wants_speech(req: BriefRequirement) -> bool:
-    return req.kind in _BEAT_KINDS and bool(_SPEECH_EXCERPT_RE.search(_req_text(req)))
+    return req.kind in _BEAT_KINDS and _speech_cue(_req_text(req), _SPEECH_EXCERPT_RE)
 
 
 def _check_speech_excerpts(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -3409,14 +3435,14 @@ def _check_speech_excerpts(req: BriefRequirement, facts: PlanFacts) -> Requireme
                 tr=f"Klibinde şunu bulamadım: {missing}",
             )
         )
-    if _SPEECH_OVER_RE.search(text) and not any(s.visual == "cutaways" for s in speech):
+    if _speech_cue(text, _SPEECH_OVER_RE) and not any(s.visual == "cutaways" for s in speech):
         problems.append(
             say(
                 en="Your words never play over the other footage",
                 tr="Sözlerin diğer çekimlerin üzerinde hiç çalmıyor",
             )
         )
-    if _SPEAKER_RE.search(text) and not any(s.visual == "speaker" for s in speech):
+    if _speech_cue(text, _SPEAKER_RE) and not any(s.visual == "speaker" for s in speech):
         problems.append(
             say(
                 en="It never cuts to you talking",
@@ -3429,7 +3455,7 @@ def _check_speech_excerpts(req: BriefRequirement, facts: PlanFacts) -> Requireme
     )
     if (
         first_other is not None
-        and _SPEAKER_RE.search(text)
+        and _speech_cue(text, _SPEAKER_RE)
         and not any(s.visual == "speaker" for s in sections[first_other + 1 :])
     ):
         problems.append(
@@ -3438,7 +3464,7 @@ def _check_speech_excerpts(req: BriefRequirement, facts: PlanFacts) -> Requireme
                 tr="Diğer çekimlerden sonra sana geri dönmüyor",
             )
         )
-    if _BACK_TO_MONTAGE_RE.search(text) and not any(s.kind == "montage" for s in sections):
+    if _speech_cue(text, _BACK_TO_MONTAGE_RE) and not any(s.kind == "montage" for s in sections):
         problems.append(
             say(
                 en="There are no fast cuts between your lines",
@@ -4544,8 +4570,8 @@ def _same_group(label: str, words: str) -> bool:
 
 
 def _sentence_case(value: str) -> str:
-    value = value.strip()
-    return value[:1].upper() + value[1:]
+    # KRI-781: Turkish-aware first letter ("ırmak" -> "Irmak", not "Irmak" via "I").
+    return capitalize(value.strip())
 
 
 def _step_names(step: NarratedStepFact) -> tuple[str, ...]:
@@ -4647,11 +4673,12 @@ def _check_narrated_order(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         if want in members:
             continue
         where = members[-1] if spot == "last" else members[0]
-        name = _sentence_case(words)
         problems.append(
             say(
-                en=f"{name} is clip {where + 1} of {len(steps)}, not the {spot} one.",
-                tr=f"{name} {len(steps)} klipten {where + 1}. sırada, {_SPOT_TR[spot]} değil.",
+                en=f"{_sentence_case(words)} is clip {where + 1} of {len(steps)}, "
+                f"not the {spot} one.",
+                tr=f"{capitalize(words.strip(), 'tr')} {len(steps)} klipten {where + 1}. "
+                f"sırada, {_SPOT_TR[spot]} değil.",
             )
         )
     if problems:
@@ -4720,13 +4747,14 @@ def _check_narrated_timing(req: BriefRequirement, facts: PlanFacts) -> Requireme
     if not excerpt:
         return _receipt(req, "partial", _CANT_CHECK_TIMING)
     start, end = steps[first].start_s, steps[last].end_s
-    label = _sentence_case(" and ".join(named))
+    en_label = _sentence_case(" and ".join(named))
+    tr_label = capitalize(" ve ".join(named).strip(), "tr")
     return _receipt(
         req,
         "met",
         say(
-            en=f'{label} clips play from {start:.1f} s to {end:.1f} s, under: "{excerpt}"',
-            tr=f"{label} klipleri {start:.1f} sn ile {end:.1f} sn arasında oynuyor, "
+            en=f'{en_label} clips play from {start:.1f} s to {end:.1f} s, under: "{excerpt}"',
+            tr=f"{tr_label} klipleri {start:.1f} sn ile {end:.1f} sn arasında oynuyor, "
             f'şu sözlerle: "{excerpt}"',
         ),
     )
@@ -5022,10 +5050,12 @@ def _judges_caption_words(req: BriefRequirement, facts: PlanFacts) -> bool:
 
 def _spelling_key(value: str, *, turkish: bool) -> str:
     """Case-free, whitespace-collapsed text that keeps every letter ("İ" -> "i"; in Turkish
-    "I" -> "ı"), so "KADIKÖY" equals "Kadıköy" but "Kadikoy" does not."""
-    text = unicodedata.normalize("NFC", value).replace("İ", "i")
-    if turkish:
-        text = text.replace("I", "ı")
+    "I" -> "ı"), so "KADIKÖY" equals "Kadıköy" but "Kadikoy" does not.
+
+    KRI-781: lower-cased with the shared Turkish-aware casing, which also applies Turkish
+    i rules when the text itself has a Turkish-only letter, whatever the flag says.
+    """
+    text = text_lower(unicodedata.normalize("NFC", value), "tr" if turkish else None)
     return " ".join(text.casefold().split())
 
 
@@ -5044,6 +5074,9 @@ def _caption_spelling(name: str, captions: str, *, turkish: bool) -> tuple[bool,
     want = _squash(name)
     if not want:
         return False, None
+    # KRI-781: a name with a Turkish-only letter is Turkish even when the job language is
+    # not, so "KIRMIZI" in the captions still equals the wanted "kırmızı".
+    turkish = turkish or uses_turkish_case(name)
     want_key = _spelling_key(name, turkish=turkish)
     name_words = len(re.split(r"[\s\-]+", name.strip()))
     tokens = list(_CAPTION_TOKEN_RE.finditer(captions))

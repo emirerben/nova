@@ -501,8 +501,13 @@ def download_generation_to_file(
     local_path: str,
     *,
     generation: str,
+    timeout_s: float | None = None,
 ) -> None:
-    """Download exactly the storage generation previously validated by a worker."""
+    """Download exactly the storage generation previously validated by a worker.
+
+    Bounded foreground callers may opt out of SDK retries with an HTTP timeout.
+    Existing workers retain their historical retry policy.
+    """
     if _uses_local_storage():
         metadata = _local_metadata(object_path)
         if metadata.generation != str(generation):
@@ -511,7 +516,10 @@ def download_generation_to_file(
         return
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path, generation=int(generation))
-    blob.download_to_filename(local_path)
+    if timeout_s is None:
+        blob.download_to_filename(local_path)
+    else:
+        blob.download_to_filename(local_path, timeout=timeout_s, retry=None)
 
 
 def delete_object_best_effort(object_path: str) -> bool:

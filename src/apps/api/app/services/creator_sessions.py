@@ -25,6 +25,7 @@ from app.agents._schemas.creator_agent import (
     creator_strategies_equal,
 )
 from app.config import settings
+from app.kria.creator_cues import SFX_NOUN_PATTERN_TR
 from app.kria.media_sources import is_analysis_proxy_path
 from app.models import (
     ContentPlan,
@@ -71,7 +72,7 @@ from app.services.tiktok_style_observations import effective_persona_style
 # ("no sound effects please") -- a notice stating what was (not) added is
 # harmless either way.
 _GENERIC_SOUND_EFFECT_REQUEST_RE = re.compile(
-    r"\b(sound\s*effects?|sound\s*fx|sfx)\b", re.IGNORECASE
+    rf"\b(sound\s*effects?|sound\s*fx|sfx|{SFX_NOUN_PATTERN_TR})\b", re.IGNORECASE
 )
 # Exact text of the repair-(d) notice `compile_strategy_to_plan` already
 # appends when it drops a stray `licensed_sfx` because `reaction_beats`

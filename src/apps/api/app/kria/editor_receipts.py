@@ -117,7 +117,12 @@ _REGEX_CUES: dict[str, re.Pattern[str]] = {
     "captions": re.compile(r"\b(captions?|subtitles?|altyazi\w*)\b"),
     "look": re.compile(r"\b(filters?|grade|grading|presets?|filtre\w*)\b"),
     "length": re.compile(r"\b(shorten\w*|trim\w*|duration|kisalt\w*|uzat\w*|longer|shorter)\b"),
-    "timing": re.compile(r"\b(delay\w*|earlier|later|appear\w* at|disappear\w*)\b"),
+    "timing": re.compile(
+        r"\b(delay\w*|earlier|later|appear\w* at|disappear\w*"
+        r"|gecik\w*|daha (?:gec|erken)|gec (?:cik|gel|basla|gir)\w*|erken (?:cik|gel|basla|gir)\w*"
+        r"|kaybol\w*|\d+ saniye (?:sonra|once)|saniyede|belir(?:sin|sinler|ecek|di)"
+        r"|(?:ekranda|daha uzun|daha kisa) (?:\w+ ){0,2}kal(?:sin|sinlar|acak|ir))\b"
+    ),
 }
 _CLIP_NOUN = re.compile(r"\b(clips?|shots?|videos?|footage|klip\w*|cekim\w*)\b")
 _TEXT_NOUN = re.compile(
@@ -133,14 +138,22 @@ _ANIMATION = re.compile(
 _SPEED = re.compile(
     r"\b(slow ?down|slow ?motion|slower|faster|speed ?(up|down)|hizlan\w*|yavasla\w*)\b"
 )
+# KRI-783: Turkish puts the verb after the noun ("yazı tipini değiştir", "fontu değiştir").
 _FONT_VERB = re.compile(
     r"\b(change|switch|swap|replace|use|set|pick|choose)\b[a-z ]{0,25}\b(fonts?|typefaces?)\b"
+    r"|\b(font|fontu\w*|fontlar\w*|yazi tip\w*)\b[a-z ]{0,25}"
+    r"\b(degis\w*|kullan\w*|sec|secin|secil\w*|yap\w*)\b"
 )
 _FONT_NOUN_ONLY = re.compile(
     r"\bfonts? (size|colou?r|weight|bigger|smaller|larger|bold)\b"
     r"|\b(bigger|smaller|larger|bold|big|small|large) fonts?\b"
+    r"|\b(font|yazi tipi)\w* (boyut|renk|kalinlig)\w*"
 )
-_SAME_FONT = re.compile(r"\b(same|different|new|another|other|matching) (fonts?|typefaces?)\b")
+_SAME_FONT = re.compile(
+    r"\b(same|different|new|another|other|matching) (fonts?|typefaces?)\b"
+    r"|\b(ayni|farkli|yeni|baska|diger) (bir )?(font|yazi tipi)\w*"
+    r"|\b(font|yazi tip)\w* (ayni|farkli|baska|degis)\w*"
+)
 _STOP = frozenset(
     "the and for with from that this these those them they their all both each every same "
     "make made have has had are was were will would can could should must might shall please "

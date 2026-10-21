@@ -149,6 +149,26 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(slid["duration_s"]?.numberValue ?? 0, 0.1)
     }
 
+    // KRI-773: Troya's restored car clip carried a chat-minted `cs-<state>-<n>` id from a draft stored
+    // before #1698. A draft clip that matches no saved clip is a new placement, so the editor must not
+    // hold (or send) that id: the server refuses it as a stale slot, and Reload re-applies it.
+    func testStagedDraftClipWithAnUnknownIdIsANewPlacement() async throws {
+        var payload = Self.chatPayload(shape: .flatOnly)
+        payload["timeline_slots"] = .array([.object([
+            "slot_id": .string("cs-369BA950-52A-27"), "clip_index": .number(3), "in_s": .number(0),
+            "duration_s": .number(3), "removed": .bool(false),
+        ])])
+        let snapshot = DraftSnapshot(draftID: "minted", itemID: "item", variantKey: "initial", draftRevision: 4,
+            snapshotHash: "h", etag: "e", baseJobID: Self.jobID, baseGenerationID: "g1",
+            snapshot: ["kind": .string("editor"), "editor_payload": .object(payload)], canUndo: true, createdAt: .now)
+        let (session, _) = await loaded(snapshot)
+        let added = try XCTUnwrap(session.document.clips.first { $0.clipIndex == 3 })
+        XCTAssertNil(added.id, "a made-up slot id must not reach the Save")
+        XCTAssertFalse(session.document.clips.contains { $0.id?.hasPrefix("cs-") == true })
+        // Saved clips keep their real ids.
+        XCTAssertTrue(session.document.clips.contains { $0.id == "s1" })
+    }
+
     // New source placements have no server slot ID until Save. They must survive
     // draft hydration, the live timeline, and the next client-state/commit round trip.
     func testRestoredUnusedSourceWithoutSlotIDSurvivesStagingAndSave() async throws {

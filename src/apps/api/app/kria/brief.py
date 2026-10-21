@@ -40,7 +40,7 @@ from pydantic import (
 from sqlalchemy import func, select
 
 from app.agents._schemas.text_element import _ALLOWED_FONTS, _HEX_COLOR_RE
-from app.kria.brief_route import loose_text, wants_filming_time_text
+from app.kria.brief_route import fold_text, loose_text, wants_filming_time_text
 from app.kria.reply_language import detect_chat_language
 from app.models import CreativeBriefVersion
 from app.schemas.clip_intents import asks_clip_description
@@ -556,11 +556,12 @@ _NEGATED_AGAIN = re.compile(r"\b(don'?t|dont|do not|never|stop)\b[^.!?]{0,20}\ba
 
 
 def _legacy_fold(message: str) -> str:
-    # Turkish dotted/dotless I: casefold() turns "\u0130" into i + combining dot,
-    # which no pattern would match, so map both capitals first. Kept as it was for the
-    # English patterns, so English routing is unchanged by KRI-520.
-    text = unicodedata.normalize("NFC", message or "").replace("\u0130", "i").replace("I", "\u0131")
-    return " ".join(text.casefold().split())
+    """The English patterns' fold: the shared ``fold_text`` (KRI-781).
+
+    It used to map "I" to dotless "ı", so "DO IT AGAIN" read "do ıt agaın" and an
+    uppercase English redo missed every pattern (a KRI-520 regression).
+    """
+    return fold_text(message or "")
 
 
 def _fold_for_redo(message: str) -> str:
