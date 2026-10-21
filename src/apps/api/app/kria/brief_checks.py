@@ -1984,6 +1984,9 @@ _ARRIVAL_BASES = frozenset({"attachment", "creator_order"})
 _ORDER_NOT_APPLIED = (
     "I couldn't match your description to the clips, so they stay in the order you attached them."
 )
+# KRI-778: an order the creator listed in their own words that the plan only partly placed,
+# said in their terms (what they listed), never the planner's "groups".
+_ORDER_LIST_NOT_PLACED = "I couldn't place everything you listed in the order you gave."
 # KRI-470 PR-G: what a required order says when it was not met.
 _ORDER_NOT_RECORDED = "I couldn't confirm the order your edit used."
 _ORDER_RULE_NOT_APPLIED = (
@@ -2015,6 +2018,30 @@ def _unplaced_order_anchor(req: BriefRequirement, facts: PlanFacts) -> str | Non
     if not said:
         return None
     return f"You asked me to {' and '.join(said)}, but I can't confirm that clip is placed there."
+
+
+def _listed_order_miss(facts: PlanFacts) -> str:
+    """KRI-778: an order described in the creator's words that the plan only partly placed.
+
+    Whole sentences naming what missed, as the creator said it, so the blocked render's
+    message reads "... Caro's bye-bye wave (last) isn't where you asked." instead of the old
+    lowercase fragment about "groups".
+    """
+    said = [say(en=_ORDER_LIST_NOT_PLACED, tr=_REASON_TR[_ORDER_LIST_NOT_PLACED])]
+    if facts.sequence_unmet:
+        missed = _and_names(facts.sequence_unmet)
+        verb = "isn't" if len(dict.fromkeys(facts.sequence_unmet)) == 1 else "aren't"
+        said.append(
+            say(en=f"{missed} {verb} where you asked.", tr=f"{missed} istediğin yerde değil.")
+        )
+    if facts.sequence_absent:
+        said.append(
+            say(
+                en=f"I found no clips for {_and_names(facts.sequence_absent)}.",
+                tr=f"{_and_names(facts.sequence_absent)} için klip bulamadım.",
+            )
+        )
+    return " ".join(said)
 
 
 def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -2075,10 +2102,7 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
             return _receipt(
                 req,
                 "partial" if landed or not required else "not_possible",
-                say(
-                    en="some of the groups you named are not where you said",
-                    tr="söylediğin gruplardan bazıları dediğin yerde değil",
-                ),
+                _listed_order_miss(facts),
             )
     elif basis in _ARRIVAL_BASES and key != basis:
         # An order only the creator's words describe, and nothing in the plan applied
@@ -2841,6 +2865,7 @@ _REASON_TR: dict[str, str] = {
     _ORDER_NOT_APPLIED: (
         "Anlattığını kliplerle eşleştiremedim, o yüzden klipler eklediğin sırada kaldı."
     ),
+    _ORDER_LIST_NOT_PLACED: "Saydığın her şeyi verdiğin sıraya yerleştiremedim.",
     _ORDER_NOT_RECORDED: "Düzenlemenin kullandığı sırayı doğrulayamadım.",
     _ORDER_RULE_NOT_APPLIED: (
         "Bu sıralama kuralını doğrulayamıyorum ve klipler kurala uyduğunu gösterebileceğim "
@@ -5262,6 +5287,48 @@ def narrated_alignment_recovery() -> str:
     )
 
 
+# KRI-778: `_check_timing`'s sentence for a total length the draft missed. Every global
+# length ask is judged against the same draft, so a brief with two of them (café M2: a freeze
+# the brief scoped as a length, and "about 14 seconds") states the draft's length twice.
+_DRAFT_LENGTH_RE = re.compile(
+    r"^(?:This draft is about \S+s\b.*; you asked for \S+s\."
+    r"|Bu taslak yaklaşık \S+ saniye\b.*; sen \S+ saniye istedin\.)$"
+)
+# A sentence already ends: its stop, then any closing quotes or brackets.
+_SENTENCE_END_RE = re.compile(r"[.!?…][\"'”’»)\]]*$")
+
+
+def _as_sentence(reason: str) -> str:
+    """A receipt reason as one sentence of the block message: capitalised, with its stop.
+
+    A draft summary lists reasons one per line, where a fragment reads fine; run together in
+    one message, a fragment runs into the next sentence (KRI-778). "iPhone" stays as is.
+    """
+    text = reason.strip().rstrip(",;:").rstrip()
+    if not text:
+        return text
+    first = text[0]
+    if first.islower() and not (len(text) > 1 and text[1].isupper()):
+        dotted = first == "i" and current_reply_language() == "tr"
+        text = ("İ" if dotted else first.upper()) + text[1:]
+    if not _SENTENCE_END_RE.search(text):
+        text += "."
+    return text
+
+
+def _block_sentences(reasons: Sequence[str]) -> list[str]:
+    """The blocking reasons as sentences, each said once, and the draft's length said once:
+    with the last length ask, the latest the creator stated (a brief keeps asks in the order
+    they were said)."""
+    lengths = [reason for reason in reasons if _DRAFT_LENGTH_RE.match(reason.strip())]
+    kept = [
+        reason
+        for reason in reasons
+        if reason in lengths[-1:] or not _DRAFT_LENGTH_RE.match(reason.strip())
+    ]
+    return [text for text in dict.fromkeys(_as_sentence(reason) for reason in kept) if text]
+
+
 @dataclass(frozen=True)
 class RenderBlockRecovery:
     """What the creator is told when checked receipts block a render, and the typed decline."""
@@ -5300,7 +5367,9 @@ def render_block_recovery(failures: Sequence[Mapping[str, Any]]) -> RenderBlockR
             field_path="opening_title",
             alternative=alternative,
         )
-    shown = " ".join(dict.fromkeys(blocked if is_no_title_reason(r) else _loc(r) for r in reasons))
+    shown = " ".join(
+        _block_sentences([blocked if is_no_title_reason(r) else _loc(r) for r in reasons])
+    )
     suffix = say(
         en=_RENDER_BLOCK_SUFFIX,
         tr="Taslağın kaydedildi. Tekrar mı deneyeyim, yoksa isteği sadeleştireyim mi?",
