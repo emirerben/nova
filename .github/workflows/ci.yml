@@ -615,6 +615,20 @@ jobs:
             tests/services/test_transcript_quality.py \
             tests/tasks/test_silent_audio_gate.py -q \
             | tee ../../../test-results/kri-559/silent-take-api-tests.log
+      - name: Verify clip records keep the spoken words in the spoken language
+        if: contains(needs.changes.outputs.journey_ids, 'kri-808-clip-speech-language')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/tasks/test_kri808_clip_speech_language.py \
+            tests/tasks/test_kria_speech_segments.py \
+            tests/services/test_transcript_quality.py \
+            tests/services/test_phone_speech_montage_job.py -q \
+            | tee ../../../test-results/kri-559/clip-speech-language-api-tests.log
       - name: Verify a montage drops the clips the creator ruled out by length
         if: contains(needs.changes.outputs.journey_ids, 'kri-623-ruled-out-clips')
         working-directory: src/apps/api
