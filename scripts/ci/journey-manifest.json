@@ -1106,6 +1106,14 @@
         "src/apps/api/app/pipeline/narration_labels.py",
         "src/apps/api/app/pipeline/score.py"
       ]
+    },
+    {
+      "id": "kri-784-creator-language-prompts",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_turkish_chat_guard.py tests/evals/test_semantic_edit_proposal_evals.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/agent_evals/semantic_edit_proposal/golden/"
+      ]
     }
   ]
 }

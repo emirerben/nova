@@ -755,9 +755,99 @@ def test_plan_blocks_stay_byte_identical_in_an_english_chat(
     ]
 
 
+# -- v1 chat (creation_threads._append) ----------------------------------------------
+
+
+async def test_v1_editor_turn_refusals_are_turkish(turkish_chat_net: TurkishChatNet) -> None:
+    """KRI-784: the v1 post-render edit path answers a Turkish chat in Turkish."""
+    from app.services import creation_editor_actions as actions  # noqa: PLC0415
+
+    thread = _thread("tr")
+    thread.state["selected_variant_id"] = None
+    no_variant = SimpleNamespace(id=uuid.uuid4(), assembly_plan={"variants": []})
+    for message in ("başlığı kaldır", "ç" * 2001):
+        body = SimpleNamespace(message=message, client_event_id="e1")
+        await actions.execute_copilot_edit(_AsyncDb(), thread, body, None, job=no_variant)
+    assert turkish_chat_net.checked == 2
+
+
+async def test_v1_not_done_lines_are_turkish(turkish_chat_net: TurkishChatNet) -> None:
+    """KRI-784: refused/skipped parts of a v1 chat edit ("Not done: ...") in Turkish."""
+    from app.services import creation_editor_actions as actions  # noqa: PLC0415
+
+    thread = _thread("tr")
+    job = SimpleNamespace(
+        id=uuid.uuid4(), assembly_plan={"variants": [{"variant_id": "v1", "text_elements": []}]}
+    )
+    response = SimpleNamespace(
+        outcome="failed",
+        ops=[],
+        intent="edit",
+        reply="I can't do that.",
+        rejection_reasons=[
+            {"op": "set_clip_label", "reason": "invalid_value"},
+            {"op": "mystery_op", "reason": "not_a_known_code"},
+        ],
+        unmet_requests=[],
+    )
+
+    async def _turn(*_args: Any, **_kwargs: Any) -> Any:
+        return response
+
+    body = SimpleNamespace(message="kliplere isim ver", client_event_id="e2")
+    with (
+        patch.object(actions, "run_copilot_turn", _turn),
+        patch.object(actions, "honest_replies_enabled", lambda: True),
+        patch.object(actions, "build_editor_snapshot", lambda *_a: {}),
+    ):
+        await actions.execute_copilot_edit(_AsyncDb(), thread, body, None, job=job)
+    assert turkish_chat_net.checked == 1
+
+
+async def test_v1_project_status_and_format_copy_is_turkish(
+    turkish_chat_net: TurkishChatNet,
+) -> None:
+    """KRI-784: status answers, the format prompt and the archive line, through `_append`."""
+    from app.routes import creation_threads  # noqa: PLC0415
+
+    thread = _thread("tr")
+    jobs = [
+        None,
+        SimpleNamespace(status="queued", current_phase=None),
+        SimpleNamespace(status="processing", current_phase="assembling_clips"),
+        SimpleNamespace(status="done", current_phase=None),
+    ]
+    sessions = [None, SimpleNamespace(status="executing"), SimpleNamespace(status="rendering")]
+    for job in jobs:
+        for session in sessions:
+            await creation_threads._append(
+                _AsyncDb(),
+                thread,
+                event_type="status_update",
+                content=creation_threads._localized_status_message(
+                    thread=thread, session=session, job=job
+                ),
+            )
+    await creation_threads._append(
+        _AsyncDb(),
+        thread,
+        event_type="format_prompt",
+        role="assistant",
+        content=creation_threads._format_prompt_copy("tr"),
+    )
+    assert turkish_chat_net.checked == len(jobs) * len(sessions) + 1
+    # English stays byte-identical.
+    assert (
+        creation_threads._format_prompt_copy(None)
+        == "What are we making? Pick a format and we’ll shape it together."
+    )
+
+
 # -- B. static net -------------------------------------------------------------------
 
-_WRITERS = {"_append_sync_event", "_append_event", "CreationThreadEvent"}
+# `_append` is the v1 chat writer in routes/creation_threads.py (also called as
+# `routes._append` from services/creation_editor_actions.py) (KRI-784).
+_WRITERS = {"_append_sync_event", "_append_event", "_append", "CreationThreadEvent"}
 # Creator-facing text handed to the turn plan and the strategy refusal (the turn task
 # writes them as the event content).
 _TEXT_ARGUMENTS = {
@@ -883,6 +973,10 @@ _CROSS_MODULE_SOURCES: dict[str, tuple[str, ...]] = {
 _LOOKUP_TABLES = frozenset(
     {
         "app.kria.strategy_policy._KNOWN_TR",  # exact English notice text
+        # KRI-784: keyed by the machine role / position value (the English text uses
+        # the raw value itself; a missing key falls back to that value).
+        "app.services.finished_style_learning._ROLE_TR",
+        "app.services.finished_style_learning._POSITION_TR",
         "app.kria.strategy_policy._SHAPE_NAMES_TR",
         "app.kria.brief_checks._SPOT_TR",
         "app.kria.brief_checks._BASIS_TR",  # machine ordering basis
@@ -991,3 +1085,84 @@ def test_every_worker_sentence_the_chat_rewords_still_exists_and_is_covered() ->
         *(text for pair in generative_build._SPEECH_FALLBACK_DECLINES.values() for text in pair),
     }
     assert not required - set(table), sorted(required - set(table))
+
+
+# ----------------------------------------------------------- KRI-784 prompt-language guard
+# Failure modes for the reply-language line on agents with no chat behind them:
+# 1. An English creator writing about Turkish places ("Göreme", "Kadıköy") is read
+#    as Turkish from the names' letters, and the prompt orders Turkish output.
+# 2. The KRIA_REPLY_LANGUAGE_ENABLED kill switch is off, yet the line still renders.
+# 3. A Turkish chat's language reaches the yes/no clip check, the model answers
+#    "evet"/"hayır", and the English-only parser drops the clip.
+# 4. A Turkish chat gets an English validator sentence or op summary glued to Turkish.
+
+_ENGLISH_ABOUT_TURKEY = (
+    "Paragliding over Ölüdeniz",
+    "Sunrise balloons over Göreme",
+    "Kadıköy, Beşiktaş and Üsküdar food crawl",
+    "Exploring Çeşme and Alaçatı",
+    "Gözleme breakfast",
+)
+
+
+def _shot_list_prompt(idea: str, theme: str = "") -> str:
+    from app.agents.shot_list_writer import ShotListWriterAgent, ShotListWriterInput
+
+    return ShotListWriterAgent(None).render_prompt(ShotListWriterInput(theme=theme, idea=idea))
+
+
+@pytest.mark.parametrize("idea", _ENGLISH_ABOUT_TURKEY)
+def test_english_about_turkish_places_keeps_the_english_prompt(idea: str) -> None:
+    from app.agents.slide_post_composer import SlidePostComposerAgent, SlidePostComposerInput
+    from app.agents.slide_post_composer import SlidePostMediaItem as Media
+
+    assert "Creator chat language" not in _shot_list_prompt(idea, theme=idea)
+    media = [Media.model_validate({"id": "m1", "kind": "image"})]
+    slide = SlidePostComposerAgent(None).render_prompt(
+        SlidePostComposerInput(idea=idea, theme=idea, notes=idea, media=media)
+    )
+    assert "Creator chat language" not in slide
+
+
+def test_turkish_creator_words_still_get_the_turkish_line() -> None:
+    assert "Turkish (tr)" in _shot_list_prompt("Kapadokya balon turu, çok güzel bir gün")
+
+
+def test_the_kill_switch_keeps_every_prompt_english(monkeypatch: pytest.MonkeyPatch) -> None:
+    turkish = "Kapadokya balon turu, çok güzel bir gün"
+    monkeypatch.setattr(settings, "kria_reply_language_enabled", False)
+    off = _shot_list_prompt(turkish)
+    assert "Creator chat language" not in off
+    with reply_language_for("tr"):
+        assert _shot_list_prompt(turkish) == off
+    monkeypatch.setattr(settings, "kria_reply_language_enabled", True)
+    assert _shot_list_prompt(turkish) != off
+
+
+def test_yes_no_clip_checks_survive_a_turkish_answer() -> None:
+    from app.agents.clip_question import ClipQuestionAgent, ClipQuestionInput, _normalize_answer
+    from app.services.clip_intent_resolution import _yes_no
+
+    assert _yes_no("evet") is True and _yes_no("Hayır.") is False
+    assert _normalize_answer("bilinmiyor") == ""
+    prompt = ClipQuestionAgent(None).render_prompt(
+        ClipQuestionInput(file_uri="gs://x", question="Is anyone talking?", reply_language="tr")
+    )
+    assert prompt.rstrip().endswith('stays exactly "yes", "no" or "unknown", in English.')
+
+
+def test_a_turkish_reply_never_glues_english_server_text() -> None:
+    from fastapi import HTTPException
+
+    from app.services.creation_editor_actions import _rejection_reply, build_honest_reply
+
+    english_changes = ["Moved the title to the top", "Made captions bigger"]
+    with reply_language_for("tr"):
+        assert build_honest_reply(english_changes, [], []) == (
+            "Düzenlemeni uyguladım. Geri kalan her şey aynı."
+        )
+        rejected = _rejection_reply(HTTPException(422, detail={"message": "Clip too short."}))
+        assert rejected == "Bu değişikliği güvenle uygulayamadım. Hiçbir şey değişmedi."
+    assert build_honest_reply(english_changes, [], []) == (
+        "Moved the title to the top and Made captions bigger. Everything else is unchanged."
+    )

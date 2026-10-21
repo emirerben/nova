@@ -228,12 +228,25 @@ class ScopeError(ValueError):
 
 
 def validate_scope(scope: list[str]) -> list[str]:
-    """Normalize a requested scope, in SECTION_ORDER. Raises :class:`ScopeError`."""
+    """Normalize a requested scope, in SECTION_ORDER. Raises :class:`ScopeError`.
+
+    The error message is in the bound reply language (the caller binds the chat's).
+    """
     if not scope or len(scope) != len(set(scope)) or any(s not in SECTION_ORDER for s in scope):
-        raise ScopeError("scope_invalid", "Choose which parts of the video to change.")
+        raise ScopeError(
+            "scope_invalid",
+            say(
+                en="Choose which parts of the video to change.",
+                tr="Videonun hangi bölümlerini değiştireceğimizi seç.",
+            ),
+        )
     if "post_caption" in scope:
         raise ScopeError(
-            "scope_section_unsupported", "The post caption can't be changed from here yet."
+            "scope_section_unsupported",
+            say(
+                en="The post caption can't be changed from here yet.",
+                tr="Paylaşım metni henüz buradan değiştirilemiyor.",
+            ),
         )
     return [s for s in SCOPABLE_SECTIONS if s in scope]
 

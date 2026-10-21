@@ -35,11 +35,12 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
 from app.agents.music_matcher import _sanitize_text
+from app.kria.reply_language import agent_reply_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-INTERVIEWER_PROMPT_VERSION = "2026-07-11-kria"
+INTERVIEWER_PROMPT_VERSION = "2026-10-21-language"
 _HARD_CAP = 7
 # Server-side turn contract (parse() enforces; the prompt only *aims*):
 # question _FORCE_FINAL_AT is always the last one, and turn_label is derived
@@ -68,6 +69,9 @@ class InterviewerInput(BaseModel):
     # creeps upward mid-interview (dogfood 2026-07-09: ~5 → ~8 over 7 turns).
     # None on the first turn or for legacy stored turns without a label.
     prev_total_estimate: int | None = None
+    # KRI-784: the creator's language ("tr"/"en"), from the chat or the caller. None:
+    # read from the creator's own words below; English/unknown renders byte-identical.
+    reply_language: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class InterviewerOutput(BaseModel):
@@ -124,12 +128,18 @@ class InterviewerAgent(Agent[InterviewerInput, InterviewerOutput]):
 
     def render_prompt(self, input: InterviewerInput) -> str:  # noqa: A002
         turns_so_far = input.turn_count
-        return load_prompt(
+        prompt = load_prompt(
             "interviewer",
             history=_format_history(input.turns),
             tiktok_context=_format_tiktok_context(input.tiktok_summary),
             turns_so_far=str(turns_so_far),
             hard_cap=str(_HARD_CAP),
+        )
+        return with_prompt_language(
+            prompt,
+            agent_reply_language(
+                input.reply_language, [t.content for t in input.turns if t.role == "user"]
+            ),
         )
 
     def parse(

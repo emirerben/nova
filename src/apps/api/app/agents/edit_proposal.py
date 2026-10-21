@@ -22,6 +22,7 @@ from app.agents.spoken_script import (
     transcript_speaks,
     word_keys,
 )
+from app.kria.reply_language import agent_reply_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.clip_intents import ResolvedClipIntent
 from app.schemas.edit_frame_schedule import EditFrameSchedule
@@ -955,6 +956,9 @@ class EditProposalAgentInput(BaseModel):
     # KRI-189: CLIP_FACTS is on for this creator, so media rows may carry `facts` and
     # capture-time ordering records its basis (`EditProposalAgentOutput.ordering`).
     clip_facts: bool = Field(default=False, exclude_if=lambda value: not value)
+    # KRI-784: the creator's language ("tr"/"en"), from the chat or the caller. None:
+    # read from the creator's own words below; English/unknown renders byte-identical.
+    reply_language: str | None = Field(default=None, exclude_if=lambda value: value is None)
     media: list[EditProposalMedia] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
 
     @model_validator(mode="before")
@@ -2353,7 +2357,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.18.0",
+        prompt_version="1.19.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -2659,7 +2663,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 "simple edit would use."
             )
         clip_facts_note = _CLIP_FACTS_PROMPT_NOTE if input.clip_facts else ""
-        return load_prompt(
+        prompt = load_prompt(
             "edit_proposal",
             clip_facts_note=clip_facts_note,
             idea=input.idea[:500],
@@ -2688,6 +2692,12 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             ),
             source_floor_note=source_floor_note,
             beat_count_note=beat_count_note,
+        )
+        return with_prompt_language(
+            prompt,
+            agent_reply_language(
+                input.reply_language, input.creator_request, input.idea, input.theme
+            ),
         )
 
     def parse(
