@@ -7,11 +7,17 @@ are the reference: İ/I/ı -> i, casefold, then (loose) diacritics stripped.
 
 A scope (a function, or a module-level statement) is a fold copy when it contains any of:
 
-- a dict literal with two or more single-character Turkish keys (``{"ı": "i", "ş": "s"}``),
+- a dict literal (keys may be ``ord("ı")``) that maps ``İ``, maps ``I`` to ``ı``, or has
+  two Turkish-only keys / three keys from ıİşŞğĞçÇöÖüÜ (``{"ı": "i", "ş": "s"}``,
+  ``{"ç": "c", "ğ": "g", "ö": "o"}``),
 - ``str.maketrans(...)`` with a Turkish letter in its arguments,
-- ``.replace("ı", ...)`` / ``.replace("İ", ...)`` etc. on a Turkish letter, or
-- ``unicodedata.normalize("NFKD" | "NFD", ...)`` (diacritic stripping; with
-  ``.encode("ascii", "ignore")`` it deletes ``ı`` outright).
+- ``.replace("ı", ...)`` / ``.replace("İ", ...)`` on a Turkish letter, or
+  ``.replace("I", "ı")`` (the N01 drift), or
+- ``normalize("NFKD" | "NFD", ...)``, called as ``unicodedata.normalize`` or a bare
+  imported ``normalize`` (diacritic stripping; with ``.encode("ascii", "ignore")`` it deletes
+  ``ı`` outright).
+
+Class-level tables count as their own scope.
 
 Each module may have at most its ``BASELINE`` count of such scopes; the count may only go
 down (lane B of the Turkish parity project is replacing them with ``brief_route``). A new
@@ -30,6 +36,8 @@ _APP = Path(__file__).resolve().parents[2] / "app"
 _CANONICAL = "kria/brief_route.py"
 _EXEMPT = "# single-fold:"
 _TURKISH = frozenset("ıİşŞğĞ")
+# Letters a Turkish diacritic table maps (``{"ç": "c", "ğ": "g", ...}``).
+_FOLD_LETTERS = frozenset("ıİşŞğĞçÇöÖüÜ")
 
 # Fold-copy scopes per module, counted on codex/turkish-parity (KRI-786). Lower a number
 # when you replace a copy with brief_route.fold_text/loose_text; never raise one.
@@ -48,6 +56,7 @@ BASELINE: dict[str, int] = {
     "schemas/edit_proposal.py": 1,
     "services/clip_facts.py": 1,
     "services/clip_file_names.py": 1,
+    "services/choice_questions.py": 1,
     "services/clip_selection.py": 1,
     "services/content_plan_dedup.py": 1,
     "services/edit_direction_planner.py": 1,
@@ -65,13 +74,46 @@ def _has_turkish(value: object) -> bool:
     return isinstance(value, str) and bool(_TURKISH & set(value))
 
 
+def _const_str(node: ast.AST | None) -> str | None:
+    """A str constant, or the character behind ``ord("ı")`` (translate-table keys)."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "ord"
+        and len(node.args) == 1
+    ):
+        return _const_str(node.args[0])
+    if isinstance(node, ast.Constant) and isinstance(node.value, int):
+        try:
+            return chr(node.value)
+        except (ValueError, OverflowError):
+            return None
+    return None
+
+
+def _dotted_i_mapping(key: str | None, value: str | None) -> bool:
+    """``"İ" -> ...`` or ``"I" -> "ı"``: the Turkish dotted/dotless I rule, alone a fold."""
+    return key == "İ" or (key == "I" and value is not None and "ı" in value)
+
+
 def _fold_signal(node: ast.AST) -> bool:
     if isinstance(node, ast.Dict):
-        keys = [k.value for k in node.keys if isinstance(k, ast.Constant)]
-        return sum(1 for k in keys if _has_turkish(k) and len(k) == 1) >= 2
-    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+        pairs = [(_const_str(k), _const_str(v)) for k, v in zip(node.keys, node.values)]
+        if any(_dotted_i_mapping(k, v) for k, v in pairs):
+            return True
+        letters = [k for k, _ in pairs if k is not None and len(k) == 1 and k in _FOLD_LETTERS]
+        return (len(letters) >= 2 and any(k in _TURKISH for k in letters)) or len(letters) >= 3
+    if not isinstance(node, ast.Call):
         return False
-    attr, args = node.func.attr, node.args
+    if isinstance(node.func, ast.Attribute):
+        attr = node.func.attr
+    elif isinstance(node.func, ast.Name):
+        attr = node.func.id
+    else:
+        return False
+    args = node.args
     if attr == "maketrans":
         return any(
             _has_turkish(n.value)
@@ -79,23 +121,31 @@ def _fold_signal(node: ast.AST) -> bool:
             for n in ast.walk(arg)
             if isinstance(n, ast.Constant)
         )
-    if attr == "replace" and args and isinstance(args[0], ast.Constant):
-        value = args[0].value
-        return _has_turkish(value) and len(value) <= 2
-    if attr == "normalize" and args and isinstance(args[0], ast.Constant):
-        return args[0].value in {"NFKD", "NFD"}
+    if attr == "replace" and isinstance(node.func, ast.Attribute) and len(args) >= 2:
+        old, new = _const_str(args[0]), _const_str(args[1])
+        if old is not None and _has_turkish(old) and len(old) <= 2:
+            return True
+        # ``.replace("I", "ı")``: the N01 drift (English "TRY AGAIN" -> "try agaın").
+        return old in {"I", "i"} and new is not None and bool({"ı", "İ"} & set(new))
+    if attr == "normalize" and args:
+        return _const_str(args[0]) in {"NFKD", "NFD"}
     return False
 
 
 def _scopes(tree: ast.Module) -> list[ast.AST]:
-    """Every function (nested ones are their own scope) plus each other module statement."""
+    """Every function (nested ones are their own scope), each other module statement, and
+    each non-method statement of a class body (class-level tables)."""
     funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]
-    top = [
-        n
-        for n in tree.body
-        if not isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+    not_scope = ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+    top = [n for n in tree.body if not isinstance(n, not_scope)]
+    class_level = [
+        stmt
+        for cls in ast.walk(tree)
+        if isinstance(cls, ast.ClassDef)
+        for stmt in cls.body
+        if not isinstance(stmt, not_scope)
     ]
-    return [*funcs, *top]
+    return [*funcs, *top, *class_level]
 
 
 def _own_nodes(scope: ast.AST):

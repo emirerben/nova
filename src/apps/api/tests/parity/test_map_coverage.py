@@ -3,7 +3,8 @@
 The parity map (``docs/reviews/turkish-parity-map-2026-10.md``, section 3) lists every
 rule-based decision that reads creator wording (map rows ``D01``..). The rule-based parity
 table (``test_decision_parity.CASES``) runs English and Turkish phrasings through the real
-functions. A map row with a status other than ``neutral`` must be either:
+functions. A map row whose status is not ``neutral``, or is ``neutral ...`` but names an
+EN-only/TR-only part (map D12), must be either:
 
 - covered by table cases (``COVERAGE``: map row -> table case ids; NOTE the map and the table
   number their D rows independently, map ``D02`` is table ``D12``), or
@@ -66,6 +67,7 @@ NO_ROW_YET: frozenset[str] = frozenset(
         "D05",  # creator_agent text colour words
         "D07",  # creator_agent _SECONDS_WORDS
         "D11",  # plan_items _review_mixed_media_timing
+        "D12",  # edit_proposal media_context_group creator-context field (EN-only)
         "D20",  # main_creator._explicit_media_scope_from_request
         "D21",  # creator_policy stated media count
         "D22",  # smart_edit planner list/ordinal events (TR-only)
@@ -99,8 +101,12 @@ def _map_rows() -> dict[str, tuple[str, str]]:
     return rows
 
 
+_LANGUAGE_STATUS = re.compile(r"\b(?:EN|TR)[-+]")
+
+
 def _language_sensitive(status: str) -> bool:
-    return not status.lower().startswith("neutral")
+    """Not ``neutral``, or ``neutral ...`` with an EN-only/TR-only/EN+TR part (map D12)."""
+    return not status.lower().startswith("neutral") or bool(_LANGUAGE_STATUS.search(status))
 
 
 def test_every_language_sensitive_map_decision_is_tabled_or_explained():

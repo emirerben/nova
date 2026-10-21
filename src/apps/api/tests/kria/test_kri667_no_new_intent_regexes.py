@@ -13,14 +13,17 @@ Two ratchets per module, both fail only when a count goes UP (KRI-786):
    ``any(m in folded for m in MARKERS)`` or ``folded.startswith("just")`` (map D49/D50).
 
    Heuristic, kept narrow so it stays low on false positives. A "folded" expression is a
-   call to ``.lower()`` / ``.casefold()`` or to a fold helper (``fold_text``, ``loose_text``,
-   ``loose_creator_text``, any ``*fold*`` function), or a local name assigned from one
-   inside the same function. Counted:
-     - ``<str literal or loop name> in|not in <folded>`` (substring test on the text), and
+   call to ``.lower()`` / ``.casefold()`` or to a text-fold helper (``fold_text``,
+   ``loose_text``, ``fold_tokens``, ``_fold*`` / ``*_fold``), anything derived from one by a
+   str-call chain (``x.lower().strip()``, ``" ".join(x.casefold().split())``,
+   ``set(fold_text(x).split())``), or a local name assigned from any of these inside the
+   same function. Counted:
+     - ``<str literal or loop name> in|not in <folded>`` (substring or word test), and
      - ``<folded>.startswith(...)`` / ``<folded>.endswith(...)``.
    Not counted: ``<folded> in {...}`` (exact match of the whole text against a set), and
-   ``.startswith/.endswith`` whose literal arguments all look like file extensions or paths
-   (start with ``.`` or contain ``/``).
+   checks whose operand is a file extension or path, for ``in`` and the affix methods alike
+   (a literal starting with ``.`` or containing ``/``, or a name like ``ext``,
+   ``image_suffixes``, ``_IMAGE_FILE_EXTS``, or a loop name bound over one).
 
 When a count goes DOWN the tests stay green and print a hint to lower the baseline, so lanes
 that delete regexes in parallel never fail each other. A check that reads no creator or
@@ -30,6 +33,7 @@ model text (ids, file names, ffmpeg output) is exempt with ``# kri667: <why>`` o
 from __future__ import annotations
 
 import ast
+import re
 import warnings
 from pathlib import Path
 
@@ -40,8 +44,28 @@ _RE_FUNCS = frozenset(
 )
 _EXEMPT = "# kri667:"
 _FOLD_METHODS = frozenset({"lower", "casefold"})
-_FOLD_FUNCS = frozenset({"fold_text", "loose_text", "loose_creator_text"})
+_FOLD_FUNCS = frozenset({"fold", "fold_text", "fold_tokens", "loose_text", "loose_creator_text"})
 _AFFIX_METHODS = frozenset({"startswith", "endswith"})
+# str calls that keep folded text folded (``x.lower().strip()`` is still folded text).
+_CHAIN_METHODS = frozenset(
+    {
+        "strip",
+        "lstrip",
+        "rstrip",
+        "replace",
+        "split",
+        "rsplit",
+        "splitlines",
+        "translate",
+        "removeprefix",
+        "removesuffix",
+    }
+)
+_WRAPPERS = frozenset({"set", "frozenset", "list", "tuple", "sorted"})
+_PATH_NAME = re.compile(
+    r"(?:^|_)(?:ext|exts|extension|extensions|suffix|suffixes|mime|path|paths|filename)(?:$|_)",
+    re.IGNORECASE,
+)
 
 # Modules outside app/kria that read creator or model wording, mapped to the top-level
 # functions to scan (None = the whole module). Every app/kria module is scanned too; a new
@@ -151,7 +175,8 @@ MEMBERSHIP_BASELINE: dict[str, int] = {
     "kria/brief_route.py": 1,
     "kria/editor_receipts.py": 1,
     "kria/planner.py": 1,
-    "routes/plan_items.py": 2,
+    # D42: hook filler penalty (``lower = hook_text.lower().strip()`` + ``.startswith``).
+    "pipeline/score.py": 1,
     "services/clip_intent_resolution.py": 2,
     "services/creator_direction.py": 3,
     "services/creator_memory_learning.py": 4,
@@ -210,37 +235,101 @@ def _is_fold_call(node: ast.AST) -> bool:
         return False
     if isinstance(node.func, ast.Attribute) and name in _FOLD_METHODS:
         return True
-    lowered = name.lower()
-    return name in _FOLD_FUNCS or "fold" in lowered
+    # Exact helper names or a ``_fold`` prefix / ``_fold`` suffix: not any substring, so
+    # ``scaffold()`` and the event folds (``fold_song_orders``) are not text folds.
+    return name in _FOLD_FUNCS or name.startswith("_fold") or name.endswith("_fold")
+
+
+def _is_folded(node: ast.AST, names: set[str]) -> bool:
+    """True when ``node`` is folded text, or is derived from it by a chain of str calls.
+
+    Walks the receiver chain, so ``x.lower().strip()``, ``fold_text(x).split()``,
+    ``" ".join(x.casefold().split())``, ``set(x.casefold().split())`` and
+    ``lowered[:40]`` all count.
+    """
+    if _is_fold_call(node) or (isinstance(node, ast.Name) and node.id in names):
+        return True
+    if isinstance(node, ast.Subscript):
+        return _is_folded(node.value, names)
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        if func.attr in _CHAIN_METHODS:
+            return _is_folded(func.value, names)
+        if func.attr == "join" and node.args:
+            return _is_folded_iterable(node.args[0], names)
+        return False
+    if isinstance(func, ast.Name) and func.id in _WRAPPERS and node.args:
+        return _is_folded_iterable(node.args[0], names)
+    return False
+
+
+def _is_folded_iterable(node: ast.AST, names: set[str]) -> bool:
+    if isinstance(node, ast.GeneratorExp | ast.ListComp | ast.SetComp):
+        return any(_is_folded(gen.iter, names) for gen in node.generators)
+    return _is_folded(node, names)
 
 
 def _folded_names(func: ast.AST) -> set[str]:
     names: set[str] = set()
+    assigns: list[tuple[list[str], ast.AST]] = []
     for node in ast.walk(func):
-        if isinstance(node, ast.Assign) and _is_fold_call(node.value):
-            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        if isinstance(node, ast.Assign):
+            targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            assigns.append((targets, node.value))
         elif (
             isinstance(node, ast.AnnAssign | ast.NamedExpr)
             and node.value is not None
-            and _is_fold_call(node.value)
             and isinstance(node.target, ast.Name)
         ):
-            names.add(node.target.id)
+            assigns.append(([node.target.id], node.value))
+    # Repeat until stable so ``a = x.lower(); b = a.strip()`` marks both names.
+    changed = True
+    while changed:
+        changed = False
+        for targets, value in assigns:
+            if set(targets) <= names or not _is_folded(value, names):
+                continue
+            names.update(targets)
+            changed = True
     return names
 
 
-def _is_folded(node: ast.AST, names: set[str]) -> bool:
-    return _is_fold_call(node) or (isinstance(node, ast.Name) and node.id in names)
+def _path_like_name(name: str) -> bool:
+    return bool(_PATH_NAME.search(name))
 
 
-def _path_like_affix(call: ast.Call) -> bool:
+def _path_like_literal(value: str) -> bool:
+    return value.startswith(".") or "/" in value
+
+
+def _path_like_operand(node: ast.AST, loop_iters: dict[str, ast.AST]) -> bool:
+    """A file-extension or path operand: ``".mp4"``, ``ext``, ``image_suffixes``, or a loop
+    name bound over ``_IMAGE_FILE_EXTS``."""
     literals = [
-        n.value
-        for arg in call.args
-        for n in ast.walk(arg)
-        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+        n.value for n in ast.walk(node) if isinstance(n, ast.Constant) and isinstance(n.value, str)
     ]
-    return bool(literals) and all(v.startswith(".") or "/" in v for v in literals)
+    if literals and all(_path_like_literal(v) for v in literals):
+        return True
+    for n in ast.walk(node):
+        if isinstance(n, ast.Name):
+            if _path_like_name(n.id):
+                return True
+            bound = loop_iters.get(n.id)
+            if bound is not None and _path_like_operand(bound, {}):
+                return True
+        elif isinstance(n, ast.Attribute) and _path_like_name(n.attr):
+            return True
+    return False
+
+
+def _loop_iters(func: ast.AST) -> dict[str, ast.AST]:
+    iters: dict[str, ast.AST] = {}
+    for node in ast.walk(func):
+        if isinstance(node, ast.comprehension | ast.For) and isinstance(node.target, ast.Name):
+            iters[node.target.id] = node.iter
+    return iters
 
 
 def _membership_nodes(roots: list[ast.AST]) -> list[ast.AST]:
@@ -253,14 +342,16 @@ def _membership_nodes(roots: list[ast.AST]) -> list[ast.AST]:
     seen: set[int] = set()
     for func in funcs:
         names = _folded_names(func)
+        iters = _loop_iters(func)
         for node in ast.walk(func):
             if id(node) in seen:
                 continue
             if isinstance(node, ast.Compare):
                 left = node.left
-                left_ok = (isinstance(left, ast.Constant) and isinstance(left.value, str)) or (
-                    isinstance(left, ast.Name)
-                )
+                left_ok = (
+                    (isinstance(left, ast.Constant) and isinstance(left.value, str))
+                    or isinstance(left, ast.Name)
+                ) and not _path_like_operand(left, iters)
                 for op, right in zip(node.ops, node.comparators, strict=True):
                     if left_ok and isinstance(op, ast.In | ast.NotIn) and _is_folded(right, names):
                         seen.add(id(node))
@@ -271,7 +362,7 @@ def _membership_nodes(roots: list[ast.AST]) -> list[ast.AST]:
                 and isinstance(node.func, ast.Attribute)
                 and node.func.attr in _AFFIX_METHODS
                 and _is_folded(node.func.value, names)
-                and not _path_like_affix(node)
+                and not any(_path_like_operand(arg, iters) for arg in node.args)
             ):
                 seen.add(id(node))
                 found.append(node)

@@ -7,9 +7,18 @@ Turkish creator (or in whatever language the model guesses).
 An agent (a class with ``render_prompt``) has a language input when either:
 
 - ``render_prompt`` or a same-module helper it calls by name uses an identifier containing
-  ``language`` (``prompt_language_line(...)``, ``input.language``, ``caption_language=``), or
+  ``language`` (``prompt_language_line(...)``, ``input.language``, ``caption_language=``)
+  outside a ``load_prompt(...)`` call, or
 - a prompt file it names (``prompts/<name>.txt``, via ``load_prompt("<name>")`` or the
-  spec's ``prompt_id``) has a ``{...language...}`` placeholder.
+  spec's ``prompt_id``) has a ``$language`` / ``${language_hint}`` placeholder.
+  ``load_prompt`` fills prompts with ``string.Template``, so only ``$name`` is substituted;
+  a ``{language}`` brace placeholder reaches the model as literal text and does not count
+  (``test_load_prompt_variables_are_template_placeholders`` fails on one).
+
+A ``language`` field with a concrete default on the agent's input (``language_hint: str =
+"en"``) only counts when every construction of that input in ``app/`` passes it by keyword;
+otherwise a Turkish creator silently runs as English (map O-rows, SequenceEmphasisAgent).
+``test_inputs_with_a_default_language_are_always_given_one`` keeps omissions from growing.
 
 Otherwise it must be in ``LANGUAGE_NEUTRAL`` (with a one-line reason: it writes nothing a
 creator reads) or in ``LANGUAGE_GAPS``, the shrinking baseline lane D of the Turkish parity
@@ -27,7 +36,8 @@ from pathlib import Path
 _API = Path(__file__).resolve().parents[2]
 _APP = _API / "app"
 _PROMPTS = _API / "prompts"
-_PLACEHOLDER = re.compile(r"\{\w*language\w*\}", re.IGNORECASE)
+# ``string.Template`` placeholders (``$language``, ``${language_hint}``): what load_prompt fills.
+_PLACEHOLDER = re.compile(r"\$\{?\w*language\w*\}?", re.IGNORECASE)
 
 # Agents whose output no creator reads as prose: ids, scores, timings, styles, or text
 # copied verbatim from the media. Keep the reason to one line.
@@ -83,8 +93,13 @@ LANGUAGE_GAPS: frozenset[str] = frozenset(
         "agents/plan_item_advisor.py::PlanItemAdvisorAgent",
         "agents/platform_copy.py::PlatformCopyAgent",
         "agents/semantic_edit_proposal.py::SemanticEditProposalAgent",
+        # Its input defaults language_hint="en" and generative_build never passes it.
+        "agents/sequence_emphasis.py::SequenceEmphasisAgent",
         "agents/shot_list_writer.py::ShotListWriterAgent",
         "agents/slide_post_composer.py::SlidePostComposerAgent",
+        # Passes language=, but its prompt writes `{language}` (brace): load_prompt never fills
+        # it, so the model reads the literal text. See KNOWN_UNFILLED_PLACEHOLDERS.
+        "agents/smart_edit_planner.py::SmartEditPlannerAgent",
         "agents/speech_excerpt_planner.py::SpeechExcerptPlannerAgent",
         "agents/style_derivation.py::StyleDerivationAgent",
         "agents/style_intent.py::StyleIntentAgent",
@@ -98,16 +113,109 @@ LANGUAGE_GAPS: frozenset[str] = frozenset(
     }
 )
 
+# ``load_prompt("<stem>", name=...)`` keywords whose prompt file has ``{name}`` but no
+# ``$name``: string.Template never fills them, so the model sees the literal braces.
+# Shrink-only; fix the prompt to ``$name`` (and bump the agent's prompt_version).
+KNOWN_UNFILLED_PLACEHOLDERS: frozenset[str] = frozenset(
+    {
+        "smart_edit_planner:assets_json",
+        "smart_edit_planner:candidates_json",
+        "smart_edit_planner:language",
+        "smart_edit_planner:preset_id",
+        "smart_edit_planner:preset_version",
+        "smart_edit_planner:words_json",
+    }
+)
+
+# Constructions of an agent ``*Input`` that leave a defaulted language field at its English
+# default (``"<module>:<Input>.<field>"`` -> count). Shrink-only.
+DEFAULT_LANGUAGE_OMISSIONS: dict[str, int] = {
+    "tasks/generative_build.py:SequenceEmphasisInput.language_hint": 1,
+}
+
+
+def _callee(call: ast.Call) -> str | None:
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr
+    return None
+
+
+def _app_trees() -> list[tuple[str, ast.Module]]:
+    return [
+        (str(path.relative_to(_APP)), ast.parse(path.read_text(encoding="utf-8")))
+        for path in sorted(_APP.rglob("*.py"))
+    ]
+
+
+def _defaulted_language_fields(trees) -> dict[str, tuple[str, ...]]:
+    """``*Input`` class -> its language fields that default to a concrete language code."""
+    fields: dict[str, list[str]] = {}
+    for _, tree in trees:
+        for cls in ast.walk(tree):
+            if not (isinstance(cls, ast.ClassDef) and cls.name.endswith("Input")):
+                continue
+            for stmt in cls.body:
+                if (
+                    isinstance(stmt, ast.AnnAssign)
+                    and isinstance(stmt.target, ast.Name)
+                    and "language" in stmt.target.id.lower()
+                    and isinstance(stmt.value, ast.Constant)
+                    and isinstance(stmt.value.value, str)
+                    and stmt.value.value
+                ):
+                    fields.setdefault(cls.name, []).append(stmt.target.id)
+    return {name: tuple(f) for name, f in fields.items()}
+
+
+def _default_language_omissions(trees) -> dict[str, int]:
+    defaulted = _defaulted_language_fields(trees)
+    found: dict[str, int] = {}
+    for rel, tree in trees:
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call) or _callee(call) not in defaulted:
+                continue
+            given = {k.arg for k in call.keywords}
+            if None in given:  # **kwargs: cannot tell statically
+                continue
+            for field in defaulted[_callee(call)]:
+                if field not in given:
+                    key = f"{rel}:{_callee(call)}.{field}"
+                    found[key] = found.get(key, 0) + 1
+    return found
+
+
+def _load_prompt_calls(tree: ast.AST):
+    for call in ast.walk(tree):
+        if (
+            isinstance(call, ast.Call)
+            and _callee(call) == "load_prompt"
+            and call.args
+            and isinstance(call.args[0], ast.Constant)
+            and isinstance(call.args[0].value, str)
+        ):
+            yield call
+
+
+def _prompt_text(stem: str) -> str | None:
+    path = _PROMPTS / f"{stem}.txt"
+    return path.read_text(encoding="utf-8") if path.exists() else None
+
+
+def _template_has(text: str, name: str) -> bool:
+    return bool(re.search(rf"\$(?:{name}\b|\{{{name}\}})", text))
+
 
 def _render_prompt_units() -> dict[str, bool]:
     """``"<module>::<Class>" -> has a language input`` for every class with render_prompt."""
     stems = {p.stem for p in _PROMPTS.glob("*.txt")}
+    trees = _app_trees()
+    omitted_inputs = {
+        key.split(":", 1)[1].split(".")[0] for key in _default_language_omissions(trees)
+    }
     units: dict[str, bool] = {}
-    for path in sorted(_APP.rglob("*.py")):
-        source = path.read_text(encoding="utf-8")
-        if "def render_prompt" not in source:
-            continue
-        tree = ast.parse(source)
+    for rel, tree in trees:
         helpers = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
         for cls in (n for n in tree.body if isinstance(n, ast.ClassDef)):
             render = next(
@@ -126,9 +234,15 @@ def _render_prompt_units() -> dict[str, bool]:
                 for n in ast.walk(render)
                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in helpers
             ]
+            # Identifiers inside load_prompt(...) only count if the prompt really has $name.
+            inside_load = {
+                id(n) for root in scanned for c in _load_prompt_calls(root) for n in ast.walk(c)
+            }
             idents: set[str] = set()
             for node in scanned:
                 for n in ast.walk(node):
+                    if id(n) in inside_load:
+                        continue
                     if isinstance(n, ast.Name):
                         idents.add(n.id)
                     elif isinstance(n, ast.Attribute):
@@ -145,7 +259,19 @@ def _render_prompt_units() -> dict[str, bool]:
                 _PLACEHOLDER.search((_PROMPTS / f"{stem}.txt").read_text(encoding="utf-8"))
                 for stem in prompt_files
             )
-            units[f"{path.relative_to(_APP)}::{cls.name}"] = has_language
+            input_cls = next(
+                (
+                    stmt.value.id
+                    for stmt in cls.body
+                    if isinstance(stmt, ast.Assign)
+                    and any(isinstance(t, ast.Name) and t.id == "Input" for t in stmt.targets)
+                    and isinstance(stmt.value, ast.Name)
+                ),
+                None,
+            )
+            if input_cls in omitted_inputs:
+                has_language = False
+            units[f"{rel}::{cls.name}"] = has_language
     return units
 
 
@@ -165,8 +291,9 @@ def test_every_agent_prompt_has_a_language_input_or_a_reason():
         )
     assert not unexplained, (
         f"KRI-786: agents with no language input: {unexplained}. Pass the creator's language "
-        "(app.kria.reply_language.prompt_language_line, or a `{language}` placeholder fed "
-        "from the job/thread), or, if the agent writes nothing a creator reads, add it to "
+        "(app.kria.reply_language.prompt_language_line, or a `$language` placeholder fed "
+        "from the job/thread; load_prompt is string.Template, so `{language}` is never "
+        "filled), or, if the agent writes nothing a creator reads, add it to "
         "LANGUAGE_NEUTRAL with a one-line reason. See agents/DECISIONS.md 'Language policy'."
     )
 
@@ -177,3 +304,44 @@ def test_allowlists_name_real_agents():
     assert not stale, f"no such agent (renamed or removed?): {stale}"
     assert not set(LANGUAGE_NEUTRAL) & LANGUAGE_GAPS
     assert all(reason.strip() for reason in LANGUAGE_NEUTRAL.values())
+
+
+def test_load_prompt_variables_are_template_placeholders():
+    """``load_prompt`` is ``string.Template.safe_substitute``: a variable the prompt spells
+    ``{name}`` instead of ``$name`` is silently never filled."""
+    unfilled = set()
+    for _, tree in _app_trees():
+        for call in _load_prompt_calls(tree):
+            stem = call.args[0].value
+            text = _prompt_text(stem)
+            if text is None:
+                continue
+            for kw in call.keywords:
+                if kw.arg and not _template_has(text, kw.arg) and f"{{{kw.arg}}}" in text:
+                    unfilled.add(f"{stem}:{kw.arg}")
+    new = sorted(unfilled - KNOWN_UNFILLED_PLACEHOLDERS)
+    fixed = sorted(KNOWN_UNFILLED_PLACEHOLDERS - unfilled)
+    if fixed:
+        warnings.warn(f"KRI-786: drop from KNOWN_UNFILLED_PLACEHOLDERS: {fixed}", stacklevel=1)
+    assert not new, (
+        f"KRI-786: load_prompt variables written as `{{name}}` in the prompt: {new}. "
+        "load_prompt uses string.Template, so write `$name` (or `${name}`)."
+    )
+
+
+def test_inputs_with_a_default_language_are_always_given_one():
+    """An agent input whose language field defaults to ``"en"`` must be given the creator's
+    language at every construction, or a Turkish creator's run is silently English."""
+    found = _default_language_omissions(_app_trees())
+    grew = {
+        key: (n, DEFAULT_LANGUAGE_OMISSIONS.get(key, 0))
+        for key, n in found.items()
+        if n > DEFAULT_LANGUAGE_OMISSIONS.get(key, 0)
+    }
+    fixed = sorted(k for k, base in DEFAULT_LANGUAGE_OMISSIONS.items() if found.get(k, 0) < base)
+    if fixed:
+        warnings.warn(f"KRI-786: lower DEFAULT_LANGUAGE_OMISSIONS: {fixed}", stacklevel=1)
+    assert not grew, (
+        f"KRI-786: agent inputs built without their language field (now, baseline): {grew}. "
+        "Pass the creator's language (thread/job language) by keyword."
+    )
