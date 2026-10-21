@@ -116,6 +116,10 @@ protocol SlidePostProposalClient: Sendable {
 }
 
 protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
+    func editorialTaste() async throws -> EditorialTasteProfile
+    func saveEditorialTaste(_ body: EditorialTasteWrite) async throws -> EditorialTasteProfile
+    func forgetEditorialTaste(revision: Int, eventID: String) async throws -> EditorialTasteProfile
+    func recordIdeaFeedback(_ body: IdeaFeedbackWrite) async throws -> IdeaFeedbackReceipt
     func updateCameraRollContentPlan(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, plan: CameraRollContentPlan) async throws -> CameraRollStory
     func changeCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, order: [UUID]?, audioPolicy: String?, eventID: String) async throws -> CameraRollStory
     func indexCameraRollCollection(id: UUID, revision: Int, offset: Int) async throws -> CameraRollIndexPass

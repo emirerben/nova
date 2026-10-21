@@ -83,3 +83,59 @@ failed on the missing command before implementation. Four journey tests now cove
 the happy path and owner, changed source, tamper, stale review, unknown project,
 duplicate import, tied judgment, private-path and seen-holdout controls. Raw local
 logs and real account captures are outside Git. Ruff lint and format pass.
+
+## Account integration failure catalogue (before implementation)
+
+The same camera-roll task branch will own the calibration boundary and its real
+proposal adapter. The main-based calibration checkpoint has been brought into
+that existing task; no new PR is stacked on the unmerged camera-roll PR.
+
+* Client-supplied owner ids, words or approval flags admit another account's posts.
+  Build examples from owned server records; require explicit confirmation of the
+  selected projects and exact proposed rules. Do not infer preference from export.
+* Retries duplicate examples/feedback, stale revisions overwrite a newer profile,
+  or an old network retry revives memory after Forget. Serialize on the owner;
+  retain minimal erased operation identities while deleting private bodies.
+* Deleting a source project leaves its copied exemplar text in personalization.
+  Store source bodies in project-cascading rows and dereference them at generation.
+* Feedback on a corrected/rejected story revision grades the wrong proposal.
+  Pin the exact offered wording, moments and revision; changed identities conflict.
+* Feedback becomes render approval, or a single contextual judgment becomes a
+  standing rule. Keep proposed words/approval and explicit preference confirmation
+  separate. Both positive and negative judgments remain contextual evidence.
+* Changed preferences/feedback, pausing Memory or erasure reuse the old story cache.
+  Bind the private context and revision identity into the actual agent input/cache.
+* The global rollout flag or account Memory pause is bypassed, private exemplars
+  leak into public story receipts, or a private path appears in provider/admin logs.
+  Keep context owner-scoped, bounded and under the agent's sensitive-IO boundary.
+* Prompt-only changes retain the same version or recorded-response tests are
+  reported as creative-quality wins. Bump the prompt version; API/DB tests prove
+  wiring, not whether the creator would publish a new live-generated idea.
+
+Gate: real HTTP and PostgreSQL import -> generation input -> feedback -> changed
+cache -> pause -> forget, plus ownership, source deletion, stale/idempotency and
+old-retry controls. Use a recorded model response only at the provider boundary;
+no paid provider call or production mutation is needed for this integration gate.
+
+
+## Account adapter implementation
+
+The real collection-story route now consumes the account profile, retrieves
+examples against the outing descriptions, binds its cache to the private context,
+and rejects results if personalization changed during generation. Prompt
+`2026-10-21.1` removes the forced audience-choice example and explicitly supports
+useful guides, firsthand opinions, concrete observations and simple mood posts.
+Opaque receipts pin the exact profile/source hashes without copying exemplar words
+into story history. Native controls expose confirmation, contextual judgments,
+pause and Forget. Full Memory clear scrubs taste with the feature flag off.
+
+The four real HTTP/PostgreSQL journeys pass, including foreign ownership, stale
+confirmation/feedback, idempotency, erase/re-consent/late retry, source deletion,
+account pause during a provider call, and old Memory-clear retries. Combined with
+existing collection and CLI journeys: 27 passed. Existing memory/replay regressions:
+46 passed. The private ten-example metadata replay reaches the actual account API
+and context builder with four confirmed rules and the contextual Troya guide choice,
+zero paid calls. The native preference/rating/Forget and existing story-correction journeys both
+pass (two UI tests, `.dev/editorial-taste-native-4.xcresult`). The full free backend
+replay suite plus account journeys passed 1,248 checks (15 skipped). No production rollout,
+independent creative-quality win or fine-tuning readiness is claimed.

@@ -1,9 +1,10 @@
 # Creator editorial taste calibration
 
-This is the private calibration boundary, not an active production learning
-feature. It performs no provider calls, account mutations or fine-tuning uploads.
-The actual generation adapter, in-app feedback, independent evaluation and rollout
-remain subsequent work. See [the implementation sequence](../reviews/editorial-taste/implementation.md).
+The private CLI performs no provider calls or account mutations. The account API
+and native preference/feedback screens connect confirmed examples to camera-roll
+idea generation behind `CREATOR_EDITORIAL_TASTE_ENABLED=false` and the explicit
+`CREATOR_EDITORIAL_TASTE_USER_IDS=[]` allowlist. An empty list admits nobody. Production rollout
+and independent creative-quality evaluation remain pending. See [the implementation sequence](../reviews/editorial-taste/implementation.md).
 
 Use a private directory **outside every Git checkout**, with permission 700:
 
@@ -82,3 +83,40 @@ Provider-specific training export and fine-tuning are intentionally absent at th
 stage. Readiness remains false until an adequate reviewed dataset and independent
 evaluation justify that step. Inspect current provider support and obtain a priced
 training budget before uploading a dataset or starting a paid training job.
+
+
+## Account adapter
+
+Migration 0124 adds project-cascading examples, versioned profile revisions and
+judgments pinned to exact story revisions. The authenticated `/me/editorial-taste`
+GET/PUT/DELETE routes manage confirmed projects/rules; POST `/feedback` records
+`would_post`, `needs_work` or `not_for_me`, optional reasons, notes and a rewrite.
+A judgment does not build a project or authorize rendering. Project notes remain
+contextual; they never silently become standing rules.
+
+PUT requires `expected_revision`, a stable `idempotency_key`, owned `project_ids`,
+`rules`, optional `project_notes`, `confirmed: true` and `enabled`. Revision changes
+include feedback. Clients must reload after conflict rather than automatically
+confirming a newer profile. The service captures saved server metadata, not client
+supplied post words. This is not pixel inspection or evidence of publication.
+
+The actual camera-roll proposer retrieves at most three examples against the
+query and outing descriptions. Confirmed rules and up to two recent judgments
+enter its bounded sensitive input. The prompt version and context bind its cache.
+Story history stores opaque version/source-hash receipts, not copied private words.
+Preferences and Memory pause are rechecked under an owner lock after generation;
+changed context returns 409 before an idea is offered.
+
+Native collection options and story review offer Idea preferences when the
+account endpoint is available. The creator chooses example posts and confirms
+rules. Would you post this? records feedback separately from Build this project.
+Account Memory pause suppresses context. Source deletion removes the corresponding
+example words. Forget editorial taste deletes example/feedback bodies and scrubs
+all historical rules, retaining opaque retry fences; delayed writes cannot revive
+erased memory. Full account Memory clear also erases taste even if its rollout
+flag is off. A retry of an older clear cannot erase new consent.
+
+Local checks use synthetic HTTP/PostgreSQL journeys and the native simulator.
+A private replay of the ten approved account captures checks the real API/context
+builder at zero model cost. That replay is development evidence, not production
+activation or a claim that new ideas match the creator's taste.

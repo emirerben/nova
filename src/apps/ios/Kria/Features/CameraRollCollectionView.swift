@@ -30,6 +30,8 @@ struct CameraRollCollectionView: View {
     @State private var showsSaved = false
     @State private var showsOptions = false
     @State private var showsGroups = false
+    @State private var showsTaste = false
+    @State private var tasteAvailable = false
     @State private var confirmsUpload = false
     @State private var cacheOnly = true
     @State private var metadataElapsedMs = 0.0
@@ -153,6 +155,7 @@ struct CameraRollCollectionView: View {
                         Divider()
                         Button("Edit groups") { showsGroups = true }.disabled(collection.entries.isEmpty)
                         Button("Analysis options") { showsOptions = true }
+                        if tasteAvailable { Button("Idea preferences") { showsTaste = true }.accessibilityIdentifier("editorial-preferences") }
                     } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
                     .accessibilityLabel("Collection options").accessibilityIdentifier("collection-options").disabled(running)
                 }
@@ -169,6 +172,7 @@ struct CameraRollCollectionView: View {
             }
             .sheet(isPresented: $showsOptions) { options }
             .sheet(isPresented: $showsGroups) { groupEditor }
+            .sheet(isPresented: $showsTaste) { EditorialTasteView(api: api) { _ in } }
             .confirmationDialog("Find ideas in this footage?", isPresented: $confirmsUpload, titleVisibility: .visible) {
                 Button("Upload and find ideas") {
                     work = Task {
@@ -179,7 +183,10 @@ struct CameraRollCollectionView: View {
                 Button("Cancel", role: .cancel) { }
             } message: { Text("Kria uploads smaller video copies for analysis. Full-quality videos stay on your iPhone.") }
             .onChange(of: selection) { _, picked in add(picked); selection = [] }
-            .task { restore(); await refreshMetadata() }
+            .task {
+                restore(); await refreshMetadata()
+                if !fixture && !metadataOnly { tasteAvailable = (try? await api.editorialTaste()) != nil }
+            }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { work = Task { await refreshMetadata() } }
                 else { persist() }

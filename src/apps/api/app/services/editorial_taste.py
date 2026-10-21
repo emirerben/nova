@@ -372,7 +372,10 @@ class TasteStore:
         }
 
     def context(self, owner, query="", kind=None):
-        value = self.load()
+        return self.context_for(self.load(), owner, query, kind)
+
+    @staticmethod
+    def context_for(value, owner, query="", kind=None):
         if value is None or value["owner_id"] != identifier(owner):
             raise ValueError("Private corpus unavailable for this creator")
         tokens = set(re.findall(r"\w{3,}", text(query, 2000, blank=True).casefold()))
@@ -401,6 +404,8 @@ class TasteStore:
             "or change a saved edit.\n"
         )
         data = {"corpus_revision": value["revision"], "confirmed_rules": rules, "examples": []}
+        if value.get("profile_revision_id"):
+            data["profile_revision_id"] = value["profile_revision_id"]
         for e in examples[:3]:
             item = {
                 "id": e["project_id"],
@@ -411,6 +416,7 @@ class TasteStore:
                 "transcript_excerpt": e["transcript"][:900],
                 "source_descriptions": e["source_descriptions"][:3],
                 "creator_request_excerpt": e["creator_requests"][:1],
+                "contextual_creator_note": e.get("creator_editorial_note", ""),
             }
             trial = {**data, "examples": [*output_examples, item]}
             if len(intro + json.dumps(trial, ensure_ascii=False)) > MAX_CONTEXT_CHARS:

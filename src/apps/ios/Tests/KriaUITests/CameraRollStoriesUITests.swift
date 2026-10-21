@@ -24,3 +24,36 @@ final class CameraRollStoriesUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["No story to suggest"].waitForExistence(timeout: 5))
     }
 }
+
+extension CameraRollStoriesUITests {
+    @MainActor func testConfirmExamplesRateIdeaAndForget() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-camera-roll-story-review"]
+        app.launch()
+        let preferences = app.buttons["editorial-preferences"]
+        XCTAssertTrue(preferences.waitForExistence(timeout: 10))
+        preferences.tap()
+        let example = app.buttons["taste-example-AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"]
+        XCTAssertTrue(example.waitForExistence(timeout: 5))
+        example.tap()
+        app.buttons["taste-save"].tap()
+        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 5))
+        app.buttons["idea-feedback"].tap()
+        app.buttons["Would post"].tap()
+        app.buttons["idea-feedback-save"].tap()
+        let saved = app.buttons["idea-feedback"]
+        let confirmed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Feedback saved"), object: saved)
+        XCTAssertEqual(XCTWaiter.wait(for: [confirmed], timeout: 5), .completed)
+        XCTAssertFalse(app.staticTexts["Rendering"].exists)
+        preferences.tap()
+        let forget = app.buttons["taste-forget"]
+        XCTAssertTrue(forget.waitForExistence(timeout: 5))
+        forget.tap()
+        app.alerts.buttons["Forget"].tap()
+        XCTAssertTrue(app.staticTexts["Choose posts you like"].waitForExistence(timeout: 5))
+        let proof = XCTAttachment(screenshot: app.screenshot())
+        proof.name = "Editorial taste is explicit and can be forgotten"
+        proof.lifetime = .keepAlways
+        add(proof)
+    }
+}

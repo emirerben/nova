@@ -109,8 +109,13 @@ private final class CameraRollStoriesURLProtocol: URLProtocol, @unchecked Sendab
 private final class CameraRollStoriesFixtureServer: @unchecked Sendable {
     private let lock = NSLock()
     private var story = CameraRollStoryFixture.story
-    func respond(_ request: URLRequest) -> (Int, [String: Any]) {
+    private var taste: [String: Any] = ["revision": 0, "enabled": false, "memory_paused": false, "rules": [], "examples": []]
+    func respond(_ request: URLRequest) -> (Int, Any) {
         lock.lock(); defer { lock.unlock() }
+        if request.httpMethod == "GET", request.url?.path.hasSuffix("/editorial-taste") == true { return (200, taste) }
+        if request.httpMethod == "GET", request.url?.path.hasSuffix("/creation-threads") == true {
+            return (200, [["id": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", "title": "A saved outing", "status": "active", "revision": 1, "runtime_version": 2, "active_plan_item_id": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", "updated_at": "2026-10-19T10:00:00Z"]])
+        }
         if request.httpMethod == "GET", request.url?.path.hasSuffix("/access-url") == true,
            let files = CameraRollStoryFixture.input?["preview_files"] as? [String: String],
            let assets = CameraRollStoryFixture.input?["assets"] as? [[String: Any]],
@@ -131,6 +136,22 @@ private final class CameraRollStoriesFixtureServer: @unchecked Sendable {
             }
         }
         guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return (400, story) }
+        if request.url?.path.hasSuffix("/editorial-taste") == true {
+            guard body["expected_revision"] as? Int == taste["revision"] as? Int else { return (409, ["detail": "Taste changed"]) }
+            let revision = (taste["revision"] as? Int ?? 0) + 1
+            if request.httpMethod == "DELETE" {
+                taste = ["revision": revision, "enabled": false, "memory_paused": false, "rules": [], "examples": []]
+            } else {
+                guard body["confirmed"] as? Bool == true, let ids = body["project_ids"] as? [String], !ids.isEmpty else { return (422, ["detail": "Confirmation required"]) }
+                taste = ["revision": revision, "enabled": body["enabled"] ?? false, "memory_paused": false, "rules": body["rules"] ?? [], "examples": ids.map { ["id": $0, "project_id": $0, "title": "A saved outing", "kind": "video"] }]
+            }
+            return (200, taste)
+        }
+        if request.url?.path.hasSuffix("/editorial-taste/feedback") == true {
+            guard body["verdict"] as? String == "would_post", body["expected_story_revision"] as? Int == story["revision"] as? Int, body["story_id"] as? String == "11111111-1111-1111-1111-111111111111" else { return (422, ["detail": "Unexpected judgment payload"]) }
+            taste["revision"] = (taste["revision"] as? Int ?? 0) + 1
+            return (200, ["id": UUID().uuidString, "recorded": true])
+        }
         if request.httpMethod == "PUT" {
             return (200, ["id": request.url!.lastPathComponent, "revision": (body["expected_revision"] as? Int ?? 0) + 1])
         }

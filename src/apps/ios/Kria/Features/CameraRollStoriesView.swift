@@ -20,6 +20,10 @@ struct CameraRollStoriesView: View {
     @State private var editingWording: CameraRollStory?
     @State private var missingOriginals: [SavedMediaAsset] = []
     @State private var relinkingStory: CameraRollStory?
+    @State private var taste: EditorialTasteProfile?
+    @State private var showsTaste = false
+    @State private var ratingStory: CameraRollStory?
+    @State private var feedbackSaved = Set<String>()
 
     var body: some View {
         NavigationStack {
@@ -56,6 +60,11 @@ struct CameraRollStoriesView: View {
                                 if let closing = plan.closingText { Text("Then: “\(closing)”").font(KriaFont.body(14)) }
                             }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
                                 .background(KriaColor.selectionSoft, in: RoundedRectangle(cornerRadius: 16))
+                        }
+                        if taste?.enabled == true && taste?.memoryPaused == false {
+                            Button(feedbackSaved.contains("\(story.id)-\(story.revision)") ? "Feedback saved" : "Would you post this?") { ratingStory = story }
+                                .font(KriaFont.body(13)).frame(minHeight: 44)
+                                .accessibilityIdentifier("idea-feedback")
                         }
                         DisclosureGroup("Story arc") {
                             VStack(alignment: .leading, spacing: 10) {
@@ -138,15 +147,29 @@ struct CameraRollStoriesView: View {
             }
             .background(KriaColor.paper).kriaPage()
             .navigationTitle("Story ideas").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.disabled(busy) } }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if taste != nil { Button("Idea preferences") { showsTaste = true }.accessibilityIdentifier("editorial-preferences") }
+                }
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.disabled(busy) }
+            }
             .onAppear { stories = result.stories }
             .task {
+                taste = try? await api.editorialTaste()
                 for story in result.stories {
                     try? await api.recordCameraRollStoryExposure(collectionID: collection.id, story: story, collectionRevision: collection.serverRevision ?? 0)
                 }
             }
             .onDisappear { selectionTask?.cancel(); player?.pause() }
             .interactiveDismissDisabled(busy)
+            .sheet(isPresented: $showsTaste) {
+                EditorialTasteView(api: api) { value in taste = value }
+            }
+            .sheet(item: $ratingStory) { story in
+                IdeaFeedbackView(api: api, collectionID: collection.id, story: story) {
+                    feedbackSaved.insert("\(story.id)-\(story.revision)")
+                }
+            }
             .sheet(isPresented: $showsPreview, onDismiss: { player?.pause(); player = nil }) {
                 if let player { VideoPlayer(player: player).ignoresSafeArea(edges: .bottom) }
             }

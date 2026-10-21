@@ -44,7 +44,7 @@ def test_no_match_is_valid_with_one_bounded_replay_call(agent_cls, raw):
     client = CassetteModelClient(raw)
     agent = agent_cls(client)
     result = agent.run(
-        evidence(), ctx=build_eval_run_context("camera-roll/no-match", is_live=False)
+        evidence().model_dump(), ctx=build_eval_run_context("camera-roll/no-match", is_live=False)
     )
     assert result.model_dump() in ({"moment_ids": []}, {"stories": []})
     assert client.invocations == 1
@@ -83,7 +83,9 @@ def test_story_replay_separates_review_reasoning_from_proposed_creative_copy():
     }
     client = CassetteModelClient(json.dumps({"stories": [story]}))
     agent = CameraRollStoriesAgent(client)
-    output = agent.run(value, ctx=build_eval_run_context("camera-roll/late-arrival", is_live=False))
+    output = agent.run(
+        value.model_dump(), ctx=build_eval_run_context("camera-roll/late-arrival", is_live=False)
+    )
     assert output.stories[0].moment_ids == [value.candidates[0].id]
     assert "on_screen_copy" not in output.model_dump()
     assert "PROPOSED copy requiring creator review" in agent.render_prompt(value)

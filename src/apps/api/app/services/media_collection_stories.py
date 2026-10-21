@@ -11,15 +11,19 @@ from fastapi import HTTPException
 
 from app.agents._model_client import default_client
 from app.agents._runtime import TerminalError
-from app.agents.camera_roll_stories import CameraRollStoriesAgent, CameraRollStoriesOutput
-from app.agents.media_moment_relevance import MomentCandidate, MomentRelevanceInput
+from app.agents.camera_roll_stories import (
+    CameraRollStoriesAgent,
+    CameraRollStoriesInput,
+    CameraRollStoriesOutput,
+)
+from app.agents.media_moment_relevance import MomentCandidate
 from app.models import MediaCollectionStory
 from app.pipeline.clip_cache import (
     MediaAssetFactKey,
     complete_media_asset_fact,
 )
 from app.schemas.media_collections import CollectionStoriesOut, CollectionStoryOut
-from app.services import media_collections, media_moments
+from app.services import creator_editorial_taste, media_collections, media_moments
 from app.services.media_collection_analysis import claim_collection_analysis, collection_run_context
 
 
@@ -81,8 +85,13 @@ async def generate_stories(db, owner, identifier, body):
     candidates = [value for value in evidence.moments if 1 <= value.end_s - value.start_s <= 20]
     if not candidates:
         return CollectionStoriesOut(revision=body.expected_revision, stories=[], coverage=evidence)
-    input = MomentRelevanceInput(
+    # Retrieve editorial examples against the actual outing, even when the
+    # creator leaves the broad default query unchanged.
+    taste_query = (body.query + " " + " ".join(value.text[:160] for value in candidates))[:2000]
+    taste = await creator_editorial_taste.generation_context(db, owner, taste_query)
+    input = CameraRollStoriesInput(
         query=body.query,
+        editorial_taste_context=taste,
         candidates=[
             MomentCandidate(
                 id=str(value.id),
@@ -148,6 +157,11 @@ async def generate_stories(db, owner, identifier, body):
             409 if claim.status == "busy" else 503, "Stories are pending; retry shortly"
         )
     await media_collections.lock_library_owner(db, owner)
+    # Serialize the final check with pause, Forget, profile changes and feedback.
+    # Never hold this lock across a provider call.
+    await creator_editorial_taste.lock_owner(db, owner)
+    if taste != await creator_editorial_taste.generation_context(db, owner, taste_query):
+        raise HTTPException(409, "Personalization changed; request ideas again")
     fresh = await candidate_evidence(db, owner, identifier, body.expected_revision, body.query)
     by_id = {str(value.id): value for value in fresh.moments}
     accepted = []
@@ -173,7 +187,11 @@ async def generate_stories(db, owner, identifier, body):
                 revision=1,
                 story_json=idea.model_dump(exclude={"moment_ids"}),
                 moments_json=[value.model_dump(mode="json") for value in moments],
-                events_json=[event("offered", 1)],
+                events_json=[
+                    event(
+                        "offered", 1, editorial_taste=creator_editorial_taste.context_receipt(taste)
+                    )
+                ],
             )
             db.add(row)
         accepted.append(story_out(row))
