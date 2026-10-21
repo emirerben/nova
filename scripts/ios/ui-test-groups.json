@@ -126,7 +126,9 @@
       "KriaUITests/SavedUploadsUITests/testPhotoReuseAcrossPosts",
       "KriaUITests/CameraRollBenchmarkUITests/testMetadataBenchmarkStartsWithNoAuthorizedAssets",
       "KriaUITests/CameraRollCollectionUITests/testReviewCorrectionRemovalAndResumeDoNotUpload",
-      "KriaUITests/CameraRollStoriesUITests/testReviewReplaceAndRejectWithoutRendering"
+      "KriaUITests/CameraRollStoriesUITests/testReviewReplaceAndRejectWithoutRendering",
+      "KriaUITests/CameraRollStoriesUITests/testConfirmExamplesRateIdeaAndForget",
+      "KriaUITests/CameraRollCollectionUITests/testPartiallyIndexedCollectionStillOffersStories"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -357,6 +359,8 @@
     "src/apps/ios/Tests/KriaUITests/CameraRollStoriesUITests.swift": "creation",
     "src/apps/ios/Tests/KriaUITests/ResearchSourcesUITests.swift": "editor",
     "src/apps/ios/Kria/Core/ResearchCitation.swift": "editor",
-    "src/apps/ios/Kria/Features/NativeResearchSourcesView.swift": "editor"
+    "src/apps/ios/Kria/Features/NativeResearchSourcesView.swift": "editor",
+    "src/apps/ios/Kria/Core/EditorialTaste.swift": "creation",
+    "src/apps/ios/Kria/Features/EditorialTasteView.swift": "creation"
   }
 }

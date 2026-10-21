@@ -139,3 +139,26 @@ zero paid calls. The native preference/rating/Forget and existing story-correcti
 pass (two UI tests, `.dev/editorial-taste-native-4.xcresult`). The full free backend
 replay suite plus account journeys passed 1,248 checks (15 skipped). No production rollout,
 independent creative-quality win or fine-tuning readiness is claimed.
+
+
+Current-main integration retains both camera-roll consent revalidation and the
+approval-readiness guard. Combined execution/readiness/taste/replay checks pass:
+2,139 passed, 15 skipped and seven expected failures. Both native journeys also
+pass on the merged branch (`.dev/editorial-taste-merged-native.xcresult`). CI maps
+the new account journeys and native preference/rating/Forget test to changed paths.
+
+The creator subsequently authorized the immediately preceding ten eligible posts.
+All twenty are positive development examples. Their original four confirmed rules
+remain unchanged; no additional inferred rule has been activated. Some posts share
+footage and several have no saved on-screen text; twenty projects are not twenty
+independent outings or a fine-tuning sufficiency claim. The local authenticated
+adapter replay accepts all twenty at zero cost. No production rollout occurred.
+
+
+CI selection verification passes all 47 checks after registering the new taste UI
+journey and the previously unclassified partial-index collection test. Runtime,
+mobile JSON and mobile OpenAPI generated contracts all match. Pre-PR mapped incident
+gates pass 1,044 checks. The live development preview is paused: automatic approval
+review rejected transmitting private account examples/scene metadata to Gemini with
+paid usage. A specific payload/provider/$0.05 approval is pending; no provider call
+was made and no workaround was attempted.

@@ -1014,7 +1014,7 @@
     {
       "id": "kri-729-camera-roll-recommendations",
       "needs_native": true,
-      "api_tests": "tests/integration/test_media_collections.py tests/integration/test_camera_roll_execution.py tests/integration/test_camera_roll_pilot_cli.py tests/integration/test_camera_roll_retrieval_eval_cli.py tests/integration/test_actual_export_verification.py tests/integration/test_actual_export_completion.py tests/routes/test_actual_export_publication.py",
+      "api_tests": "tests/integration/test_media_collections.py tests/integration/test_camera_roll_execution.py tests/integration/test_camera_roll_pilot_cli.py tests/integration/test_camera_roll_retrieval_eval_cli.py tests/integration/test_actual_export_verification.py tests/integration/test_actual_export_completion.py tests/routes/test_actual_export_publication.py tests/integration/test_editorial_taste.py tests/journeys/test_editorial_taste_cli.py tests/evals/test_camera_roll_agents.py",
       "xctests": [
         "KriaTests/CameraRollCollectionTests/testAllAddedAssetsSurviveResumeWithoutASecondSelection",
         "KriaTests/CameraRollCollectionTests/testSelectionResumeCorrectionsAndRemoval",
@@ -1047,7 +1047,15 @@
         "src/apps/api/tests/integration/test_media_collections.py",
         "src/apps/api/tests/integration/test_camera_roll_execution.py",
         "src/apps/api/tests/integration/test_camera_roll_pilot_cli.py",
-        "src/apps/api/tests/integration/test_camera_roll_retrieval_eval_cli.py"
+        "src/apps/api/tests/integration/test_camera_roll_retrieval_eval_cli.py",
+        "src/apps/api/app/services/creator_editorial_taste.py",
+        "src/apps/api/app/services/editorial_taste.py",
+        "src/apps/api/app/routes/editorial_taste.py",
+        "src/apps/api/app/schemas/editorial_taste.py",
+        "src/apps/api/app/migrations/versions/0124_creator_editorial_taste.py",
+        "src/apps/api/tests/integration/test_editorial_taste.py",
+        "src/apps/ios/Kria/Core/EditorialTaste.swift",
+        "src/apps/ios/Kria/Features/EditorialTasteView.swift"
       ]
     }
   ]
