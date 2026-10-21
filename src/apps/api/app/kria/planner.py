@@ -2209,6 +2209,8 @@ async def _plan_from_creator_output(
         # KRI-802: planning on past a held question must never cost the creator that
         # question: the turn asks it, exactly as it did before batching.
         log.warning("kria_question_batch_failed_open", error_type=type(exc).__name__)
+        with suppress(Exception):  # a failed statement must not poison the rest of the turn
+            await db.rollback()
         planned = held[0]
     else:
         if held:
