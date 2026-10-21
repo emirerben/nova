@@ -2,7 +2,7 @@
 
 Nova transforms raw real-life videos into viral short-form content (TikTok, Reels, Shorts).
 
-Start with [docs/README.md](docs/README.md) for code and focused tests. Before implementation, review or a new PR, follow the [request-to-output standard](docs/runbooks/request-to-output-standard.md); use [agent navigation](docs/runbooks/agent-navigation.md) for runtime evidence and handoffs.
+Start: [code/tests](docs/README.md), [request-to-output standard](docs/runbooks/request-to-output-standard.md) (required before implementation, review or PR), [runtime evidence/handoffs](docs/runbooks/agent-navigation.md).
 
 ## Codex agent routing
 

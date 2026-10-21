@@ -138,3 +138,12 @@ passing application suites were not rerun locally for this policy-only change.
 A body edited after lint has already failed still needs that small lint job
 rerun; the independent body-edit workflow does not overwrite code-check
 results. Main's required-check activation remains a post-merge action.
+
+New-head guards on `4494b6e3af2e851190113deeabf1ad93a0bb4e0a` also exposed
+instruction-file size drift: newer main added the TR/EN language-policy pointer,
+making the merged instructions 38,028 bytes. The size guard and routing guard
+failed on that same budget error. One bounded edit shortens this PR's navigation
+paragraph by 71 bytes while retaining its three links and mandatory timing.
+A local three-way merge with main preserves its language-policy pointer and
+measures **37,957 bytes**; the task file is **37,918 bytes**. The size and static
+routing checks pass. No routing policy or model selection was changed.
