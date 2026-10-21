@@ -61,6 +61,8 @@ from app.services.clip_facts import CAPTURE_ORDER_KEYS
 from app.services.clip_order_sequence import row_relations, sequence_rows
 from app.services.kria_editor_ops_diff import effective_entrance
 from app.services.length_policy import creator_duration_matches, length_owner, natural_length_owner
+from app.text_fold import capitalize, uses_turkish_case
+from app.text_fold import lower as text_lower
 
 if TYPE_CHECKING:
     from app.agents._schemas.creator_agent import ResolvedCreatorManifest
@@ -4568,8 +4570,8 @@ def _same_group(label: str, words: str) -> bool:
 
 
 def _sentence_case(value: str) -> str:
-    value = value.strip()
-    return value[:1].upper() + value[1:]
+    # KRI-781: Turkish-aware first letter ("ırmak" -> "Irmak", not "Irmak" via "I").
+    return capitalize(value.strip())
 
 
 def _step_names(step: NarratedStepFact) -> tuple[str, ...]:
@@ -4671,11 +4673,12 @@ def _check_narrated_order(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         if want in members:
             continue
         where = members[-1] if spot == "last" else members[0]
-        name = _sentence_case(words)
         problems.append(
             say(
-                en=f"{name} is clip {where + 1} of {len(steps)}, not the {spot} one.",
-                tr=f"{name} {len(steps)} klipten {where + 1}. sırada, {_SPOT_TR[spot]} değil.",
+                en=f"{_sentence_case(words)} is clip {where + 1} of {len(steps)}, "
+                f"not the {spot} one.",
+                tr=f"{capitalize(words.strip(), 'tr')} {len(steps)} klipten {where + 1}. "
+                f"sırada, {_SPOT_TR[spot]} değil.",
             )
         )
     if problems:
@@ -4744,13 +4747,14 @@ def _check_narrated_timing(req: BriefRequirement, facts: PlanFacts) -> Requireme
     if not excerpt:
         return _receipt(req, "partial", _CANT_CHECK_TIMING)
     start, end = steps[first].start_s, steps[last].end_s
-    label = _sentence_case(" and ".join(named))
+    en_label = _sentence_case(" and ".join(named))
+    tr_label = capitalize(" ve ".join(named).strip(), "tr")
     return _receipt(
         req,
         "met",
         say(
-            en=f'{label} clips play from {start:.1f} s to {end:.1f} s, under: "{excerpt}"',
-            tr=f"{label} klipleri {start:.1f} sn ile {end:.1f} sn arasında oynuyor, "
+            en=f'{en_label} clips play from {start:.1f} s to {end:.1f} s, under: "{excerpt}"',
+            tr=f"{tr_label} klipleri {start:.1f} sn ile {end:.1f} sn arasında oynuyor, "
             f'şu sözlerle: "{excerpt}"',
         ),
     )
@@ -5046,10 +5050,12 @@ def _judges_caption_words(req: BriefRequirement, facts: PlanFacts) -> bool:
 
 def _spelling_key(value: str, *, turkish: bool) -> str:
     """Case-free, whitespace-collapsed text that keeps every letter ("İ" -> "i"; in Turkish
-    "I" -> "ı"), so "KADIKÖY" equals "Kadıköy" but "Kadikoy" does not."""
-    text = unicodedata.normalize("NFC", value).replace("İ", "i")
-    if turkish:
-        text = text.replace("I", "ı")
+    "I" -> "ı"), so "KADIKÖY" equals "Kadıköy" but "Kadikoy" does not.
+
+    KRI-781: lower-cased with the shared Turkish-aware casing, which also applies Turkish
+    i rules when the text itself has a Turkish-only letter, whatever the flag says.
+    """
+    text = text_lower(unicodedata.normalize("NFC", value), "tr" if turkish else None)
     return " ".join(text.casefold().split())
 
 
@@ -5068,6 +5074,9 @@ def _caption_spelling(name: str, captions: str, *, turkish: bool) -> tuple[bool,
     want = _squash(name)
     if not want:
         return False, None
+    # KRI-781: a name with a Turkish-only letter is Turkish even when the job language is
+    # not, so "KIRMIZI" in the captions still equals the wanted "kırmızı".
+    turkish = turkish or uses_turkish_case(name)
     want_key = _spelling_key(name, turkish=turkish)
     name_words = len(re.split(r"[\s\-]+", name.strip()))
     tokens = list(_CAPTION_TOKEN_RE.finditer(captions))

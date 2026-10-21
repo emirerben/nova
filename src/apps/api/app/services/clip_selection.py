@@ -18,7 +18,6 @@ bound to those across turns and the newest answer for an intent wins.
 from __future__ import annotations
 
 import re
-import unicodedata
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -30,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.kria.reply_language import current_reply_language, detect_chat_language, say
 from app.kria.text_trim import trim_at_word
 from app.schemas.clip_intents import ClipIntent, ClipIntentOp
+from app.text_fold import loose_text
 
 CLIP_QUESTION_VERSION = 1
 MAX_QUESTION_CLIPS = 50  # == MAX_CREATOR_MEDIA_REFS
@@ -87,9 +87,8 @@ class ClipSelectionIn(_Strict):
 
 
 def _words(text: str) -> list[str]:
-    decomposed = unicodedata.normalize("NFKD", text).casefold()
-    plain = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return [t for t in re.split(r"[^\w]+", plain, flags=re.UNICODE) if t]
+    # KRI-781: the shared Turkish-aware fold ("IŞIK" and "ışık" both key "isik").
+    return [t for t in re.split(r"[^\w]+", loose_text(text), flags=re.UNICODE) if t]
 
 
 def intent_key(intent: ClipIntent) -> str:

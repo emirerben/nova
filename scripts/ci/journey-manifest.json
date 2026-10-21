@@ -558,6 +558,15 @@
       ]
     },
     {
+      "id": "kri-781-turkish-fold",
+      "needs_native": false,
+      "api_tests": "tests/parity/test_decision_parity.py tests/pipeline/test_lyrics_alignment.py tests/pipeline/test_text_element_parity_contract.py",
+      "paths": [
+        "src/apps/api/app/text_fold.py",
+        "src/apps/api/app/pipeline/lyrics_alignment.py"
+      ]
+    },
+    {
       "id": "kri-689-clip-speed",
       "needs_native": false,
       "api_tests": "tests/kria/test_kri689_clip_speed_ask.py tests/tasks/test_kri689_speed_review.py tests/tasks/test_unified_montage_dispatch.py",
