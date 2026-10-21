@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.13.0] - 2026-10-21
+
+### Fixed
+- KRI-775: a phone montage draft the planner will refuse never reaches the approval card (#1713) <!-- release-pr: 1713 -->
+
 ## [0.81.12.0] - 2026-10-21
 
 ### Changed
