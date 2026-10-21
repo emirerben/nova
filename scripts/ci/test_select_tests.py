@@ -629,8 +629,12 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates,kri-648-phone-text",
+                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates,kri-648-phone-text,kri-788-order-answer-dispatch",
                 ),
+            ),
+            (
+                "src/apps/api/tests/tasks/test_kri788_order_answer_dispatch.py",
+                (True, "covered", "kri-788-order-answer-dispatch"),
             ),
             (
                 "src/apps/api/app/kria/duplicate_uploads.py",
