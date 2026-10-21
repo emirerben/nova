@@ -55,6 +55,7 @@ writes the contract, and prod's contract digest is reproduced without it.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import copy
 import json
 import uuid
@@ -351,7 +352,9 @@ def run_worker(monkeypatch: pytest.MonkeyPatch, job) -> WorkerOutcome:  # noqa: 
     monkeypatch.setattr(gb, "_run_phone_subtitled_job", route("subtitled"))
     monkeypatch.setattr(gb, "_run_phone_narrated_job", route("narrated"))
     monkeypatch.setattr(gb, "_run_phone_guided_job", route("guided"))
-    gb._run_generative_job_impl(str(job.id))
+    # Run in a copy of the context: the Celery wrapper resets the plan-ownership fence the
+    # worker sets, and calling the impl directly would leak it into later tests.
+    contextvars.copy_context().run(gb._run_generative_job_impl, str(job.id))
     return WorkerOutcome(
         failure_reason=seen.get("failure_reason"),
         message=seen.get("message"),
