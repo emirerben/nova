@@ -2137,7 +2137,9 @@ async def resolve_clip_intents_for_turn(
     }
     clip_order = {clip.media_id: index for index, clip in enumerate(clips)}
     exclusion_suspects = {
-        w.intent.intent_id: sorted(w.considered_media_ids, key=clip_order.__getitem__)
+        w.intent.intent_id: sorted(
+            w.considered_media_ids, key=lambda m: clip_order.get(m, len(clip_order))
+        )
         for w in work_by_id.values()
         if w.intent.op == "exclude" and not w.kept and w.considered_media_ids
     }
