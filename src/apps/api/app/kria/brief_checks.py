@@ -58,6 +58,7 @@ from app.schemas.text_style_intent import (
     normalize_title_animation,
 )
 from app.services.clip_facts import CAPTURE_ORDER_KEYS
+from app.services.clip_order_sequence import row_relations, sequence_rows
 from app.services.kria_editor_ops_diff import effective_entrance
 from app.services.length_policy import creator_duration_matches, length_owner, natural_length_owner
 
@@ -249,6 +250,10 @@ class PlanFacts:
     # absent, not misplaced. A group made only of clips an earlier group already seated, or of
     # Visuals-pool items, is neither (the planner outcome's ``code`` says which).
     sequence_absent: tuple[str, ...] = ()
+    # KRI-764: stated first / last groups that name a clip an earlier group already seated at
+    # the OTHER spot (one clip asked to be first and last). The earlier claim stands and the
+    # edit still renders, so this is a note (partial), never a failure. Known at draft time.
+    sequence_conflicts: tuple[str, ...] = ()
     # KRI-522: the spots ("first" / "last" / "then") whose stated sequence group landed,
     # read off the same outcomes. None = this plan cannot say (not a unified montage), so a
     # stated first/last clip stays unjudged there instead of failing a plan that seated it.
@@ -603,6 +608,7 @@ def plan_facts_from_strategy(
         ordering_fallback_clip_ids=tuple(
             str(c) for c in (strategy.get("ordering_fallback_clip_ids") or [])
         ),
+        sequence_conflicts=_strategy_sequence_conflicts(strategy),
         texts=tuple(texts),
         edit_format=str(edit_format) if edit_format else None,
         speech_cleanup_enabled=speech_cleanup_enabled,
@@ -681,19 +687,36 @@ def _sequence_label(name: str) -> str:
 
 def _sequence_problems(record: Mapping[str, Any], codes: tuple[str | None, ...]) -> tuple[str, ...]:
     """The stated-sequence groups of a unified-montage record that did not land, by outcome
-    ``code`` (KRI-503). A ``then`` group wholly inside an earlier group, and a Visuals-only
-    group, are not "a described group missed its place"; a row without a code (an older or
-    hand-built record) counts as misplaced, exactly as before."""
+    ``code`` (KRI-503). A ``then`` group wholly inside an earlier group, a first / last group
+    that repeats an earlier one (KRI-764: the creator said it twice, the earlier row carries
+    the verdict) and a Visuals-only group are not "a described group missed its place"; a row
+    without a code (an older or hand-built record) counts as misplaced, exactly as before."""
     out: list[str] = []
     for row in record.get("intent_outcomes") or []:
         if not isinstance(row, Mapping) or row.get("op") != "order" or row.get("status") == "met":
             continue
         code = row.get("code")
-        if code == "visual" or (code == "contained" and row.get("position") == "then"):
+        if code in ("visual", "repeat") or (code == "contained" and row.get("position") == "then"):
             continue
         if code in codes:
             out.append(_sequence_label(str(row.get("name") or "")))
     return tuple(out)
+
+
+def _strategy_sequence_conflicts(strategy: Mapping[str, Any]) -> tuple[str, ...]:
+    """Draft-time twin of ``_sequence_problems(record, ("conflict",))`` (KRI-764).
+
+    A strategy never records its clip order, but a clip asked to be first AND last is
+    readable off the resolved intents alone (it is about ids, not about the layout), so the
+    creator hears it before approving instead of after the render."""
+    rows = sequence_rows(strategy.get("resolved_clip_intents"))
+    return tuple(
+        _sequence_label(f"{position or 'then'}: {name}" if name else "")
+        for (position, name, _members, _status), relation in zip(
+            rows, row_relations(rows), strict=True
+        )
+        if relation == "conflict"
+    )
 
 
 def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFacts:
@@ -755,6 +778,7 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         ),
         sequence_unmet=_sequence_problems(record, ("misplaced", None, "contained")),
         sequence_absent=_sequence_problems(record, ("absent", "unresolved")),
+        sequence_conflicts=_sequence_problems(record, ("conflict",)),
         texts=tuple(
             str(text)
             for text in (
@@ -1464,6 +1488,7 @@ _MONTAGE_ORDER_FIELDS = (
     "sequence_statuses",
     "sequence_unmet",
     "sequence_absent",
+    "sequence_conflicts",
     "sequence_spots_met",
     "route_start",
     "route_end",
@@ -1998,6 +2023,23 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     laid out yet (its order is judged when it renders)."""
     if facts.narrated_steps is not None:
         return _check_narrated_order(req, facts)
+    if facts.sequence_conflicts and not (facts.sequence_unmet or facts.sequence_absent):
+        # KRI-764: one clip asked to be first AND last. The earlier ask stands and the edit
+        # still renders, so say so (before approval too) instead of refusing the render.
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=(
+                    "You asked for the same clip in two places: "
+                    f"{', '.join(facts.sequence_conflicts)}. I kept the first place you named."
+                ),
+                tr=(
+                    "Aynı klibi iki ayrı yere istedin: "
+                    f"{', '.join(facts.sequence_conflicts)}. İlk söylediğin yeri korudum."
+                ),
+            ),
+        )
     key = str(req.facts.get("key") or req.facts.get("by") or "").casefold()
     required = facts.strict_order and _order_is_required(req)
     unmet = "not_possible" if required else "partial"
@@ -6358,6 +6400,7 @@ _OUTCOME_REASON_TR = {
     "no clip got one": "hiçbir klibe gelmedi",
     "I couldn't tell which clips": "Hangi kliplerden söz ettiğini anlayamadım",
     "its clips are already in an earlier group": "klipleri zaten önceki bir grupta",
+    "its clips are already placed at another spot": "klipleri zaten başka bir yerde",
     "the clips did not end up there": "klipler oraya gelmedi",
     "you chose grouping first, each group in the order you filmed it": (
         "önce gruplamayı seçtin, her grup çektiğin sırada"

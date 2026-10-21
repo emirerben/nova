@@ -14,7 +14,7 @@ Pure functions over ids: no clips, no settings, no I/O.
 from __future__ import annotations
 
 import unicodedata
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Any, TypeVar
 
 # (position, name, member ids, status): the order intents, listed order.
@@ -108,6 +108,37 @@ def sequence_rows(resolved_intents: object) -> list[SequenceRow]:
         members = _members(intent) if status == "resolved" else []
         rows.append((position, _nfc(intent.get("attribute")), members, status))
     return rows
+
+
+def row_relations(rows: Sequence[SequenceRow], present: Collection[str] | None = None) -> list[str]:
+    """How each row relates to the rows before it, by the rule ``apply_sequence`` seats by:
+    a clip belongs to the FIRST row that names it (KRI-764).
+
+    * ``new``: the row names a clip no earlier row seated (or none at all, e.g. unresolved).
+    * ``repeat``: a first / last row whose clips an earlier row already seated at that same
+      spot. The creator said it twice (a description, then the clip's file name): satisfied.
+    * ``conflict``: a first / last row whose clips an earlier row seated at another spot.
+      One clip cannot be both first and last; the earlier claim stands.
+    * ``contained``: a ``then`` group made only of clips earlier groups already seated.
+
+    ``present`` limits the clips considered (the ones in the edit); None considers them all.
+    """
+    seat_of: dict[str, str] = {}
+    out: list[str] = []
+    for position, _name, members, status in rows:
+        spot = position or "then"
+        mine = [m for m in members if status == "resolved" and (present is None or m in present)]
+        fresh = [m for m in mine if m not in seat_of]
+        if not mine or fresh:
+            out.append("new")
+        elif position is None:
+            out.append("contained")
+        elif {seat_of[m] for m in mine} == {spot}:
+            out.append("repeat")
+        else:
+            out.append("conflict")
+        seat_of.update(dict.fromkeys(fresh, spot))
+    return out
 
 
 def apply_sequence(

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.71.0] - 2026-10-21
+
+### Changed
+- fix(editor): chat never stages a clip window longer than its footage (KRI-772) (#1704) <!-- release-pr: 1704 -->
+
+## [0.80.70.0] - 2026-10-21
+
+### Changed
+- KRI-764: a restated first/last pin no longer refuses the render (#1703) <!-- release-pr: 1703 -->
+
 ## [0.80.69.0] - 2026-10-21
 
 ### Changed
