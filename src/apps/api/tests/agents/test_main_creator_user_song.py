@@ -35,11 +35,12 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v63 adds source-backed explanations; no-song fixtures track the deliberate new baseline.
 # v62 grounds a phone montage story in owned clip IDs and explanatory text goals.
 # v64 adds typed unchanged-source audio intent; only the two brief-on renders change.
+# v66 (KRI-806) adds the editorial_plan audio pairing rule: all four renders changed.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, False): "4684c634fa88dcfec7865a41330b8a781bb706837861c6e7d63c796b8c2d0a2a",
-    (True, True): "9a781353f4aea31a5c947760f6d0afd35adc862a2165d6c7134d39ff1fe638b3",
-    (False, False): "9ae7a03343fc258ce0fec6bc86976e6f24b1576bc4ad92920eb5e5b28f1e330d",
-    (False, True): "4359258a49d91c04bd16d8d77dcd4101d989ff9859d13295f226b15e127f11e0",
+    (True, False): "ba2f0743754b875c49e3a94f5112cbb9595e786d9328f557fb0e30777b89e725",
+    (True, True): "0354a89c86ea4956627a643ce9860b0b8588f762deeb8e857bce4ca2e8c92113",
+    (False, False): "b49f8c15b28a37d5ef66dbc9e1d1c3a8c724482d91f2e609aad4f6abd0b6d13a",
+    (False, True): "29560eda13e14cd436abe97505942ab06b57ffc88614fd3a2ae6697f1d7938e8",
 }
 
 
@@ -109,7 +110,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-19-v64"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-21-v66"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 
