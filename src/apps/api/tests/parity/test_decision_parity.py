@@ -339,6 +339,39 @@ def _caption_language(text: str) -> str | None:
     return parse_caption_language_request(text)
 
 
+def _chat_and_render_language(text: str) -> tuple[str | None, str]:
+    """The chat language ``text`` sets, and the render language a plan item it drives gets."""
+    import uuid
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from app.kria.reply_language import resolve_reply_language
+    from app.tasks.content_plan_build import _item_chat_language
+
+    chat = resolve_reply_language(text)
+    thread = SimpleNamespace(state={"reply_language": chat} if chat else {})
+    session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = thread
+    item = SimpleNamespace(id=uuid.uuid4())
+    return chat, _item_chat_language(session, item, uuid.uuid4(), None)
+
+
+def _hook_in_chat_language(text: str) -> bool:
+    from app.agents.intro_writer import _language_instruction
+
+    chat, render = _chat_and_render_language(text)
+    return chat is not None and _language_instruction(render) == _language_instruction(chat)
+
+
+def _caption_fallback_in_chat_language(text: str) -> bool:
+    from app.pipeline.caption_language import resolve_spoken_caption_language
+
+    chat, render = _chat_and_render_language(text)
+    # Whisper heard no language and the transcript is too short to guess from.
+    language, _source = resolve_spoken_caption_language(None, transcript_text="", fallback=render)
+    return chat is not None and language == chat
+
+
 def _filler_token(text: str) -> bool:
     from app.pipeline.silence_cut import is_filler_token
 
@@ -1285,6 +1318,38 @@ CASES: tuple[Case, ...] = (
             "tr_ascii": "turkce altyazi",
             "tr_upper": "TÜRKÇE ALTYAZI",
             "tr_mixed": "Türkçe captions olsun",
+        },
+    ),
+    # O18 (KRI-780): a chat-driven plan item's hook is written in the chat's language.
+    Case(
+        "O18",
+        "captions_transcript",
+        "tasks.content_plan_build._item_chat_language",
+        "hook written in the chat language",
+        _hook_in_chat_language,
+        "Make my trip video upbeat and add captions",
+        True,
+        {
+            "tr": "Gezi videomu enerjik yap ve altyazı ekle",
+            "tr_ascii": "gezi videomu enerjik yap ve altyazi ekle",
+            "tr_upper": "GEZİ VİDEOMU ENERJİK YAP VE ALTYAZI EKLE",
+            "tr_mixed": "Gezi videomu upbeat yap, captions ekle",
+        },
+    ),
+    # O27 (KRI-780): spoken captions with no detectable language fall back to the chat's.
+    Case(
+        "O27",
+        "captions_transcript",
+        "pipeline.caption_language.resolve_spoken_caption_language",
+        "caption fallback follows the chat language",
+        _caption_fallback_in_chat_language,
+        "Make my trip video upbeat and add captions",
+        True,
+        {
+            "tr": "Gezi videomu enerjik yap ve altyazı ekle",
+            "tr_ascii": "gezi videomu enerjik yap ve altyazi ekle",
+            "tr_upper": "GEZİ VİDEOMU ENERJİK YAP VE ALTYAZI EKLE",
+            "tr_mixed": "Gezi videomu upbeat yap, captions ekle",
         },
     ),
     # D38: a hesitation vocalization in the transcript is a lexical filler (cut).
