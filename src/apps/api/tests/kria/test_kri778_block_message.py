@@ -160,13 +160,17 @@ def _length_reasons(*, outro_s: float = 0.0) -> list[dict]:
     ],
 )
 def test_the_draft_length_is_said_once_with_the_last_length_ask(language, outro_s, expected):
-    """Every global length ask compares the same draft; the brief keeps them in the order
-    the creator said them, so the last one stands (M2: "about 14 seconds")."""
+    """KRI-777's freeze limitation is separate from the single total-length reason."""
     with reply_language_for(language):
         rows = _length_reasons(outro_s=outro_s)
         message = render_block_recovery([_row("Your order is off.", "r1"), *rows]).message
     suffix = SUFFIX_TR if language == "tr" else SUFFIX_EN
-    assert message == f"Your order is off. {expected} {suffix}"
+    freeze = (
+        "Bu düzenlemede henüz bir kareyi donduramıyorum, o yüzden o an normal akıyor."
+        if language == "tr"
+        else "I can't freeze a frame in this edit yet, so that moment plays normally."
+    )
+    assert message == f"Your order is off. {freeze} {expected} {suffix}"
 
 
 @pytest.mark.parametrize(

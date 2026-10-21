@@ -1503,13 +1503,13 @@ def test_the_m2_block_message_is_whole_sentences_with_one_length(harness, monkey
         "This draft is about 4.7s; you asked for 14s. "
         "Your draft is saved. Should I try again or simplify this request?"
     )
-    # Only the copy changed: the same three receipts block, with the same statuses.
-    blocking = {
+    # KRI-777 makes freeze an honest format limit; order/length still block.
+    checked_misses = {
         row["requirement_id"]: row["status"]
         for row in receipts
         if row["verification"] == "checked" and row["status"] != "met"
     }
-    assert blocking == {"r1": "partial", "r3": "partial", "r7": "partial"}
+    assert checked_misses == {"r1": "partial", "r3": "not_possible", "r7": "partial"}
 
 
 def test_the_m2_block_message_reads_the_same_in_a_turkish_chat(harness, monkeypatch):
