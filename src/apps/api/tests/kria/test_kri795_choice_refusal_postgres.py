@@ -111,7 +111,9 @@ async def _draft_time_question(monkeypatch: pytest.MonkeyPatch, language: str) -
     return {"content": asked.plan.response, "question": asked.plan.choice_question}
 
 
-def _seed_refused_render(history: list[dict]) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+def _seed_refused_render(
+    history: list[dict], *, detail: str = PROD_DETAIL
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
     """A thread whose approved render was refused at dispatch, awaiting its observer.
 
     ``history`` is the chat before the approval: ``{"role", "event_type", "content",
@@ -162,7 +164,7 @@ def _seed_refused_render(history: list[dict]) -> tuple[uuid.UUID, uuid.UUID, uui
             content_plan_item_id=item.id,
             content_plan_ownership_epoch=0,
             failure_reason="phone_plan_unsupported",
-            error_detail=PROD_DETAIL,
+            error_detail=detail,
             assembly_plan={
                 "variants": [],
                 "native_device_only": True,
@@ -225,8 +227,10 @@ def _asked_and_answered(asked: dict, option: str) -> list[dict]:
     ]
 
 
-async def _refused(history: list[dict]) -> tuple[uuid.UUID, uuid.UUID, CreationThreadEvent]:
-    user_id, thread_id, execution_id = _seed_refused_render(history)
+async def _refused(
+    history: list[dict], *, detail: str = PROD_DETAIL
+) -> tuple[uuid.UUID, uuid.UUID, CreationThreadEvent]:
+    user_id, thread_id, execution_id = _seed_refused_render(history, detail=detail)
     observed, _ = await asyncio.to_thread(_observe_dispatched_execution, execution_id)
     assert observed == "failed"
     return user_id, thread_id, _failed_event(thread_id)
@@ -426,5 +430,26 @@ async def test_choice_questions_off_attach_no_picker_and_point_at_none(
         assert "choice_question" not in event.payload  # F11
         assert "Tap an option" not in event.content
         _assert_no_dead_end(event.content)
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_the_order_question_cannot_fix_gets_no_picker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Upload order was chosen and the clip rows did not add up: re-asking would recommend
+    the answer that just failed, so the card says what to do instead."""
+    try:
+        asked = await _draft_time_question(monkeypatch, "en")
+        _, _, event = await _refused(
+            _asked_and_answered(asked, "attachment_order"),
+            detail="I need to know which clips are in the edit to verify their order.",
+        )
+        assert "choice_question" not in event.payload
+        assert event.content == (
+            "I couldn't tell which clips are in this edit, so I couldn't keep their order. "
+            "Tell me how you want the clips ordered, and I'll make a new draft."
+        )
     finally:
         await async_engine.dispose()

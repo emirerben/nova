@@ -4107,11 +4107,13 @@ _UNRESOLVED_PLAIN: dict[str, tuple[str, str, tuple[str, str], str | None]] = {
         _ORDER_NEXT_STEP,
         "order_basis",
     ),
+    # Written only after the creator chose upload order and the clip rows did not add up,
+    # so the order question's recommended answer would hit the same refusal: no picker.
     "I need to know which clips are in the edit to verify their order.": (
         "I couldn't tell which clips are in this edit, so I couldn't keep their order.",
         "Bu düzenlemede hangi kliplerin olduğunu anlayamadım, o yüzden sıralarını koruyamadım.",
         _ORDER_NEXT_STEP,
-        "order_basis",
+        None,
     ),
     "I need capture times for every selected clip to verify chronological order.": (
         "Some of your clips have no filming time, so I couldn't put them in the order you "
