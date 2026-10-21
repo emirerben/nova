@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.72.0] - 2026-10-21
+
+### Changed
+- fix(ai): honor word-by-word titles and preserve placeholders (#1706) <!-- release-pr: 1706 -->
+
 ## [0.80.71.0] - 2026-10-21
 
 ### Changed
