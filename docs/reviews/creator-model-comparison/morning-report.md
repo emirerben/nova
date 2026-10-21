@@ -1,5 +1,9 @@
 # Morning review
 
+**Historical phase snapshot.** See [current decision and delivery](CURRENT-STATUS.md)
+for subsequent human feedback, rendered proxy previews, product-fix extraction and
+updated budget reconciliation.
+
 The comparison infrastructure and the approved development pilot are implemented.
 **Keep Gemini in production while reviewing the actual candidate outputs.** This
 small, related-source pilot does not establish a production quality winner.

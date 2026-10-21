@@ -1,5 +1,9 @@
 # Main Creator / Edit Copilot comparison
 
+**Current decision and delivery: [CURRENT-STATUS.md](CURRENT-STATUS.md).**
+The figures and pending-review statements below describe the earlier development
+phase; current human feedback, native proxy previews and accounting supersede them.
+
 Read the [morning report](morning-report.md) and
 [final development results](final-development-results.json).
 **Production remains Gemini. No quality winner is established.**
