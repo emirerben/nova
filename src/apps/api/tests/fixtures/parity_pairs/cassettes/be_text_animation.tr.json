@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_text_animation",
+  "lang": "tr",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "başlık daktilo efektiyle yazılarak gelsin",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "başlık daktilo efektiyle yazılarak gelsin"
+  },
+  "prompt_sha256": "e3676b96b1c16393047460246a25453cbebf50698f4628fe8473b30036e9eda6",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:11:37.813869+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"title\",\n      \"literal\": null,\n      \"description\": \"başlık daktilo efektiyle yazılarak gelsin\",\n      \"facts\": {\n        \"animation\": \"typewriter\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"title\",\n      \"literal\": null,\n      \"description\": \"başlık daktilo efektiyle yazılarak gelsin\",\n      \"facts\": {\n        \"animation\": \"typewriter\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3230,
+    "out": 98,
+    "thoughts": 955
+  },
+  "computed_cost_usd": 0.006371
+}

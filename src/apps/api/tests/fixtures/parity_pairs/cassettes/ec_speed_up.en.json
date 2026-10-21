@@ -1,0 +1,99 @@
+{
+  "pair_id": "ec_speed_up",
+  "lang": "en",
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-10-19-v85",
+  "message": "speed up clip 2",
+  "input": {
+    "utterance": "speed up clip 2",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "clip",
+        "text",
+        "transition"
+      ],
+      "editor_ops_version": 2,
+      "slots": [
+        {
+          "key": "s1",
+          "slot_id": "s1",
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 0.0,
+          "output_end_s": 3.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        },
+        {
+          "key": "s2",
+          "slot_id": "s2",
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 3.0,
+          "output_end_s": 6.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        },
+        {
+          "key": "s3",
+          "slot_id": "s3",
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 6.0,
+          "output_end_s": 9.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        },
+        {
+          "key": "s4",
+          "slot_id": "s4",
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 9.0,
+          "output_end_s": 12.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        }
+      ],
+      "text_bars": [],
+      "total_duration_s": 12,
+      "max_duration_s": 120,
+      "remaining_duration_s": 108
+    }
+  },
+  "prompt_sha256": "0c75c7a3522a96418e9f80370fe82190e1addc7d894b7447b1d4cebad13f9ad4",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:09:08.232164+00:00",
+  "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"patch_slots\",\n      \"selector\": {\n        \"slot_indexes\": [\n          1\n        ]\n      },\n      \"patch\": {\n        \"playback_rate\": 2\n      }\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"I've sped up clip 2 so it plays twice as fast.\",\n  \"suggestions\": [\n    \"Speed up all clips\",\n    \"Undo this change\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [],\n  \"claimed_ops\": [\n    \"patch_slots\"\n  ]\n}",
+  "raw_texts": [
+    "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"patch_slots\",\n      \"selector\": {\n        \"slot_indexes\": [\n          1\n        ]\n      },\n      \"patch\": {\n        \"playback_rate\": 2\n      }\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"I've sped up clip 2 so it plays twice as fast.\",\n  \"suggestions\": [\n    \"Speed up all clips\",\n    \"Undo this change\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [],\n  \"claimed_ops\": [\n    \"patch_slots\"\n  ]\n}"
+  ],
+  "model_used": "gemini-3.1-pro-preview",
+  "tokens": {
+    "in": 23934,
+    "out": 187,
+    "thoughts": 958
+  },
+  "computed_cost_usd": 0.061608
+}

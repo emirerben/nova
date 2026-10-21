@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_closing_title",
+  "lang": "tr",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "En sona \"Seneye görüşürüz\" yazısı koy.",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "En sona \"Seneye görüşürüz\" yazısı koy."
+  },
+  "prompt_sha256": "3a6b9faa8d6dd68282527f8ac0daec7ac9671c9908b2cff738114d4531ad77fd",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:11:18.770178+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"Seneye görüşürüz\",\n      \"description\": \"en sona \\\"Seneye görüşürüz\\\" yazısı koy\",\n      \"facts\": {}\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"Seneye görüşürüz\",\n      \"description\": \"en sona \\\"Seneye görüşürüz\\\" yazısı koy\",\n      \"facts\": {}\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3231,
+    "out": 91,
+    "thoughts": 738
+  },
+  "computed_cost_usd": 0.005532
+}

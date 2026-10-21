@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-19",
+  "evidence_level": "private_creator_upload_proxy_preview",
+  "source_count": 12,
+  "source_bytes": 4679379,
+  "cached_visual_fact_count": 12,
+  "new_visual_model_calls": 0,
+  "story_model_calls": 2,
+  "settled_spend_usd": 0.004802,
+  "approved_total_cap_usd": 2,
+  "model": "gemini-2.5-flash",
+  "story_prompt_version": "2026-10-19.2",
+  "renderer": "production AVFoundation exporter on macOS",
+  "input_quality": "owned generation/hash-verified analysis copies; full-quality phone originals not used",
+  "examples": [
+    {
+      "case": "example-1",
+      "duration_s": 10.1,
+      "verification_status": "checked",
+      "checks": 16,
+      "export_sha256": "4bea0d7f228c29aa1b3493091b74255acca2eea25dab00524330b9c5ca61d5e6"
+    },
+    {
+      "case": "walk-1",
+      "duration_s": 7.966667,
+      "verification_status": "checked",
+      "checks": 12,
+      "export_sha256": "77be79f83725b7c3152c02898ebc9dd48ad6e34b2ebc9b638cd306e31078db18"
+    }
+  ],
+  "source_file_sha256": {
+    "src/apps/api/app/services/media_collection_preparation.py": "68f74fcb6a0059a4ebb933c73009846024b5ce0e994cc9fc5fe94e15826d1553",
+    "src/apps/api/app/services/media_collection_analysis.py": "ea370ccf5a9813dfaa5fbdbe2cfcf9c6389e9e8d00162fcf341520484ac69075",
+    "src/apps/api/app/services/actual_export_verification.py": "447498087182dae05f1555b7d5b44d7b362dc8c1e83fc4dffdaaaec8dd4f4230",
+    "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/Export.swift": "b9cd89251be7c360cf22a5c72596baf552020eec7a6e893ac59c3556f50c43b9"
+  },
+  "production_writes": 0,
+  "publication": "none",
+  "signed_in_device_journey": "not_claimed",
+  "human_fulfillment": "not_reviewed",
+  "rollout": "hold",
+  "physical_export": {
+    "receipt": {
+      "app_version": "1",
+      "cases": [
+        {
+          "case": "example_1",
+          "elapsed_ms": 1944.048708,
+          "status": "exported"
+        },
+        {
+          "case": "example_2",
+          "elapsed_ms": 1551.562833,
+          "status": "exported"
+        }
+      ],
+      "os_version": "Version 27.0.1 (Build 24A446)",
+      "provider_calls": 0,
+      "status": "exported",
+      "uploads": 0
+    },
+    "verification": [
+      {
+        "case": "example_1",
+        "status": "checked",
+        "checks": 16,
+        "sha256": "c08d65be724c098a6402b4a5810eb9ca1c0027ebfbaa2a2f733e7fb1ebd7f983"
+      },
+      {
+        "case": "example_2",
+        "status": "checked",
+        "checks": 12,
+        "sha256": "11424f1fbb7cb06a24d8710524c84a8afced56c2c249c0042ca6bf5b1cbab73e"
+      }
+    ],
+    "source_quality": "analysis_copy",
+    "evidence_level": "offline_frozen_recipe_on_physical_iphone_not_signed_in_pilot",
+    "production_writes": 0
+  }
+}
