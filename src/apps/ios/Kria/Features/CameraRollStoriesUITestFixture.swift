@@ -90,7 +90,11 @@ private enum CameraRollStoryFixture {
     }
     static var story: [String: Any] {
         if let stories = (input?["result"] as? [String: Any])?["stories"] as? [[String: Any]], let first = stories.first { return first }
-        return ["id": "11111111-1111-1111-1111-111111111111", "revision": 1, "title": "Boat journey", "hook": "Start on the water", "payoff": "Finish at the destination", "rationale": "A crossing becomes an arrival.", "duration_s": 13, "moments": Array(moments.prefix(2)), "rejected": false, "audio_policy": "preserve_source_audio"]
+        var value: [String: Any] = ["id": "11111111-1111-1111-1111-111111111111", "revision": 1, "title": "Boat journey", "hook": "Start on the water", "payoff": "Finish at the destination", "rationale": "A crossing becomes an arrival.", "duration_s": 13, "moments": Array(moments.prefix(2)), "rejected": false, "audio_policy": "preserve_source_audio"]
+        if ProcessInfo.processInfo.arguments.contains("-camera-roll-story-research") {
+            value["research"] = ["topic": "Ferry terminal history", "review_current": true, "evidence": ["facts": [["id": "fact-0", "text": "Recorded research: the terminal was rebuilt.", "sources": [["title": "Recorded public archive", "url": "https://si.edu/recorded-fixture"]]]], "retrieved_at": "2026-10-21T00:00:00Z", "search_entry_html": "<div>Recorded attribution</div>"]]
+        }
+        return value
     }
 }
 private final class CameraRollStoriesURLProtocol: URLProtocol, @unchecked Sendable {

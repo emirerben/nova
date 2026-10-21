@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents.media_moment_relevance import MomentRelevanceInput
 from app.schemas.media_collections import StoryContentPlan
+from app.schemas.research import ResearchEvidence, StoryResearch
 
 
 class StoryIdea(BaseModel):
@@ -18,6 +19,7 @@ class StoryIdea(BaseModel):
     rationale: str = Field(min_length=1, max_length=500)
     moment_ids: list[str] = Field(min_length=1, max_length=8)
     content_plan: StoryContentPlan
+    research: StoryResearch | None = None
 
 
 class CameraRollStoriesOutput(BaseModel):
@@ -30,6 +32,7 @@ class _StoryProposal(BaseModel):
     title: str = Field(min_length=1, max_length=100)
     moment_ids: list[str] = Field(min_length=1, max_length=8)
     content_plan: StoryContentPlan
+    research_fact_ids: list[str] = Field(default_factory=list, max_length=3)
 
 
 class _StoryProposals(BaseModel):
@@ -39,13 +42,15 @@ class _StoryProposals(BaseModel):
 
 class CameraRollStoriesInput(MomentRelevanceInput):
     editorial_taste_context: str = Field(default="", max_length=8000, exclude_if=lambda v: not v)
+    public_research: ResearchEvidence | None = Field(default=None, exclude_if=lambda v: v is None)
+    research_topic: str = Field(default="", max_length=200, exclude_if=lambda v: not v)
 
 
 class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.media.camera_roll_stories",
         prompt_id="camera_roll_stories",
-        prompt_version="2026-10-21.2",
+        prompt_version="2026-10-21.3",
         model="gemini-2.5-flash",
         max_attempts=1,
         timeout_s=20,
@@ -58,9 +63,12 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
     Output = CameraRollStoriesOutput
 
     def render_prompt(self, input):  # noqa: A002
+        input = self.Input.model_validate(input.model_dump())
         # Keep source UUIDs out of the selection vocabulary. References exist
         # only within this request and resolve back to the immutable moments.
         data = input.model_dump()
+        if input.public_research:
+            data["public_research"].pop("search_entry_html", None)
         sources = {candidate.source: f"s{i + 1}" for i, candidate in enumerate(input.candidates)}
         data["candidates"] = [
             {**candidate.model_dump(), "id": f"m{i + 1}", "source": sources[candidate.source]}
@@ -68,12 +76,14 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
         ]
         return (
             'Return JSON {"stories": [{"title": "", "moment_ids": ["id"], '
+            '"research_fact_ids": [], '
             '"content_plan": {"version": 1, '
             '"format": "text_story", "audience": "", "angle": "", "why_it_works": "", '
             '"opening_text": "", "closing_text": null, "caption": "", '
             '"beat_reasons": ["why this exact moment advances the idea"]}}]}. '
             "Offer zero to three DISTINCT "
-            "coherent stories grounded exclusively in candidate evidence and the creator's query. "
+            "coherent stories grounded in candidate evidence, the creator's query, and supplied "
+            "public_research only. "
             "Prefer one specific, publishable idea over repetitive alternatives. Choose a "
             "suitable editorial "
             "form that fits the creator's request and footage: a useful guide, an honest firsthand "
@@ -94,6 +104,19 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "Use specific observations supported by THESE moments. A visible replica is a "
             "replica; guessed identities remain uncertain. Creative reasoning is a hypothesis, "
             "never proof of audience performance or a promise of views. "
+            "When public_research is supplied, make the specific interesting fact the point of "
+            "the idea; do not return a generic advertisement for visiting. Select one to three "
+            "supplied fact IDs in research_fact_ids. Prefer footage that illustrates the point, "
+            "but relevant background is useful even when no clip demonstrates the fact. Explain "
+            "that distinction in the beat reasons. Treat all researched facts as background "
+            "context, never proof that an unidentified pictured object, wall or building has a "
+            "particular name, age or provenance. Do not equate settlement layers with separate "
+            "civilizations or infer continuous occupation from a date range. Preserve source "
+            "qualifications and conflicting numbering conventions. State the interesting point "
+            "in the supported opening/closing wording or posting caption; do not promise a "
+            "voiceover or a longer explanatory edit. Without public_research, leave "
+            "research_fact_ids empty and do not invent facts or ask for publicly researchable "
+            "history as if only the creator could know it. Never output source URLs. "
             "When editorial_taste_context is present, use its confirmed rules and relevant "
             "positive examples to choose the premise and level of specificity. Reviewed choices "
             "are contextual judgments, not universal rules. Current creator direction wins. "
@@ -115,8 +138,9 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "The supported project has normal-speed portrait cuts, that opening/closing text, "
             "and original sound. Do not promise added music, generated narration, unrecorded "
             "speech, new shots, or effects. Write copy legible in the available duration; omit "
-            "the closing text for very short stories. Avoid unsupported place names, historical "
-            "facts, personal experiences or claims even when a visual label guesses them. "
+            "the closing text for very short stories. Historical facts need supplied research; "
+            "place names need the query or research. Avoid unsupported personal experiences "
+            "or claims even when a visual label guesses them. "
             "Do not substitute descriptions for footage or claim model evidence is verified. "
             "Use overlapping unusable-span notes and source visibility as fallible evidence; "
             "darkness or stillness can serve the requested story and are not automatic defects. "
@@ -126,11 +150,12 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
 
     def parse(self, raw_text, input):  # noqa: A002
         try:
+            input = self.Input.model_validate(input.model_dump())
             proposals = _StoryProposals.model_validate_json(raw_text)
             result = self.Output(
                 stories=[
                     StoryIdea(
-                        **proposal.model_dump(),
+                        **proposal.model_dump(exclude={"research_fact_ids"}),
                         hook=proposal.content_plan.opening_text,
                         payoff=proposal.content_plan.closing_text or proposal.content_plan.angle,
                         rationale=proposal.content_plan.why_it_works,
@@ -140,7 +165,7 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             )
             known = {candidate.id for candidate in input.candidates}
             references = {f"m{i + 1}": candidate.id for i, candidate in enumerate(input.candidates)}
-            for story in result.stories:
+            for story, proposal in zip(result.stories, proposals.stories, strict=True):
                 story.moment_ids = [references.get(value, value) for value in story.moment_ids]
                 if (
                     len(set(story.moment_ids)) != len(story.moment_ids)
@@ -149,6 +174,24 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
                     raise ValueError("Story references unknown or repeated evidence")
                 if len(story.content_plan.beat_reasons) != len(story.moment_ids):
                     raise ValueError("Each selected moment needs its own reason")
+                ids = proposal.research_fact_ids
+                if input.public_research:
+                    from app.services.story_idea_research import story_content_digest
+
+                    facts = {fact.id: fact for fact in input.public_research.facts}
+                    if not ids or len(set(ids)) != len(ids) or any(key not in facts for key in ids):
+                        raise ValueError("Story needs known, unique research facts")
+                    story.research = StoryResearch(
+                        topic=input.research_topic,
+                        evidence=input.public_research.model_copy(
+                            update={"facts": [facts[key] for key in ids]}
+                        ),
+                        reviewed_content_sha256=story_content_digest(
+                            story.title, story.content_plan.model_dump(), story.moment_ids
+                        ),
+                    )
+                elif ids:
+                    raise ValueError("Story has no researched evidence")
             return result
         except ValueError as exc:
             raise SchemaError("Invalid camera-roll story response") from exc

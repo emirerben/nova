@@ -1300,6 +1300,10 @@
             "title": "Requires Render Approval",
             "type": "boolean"
           },
+          "research": {
+            "$ref": "#/components/schemas/StoryResearch",
+            "nullable": true
+          },
           "revision": {
             "title": "Revision",
             "type": "integer"
@@ -8645,6 +8649,85 @@
         "title": "RequirementReceipt",
         "type": "object"
       },
+      "ResearchEvidence": {
+        "properties": {
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchFact"
+            },
+            "maxItems": 30,
+            "minItems": 1,
+            "title": "Facts",
+            "type": "array"
+          },
+          "retrieved_at": {
+            "title": "Retrieved At",
+            "type": "string"
+          },
+          "search_entry_html": {
+            "maxLength": 100000,
+            "title": "Search Entry Html",
+            "type": "string"
+          }
+        },
+        "required": [
+          "facts",
+          "retrieved_at",
+          "search_entry_html"
+        ],
+        "title": "ResearchEvidence",
+        "type": "object"
+      },
+      "ResearchFact": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchSource"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Sources",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 3000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "sources"
+        ],
+        "title": "ResearchFact",
+        "type": "object"
+      },
+      "ResearchSource": {
+        "properties": {
+          "title": {
+            "maxLength": 300,
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "maxLength": 2048,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "url"
+        ],
+        "title": "ResearchSource",
+        "type": "object"
+      },
       "ResolvedTextMotion": {
         "additionalProperties": false,
         "properties": {
@@ -10267,6 +10350,78 @@
           "client_event_id"
         ],
         "title": "StoryCorrectionBody",
+        "type": "object"
+      },
+      "StoryGenerationBody": {
+        "additionalProperties": false,
+        "properties": {
+          "cache_only": {
+            "default": false,
+            "title": "Cache Only",
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "query": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "research_topic": {
+            "maxLength": 200,
+            "minLength": 4,
+            "nullable": true,
+            "title": "Research Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "query"
+        ],
+        "title": "StoryGenerationBody",
+        "type": "object"
+      },
+      "StoryResearch": {
+        "properties": {
+          "basis": {
+            "default": "background_context",
+            "enum": [
+              "background_context"
+            ],
+            "title": "Basis",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/ResearchEvidence"
+          },
+          "review_current": {
+            "default": true,
+            "title": "Review Current",
+            "type": "boolean"
+          },
+          "reviewed_content_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Reviewed Content Sha256",
+            "type": "string"
+          },
+          "topic": {
+            "maxLength": 200,
+            "minLength": 3,
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "evidence",
+          "reviewed_content_sha256"
+        ],
+        "title": "StoryResearch",
         "type": "object"
       },
       "StoryReviewBody": {
@@ -15598,7 +15753,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SemanticSearchBody"
+                "$ref": "#/components/schemas/StoryGenerationBody"
               }
             }
           },

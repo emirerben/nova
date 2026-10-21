@@ -306,3 +306,18 @@ actual generation context includes the exact rejection and preserves all 20
 examples and four rules. These are private/local replays, not production activation
 or weight training. No additional provider call or spend occurred. A useful
 firsthand observation for the guide is the next creator input.
+
+## Public research as a creative input
+
+The creator's next calibration asks Kria to research interesting public facts and
+prefer footage that illustrates them, while still offering relevant background
+when it cannot be pictured. The actual statement is saved privately as contextual
+Troya direction, alongside the existing approved examples and rejected proposal;
+it is not treated as evidence of any historical count. The private corpus is now
+revision 12; the isolated account replay is revision 5 with twenty examples and
+five creator-provided preferences. Production memory remains unchanged.
+
+The optional research-to-idea adapter and its limitations are recorded in
+[idea research](../camera-roll-recommendations/idea-research.md). Its passing
+structural/HTTP checks do not establish that the next generated idea matches the
+creator's taste. That still requires the real output and creator judgment.

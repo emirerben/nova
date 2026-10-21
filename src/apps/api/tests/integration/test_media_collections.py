@@ -6,6 +6,7 @@ No provider, storage download, upload, render or original backup is permitted he
 
 import asyncio
 import hashlib
+import json
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -1090,3 +1091,117 @@ async def test_invalid_story_generation_returns_private_retry_response(
     assert retry.status_code == 503
     assert len(attempts) == 2
     assert attempts[0] != attempts[1], "A retried lease needs a new paid-call identity"
+
+
+async def test_research_ideas_keep_public_search_private_and_reuse_reviewed_evidence(
+    collection_world, monkeypatch
+):
+    """Prerecorded provider boundaries; no live research or quality claim."""
+    from app.agents.camera_roll_stories import CameraRollStoriesAgent
+    from app.services import story_idea_research as research
+    from app.services.researched_text import GroundedResearchAgent, ResearchEvidence
+
+    client, assets, sources, owner, _app = collection_world
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    await client.put(path, json=selection(assets, sources))
+    await client.post(f"{path}/index", json={"expected_revision": 1})
+    calls = []
+    approved = True
+    source_url = "https://si.edu/terminal"
+
+    def search(self, value, *, ctx):
+        calls.append(("search", value.model_dump()))
+        assert value.topic == "History of the public ferry terminal"
+        assert "private direction" not in value.model_dump_json()
+        assert ctx.deadline_monotonic is not None
+        return ResearchEvidence(
+            facts=[
+                dict(
+                    id="fact-0",
+                    text="The terminal was rebuilt after a fire.",
+                    sources=[dict(title="Public archive", url=source_url)],
+                )
+            ],
+            retrieved_at="2026-10-21T00:00:00+00:00",
+            search_entry_html="<div>Recorded provider attribution</div>",
+        )
+
+    def ideas(self, value, *, ctx):
+        calls.append(("ideas", None))
+        assert value.public_research.facts[0].id == "fact-0"
+        return self.parse(
+            json.dumps(
+                {
+                    "stories": [
+                        {
+                            "title": "A terminal rebuilt",
+                            "moment_ids": ["m1"],
+                            "research_fact_ids": ["fact-0"],
+                            "content_plan": {
+                                "audience": "Ferry passengers",
+                                "angle": "The terminal's rebuilding",
+                                "why_it_works": "History gives this crossing a point.",
+                                "opening_text": "This terminal was rebuilt after a fire",
+                                "caption": "A piece of terminal history.",
+                                "beat_reasons": [
+                                    "Crossing footage supplies atmosphere, not evidence of a fire"
+                                ],
+                            },
+                        }
+                    ]
+                }
+            ),
+            value,
+        )
+
+    def review(self, value, *, ctx):
+        calls.append(("review", None))
+        return research.StoryResearchReviewOutput(approved=approved, reason="Recorded review")
+
+    monkeypatch.setattr(GroundedResearchAgent, "run", search)
+    monkeypatch.setattr(CameraRollStoriesAgent, "run", ideas)
+    monkeypatch.setattr(research.StoryResearchReviewAgent, "run", review)
+    body = dict(
+        expected_revision=1,
+        query="My private direction for a ferry outing",
+        research_topic="History of the public ferry terminal",
+    )
+    cold = await client.post(f"{path}/stories", json={**body, "cache_only": True})
+    assert cold.status_code == 409 and not calls
+    response = await client.post(f"{path}/stories", json=body)
+    assert response.status_code == 200, response.text
+    story = response.json()["stories"][0]
+    assert story["research"]["basis"] == "background_context"
+    assert (
+        story["research"]["evidence"]["facts"][0]["sources"][0]["url"] == "https://si.edu/terminal"
+    )
+    assert story["research"]["evidence"]["search_entry_html"]
+    assert story["requires_render_approval"]
+    assert [row[0] for row in calls] == ["search", "ideas", "review"]
+    cached = await client.post(f"{path}/stories", json={**body, "cache_only": True})
+    assert cached.status_code == 200 and cached.json()["stories"][0] == story
+    assert len(calls) == 3
+    changed_plan = {**story["content_plan"], "opening_text": "My revised opening"}
+    changed = await client.patch(
+        f"{path}/stories/{story['id']}",
+        json=dict(
+            expected_revision=1,
+            expected_story_revision=1,
+            client_event_id="research-copy-edit",
+            content_plan=changed_plan,
+        ),
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["research"]["review_current"] is False
+    assert changed.json()["research"]["evidence"] == story["research"]["evidence"]
+    approved = False
+    failed = await client.post(f"{path}/stories", json={**body, "query": "A different direction"})
+    assert failed.status_code == 503 and "stories" not in failed.json()
+    assert len(calls) == 6
+    invalid = await client.post(
+        f"{path}/stories", json={**body, "research_topic": "https://private.local/x"}
+    )
+    assert invalid.status_code == 422 and len(calls) == 6
+    source_url = "https://travel-blog.example/terminal"
+    ungrounded = await client.post(f"{path}/stories", json={**body, "query": "A third direction"})
+    assert ungrounded.status_code == 503 and len(calls) == 7

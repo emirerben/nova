@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.research import StoryResearch
+
 
 class CollectionMember(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -85,6 +87,19 @@ class SemanticSearchBody(BaseModel):
     cache_only: bool = False
 
 
+class StoryGenerationBody(SemanticSearchBody):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    research_topic: str | None = Field(default=None, min_length=4, max_length=200)
+
+    @model_validator(mode="after")
+    def public_research_topic(self):
+        if self.research_topic is not None:
+            from app.services.researched_text import ResearchRequest
+
+            ResearchRequest(topic=self.research_topic, request_quote=self.research_topic)
+        return self
+
+
 class MomentInspectionBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_revision: int = Field(ge=1)
@@ -144,6 +159,7 @@ class CollectionStoryOut(BaseModel):
     on_screen_copy: list[str] = Field(default_factory=list)
     requires_render_approval: Literal[True] = True
     rejected: bool = False
+    research: StoryResearch | None = None
 
 
 class CollectionStoriesOut(BaseModel):

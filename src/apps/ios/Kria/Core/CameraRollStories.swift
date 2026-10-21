@@ -36,7 +36,29 @@ struct CameraRollStory: Codable, Identifiable, Sendable {
     let rejected: Bool
     let audioPolicy: String
     var contentPlan: CameraRollContentPlan? = nil
-    enum CodingKeys: String, CodingKey { case id, revision, title, hook, payoff, rationale, moments, rejected; case duration = "duration_s", audioPolicy = "audio_policy", contentPlan = "content_plan" }
+    var research: CameraRollStoryResearch? = nil
+    enum CodingKeys: String, CodingKey { case id, revision, title, hook, payoff, rationale, moments, rejected, research; case duration = "duration_s", audioPolicy = "audio_policy", contentPlan = "content_plan" }
+}
+struct CameraRollStoryResearch: Codable, Sendable {
+    let topic: String
+    let reviewCurrent: Bool
+    let evidence: Evidence
+    enum CodingKeys: String, CodingKey { case topic, evidence; case reviewCurrent = "review_current" }
+    struct Evidence: Codable, Sendable {
+        let facts: [Fact]
+        let retrievedAt: String
+        let searchEntryHTML: String
+        enum CodingKeys: String, CodingKey { case facts; case retrievedAt = "retrieved_at", searchEntryHTML = "search_entry_html" }
+    }
+    struct Fact: Codable, Identifiable, Sendable {
+        let id: String
+        let text: String
+        let sources: [Source]
+    }
+    struct Source: Codable, Sendable {
+        let title: String
+        let url: String
+    }
 }
 struct CameraRollStories: Decodable, Sendable {
     let stories: [CameraRollStory]
@@ -62,6 +84,10 @@ extension KriaAPIClient {
     func changeCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, order: [UUID]?, audioPolicy: String?, eventID: String) async throws -> CameraRollStory { throw APIError.unsupported }
     func indexCameraRollCollection(id: UUID, revision: Int, offset: Int) async throws -> CameraRollIndexPass { throw APIError.unsupported }
     func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool) async throws -> CameraRollStories { throw APIError.unsupported }
+    func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool, researchTopic: String?) async throws -> CameraRollStories {
+        guard researchTopic == nil else { throw APIError.unsupported }
+        return try await cameraRollStories(id: id, revision: revision, query: query, cacheOnly: cacheOnly)
+    }
     func recordCameraRollStoryExposure(collectionID: UUID, story: CameraRollStory, collectionRevision: Int) async throws { throw APIError.unsupported }
     func correctCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, index: Int, momentID: UUID, eventID: String) async throws -> CameraRollStory { throw APIError.unsupported }
     func rejectCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, eventID: String) async throws -> CameraRollStory { throw APIError.unsupported }
@@ -87,8 +113,12 @@ extension KriaAPI {
         return try await request(path: "me/media-collections/\(id)/index", method: "POST", bodyData: JSONEncoder().encode(body), decode: CameraRollIndexPass.self)
     }
     func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool) async throws -> CameraRollStories {
-        let body: [String: JSONValue] = ["expected_revision": .number(Double(revision)), "query": .string(String(query.prefix(500))), "cache_only": .bool(cacheOnly)]
-        return try await request(path: "me/media-collections/\(id)/stories", method: "POST", bodyData: JSONEncoder().encode(body), decode: CameraRollStories.self, timeoutInterval: 90)
+        try await cameraRollStories(id: id, revision: revision, query: query, cacheOnly: cacheOnly, researchTopic: nil)
+    }
+    func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool, researchTopic: String?) async throws -> CameraRollStories {
+        var body: [String: JSONValue] = ["expected_revision": .number(Double(revision)), "query": .string(String(query.prefix(500))), "cache_only": .bool(cacheOnly)]
+        if let researchTopic { body["research_topic"] = .string(String(researchTopic.prefix(200))) }
+        return try await request(path: "me/media-collections/\(id)/stories", method: "POST", bodyData: JSONEncoder().encode(body), decode: CameraRollStories.self, timeoutInterval: researchTopic == nil ? 90 : 130)
     }
     func correctCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, index: Int, momentID: UUID, eventID: String) async throws -> CameraRollStory {
         var body = storyReviewBody(story, revision: collectionRevision, eventID: eventID)

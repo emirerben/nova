@@ -15,8 +15,9 @@ from app.schemas.edit_proposal import (
     StoryBeat,
 )
 from app.schemas.media_collections import StoryContentPlan
+from app.schemas.research import StoryResearch
 from app.services import media_collections
-from app.services.media_collection_stories import candidate_evidence
+from app.services.media_collection_stories import candidate_evidence, story_out
 
 
 def execution_digest(value):
@@ -37,6 +38,7 @@ class PreparedCollectionStory(BaseModel):
     content_plan: StoryContentPlan | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    research: StoryResearch | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 async def prepare_story_snapshot(db, owner, story, item):
@@ -193,6 +195,7 @@ async def prepare_story_snapshot(db, owner, story, item):
         strategy=strategy,
         compiled_digest=execution_digest(compiled),
         content_plan=content_plan,
+        research=story_out(story).research,
     )
 
 
@@ -329,6 +332,8 @@ def install_approved_story(db, *, item, owner, raw, strategy, dry_run=False):
         raise ValueError("Approved story was rejected")
     if any(strategy.get(key) != value for key, value in prepared.strategy.items()):
         raise ValueError("Approved story strategy changed")
+    if prepared.research != story_out(story).research:
+        raise ValueError("Approved story research changed")
     if (
         execution_digest(compile_proposal_execution_plan(prepared.snapshot))
         != prepared.compiled_digest
@@ -410,5 +415,5 @@ async def validate_prepared_story_for_approval(db, *, owner, item, raw):
     ):
         raise HTTPException(409, "This story was rejected")
     current = await prepare_story_snapshot(db, owner, story, item)
-    if current.compiled_digest != prepared.compiled_digest:
+    if current.compiled_digest != prepared.compiled_digest or current.research != prepared.research:
         raise HTTPException(409, "Chosen story source or compiler changed")

@@ -20,6 +20,7 @@ from app.schemas.media_collections import (
     MomentSearchOut,
     SemanticSearchBody,
     StoryCorrectionBody,
+    StoryGenerationBody,
     StoryReviewBody,
     StorySelectionBody,
 )
@@ -141,7 +142,7 @@ async def inspect(
 @router.post("/{identifier}/stories", response_model=CollectionStoriesOut)
 async def stories(
     identifier: uuid.UUID,
-    body: SemanticSearchBody,
+    body: StoryGenerationBody,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ):

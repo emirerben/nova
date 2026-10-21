@@ -67,6 +67,24 @@ def ffmpeg(*args):
     )
 
 
+@pytest.fixture(autouse=True)
+def report_missing_export_evidence(monkeypatch):
+    """Keep a failed CI measurement actionable without changing its verdict."""
+    run = measured._run
+
+    def diagnose(arguments, **kwargs):
+        try:
+            return run(arguments, **kwargs)
+        except subprocess.SubprocessError as exc:
+            stderr = getattr(exc, "stderr", b"") or b""
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode(errors="replace")
+            print("Export measurement failed:", type(exc).__name__, arguments, stderr[-2000:])
+            raise
+
+    monkeypatch.setattr(measured, "_run", diagnose)
+
+
 @pytest.fixture(scope="module")
 def exports(tmp_path_factory):
     if not shutil.which("ffmpeg") or not shutil.which("tesseract"):

@@ -25,6 +25,12 @@ from app.pipeline.clip_cache import (
 from app.schemas.media_collections import CollectionStoriesOut, CollectionStoryOut
 from app.services import creator_editorial_taste, media_collections, media_moments
 from app.services.media_collection_analysis import claim_collection_analysis, collection_run_context
+from app.services.researched_text import ResearchUnavailable
+from app.services.story_idea_research import (
+    research_spec_identity,
+    research_story_ideas,
+    story_content_digest,
+)
 
 
 def event(kind, revision, **fields):
@@ -33,6 +39,15 @@ def event(kind, revision, **fields):
 
 def story_out(row):
     plan = row.story_json.get("content_plan")
+    details = dict(row.story_json)
+    if research := details.get("research"):
+        details["research"] = {
+            **research,
+            "review_current": research["reviewed_content_sha256"]
+            == story_content_digest(
+                row.story_json["title"], plan, [v["id"] for v in row.moments_json]
+            ),
+        }
     return CollectionStoryOut(
         id=row.id,
         collection_id=row.collection_id,
@@ -49,7 +64,7 @@ def story_out(row):
             if plan
             else []
         ),
-        **row.story_json,
+        **details,
     )
 
 
@@ -108,6 +123,7 @@ async def generate_stories(db, owner, identifier, body):
         ],
     )
     spec = CameraRollStoriesAgent.spec
+    research_topic = getattr(body, "research_topic", None)
     digest = hashlib.sha256(
         json.dumps(
             [
@@ -115,6 +131,7 @@ async def generate_stories(db, owner, identifier, body):
                 input.model_dump(),
                 [value.evidence.get("index_spec") for value in candidates],
                 body.expected_revision,
+                [research_topic, research_spec_identity()] if research_topic else None,
             ],
             sort_keys=True,
         ).encode()
@@ -128,25 +145,28 @@ async def generate_stories(db, owner, identifier, body):
         cache_only=body.cache_only,
         canonical_asset_id=str(first.asset_id),
         canonical_source_id=str(first.source_id),
-        lease_seconds=90,
+        lease_seconds=150 if research_topic else 90,
     )
     if claim.status == "ready":
         ideas = CameraRollStoriesOutput.model_validate(claim.result_json)
     elif claim.status == "claimed":
         try:
             ideas = await asyncio.to_thread(
-                CameraRollStoriesAgent(default_client()).run,
+                research_story_ideas
+                if research_topic
+                else CameraRollStoriesAgent(default_client()).run,
                 input,
+                *([research_topic] if research_topic else []),
                 ctx=collection_run_context(
                     creator_id=str(owner),
                     request_id=f"collection-stories:{digest}:{claim.attempt_token}",
-                    deadline_monotonic=time.monotonic() + 25,
+                    deadline_monotonic=time.monotonic() + (115 if research_topic else 25),
                     estimated_max_cost_usd=0.05,
                 ),
             )
             if not await asyncio.to_thread(complete_media_asset_fact, claim, ideas.model_dump()):
                 raise HTTPException(409, "Story evidence changed; retry")
-        except TerminalError as exc:
+        except (TerminalError, ResearchUnavailable) as exc:
             await asyncio.to_thread(complete_media_asset_fact, claim, None, failed=True)
             raise HTTPException(503, "Ideas could not be completed. Please try again.") from exc
         except Exception:

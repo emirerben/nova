@@ -26,6 +26,23 @@ final class CameraRollStoriesUITests: XCTestCase {
 }
 
 extension CameraRollStoriesUITests {
+    @MainActor func testResearchFactsAndSourcesStayBehindTheIdea() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-camera-roll-story-review", "-camera-roll-story-research"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        let research = app.buttons["story-research-sources"]
+        XCTAssertTrue(research.waitForExistence(timeout: 5))
+        research.tap()
+        XCTAssertTrue(app.staticTexts["Recorded research: the terminal was rebuilt."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["Recorded public archive"].firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["Rendering"].exists)
+        let proof = XCTAttachment(screenshot: app.screenshot())
+        proof.name = "Idea research with provider source, before project approval"
+        proof.lifetime = .keepAlways
+        add(proof)
+    }
+
     @MainActor func testConfirmExamplesRateIdeaAndForget() {
         let app = XCUIApplication()
         app.launchArguments = ["-camera-roll-story-review"]

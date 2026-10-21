@@ -138,3 +138,48 @@ def test_story_replay_resolves_request_local_references_to_exact_sources():
         )
         with pytest.raises(SchemaError):
             agent.parse(json.dumps({"stories": [rejected]}), value)
+
+
+@pytest.mark.parametrize("references", [[], ["fact-unknown"], ["fact-0", "fact-0"]])
+def test_researched_story_cannot_invent_or_duplicate_citations(references):
+    from app.agents.camera_roll_stories import CameraRollStoriesInput
+    from app.schemas.research import ResearchEvidence
+
+    value = CameraRollStoriesInput(
+        **evidence().model_dump(),
+        research_topic="Public building history",
+        public_research=ResearchEvidence(
+            facts=[
+                dict(
+                    id="fact-0",
+                    text="Recorded building history.",
+                    sources=[dict(title="Public archive", url="https://si.edu/recorded-fixture")],
+                )
+            ],
+            retrieved_at="2026-10-21T00:00:00Z",
+            search_entry_html="<div>Recorded attribution</div>",
+        ),
+    )
+    story = dict(
+        title="Building history",
+        moment_ids=["m1"],
+        research_fact_ids=references,
+        content_plan=dict(
+            audience="Walkers",
+            angle="Building history",
+            why_it_works="A specific fact adds context.",
+            opening_text="An evening crossing",
+            caption="Evening light",
+            beat_reasons=["Atmosphere, not object identification"],
+        ),
+    )
+    with pytest.raises(SchemaError):
+        CameraRollStoriesAgent(None).parse(json.dumps(dict(stories=[story])), value)
+    story["research_fact_ids"] = ["fact-0"]
+    valid = CameraRollStoriesAgent(None).parse(json.dumps(dict(stories=[story])), value)
+    assert valid.stories[0].research.evidence.facts[0].sources[0].url == (
+        "https://si.edu/recorded-fixture"
+    )
+    without_research = value.model_copy(update={"public_research": None, "research_topic": ""})
+    with pytest.raises(SchemaError):
+        CameraRollStoriesAgent(None).parse(json.dumps(dict(stories=[story])), without_research)

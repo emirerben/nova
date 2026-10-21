@@ -234,6 +234,33 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
             moments_json=moments,
             events_json=[],
         )
+        if with_content_plan:
+            from app.schemas.research import StoryResearch
+            from app.services.story_idea_research import story_content_digest
+
+            story.story_json["research"] = StoryResearch(
+                topic="Ferry terminal history",
+                evidence=dict(
+                    facts=[
+                        dict(
+                            id="fact-0",
+                            text="Recorded terminal history.",
+                            sources=[
+                                dict(
+                                    title="Recorded archive", url="https://si.edu/recorded-fixture"
+                                )
+                            ],
+                        )
+                    ],
+                    retrieved_at="2026-10-21T00:00:00Z",
+                    search_entry_html="<div>Recorded attribution</div>",
+                ),
+                reviewed_content_sha256=story_content_digest(
+                    story.story_json["title"],
+                    story.story_json["content_plan"],
+                    [value["id"] for value in moments],
+                ),
+            ).model_dump(mode="json")
         db.add(story)
         await db.commit()
         story_id, thread_id, item_id = story.id, thread.id, item.id
@@ -264,6 +291,11 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         draft = db.get(CreatorEditDraft, approval.draft_id)
         assert draft.snapshot_json["prepared_collection_story"]["story_id"] == str(story_id)
         frozen = draft.snapshot_json["prepared_collection_story"]
+        prepared_research = frozen.get("research")
+        if with_content_plan:
+            assert frozen["research"]["evidence"]["facts"][0]["sources"][0]["url"] == (
+                "https://si.edu/recorded-fixture"
+            )
         from app.pipeline.guided_story import compile_proposal_execution_plan
         from app.schemas.edit_proposal import EditProposalSnapshot
 
@@ -378,6 +410,8 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
             ["Where does this crossing lead?", "Worth the trip?"] if with_content_plan else []
         )
         assert job.assembly_plan["prepared_collection_story"]["story_id"] == str(story_id)
+        if with_content_plan:
+            assert job.assembly_plan["prepared_collection_story"]["research"] == prepared_research
         assert item.edit_proposal["status"] == "approved"
         snapshot = item.edit_proposal["last_approved"]["snapshot"]
         assert snapshot.get("text_policy", "legacy") == ("legacy" if with_content_plan else "none")

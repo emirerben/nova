@@ -25,6 +25,7 @@ struct CameraRollCollectionView: View {
     @State private var previousPermission: PHAuthorizationStatus?
     @State private var recentCollections: [LocalCollectionChoice] = []
     @State private var query = ""
+    @State private var researchTopic = ""
     @State private var stories: CameraRollStories?
     @State private var showsStories = false
     @State private var showsSaved = false
@@ -253,6 +254,13 @@ struct CameraRollCollectionView: View {
                 Button { requestIdeas() } label: { Text("Find story ideas").frame(maxWidth: .infinity) }
                     .buttonStyle(KriaPrimaryButtonStyle()).disabled(!canFindIdeas)
                     .accessibilityIdentifier("collection-find-stories")
+                DisclosureGroup("Research an angle") {
+                    TextField("Public place or topic", text: $researchTopic)
+                        .font(KriaFont.body(14)).textInputAutocapitalization(.sentences)
+                        .accessibilityIdentifier("collection-research-topic")
+                    Text("Kria finds interesting facts and their sources.")
+                        .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                }.font(KriaFont.body(13))
             }
         }.padding(.horizontal, 24).padding(.vertical, 16).background(KriaColor.paper)
     }
@@ -411,7 +419,8 @@ struct CameraRollCollectionView: View {
             } while offset < CameraRollCollection.maximumCount
             guard unavailable.isEmpty else { status = "\(unavailable.count) uploads are unavailable. Remove or restore them before continuing."; return }
             if !missing.isEmpty { status = "Ideas use the available footage. \(missing.count) clips aren't included yet." }
-            let found = try await api.cameraRollStories(id: collection.id, revision: revision, query: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Find a story in this outing" : query, cacheOnly: cacheOnly)
+            let topic = researchTopic.trimmingCharacters(in: .whitespacesAndNewlines)
+            let found = try await api.cameraRollStories(id: collection.id, revision: revision, query: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Find a story in this outing" : query, cacheOnly: cacheOnly, researchTopic: topic.isEmpty ? nil : topic)
             stories = found
             if !untimed.isEmpty { status = "Story ideas currently use videos. Your \(untimed.count) photos remain in the collection." }
             showsStories = true

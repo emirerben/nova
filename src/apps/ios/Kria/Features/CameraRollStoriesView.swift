@@ -66,6 +66,7 @@ struct CameraRollStoriesView: View {
                                 .font(KriaFont.body(13)).frame(minHeight: 44)
                                 .accessibilityIdentifier("idea-feedback")
                         }
+                        if let research = story.research { CameraRollIdeaResearchView(research: research) }
                         DisclosureGroup("Story arc") {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text(story.rationale).font(KriaFont.body(14)).foregroundStyle(KriaColor.mutedInk)
@@ -267,6 +268,32 @@ struct CameraRollStoriesView: View {
             await onSelected(current)
         } catch is CancellationError { self.error = "Paused. The draft chat is saved; choose this story again to continue." }
         catch { self.error = error.localizedDescription }
+    }
+}
+
+private struct CameraRollIdeaResearchView: View {
+    let research: CameraRollStoryResearch
+    var body: some View {
+        DisclosureGroup("Research behind the idea") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("About \(research.topic)").font(KriaFont.body(13).weight(.semibold))
+                if !research.reviewCurrent {
+                    Text("Wording or footage changed. Recheck these sources.")
+                        .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                }
+                ForEach(research.evidence.facts) { fact in
+                    Text(fact.text).font(KriaFont.body(14))
+                    ForEach(fact.sources, id: \.url) { source in
+                        if let url = ResearchCitation.publicURL(source.url) {
+                            Link(source.title, destination: url).font(KriaFont.body(13)).frame(minHeight: 44)
+                        }
+                    }
+                }
+                if !research.evidence.searchEntryHTML.isEmpty {
+                    ResearchSearchAttribution(html: research.evidence.searchEntryHTML).frame(height: 100)
+                }
+            }.padding(.top, 8)
+        }.font(KriaFont.body(13)).accessibilityIdentifier("story-research-sources")
     }
 }
 
