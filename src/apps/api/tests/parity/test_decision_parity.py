@@ -743,6 +743,178 @@ CASES: tuple[Case, ...] = (
             "tr_upper": "FOTOĞRAFLARI HIZLI GEÇİRME",
         },
     ),
+    # DC1-7: a generic Turkish SFX ask names no effect ("videoya" is "to the video").
+    Case(
+        "DC1-7",
+        "brief_parsing",
+        "routes.creator_agent._explicit_sfx_name",
+        "generic sound-effect ask is unnamed",
+        _sfx_name,
+        "add a sound effect to the video",
+        None,
+        {
+            "tr": "Videoya ses efekti ekle",
+            "tr_ascii": "videoya ses efekti ekle",
+            "tr_upper": "VİDEOYA SES EFEKTİ EKLE",
+            "tr_mixed": "komik yerlere sfx ekle",
+        },
+    ),
+    # DC1-8: a passing mention of an effect is not a request for it.
+    Case(
+        "DC1-8",
+        "brief_parsing",
+        "routes.creator_agent._explicit_sfx_name",
+        "declined or described effect is unnamed",
+        _sfx_name,
+        "use a different sound effect, not the whoosh sfx second time",
+        None,
+        {
+            "tr": "Farklı bir ses efekti kullan, whoosh olmasın",
+            "tr_ascii": "farkli bir ses efekti kullan, whoosh olmasin",
+            "tr_mixed": "geçiş sfx sakin olsun",
+        },
+    ),
+    # DC1-9: "don't forget to add" asks for the effect.
+    Case(
+        "DC1-9",
+        "brief_parsing",
+        "routes.creator_agent._explicit_sfx_name",
+        "named sound effect (don't forget)",
+        _sfx_name,
+        "don't forget to add the whoosh sound effect",
+        "whoosh",
+        {
+            "tr": "Whoosh ses efektini eklemeyi unutma",
+            "tr_ascii": "whoosh ses efektini eklemeyi unutma",
+            "tr_upper": "WHOOSH SES EFEKTİNİ EKLEMEYİ UNUTMA",
+        },
+    ),
+    # DC1-10: "don't reset the timing" keeps the profile.
+    Case(
+        "DC1-10",
+        "brief_parsing",
+        "routes.plan_items._review_mixed_media_timing",
+        "keep timing (negated reset)",
+        _review_timing_kept,
+        "don't reset the timing",
+        True,
+        {
+            "tr": "Zamanlamayı sıfırlama",
+            "tr_ascii": "zamanlamayi sifirlama",
+            "tr_upper": "ZAMANLAMAYI SIFIRLAMA",
+            "tr_mixed": "timing'i iptal etme",
+        },
+    ),
+    # DC1-11: a refused title is not rendered.
+    Case(
+        "DC1-11",
+        "brief_parsing",
+        "routes.creator_agent._apply_explicit_render_intent",
+        "refused opening title",
+        _opening_title,
+        "don't use the title 'Emir'",
+        None,
+        {
+            "tr": "'Emir' başlığını koyma",
+            "tr_ascii": "'Emir' basligini koyma",
+            "tr_upper": "'Emir' BAŞLIĞINI KOYMA",
+            "tr_mixed": "title 'Emir' olmasın",
+        },
+    ),
+    # DC1-12: copy placed at the end is the closing title.
+    Case(
+        "DC1-12",
+        "brief_parsing",
+        "routes.creator_agent._apply_explicit_render_intent",
+        "closing title from an end cue",
+        _closing_title,
+        "end title 'Görüşürüz'",
+        "Görüşürüz",
+        {
+            "tr": "Sona 'Görüşürüz' yazısı ekle",
+            "tr_ascii": "videonun sonunda 'Görüşürüz' yazisi olsun",
+            "tr_upper": "SONA 'Görüşürüz' YAZISI EKLE",
+            "tr_mixed": "'Görüşürüz' kapanış title olsun",
+        },
+    ),
+    # DC1-13: quoted words in an edit to existing text are not a new title.
+    Case(
+        "DC1-13",
+        "brief_parsing",
+        "routes.creator_agent._apply_explicit_render_intent",
+        "edit of existing text is no title",
+        _opening_title,
+        "in the text replace 'Sen' with 'Siz'",
+        None,
+        {
+            "tr": "Yazıda 'Sen' yerine 'Siz' kullan",
+            "tr_ascii": "yazida 'Sen' yerine 'Siz' kullan",
+            "tr_upper": "YAZIDA 'Sen' YERİNE 'Siz' KULLAN",
+        },
+    ),
+    # DC1-14: digits with the Turkish seconds unit ground the model's value.
+    Case(
+        "DC1-14",
+        "brief_parsing",
+        "routes.creator_agent._excerpt_states_seconds",
+        "seconds as digits",
+        _states_two_seconds,
+        "hold the title for 2 seconds",
+        True,
+        {
+            "tr": "Başlık 2 sn kalsın",
+            "tr_ascii": "baslik 2 sn kalsin",
+            "tr_upper": "BAŞLIK 2 SANİYE KALSIN",
+            "tr_mixed": "title 2sn kalsın",
+        },
+    ),
+    # DC1-15: a status question with a subject ("is the video ready?").
+    Case(
+        "DC1-15",
+        "chat_routing",
+        "routes.creation_threads._is_status_only_message",
+        "status question with a subject",
+        _status_only,
+        "is the video ready?",
+        True,
+        {
+            "tr": "Video hazır mı?",
+            "tr_ascii": "video hazirmi?",
+            "tr_upper": "VİDEO HAZIR MI?",
+            "tr_mixed": "render bitti mi?",
+        },
+    ),
+    # DC1-16: "a fast pace" with the indefinite article.
+    Case(
+        "DC1-16",
+        "brief_parsing",
+        "routes.creator_agent._apply_explicit_render_intent",
+        "fast pacing (indefinite)",
+        _pacing,
+        "a fast pace",
+        "fast",
+        {
+            "tr": "Hızlı bir tempo olsun",
+            "tr_ascii": "hizli bir tempo olsun",
+            "tr_upper": "HIZLI BİR TEMPO OLSUN",
+        },
+    ),
+    # DC1-17: "use every clip" widens media scope.
+    Case(
+        "DC1-17",
+        "brief_parsing",
+        "routes.creator_agent._explicit_media_scope",
+        "use every clip",
+        _media_scope,
+        "use every clip",
+        "all",
+        {
+            "tr": "Her klibi kullan",
+            "tr_ascii": "her klibi kullan",
+            "tr_upper": "HER KLİBİ KULLAN",
+            "tr_mixed": "hiçbirini atlama",
+        },
+    ),
     # D20: quick photos + longer videos profile.
     Case(
         "D20",

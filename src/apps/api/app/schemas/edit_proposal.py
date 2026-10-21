@@ -540,6 +540,10 @@ _TR_SCOPE_ALL = re.compile(
     rf"\b(?:tum|butun)\s+(?:(?:yuklenen|yukledigim|verdigim|sagladigim|elimdeki)\s+)?{_TR_ALL_NOUN}"
     r"|\b(?:tum|butun)\s+(?:medya|dosya)\w*"
     rf"|\b{_TR_ALL_WORD}\s+(?:de\s+)?(?:kullan|koy|ekle|dahil\s+et|tut)\w*"
+    # "her klibi kullan" (use every clip), affirmative verb only; "hiçbirini atlama"
+    # (don't skip any) is a double negative that means all.
+    r"|\bher\s+(?:kli[pb]|clip|video|fotograf|foto|cekim)\w*\s+(?:kullan|koy|ekle)(?!m[ae])\w*"
+    r"|\bhicbir(?:i|in|ini|isini)\s+(?:atlama|cikarma|disarida\s+birakma)\w*"
 )
 _TR_SCOPE_SELECTED = re.compile(
     r"\b(?:sadece|yalnizca|yalniz)\s+(?:secili|secilen|sectigim|belirtilen|belirttigim|listelenen)\w*"

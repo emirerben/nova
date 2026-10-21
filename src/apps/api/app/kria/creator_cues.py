@@ -17,7 +17,7 @@ forms (``ba[sş]l[iı]``), and case-insensitive matching treats I/İ/ı/i as one
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Literal
 
 from app.kria.brief_route import loose_text
@@ -62,13 +62,74 @@ def _negated(word: str) -> bool:
     return any(word.endswith(tail) and len(word) > len(tail) + 1 for tail in _NEGATED_TAILS)
 
 
+# Only the unambiguous verb endings: a bare -ma/-me is also a noun ("kesme" = cut,
+# "çekme"), so it counts as negation only as the last word of its clause.
+_STRICT_NEGATED_TAILS = ("masin", "mesin", "mayin", "meyin", "mamali", "memeli")
+
+
+def _negated_strict(word: str) -> bool:
+    if word in _NEGATION_WORDS or "miyor" in word or "muyor" in word:
+        return True
+    return any(word.endswith(tail) and len(word) > len(tail) + 1 for tail in _STRICT_NEGATED_TAILS)
+
+
 # --------------------------------------------------------------------------- titles
-# Opening-title nouns ("başlık", "başlığı", "yazısı"), spliced into the title grammar
-# beside English title/intro/hook/text. Plurals (captions) and "yazı tipi" (font) are
-# not titles.
-TITLE_NOUN_PATTERN_TR = r"ba[sş]l[iı](?:k(?!lar)|[gğ](?![iı]?lar))\w*|yaz[iı](?!lar)(?!\s+tip)\w*"
-# Closing cue before a title noun ("kapanış başlığı", "bitiş yazısı").
+# Opening-title nouns spliced into the title grammar beside English title/intro/hook/
+# text. Only the forms that introduce copy: bare, possessive and accusative ("başlık",
+# "başlığı", "başlığını", "yazı", "yazısı", "yazısını", "yazıyı"). Case forms that point
+# at existing text ("yazıda 'Sen' yerine 'Siz'", "yazıdan") fail the trailing \b, as
+# do plurals (captions); "yazı tipi" is a font.
+TITLE_NOUN_PATTERN_TR = (
+    r"ba[sş]l[iı](?:[gğ][iı](?:n[iı])?|k)"
+    r"|yaz[iı](?:s[iı](?:n[iı])?|y[iı])?(?!\s+tip)"
+)
+# A closing cue between the copy and the noun ("'Görüşürüz' kapanış başlığı") or
+# before the noun ("kapanış başlığı", "bitiş yazısı").
 CLOSING_CUE_PATTERN_TR = r"kapan[iı][sş]\w*|biti[sş]\w*"
+# Words for "the end" that may sit before the copy ("sona 'X' yazısı ekle", "videonun
+# sonunda 'X' yazısı"). Read as whole words, Turkish messages only: "sonra" (then) and
+# English "son" are not cues.
+_CLOSING_WORDS = frozenset(
+    "son sona sonda sonu sonuna sonunda sondaki sonundaki kapanis kapanista kapanisa"
+    " bitis bitiste bitise".split()
+)
+_CLAUSE_JOINERS = frozenset({"ve", "ama", "fakat", "ancak", "sonra", "ile"})
+
+
+def turkish_closing_cue(request: str, clause_prefix: str) -> bool:
+    """True when the last words of ``clause_prefix`` name the end of the video, in a
+    Turkish ``request`` ("sona", "videonun sonunda", "son yazı")."""
+
+    if not loose_creator_text(request):
+        return False
+    clauses = _clauses(loose_text(clause_prefix))
+    tail = clauses[-1][-2:] if clauses else []
+    return any(word in _CLOSING_WORDS for word in tail)
+
+
+# Verbs that put copy on screen; a bare -ma/-me on one of them closes a refusal
+# ("koyma", "kullanma", "ekleme"), where on any other word it may be English or a
+# noun ("theme", "same time", "kesme").
+_COPY_VERBS = ("koy", "kullan", "ekle", "yaz", "goster", "yerlestir", "olustur", "cikar", "sec")
+
+
+def turkish_clause_refused(request: str, clause_rest: str) -> bool:
+    """True when the Turkish verb closing a clause negates it ("'Emir' başlığını
+    koyma", "başlık 'Emir' olmasın"). ``clause_rest`` is the text after the match, up
+    to the next clause break; only its first sub-clause (before "ve"/"ama") counts."""
+
+    if not loose_creator_text(request):
+        return False
+    clauses = _clauses(loose_text(clause_rest))
+    words = clauses[0] if clauses else []
+    for index, word in enumerate(words):
+        if word in _CLAUSE_JOINERS:
+            words = words[:index]
+            break
+    if any(_negated_strict(word) for word in words):
+        return True
+    return bool(words) and _starts(words[-1], _COPY_VERBS) and _negated(words[-1])
+
 
 # --------------------------------------------------------------------------- SFX
 # "ses efekti" / "ses efektini" / "SES EFEKTİ" beside English sound effect/sfx.
@@ -91,57 +152,169 @@ def _strip_punct(token: str) -> str:
     return token[start:end]
 
 
-def _sfx_refused(verb_suffix: str) -> bool:
-    """ekle|me, kullan|mayın, koy|masın, ekle|mez -> refused; ekle|yin, ekle|meni -> not."""
-    if "miyor" in verb_suffix or "muyor" in verb_suffix:
-        return True
-    if not verb_suffix.startswith(("ma", "me")):
+# Affirmative and negated endings of the SFX verbs, after ASCII folding (ı->i,
+# ü->u). A verb is a whole word: the stem plus one of these, so English "second",
+# "calm" or "calls" never reads as "seç" / "çal".
+_SFX_VERB_SUFFIXES = frozenset(
+    "_ in un yin yun iniz unuz yiniz yunuz sin sun sene sana elim alim yelim yalim"
+    " ir ur ar er r abilir ebilir yabilir yebilir abilirsin ebilirsin yabilirsin"
+    " yebilirsin nsin nsun nir ip yip yup".split()
+)
+_SFX_VERB_REFUSED = frozenset(
+    "ma me masin mesin mayin meyin maz mez mamali memeli mayalim meyelim masana mesene"
+    " mayiniz meyiniz".split()
+)
+# Verbal nouns ("eklemeyi unutma", "kullanmak istemiyorum"): refused only when the
+# next word refuses, and never before "unutma" (don't forget to).
+_SFX_VERBAL_NOUN = frozenset("mak mek mayi meyi masini mesini".split())
+# Whole words that close an SFX ask with no verb ("Vine Boom ses efekti olsun").
+_SFX_WANT_WORDS = frozenset("olsun istiyorum isterim lazim".split())
+_SFX_REFUSE_WORDS = frozenset("olmasin istemiyorum istemem olmaz yok".split())
+_NOT_FORGET = ("unutma",)
+# Words before the noun that are never part of an effect's name.
+_SFX_FILLERS = frozenset(
+    "ve ile veya lutfen de da ki icin ustune ustunde uzerine sonra once bana buraya"
+    " oraya suraya simdi gibi mi cok olarak".split()
+)
+# Case endings that make the word before the noun an argument of the verb, not the
+# effect's name: "videoya", "yerlere", "geçişte", "klipten", "müziğin üstüne".
+_CASE_TAILS = (
+    "ya",
+    "ye",
+    "da",
+    "de",
+    "ta",
+    "te",
+    "dan",
+    "den",
+    "tan",
+    "ten",
+    "na",
+    "ne",
+    "lere",
+    "lara",
+    "nin",
+    "nun",
+    "in",
+    "un",
+)
+_MEDIA_STEMS = ("klip", "klib", "video", "foto", "sahne", "muzik", "sarki", "gecis", "kesim")
+UNNAMED_SFX_PHRASE_TR = "bir"
+
+
+def _sfx_verb(words: list[str], at: int) -> bool | None:
+    """None when ``words[at]`` is no SFX verb form, else whether it refuses."""
+
+    word = words[at]
+    nxt = words[at + 1] if at + 1 < len(words) else ""
+    if word in _SFX_WANT_WORDS:
         return False
-    rest = verb_suffix[2:]
-    return rest == "" or rest.startswith(("s", "y", "z", "li", "dan", "den"))
+    if word in _SFX_REFUSE_WORDS:
+        return True
+    for stem in _SFX_VERBS:
+        if not word.startswith(stem):
+            continue
+        suffix = word[len(stem) :] or "_"
+        if suffix in _SFX_VERB_SUFFIXES:
+            return False
+        if suffix in _SFX_VERB_REFUSED or "miyor" in suffix or "muyor" in suffix:
+            return True
+        if suffix in _SFX_VERBAL_NOUN:
+            if nxt.startswith(_NOT_FORGET):
+                return False
+            return nxt in _SFX_REFUSE_WORDS or (nxt.startswith("iste") and _negated(nxt))
+    return None
 
 
-def turkish_sfx_phrases(request: str) -> list[tuple[str, bool]]:
-    """Every "<name> ses efekti ekle" / "<name> sfx kullan" phrase, in order, paired
-    with whether it was refused ("whoosh ses efekti ekleme").
+def _name_word(token: str, folded: str) -> bool:
+    if not token or folded in _SFX_FILLERS:
+        return False
+    return token.casefold() not in SFX_GENERIC_WORDS_TR
 
-    The name is the word before the noun, or the two words before it when both are
-    capitalized ("Vine Boom"). A generic word ("bir ses efekti ekle") comes back as
-    the phrase, so the caller treats it as an unnamed request.
+
+def _argument_word(folded: str) -> bool:
+    return folded.startswith(_MEDIA_STEMS) or any(
+        folded.endswith(tail) and len(folded) > len(tail) + 1 for tail in _CASE_TAILS
+    )
+
+
+def turkish_sfx_phrases(
+    request: str, *, resolves: Callable[[str], bool] | None = None
+) -> list[tuple[str, bool]]:
+    """Every "<name> ses efekti ekle" / "<name> sfx kullan" phrase in a Turkish
+    message, in order, paired with whether it was refused ("whoosh ses efekti ekleme").
+
+    English messages yield nothing. With ``resolves`` (the catalog), the longest of
+    the up-to-three words before the noun that names a catalog effect wins ("vine boom
+    ses efekti ekle"). Otherwise the name is the word before the noun, or the two
+    words before it when both are capitalized ("Vine Boom"); a word that carries a
+    case ending ("videoya", "yerlere") or a filler ("lütfen", "ve") is no name, and the
+    ask comes back as ``UNNAMED_SFX_PHRASE_TR`` so the caller treats it as unnamed.
     """
 
+    if not loose_creator_text(request):
+        return []
     raw = str(request or "").split()
     tokens = [_strip_punct(token) for token in raw]
     loose = [loose_text(token) for token in tokens]
     phrases: list[tuple[str, bool]] = []
     for index, word in enumerate(loose):
         if word.startswith("sfx"):
-            verb_at = index + 1
+            noun_end = index
         elif word == "ses" and index + 1 < len(loose) and loose[index + 1].startswith("efekt"):
-            verb_at = index + 2
+            noun_end = index + 1
         else:
             continue
-        # Name, noun and verb share one clause ("whoosh sesi. Ekle" is two sentences).
-        if index == 0 or raw[index - 1][-1:] in _CLAUSE_END or raw[verb_at - 1][-1:] in _CLAUSE_END:
-            continue
+        if raw[noun_end][-1:] in _CLAUSE_END:
+            continue  # "whoosh sesi. Ekle" is two sentences
+        verb_at = noun_end + 1
         if verb_at < len(loose) and loose[verb_at] in {"de", "da"}:
             verb_at += 1
+        after: list[str] = []
+        if verb_at < len(loose) and loose[verb_at] == "olarak":
+            # "ses efekti olarak Vine Boom kullan": the name follows the noun.
+            for at in range(verb_at + 1, min(verb_at + 5, len(loose))):
+                if _sfx_verb(loose, at) is not None:
+                    verb_at = at
+                    break
+                after.append(tokens[at])
+                if raw[at][-1:] in _CLAUSE_END:
+                    break
+            else:
+                continue
         if verb_at >= len(loose):
             continue
-        stem = next((stem for stem in _SFX_VERBS if loose[verb_at].startswith(stem)), None)
-        if stem is None or not tokens[index - 1]:
+        refused = _sfx_verb(loose, verb_at)
+        if refused is None:
             continue
-        name = [tokens[index - 1]]
-        if (
-            index >= 2
-            and raw[index - 2][-1:] not in _CLAUSE_END
-            and tokens[index - 2][:1].isupper()
-            and tokens[index - 1][:1].isupper()
-            and not tokens[index - 1].isupper()
-            and tokens[index - 2].casefold() not in SFX_GENERIC_WORDS_TR
-        ):
-            name.insert(0, tokens[index - 2])
-        phrases.append((" ".join(name), _sfx_refused(loose[verb_at][len(stem) :])))
+        if after:
+            phrases.append((" ".join(after), refused))
+            continue
+        span: list[int] = []
+        at = index - 1
+        while at >= 0 and len(span) < 3 and raw[at][-1:] not in _CLAUSE_END:
+            if not _name_word(tokens[at], loose[at]):
+                break
+            span.insert(0, at)
+            at -= 1
+        name: list[str] = []
+        if resolves is not None:
+            for start in range(len(span)):
+                candidate = " ".join(tokens[i] for i in span[start:])
+                if resolves(candidate):
+                    name = [candidate]
+                    break
+        if not name and span and not _argument_word(loose[span[-1]]):
+            name = [tokens[span[-1]]]
+            if (
+                len(span) >= 2
+                and tokens[span[-2]][:1].isupper()
+                and tokens[span[-1]][:1].isupper()
+                and not tokens[span[-1]].isupper()
+                and not loose[span[-2]].startswith(_MEDIA_STEMS)
+            ):
+                name.insert(0, tokens[span[-2]])
+        phrases.append((" ".join(name) or UNNAMED_SFX_PHRASE_TR, refused))
     return phrases
 
 
@@ -199,14 +372,26 @@ def turkish_pacing(text: str) -> Literal["fast", "relaxed", "balanced"] | None:
         for index, word in enumerate(words):
             if not _starts(word, _PACE_NOUNS):
                 continue
-            for at in (index - 1, index + 1, index + 2):
+            # "hızlı tempo", "hızlı bir tempo", "tempo hızlı olsun".
+            before = index - 2 if index >= 2 and words[index - 1] == "bir" else index - 1
+            for at in (before, index + 1, index + 2):
                 if not 0 <= at < len(words):
                     continue
                 pace = next((pace for pace, adjectives in _PACES if words[at] in adjectives), None)
                 if pace is None:
                     continue
                 after = max(at, index) + 1
-                if not any(_negated(follow) for follow in words[after : after + 3]):
+                following = words[after : after + 3]
+                closes = after + len(following) == len(words)
+                for cut, follow in enumerate(following):
+                    if follow in _CLAUSE_JOINERS:
+                        following, closes = following[:cut], True  # "... ve sert kesme"
+                        break
+                # A bare -ma/-me word is a verb only when it closes the clause
+                # ("hızlı tempo kullanma"); "sert kesme" is a noun (a hard cut).
+                if not any(_negated_strict(follow) for follow in following) and not (
+                    following and closes and _negated(following[-1])
+                ):
                     return pace
     return None
 
@@ -233,6 +418,33 @@ TR_SECONDS_WORDS = {
     "on": 10.0,
 }
 TR_SECONDS_UNIT_PATTERN = r"(?:saniye\w*|sn\b)"
+# A number word that ends a compound ("on beş" = 15, "yirmi iki") is not that number.
+TR_SECONDS_WORD_LEAD = r"(?<!\w)(?<!on\s)(?<!yirmi\s)(?<!otuz\s)"
+
+
+def tr_seconds_spellings(seconds: float) -> list[tuple[str, str]]:
+    """(regex lead, spelling) pairs that state ``seconds`` before a Turkish unit:
+    number words ("iki", "bir buçuk"), and digits with a decimal point or comma
+    ("2", "1,5", "1.5"), which the English digit reader misses before "sn"."""
+
+    spellings = [
+        (TR_SECONDS_WORD_LEAD, word)
+        for word, number in TR_SECONDS_WORDS.items()
+        if abs(number - seconds) < 1e-6
+    ]
+    spellings += [
+        (TR_SECONDS_WORD_LEAD, rf"{word}\s+bu[cç]uk")
+        for word, number in TR_SECONDS_WORDS.items()
+        if number >= 1 and abs(number + 0.5 - seconds) < 1e-6
+    ]
+    if seconds > 0:
+        whole = f"{seconds:g}"
+        digits = {whole, whole.replace(".", ",")}
+        if float(seconds).is_integer():
+            digits |= {f"{int(seconds)}.0", f"{int(seconds)},0"}
+        spellings += [(r"(?<![\w.,])", digit.replace(".", r"\.")) for digit in sorted(digits)]
+    return spellings
+
 
 # --------------------------------------------------------------------------- mixed timing review
 _TIMING_STEMS = ("timing", "zamanlama", "tempo", "gecis")
@@ -242,8 +454,23 @@ _PHOTO_STEMS = ("foto", "resim", "resm")
 _FAST_STEMS = ("hizli", "cabuk", "seri", "flash")
 
 
+_LIGHT_VERB_NOT = frozenset(
+    "etme etmeyin etmesin yapma yapmayin yapmasin donme dondurme getirme".split()
+)
+
+
+def _refused_reset(words: list[str], index: int) -> bool:
+    """A negated reset: "sıfırlama", "kaldırma", "iptal etme", "normale döndürme"."""
+    word = words[index]
+    nxt = words[index + 1] if index + 1 < len(words) else ""
+    return _starts(word, _RESET_STEMS) and (_negated(word) or nxt in _LIGHT_VERB_NOT)
+
+
 def _resets(words: list[str]) -> bool:
-    if any(_starts(word, _RESET_STEMS) for word in words):
+    if any(
+        _starts(word, _RESET_STEMS) and not _refused_reset(words, index)
+        for index, word in enumerate(words)
+    ):
         return True
     return any(
         (a == "geri" and b.startswith("al"))
@@ -259,8 +486,13 @@ def turkish_mixed_timing_review(text: str) -> Literal["preserve", "reset"] | Non
     clauses = _clauses(loose_creator_text(text))
     for words in clauses:
         for index, word in enumerate(words):
-            if _starts(word, _TIMING_STEMS) and any(
-                _starts(follow, _PRESERVE_STEMS) for follow in words[index + 1 : index + 5]
+            if not _starts(word, _TIMING_STEMS):
+                continue
+            window = range(index + 1, min(index + 5, len(words)))
+            # "zamanlamayı değiştirme"; a negated reset keeps it too ("zamanlamayı
+            # sıfırlama", "zamanlamayı iptal etme"), like English "don't reset".
+            if any(
+                _starts(words[at], _PRESERVE_STEMS) or _refused_reset(words, at) for at in window
             ):
                 return "preserve"
     for words in clauses:

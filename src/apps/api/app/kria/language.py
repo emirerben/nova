@@ -52,7 +52,21 @@ _STATUS_QUESTIONS = {
     "neredeyiz",
     # Turkish with the English product word ("status ne?").
     "status ne",
+    "durumu ne",
+    "durumu nedir",
+    "bitmedi mi",
+    "daha bitmedi mi",
+    "hala bitmedi mi",
+    "ne kadar kaldi",
+    "daha ne kadar",
+    "guncelleme",
+    "guncelleme var mi",
 }
+
+# A subject before a Turkish status predicate ("video hazır mı?", "render bitti mi?").
+_STATUS_SUBJECTS = frozenset({"video", "videom", "render", "edit", "islem", "kurgu"})
+# The Turkish question particle, often typed joined to its word ("bittimi", "hazırmı").
+_QUESTION_PARTICLES = ("mi", "mu")
 
 _HELP_QUESTIONS = {
     "help",
@@ -103,7 +117,15 @@ def is_paraphrase_only(*, user_message: str, assistant_message: str) -> bool:
 def is_status_question(message: str) -> bool:
     """Return true only for an inert, status-only interruption."""
 
-    return _normalized(message) in _STATUS_QUESTIONS
+    normalized = _normalized(message)
+    if normalized in _STATUS_QUESTIONS:
+        return True
+    words = normalized.split()
+    if len(words) > 1 and words[0] in _STATUS_SUBJECTS:
+        words = words[1:]
+    if words and words[-1].endswith(_QUESTION_PARTICLES) and len(words[-1]) > 4:
+        words = [*words[:-1], words[-1][:-2], words[-1][-2:]]
+    return " ".join(words) in _STATUS_QUESTIONS
 
 
 def is_help_question(message: str) -> bool:

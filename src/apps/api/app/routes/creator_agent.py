@@ -85,7 +85,10 @@ from app.kria.creator_cues import (
     SFX_NOUN_PATTERN_TR,
     TITLE_NOUN_PATTERN_TR,
     TR_SECONDS_UNIT_PATTERN,
-    TR_SECONDS_WORDS,
+    UNNAMED_SFX_PHRASE_TR,
+    tr_seconds_spellings,
+    turkish_clause_refused,
+    turkish_closing_cue,
     turkish_keeps_clip_order,
     turkish_pacing,
     turkish_sfx_phrases,
@@ -845,7 +848,7 @@ def _sfx_verb_refused(request: str, verb_start: int, phrase_end: int) -> bool:
     return not _SFX_MODERATION_AFTER.match(request, phrase_end)
 
 
-def _sfx_verb_matches(request: str) -> list[tuple[str, bool]]:
+def _sfx_verb_matches(request: str, manifest: Any | None = None) -> list[tuple[str, bool]]:
     """Every "add <phrase> sound effect" phrase, one per verb, in order.
 
     Overlapping candidates let "Add a sound effect. Use the Fah sound effect"
@@ -863,12 +866,16 @@ def _sfx_verb_matches(request: str) -> list[tuple[str, bool]]:
         phrase = match.group(1)
         if not re.search(rf"\b(?:and|but|then|so)\s+{_SFX_VERB}\b", phrase, re.IGNORECASE):
             phrases.append((phrase, _sfx_verb_refused(request, match.start(), match.end(1))))
-    # KRI-782: Turkish puts the verb last ("whoosh ses efektini ekle").
-    return phrases + turkish_sfx_phrases(request)
+    # KRI-782: Turkish puts the verb last ("whoosh ses efektini ekle"); the catalog
+    # lets a lowercase two-word label ("vine boom") resolve whole.
+    resolves = None
+    if manifest is not None:
+        resolves = lambda name: resolve_creator_sfx_catalog_ref(manifest, name) is not None  # noqa: E731
+    return phrases + turkish_sfx_phrases(request, resolves=resolves)
 
 
-def _sfx_verb_phrases(request: str) -> list[str]:
-    return [phrase for phrase, negated in _sfx_verb_matches(request) if not negated]
+def _sfx_verb_phrases(request: str, manifest: Any | None = None) -> list[str]:
+    return [phrase for phrase, negated in _sfx_verb_matches(request, manifest) if not negated]
 
 
 def _sfx_name_from_phrase(phrase: str, manifest: Any | None) -> str | None:
@@ -902,9 +909,10 @@ def _explicit_sfx_lookup_names(creator_request: str, *, manifest: Any) -> list[s
 
     request = " ".join(str(creator_request or "").split())
     names = [_explicit_sfx_name(creator_request, manifest=manifest)]
-    for phrase in _sfx_verb_phrases(request)[:3]:
+    for phrase in _sfx_verb_phrases(request, manifest)[:3]:
         literal = re.sub(r"^the\s+(?=\S)", "", phrase, flags=re.IGNORECASE)
-        if literal.casefold() not in {"a", "an", "the", "no", "not", "any", "some"}:
+        unnamed = {"a", "an", "the", "no", "not", "any", "some", UNNAMED_SFX_PHRASE_TR}
+        if literal.casefold() not in unnamed:
             names.append(literal)
     return list(dict.fromkeys(name for name in names if name))
 
@@ -924,7 +932,7 @@ def _explicit_sfx_name(creator_request: str, *, manifest: Any | None = None) -> 
             return match.group(1).strip()
     unnamed_phrase: str | None = None
     declined = False
-    for phrase, negated in _sfx_verb_matches(request):
+    for phrase, negated in _sfx_verb_matches(request, manifest):
         if negated:
             declined = True
             continue
@@ -1177,14 +1185,19 @@ def _excerpt_states_seconds(excerpt: str, seconds: float) -> bool:
             return True
     # KRI-782: Turkish number words pair only with the Turkish unit ("iki saniye"),
     # read from the Turkish-aware fold so "İKİ SANİYE" counts too.
-    words = [(word, number, _SECONDS_UNIT, text) for word, number in _SECONDS_WORDS.items()]
+    # Digits before "sn" / "saniyelik" ("2 sn", "1,5 saniye") and "bir buçuk" too.
+    words = [
+        (r"(?<!\w)", word, _SECONDS_UNIT, text)
+        for word, number in _SECONDS_WORDS.items()
+        if abs(number - float(seconds)) < 1e-6
+    ]
     folded = fold_text(excerpt)
     words += [
-        (word, number, TR_SECONDS_UNIT_PATTERN, folded) for word, number in TR_SECONDS_WORDS.items()
+        (lead, word, TR_SECONDS_UNIT_PATTERN, folded)
+        for lead, word in tr_seconds_spellings(float(seconds))
     ]
     return any(
-        abs(number - float(seconds)) < 1e-6 and re.search(rf"(?<!\w){word}\s*-?\s*{unit}", source)
-        for word, number, unit, source in words
+        re.search(rf"{lead}{word}\s*-?\s*{unit}", source) for lead, word, unit, source in words
     )
 
 
@@ -1335,10 +1348,20 @@ def _apply_explicit_render_intent(
             clause_prefix = request[clause_start + 1 : match.start()]
             if re.search(r"\b(?:do\s+not|don't|dont|without|no)\b", clause_prefix, re.IGNORECASE):
                 continue
+            # Turkish negates with the verb that closes the clause, after the copy
+            # ("'Emir' başlığını koyma", "başlık 'Emir' olmasın").
+            ends = (request.find(d, match.end()) for d in (".", "!", "?", ";", ","))
+            clause_end = min((end for end in ends if end >= 0), default=len(request))
+            if turkish_clause_refused(request, request[match.end() : clause_end]):
+                continue
             # The cue precedes the title noun ("closing title ...") or, for
             # "outro text: ...", opens the match itself.
-            if re.search(rf"\b(?:{closing_cue})\s*$", clause_prefix, re.IGNORECASE) or re.match(
-                rf"(?:{closing_cue})\b", match.group(0), re.IGNORECASE
+            if (
+                re.search(rf"\b(?:{closing_cue})\s*$", clause_prefix, re.IGNORECASE)
+                or re.match(rf"(?:{closing_cue})\b", match.group(0), re.IGNORECASE)
+                # "'Görüşürüz' kapanış başlığı", "sona 'Görüşürüz' yazısı ekle".
+                or match.groupdict().get("tr_closing")
+                or turkish_closing_cue(request, clause_prefix)
             ):
                 if closing_text is None:
                     closing_text = text
@@ -1348,7 +1371,8 @@ def _apply_explicit_render_intent(
 
     _title_patterns = (
         re.compile(
-            rf"{_OPEN_QUOTE}(.{{1,280}}?){_CLOSE_QUOTE}\s+(?:opening\s+)?(?:{title_noun})\b",
+            rf"{_OPEN_QUOTE}(.{{1,280}}?){_CLOSE_QUOTE}\s+"
+            rf"(?:opening\s+|(?P<tr_closing>{CLOSING_CUE_PATTERN_TR})\s+)?(?:{title_noun})\b",
             re.IGNORECASE,
         ),
         re.compile(
