@@ -37,6 +37,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.kria.brief_route import fold_text, loose_text
+from app.kria.freeze_ask import times_one_moment
 from app.kria.reply_language import current_reply_language, say
 from app.services.clip_facts import (
     CAPTURE_ORDER_KEYS,
@@ -761,7 +762,8 @@ def _requested_durations(brief: Any) -> tuple[list[float], list[str], str]:
     requirement_ids: list[str] = []
     quoted = ""
     for req in _live(brief):
-        if req.kind != "timing":
+        # KRI-777: a freeze's or a moment's seconds are not a length the creator asked for.
+        if req.kind != "timing" or times_one_moment(req):
             continue
         value = _number((req.facts or {}).get("duration_s"))
         if value is not None:

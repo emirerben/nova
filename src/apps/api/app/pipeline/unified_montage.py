@@ -55,6 +55,7 @@ from app.kria.brief_route import (
     wants_filming_time_text,
     wants_hour_only_text,
 )
+from app.kria.freeze_ask import times_one_moment
 from app.pipeline.best_parts import BestPart, BestPartsResult, select_best_parts
 from app.pipeline.pinned_text import drawable_pins, pins_from_strategy
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
@@ -270,7 +271,8 @@ def brief_view(brief: Any) -> BriefView:
             # A "narrative" or a first/last-clip key is not a basis: it is what the
             # creator's own sequence rows (and the clips' words, KRI-585) decide.
             basis_stated = basis_stated or key.casefold() == ATTACHMENT_ORDER_KEY
-        elif req.kind == "timing":
+        elif req.kind == "timing" and not times_one_moment(req):
+            # KRI-777: "freeze the frame for one second on the bite" is not a one-second video.
             raw = (req.facts or {}).get("duration_s")
             if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0:
                 target = float(raw)
