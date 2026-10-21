@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.7.0] - 2026-10-21
+
+### Changed
+- feat(kria): Turkish parity D — Server copy + prompts carry the creator's language (KRI-784) (#1717) <!-- release-pr: 1717 -->
+
 ## [0.81.6.0] - 2026-10-21
 
 ### Changed
