@@ -4762,6 +4762,10 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
             )
         else:
             raise
+    if status == "dispatched" and result_job_id is not None:
+        # The render may have finished before this receipt read `dispatched` (a fast phone-plan
+        # refusal); its own end-of-task nudge then found nothing to settle.
+        nudge_kria_observer(result_job_id)
     if successor_id is not None:
         run_kria_turn.apply_async(
             args=[successor_id],
@@ -6163,9 +6167,17 @@ def _reconcile_kria_turns_body() -> dict[str, int]:
             task_id=f"kria-approval:{approval_id}",
             queue="agent-control",
         )
+    return {
+        "published": len(identifiers) + len(approval_identifiers),
+        "settled": _settle_dispatched_executions(dispatched_execution_ids),
+    }
+
+
+def _settle_dispatched_executions(execution_ids: list[uuid.UUID]) -> int:
+    """Observe each dispatched receipt; publish the queued turns the settled ones release."""
     settled = 0
     successors: list[str] = []
-    for execution_id in dispatched_execution_ids:
+    for execution_id in execution_ids:
         outcome, successor_id = _observe_dispatched_execution(execution_id)
         if outcome in {"completed", "failed"}:
             settled += 1
@@ -6177,10 +6189,62 @@ def _reconcile_kria_turns_body() -> dict[str, int]:
             task_id=successor_id,
             queue="agent-control",
         )
-    return {
-        "published": len(identifiers) + len(approval_identifiers),
-        "settled": settled,
-    }
+    return settled
+
+
+# A nudge still queued after this long is moot: the minute sweep has settled the Job by then.
+OBSERVE_NUDGE_TTL_S = 120
+
+
+@celery_app.task(
+    name="tasks.observe_kria_job",
+    soft_time_limit=30,
+    time_limit=45,
+    max_retries=0,
+)
+def observe_kria_job(job_id: str) -> dict[str, int]:
+    """Settle the chat receipts waiting on one Job, right after that Job changed.
+
+    The minute sweep used to be the only thing that posted a render's ready/failed card, so
+    the creator waited up to a minute for it (café M2 job 50f67a06 failed at 13:05:12; its
+    card came at 13:05:53). The render tasks, the phone's publish/failure reports and the
+    approval dispatch nudge this task instead. It runs the sweep's own observer, which
+    row-locks and re-checks each receipt, so a nudge racing the sweep posts one card; the
+    sweep stays the fallback for a nudge that never arrives.
+    """
+
+    if not settings.kria_runtime_v2_enabled:
+        return {"settled": 0}
+    with sync_session() as db:
+        execution_ids = list(
+            db.execute(
+                select(CreatorAgentExecution.id)
+                .where(
+                    CreatorAgentExecution.target_job_id == uuid.UUID(job_id),
+                    CreatorAgentExecution.status == "dispatched",
+                )
+                .order_by(CreatorAgentExecution.dispatched_at, CreatorAgentExecution.id)
+                .limit(50)
+            ).scalars()
+        )
+    return {"settled": _settle_dispatched_executions(execution_ids)}
+
+
+def nudge_kria_observer(job_id: object) -> None:
+    """Ask `observe_kria_job` to settle this Job's chat receipts now. Never raises.
+
+    Call it after the Job write commits. A lost nudge (broker down, worker killed) only
+    means the minute sweep posts the card instead.
+    """
+
+    try:
+        if not settings.kria_runtime_v2_enabled:
+            return
+        observe_kria_job.apply_async(
+            args=[str(job_id)], queue="agent-control", expires=OBSERVE_NUDGE_TTL_S
+        )
+    except Exception:  # noqa: BLE001 - the sweep settles whatever a lost nudge misses
+        log.warning("kria_observe_nudge_failed", job_id=str(job_id), exc_info=True)
 
 
 @celery_app.task(
