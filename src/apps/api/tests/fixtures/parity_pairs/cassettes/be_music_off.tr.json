@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_music_off",
+  "lang": "tr",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "müzik ekleme, kameranın kendi sesi kalsın",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "müzik ekleme, kameranın kendi sesi kalsın"
+  },
+  "prompt_sha256": "650a29ff1d939fe141a7c54904e2e6d53afd7762853d1b7335727de4567fc770",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:12:12.501833+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"audio\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"müzik ekleme\",\n      \"facts\": {}\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"audio\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"kameranın kendi sesi kalsın\",\n      \"facts\": {\n        \"audio_intent\": \"source_unchanged\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"audio\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"müzik ekleme\",\n      \"facts\": {}\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"audio\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"kameranın kendi sesi kalsın\",\n      \"facts\": {\n        \"audio_intent\": \"source_unchanged\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3231,
+    "out": 152,
+    "thoughts": 931
+  },
+  "computed_cost_usd": 0.006484
+}

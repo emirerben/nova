@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_opening_title",
+  "lang": "tr",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "Başa \"Lisbon Diaries\" yazan bir başlık ekle.",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "Başa \"Lisbon Diaries\" yazan bir başlık ekle."
+  },
+  "prompt_sha256": "ba25365d520a1115204b6908ea4728cfff90c5d99cc7eae871d562a4aa835c1d",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:11:02.234013+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"title\",\n      \"literal\": \"Lisbon Diaries\",\n      \"description\": null,\n      \"facts\": {\n        \"position\": \"top\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"title\",\n      \"literal\": \"Lisbon Diaries\",\n      \"description\": null,\n      \"facts\": {\n        \"position\": \"top\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3233,
+    "out": 88,
+    "thoughts": 1888
+  },
+  "computed_cost_usd": 0.009835
+}

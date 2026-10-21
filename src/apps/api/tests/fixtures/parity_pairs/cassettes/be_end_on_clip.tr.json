@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_end_on_clip",
+  "lang": "tr",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "videoyu gün batımı klibiyle bitir",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "videoyu gün batımı klibiyle bitir"
+  },
+  "prompt_sha256": "ad192777055d241a168622f7e61f9d3489f3163a587dbc1f5d7ba4952731e9f1",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:10:44.191423+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"order\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"videoyu gün batımı klibiyle bitir\",\n      \"facts\": {\n        \"last_clip\": \"gün batımı klibi\",\n        \"closing\": \"gün batımı klibi\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"order\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"videoyu gün batımı klibiyle bitir\",\n      \"facts\": {\n        \"last_clip\": \"gün batımı klibi\",\n        \"closing\": \"gün batımı klibi\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3229,
+    "out": 116,
+    "thoughts": 1209
+  },
+  "computed_cost_usd": 0.00739
+}

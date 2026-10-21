@@ -1,0 +1,938 @@
+{
+  "schema_version": 1,
+  "ticket": "KRI-773",
+  "layer": "phase 2 layer 2: model-level English/Turkish decision parity",
+  "notes": [
+    "One pair = one creator decision asked once in English and once in natural Turkish (not a word-for-word translation).",
+    "Everything except the creator's message is identical across the two languages (same base input, same footage context), so a different decision is caused by the message language.",
+    "`reply_language` is set from app.kria.reply_language.detect_chat_language(message) for agents that take it, as production does for a chat in that language.",
+    "`compare` says which structured fields of the parsed output carry the decision; titles typed in each language are compared by presence, verbatim titles (same string in both) by value.",
+    "`expect` is the intended decision (a subset of the projection). A pair where both languages miss `expect` is an English gap, not a parity gap.",
+    "`base_fixture` is relative to tests/fixtures/agent_evals/; `base_input` deep-merges over the fixture input (or is the whole input when there is no fixture)."
+  ],
+  "agents": {
+    "brief_extractor": {
+      "class": "app.agents.brief_extractor:BriefExtractorAgent",
+      "message_fields": [
+        "user_message"
+      ],
+      "reply_language": false
+    },
+    "main_creator": {
+      "class": "app.agents.main_creator:MainCreatorAgent",
+      "message_fields": [
+        "user_message"
+      ],
+      "reply_language": true
+    },
+    "edit_copilot": {
+      "class": "app.agents.edit_copilot:EditCopilotAgent",
+      "message_fields": [
+        "utterance"
+      ],
+      "reply_language": true
+    },
+    "clip_intent_planner": {
+      "class": "app.agents.clip_intent_planner:ClipIntentPlannerAgent",
+      "message_fields": [
+        "creator_request",
+        "latest_user_message"
+      ],
+      "reply_language": true
+    },
+    "creator_memory_extractor": {
+      "class": "app.agents.creator_memory_extractor:CreatorMemoryExtractorAgent",
+      "message_fields": [
+        "source_message"
+      ],
+      "reply_language": false
+    },
+    "slide_post_composer": {
+      "class": "app.agents.slide_post_composer:SlidePostComposerAgent",
+      "message_fields": [
+        "notes"
+      ],
+      "reply_language": false
+    }
+  },
+  "bases": {
+    "brief_followup": {
+      "creator_request": "",
+      "conversation": [],
+      "current_brief": {
+        "version": 0,
+        "requirements": []
+      },
+      "require_request_scope": true
+    },
+    "lisbon_slides": {
+      "theme": "solo travel",
+      "idea": "a weekend in Lisbon",
+      "notes": "",
+      "persona_summary": "lowercase, in-the-moment travel creator, second-person voice",
+      "platform_profile": "instagram_carousel",
+      "media": [
+        {
+          "id": "a1",
+          "kind": "image",
+          "description": "airport arrival, golden hour light through terminal windows"
+        },
+        {
+          "id": "a2",
+          "kind": "image",
+          "description": "narrow cobblestone alley in Alfama, laundry lines overhead"
+        },
+        {
+          "id": "a3",
+          "kind": "video",
+          "description": "6s clip riding tram 28 through a curve, hand out the window"
+        },
+        {
+          "id": "a4",
+          "kind": "image",
+          "description": "pastel de nata and coffee on a cafe table, midday"
+        },
+        {
+          "id": "a5",
+          "kind": "image",
+          "description": "sunset over the Tagus river from Miradouro da Senhora do Monte"
+        }
+      ]
+    }
+  },
+  "pairs": [
+    {
+      "id": "mc_pacing",
+      "capability": "pacing",
+      "agent": "main_creator",
+      "base_fixture": "main_creator/montage_strategy.json",
+      "en": "Make it slow and calm, no fast cuts. I want it to feel relaxed.",
+      "tr": "yavaş ve sakin olsun, hızlı kesmeler istemiyorum. rahat bir his versin",
+      "compare": {
+        "probes": [
+          "action.kind",
+          "action.strategy.pacing"
+        ]
+      },
+      "expect": {
+        "action.kind": "propose_strategy",
+        "action.strategy.pacing": "relaxed"
+      },
+      "notes": "CreativePace is relaxed | balanced | fast; 'relaxed' is the calm choice."
+    },
+    {
+      "id": "mc_music_off",
+      "capability": "music_bed_on_off",
+      "agent": "main_creator",
+      "base_fixture": "main_creator/montage_strategy.json",
+      "en": "No music please, just keep the original sound of my clips.",
+      "tr": "Müzik koyma lütfen, kliplerin kendi sesi kalsın.",
+      "compare": {
+        "probes": [
+          "action.kind",
+          "action.strategy.audio_strategy"
+        ]
+      },
+      "expect": {
+        "action.kind": "propose_strategy",
+        "action.strategy.audio_strategy": "original_audio"
+      }
+    },
+    {
+      "id": "mc_photo_timing",
+      "capability": "photo_timing",
+      "agent": "main_creator",
+      "base_fixture": "main_creator/montage_strategy.json",
+      "en": "Photos should flash by really quickly, the videos can stay on screen longer.",
+      "tr": "fotoğraflar çok hızlı geçsin, videolar ekranda daha uzun kalabilir",
+      "compare": {
+        "probes": [
+          "action.kind",
+          "action.strategy.mixed_media_timing.image_hold",
+          "action.strategy.mixed_media_timing.video_hold"
+        ]
+      },
+      "expect": {
+        "action.kind": "propose_strategy",
+        "action.strategy.mixed_media_timing.image_hold": "very_fast",
+        "action.strategy.mixed_media_timing.video_hold": "longer"
+      }
+    },
+    {
+      "id": "mc_named_sfx",
+      "capability": "named_sound_effect",
+      "agent": "main_creator",
+      "base_fixture": "main_creator/sfx_described_buzzer.json",
+      "en": "Make a quick edit of the best sports moments. Add a buzzer sound effect every time someone misses.",
+      "tr": "En iyi spor anlarından hızlı bir edit yap. Biri her ıskaladığında buzzer sesi ekle.",
+      "compare": {
+        "probes": [
+          "action.kind",
+          "action.strategy.licensed_sfx.effect_id",
+          "action.strategy.licensed_sfx.semantics"
+        ]
+      },
+      "expect": {
+        "action.kind": "propose_strategy"
+      },
+      "notes": "The catalog holds no 'buzzer' effect (Fah, Rejection), so the intended decision is only that both languages handle the named effect the same way."
+    },
+    {
+      "id": "ec_speed_up",
+      "capability": "speed_up_clip",
+      "agent": "edit_copilot",
+      "base_fixture": "edit_copilot/golden/kria_v2_timeline_speed_up_clip.json",
+      "en": "speed up clip 2",
+      "tr": "2. klibi hızlandır",
+      "compare": {
+        "probes": [
+          "intent"
+        ],
+        "ops": {
+          "patch_slots": [
+            "selector.slot_indexes",
+            "patch.playback_rate>1"
+          ]
+        }
+      },
+      "expect": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "patch_slots",
+            "selector.slot_indexes": [
+              1
+            ],
+            "patch.playback_rate>1": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "ec_remove_text",
+      "capability": "remove_text",
+      "agent": "edit_copilot",
+      "base_fixture": "edit_copilot/golden/kria_v2_text_delete_all_labels.json",
+      "en": "delete all the labels",
+      "tr": "bütün etiketleri sil",
+      "compare": {
+        "probes": [
+          "intent"
+        ],
+        "ops": {
+          "remove_texts": [
+            "selector.group"
+          ]
+        }
+      },
+      "expect": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "remove_texts",
+            "selector.group": "labels"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ec_undo",
+      "capability": "undo_last_change",
+      "agent": "edit_copilot",
+      "base_fixture": "edit_copilot/golden/kria_v2_timeline_speed_up_clip.json",
+      "base_input": {
+        "variant_snapshot": {
+          "allowed_op_families": [
+            "clip",
+            "text",
+            "transition",
+            "history"
+          ],
+          "history_state": {
+            "can_undo_last_turn": true,
+            "last_turn_summary": "Sped up clip 2 to 2x"
+          }
+        }
+      },
+      "en": "undo that, I liked it better before",
+      "tr": "bunu geri al, önceki hali daha iyiydi",
+      "compare": {
+        "probes": [
+          "intent"
+        ],
+        "ops": {}
+      },
+      "expect": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "undo_last_edit"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ec_highlight_word",
+      "capability": "highlight_word",
+      "agent": "edit_copilot",
+      "base_fixture": "edit_copilot/golden/caption_emphasize_named_entity.json",
+      "en": "emphasize Turkey in the captions",
+      "tr": "altyazıda Turkey kelimesini vurgula",
+      "compare": {
+        "probes": [
+          "intent"
+        ],
+        "ops": {
+          "set_caption_emphasis": [
+            "cue_index",
+            "emphasis"
+          ]
+        }
+      },
+      "expect": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "set_caption_emphasis",
+            "cue_index": 0,
+            "emphasis": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "cip_exclude_clip",
+      "capability": "exclude_clip",
+      "agent": "clip_intent_planner",
+      "base_input": {
+        "candidate_intents": null,
+        "clip_facts": true,
+        "clip_exclusions": true
+      },
+      "en": "Make a fun montage of our weekend in Lisbon, but don't use the laundry clip.",
+      "tr": "Lizbon hafta sonumuzdan eğlenceli bir montaj yap ama çamaşır klibini kullanma.",
+      "compare": {
+        "probes": [
+          "question?"
+        ],
+        "intents": [
+          "op"
+        ]
+      },
+      "expect": {
+        "question?": false,
+        "intents": [
+          {
+            "op": "exclude"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cip_use_all_clips",
+      "capability": "use_all_clips",
+      "agent": "clip_intent_planner",
+      "base_input": {
+        "candidate_intents": null,
+        "clip_facts": true,
+        "clip_exclusions": true
+      },
+      "en": "Make an 8 second fast montage using all my clips.",
+      "tr": "tüm kliplerimi kullanarak 8 saniyelik hızlı bir montaj yap",
+      "compare": {
+        "probes": [
+          "question?"
+        ],
+        "intents": [
+          "op"
+        ]
+      },
+      "expect": {
+        "question?": false,
+        "intents": [
+          {
+            "op": "include"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cip_keep_order",
+      "capability": "keep_clip_order",
+      "agent": "clip_intent_planner",
+      "base_input": {
+        "candidate_intents": null,
+        "clip_facts": true,
+        "clip_exclusions": true
+      },
+      "en": "Put the clips in the order I filmed them.",
+      "tr": "klipleri çektiğim sıraya göre diz",
+      "compare": {
+        "probes": [
+          "question?"
+        ],
+        "intents": [
+          "op",
+          "order_by"
+        ]
+      },
+      "expect": {
+        "question?": false
+      }
+    },
+    {
+      "id": "be_total_duration",
+      "capability": "total_duration",
+      "agent": "brief_extractor",
+      "base": "brief_followup",
+      "en": "Make the whole video 30 seconds long.",
+      "tr": "videonun tamamı 30 saniye olsun",
+      "compare": {
+        "probes": [
+          "request_scope"
+        ],
+        "kinds": [
+          "timing"
+        ],
+        "req": [
+          "kind",
+          "facts.duration_s"
+        ]
+      },
+      "expect": {
+        "request_scope": "edit",
+        "reqs": [
+          {
+            "kind": "timing",
+            "facts.duration_s": 30
+          }
+        ]
+      }
+    },
+    {
+      "id": "be_shorten",
+      "capability": "shorten_to_n_seconds",
+      "agent": "brief_extractor",
+      "base": "brief_followup",
+      "en": "It's too long, cut it down to 15 seconds.",
+      "tr": "çok uzun olmuş, 15 saniyeye indir",
+      "compare": {
+        "probes": [
+          "request_scope"
+        ],
+        "kinds": [
+          "timing"
+        ],
+        "req": [
+          "kind",
+          "facts.duration_s"
+        ]
+      },
+      "expect": {
+        "request_scope": "edit",
+        "reqs": [
+          {
+            "kind": "timing",
+            "facts.duration_s": 15
+          }
+        ]
+      }
+    },
+    {
+      "id": "be_keep_order",
+      "capability": "keep_clip_order",
+      "agent": "brief_extractor",
+      "base": "brief_followup",
+      "en": "Keep the clips in the order I filmed them.",
+      "tr": "klipleri çektiğim sırada tut",
+      "compare": {
+        "probes": [
+          "request_scope"
+        ],
+        "kinds": [
+          "order"
+        ],
+        "req": [
+          "kind",
+          "scope",
+          "facts.key"
+        ]
+      },
+      "expect": {
+        "reqs": [
+          {
+            "kind": "order",
+            "facts.key": "capture_time"
+          }
+        ]
+      }
+    },
+    {
+      "id": "be_end_on_clip",
+      "capability": "end_on_specific_clip",
+      "agent": "brief_extractor",
+      "base": "brief_followup",
+      "en": "End the video on the sunset clip.",
+      "tr": "videoyu gün batımı klibiyle bitir",
+      "compare": {
+        "probes": [
+          "request_scope"
+        ],
+        "kinds": null,
+        "req": [
+          "kind",
+          "any:facts.closing,facts.last_clip"
+        ]
+      },
+      "expect": {
+        "reqs": [
+          {
+            "any:facts.closing,facts.last_clip": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "be_captions_on",
+      "capability": "captions_on",
+      "agent": "brief_extractor",
+      "base": "brief_followup",
+      "en": "Add captions.",
+      "tr": "altyazı ekle",
+      "compare": {
+        "probes": [
+          "request_scope"
+        ],
+        "kinds": null,
+        "req": [
+          "facts.captions",
+          "facts.caption_language"
+        ]
+      },
+      "expect": {
+        "reqs": [
+          {
+            "facts.captions": "on"
+          }
+        ]
+      }
+    },
+    {
+      "id": "be_caption_language",
+      "capability": "caption_language",
+      "agent": "brief_extractor",
+      "base": "brief_followup",
+      "en": "Put English captions on it.",
+      "tr": "ingilizce altyazı koy",
+      "compare": {
+        "probes": [
+          "request_scope"
+        ],
+        "kinds": null,
+        "req": [
+          "facts.captions",
+          "facts.caption_language"
+        ]
+      },
+      "expect": {
+        "reqs": [
+          {
+            "facts.captions": "on",
+            "facts.caption_language": "en"
+          }
+        ]
+      }
+    },
+    {
+      "id": "be_opening_title",
+      "capability": "opening_title_text",
+      "agent": "brief_extractor",
+      "base": "brief_followup",
+      "en": "Add a title at the start that says \"Lisbon Diaries\".",
+      "tr": "Başa \"Lisbon Diaries\" yazan bir başlık ekle.",
+      "compare": {
+        "probes": [
+          "request_scope"
+        ],
+        "kinds": [
+          "text"
+        ],
+        "req": [
+          "kind",
+          "scope",
+          "literal|cf"
+        ]
+      },
+      "expect": {
+        "reqs": [
+          {
+            "kind": "text",
+            "scope": "title",
+            "literal|cf": "lisbon diaries"
+          }
+        ]
+      },
+      "notes": "The title is given verbatim in both languages, so it is compared by value."
+    },
+    {
+      "id": "be_closing_title",
+      "capability": "closing_title",
+      "agent": "brief_extractor",
+      "base": "brief_followup",
+      "en": "At the very end, put the text \"See you next summer\".",
+      "tr": "En sona \"Seneye görüşürüz\" yazısı koy.",
+      "compare": {
+        "probes": [
+          "request_scope"
+        ],
+        "kinds": [
+          "text"
+        ],
+        "req": [
+          "kind",
+          "has:literal"
+        ]
+      },
+      "expect": {
+        "reqs": [
+          {
+            "kind": "text",
+            "has:literal": true
+          }
+        ]
+      },
+      "notes": "The closing line is in each creator's own language, so only its presence as an exact literal is compared."
+    },
+    {
+      "id": "be_text_position",
+      "capability": "text_position",
+      "agent": "brief_extractor",
+      "base": "brief_followup",
+      "en": "Put a location label on each clip in the bottom left corner.",
+      "tr": "her klibin sol alt köşesine konum yazısı ekle",
+      "compare": {
+        "probes": [
+          "request_scope"
+        ],
+        "kinds": [
+          "text"
+        ],
+        "req": [
+          "kind",
+          "scope",
+          "facts.position"
+        ]
+      },
+      "expect": {
+        "reqs": [
+          {
+            "kind": "text",
+            "scope": "per_clip",
+            "facts.position": "bottom_left"
+          }
+        ]
+      }
+    },
+    {
+      "id": "be_text_animation",
+      "capability": "text_animation",
+      "agent": "brief_extractor",
+      "base": "brief_followup",
+      "en": "Make the title appear with a typewriter animation.",
+      "tr": "başlık daktilo efektiyle yazılarak gelsin",
+      "compare": {
+        "probes": [
+          "request_scope"
+        ],
+        "kinds": null,
+        "req": [
+          "first:facts.animation,facts.si_entrance"
+        ]
+      },
+      "expect": {
+        "reqs": [
+          {
+            "first:facts.animation,facts.si_entrance": "typewriter"
+          }
+        ]
+      }
+    },
+    {
+      "id": "be_change_font",
+      "capability": "change_font",
+      "agent": "brief_extractor",
+      "base": "brief_followup",
+      "en": "Change all the text to the Playfair Display font.",
+      "tr": "tüm yazıların fontunu Playfair Display yap",
+      "compare": {
+        "probes": [
+          "request_scope"
+        ],
+        "kinds": [
+          "style",
+          "text"
+        ],
+        "req": [
+          "kind",
+          "facts.si_font_family|cf",
+          "facts.si_target"
+        ]
+      },
+      "expect": {
+        "reqs": [
+          {
+            "kind": "style",
+            "facts.si_font_family|cf": "playfair display",
+            "facts.si_target": "all_text"
+          }
+        ]
+      }
+    },
+    {
+      "id": "be_text_color",
+      "capability": "color_look",
+      "agent": "brief_extractor",
+      "base": "brief_followup",
+      "en": "Make all the text #FFD400.",
+      "tr": "bütün yazılar #FFD400 renginde olsun",
+      "compare": {
+        "probes": [
+          "request_scope"
+        ],
+        "kinds": [
+          "style",
+          "text"
+        ],
+        "req": [
+          "kind",
+          "facts.si_color|cf",
+          "facts.si_target"
+        ]
+      },
+      "expect": {
+        "reqs": [
+          {
+            "kind": "style",
+            "facts.si_color|cf": "#ffd400"
+          }
+        ]
+      }
+    },
+    {
+      "id": "be_brighten",
+      "capability": "color_look",
+      "agent": "brief_extractor",
+      "base": "brief_followup",
+      "en": "The clips look too dark, brighten them up.",
+      "tr": "klipler çok karanlık duruyor, biraz aydınlat",
+      "compare": {
+        "probes": [
+          "request_scope"
+        ],
+        "kinds": null,
+        "req": [
+          "kind",
+          "facts.footage_light"
+        ]
+      },
+      "expect": {
+        "reqs": [
+          {
+            "kind": "style",
+            "facts.footage_light": "brighter"
+          }
+        ]
+      }
+    },
+    {
+      "id": "be_music_off",
+      "capability": "music_bed_on_off",
+      "agent": "brief_extractor",
+      "base": "brief_followup",
+      "en": "Don't add any music, keep the original sound from the camera.",
+      "tr": "müzik ekleme, kameranın kendi sesi kalsın",
+      "compare": {
+        "probes": [
+          "request_scope"
+        ],
+        "kinds": [
+          "audio"
+        ],
+        "req": [
+          "kind",
+          "facts.audio_intent"
+        ]
+      },
+      "expect": {
+        "reqs": [
+          {
+            "kind": "audio",
+            "facts.audio_intent": "source_unchanged"
+          }
+        ]
+      }
+    },
+    {
+      "id": "be_named_sfx",
+      "capability": "named_sound_effect",
+      "agent": "brief_extractor",
+      "base": "brief_followup",
+      "en": "Play a pop sound when I say \"coffee\".",
+      "tr": "\"kahve\" dediğimde pop sesi çal",
+      "compare": {
+        "probes": [
+          "request_scope"
+        ],
+        "kinds": null,
+        "req": [
+          "kind",
+          "has:facts.triggers"
+        ]
+      },
+      "expect": {
+        "reqs": [
+          {
+            "has:facts.triggers": true
+          }
+        ]
+      },
+      "notes": "The trigger word is the creator's own spoken word in each language, so only its presence is compared."
+    },
+    {
+      "id": "be_voiceover_vs_quote",
+      "capability": "voiceover_vs_onscreen_quote",
+      "agent": "brief_extractor",
+      "base": "brief_followup",
+      "en": "Show my quote \"Never stop exploring\" as text on screen, don't read it out loud.",
+      "tr": "\"Keşfetmeyi asla bırakma\" sözümü ekranda yazı olarak göster, sesli okuma",
+      "compare": {
+        "probes": [
+          "request_scope"
+        ],
+        "kinds": null,
+        "req": [
+          "kind",
+          "has:literal"
+        ]
+      },
+      "expect": {
+        "reqs": [
+          {
+            "kind": "text",
+            "has:literal": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "be_status_question",
+      "capability": "status_question",
+      "agent": "brief_extractor",
+      "base": "brief_followup",
+      "en": "Is my video ready yet?",
+      "tr": "videom hazır mı",
+      "compare": {
+        "probes": [
+          "request_scope",
+          "count:brief_updates"
+        ],
+        "kinds": null,
+        "req": [
+          "kind"
+        ]
+      },
+      "expect": {
+        "count:brief_updates": 0
+      }
+    },
+    {
+      "id": "be_redo_scratch",
+      "capability": "redo_from_scratch",
+      "agent": "brief_extractor",
+      "base": "brief_followup",
+      "en": "Start over and make the whole video again from scratch.",
+      "tr": "baştan başla, videoyu sıfırdan yeniden yap",
+      "compare": {
+        "probes": [
+          "request_scope",
+          "count:brief_updates"
+        ],
+        "kinds": null,
+        "req": [
+          "kind"
+        ]
+      },
+      "expect": {
+        "request_scope": "rebuild",
+        "count:brief_updates": 0
+      }
+    },
+    {
+      "id": "mem_always_font",
+      "capability": "always_do_x_memory",
+      "agent": "creator_memory_extractor",
+      "base_input": {
+        "candidate_hint": "explicit",
+        "current_memory": [
+          {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "normalized_key": "pacing",
+            "instruction": "Keep the pacing fast",
+            "enforcement": "constraint",
+            "state": "active",
+            "user_locked": false
+          }
+        ]
+      },
+      "en": "From now on, always use the Inter font in my videos.",
+      "tr": "Bundan sonra videolarımda hep Inter fontunu kullan.",
+      "compare": {
+        "probes": [
+          "operation",
+          "normalized_key",
+          "structured_value.font_family|cf",
+          "enforcement"
+        ]
+      },
+      "expect": {
+        "operation": "activate_explicit",
+        "normalized_key": "font_family",
+        "structured_value.font_family|cf": "inter"
+      },
+      "notes": "candidate_hint is pinned to explicit for both so the model is measured alone; the rule-based gate in front of it (classify_memory_candidate) is reported per pair as `gate`."
+    },
+    {
+      "id": "slide_count",
+      "capability": "slide_count",
+      "agent": "slide_post_composer",
+      "base": "lisbon_slides",
+      "en": "Keep it to just 3 slides.",
+      "tr": "sadece 3 slayt olsun",
+      "compare": {
+        "probes": [
+          "len:order"
+        ]
+      },
+      "expect": {
+        "len:order": 3
+      },
+      "notes": "The composer's contract (parse) requires every given id exactly once, so a slide count in the creator's notes cannot be honoured in either language: an English gap by design, kept as a tracked capability gap."
+    },
+    {
+      "id": "slide_cover",
+      "capability": "slide_cover",
+      "agent": "slide_post_composer",
+      "base": "lisbon_slides",
+      "en": "Use the sunset photo as the cover.",
+      "tr": "kapak fotoğrafı gün batımı olsun",
+      "compare": {
+        "probes": [
+          "cover_id"
+        ]
+      },
+      "expect": {
+        "cover_id": "a5"
+      }
+    }
+  ]
+}

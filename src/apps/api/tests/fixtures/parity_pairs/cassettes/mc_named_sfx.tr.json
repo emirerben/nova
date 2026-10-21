@@ -1,0 +1,100 @@
+{
+  "pair_id": "mc_named_sfx",
+  "lang": "tr",
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-10-19-v64",
+  "message": "En iyi spor anlarından hızlı bir edit yap. Biri her ıskaladığında buzzer sesi ekle.",
+  "input": {
+    "user_message": "En iyi spor anlarından hızlı bir edit yap. Biri her ıskaladığında buzzer sesi ekle.",
+    "creator_context": "Personal sports-day footage from Ann Arbor.",
+    "item_context": "A short highlight montage from several games.",
+    "media_context": [
+      {
+        "media_id": "clip-football",
+        "kind": "video",
+        "creator_note": "football action"
+      },
+      {
+        "media_id": "clip-tennis",
+        "kind": "video",
+        "creator_note": "tennis action"
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-sports-day",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "has_voiceover": false,
+      "media": [
+        {
+          "media_id": "clip-football",
+          "kind": "video",
+          "duration_s": 12.0,
+          "label": "Football"
+        },
+        {
+          "media_id": "clip-tennis",
+          "kind": "video",
+          "duration_s": 10.0,
+          "label": "Tennis"
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "sfx-fah",
+          "kind": "sound_effect",
+          "label": "Fah"
+        },
+        {
+          "catalog_id": "sfx-rejection",
+          "kind": "sound_effect",
+          "label": "Rejection"
+        },
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Licensed sports pulse"
+        }
+      ],
+      "capabilities": {
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "edit_format:montage": {
+          "available": true
+        },
+        "sound_effects": {
+          "available": true
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "reply_language": "tr"
+  },
+  "prompt_sha256": "d0079a68d80ebdfa26e5bd7cf0c91ac1d6f5ca8c976395dd9a6dfde2cb73c9d4",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:08:35.883805+00:00",
+  "raw_text": "{\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"audio_strategy\": \"licensed_music\",\n      \"media_scope\": \"selected\",\n      \"story_structure\": [\n        \"Hareketli futbol anlarıyla güçlü bir başlangıç\",\n        \"Tenis sahneleri ve ıskalama anlarında buzzer efekti\",\n        \"Hızlı ve enerjik final\"\n      ],\n      \"pacing\": \"fast\",\n      \"target_duration_s\": 10,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"licensed_sfx\": {\n        \"effect_id\": \"buzzer\",\n        \"semantics\": \"funny_moments\",\n        \"max_placements\": 6\n      },\n      \"rationale\": \"Görüntülerindeki en iyi anları seçip hızlı ve enerjik bir tempoda kurgulayacağım. Spor temalı ritmik bir müzik kullanarak tempoyu yüksek tutarken, ıskalama anlarına tam istediğin gibi buzzer ses efektini yerleştireceğim.\"\n    },\n    \"summary\": \"Futbol ve tenis görüntülerinden en iyi anları seçip tempolu bir spor montajı yapıyorum. Arka planda hareketli bir müzik çalarken, ıskalanan anlara buzzer ses efektini ekleyeceğim.\",\n    \"render_intent_evidence\": {\n      \"licensed_sfx\": \"Biri her ıskaladığında buzzer sesi ekle.\"\n    }\n  }\n}",
+  "raw_texts": [
+    "{\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"audio_strategy\": \"licensed_music\",\n      \"media_scope\": \"selected\",\n      \"story_structure\": [\n        \"Hareketli futbol anlarıyla güçlü bir başlangıç\",\n        \"Tenis sahneleri ve ıskalama anlarında buzzer efekti\",\n        \"Hızlı ve enerjik final\"\n      ],\n      \"pacing\": \"fast\",\n      \"target_duration_s\": 10,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"licensed_sfx\": {\n        \"effect_id\": \"buzzer\",\n        \"semantics\": \"funny_moments\",\n        \"max_placements\": 6\n      },\n      \"rationale\": \"Görüntülerindeki en iyi anları seçip hızlı ve enerjik bir tempoda kurgulayacağım. Spor temalı ritmik bir müzik kullanarak tempoyu yüksek tutarken, ıskalama anlarına tam istediğin gibi buzzer ses efektini yerleştireceğim.\"\n    },\n    \"summary\": \"Futbol ve tenis görüntülerinden en iyi anları seçip tempolu bir spor montajı yapıyorum. Arka planda hareketli bir müzik çalarken, ıskalanan anlara buzzer ses efektini ekleyeceğim.\",\n    \"render_intent_evidence\": {\n      \"licensed_sfx\": \"Biri her ıskaladığında buzzer sesi ekle.\"\n    }\n  }\n}"
+  ],
+  "model_used": "gemini-3.1-pro-preview",
+  "tokens": {
+    "in": 9083,
+    "out": 369,
+    "thoughts": 1259
+  },
+  "computed_cost_usd": 0.037702
+}

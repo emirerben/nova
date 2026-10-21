@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_voiceover_vs_quote",
+  "lang": "tr",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "\"Keşfetmeyi asla bırakma\" sözümü ekranda yazı olarak göster, sesli okuma",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "\"Keşfetmeyi asla bırakma\" sözümü ekranda yazı olarak göster, sesli okuma"
+  },
+  "prompt_sha256": "860d99432c2d0ee22cf8d1f3ccc7b8ddf409406b9b7400d906cce3774b8cc593",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:12:33.329205+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"Keşfetmeyi asla bırakma\",\n      \"description\": \"ekranda yazı olarak göster\",\n      \"facts\": {}\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"audio\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"sesli okuma\",\n      \"facts\": {}\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"Keşfetmeyi asla bırakma\",\n      \"description\": \"ekranda yazı olarak göster\",\n      \"facts\": {}\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"audio\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"sesli okuma\",\n      \"facts\": {}\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3240,
+    "out": 141,
+    "thoughts": 872
+  },
+  "computed_cost_usd": 0.006229
+}

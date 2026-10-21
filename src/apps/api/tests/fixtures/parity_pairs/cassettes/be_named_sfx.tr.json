@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_named_sfx",
+  "lang": "tr",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "\"kahve\" dediğimde pop sesi çal",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "\"kahve\" dediğimde pop sesi çal"
+  },
+  "prompt_sha256": "d5741647af5ccda3164fc24591bda8554d8f75ad6d96b8776d095120aeae1213",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:12:21.632783+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"audio\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"\\\"kahve\\\" dediğimde pop sesi çal\",\n      \"facts\": {\n        \"triggers\": [\n          \"kahve\"\n        ]\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"audio\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"\\\"kahve\\\" dediğimde pop sesi çal\",\n      \"facts\": {\n        \"triggers\": [\n          \"kahve\"\n        ]\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3228,
+    "out": 101,
+    "thoughts": 596
+  },
+  "computed_cost_usd": 0.005035
+}

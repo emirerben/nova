@@ -1076,6 +1076,17 @@
         "scripts/editorial-taste-eval.py",
         "src/apps/api/tests/journeys/test_editorial_taste_evaluation_cli.py"
       ]
+    },
+    {
+      "id": "kri-773-turkish-parity",
+      "needs_native": false,
+      "api_tests": "tests/parity tests/evals/parity",
+      "paths": [
+        "src/apps/api/tests/parity/",
+        "src/apps/api/tests/evals/parity/",
+        "src/apps/api/tests/fixtures/parity_pairs/",
+        "docs/reviews/turkish-parity-map-2026-10.md"
+      ]
     }
   ]
 }
