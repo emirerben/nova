@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import math
+import os
 import re
 import subprocess
 import tempfile
@@ -115,9 +116,15 @@ def unsupported_reasons(recipe) -> list[str]:
     return sorted(set(reasons))
 
 
-def _run(arguments: list[str], *, data: bytes | None = None, timeout: float = 20) -> bytes:
+def _run(
+    arguments: list[str],
+    *,
+    data: bytes | None = None,
+    timeout: float = 20,
+    env: Mapping[str, str] | None = None,
+) -> bytes:
     return subprocess.run(
-        arguments, input=data, check=True, capture_output=True, timeout=timeout
+        arguments, input=data, check=True, capture_output=True, timeout=timeout, env=env
     ).stdout
 
 
@@ -411,6 +418,10 @@ def _read_text(
                 ["tesseract", "stdin", "stdout", "--psm", "6", "tsv"],
                 data=buffer.getvalue(),
                 timeout=5,
+                # OpenMP teams contend across concurrent verifications on a
+                # CPU-limited worker. Bound this child only; retain the exact
+                # OCR algorithm, confidence bar and five-second deadline.
+                env={**os.environ, "OMP_THREAD_LIMIT": "1"},
             )
             rows = csv.DictReader(io.StringIO(raw.decode()), delimiter="\t")
             candidates.add(

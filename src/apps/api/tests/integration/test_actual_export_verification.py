@@ -12,12 +12,13 @@ import shutil
 import subprocess
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from app.kria.device_render import DeviceRenderStatus, make_device_request
 from app.kria.recipes_v2 import EditRecipeV2
@@ -56,6 +57,28 @@ def test_watermark_evidence_bounds_match_native_compositor(canvas, expected):
     # Independent placement oracle: KriaMediaEngine BrandingTests pins these
     # approved tile bounds, including the 4:5 height-constrained scale.
     assert measured._watermark_bounds(*canvas) == pytest.approx(expected)
+
+
+def test_concurrent_text_evidence_survives_an_oversubscribed_parent(monkeypatch):
+    """Actual OCR pixels/processes, no wider deadline or altered recognition bar.
+
+    Failure: inherited OpenMP teams compete under CPU quotas and exhaust the
+    five-second read budget. A child resource policy must isolate OCR from an
+    oversubscribed parent while still reading the exact displayed word.
+    """
+    assert FONT is not None, "Text evidence requires the integration font"
+    image = Image.new("RGB", (1000, 180), "white")
+    ImageDraw.Draw(image).text(
+        (20, 40), "Approved", fill="black", font=ImageFont.truetype(str(FONT), 72)
+    )
+    monkeypatch.setenv("OMP_NUM_THREADS", "64")
+    monkeypatch.setenv("OMP_THREAD_LIMIT", "64")
+    wanted = measured.normalize_text("Approved")
+    with ThreadPoolExecutor(max_workers=32) as pool:
+        results = list(
+            pool.map(lambda _: measured._read_text(image, [(0, 0, 0)], wanted=wanted), range(32))
+        )
+    assert all(wanted in result for result in results)
 
 
 def ffmpeg(*args):
