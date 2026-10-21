@@ -1107,6 +1107,7 @@ async def test_research_ideas_keep_public_search_private_and_reuse_reviewed_evid
     await client.post(f"{path}/index", json={"expected_revision": 1})
     calls = []
     approved = True
+    source_approved = True
     source_url = "https://si.edu/terminal"
 
     def search(self, value, *, ctx):
@@ -1155,12 +1156,23 @@ async def test_research_ideas_keep_public_search_private_and_reuse_reviewed_evid
         )
 
     def review(self, value, *, ctx):
-        calls.append(("review", None))
-        return research.StoryResearchReviewOutput(approved=approved, reason="Recorded review")
+        calls.append(
+            (
+                "source_review" if isinstance(self, research.StorySourceReviewAgent) else "review",
+                None,
+            )
+        )
+        return research.StoryResearchReviewOutput(
+            approved=source_approved
+            if isinstance(self, research.StorySourceReviewAgent)
+            else approved,
+            reason="Recorded review",
+        )
 
     monkeypatch.setattr(GroundedResearchAgent, "run", search)
     monkeypatch.setattr(CameraRollStoriesAgent, "run", ideas)
     monkeypatch.setattr(research.StoryResearchReviewAgent, "run", review)
+    monkeypatch.setattr(research.StorySourceReviewAgent, "run", review)
     body = dict(
         expected_revision=1,
         query="My private direction for a ferry outing",
@@ -1177,10 +1189,10 @@ async def test_research_ideas_keep_public_search_private_and_reuse_reviewed_evid
     )
     assert story["research"]["evidence"]["search_entry_html"]
     assert story["requires_render_approval"]
-    assert [row[0] for row in calls] == ["search", "ideas", "review"]
+    assert [row[0] for row in calls] == ["search", "ideas", "source_review", "review"]
     cached = await client.post(f"{path}/stories", json={**body, "cache_only": True})
     assert cached.status_code == 200 and cached.json()["stories"][0] == story
-    assert len(calls) == 3
+    assert len(calls) == 4
     changed_plan = {**story["content_plan"], "opening_text": "My revised opening"}
     changed = await client.patch(
         f"{path}/stories/{story['id']}",
@@ -1197,11 +1209,17 @@ async def test_research_ideas_keep_public_search_private_and_reuse_reviewed_evid
     approved = False
     failed = await client.post(f"{path}/stories", json={**body, "query": "A different direction"})
     assert failed.status_code == 503 and "stories" not in failed.json()
-    assert len(calls) == 6
+    assert len(calls) == 8
     invalid = await client.post(
         f"{path}/stories", json={**body, "research_topic": "https://private.local/x"}
     )
-    assert invalid.status_code == 422 and len(calls) == 6
+    assert invalid.status_code == 422 and len(calls) == 8
+    source_approved = False
+    unsupported = await client.post(
+        f"{path}/stories", json={**body, "query": "Another source selection"}
+    )
+    assert unsupported.status_code == 503 and len(calls) == 11
+    assert [row[0] for row in calls[-3:]] == ["search", "ideas", "source_review"]
     source_url = "https://travel-blog.example/terminal"
     ungrounded = await client.post(f"{path}/stories", json={**body, "query": "A third direction"})
-    assert ungrounded.status_code == 503 and len(calls) == 7
+    assert ungrounded.status_code == 503 and len(calls) == 12

@@ -50,7 +50,7 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.media.camera_roll_stories",
         prompt_id="camera_roll_stories",
-        prompt_version="2026-10-21.4",
+        prompt_version="2026-10-21.5",
         model="gemini-2.5-flash",
         max_attempts=1,
         timeout_s=20,
@@ -111,6 +111,10 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "'Layers of History' or 'Ancient Stories' is not an explanation. Do not hide the "
             "interesting point only in why_it_works while showing generic text. "
             "Keep the title equally specific; do not reuse a rejected brochure-like title. "
+            "Write plain explanatory copy, without promotional padding such as 'Discover the "
+            "incredible', 'fascinating journey' or 'each layer tells a story'. If a fact gives "
+            "a range or conflicting counts, do not choose one count for the title or opening. "
+            "Prefer explaining the underlying process to quoting an uncertain number. "
             "Use the current query for the outing's overall context, but identify individual "
             "objects/buildings only from their own evidence or explicit creator identification. "
             "A generic modern building is not evidence of a museum. Select fewer moments when "
@@ -118,7 +122,11 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "Return the selected IDs in research_fact_ids. Prefer footage that illustrates "
             "the point, "
             "but relevant background is useful even when no clip demonstrates the fact. Explain "
-            "that distinction in the beat reasons. Treat all researched facts as background "
+            "each beat's editorial purpose using only object names already in THAT candidate's "
+            "description. Do not upgrade 'stone house' to 'ancient structure' or 'stone "
+            "amphitheater' to 'excavated remains'. The historical background does not date "
+            "the pictured stone. A scene can supply atmosphere without illustrating a layer. "
+            "Make that distinction in the beat reasons. Treat all researched facts as background "
             "context, never proof that an unidentified pictured object, wall or building has a "
             "particular name, age or provenance. Do not equate settlement layers with separate "
             "civilizations or infer continuous occupation from a date range. Preserve source "
