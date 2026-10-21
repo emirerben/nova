@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.11.0] - 2026-10-21
+
+### Fixed
+- fix(clips): one video never gets a "which of your clips" picker (KRI-779) (#1709) <!-- release-pr: 1709 -->
+
 ## [0.81.10.0] - 2026-10-21
 
 ### Changed
