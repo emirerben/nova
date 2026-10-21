@@ -478,6 +478,19 @@ def _lower(text: str) -> str:
     return apply_text_case(text, "lower")
 
 
+def _draws_every_letter(family: str) -> Callable[[str], bool]:
+    """Does the face the Skia renderer resolves for `family` draw every letter of the text?"""
+
+    def check(text: str) -> bool:
+        from app.pipeline.font_coverage import missing_glyphs
+        from app.pipeline.text_overlay_skia import _resolve_typeface_for_overlay
+
+        resolved = _resolve_typeface_for_overlay({"font_family": family, "text": text})
+        return not missing_glyphs(resolved.name, text)
+
+    return check
+
+
 # --------------------------------------------------------------------------- table
 
 
@@ -1873,6 +1886,94 @@ CASES: tuple[Case, ...] = (
         "Barış Manço",
         True,
         {"tr_ascii": "Baris Manco", "tr_upper": "BARIŞ MANÇO"},
+    ),
+    # ---------------------------------------------------------------- render fonts
+    # O37-O41 (+ O41z, ZT Bros Oskon 90s draws its dotless ı with a dot, found in
+    # KRI-785): the renderer's face must draw every letter of the text. A face
+    # missing Turkish letters falls back for the whole run (font_coverage).
+    Case(
+        "O37",
+        "render_fonts",
+        "pipeline.text_overlay_skia._resolve_typeface_for_overlay",
+        "Alte Haas Grotesk draws every letter",
+        _draws_every_letter("Alte Haas Grotesk"),
+        "Sunny light, so nice!",
+        True,
+        {
+            "tr": "Güneş ışığı, çok güzel!",
+            "tr_ascii": "Gunes isigi, cok guzel!",
+            "tr_upper": "GÜNEŞ IŞIĞI, ÇOK GÜZEL! İŞTE",
+        },
+    ),
+    Case(
+        "O38",
+        "render_fonts",
+        "pipeline.text_overlay_skia._resolve_typeface_for_overlay",
+        "Big Curls draws every letter",
+        _draws_every_letter("Big Curls"),
+        "Sunny light, so nice!",
+        True,
+        {
+            "tr": "Güneş ışığı, çok güzel!",
+            "tr_ascii": "Gunes isigi, cok guzel!",
+            "tr_upper": "GÜNEŞ IŞIĞI, ÇOK GÜZEL! İŞTE",
+        },
+    ),
+    Case(
+        "O39",
+        "render_fonts",
+        "pipeline.text_overlay_skia._resolve_typeface_for_overlay",
+        "Permanent Marker draws every letter",
+        _draws_every_letter("Permanent Marker"),
+        "Sunny light, so nice!",
+        True,
+        {
+            "tr": "Güneş ışığı, çok güzel!",
+            "tr_ascii": "Gunes isigi, cok guzel!",
+            "tr_upper": "GÜNEŞ IŞIĞI, ÇOK GÜZEL! İŞTE",
+        },
+    ),
+    Case(
+        "O40",
+        "render_fonts",
+        "pipeline.text_overlay_skia._resolve_typeface_for_overlay",
+        "Satisfy draws every letter",
+        _draws_every_letter("Satisfy"),
+        "Sunny light, so nice!",
+        True,
+        {
+            "tr": "Güneş ışığı, çok güzel!",
+            "tr_ascii": "Gunes isigi, cok guzel!",
+            "tr_upper": "GÜNEŞ IŞIĞI, ÇOK GÜZEL! İŞTE",
+        },
+    ),
+    Case(
+        "O41",
+        "render_fonts",
+        "pipeline.text_overlay_skia._resolve_typeface_for_overlay",
+        "Rascal draws every letter",
+        _draws_every_letter("Rascal"),
+        "Sunny light, so nice!",
+        True,
+        {
+            "tr": "Güneş ışığı, çok güzel!",
+            "tr_ascii": "Gunes isigi, cok guzel!",
+            "tr_upper": "GÜNEŞ IŞIĞI, ÇOK GÜZEL! İŞTE",
+        },
+    ),
+    Case(
+        "O41z",
+        "render_fonts",
+        "pipeline.text_overlay_skia._resolve_typeface_for_overlay",
+        "ZT Bros Oskon 90s draws every letter",
+        _draws_every_letter("ZT Bros Oskon 90s"),
+        "Sunny light, so nice!",
+        True,
+        {
+            "tr": "Güneş ışığı, çok güzel!",
+            "tr_ascii": "Gunes isigi, cok guzel!",
+            "tr_upper": "GÜNEŞ IŞIĞI, ÇOK GÜZEL! İŞTE",
+        },
     ),
 )
 
