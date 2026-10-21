@@ -7556,6 +7556,14 @@ async def _editor_commit_item(
         any(deletion.kind == "clip" for deletion in initial_deletions)
         and locked_variant.get("resolved_archetype") == "guided_story"
     )
+    durable_authored_save = (
+        body.editor_state_version == 2
+        and locked_variant.get("resolved_archetype") == "guided_story"
+        and not (locked_job.assembly_plan.get("guided_story_execution_plan") or {}).get("narration")
+        and locked_variant.get("editor_timeline_mode") != "authored"
+        and not is_empty_editor_variant(locked_variant)
+        and not user_song_for_variant(locked_job, locked_variant, song_filename=None)
+    )
     if needs_authored_deletion_baseline and user_song_for_variant(
         locked_job, locked_variant, song_filename=None
     ):
@@ -7565,13 +7573,30 @@ async def _editor_commit_item(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=USER_SONG_CLIP_EDIT_UNSUPPORTED,
         )
-    if is_empty_editor_variant(locked_variant):
+    if is_empty_editor_variant(locked_variant) or (
+        body.editor_state_version == 2
+        and locked_variant.get("editor_state_version") == 2
+        and locked_variant.get("editor_timeline_mode") == "authored"
+    ):
         await attach_saved_editor_drafts(db, locked_job)
         draft_baseline = stage_saved_draft_baseline(locked_job, variant_id, body)
-    elif needs_authored_deletion_baseline:
+    elif needs_authored_deletion_baseline or durable_authored_save:
         draft_baseline = stage_initial_authored_baseline(
             locked_job, variant_id, editor_deletion_timeline(locked_job, locked_variant)
         )
+        if durable_authored_save and body.timeline_slots is None:
+            from app.routes.generative_jobs import TimelineSlotEdit
+
+            # Compile from the full current authoring baseline even for a
+            # text-only Save; never reburn a stale pre-edit video underneath it.
+            body = body.model_copy(
+                update={
+                    "timeline_slots": [
+                        TimelineSlotEdit.model_validate(row)
+                        for row in editor_deletion_timeline(locked_job, locked_variant)
+                    ]
+                }
+            )
     else:
         draft_baseline = None
     body = normalize_editor_deletion_request(draft_baseline or locked_job, variant_id, body)
@@ -7818,7 +7843,7 @@ async def _editor_commit_item(
     )
     if saving_empty:
         if not is_empty_editor_variant(locked_variant):
-            if commit_body.editor_state_version != 1:
+            if commit_body.editor_state_version not in (1, 2):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="editor_draft_requires_supported_client",
@@ -7956,14 +7981,31 @@ async def _editor_commit_item(
         item.theme = cleaned_title
         item.user_edited = True
 
+    saved_draft = None
+    if commit_body.editor_state_version == 2:
+        from app.services.editor_empty_drafts import (
+            prepare_saved_render_windows,
+            stage_prepared_editor_draft,
+        )
+
+        prepare_saved_render_windows(locked_job, variant_id, prep)
+        saved_draft = await stage_prepared_editor_draft(
+            db,
+            item=item,
+            job=locked_job,
+            variant_id=variant_id,
+            creator_id=user.id,
+            body=commit_body,
+        )
     await db.commit()
     # Kick AFTER the commit so a worker that grabs the task instantly always
     # observes the committed sections + generation token. If the kick fails the
     # persist stands — the honest partial state ("saved, rendering didn't
     # start") the plan's §9 table describes.
-    render_started = True
+    render_started = not bool(prep.get("render_recovery"))
     try:
-        enqueue_editor_commit_render(str(locked_job.id), variant_id, prep)
+        if render_started:
+            enqueue_editor_commit_render(str(locked_job.id), variant_id, prep)
     except Exception:  # noqa: BLE001 — persistence already committed; report partial success
         render_started = False
         log.exception(
@@ -8041,7 +8083,11 @@ async def _editor_commit_item(
         ),
     )
     return EditorCommitResponse(
-        ok=render_started,
+        ok=render_started or saved_draft is not None,
+        draft=saved_draft,
+        render_started=render_started,
+        render_recovery=prep.get("render_recovery")
+        or (None if render_started else "Saved. Retry rendering when the service is available."),
         generation=prep["generation"],
         revision_number=prep.get("revision_number"),
         revision_hash=canonical_revision_hash,

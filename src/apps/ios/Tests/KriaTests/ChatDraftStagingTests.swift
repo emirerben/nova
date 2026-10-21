@@ -94,6 +94,27 @@ final class ChatDraftStagingTests: XCTestCase {
         return (session, fake)
     }
 
+    func testDurableSnapshotReopensExactLanesWithCurrentCapabilities() {
+        let payload: [String: JSONValue] = [
+            "base_generation": .string("g1"), "editor_state_version": .number(2),
+            "sections": .object([
+                "timeline_slots": .array([.object(["slot_id": .string("s1"), "clip_index": .number(0), "in_s": .number(0.9), "duration_s": .number(3)])]),
+                "text_elements": .array([.object(["id": .string("road"), "text": .string("Road trip"), "start_s": .number(0), "end_s": .number(3)])])
+            ])
+        ]
+        let snapshot = DraftSnapshot(draftID: "saved", itemID: "item", variantKey: "initial", draftRevision: 4,
+            snapshotHash: "h", etag: "e", baseJobID: Self.jobID, baseGenerationID: "g1",
+            snapshot: ["kind": .string("editor"), "editor_payload": .object(payload)], canUndo: true, createdAt: .now)
+        var variant = Self.variant()
+        variant["editor_capabilities"] = .object(["timeline": .bool(true)])
+        let draft = snapshot.editorDraft(projectID: UUID(), authoritativeVariant: variant)
+        let reopened = EditorDocument(snapshot: draft.serverSnapshot)
+        XCTAssertEqual(reopened.clips.first?.inS, 0.9)
+        XCTAssertEqual(reopened.clips.first?.durationS, 3)
+        XCTAssertEqual(reopened.textElements.map(\.text), ["Road trip"])
+        XCTAssertEqual(draft.serverSnapshot["editor_capabilities"], variant["editor_capabilities"])
+    }
+
     func testMatchingGenerationOverlaysChatLanesAsUnsavedEdits() async throws {
         let (session, _) = await loaded(Self.chatSnapshot())
         XCTAssertTrue(session.hasUnsavedChanges)
@@ -118,7 +139,7 @@ final class ChatDraftStagingTests: XCTestCase {
     // KRI-772: a chat draft staged before the server fitted windows to the footage (Troya: 3 s asked of a
     // 3.36 s clip that starts at 0.9 s) opens repaired, so Save is not refused for a window the creator
     // never typed.
-    func testStagedDraftWindowLongerThanItsFootageOpensFitted() async throws {
+    func testStagedDraftWindowLongerThanItsFootageKeepsAuthoredIntent() async throws {
         var payload = Self.chatPayload(shape: .flatOnly)
         // Base s1 has 6 s of footage. 4 s in + 3 s long needs 7 s.
         payload["timeline_slots"] = .array([.object([
@@ -131,8 +152,7 @@ final class ChatDraftStagingTests: XCTestCase {
         let (session, _) = await loaded(snapshot)
         let s1 = try XCTUnwrap(session.document.clips.first { $0.id == "s1" })
         XCTAssertEqual(s1.inS, 4, accuracy: 1e-9)
-        XCTAssertEqual(s1.durationS ?? 0, 2, accuracy: 1e-6, "6 s footage - 4 s start = 2 s")
-        XCTAssertLessThanOrEqual(s1.inS + (s1.durationS ?? 0), 6 + 1e-9)
+        XCTAssertEqual(s1.durationS ?? 0, 3, accuracy: 1e-6, "Render mapping must not rewrite the draft")
     }
 
     func testFittedToFootageLeavesFittingAndUnmeasuredWindowsAlone() {
@@ -825,7 +845,7 @@ final class ChatDraftStagingTests: XCTestCase {
             Set(lanes.keys), ["remove_music", "base_generation", "editor_state_version"],
             "A clean editor exports request metadata without any changed lanes"
         )
-        XCTAssertEqual(lanes["editor_state_version"] as? Int, 1)
+        XCTAssertEqual(lanes["editor_state_version"] as? Int, 2)
     }
 
     func testExportCarriesOnlyChangedLanesAndNeverSaveOnlyFields() async throws {

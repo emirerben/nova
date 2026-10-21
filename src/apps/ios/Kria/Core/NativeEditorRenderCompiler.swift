@@ -158,9 +158,30 @@ enum NativeEditorRenderError: Error, Equatable {
             // timeline duration remains authoritative. If the source ends,
             // retain its last decoded frame for the remaining clock time; this
             // keeps narration and other audio tracks on their original clock.
-            let sourceSpan = max(0, clip.trimOut - clip.trimIn)
+            var sourceStart = clip.trimIn
+            var sourceSpan = max(0, clip.trimOut - clip.trimIn)
             let authoredMovingDuration = max(0, authoredSlot?.durationS ?? outputDuration)
-            let requestedRate = explicitRate ?? sourceSpan / authoredMovingDuration
+            var requestedRate = explicitRate ?? sourceSpan / authoredMovingDuration
+            // Narration and legacy projections can intentionally carry a
+            // shorter moving span plus a hold. Only an unchanged authored
+            // source window uses the duration-preserving render projection.
+            let isAuthoredWindow = authoredSlot?.raw["native_source_span_s"] == nil
+                && abs(outputDuration - authoredMovingDuration) < 0.000_001
+                && abs(sourceStart - (authoredSlot?.inS ?? sourceStart)) < 0.000_001
+            if isAuthoredWindow, let authoredSlot,
+               let available = source.asset.duration ?? clip.sourceDuration {
+                let authoredRate = explicitRate ?? 1
+                let requestedSpan = authoredMovingDuration * authoredRate
+                guard available.isFinite, authoredSlot.inS.isFinite, authoredRate.isFinite,
+                      available > 0, authoredSlot.inS >= 0 else { throw RecipeError.invalidTimeline }
+                if authoredSlot.inS + requestedSpan > available {
+                    guard requestedSpan <= available,
+                          authoredSlot.raw["source_start_locked"] != .bool(true) else { throw RecipeError.invalidTimeline }
+                    requestedRate = authoredRate
+                    sourceSpan = requestedSpan
+                    sourceStart = available - requestedSpan
+                }
+            }
             guard requestedRate.isFinite, (0.25...4).contains(requestedRate),
                   outputDuration > 0, sourceSpan > 0 else { throw RecipeError.invalidTimeline }
             // The timeline owns output duration. At slow rates consume only
@@ -173,7 +194,7 @@ enum NativeEditorRenderError: Error, Equatable {
             let cameraLevel: Double = clip.muted || authoredSlot?.raw["muted"] == .bool(true) || audioSources["narration"] != nil ? 0 : sourceGain
             cameraLevelWithoutSong.append(cameraLevel)
             video.append(TimelineClip(id: clip.slotID ?? clip.id.uuidString, sourceAssetID: id,
-                sourceStart: clip.trimIn, sourceDuration: consumedSourceDuration, timelineStart: clip.start,
+                sourceStart: sourceStart, sourceDuration: consumedSourceDuration, timelineStart: clip.start,
                 rate: requestedRate, transition: transition,
                 volume: audioSources[Self.songSourceKey] != nil && !creatorHearsCameraWithSong ? 0 : cameraLevel, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
                 holdDuration: holdDuration > 0 ? holdDuration : nil,

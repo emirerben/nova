@@ -3452,6 +3452,7 @@ struct NativeEditorTemporaryVideo {
             resized = KriaSourceWindowGeometry.resizedTrailing(window, by: translation * rate, rate: rate, sourceDuration: sourceDuration ?? end)
         }
         // A gesture that lands back on the baseline must compare equal to it (no phantom undo step).
+        if abs(resized.start - slot.inS) >= 1e-9 { slot.raw["source_start_locked"] = .bool(true) }
         slot.inS = abs(resized.start - slot.inS) < 1e-9 ? slot.inS : resized.start
         slot.durationS = abs(resized.length - currentDuration) < 1e-9 && slot.durationS != nil
             ? slot.durationS : max(minimumClipDuration, resized.length)
@@ -3530,7 +3531,10 @@ struct NativeEditorTemporaryVideo {
         let span = length * (found.map { effectiveSourceRate(slot: $0.slot, clip: $0.clip) } ?? 1)
         let sourceEnd = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"]) ?? slot.inS + span
         let start = min(max(0, slot.inS + offset), max(0, sourceEnd - span))
-        transactDocument(section: .timeline) { $0.clips[index].inS = start }
+        transactDocument(section: .timeline) {
+            $0.clips[index].inS = start
+            if start != slot.inS { $0.clips[index].raw["source_start_locked"] = .bool(true) }
+        }
     }
 
     // MARK: - Typed clip inspector mutations
@@ -5638,7 +5642,22 @@ struct NativeEditorTemporaryVideo {
                 setAuthoritativeDuration(expectedDuration)
                 refreshDuration()
             }
-            acknowledge(acknowledged, generation: response.generation, submittedDocument: submittedDocument)
+            var savedSubmission = submittedDocument
+            if let draft = response.draft, acknowledged.contains(.timeline) {
+                let savedSlots = EditorDocument(snapshot: draft.snapshot).clips
+                if savedSlots.count == submittedDocument.clips.count {
+                    for index in savedSlots.indices where submittedDocument.clips[index].id == nil {
+                        let submitted = submittedDocument.clips[index]
+                        savedSubmission.clips[index].id = savedSlots[index].id
+                        // Only replace identity on an unchanged submitted row;
+                        // never overwrite edits made during the request.
+                        if let current = document.clips.firstIndex(of: submitted) {
+                            document.clips[current].id = savedSlots[index].id
+                        }
+                    }
+                }
+            }
+            acknowledge(acknowledged, generation: response.generation, submittedDocument: savedSubmission)
             if hasPostSubmitEdits {
                 let acknowledgedRevision = document.revision
                 let rebaseSong = userSongRebase
@@ -5667,7 +5686,7 @@ struct NativeEditorTemporaryVideo {
             // timeline-only save). Reconcile the committed variant as soon as
             // it is durable; polling remains the fallback when this read is
             // unavailable or still stale.
-            if let saveJobID,
+            if response.draft == nil, let saveJobID,
                response.generation == document.revision.baseGeneration {
                 do {
                     let committedVariant = try await api.editorVariant(jobID: saveJobID, variantID: saveVariantKey)
@@ -5687,7 +5706,7 @@ struct NativeEditorTemporaryVideo {
                 }
             }
             guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
-            if response.ok {
+            if response.renderStarted ?? response.ok {
                 // The commit is durable even while its render is pending. Keep
                 // the acknowledged sections retryable until a matching ready
                 // generation is observed.
@@ -5699,7 +5718,7 @@ struct NativeEditorTemporaryVideo {
                 startPreviewRefresh(generation: response.generation)
             } else {
                 pendingRenderRetrySections = acknowledged
-                saveState = .renderRetryNeeded("Your edit is saved. Its preview render did not start, so you can retry it safely.")
+                saveState = .renderRetryNeeded(response.renderRecovery ?? "Your edit is saved. Its preview render did not start, so you can retry it safely.")
             }
         } catch APIError.conflict {
             guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
@@ -5951,6 +5970,7 @@ struct NativeEditorTemporaryVideo {
         // A pure slide writes `in_s` alone, so a beat-bound slot keeps `duration_beats`; a new length is a fixed length.
         mutateClip(clipID: selection.id) { slot in
             slot.inS = max(0, window.start)
+            if moved { slot.raw["source_start_locked"] = .bool(true) }
             if resized { slot.durationS = max(minimumClipDuration, window.length); slot.durationBeats = nil }
         }
         return true
@@ -6447,7 +6467,7 @@ struct NativeEditorTemporaryVideo {
             carouselMoment: changedSections.contains(.carouselMoment) ? (carouselObject.map(EditorCarouselMomentPatch.replace) ?? .remove) : .omitted,
             title: changedSections.contains(.title) ? value["title"]?.stringValue : nil,
             guidedRevisionNumber: guidedRevisionNumber,
-            editorStateVersion: 1,
+            editorStateVersion: 2,
             deletions: document.deletions.isEmpty ? nil : document.deletions,
             baseGeneration: baseGeneration
         )

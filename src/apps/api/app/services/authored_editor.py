@@ -198,7 +198,9 @@ def _fit_window_to_source(
     return fitted
 
 
-def resolve_authored_phone_slots(job: Any, variant: dict, slots: list[Any]) -> list[dict]:
+def resolve_authored_phone_slots(
+    job: Any, variant: dict, slots: list[Any], *, preserve_intent: bool = False
+) -> list[dict]:
     """Resolve explicit placements against the original/admitted receipt catalog."""
     import math
     import uuid
@@ -211,6 +213,7 @@ def resolve_authored_phone_slots(job: Any, variant: dict, slots: list[Any]) -> l
 
     current = editor_deletion_timeline(job, variant)
     known = {row.get("slot_id") for row in current}
+    baseline = {row.get("slot_id"): row for row in current}
     resolved = []
     total = 0.0
     for slot in slots:
@@ -240,7 +243,7 @@ def resolve_authored_phone_slots(job: Any, variant: dict, slots: list[Any]) -> l
             raise HTTPException(422, detail={"code": "TIMELINE_INVALID_WINDOW"})
         duration = snap_to_editor_minimum(duration, minimum_duration)
         bound = source.get("duration_s")
-        if source["kind"] == "video":
+        if source["kind"] == "video" and not preserve_intent:
             duration = _fit_window_to_source(
                 slot,
                 order=len(resolved),
@@ -258,9 +261,14 @@ def resolve_authored_phone_slots(job: Any, variant: dict, slots: list[Any]) -> l
                 "slot_id": slot.slot_id or str(uuid.uuid4()),
                 "source_gcs_path": source["gcs_path"],
                 "source_duration_s": bound,
+                "source_kind": source["kind"],
                 "media_id": source["media_id"],
                 "order": len(resolved),
                 "duration_s": duration,
+                "source_start_locked": bool(
+                    slot.source_start_locked
+                    or (baseline.get(slot.slot_id) or {}).get("source_start_locked")
+                ),
             }
         )
     if not resolved:
@@ -365,7 +373,9 @@ def authored_cloud_timeline_clips(
     return result
 
 
-def resolve_authored_cloud_slots(job: Any, variant: dict, slots: list[Any]) -> list[dict]:
+def resolve_authored_cloud_slots(
+    job: Any, variant: dict, slots: list[Any], *, preserve_intent: bool = False
+) -> list[dict]:
     """Preserve exact authored source identities and per-occurrence geometry."""
     import math
     import uuid
@@ -432,7 +442,8 @@ def resolve_authored_cloud_slots(job: Any, variant: dict, slots: list[Any]) -> l
         duration = snap_to_editor_minimum(duration)
         bound = source.get("source_duration_s")
         if (
-            source["source_kind"] == "video"
+            not preserve_intent
+            and source["source_kind"] == "video"
             and bound is not None
             and slot.in_s + duration * rate > float(bound) + SOURCE_BOUNDS_TOLERANCE_S
         ):
@@ -466,6 +477,9 @@ def resolve_authored_cloud_slots(job: Any, variant: dict, slots: list[Any]) -> l
                 **slot.model_dump(mode="json"),
                 **source,
                 **controls,
+                "source_start_locked": bool(
+                    slot.source_start_locked or old.get("source_start_locked")
+                ),
                 "slot_id": slot.slot_id or str(uuid.uuid4()),
                 "duration_s": float(duration),
                 "look_preset": preset,
@@ -481,5 +495,11 @@ def resolve_authored_cloud_slots(job: Any, variant: dict, slots: list[Any]) -> l
     prefix = _durable_sources_prefix(job)
     for path in {row["source_gcs_path"] for row in resolved}:
         if path.startswith(prefix) and not storage.object_exists(path):
-            raise HTTPException(422, detail={"code": "sources_expired"})
+            if not preserve_intent:
+                raise HTTPException(422, detail={"code": "sources_expired"})
+            # Identity is already admitted from this owned job's catalogue.
+            # Missing bytes prevent rendering, not persistence of that identity.
+            for row in resolved:
+                if row["source_gcs_path"] == path:
+                    row["source_unavailable"] = True
     return resolved

@@ -114,7 +114,10 @@ def test_initial_guided_deletion_materializes_effective_lanes_before_mode_switch
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("from_empty", [False, True])
-async def test_first_staged_device_restore_checks_original_source_receipt(monkeypatch, from_empty):
+@pytest.mark.parametrize("protocol", [1, 2])
+async def test_first_staged_device_restore_checks_original_source_receipt(
+    monkeypatch, from_empty, protocol
+):
     from fastapi import HTTPException
 
     from app.routes import editor_sources
@@ -143,7 +146,7 @@ async def test_first_staged_device_restore_checks_original_source_receipt(monkey
             variant["variant_id"],
             gj.EditorCommitRequest(
                 base_generation="generation",
-                editor_state_version=1,
+                editor_state_version=protocol,
             ),
         )
     else:
