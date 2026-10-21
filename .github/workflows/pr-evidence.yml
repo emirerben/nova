@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: pr-evidence-${{ github.event.pull_request.number }}
@@ -83,6 +84,34 @@ jobs:
           else
             echo "bootstrap=false" >> "$GITHUB_OUTPUT"
           fi
+      - name: Read current PR evidence
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/current-pr-evidence.json"
+          python3 - <<'PYTHON'
+          import json
+          import os
+          from pathlib import Path
+
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+          current = json.loads((Path(os.environ["RUNNER_TEMP"]) / "current-pr-evidence.json").read_text())
+          original = event["pull_request"]
+          if (
+              current.get("number") != original["number"]
+              or current.get("number") != int(os.environ["PR_NUMBER"])
+              or current.get("head", {}).get("sha") != os.environ["HEAD_SHA"]
+              or current.get("base", {}).get("ref") != original["base"]["ref"]
+              or not isinstance(current.get("body"), str)
+          ):
+              raise SystemExit("Current PR evidence must belong to this PR, head and base branch")
+          # Keep this run's immutable diff/base; refresh only the body as inert data.
+          original["body"] = current["body"]
+          (Path(os.environ["RUNNER_TEMP"]) / "pr-evidence-event.json").write_text(json.dumps(event))
+          PYTHON
       - name: Validate request-to-output evidence
         if: steps.policy.outputs.bootstrap == 'false'
         env:
@@ -91,4 +120,4 @@ jobs:
         run: |
           python3 .pr-evidence-policy/scripts/ci/pr-evidence.py \
             --repo .pr-evidence-diff --base "$BASE_SHA" --head "$HEAD_SHA" \
-            --event "$GITHUB_EVENT_PATH"
+            --event "$RUNNER_TEMP/pr-evidence-event.json"

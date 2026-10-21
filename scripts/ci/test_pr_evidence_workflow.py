@@ -7,12 +7,13 @@ existing required lint check must cover code pushes; local checks must include
 uncommitted files and reject missing evidence for affected changes.
 """
 
-from pathlib import Path
+import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -33,22 +34,110 @@ class EvidenceWorkflowTests(unittest.TestCase):
     def workflow(self):
         return (ROOT / ".github/workflows/pr-evidence.yml").read_text()
 
+    # Hosted failure first: a synchronize event can carry yesterday's evidence
+    # even after the PR body has been corrected for the current head. Fetch body
+    # data at validation time, while rejecting a changed head/base branch, an
+    # unexpected PR, malformed API data and read failures. Never evaluate body text.
+    def current_event(self, workflow, *, changes=None, api_exit=0):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            event = {
+                "repository": {"full_name": "example/nova"},
+                "pull_request": {
+                    "number": 42,
+                    "head": {"sha": "b" * 40},
+                    "base": {"sha": "a" * 40, "ref": "main"},
+                    "body": "stale evidence",
+                },
+            }
+            current = {
+                "number": 42,
+                "head": {"sha": "b" * 40},
+                # Main may advance while this exact-head run is queued.
+                "base": {"sha": "c" * 40, "ref": "main"},
+                "body": "corrected evidence; $(touch injected); `touch injected`",
+            }
+            current.update(changes or {})
+            (root / "event.json").write_text(json.dumps(event))
+            (root / "response.json").write_text(json.dumps(current))
+            gh = root / "gh"
+            gh.write_text(
+                f"#!{sys.executable}\n"
+                "from pathlib import Path\nimport sys\n"
+                "assert sys.argv[1:] == ['api', 'repos/example/nova/pulls/42']\n"
+                f"sys.stdout.write(Path({str(root / 'response.json')!r}).read_text())\n"
+                f"sys.exit({api_exit})\n"
+            )
+            gh.chmod(0o755)
+            result = subprocess.run(
+                ["bash", "-euo", "pipefail", "-c", run_block(workflow, "Read current PR evidence")],
+                cwd=root,
+                env=dict(
+                    os.environ,
+                    PATH=f"{root}:{os.environ['PATH']}",
+                    GITHUB_EVENT_PATH=str(root / "event.json"),
+                    GITHUB_REPOSITORY="example/nova",
+                    PR_NUMBER="42",
+                    HEAD_SHA="b" * 40,
+                    RUNNER_TEMP=str(root),
+                ),
+                capture_output=True,
+                text=True,
+            )
+            output = root / "pr-evidence-event.json"
+            return (
+                result,
+                json.loads(output.read_text()) if output.exists() else None,
+                (root / "injected").exists(),
+            )
+
+    def evidence_workflows(self):
+        return [self.workflow(), (ROOT / ".github/workflows/ci.yml").read_text()]
+
+    def test_current_body_replaces_stale_event_without_changing_immutable_base(self):
+        for workflow in self.evidence_workflows():
+            with self.subTest(workflow=workflow.splitlines()[0]):
+                result, event, injected = self.current_event(workflow)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("corrected evidence", event["pull_request"]["body"])
+                self.assertEqual(event["pull_request"]["base"]["sha"], "a" * 40)
+                self.assertFalse(injected)
+
+    def test_current_body_fails_closed_for_changed_head_or_pr_or_base_branch(self):
+        for workflow in self.evidence_workflows():
+            for change in (
+                {"head": {"sha": "d" * 40}},
+                {"number": 43},
+                {"base": {"ref": "dev"}},
+                {"body": None},
+            ):
+                with self.subTest(change=change):
+                    result, event, injected = self.current_event(workflow, changes=change)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIsNone(event)
+                    self.assertFalse(injected)
+
+    def test_current_body_read_failure_never_uses_the_old_event(self):
+        for workflow in self.evidence_workflows():
+            result, event, _ = self.current_event(workflow, api_exit=42)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIsNone(event)
+
     def test_body_edits_have_a_small_independent_read_only_check(self):
         workflow = self.workflow()
-        self.assertIn(
-            "types: [opened, reopened, synchronize, edited, ready_for_review]", workflow
-        )
+        self.assertIn("types: [opened, reopened, synchronize, edited, ready_for_review]", workflow)
         self.assertIn("branches: [main, dev]", workflow)
         self.assertIn("name: PR evidence", workflow)
         self.assertIn("contents: read", workflow)
         self.assertNotIn("pull_request_target", workflow)
         self.assertNotIn("secrets.", workflow)
-        self.assertNotIn("write", workflow)
+        self.assertNotIn("contents: write", workflow)
+        self.assertNotIn("pull-requests: write", workflow)
         self.assertNotIn("github.event.pull_request.body", workflow)
         self.assertEqual(workflow.count("persist-credentials: false"), 2)
         self.assertIn("ref: ${{ github.event.pull_request.base.sha }}", workflow)
         self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", workflow)
-        self.assertIn('--event "$GITHUB_EVENT_PATH"', workflow)
+        self.assertIn('--event "$RUNNER_TEMP/pr-evidence-event.json"', workflow)
         main = (ROOT / ".github/workflows/ci.yml").read_text()
         self.assertNotIn("types: [opened, reopened, synchronize, edited", main)
 
@@ -137,6 +226,7 @@ class EvidenceWorkflowTests(unittest.TestCase):
                 BASE_SHA="a" * 40,
                 HEAD_SHA="b" * 40,
                 GITHUB_EVENT_PATH="event.json",
+                RUNNER_TEMP=str(repo),
             )
             result = subprocess.run(
                 ["bash", "-euo", "pipefail", "-c", script],
@@ -166,7 +256,7 @@ class EvidenceWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/ci/select-tests.py gate lint lint-suites", lint)
         self.assertIn("Validate request-to-output evidence", lint)
         self.assertIn("if: github.event_name == 'pull_request'", lint)
-        self.assertIn('--event "$GITHUB_EVENT_PATH"', lint)
+        self.assertIn('--event "$RUNNER_TEMP/pr-evidence-event.json"', lint)
         self.assertIn("initial policy bootstrap", lint)
 
     def test_preship_accepts_body_files_and_checks_working_changes(self):

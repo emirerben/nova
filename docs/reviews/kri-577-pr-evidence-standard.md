@@ -87,3 +87,54 @@ cases. Expected artifacts accept non-English paths without English keyword tests
 Existing CI is responsible for its actual hosted run. The final PR body binds this
 report to the exact committed head. This report is local CI-policy evidence, not
 an M2 export, a live-model evaluation or observed production enforcement.
+
+## Refreshed hosted failure classification
+
+CI [39666544360](https://github.com/emirerben/nova/actions/runs/39666544360)
+ran head `9564fe0bc8befc5457c1ae9212f4a7c4cb4f11ce`. Its independent
+PR-evidence check passed, but normal CI had three distinct root failures:
+
+- `api (0)` job `119453881150`: the four EN/TR + outro length-message
+  assertions in `test_kri778_block_message`, the strict freeze XPASS in
+  `test_kri775_merope_m2_replay`, and the checked-miss assertion in
+  `test_unified_montage_dispatch` (six cases).
+- `api (1)` job `119453880973`: the M2 card/model-summary assertion in
+  `test_kri776_moment_ask_in_brief` (one case). These seven are the same
+  independently reproduced main failures covered by separate draft #1735.
+  Its exact head `5cacf936eed3a3ea55386e183abe7d149bc0f83d` now passes hosted CI;
+  this policy branch does not copy that repair or claim it is merged.
+- `journey-offline` job `119454315222`: `scripts/ios/phone-text-style-e2e.py:400`
+  still expects Big Curls + İstanbul to require clarification, while the
+  merged KRI-785 font fallback now selects Great Vibes. This script and the
+  relevant font policy/coverage files are byte-identical to the immutable
+  main base `110e87197ccaef219c5dfcfdd65f5f7b41dd712a`. Separate base validation
+  is owned by the KRI-721 session; no font repair belongs in this policy PR.
+- `lint` job `119455204151`: genuine policy defect. The synchronize event
+  retained the previous head's PR-body evidence even after the live PR body
+  was updated. The validator correctly rejected that stale snapshot.
+
+`journey`, `build-and-test` and `test-api` failures are aggregate consequences
+of those root jobs. Native validation was skipped after the offline failure;
+it was not a passing native test run.
+
+### Policy repair and focused verification
+
+Both evidence paths now read the current body with a read-only GitHub token
+immediately before validation. They require the same PR number, head SHA and
+target branch, preserve this run's immutable base SHA, and treat the fetched
+body as file data. A failed API read or mismatched identity fails closed.
+The existing validator still checks all evidence fields and exact artifact
+revisions; no enforcement is bypassed.
+
+Three new failure-contract tests were added before the workflow change. They
+exercise both real workflow shell steps with a local GitHub transport substitute:
+corrected body + advancing base, changed head/PR/target branch, invalid body,
+API failure, and shell-shaped text remaining inert. The eight affected workflow
+tests passed across focused runs after updating the read-only-permission
+assertion to distinguish local file writes from remote write permissions.
+Scoped Ruff, workflow YAML parsing and whitespace checks passed. Previously
+passing application suites were not rerun locally for this policy-only change.
+
+A body edited after lint has already failed still needs that small lint job
+rerun; the independent body-edit workflow does not overwrite code-check
+results. Main's required-check activation remains a post-merge action.
