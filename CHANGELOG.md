@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.9.0] - 2026-10-21
+
+### Changed
+- fix(ci): turn main green after the Turkish parity merges (#1734) <!-- release-pr: 1734 -->
+
 ## [0.81.8.0] - 2026-10-21
 
 ### Changed
