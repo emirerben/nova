@@ -40,3 +40,9 @@ still accepts ("Inter-Bold" guided narration captions + v<3 titles,
 "Inter-Regular"/"PlayfairDisplay-Regular" web presets, "PlayfairDisplay-Bold"
 visual-block cards). Each must resolve to its registry face, not fall back to
 the `display` default — a fallback is a FAIL here.
+
+`turkish_glyphs.json` (KRI-785) burns Turkish text (`ğĞşŞıİçÇöÖüÜ` + punctuation) in
+every registry font. Faces that lack a letter (Alte Haas Grotesk, Permanent Marker,
+Satisfy, Big Curls, Rascal, and ZT Bros Oskon 90s, whose dotless ı still has its dot)
+must switch the whole run to their `assets/fonts/glyph-fallbacks.json` partner. The
+verifier FAILs any overlay whose resolved face still lacks a glyph.

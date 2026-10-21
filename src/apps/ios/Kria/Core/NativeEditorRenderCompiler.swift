@@ -24,6 +24,7 @@ enum NativeEditorRenderError: Error, Equatable {
     private let fontURLs: [String: URL]
     private let fontAliases: [String: String]
     private let fontInstances: [String: [String: Double]]
+    private let glyphFallback: NativeGlyphFallback
     private let handwritingLayout: AuthoredHandwritingLayout
     private var fontAssets: [String: MediaAsset] = [:]
 
@@ -47,9 +48,15 @@ enum NativeEditorRenderError: Error, Equatable {
         }
         fontAliases = registry.mapValues(\.file)
         fontInstances = try JSONDecoder().decode([String: [String: Double]].self, from: Data(contentsOf: fontDirectory.appendingPathComponent("native-font-instances.json")))
-        fontURLs = Dictionary(uniqueKeysWithValues: try FileManager.default.contentsOfDirectory(
+        let urls = Dictionary(uniqueKeysWithValues: try FileManager.default.contentsOfDirectory(
             at: fontDirectory, includingPropertiesForKeys: nil
         ).filter { ["ttf", "otf"].contains($0.pathExtension.lowercased()) }.map { ($0.lastPathComponent, $0) })
+        fontURLs = urls
+        let aliases = fontAliases
+        // Same lookup order as `resolveFont`.
+        glyphFallback = NativeGlyphFallback(fontDirectory: fontDirectory) { family in
+            [aliases[family], family + ".ttf", family + "-Regular.ttf", family + ".otf"].compactMap { $0 }.lazy.compactMap { urls[$0] }.first
+        }
     }
 
     /// `deviceCaptions`: the variant renders on the phone, whose caption
@@ -540,10 +547,13 @@ enum NativeEditorRenderError: Error, Equatable {
             guard item.end > item.start else { throw RecipeError.invalidTimeline }
             // Placement and the default face match the server burn (cloud and
             // phone recipes alike); see `EditorTextElement.anchor(of:)`.
-            let family = element.fontFamily
+            let raw = element.raw
+            let displayText = KriaTextCase.apply(element.text, raw["text_case"]?.stringValue)
+            // KRI-785: a face missing a letter of this text sets the whole run in
+            // its glyph-fallbacks.json partner, like the cloud renderer.
+            let family = glyphFallback.family(element.fontFamily, for: displayText)
             let font = try resolveFont(family)
             let fontID = try registerFont(font)
-            let raw = element.raw
             let legacy = raw["effect"]?.stringValue ?? "none"
             if raw["behind_subject"] == .bool(true) || raw["theme_transition"]?.objectValue != nil {
                 throw NativeEditorRenderError.unsupportedLane("text subject or scene compositing")
@@ -581,7 +591,6 @@ enum NativeEditorRenderError: Error, Equatable {
                 background: try raw["background_color"]?.stringValue.map { try ink(.string($0), fallback: "#FFFFFF") },
                 fontVariations: fontInstances[family] ?? [:], letterSpacing: raw["letter_spacing"]?.numberValue ?? 0, lineSpacing: raw["line_spacing"]?.numberValue ?? 1.15, wrapsLines: raw["wrap_lines"] != .bool(false),
                 bend: raw["bend"]?.numberValue ?? 0)
-            let displayText = KriaTextCase.apply(element.text, raw["text_case"]?.stringValue)
             let explicitPhases = raw["animation_phases"]?.objectValue != nil
             if legacy == "handwriting" && !explicitPhases {
                 text.append(try handwritingLayout.compile(id: element.id, text: displayText, start: item.start, end: item.end,

@@ -65,6 +65,7 @@ from app.pipeline.dissolve_effect import (
     render_dissolve_skia_image,
 )
 from app.pipeline.font_aliases import registry_font_name
+from app.pipeline.font_coverage import glyph_safe_family
 from app.pipeline.generative_overlays import (
     resolve_letter_spacing_em,
     resolve_letter_spacing_px,
@@ -864,7 +865,9 @@ class TypefaceResolution:
 
     @property
     def fallback(self) -> bool:
-        if self.source == "authored_centerline":
+        # A glyph fallback is a deliberate whole-run swap to a face that covers
+        # the text (KRI-785), not an unresolved font: reported separately.
+        if self.source in ("authored_centerline", "glyph_fallback"):
             return False
         return bool(
             self.requested_font_family
@@ -879,6 +882,7 @@ class TypefaceResolution:
             "file": self.file,
             "source": self.source,
             "fallback": self.fallback,
+            "glyph_fallback": self.source == "glyph_fallback",
         }
 
     def event_typeface_dict(self) -> dict[str, str]:
@@ -961,6 +965,34 @@ def _registry_typeface(name: str) -> tuple[str, str, skia.Typeface] | None:
 
 
 def _resolve_typeface_for_overlay(
+    overlay: dict, font_name_override: str | None = None
+) -> TypefaceResolution:
+    """Resolve the overlay's typeface, then make it glyph-safe for its text.
+
+    When the chosen registry face lacks a glyph the overlay text needs (Turkish
+    ğ ş İ in Satisfy, Rascal, ...), the whole run switches to the shared
+    `font_coverage.glyph_safe_family` fallback — the same rule the Pillow/libass
+    path, overlay_verify and the iOS compiler apply (KRI-785).
+    """
+    resolution = _resolve_requested_typeface(overlay, font_name_override)
+    if resolution.source == "last_resort":
+        return resolution
+    text = _overlay_text(overlay)
+    if not text:
+        return resolution
+    safe = glyph_safe_family(resolution.name, text)
+    if not safe or safe == resolution.name:
+        return resolution
+    resolved = _registry_typeface(safe)
+    if resolved is None:
+        return resolution
+    resolved_name, file_name, tf = resolved
+    return replace(
+        resolution, typeface=tf, name=resolved_name, file=file_name, source="glyph_fallback"
+    )
+
+
+def _resolve_requested_typeface(
     overlay: dict, font_name_override: str | None = None
 ) -> TypefaceResolution:
     """Resolve a typeface for an overlay following the same priority as

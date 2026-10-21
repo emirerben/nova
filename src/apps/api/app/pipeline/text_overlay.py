@@ -26,6 +26,7 @@ import structlog
 
 from app.pipeline.ass_utils import format_ass_time, sanitize_ass_text
 from app.pipeline.font_aliases import registry_font_name
+from app.pipeline.font_coverage import glyph_safe_family, glyph_safe_overlay
 from app.pipeline.generative_overlays import resolve_line_spacing, resolve_max_width_frac
 from app.pipeline.text_animation_math import (
     HANDWRITING_NOMINAL_SETTLE_S as _HANDWRITING_NOMINAL_SETTLE_S,
@@ -476,6 +477,7 @@ def generate_text_overlay_png(
     results: list[dict] = []
 
     for i, overlay in enumerate(overlays):
+        overlay = glyph_safe_overlay(overlay)  # KRI-785: same rule as the Skia path
         effect = overlay.get("effect", "none")
         spans = overlay.get("spans")
 
@@ -663,6 +665,7 @@ def generate_animated_overlay_ass(
     ass_paths: list[str] = []
 
     for i, overlay in enumerate(overlays):
+        overlay = glyph_safe_overlay(overlay)  # KRI-785: same rule as the Skia path
         effect = overlay.get("effect", "none")
         if overlay.get("animation_phases") is not None or effect not in ASS_ANIMATED_EFFECTS:
             continue
@@ -839,6 +842,7 @@ def _render_single_overlay_at_time(
     overlay_index: int,
 ) -> str | None:
     """Render a single overlay at time T into output_dir, return PNG path or None."""
+    overlay = glyph_safe_overlay(overlay)  # KRI-785: same rule as the Skia path
     text, start_s, end_s, position = _validate_overlay(overlay, slot_duration_s)
     has_spans = bool(overlay.get("spans"))
     if text is None and not has_spans:
@@ -874,6 +878,7 @@ def _render_single_overlay_at_time(
             pixel_size,
             settle_font_name=settle_name,
             custom_fonts=custom_cycle,
+            text=text or "",
         )
         # A 2-font curated cycle (settle + one custom entry) still has just
         # 2 entries — that's intentional. The <2 guard catches degraded
@@ -2185,6 +2190,7 @@ def _render_font_cycle(
         pixel_size,
         settle_font_name=settle_name,
         custom_fonts=custom_cycle,
+        text=text or "",
     )
     if len(cycle_fonts) < 2:
         # Not enough fonts for cycling -- fall back to static
@@ -3221,8 +3227,13 @@ def _resolve_cycle_fonts(
     size: int = OVERLAY_FONT_SIZE,
     settle_font_name: str = "_default",
     custom_fonts: list[str] | None = None,
+    text: str = "",
 ) -> list:
     """Resolve available fonts for cycling at the given pixel size.
+
+    `text` makes every cycle face glyph-safe for the overlay text (KRI-785):
+    a face missing a needed letter is replaced by its whole-run fallback, the
+    same substitution the Skia cycle applies per frame.
 
     The settle font (index 0) is determined by settle_font_name:
     - "_default" -> Playfair Display Bold (classic behavior)
@@ -3242,6 +3253,15 @@ def _resolve_cycle_fonts(
     """
     global _cycle_fonts_cache
     custom_key = tuple(custom_fonts) if custom_fonts else None
+    if text:
+        if settle_font_name != "_default":
+            settle_font_name = glyph_safe_family(settle_font_name, text) or settle_font_name
+        cycle_names = [
+            glyph_safe_family(n, text) or n
+            for n in (custom_fonts if custom_fonts else _CYCLE_CONTRAST_NAMES)
+        ]
+        custom_fonts = list(dict.fromkeys(cycle_names))
+        custom_key = tuple(custom_fonts)
     cache_key = (size, settle_font_name, custom_key)
     if cache_key in _cycle_fonts_cache:
         return _cycle_fonts_cache[cache_key]
