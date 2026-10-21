@@ -790,10 +790,6 @@
         "src/apps/api/tests/routes/test_editor_save_contract_matrix.py",
         "src/apps/api/tests/services/test_phone_editor_render_contract.py",
         "src/apps/api/app/schemas/editor_window.py",
-        "src/apps/api/app/services/guided_timeline.py",
-        "src/apps/api/app/routes/plan_items.py",
-        "src/apps/ios/Kria/Core/Services.swift",
-        "src/apps/ios/Kria/Features/NativeEditorSession.swift",
         "src/apps/ios/Tests/Fixtures/editor_save_codes.json",
         "src/apps/ios/Tests/KriaTests/EditorSaveCodeCatalogTests.swift",
         "src/apps/api/tests/routes/test_editor_save_code_catalog.py"
