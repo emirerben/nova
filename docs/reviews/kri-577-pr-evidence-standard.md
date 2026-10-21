@@ -147,3 +147,38 @@ paragraph by 71 bytes while retaining its three links and mandatory timing.
 A local three-way merge with main preserves its language-policy pointer and
 measures **37,957 bytes**; the task file is **37,918 bytes**. The size and static
 routing checks pass. No routing policy or model selection was changed.
+
+## Verified dependency integration into the existing draft
+
+Fresh main is `3519e7cf00303da7af69b2b1453ee82f5c5e7853`. Neither shared
+repair was its ancestor or patch-equivalent on main or this draft. Both source
+PRs were still open and green. Main merged cleanly as commit
+`270dce6d92cddc58decfa1b08ba8a36acf19c4cf`, followed by two separate,
+unmodified `cherry-pick -x` commits:
+
+| Source repair | Original commit | Attributed dependency commit |
+| --- | --- | --- |
+| #1735 M2 assertions | `5cacf936eed3a3ea55386e183abe7d149bc0f83d` | `0b14d75e65d05e12b0552250adefe02b77ff8be5` |
+| #1740 portable font journey | `603f679dc29bbf7aecda451ddcc57cda2485f7f7` | `ef54653c13e75a4c7bcb8c012bfcea4c4bcfe9dc` |
+
+Both commits preserve source authorship and the exact original SHA in their
+commit message. All seven dependency files match their source revisions byte
+for byte. No repair was reimplemented, and the policy changes remain separate
+from these test dependencies. The source PRs were not merged.
+
+Changed-boundary verification on the integrated tree:
+
+- The eight M2/gate suites named in the #1735 report: **480 passed, 3 xfailed**,
+  using this worktree's isolated scratch Postgres database. The three retained
+  recorded-brief failures are not treated as current full-path acceptance.
+- `python3 -m unittest scripts/ci/test_pr_evidence_workflow.py -v`: **8 passed**.
+- The exact `verify_font_coverage()` helper from #1740: `İstanbul`, Great Vibes,
+  no missing displayed glyphs; its uncovered-text and unknown-font guards pass.
+- The merged instruction file is **37,957 / 38,000 bytes**. Static routing,
+  dependency byte comparisons and whitespace checks pass.
+
+Only the affected boundaries were rerun for this new integration. Unrelated
+already-passing suites were not manually repeated. Final integrated-head
+preship and hosted CI are required before calling this draft merge-ready.
+No merge, deploy, T1 ordering change, physical-device operation, paid call or
+denied gate implementation was performed.
