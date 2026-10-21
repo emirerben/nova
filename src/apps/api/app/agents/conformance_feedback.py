@@ -20,6 +20,7 @@ import structlog
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.conformance import ConformanceInput, ConformanceOutput
+from app.kria.reply_language import creator_text_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
@@ -91,7 +92,7 @@ class ConformanceFeedbackAgent(Agent[ConformanceInput, ConformanceOutput]):
         #                incident). Converted to $var; data now actually renders.
         # 2026-06-11 — evaluated_theme echo-back guard, creator-context block,
         #              advice-voice suggestions (wrong-brief incident fixes).
-        prompt_version="2026-06-11.1",
+        prompt_version="2026-10-21-language",
         # Text-only digest comparison — flash + small thinking budget.
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
@@ -109,13 +110,18 @@ class ConformanceFeedbackAgent(Agent[ConformanceInput, ConformanceOutput]):
         return ["verdict", "confidence", "summary"]
 
     def render_prompt(self, input: ConformanceInput) -> str:  # noqa: A002
-        return load_prompt(
+        prompt = load_prompt(
             "conformance_feedback",
             theme=str(input.theme or ""),
             idea=str(input.idea or ""),
             shot_list=_format_shots(input.filming_guide),
             clip_digest=_format_clip_digest(input.clip_digest),
             user_context_block=_user_context_block(input.user_context),
+        )
+        return with_prompt_language(
+            prompt,
+            input.reply_language
+            or creator_text_language(input.theme, input.idea, input.user_context),
         )
 
     def parse(  # noqa: A002

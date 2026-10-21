@@ -290,3 +290,26 @@ def prompt_language_line(language: str | None) -> str:
         "is in English. Text that appears on the video stays exactly as the creator "
         "wrote or asked for it, in whatever language that is."
     )
+
+
+def creator_text_language(*texts: object) -> str | None:
+    """The language the creator's own words clearly read as, else None (KRI-784).
+
+    For agents with no chat behind them (onboarding, plan, voiceover, slide posts):
+    pass only text the creator wrote (answers, a brief, an idea), never model-written
+    summaries, so English context does not drown out a Turkish creator.
+    """
+    parts: list[str] = []
+    for text in texts:
+        if isinstance(text, str):
+            parts.append(text)
+        elif isinstance(text, list | tuple):
+            parts.extend(t for t in text if isinstance(t, str))
+    joined = " ".join(p.strip() for p in parts if p.strip())
+    return detect_chat_language(joined) if joined else None
+
+
+def with_prompt_language(prompt: str, language: str | None) -> str:
+    """``prompt`` plus the reply-language line; unchanged for English or unknown (KRI-784)."""
+    line = prompt_language_line(language)
+    return f"{prompt}\n\n{line}" if line else prompt

@@ -16,9 +16,10 @@ from __future__ import annotations
 import json
 from typing import ClassVar
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
+from app.kria.reply_language import creator_text_language, with_prompt_language
 from app.pipeline.agents.copy_writer import (
     InstagramCopy,
     PlatformCopy,
@@ -32,6 +33,9 @@ class PlatformCopyInput(BaseModel):
     transcript_excerpt: str = ""
     has_transcript: bool = True
     template_tone: str = ""
+    # KRI-784: the creator's language ("tr"/"en"), from the chat or the caller. None:
+    # read from the creator's own words below; English/unknown renders byte-identical.
+    reply_language: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class PlatformCopyOutput(BaseModel):
@@ -46,7 +50,7 @@ class PlatformCopyAgent(Agent[PlatformCopyInput, PlatformCopyOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.platform_copy",
         prompt_id="_inline",  # prompt is built from input, no template file
-        prompt_version="2026-05-09",
+        prompt_version="2026-10-21-language",
         model="gemini-2.5-flash",
         # Legacy used 2 attempts; keep the runtime's 5-attempt default but a
         # tighter timeout — copy is short and shouldn't take long.
@@ -68,7 +72,7 @@ class PlatformCopyAgent(Agent[PlatformCopyInput, PlatformCopyOutput]):
             if input.template_tone
             else ""
         )
-        return (
+        prompt = (
             "Generate platform-native social media copy for a short-form video clip.\n\n"
             f'Hook text (first line of clip): "{input.hook_text}"\n'
             f"{transcript_note}"
@@ -85,10 +89,13 @@ class PlatformCopyAgent(Agent[PlatformCopyInput, PlatformCopyOutput]):
             "All copy should feel native to each platform. Be direct and energetic.\n"
             "Return ONLY valid JSON, no markdown."
         )
+        return with_prompt_language(
+            prompt,
+            input.reply_language
+            or creator_text_language(input.hook_text, input.transcript_excerpt),
+        )
 
-    def parse(
-        self, raw_text: str, input: PlatformCopyInput
-    ) -> PlatformCopyOutput:  # noqa: A002, ARG002
+    def parse(self, raw_text: str, input: PlatformCopyInput) -> PlatformCopyOutput:  # noqa: A002, ARG002
         try:
             data = json.loads(raw_text)
         except (ValueError, TypeError) as exc:

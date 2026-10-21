@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
 from app.agents.music_matcher import _sanitize_text
+from app.kria.reply_language import creator_text_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.voiceover_script import target_word_count
 
@@ -116,6 +117,9 @@ class VoiceoverScriptWriterInput(BaseModel):
     answers: list[str] = Field(default_factory=list)
     # Total footage duration in seconds — sizes the target word count.
     target_duration_s: float = 30.0
+    # KRI-784: the creator's language ("tr"/"en"), from the chat or the caller. None:
+    # read from the creator's own words below; English/unknown renders byte-identical.
+    reply_language: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class VoiceoverScriptWriterOutput(BaseModel):
@@ -127,7 +131,7 @@ class VoiceoverScriptWriterAgent(Agent[VoiceoverScriptWriterInput, VoiceoverScri
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.voiceover.script_writer",
         prompt_id="write_voiceover_script",
-        prompt_version="2026-07-01",
+        prompt_version="2026-10-21-language",
         model="gemini-2.5-flash",
         max_attempts=3,
         timeout_s=25.0,
@@ -153,7 +157,7 @@ class VoiceoverScriptWriterAgent(Agent[VoiceoverScriptWriterInput, VoiceoverScri
         lo, hi = self._band(input.target_duration_s)
         answers = "\n".join(f"- {_clean_input(a)}" for a in input.answers if a.strip()) or "(none)"
         footage = _clean_input(input.footage_summary) or "(no footage summary available)"
-        return load_prompt(
+        prompt = load_prompt(
             "write_voiceover_script",
             footage_summary=footage,
             brief=_clean_input(input.brief) or "(none)",
@@ -162,6 +166,10 @@ class VoiceoverScriptWriterAgent(Agent[VoiceoverScriptWriterInput, VoiceoverScri
             min_words=str(lo),
             max_words=str(hi),
             duration_s=str(round(input.target_duration_s)),
+        )
+        return with_prompt_language(
+            prompt,
+            input.reply_language or creator_text_language(input.brief, input.answers),
         )
 
     def parse(

@@ -27,6 +27,7 @@ from app.agents.spoken_script import (
     narration_word_keys,
     quote_text,
 )
+from app.kria.reply_language import creator_text_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.clip_intents import ResolvedClipIntent
 from app.schemas.edit_proposal import creator_copy_match_key
@@ -651,7 +652,7 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.semantic_edit_proposal",
         prompt_id="semantic_edit_proposal",
-        prompt_version="2.0.13",
+        prompt_version="2.0.14",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -680,7 +681,7 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
             projection = _media_prompt_dict(row)
             projection["server_exclusive_group_ids"] = group_ids_by_alias[row.media_id]
             media_rows.append(projection)
-        return load_prompt(
+        prompt = load_prompt(
             "semantic_edit_proposal",
             direction=input.direction,
             goal=input.goal or input.idea or input.theme or "(none)",
@@ -700,6 +701,11 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
                 _semantic_constraint_block(input, aliases), ensure_ascii=False
             ),
             media_json=json.dumps(media_rows, ensure_ascii=False),
+        )
+        return with_prompt_language(
+            prompt,
+            input.reply_language
+            or creator_text_language(input.creator_request, input.idea, input.theme),
         )
 
     def parse(self, raw_text: str, input: EditProposalAgentInput) -> SemanticEditPlan:  # noqa: A002

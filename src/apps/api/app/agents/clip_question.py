@@ -37,6 +37,7 @@ from typing import ClassVar
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
+from app.kria.reply_language import creator_text_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 
 _ANSWER_MAX_WORDS = 3
@@ -65,6 +66,9 @@ class ClipQuestionInput(BaseModel):
     # `needs_vision` entry, or a generic fallback built from the intent's
     # `attribute`). Free text — no enum of question "kinds".
     question: str = Field(min_length=1, max_length=200)
+    # KRI-784: the creator's language ("tr"/"en"), from the chat or the caller. None:
+    # read from the creator's own words below; English/unknown renders byte-identical.
+    reply_language: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ClipQuestionOutput(BaseModel):
@@ -88,7 +92,7 @@ class ClipQuestionAgent(Agent[ClipQuestionInput, ClipQuestionOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.video.clip_question",
         prompt_id="clip_question",
-        prompt_version="2026-09-21.3",
+        prompt_version="2026-10-21-language",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -120,7 +124,11 @@ class ClipQuestionAgent(Agent[ClipQuestionInput, ClipQuestionOutput]):
         return []
 
     def render_prompt(self, input: ClipQuestionInput) -> str:  # noqa: A002
-        return load_prompt("clip_question", question=input.question)
+        prompt = load_prompt("clip_question", question=input.question)
+        return with_prompt_language(
+            prompt,
+            input.reply_language or creator_text_language(input.question),
+        )
 
     def parse(self, raw_text: str, input: ClipQuestionInput) -> ClipQuestionOutput:  # noqa: A002
         try:

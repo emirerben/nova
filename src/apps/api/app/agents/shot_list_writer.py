@@ -21,8 +21,9 @@ from app.agents._schemas.content_plan import (
     MIN_SHOT_DURATION_S,
 )
 from app.agents.music_matcher import _sanitize_text
+from app.kria.reply_language import creator_text_language, with_prompt_language
 
-SHOT_LIST_WRITER_PROMPT_VERSION = "2026-06-18"
+SHOT_LIST_WRITER_PROMPT_VERSION = "2026-10-21-language"
 
 _MAX_CLIP_COUNT = 10
 _MIN_CLIP_COUNT = 1
@@ -41,6 +42,9 @@ class ShotListWriterInput(BaseModel):
     theme: str = ""
     idea: str
     edit_format: str = "montage"
+    # KRI-784: the creator's language ("tr"/"en"), from the chat or the caller. None:
+    # read from the creator's own words below; English/unknown renders byte-identical.
+    reply_language: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ShotListWriterOutput(BaseModel):
@@ -118,7 +122,7 @@ class ShotListWriterAgent(Agent[ShotListWriterInput, ShotListWriterOutput]):
     def render_prompt(self, input: ShotListWriterInput) -> str:  # noqa: A002
         hint = _EDIT_HINTS.get(input.edit_format, _EDIT_HINTS["montage"])
         theme_line = f"Theme: {_sanitize_text(input.theme)}\n" if input.theme.strip() else ""
-        return (
+        prompt = (
             "You are a short-form video coach. Given a content idea, produce a concrete "
             "filming guide — a list of shots the creator should capture.\n\n"
             "## Content idea\n\n"
@@ -135,6 +139,10 @@ class ShotListWriterAgent(Agent[ShotListWriterInput, ShotListWriterOutput]):
             'Return ONLY the JSON object with a "filming_guide" array. No commentary.\n\n'
             "Respond with JSON only:\n"
             '{"filming_guide": [{"what": "...", "how": "...", "duration_s": 5, "clip_count": 1}, ...]}'  # noqa: E501
+        )
+        return with_prompt_language(
+            prompt,
+            input.reply_language or creator_text_language(input.theme, input.idea),
         )
 
     def parse(

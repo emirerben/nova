@@ -684,6 +684,8 @@ def query_clip_vision(
                 file_uri=file_ref.uri,
                 file_mime=getattr(file_ref, "mime_type", None) or "video/mp4",
                 question=question,
+                # KRI-784: the answer can become a clip label the creator sees.
+                reply_language=current_reply_language(),
             ),
             ctx=run_context,
         )

@@ -755,9 +755,99 @@ def test_plan_blocks_stay_byte_identical_in_an_english_chat(
     ]
 
 
+# -- v1 chat (creation_threads._append) ----------------------------------------------
+
+
+async def test_v1_editor_turn_refusals_are_turkish(turkish_chat_net: TurkishChatNet) -> None:
+    """KRI-784: the v1 post-render edit path answers a Turkish chat in Turkish."""
+    from app.services import creation_editor_actions as actions  # noqa: PLC0415
+
+    thread = _thread("tr")
+    thread.state["selected_variant_id"] = None
+    no_variant = SimpleNamespace(id=uuid.uuid4(), assembly_plan={"variants": []})
+    for message in ("başlığı kaldır", "ç" * 2001):
+        body = SimpleNamespace(message=message, client_event_id="e1")
+        await actions.execute_copilot_edit(_AsyncDb(), thread, body, None, job=no_variant)
+    assert turkish_chat_net.checked == 2
+
+
+async def test_v1_not_done_lines_are_turkish(turkish_chat_net: TurkishChatNet) -> None:
+    """KRI-784: refused/skipped parts of a v1 chat edit ("Not done: ...") in Turkish."""
+    from app.services import creation_editor_actions as actions  # noqa: PLC0415
+
+    thread = _thread("tr")
+    job = SimpleNamespace(
+        id=uuid.uuid4(), assembly_plan={"variants": [{"variant_id": "v1", "text_elements": []}]}
+    )
+    response = SimpleNamespace(
+        outcome="failed",
+        ops=[],
+        intent="edit",
+        reply="I can't do that.",
+        rejection_reasons=[
+            {"op": "set_clip_label", "reason": "invalid_value"},
+            {"op": "mystery_op", "reason": "not_a_known_code"},
+        ],
+        unmet_requests=[],
+    )
+
+    async def _turn(*_args: Any, **_kwargs: Any) -> Any:
+        return response
+
+    body = SimpleNamespace(message="kliplere isim ver", client_event_id="e2")
+    with (
+        patch.object(actions, "run_copilot_turn", _turn),
+        patch.object(actions, "honest_replies_enabled", lambda: True),
+        patch.object(actions, "build_editor_snapshot", lambda *_a: {}),
+    ):
+        await actions.execute_copilot_edit(_AsyncDb(), thread, body, None, job=job)
+    assert turkish_chat_net.checked == 1
+
+
+async def test_v1_project_status_and_format_copy_is_turkish(
+    turkish_chat_net: TurkishChatNet,
+) -> None:
+    """KRI-784: status answers, the format prompt and the archive line, through `_append`."""
+    from app.routes import creation_threads  # noqa: PLC0415
+
+    thread = _thread("tr")
+    jobs = [
+        None,
+        SimpleNamespace(status="queued", current_phase=None),
+        SimpleNamespace(status="processing", current_phase="assembling_clips"),
+        SimpleNamespace(status="done", current_phase=None),
+    ]
+    sessions = [None, SimpleNamespace(status="executing"), SimpleNamespace(status="rendering")]
+    for job in jobs:
+        for session in sessions:
+            await creation_threads._append(
+                _AsyncDb(),
+                thread,
+                event_type="status_update",
+                content=creation_threads._localized_status_message(
+                    thread=thread, session=session, job=job
+                ),
+            )
+    await creation_threads._append(
+        _AsyncDb(),
+        thread,
+        event_type="format_prompt",
+        role="assistant",
+        content=creation_threads._format_prompt_copy("tr"),
+    )
+    assert turkish_chat_net.checked == len(jobs) * len(sessions) + 1
+    # English stays byte-identical.
+    assert (
+        creation_threads._format_prompt_copy(None)
+        == "What are we making? Pick a format and we’ll shape it together."
+    )
+
+
 # -- B. static net -------------------------------------------------------------------
 
-_WRITERS = {"_append_sync_event", "_append_event", "CreationThreadEvent"}
+# `_append` is the v1 chat writer in routes/creation_threads.py (also called as
+# `routes._append` from services/creation_editor_actions.py) (KRI-784).
+_WRITERS = {"_append_sync_event", "_append_event", "_append", "CreationThreadEvent"}
 # Creator-facing text handed to the turn plan and the strategy refusal (the turn task
 # writes them as the event content).
 _TEXT_ARGUMENTS = {
@@ -883,6 +973,10 @@ _CROSS_MODULE_SOURCES: dict[str, tuple[str, ...]] = {
 _LOOKUP_TABLES = frozenset(
     {
         "app.kria.strategy_policy._KNOWN_TR",  # exact English notice text
+        # KRI-784: keyed by the machine role / position value (the English text uses
+        # the raw value itself; a missing key falls back to that value).
+        "app.services.finished_style_learning._ROLE_TR",
+        "app.services.finished_style_learning._POSITION_TR",
         "app.kria.strategy_policy._SHAPE_NAMES_TR",
         "app.kria.brief_checks._SPOT_TR",
         "app.kria.brief_checks._BASIS_TR",  # machine ordering basis

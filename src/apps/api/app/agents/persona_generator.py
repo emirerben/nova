@@ -28,6 +28,7 @@ from app.agents._schemas.persona import (
 )
 from app.agents.music_matcher import _sanitize_text
 from app.agents.persona_examples import format_archetypes, format_success_factors
+from app.kria.reply_language import creator_text_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 
 
@@ -122,7 +123,7 @@ class PersonaGeneratorAgent(Agent[PersonaQuestionnaire, Persona]):
         return ["summary", "content_pillars", "tone", "audience", "posting_cadence"]
 
     def render_prompt(self, input: PersonaQuestionnaire) -> str:  # noqa: A002
-        return load_prompt(
+        prompt = load_prompt(
             "generate_persona",
             # Primary input block — interview turns (new) or flat fields (legacy)
             interview_block=_interview_block(input),
@@ -136,6 +137,19 @@ class PersonaGeneratorAgent(Agent[PersonaQuestionnaire, Persona]):
             archetypes=format_archetypes(),
             # Codified TikTok success factors relevant to lane/cadence choices.
             success_factors=format_success_factors("persona"),
+        )
+        return with_prompt_language(
+            prompt,
+            input.reply_language
+            or creator_text_language(
+                input.work,
+                input.school,
+                input.social,
+                input.hobbies,
+                input.travels,
+                input.passions,
+                [t.content for t in input.interview_turns if t.role == "user"],
+            ),
         )
 
     def parse(

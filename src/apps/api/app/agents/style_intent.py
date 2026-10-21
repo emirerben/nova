@@ -23,11 +23,12 @@ import structlog
 from pydantic import BaseModel, Field
 
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
+from app.kria.reply_language import creator_text_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-STYLE_INTENT_PROMPT_VERSION = "2026-07-11-kria"
+STYLE_INTENT_PROMPT_VERSION = "2026-10-21-language"
 
 # The exactly 10 parity-safe knob keys (must match StyleKnobs in _schemas/user_style.py)
 _PARITY_SAFE_KNOBS: frozenset[str] = frozenset(
@@ -58,6 +59,9 @@ class StyleIntentInput(BaseModel):
     prior_turns: list[dict] = Field(default_factory=list)
     # Compact snapshot of the user's current style (set label + top knobs, not full JSONB).
     current_style_snapshot: dict | None = None
+    # KRI-784: the creator's language ("tr"/"en"), from the chat or the caller. None:
+    # read from the creator's own words below; English/unknown renders byte-identical.
+    reply_language: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class StyleIntentOutput(BaseModel):
@@ -139,11 +143,23 @@ class StyleIntentAgent(Agent[StyleIntentInput, StyleIntentOutput]):
         return ["intent", "reply"]
 
     def render_prompt(self, input: StyleIntentInput) -> str:  # noqa: A002
-        return load_prompt(
+        prompt = load_prompt(
             "style_intent",
             utterance=input.utterance[:500],
             prior_turns=_format_prior_turns(input.prior_turns),
             style_snapshot=_format_style_snapshot(input.current_style_snapshot),
+        )
+        return with_prompt_language(
+            prompt,
+            input.reply_language
+            or creator_text_language(
+                input.utterance,
+                [
+                    str(t.get("content") or "")
+                    for t in input.prior_turns
+                    if isinstance(t, dict) and t.get("role") == "user"
+                ],
+            ),
         )
 
     def parse(

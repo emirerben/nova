@@ -14,9 +14,10 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
 from app.agents.music_matcher import _sanitize_text
+from app.kria.reply_language import creator_text_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 
-IDEA_EXPANDER_PROMPT_VERSION = "2026-07-11-kria"
+IDEA_EXPANDER_PROMPT_VERSION = "2026-10-21-language"
 
 IdeaExpandVideoType = Literal["montage", "voiceover", "talking_to_camera"]
 IdeaExpandContentMode = Literal["create_new", "existing_footage", "mixed"]
@@ -29,6 +30,9 @@ class IdeaExpanderInput(BaseModel):
     creator_context: str = ""
     video_type: IdeaExpandVideoType = "montage"
     content_mode: IdeaExpandContentMode = "create_new"
+    # KRI-784: the creator's language ("tr"/"en"), from the chat or the caller. None:
+    # read from the creator's own words below; English/unknown renders byte-identical.
+    reply_language: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class FilmingShot(BaseModel):
@@ -74,7 +78,7 @@ class IdeaExpanderAgent(Agent[IdeaExpanderInput, IdeaExpanderOutput]):
             if input.content_pillars
             else "  (none)"
         )
-        return load_prompt(
+        prompt = load_prompt(
             "idea_expander",
             idea=_sanitize_text(input.idea),
             persona_summary=_sanitize_text(input.persona_summary),
@@ -82,6 +86,10 @@ class IdeaExpanderAgent(Agent[IdeaExpanderInput, IdeaExpanderOutput]):
             creator_context=_sanitize_text(input.creator_context),
             video_type=input.video_type,
             content_mode=input.content_mode,
+        )
+        return with_prompt_language(
+            prompt,
+            input.reply_language or creator_text_language(input.idea, input.creator_context),
         )
 
     def parse(
