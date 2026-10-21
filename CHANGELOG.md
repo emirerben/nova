@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.4.0] - 2026-10-21
+
+### Changed
+- fix(parity): Turkish parity C2 — Edit/speech/receipt/style decisions understand Turkish (KRI-783) (#1718) <!-- release-pr: 1718 -->
+
+## [0.81.3.0] - 2026-10-21
+
+### Changed
+- fix(creator): Turkish parity C1 — Legacy creator path trusts the model, not English regexes (KRI-782) (#1715) <!-- release-pr: 1715 -->
+
+## [0.81.2.0] - 2026-10-21
+
+### Changed
+- test(parity): Turkish↔English parity map + baseline suites (KRI-773) (#1707) <!-- release-pr: 1707 -->
+
+## [0.81.1.0] - 2026-10-21
+
+### Changed
+- fix(kria): don't hold back the first draft of an open 'Suggest an edit.' request (KRI-774) (#1705) <!-- release-pr: 1705 -->
+
+## [0.81.0.0] - 2026-10-21
+
+### Added
+- Add camera-roll content ideas with creator taste and verified project exports (#1685) <!-- release-pr: 1685 -->
+
 ## [0.80.72.0] - 2026-10-21
 
 ### Changed

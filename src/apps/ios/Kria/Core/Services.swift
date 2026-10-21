@@ -116,6 +116,23 @@ protocol SlidePostProposalClient: Sendable {
 }
 
 protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
+    func editorialTaste() async throws -> EditorialTasteProfile
+    func saveEditorialTaste(_ body: EditorialTasteWrite) async throws -> EditorialTasteProfile
+    func forgetEditorialTaste(revision: Int, eventID: String) async throws -> EditorialTasteProfile
+    func recordIdeaFeedback(_ body: IdeaFeedbackWrite) async throws -> IdeaFeedbackReceipt
+    func updateCameraRollContentPlan(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, plan: CameraRollContentPlan) async throws -> CameraRollStory
+    func changeCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, order: [UUID]?, audioPolicy: String?, eventID: String) async throws -> CameraRollStory
+    func indexCameraRollCollection(id: UUID, revision: Int, offset: Int) async throws -> CameraRollIndexPass
+    func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool) async throws -> CameraRollStories
+    func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool, researchTopic: String?) async throws -> CameraRollStories
+    func recordCameraRollStoryExposure(collectionID: UUID, story: CameraRollStory, collectionRevision: Int) async throws
+    func correctCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, index: Int, momentID: UUID, eventID: String) async throws -> CameraRollStory
+    func rejectCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, eventID: String) async throws -> CameraRollStory
+    func selectCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, threadID: UUID, threadRevision: Int, eventID: String) async throws -> TurnAccepted
+    func createCameraRollStoryThread(id: UUID, revision: Int) async throws -> CreationThread
+    func inspectCameraRollMoment(collectionID: UUID, revision: Int, momentID: UUID, question: String, cacheOnly: Bool) async throws -> CameraRollInspection
+    func importCollectionMedia(file: URL, kind: String) async throws -> SavedMediaAsset
+    func saveCameraRollCollection(_ collection: CameraRollCollection, revision: Int) async throws -> SavedCameraRollCollection
     func repairSavedMedia(asset: SavedMediaAsset, file: URL) async throws -> SavedMediaAsset
     var mediaLibraryOwner: String? { get }
     func savedMedia(query: String, kind: String?, cursor: String?) async throws -> SavedMediaPage
@@ -1243,9 +1260,22 @@ struct KriaAPI: KriaAPIClient {
         body.append(audio)
         append("\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"context_terms\"\r\n\r\n")
         append(String(data: (try? JSONEncoder().encode(contextTerms)) ?? Data("[]".utf8), encoding: .utf8) ?? "[]")
+        // KRI-780: the device's preferred languages, so a short Turkish take is read as Turkish.
+        if let localeHint = Self.dictationLocaleHint() {
+            append("\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"locale_hint\"\r\n\r\n")
+            append(localeHint)
+        }
         append("\r\n--\(boundary)--\r\n")
         return try await request(path: "dictation/transcribe", method: "POST", headers: ["Content-Type": "multipart/form-data; boundary=\(boundary)"], bodyData: body, decode: DictationTranscriptResponse.self, timeoutInterval: 30)
     }
+    /// Dictation `locale_hint`: the device's preferred language tags, best first, comma-joined
+    /// ("en-TR,tr-TR"); nil when none. The server forces Whisper only to a top-ranked Kria
+    /// language and uses later ones just for the spelling-bias word list.
+    static func dictationLocaleHint(preferred: [String] = Locale.preferredLanguages) -> String? {
+        let tags = preferred.prefix(4).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.contains(",") }
+        return tags.isEmpty ? nil : tags.joined(separator: ",")
+    }
+
     func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink {
         try await request(path: "creation-threads/\(threadID.uuidString)/song-audio", method: "GET",
                           query: generation.map { [URLQueryItem(name: "generation", value: String($0))] } ?? [],

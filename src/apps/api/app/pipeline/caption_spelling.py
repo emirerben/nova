@@ -26,17 +26,18 @@ import re
 from collections.abc import Iterable, Sequence
 from typing import Any
 
+from app.text_fold import loose_case
+
 MAX_ASKS = 12
 _MIN_TARGET_LEN = 5
 
-_FOLD = str.maketrans(
-    {"ı": "i", "ş": "s", "ç": "c", "ğ": "g", "ö": "o", "ü": "u", "â": "a", "î": "i", "û": "u"}
-)
-
 
 def _fold(text: str) -> str:
-    """Lowercase and strip Turkish diacritics; "İ"/"I" both become "i"."""
-    return (text or "").replace("İ", "i").replace("I", "i").lower().translate(_FOLD)
+    """Lowercase and strip Turkish diacritics; "İ"/"I" both become "i".
+
+    The shared Turkish-aware fold (KRI-781), whitespace kept as written.
+    """
+    return loose_case(text or "")
 
 
 # Quoted single words only: straight, curly and guillemet double quotes.

@@ -1,0 +1,55 @@
+{
+  "pair_id": "slide_count",
+  "lang": "tr",
+  "agent": "nova.plan.slide_post_composer",
+  "prompt_version": "2026-09-09-kria",
+  "message": "sadece 3 slayt olsun",
+  "input": {
+    "theme": "solo travel",
+    "idea": "a weekend in Lisbon",
+    "notes": "sadece 3 slayt olsun",
+    "persona_summary": "lowercase, in-the-moment travel creator, second-person voice",
+    "platform_profile": "instagram_carousel",
+    "media": [
+      {
+        "id": "a1",
+        "kind": "image",
+        "description": "airport arrival, golden hour light through terminal windows"
+      },
+      {
+        "id": "a2",
+        "kind": "image",
+        "description": "narrow cobblestone alley in Alfama, laundry lines overhead"
+      },
+      {
+        "id": "a3",
+        "kind": "video",
+        "description": "6s clip riding tram 28 through a curve, hand out the window"
+      },
+      {
+        "id": "a4",
+        "kind": "image",
+        "description": "pastel de nata and coffee on a cafe table, midday"
+      },
+      {
+        "id": "a5",
+        "kind": "image",
+        "description": "sunset over the Tagus river from Miradouro da Senhora do Monte"
+      }
+    ]
+  },
+  "prompt_sha256": "48810ee23c070560fb0b706af48a9b81ed2b8f05b05b6833a8f47cf6266fdd75",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:12:59.733584+00:00",
+  "raw_text": "{\n  \"order\": [\n    \"a1\",\n    \"a4\",\n    \"a3\",\n    \"a2\",\n    \"a5\"\n  ],\n  \"cover_id\": \"a5\",\n  \"caption\": \"a quick solo weekend in lisbon, letting yourself just wander and soak it all in. you really have to experience this city.\",\n  \"alt_text\": {\n    \"a1\": \"Golden hour light streams through large windows at an airport terminal.\",\n    \"a3\": \"A hand extends out from a moving tram, showing the blurred cityscape.\",\n    \"a5\": \"A panoramic view of Lisbon's rooftops and the Tagus river at sunset.\"\n  }\n}",
+  "raw_texts": [
+    "{\n  \"order\": [\n    \"a1\",\n    \"a4\",\n    \"a3\",\n    \"a2\",\n    \"a5\"\n  ],\n  \"cover_id\": \"a5\",\n  \"caption\": \"a quick solo weekend in lisbon, letting yourself just wander and soak it all in. you really have to experience this city.\",\n  \"alt_text\": {\n    \"a1\": \"Golden hour light streams through large windows at an airport terminal.\",\n    \"a3\": \"A hand extends out from a moving tram, showing the blurred cityscape.\",\n    \"a5\": \"A panoramic view of Lisbon's rooftops and the Tagus river at sunset.\"\n  }\n}"
+  ],
+  "model_used": "gemini-2.5-flash",
+  "tokens": {
+    "in": 511,
+    "out": 159,
+    "thoughts": 495
+  },
+  "computed_cost_usd": 0.001788
+}

@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_keep_order",
+  "lang": "tr",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "klipleri çektiğim sırada tut",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "klipleri çektiğim sırada tut"
+  },
+  "prompt_sha256": "51686bbb485dcdac7006d8aa87c977c58925b380081fbe87352264b8126e06d8",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:10:33.143386+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"order\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"klipleri çektiğim sırada tut\",\n      \"facts\": {\n        \"key\": \"capture_time\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"order\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"klipleri çektiğim sırada tut\",\n      \"facts\": {\n        \"key\": \"capture_time\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3224,
+    "out": 93,
+    "thoughts": 440
+  },
+  "computed_cost_usd": 0.004417
+}

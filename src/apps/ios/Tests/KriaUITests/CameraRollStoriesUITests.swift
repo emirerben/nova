@@ -1,0 +1,76 @@
+import XCTest
+
+final class CameraRollStoriesUITests: XCTestCase {
+    @MainActor func testReviewReplaceAndRejectWithoutRendering() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-camera-roll-story-review"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        app.buttons["story-replace-0"].tap()
+        app.buttons["story-alternative-33333333-3333-3333-3333-333333333333"].tap()
+        XCTAssertTrue(app.staticTexts["The final arrival"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["A ferry crossing"].exists, "The unrelated second choice must remain")
+        for _ in 0..<3 where !app.switches["story-sound"].isHittable { app.swipeDown() }
+        app.switches["story-sound"].switches.firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["Muted footage"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["The final arrival"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Corrected recommendation preserves other footage and separate approval"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        for _ in 0..<4 where !app.buttons["Not this story"].exists { app.swipeUp() }
+        XCTAssertTrue(app.buttons["story-choose-11111111-1111-1111-1111-111111111111"].exists)
+        app.buttons["Not this story"].tap()
+        XCTAssertTrue(app.staticTexts["No story to suggest"].waitForExistence(timeout: 5))
+    }
+}
+
+extension CameraRollStoriesUITests {
+    @MainActor func testResearchFactsAndSourcesStayBehindTheIdea() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-camera-roll-story-review", "-camera-roll-story-research"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        let research = app.buttons["story-research-sources"]
+        XCTAssertTrue(research.waitForExistence(timeout: 5))
+        research.tap()
+        XCTAssertTrue(app.staticTexts["Recorded research: the terminal was rebuilt."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["Recorded public archive"].firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["Rendering"].exists)
+        let proof = XCTAttachment(screenshot: app.screenshot())
+        proof.name = "Idea research with provider source, before project approval"
+        proof.lifetime = .keepAlways
+        add(proof)
+    }
+
+    @MainActor func testConfirmExamplesRateIdeaAndForget() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-camera-roll-story-review"]
+        app.launch()
+        let preferences = app.buttons["editorial-preferences"]
+        XCTAssertTrue(preferences.waitForExistence(timeout: 10))
+        preferences.tap()
+        let example = app.buttons["taste-example-AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"]
+        XCTAssertTrue(example.waitForExistence(timeout: 5))
+        example.tap()
+        app.buttons["taste-save"].tap()
+        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 5))
+        app.buttons["idea-feedback"].tap()
+        app.buttons["Would post"].tap()
+        app.buttons["idea-feedback-save"].tap()
+        let saved = app.buttons["idea-feedback"]
+        let confirmed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Feedback saved"), object: saved)
+        XCTAssertEqual(XCTWaiter.wait(for: [confirmed], timeout: 5), .completed)
+        XCTAssertFalse(app.staticTexts["Rendering"].exists)
+        preferences.tap()
+        let forget = app.buttons["taste-forget"]
+        XCTAssertTrue(forget.waitForExistence(timeout: 5))
+        forget.tap()
+        app.alerts.buttons["Forget"].tap()
+        XCTAssertTrue(app.staticTexts["Choose posts you like"].waitForExistence(timeout: 5))
+        let proof = XCTAttachment(screenshot: app.screenshot())
+        proof.name = "Editorial taste is explicit and can be forgotten"
+        proof.lifetime = .keepAlways
+        add(proof)
+    }
+}

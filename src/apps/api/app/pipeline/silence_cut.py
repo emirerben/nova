@@ -76,6 +76,7 @@ from app.pipeline.cut_grid import (
     rendered_spans,
     snap_to_frame,
 )
+from app.text_fold import fold_case
 
 # Whisper bias prompt for the CUT path: passed as whisper-1's ``prompt`` /
 # faster-whisper's ``initial_prompt`` (transcribe(..., verbatim_prompt=…)) so the
@@ -302,9 +303,17 @@ def _elongation_images(entry: str) -> Iterable[str]:
         yield "".join(ch * k for (ch, _), k in zip(runs, combo))
 
 
-_FILLER_MATCH_SET = (
-    frozenset(image for entry in _FILLER_LEXICON for image in _elongation_images(entry))
-    - _REAL_EXCLAMATIONS
+def _filler_key(text: str) -> str:
+    """The shared Turkish-aware fold (KRI-781), letters only: "Iıı," -> "iii"."""
+    return "".join(ch for ch in fold_case(str(text)) if ch.isalpha())
+
+
+# Lexicon images go through the same fold as tokens, so "ııı" is stored as "iii".
+_FILLER_MATCH_SET = frozenset(
+    _filler_key(image)
+    for entry in _FILLER_LEXICON
+    for image in _elongation_images(entry)
+    if image not in _REAL_EXCLAMATIONS
 )
 
 
@@ -318,14 +327,11 @@ def is_filler_token(text: str) -> bool:
     real words never do. Public so caption hygiene (plans/010 15A) can strip
     filler tokens from cue input even when they were not cut.
     """
-    # Turkish casing: str.lower() maps 'I'→'i' and NEVER 'ı', so "Iıı," would
-    # normalize to "iıı" and miss the "ııı" lexicon entry. Fold the Turkish
-    # capitals explicitly BEFORE lowercasing: 'İ' (dotted) → 'i', 'I'
-    # (dotless in Turkish) → 'ı'. Safe for English input because the lexicon
-    # has no i-initial entries, so English capital-I words ("I", "It", "Im")
-    # can never collapse onto a filler image.
-    folded = str(text).replace("İ", "i").replace("I", "ı")
-    normalized = "".join(ch for ch in folded.lower() if ch.isalpha())
+    # Turkish casing: the shared fold maps all four i letters (I, İ, ı, i) to "i", on
+    # tokens and lexicon alike, so "Iıı," / "IIı," / "ııı" all key "iii". English
+    # capital-I words ("I", "It", "Im") key "i"/"it"/"im" and can never collapse onto a
+    # filler image (the only i-skeletons are "ii"/"iii"/"ih").
+    normalized = _filler_key(text)
     if not normalized:
         return False
     return _collapse_runs(normalized) in _FILLER_MATCH_SET

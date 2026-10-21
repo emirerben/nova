@@ -106,11 +106,12 @@ def test_ordinary_turkish_and_english_edits_are_not_redo(message: str) -> None:
     assert not wants_full_replan(message)
 
 
-def test_english_routing_is_unchanged_including_its_capital_i_quirk() -> None:
-    # The pre-KRI-520 fold maps a capital I to a dotless ı, so all-caps English with an
-    # I never matched. KRI-520 leaves English exactly as it was (not fixed here).
-    assert not wants_full_replan("TRY AGAIN")
-    assert not _asks_remove("REMOVE CLIP 2")
+def test_english_routing_reads_all_caps_like_lowercase() -> None:
+    # KRI-781: the English fold used to map a capital I to a dotless ı, so all-caps
+    # English with an I never matched ("TRY AGAIN" -> "try agaın"). It now uses the
+    # shared Turkish-aware fold, so capitals route exactly like lowercase.
+    assert wants_full_replan("TRY AGAIN") == wants_full_replan("try again") is True
+    assert _asks_remove("REMOVE CLIP 2") == _asks_remove("remove clip 2") is True
     # English words that are also Turkish verbs/ordinals never reach the Turkish rules.
     assert not _asks_remove("Put video 3 at the start")
     assert not _asks_move("Show the kitten once at the end")

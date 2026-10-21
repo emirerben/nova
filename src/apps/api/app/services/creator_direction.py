@@ -58,6 +58,56 @@ _FONT_PATTERNS = (
     ),
 )
 
+# Durable markers, as whole words of ``style_asks.words`` (Turkish-folded) text.
+_DURABLE_MARKERS = (
+    "always",
+    "every time",
+    "from now on",
+    "every video",
+    "her zaman",
+    "hep",
+    "daima",
+    "bundan sonra",
+    "artik",
+    "her seferinde",
+    "her videoda",
+    "tum videolarimda",
+    "butun videolarimda",
+)
+
+# Negation, as whole words of the same folded text: English, then Turkish ("asla" never,
+# "değil" not, "istemiyorum"/"istemem" I don't want, "olmasın" let it not be).
+_FONT_NEGATIONS = frozenset(
+    {
+        "never",
+        "avoid",
+        "no",
+        "not",
+        "dont",
+        "stop",
+        "without",
+        "except",
+        "asla",
+        "degil",
+        "istemiyorum",
+        "istemem",
+        "olmasin",
+        "olmasini",
+    }
+)
+# Turkish negative verb forms: "kullanma", "kullanmayın", "kullanılmasın", "koymayın".
+_FONT_NEGATED_VERB_STEMS = ("kullanma", "kullanilma", "koyma", "secme", "istemi")
+
+
+def _is_negated_verb(token: str) -> bool:
+    """A Turkish negative verb form. "kullanmak" (to use) and "kullanmanı istiyorum" (I
+    want you to use) share the stem but are positive, so only an ending that keeps the
+    negation counts (none, -y-, -sın, -dan, -z)."""
+    for stem in _FONT_NEGATED_VERB_STEMS:
+        if token.startswith(stem) and token[len(stem) : len(stem) + 1] in ("", "y", "s", "d", "z"):
+            return True
+    return False
+
 
 class DirectionError(ValueError):
     code = "invalid_direction"
@@ -206,7 +256,34 @@ def infer_typed_direction(
                 font_family = match.group(1).strip(" ._-")
                 if font_family and validate_capability_values({"font_family": font_family}):
                     return "font_family", {"font_family": font_family}, "constraint"
+        font_family = _durable_font_from_words(instruction)
+        if font_family and validate_capability_values({"font_family": font_family}):
+            return "font_family", {"font_family": font_family}, "constraint"
     return normalized_key, structured_value, enforcement
+
+
+def _durable_font_from_words(instruction: str) -> str | None:
+    """KRI-783: "Her zaman Inter fontunu kullan" / "always Inter font kullan".
+
+    Any language: a durable marker plus the one registry font the words name, read by the
+    shared bilingual font reader (``style_asks.font_from_words``, which needs a font noun
+    such as "font", "fontunu" or "yazı tipi"). The English patterns above run first.
+    """
+    from app.kria.style_asks import font_from_words, words  # noqa: PLC0415
+
+    folded = words(instruction)
+    padded = f" {folded} "
+    if not any(f" {marker} " in padded for marker in _DURABLE_MARKERS):
+        return None
+    tokens = folded.split()
+    # A durable rule that forbids the font ("Always avoid the Inter font", "Artık Inter
+    # fontunu kullanma") must never be saved as "always use it"; the English
+    # ``explicit_text_rule`` path owns "never use X font" as an exclusion.
+    if _FONT_NEGATIONS.intersection(tokens) or " don t " in padded:
+        return None
+    if any(_is_negated_verb(token) for token in tokens):
+        return None
+    return font_from_words(folded)
 
 
 @dataclass(frozen=True)
@@ -845,6 +922,12 @@ class CreatorDirectionService:
         )
         db.add(operation)
         await db.flush()
+        # Full account Forget also erases editorial examples and judgments,
+        # independently of their rollout flag. Existing operation retries return
+        # above, so they cannot erase preferences added after this clear.
+        from app.services.creator_editorial_taste import erase_profile
+
+        await erase_profile(db, user_id, key=f"memory-clear:{operation.id}")
         return operation
 
     async def set_item_state(

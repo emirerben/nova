@@ -39,6 +39,7 @@ from app.kria import plan_payloads
 from app.kria.plan_contract import DETAIL_MAX, SCOPABLE_SECTIONS, SUMMARY_MAX
 from app.kria.plan_contract import SECTION_ORDER as _CONTRACT_SECTION_ORDER
 from app.kria.reply_language import reply_language_for, say, thread_reply_language
+from app.text_fold import capitalize
 
 log = structlog.get_logger()
 
@@ -646,7 +647,7 @@ def update_summary_text(changed: list[str]) -> str:
     sections = [s for s in SECTION_ORDER if s in changed and s in _SECTION_WORDS]
     en = _join([_SECTION_WORDS[s][0] for s in sections], "and")
     tr = _join([_SECTION_WORDS[s][1] for s in sections], "ve")
-    return say(en=f"Updated {en}.", tr=f"{tr[:1].upper()}{tr[1:]} güncelledim.")[:400]
+    return say(en=f"Updated {en}.", tr=f"{capitalize(tr, 'tr')} güncelledim.")[:400]
 
 
 def _emit_update_summary(job_id: str) -> None:
