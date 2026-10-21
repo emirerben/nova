@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.17.0] - 2026-10-21
+
+### Changed
+- fix(editor): save exact drafts independently of render windows (#1725) <!-- release-pr: 1725 -->
+
 ## [0.81.16.0] - 2026-10-21
 
 ### Changed
