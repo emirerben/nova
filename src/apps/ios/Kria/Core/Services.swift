@@ -2663,11 +2663,41 @@ extension DraftSnapshot {
             merged.append(slot)
         }
         merged.append(contentsOf: unmatched)
+        // KRI-772: a draft staged before the server fitted chat windows to the footage can carry a
+        // window longer than its clip (Troya: 3 s on 3.36 s from 0.9 s). Repair it as the draft opens,
+        // so the creator edits a window the Save accepts instead of meeting a generic refusal.
+        merged = merged.map(fittedToFootage)
         // A tombstone for a slot the base never listed is not a change.
         let baseIDs = Set(base.compactMap { object($0)?["slot_id"]?.stringValue })
         let effective = merged.filter { $0["removed"] != .bool(true) || baseIDs.contains($0["slot_id"]?.stringValue ?? "") }
         guard strippingNulls(.array(effective.map(JSONValue.object))) != strippingNulls(.array(base)) else { return nil }
         return merged.map(JSONValue.object)
+    }
+
+    /// Shortens a window that needs more footage than its clip has (`in_s + duration * rate >
+    /// source_duration_s`, the Save's own bound). Shorten first; slide the start back only when less
+    /// than the minimum length would remain. Untouched when the footage length is unknown.
+    static func fittedToFootage(_ row: [String: JSONValue]) -> [String: JSONValue] {
+        guard row["removed"] != .bool(true),
+              row["media_kind"]?.stringValue != "image", row["kind"]?.stringValue != "image",
+              let source = (row["source_duration_s"] ?? row["source_duration"])?.numberValue, source > 0,
+              let duration = row["duration_s"]?.numberValue, duration > 0 else { return row }
+        let rate = row["playback_rate"]?.numberValue.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? 1
+        let start = max(0, row["in_s"]?.numberValue ?? 0)
+        guard start + duration * rate > source + KriaSourceWindowGeometry.boundsTolerance else { return row }
+        let available = (source - start) / rate
+        var fittedStart = start
+        var fitted = min(duration, available)
+        if available < KriaSourceWindowGeometry.minimumLength - 1e-6 {
+            fitted = min(duration, source / rate)
+            fittedStart = max(0, source - fitted * rate)
+        }
+        fitted = (fitted * 1e6).rounded(.down) / 1e6
+        var next = row
+        next["in_s"] = .number(fittedStart)
+        next["duration_s"] = .number(fitted)
+        if next["duration_beats"] != nil { next["duration_beats"] = .null }
+        return next
     }
 
     /// Structural comparison key that treats absent and null fields alike (the
