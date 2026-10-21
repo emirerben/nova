@@ -17,6 +17,7 @@ from app.config import settings
 from app.kria.reply_language import reply_language_for, say, thread_reply_language
 from app.models import CreationThread, CreationThreadEvent, CreatorMemoryOutbox, User
 from app.services.private_text import normalize_private_text
+from app.text_fold import has_marker
 
 MemoryCandidate = Literal["explicit", "soft", "noop"]
 
@@ -102,12 +103,13 @@ def classify_memory_candidate(message: str | None) -> MemoryCandidate:
     text = normalize_creator_message(message)
     if not text:
         return "noop"
-    lowered = text.casefold()
-    if any(marker in lowered for marker in _LOCAL_MARKERS):
+    # KRI-781: markers match at word starts over the shared Turkish-aware fold, so
+    # "TÜM VİDEOLARIMDA" / "tum videolarimda" count and "asla" never hits "başlasın".
+    if has_marker(text, _LOCAL_MARKERS):
         return "noop"
-    if any(marker in lowered for marker in _DURABLE_MARKERS):
+    if has_marker(text, _DURABLE_MARKERS):
         return "explicit"
-    if any(marker in lowered for marker in _SOFT_MARKERS):
+    if has_marker(text, _SOFT_MARKERS):
         return "soft"
     return "noop"
 
@@ -115,8 +117,7 @@ def classify_memory_candidate(message: str | None) -> MemoryCandidate:
 def requires_stateful_extraction(message: str | None) -> bool:
     """Return whether explicit language needs current-memory judgment."""
 
-    lowered = normalize_creator_message(message).casefold()
-    return any(marker in lowered for marker in _STATEFUL_MARKERS)
+    return has_marker(normalize_creator_message(message), _STATEFUL_MARKERS)
 
 
 def eligible_memory_event(event: CreationThreadEvent) -> bool:

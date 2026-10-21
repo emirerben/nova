@@ -88,6 +88,7 @@ from app.services.clip_selection import (
     intent_key,
 )
 from app.services.clip_understanding import clip_record
+from app.text_fold import title_words
 
 log = structlog.get_logger()
 
@@ -2233,7 +2234,7 @@ def _apply_vision_result(
             work.failed_media_ids.add(candidate.media_id)
             return
 
-        value = candidate.fallback_value or clean_label_text(output.answer.title())
+        value = candidate.fallback_value or clean_label_text(title_words(output.answer))
         label = ground_label(
             media_id=candidate.media_id,
             value=value,

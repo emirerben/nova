@@ -560,12 +560,7 @@ enum NativeEditorRenderError: Error, Equatable {
                 background: try raw["background_color"]?.stringValue.map { try ink(.string($0), fallback: "#FFFFFF") },
                 fontVariations: fontInstances[family] ?? [:], letterSpacing: raw["letter_spacing"]?.numberValue ?? 0, lineSpacing: raw["line_spacing"]?.numberValue ?? 1.15, wrapsLines: raw["wrap_lines"] != .bool(false),
                 bend: raw["bend"]?.numberValue ?? 0)
-            let displayText: String = switch raw["text_case"]?.stringValue {
-            case "upper": element.text.uppercased()
-            case "lower": element.text.lowercased()
-            case "title": Self.titleCase(element.text)
-            default: element.text
-            }
+            let displayText = KriaTextCase.apply(element.text, raw["text_case"]?.stringValue)
             let explicitPhases = raw["animation_phases"]?.objectValue != nil
             if legacy == "handwriting" && !explicitPhases {
                 text.append(try handwritingLayout.compile(id: element.id, text: displayText, start: item.start, end: item.end,
@@ -888,17 +883,6 @@ enum NativeEditorRenderError: Error, Equatable {
         return try JSONDecoder().decode(TextMotionParameters.self, from: JSONEncoder().encode(normalized))
     }
 
-    private static func titleCase(_ text: String) -> String {
-        let pattern = try! NSRegularExpression(pattern: #"\S+"#)
-        var output = text
-        for match in pattern.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
-            guard let range = Range(match.range, in: output) else { continue }
-            let word = String(output[range])
-            output.replaceSubrange(range, with: word.prefix(1).uppercased() + word.dropFirst().lowercased())
-        }
-        return output
-    }
-
     private static func projectSentenceCaptions(
         _ elements: [EditorTextElement], captionMeta: [String: JSONValue]
     ) -> [EditorTextElement] {
@@ -1002,5 +986,60 @@ enum NativeEditorRenderError: Error, Equatable {
         }
         return TextInk(red: Double((color >> 16) & 255) / 255,
                        green: Double((color >> 8) & 255) / 255, blue: Double(color & 255) / 255, alpha: alpha)
+    }
+}
+
+
+/// text_case transform. EXACT mirror of `apply_text_case` (api app/agents/_schemas/text_element.py,
+/// casing in app/text_fold.py) and `applyTextCase` (web src/lib/overlay-layout.ts); shared fixture
+/// tests/fixtures/text-element-parity/text_case.json. KRI-781: Turkish i rules ("istanbul" -> "İSTANBUL",
+/// "IŞIK" -> "ışık") apply when the language is Turkish or the text has a Turkish-only letter
+/// (ı İ ğ Ğ ş Ş); English is cased exactly as before ("title" -> "TITLE").
+enum KriaTextCase {
+    private static let turkishOnlyLetters: Set<Character> = ["ı", "İ", "ğ", "Ğ", "ş", "Ş"]
+
+    static func usesTurkishCase(_ text: String, language: String? = nil) -> Bool {
+        let code = (language ?? "").lowercased().replacingOccurrences(of: "_", with: "-")
+        let base = code.split(separator: "-").first.map(String.init) ?? ""
+        if base == "tr" || base == "az" { return true }
+        return text.contains { turkishOnlyLetters.contains($0) }
+    }
+
+    static func upper(_ text: String, language: String? = nil) -> String {
+        guard usesTurkishCase(text, language: language) else { return text.uppercased() }
+        return text.precomposedStringWithCanonicalMapping
+            .replacingOccurrences(of: "i", with: "\u{130}")
+            .replacingOccurrences(of: "ı", with: "I")
+            .uppercased()
+    }
+
+    static func lower(_ text: String, language: String? = nil) -> String {
+        guard usesTurkishCase(text, language: language) else { return text.lowercased() }
+        return text.precomposedStringWithCanonicalMapping
+            .replacingOccurrences(of: "\u{130}", with: "i")
+            .replacingOccurrences(of: "I", with: "ı")
+            .lowercased()
+    }
+
+    /// First character of each whitespace-delimited run upper, the rest lower (never after apostrophes).
+    static func title(_ text: String, language: String? = nil) -> String {
+        let lang: String? = usesTurkishCase(text, language: language) ? "tr" : nil
+        let pattern = try! NSRegularExpression(pattern: #"\S+"#)
+        var output = text
+        for match in pattern.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+            guard let range = Range(match.range, in: output) else { continue }
+            let word = String(output[range])
+            output.replaceSubrange(range, with: upper(String(word.prefix(1)), language: lang) + lower(String(word.dropFirst()), language: lang))
+        }
+        return output
+    }
+
+    static func apply(_ text: String, _ textCase: String?, language: String? = nil) -> String {
+        switch textCase {
+        case "upper": upper(text, language: language)
+        case "lower": lower(text, language: language)
+        case "title": title(text, language: language)
+        default: text
+        }
     }
 }

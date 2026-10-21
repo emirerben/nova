@@ -9,6 +9,7 @@ from difflib import SequenceMatcher
 from typing import Protocol
 
 from app.pipeline.lyrics_alignment import align
+from app.text_fold import loose_text
 
 
 class WordLike(Protocol):
@@ -39,7 +40,9 @@ def _tokens(text: str) -> list[str]:
 
 
 def _norm(token: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", token.lower())
+    # KRI-781: the shared Turkish-aware fold; a bare lower() + [a-z0-9] deleted every
+    # Turkish letter ("şöyle" -> "yle", "güzel" -> "gzel").
+    return re.sub(r"[^a-z0-9]", "", loose_text(token))
 
 
 def _similarity(a: str, b: str) -> float:

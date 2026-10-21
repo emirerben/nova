@@ -39,6 +39,7 @@ from app.services.kria_editor_ops import (
     _slot_duration,
     is_caption_text_bar,
 )
+from app.text_fold import capitalize
 
 MAX_TEXT_CHARS = 500
 MAX_SELECTOR_LIST = 100
@@ -516,7 +517,8 @@ def _describe_selector_tr(selector: dict[str, Any], *, find: str | None = None) 
     if find:
         qualifiers.append(f"“{find}” içeren")
     phrase = " ".join([*qualifiers, noun])
-    return phrase[:1].upper() + phrase[1:]
+    # KRI-781: Turkish-aware first letter ("ilk" -> "İlk").
+    return capitalize(phrase, "tr")
 
 
 def zero_match_message(selector: dict[str, Any], *, find: str | None = None) -> str:

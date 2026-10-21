@@ -27,9 +27,9 @@ Usage:
 from __future__ import annotations
 
 import re
-import unicodedata
 
 from app.agents._schemas.content_plan import PlanItemSpec
+from app.text_fold import loose_text
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
@@ -102,8 +102,8 @@ _STOPWORDS = frozenset(
 
 
 def _tokens(s: str) -> set[str]:
-    folded = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
-    return {t for t in _TOKEN_RE.findall(folded.lower()) if t not in _STOPWORDS}
+    # KRI-781: the shared Turkish-aware fold; ascii-ignore used to DELETE "ı" ("krmz").
+    return {t for t in _TOKEN_RE.findall(loose_text(s)) if t not in _STOPWORDS}
 
 
 def _provenance_score(spec_text: str, seed_text: str) -> float:

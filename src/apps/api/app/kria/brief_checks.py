@@ -61,6 +61,8 @@ from app.services.clip_facts import CAPTURE_ORDER_KEYS
 from app.services.clip_order_sequence import row_relations, sequence_rows
 from app.services.kria_editor_ops_diff import effective_entrance
 from app.services.length_policy import creator_duration_matches, length_owner, natural_length_owner
+from app.text_fold import capitalize, uses_turkish_case
+from app.text_fold import lower as text_lower
 
 if TYPE_CHECKING:
     from app.agents._schemas.creator_agent import ResolvedCreatorManifest
@@ -4568,8 +4570,8 @@ def _same_group(label: str, words: str) -> bool:
 
 
 def _sentence_case(value: str) -> str:
-    value = value.strip()
-    return value[:1].upper() + value[1:]
+    # KRI-781: Turkish-aware first letter ("ırmak" -> "Irmak", not "Irmak" via "I").
+    return capitalize(value.strip())
 
 
 def _step_names(step: NarratedStepFact) -> tuple[str, ...]:
@@ -5046,10 +5048,12 @@ def _judges_caption_words(req: BriefRequirement, facts: PlanFacts) -> bool:
 
 def _spelling_key(value: str, *, turkish: bool) -> str:
     """Case-free, whitespace-collapsed text that keeps every letter ("İ" -> "i"; in Turkish
-    "I" -> "ı"), so "KADIKÖY" equals "Kadıköy" but "Kadikoy" does not."""
-    text = unicodedata.normalize("NFC", value).replace("İ", "i")
-    if turkish:
-        text = text.replace("I", "ı")
+    "I" -> "ı"), so "KADIKÖY" equals "Kadıköy" but "Kadikoy" does not.
+
+    KRI-781: lower-cased with the shared Turkish-aware casing, which also applies Turkish
+    i rules when the text itself has a Turkish-only letter, whatever the flag says.
+    """
+    text = text_lower(unicodedata.normalize("NFC", value), "tr" if turkish else None)
     return " ".join(text.casefold().split())
 
 
@@ -5068,6 +5072,9 @@ def _caption_spelling(name: str, captions: str, *, turkish: bool) -> tuple[bool,
     want = _squash(name)
     if not want:
         return False, None
+    # KRI-781: a name with a Turkish-only letter is Turkish even when the job language is
+    # not, so "KIRMIZI" in the captions still equals the wanted "kırmızı".
+    turkish = turkish or uses_turkish_case(name)
     want_key = _spelling_key(name, turkish=turkish)
     name_words = len(re.split(r"[\s\-]+", name.strip()))
     tokens = list(_CAPTION_TOKEN_RE.finditer(captions))

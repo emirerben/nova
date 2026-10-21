@@ -29,6 +29,8 @@ from dataclasses import dataclass
 import httpx
 import structlog
 
+from app.text_fold import fold_text, loose_text
+
 log = structlog.get_logger()
 
 
@@ -504,10 +506,8 @@ _TITLE_TOKEN_RE = re.compile(r"[a-z0-9]+")
 def _tokenize_title(s: str) -> set[str]:
     """Lowercase tokens of [a-z0-9] runs. Drops punctuation, accents
     (after NFKD), and feature credits."""
-    import unicodedata  # noqa: PLC0415 — only needed here
-
-    folded = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
-    return set(_TITLE_TOKEN_RE.findall(folded.lower()))
+    # KRI-781: the shared Turkish-aware fold; ascii-ignore used to DELETE "ı".
+    return set(_TITLE_TOKEN_RE.findall(loose_text(s)))
 
 
 _ARTIST_TAIL_FEAT_RE = re.compile(r"\s+(?:ft|feat|featuring)\.?\s+.+$", flags=re.IGNORECASE)
@@ -519,7 +519,7 @@ def _artists_match(a: str, b: str) -> bool:
 
     def _norm(s: str) -> str:
         s = _ARTIST_TAIL_FEAT_RE.sub("", s.strip())
-        return s.casefold()
+        return fold_text(s)
 
     return _norm(a) == _norm(b)
 
