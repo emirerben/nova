@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from app.auth import get_current_user
 from app.config import settings
+from app.limiter import limiter
 from app.main import app
 from app.pipeline.transcribe import Transcript, Word
 
@@ -47,6 +48,7 @@ def _signed_in(monkeypatch):
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=1)
     monkeypatch.setattr(settings, "voice_dictation_enabled", True)
     monkeypatch.setattr("app.services.audio_download.probe_duration", lambda _p: 4.0)
+    limiter.reset()  # every test posts; the 30/minute cap must not leak between them
     yield
     app.dependency_overrides.clear()
 
@@ -205,3 +207,46 @@ def test_temp_file_is_deleted_on_every_path(monkeypatch) -> None:
     client.post("/dictation/transcribe", files=_audio(content_type="image/png"))
     client.post("/dictation/transcribe", files=_audio(size=3 * 1024 * 1024 + 1))
     assert set(glob.glob(f"{tempfile.gettempdir()}/tmp*.m4a")) == before
+
+
+def test_only_a_top_ranked_kria_language_is_forced(monkeypatch) -> None:
+    """KRI-780 review: forcing a device language makes Whisper translate speech in another
+    one, and codes Whisper does not know ("nb") fail the call. Only a top-ranked Turkish
+    locale forces; a later Turkish entry only adds the Turkish word list."""
+
+    calls: list = []
+    _stub_whisper(monkeypatch, _transcript("add captions and remove the music"), calls)
+    cases = {
+        "de-DE": (None, False),
+        "nb-NO": (None, False),
+        "az-AZ": (None, False),
+        "de-DE,tr-TR": (None, True),
+        "en-TR,tr-TR": (None, True),
+        "tr-TR,en-US": ("tr", True),
+    }
+    for hint, (language, turkish_words) in cases.items():
+        calls.clear()
+        res = client.post("/dictation/transcribe", files=_audio(), data={"locale_hint": hint})
+        assert res.status_code == 200, hint
+        assert calls[0]["language"] == language, hint
+        assert ("altyazı" in calls[0]["verbatim_prompt"]) is turkish_words, hint
+
+
+def test_turkish_credit_filler_after_the_request_is_dropped(monkeypatch) -> None:
+    for heard, kept in (
+        ("klipleri sırala Altyazı M.K.", "klipleri sırala"),
+        ("müziği kaldır. İzlediğiniz için teşekkür ederim.", "müziği kaldır."),
+    ):
+        _stub_whisper(monkeypatch, _transcript(heard))
+        res = client.post("/dictation/transcribe", files=_audio(), data={"locale_hint": "tr-TR"})
+        assert res.json()["text"] == kept
+
+    _stub_whisper(monkeypatch, _transcript("Altyazı M.K."))
+    res = client.post("/dictation/transcribe", files=_audio(), data={"locale_hint": "tr-TR"})
+    assert res.json() == {"text": "", "reason": "no_speech"}
+
+
+def test_all_caps_turkish_prompt_echo_is_no_speech(monkeypatch) -> None:
+    _stub_whisper(monkeypatch, _transcript("ALTYAZI SESLENDİRME GEÇİŞ", no_speech=None))
+    res = client.post("/dictation/transcribe", files=_audio(), data={"locale_hint": "tr-TR"})
+    assert res.json() == {"text": "", "reason": "no_speech"}

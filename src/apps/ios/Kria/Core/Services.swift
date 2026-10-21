@@ -1260,8 +1260,7 @@ struct KriaAPI: KriaAPIClient {
         body.append(audio)
         append("\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"context_terms\"\r\n\r\n")
         append(String(data: (try? JSONEncoder().encode(contextTerms)) ?? Data("[]".utf8), encoding: .utf8) ?? "[]")
-        // KRI-780: the language the creator speaks (the same device language the live Apple
-        // recognizer uses), so Whisper transcribes a short Turkish take as Turkish.
+        // KRI-780: the device's preferred languages, so a short Turkish take is read as Turkish.
         if let localeHint = Self.dictationLocaleHint() {
             append("\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"locale_hint\"\r\n\r\n")
             append(localeHint)
@@ -1269,10 +1268,12 @@ struct KriaAPI: KriaAPIClient {
         append("\r\n--\(boundary)--\r\n")
         return try await request(path: "dictation/transcribe", method: "POST", headers: ["Content-Type": "multipart/form-data; boundary=\(boundary)"], bodyData: body, decode: DictationTranscriptResponse.self, timeoutInterval: 30)
     }
-    /// Dictation `locale_hint`: the device's most preferred language tag ("tr-TR"); nil when none.
+    /// Dictation `locale_hint`: the device's preferred language tags, best first, comma-joined
+    /// ("en-TR,tr-TR"); nil when none. The server forces Whisper only to a top-ranked Kria
+    /// language and uses later ones just for the spelling-bias word list.
     static func dictationLocaleHint(preferred: [String] = Locale.preferredLanguages) -> String? {
-        guard let tag = preferred.first?.trimmingCharacters(in: .whitespaces), !tag.isEmpty else { return nil }
-        return tag
+        let tags = preferred.prefix(4).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.contains(",") }
+        return tags.isEmpty ? nil : tags.joined(separator: ",")
     }
 
     func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink {
