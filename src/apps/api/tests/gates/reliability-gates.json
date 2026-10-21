@@ -1714,6 +1714,49 @@
         "KRI-725"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-788-order-answer-dispatch",
+      "tickets": [
+        "KRI-788",
+        "KRI-787"
+      ],
+      "symptom": "Every render after the order answer \"Use the order you added the clips\" was refused at dispatch with \"I can't verify this ordering rule from the approved media.\": the approved binding held the answer, but the job factory erased the strategy's answers (KRI-492) and the dispatch rebuild never restored them, while the approval dry run read the draft that still had them.",
+      "boundary": "dispatch",
+      "status": "open_pr",
+      "owner": "KRI-788",
+      "journey": "kri-788-order-answer-dispatch",
+      "paths": [
+        "src/apps/api/app/tasks/content_plan_build.py",
+        "src/apps/api/app/services/generative_jobs.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/kria/brief_binding.py"
+      ],
+      "regression_tests": [
+        "tests/tasks/test_kri788_order_answer_dispatch.py"
+      ],
+      "harness": "real_contract",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "T1 render 2's approved strategy, answered brief and clip record through the real approval dry run, BriefBinding, dispatch over the real job factory, contract and phone dispatch gate; baseline fails with prod's exact refusal.",
+        "live_model": "n/a; no model call on this path",
+        "native_output": "unknown; T1 phone re-send after deploy pending",
+        "production": "not deployed"
+      },
+      "neighbours_covered": [
+        "attachment_order answer",
+        "unordered answer",
+        "client-written answer with no binding answer",
+        "binding answer differs from the strategy's",
+        "binding with no answers stays byte-identical",
+        "approval-time contract equals the dispatch contract"
+      ],
+      "neighbours_gap": [
+        "length, silent-tail and text-placement answers ride the same restore but have no T1-shaped replay here",
+        "approval readiness (KRI-721) still assesses the draft strategy, not the dispatch projection"
+      ],
+      "follow_ups": [],
+      "red_control": "not_applicable"
     }
   ]
 }
