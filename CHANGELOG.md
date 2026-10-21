@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.12.0] - 2026-10-21
+
+### Changed
+- KRI-776: "six moments, about 2 seconds each" reaches the brief and the plan (#1711) <!-- release-pr: 1711 -->
+
 ## [0.81.11.0] - 2026-10-21
 
 ### Fixed
