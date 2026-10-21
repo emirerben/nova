@@ -25,7 +25,8 @@ from app.pipeline.prompt_loader import load_prompt
 # v10 (KRI-700): shared brief records `footage_light` for brighten / darken asks.
 # v11 (KRI-674 follow-up): timing examples satisfy the non-empty content contract.
 # v12 (KRI-721 live check): shared brief carries unprocessed source-audio intent.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-19-v12"
+# v13 (KRI-789): shared brief records quoted start / end lines as a `timing` trim.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-21-v13"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")

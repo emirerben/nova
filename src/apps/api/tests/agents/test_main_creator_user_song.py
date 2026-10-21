@@ -37,9 +37,9 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v64 adds typed unchanged-source audio intent; only the two brief-on renders change.
 PRE_CHANGE_PROMPT_SHA = {
     (True, False): "4684c634fa88dcfec7865a41330b8a781bb706837861c6e7d63c796b8c2d0a2a",
-    (True, True): "9a781353f4aea31a5c947760f6d0afd35adc862a2165d6c7134d39ff1fe638b3",
+    (True, True): "0fa413844cd1bcef2f6441d693705b73a57c16afb2e5c29af88bd210b5b61132",
     (False, False): "9ae7a03343fc258ce0fec6bc86976e6f24b1576bc4ad92920eb5e5b28f1e330d",
-    (False, True): "4359258a49d91c04bd16d8d77dcd4101d989ff9859d13295f226b15e127f11e0",
+    (False, True): "75dedc2f14e1d6b7ec3321e5edcac9ac31a890e45a692a50740cfae85579e74f",
 }
 
 
@@ -109,7 +109,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-19-v64"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-21-v65"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

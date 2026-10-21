@@ -193,6 +193,14 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   `tests/kria/test_kri667_no_new_intent_regexes.py` ratchets the `re.*` count of
   every creator-wording module down (exempt a non-wording regex with
   `# kri667: <why>`). Pins: `tests/kria/test_kri667_structured_ask_facts.py`.
+- **Start / end lines are a trim (KRI-789).** "Start at "…" and end right after "…"" inside a
+  take is one `timing` requirement with `facts` {`start_line`, `end_line`} (the creator's
+  exact quoted words; either alone), never an `order` requirement (Main Creator v65,
+  extractor v13). Not `start` / `end`: those are route keys, and `unified_montage.brief_view`
+  merges every requirement's facts into the route title. `app.kria.take_trim` re-files a
+  v64-shaped reply (key-less `order` with quoted `start` / `end`) on a one-video edit, and
+  `choice_questions.one_clip_edit` keeps both the order_basis question and the render
+  contract quiet about any free-form order rule on one clip.
 - **Clip speed (KRI-689).** The phone montage plays every clip at natural speed
   (`phone_guided_plan` refuses a `playback_rate` other than 1). A speed ask ("speed the
   river shots up 2x", slow motion, time-lapse, "2 kat hızlandır") used to be dropped
