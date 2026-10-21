@@ -863,6 +863,12 @@ class Settings(BaseSettings):
     # Deploy readers everywhere before enabling snapshot writers.
     kria_brief_binding_enabled: bool = False
     kria_brief_binding_user_ids: Annotated[list[str], NoDecode] = []
+    # KRI-775: before the approval card, run the phone montage plan the worker will run
+    # (`app.services.phone_montage_preflight`) and hold back a draft it would refuse,
+    # with the reason and the "simpler version?" choice. Deterministic, fail-open.
+    # Default TRUE; kill switch = false + restart (api + worker): approval is offered
+    # exactly as before and the worker's own check is the only one.
+    kria_phone_montage_preflight_enabled: bool = True
     # KRI-721: enroll new approval writers only after API/worker readers deploy.
     # Existing stamped assessments remain mandatory when enrollment is disabled.
     kria_approval_readiness_enabled: bool = False

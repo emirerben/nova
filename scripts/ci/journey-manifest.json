@@ -656,6 +656,17 @@
       ]
     },
     {
+      "id": "kri-775-phone-preflight",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri775_merope_m2_replay.py tests/kria/test_kri775_phone_montage_preflight.py tests/kria/test_kri775_preflight_runtime_postgres.py",
+      "paths": [
+        "src/apps/api/app/services/phone_montage_preflight.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/fixtures/kri775_merope_m2_turns.json"
+      ]
+    },
+    {
       "id": "kri-632-phone-captions",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_phone_caption_cue_budget.py tests/pipeline/test_caption_spelling.py",
