@@ -1166,6 +1166,22 @@
         "src/apps/api/assets/fonts/glyph-fallbacks.json",
         "src/apps/api/tests/fixtures/overlay_verify/"
       ]
+    },
+    {
+      "id": "kri-802-question-batch",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_kri802_question_batch.py tests/kria/test_kri802_question_batch_postgres.py",
+      "xctests": [
+        "KriaUITests/CreationUITests/testTitleCardAndClipPickerInOneReplyGoOutOnOneTurn",
+        "KriaUITests/CreationUITests/testClipsFirstThenTheTitleTapSendsBothOnOneTurn"
+      ],
+      "paths": [
+        "src/apps/api/tests/fixtures/kri802_don_julio_m1_turn1.json",
+        "src/apps/api/tests/kria/test_kri802_question_batch.py",
+        "src/apps/api/tests/kria/test_kri802_question_batch_postgres.py",
+        "src/apps/ios/Kria/Core/QuestionBatch.swift",
+        "src/apps/ios/Kria/Features/ChoiceQuestionCard.swift"
+      ]
     }
   ]
 }
