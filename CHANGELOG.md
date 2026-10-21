@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.2.0] - 2026-10-21
+
+### Changed
+- test(parity): Turkish↔English parity map + baseline suites (KRI-773) (#1707) <!-- release-pr: 1707 -->
+
 ## [0.81.1.0] - 2026-10-21
 
 ### Changed
