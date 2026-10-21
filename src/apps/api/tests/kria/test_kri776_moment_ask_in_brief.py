@@ -703,14 +703,18 @@ async def _draft(monkeypatch, take_s: float) -> tuple[str, str | None, str | Non
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_runtime_flags", "_dispose_async_engine")
-async def test_a_plan_with_the_six_moments_keeps_the_summary_on_the_card(monkeypatch) -> None:  # noqa: ANN001
+async def test_six_moments_card_keeps_the_checked_summary_and_freeze_limit(monkeypatch) -> None:  # noqa: ANN001
     status, reply, card = await _draft(monkeypatch, TAKE_S)
 
     assert status == "awaiting_approval"
-    # The model's summary stays, and the moment ask is checked before approval now.
-    assert reply.startswith(f"{SUMMARY}\n")
+    # KRI-777's unsupported freeze stays visible beside the fulfilled moment ask.
+    # Both the reply and approval card use the checked summary, not the model's promise.
+    assert reply.startswith("Not everything you asked for made it in:\n")
+    assert "Couldn't: Freeze the frame for one second on Atakan's bite" in reply
+    assert "I can't freeze a frame in this edit yet, so that moment plays normally" in reply
+    assert "you asked for 1s" not in reply
     assert reply.endswith("(6 moments, the longest 2.0 s)")
-    assert card == f"Render this draft: {SUMMARY}"
+    assert card == f"Render this draft: {reply}"
 
 
 @pytest.mark.asyncio
