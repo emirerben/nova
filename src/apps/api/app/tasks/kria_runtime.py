@@ -1090,6 +1090,7 @@ def _complete_draft_turn(
         readiness_report = None
         brief = None
         speed_notice: str | None = None  # KRI-689
+        phone_blockers: list = []  # KRI-775
         if planned.brief_route is not None:
             # KRI-188: persist this turn's requirements (idempotent per turn),
             # then check each one deterministically against what was drafted.
@@ -1157,6 +1158,27 @@ def _complete_draft_turn(
                         item_edit_format=item.edit_format,
                         clip_paths=item.clip_gcs_paths or (),
                     )
+                    if not readiness_required:
+                        # KRI-775: the phone montage worker refuses a draft whose order or
+                        # length falls short. Plan it now (deterministic, fail-open) so its
+                        # receipts hold the draft back here instead of after approval.
+                        from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+                        from app.services.phone_montage_preflight import (  # noqa: PLC0415
+                            phone_montage_blockers,
+                            with_blocked_requirements,
+                        )
+
+                        phone_blockers = phone_montage_blockers(
+                            db,
+                            creator_id=thread.creator_id,
+                            item=item,
+                            brief=brief,
+                            strategy=document.strategy,
+                            media_snapshot=planned.media_snapshot
+                            if planned.media_snapshot is not None
+                            else snapshot_media(item),
+                        )
+                        checked = with_blocked_requirements(checked, brief, phone_blockers)
                 else:
                     # Editor operations verify only the requirements stated in
                     # this very turn, against what the ops changed (KRI-558).
@@ -1176,6 +1198,13 @@ def _complete_draft_turn(
                         # of a creator whose writer is not brief-bound.
                         strict_order=bound_writer,
                     )
+                    if phone_blockers:
+                        from app.services.phone_montage_preflight import (  # noqa: PLC0415
+                            with_blocker_receipts,
+                        )
+
+                        # KRI-775: a requirement the phone plan falls short on is judged by it.
+                        receipts = with_blocker_receipts(receipts, phone_blockers)
                     bound = False
                     if editor_turn and not compiled.diff.unavailable:
                         try:
