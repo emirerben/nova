@@ -214,9 +214,15 @@ def build_clip_question(
     }
 
 
-def clip_question_text(categories: list[dict[str, Any]]) -> str:
-    """Self-sufficient human copy for the question (the app also shows thumbnails)."""
+def clip_question_text(categories: list[dict[str, Any]], *, only_video: bool = False) -> str:
+    """Self-sufficient human copy for the question (the app also shows thumbnails).
+
+    ``only_video`` (KRI-779): every category's one candidate is the project's only video,
+    so there is no "which clip" to ask: the question is whether the moment is in it at all.
+    """
     labels = [c["label"] for c in categories]
+    if only_video:
+        return _not_in_the_video_text(labels)
     if len(labels) == 1:
         return say(
             en=(
@@ -241,6 +247,35 @@ def clip_question_text(categories: list[dict[str, Any]]) -> str:
         tr=(
             f"Şunlar için hangi klipleri kastettiğini anlayamadım: {shown}{more}. "
             "Her biri için klipleri seç ya da hiç klibi olmayanları işaretle."
+        ),
+    )
+
+
+def _not_in_the_video_text(labels: list[str]) -> str:
+    if len(labels) == 1:
+        return say(
+            en=(
+                f'I couldn\'t find "{labels[0]}" in your video. '
+                "Tap the video if it's in there, or tell me it isn't."
+            ),
+            tr=(
+                f'Videonda "{labels[0]}" olan yeri bulamadım. '
+                "Varsa videoya dokun, yoksa olmadığını söyle."
+            ),
+        )
+    shown = ", ".join(f'"{label}"' for label in labels[:4])
+    more = say(
+        en=f" and {len(labels) - 4} more" if len(labels) > 4 else "",
+        tr=f" ve {len(labels) - 4} tane daha" if len(labels) > 4 else "",
+    )
+    return say(
+        en=(
+            f"I couldn't find {shown}{more} in your video. "
+            "Tap the video for each one that's in it, or mark the ones that aren't."
+        ),
+        tr=(
+            f"Videonda şunları bulamadım: {shown}{more}. "
+            "Videoda olanlar için videoya dokun, olmayanları işaretle."
         ),
     )
 
