@@ -1269,6 +1269,33 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.previewSkippedMediaCount, 2)
     }
 
+    func testConcurrentPlaybackFailureReportsPreserveEveryEventAndDraftCall() async throws {
+        let jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1,
+            snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString,
+            baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now))
+        let api: any KriaAPIClient = fake
+        let count = 512
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for code in 0..<count {
+                group.addTask {
+                    let report = PlaybackFailureReport(
+                        playerKind: .finished, errorDomain: "test.concurrent", errorCode: code,
+                        underlyingDomain: nil, underlyingCode: nil, sourceState: "failed", appBuild: nil)
+                    try await api.reportPlaybackFailure(jobID: jobID, report: report)
+                    _ = try await api.draft(threadID: jobID)
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        XCTAssertEqual(fake.playbackFailureReports.count, count)
+        XCTAssertEqual(Set(fake.playbackFailureReports.map(\.errorCode)), Set(0..<count))
+        XCTAssertEqual(fake.draftCallCount, count)
+    }
+
     /// A live preview that can't be built is reported from a Release build too: error type, case and code, the
     /// state it failed in, and nothing that identifies the creator's media (no link, path or text).
     func testLivePreviewFailureIsReportedWithoutPrivateDetail() async throws {
@@ -4752,7 +4779,7 @@ final class NativeEditorSessionTests: XCTestCase {
         let renderSessions = DeviceRenderSessions(fetch: { job, variant in
             XCTAssertEqual(job, jobID)
             XCTAssertEqual(variant, "variant")
-            fake.deviceFetchCount += 1
+            await MainActor.run { fake.deviceFetchCount += 1 }
             throw APIError.requestFailed(status: 503)
         }, factory: { _, _ in throw APIError.unsupported })
         let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 4))
@@ -5952,7 +5979,10 @@ private actor SessionTestStatus {
     func set(_ response: DeviceRenderStatusResponse) { self.response = response }
 }
 
-final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
+// Async protocol witnesses can run concurrently with the main-actor test readers.
+// Keep reports, counters and suspended-call state on the same actor as those readers.
+@MainActor
+final class EditorCommitSpy: KriaAPIClient {
     var draftSnapshot: DraftSnapshot
     var draftError: APIError?
     let openReceipt: OpenInEditorResponse?
