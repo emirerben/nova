@@ -2843,8 +2843,8 @@ _TALKING_HONEST_EN: tuple[str, ...] = (
     _TALKING_NO_SUCH_EDIT,
     _TALKING_NO_SPOKEN_TEXT,
     _TALKING_OPENING_CUT_PLAN,
-    _TALKING_SPOKEN_TEXT_PLAN,
     _TALKING_WINDOW_PLAN,
+    _TALKING_SPOKEN_TEXT_PLAN,
 )
 
 # The Turkish twin of every static reason above (KRI-520). Reasons are written into

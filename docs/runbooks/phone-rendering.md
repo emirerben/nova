@@ -2571,37 +2571,6 @@ Tests: `tests/tasks/test_phone_subtitled_closing_title_worker.py`,
 `tests/kria/test_strategy_policy.py::test_closing_text_*`,
 `tests/services/test_phone_reaction_grounding.py::test_closing_card_*`.
 
-### Text on a spoken word on phone Talking edits (KRI-707)
-
-"“Atakan” dediğimde ekrana büyük “ATAKAN” yazısı gelsin" (boat kit T1, thread
-D2E99325, 2026-10-16) is a brief `text` requirement with the literal and its
-spoken trigger in `facts.triggers`. Nothing drew it, so the first receipt said
-"that exact text isn't in this draft", "simpler version" dropped it, and after
-KRI-705 the draft said "can't" while the contract still pinned the text, so the
-phone pin refused the render ("missing confirmed on-screen text"). Now, with no
-model or prompt involved:
-
-- **Ask.** `app.kria.spoken_text_ask` reads a live `global` text requirement with a
-  literal and non-empty triggers (structured fields only, KRI-667).
-- **Worker.** `_phone_talking_spoken_text_rows` finds the first time the take says
-  a trigger in the take's own words on the cut timeline (the reaction-beat token
-  match, so "Atakan'ı" says "Atakan"; never the caption cues, which correction can
-  strip of word timings) and adds a row `spoken-text-<requirement id>`: the
-  title's look, fading in on the word for 2 s, placed by `place_talking_title`
-  off the face and clear of the captions and title shown then (the face wins when
-  both can't be cleared). Persisted in `text_elements` plus a
-  `spoken_text_placement` receipt (`placed` / `not_heard` / `no_time` / `error`).
-- **Receipts.** Before approval: "I'll show it the moment you say that word ...",
-  a Talking plan line like the start cut (never "a simpler version?"). After
-  render: met when shown off the face; partial with the reason otherwise.
-- **Contract.** A Talking edit no longer pins such a text in `exact_texts`: it shows
-  only where the take says the word, and its receipt answers it.
-
-Kill switch: `fly secrets set PHONE_SUBTITLED_SPOKEN_TEXT_ENABLED=false --app
-nova-video` + restart (api + worker). The draft says "can't" again and no row is
-placed; rows already on a variant keep rendering and survive Saves.
-Tests: `tests/tasks/test_kri707_talking_spoken_text.py`.
-
 ### Start and end lines on phone Talking edits (KRI-628, KRI-704, KRI-790)
 
 "Start at "Hi, I'm Karolina, I'm from Ecuador" and end right after "I'm gonna be
@@ -2635,6 +2604,37 @@ Verify on a real take (writes `report.json`, and with `--video` a `window.mp4` t
 watch): `cd src/apps/api && python -m app.cli.verify_take_window --take
 tests/fixtures/kri790_merope_t1_take.json --video <take.mp4>`.
 Tests: `tests/pipeline/test_phone_take_window.py`, `tests/pipeline/test_phone_opening_cut.py`.
+
+### Text on a spoken word on phone Talking edits (KRI-707)
+
+"“Atakan” dediğimde ekrana büyük “ATAKAN” yazısı gelsin" (boat kit T1, thread
+D2E99325, 2026-10-16) is a brief `text` requirement with the literal and its
+spoken trigger in `facts.triggers`. Nothing drew it, so the first receipt said
+"that exact text isn't in this draft", "simpler version" dropped it, and after
+KRI-705 the draft said "can't" while the contract still pinned the text, so the
+phone pin refused the render ("missing confirmed on-screen text"). Now, with no
+model or prompt involved:
+
+- **Ask.** `app.kria.spoken_text_ask` reads a live `global` text requirement with a
+  literal and non-empty triggers (structured fields only, KRI-667).
+- **Worker.** `_phone_talking_spoken_text_rows` finds the first time the take says
+  a trigger in the take's own words on the cut timeline (the reaction-beat token
+  match, so "Atakan'ı" says "Atakan"; never the caption cues, which correction can
+  strip of word timings) and adds a row `spoken-text-<requirement id>`: the
+  title's look, fading in on the word for 2 s, placed by `place_talking_title`
+  off the face and clear of the captions and title shown then (the face wins when
+  both can't be cleared). Persisted in `text_elements` plus a
+  `spoken_text_placement` receipt (`placed` / `not_heard` / `no_time` / `error`).
+- **Receipts.** Before approval: "I'll show it the moment you say that word ...",
+  a Talking plan line like the start cut (never "a simpler version?"). After
+  render: met when shown off the face; partial with the reason otherwise.
+- **Contract.** A Talking edit no longer pins such a text in `exact_texts`: it shows
+  only where the take says the word, and its receipt answers it.
+
+Kill switch: `fly secrets set PHONE_SUBTITLED_SPOKEN_TEXT_ENABLED=false --app
+nova-video` + restart (api + worker). The draft says "can't" again and no row is
+placed; rows already on a variant keep rendering and survive Saves.
+Tests: `tests/tasks/test_kri707_talking_spoken_text.py`.
 
 ## Your song montages (KRI-374)
 
