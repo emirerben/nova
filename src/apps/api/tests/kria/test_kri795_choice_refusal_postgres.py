@@ -71,7 +71,7 @@ from app.tasks import kria_runtime
 from app.tasks.kria_runtime import _observe_dispatched_execution
 from tests.kria.test_choice_conflict_gate import _brief, _gate, _planned, _rows, _strategy
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
-from tests.kria.test_title_block_answer_postgres import _failed_event, _reply, _selections
+from tests.kria.test_title_block_answer_postgres import _failed_event, _reply
 
 GENERATION = "gen-1"
 ROWS = _rows(3)
@@ -232,6 +232,20 @@ async def _refused(history: list[dict]) -> tuple[uuid.UUID, uuid.UUID, CreationT
     return user_id, thread_id, _failed_event(thread_id)
 
 
+def _last_selection(thread_id: uuid.UUID) -> dict:
+    """The newest creator answer in the thread, by event order."""
+    with sync_session() as db:
+        payloads = db.execute(
+            select(CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == thread_id,
+                CreationThreadEvent.role == "user",
+            )
+            .order_by(CreationThreadEvent.sequence.desc())
+        ).scalars()
+        return next(p["choice_selection"] for p in payloads if p and "choice_selection" in p)
+
+
 def _thread_events(thread_id: uuid.UUID) -> tuple:
     with sync_session() as db:
         rows = db.execute(
@@ -311,7 +325,7 @@ async def test_an_answer_after_the_refusal_is_replayed_and_the_contract_resolves
         user_id, thread_id, event = await _refused(_asked_and_answered(asked, "attachment_order"))
         await _reply(user_id, thread_id, reply)
 
-        selection = _selections(thread_id)[-1]
+        selection = _last_selection(thread_id)
         assert selection == {
             "question_id": event.payload["choice_question"]["question_id"],
             "option_key": option,
@@ -357,7 +371,7 @@ async def test_a_turkish_chat_gets_the_reason_and_the_turkish_options(
             assert english not in content, content
 
         await _reply(user_id, thread_id, "Sabit bir sıra olmadan devam et")
-        assert _selections(thread_id)[-1]["option_key"] == "unordered"
+        assert _last_selection(thread_id)["option_key"] == "unordered"
     finally:
         await async_engine.dispose()
 
