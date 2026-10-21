@@ -88,7 +88,10 @@ log = structlog.get_logger()
 # KRI-700: a brighten / darken ask carries `footage_light`, so the server can say no draft
 # changes the footage's light instead of the summary promising it (v60).
 # v61 (KRI-674 live verification): per-clip camera sound is not spoken excerpts.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-19-v64"
+# KRI-791: an on-screen text timed to a spoken word carries `triggers` too (it was taught only
+# for photos, videos, stickers and sounds, so "Show MEROPE ... the first time she says Merope"
+# arrived with no trigger), plus `speaker` when someone other than the creator says it (v65).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-21-v65"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -399,9 +402,12 @@ the subtitle facts include below_text "Gameday" and smaller_than "Gameday", and 
 facts include below_text "Aston Villa v Fenerbahçe". Keep the modifier in description too.
 The server checks these asks from `facts`, not from the description, so ALWAYS record them
 with these English keys and values, whatever language the creator writes in: a photo, video,
-sticker or sound timed to spoken words ("show the medal photo when I say medal", "her 'kahve'
-kelimesinde fincan sesi") => {"triggers": ["medal"]}, the spoken words exactly as the creator
-wrote them, never translated; keep a take whole, uncut => {"keep_whole_take": true}; end on a
+sticker, sound or on-screen text timed to spoken words ("show the medal photo when I say medal",
+"her 'kahve' kelimesinde fincan sesi") => {"triggers": ["medal"]}, the spoken words exactly as
+the creator wrote them, never translated, plus "speaker" (the creator's words for who) only when
+someone other than the creator says them: "Show MEROPE in big letters the first time she says
+Merope" => a text requirement, literal "MEROPE", facts {"triggers": ["Merope"], "speaker":
+"she"}; keep a take whole, uncut => {"keep_whole_take": true}; end on a
 particular shot, photo or badge => {"closing": "<the creator's words for it>"}; remove pauses,
 filler sounds or retakes from the speech => {"speech_cleanup": true}, keep them =>
 {"speech_cleanup": false}; captions => {"captions": "on"}, {"captions": "off"} or {"captions":

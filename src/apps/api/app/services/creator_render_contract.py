@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.kria.brief import CreativeBrief
+from app.kria.brief_checks import is_spoken_text_cue
 from app.kria.brief_route import chapter_list
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
@@ -1127,10 +1128,14 @@ def build_render_contract(
                     continue
                 durations.append(float(requirement.facts["duration_s"]))
             if requirement.kind == "text" and requirement.literal:
-                if talking_edit and requirement_spoken_text(requirement) is not None:
+                if talking_edit and (
+                    requirement_spoken_text(requirement) is not None
+                    or is_spoken_text_cue(requirement)
+                ):
                     # KRI-707: a Talking edit shows text on a spoken word only where the
                     # take says it (`phone_spoken_text`). Its own receipt answers it ("not
                     # heard" / "can't"), so pinning it would refuse an honest render.
+                    # KRI-791: so does one whose word the ask doesn't name ("which word?").
                     continue
                 shot_index = None
                 if requirement.is_shot_text:

@@ -2178,9 +2178,10 @@ _WHOLE_TAKE_RE = re.compile(
 )
 # Who says the trigger: the creator in the first or second person ("when I say ..."), or,
 # because the brief rewrites asks into third person, their voice ("when the voiceover
-# says ...", "when the narration mentions ...").
+# says ...", "when the narration mentions ..."), or someone in the take ("the first time she
+# says Merope", KRI-791).
 _CUE_SPEAKER = (
-    r"(?:(?:i|you|we)"
+    r"(?:(?:i|you|we|she|he|they|someone|somebody|anyone|anybody|everyone)"
     r"|(?:my |the |our |this |her |his )?"
     r"(?:voice[- ]?over|narration|narrator|recording|audio|script|voice|speech|commentary))"
 )
@@ -2188,7 +2189,9 @@ _CUE_VERB = (
     r"(?:say|says|mention|mentions|hear|hears|name|names|talk(?:s)? about|read(?:s)?"
     r"|bring(?:s)? up|get(?:s)? to)"
 )
-_CUE_OPENER = r"(?:when|whenever|as soon as|the moment|the second|every time)"
+_CUE_OPENER = (
+    r"(?:when|whenever|as soon as|the moment|the second|every time|the (?:first|1st) time)"
+)
 # The creator's voice is the trigger ("when I say ...", "dediğimde"). Without a named word,
 # only this counts as a pop-in ask; "pop up" and "sticker" alone do not.
 _SPOKEN_CUE_RE = re.compile(
@@ -2215,7 +2218,7 @@ _BEAT_CUE_RE = re.compile(
 # The words after the cue verb ("... when voiceover says the medal, show ..."): the trigger
 # the creator named without quoting it.
 _CUE_TRIGGER_RE = re.compile(
-    rf"\b{_CUE_OPENER} {_CUE_SPEAKER} {_CUE_VERB}\s+"
+    rf"\b{_CUE_OPENER} (?P<speaker>{_CUE_SPEAKER}) {_CUE_VERB}\s+"
     r"(?:the (?:words?|phrase|name) )?(?P<trigger>.+)",
     re.IGNORECASE,
 )
@@ -2426,17 +2429,18 @@ def _fact_triggers(req: BriefRequirement) -> list[str]:
     return found
 
 
-def _cue_triggers(req: BriefRequirement) -> list[str]:
-    """The words right after a cue verb ("when voiceover says the medal, show ...").
+def _cue_trigger_match(req: BriefRequirement) -> tuple[list[str], str | None]:
+    """The words right after a cue verb, and who the cue says speaks them.
 
-    A guess at what the creator named without quoting it, in their own spelling. It only
-    ever CONFIRMS (picks which pop-ins an ask is about, recognises an unheard word); a
-    guess that matches nothing never becomes a "No pop-in for X" verdict.
+    "... the first time she says Merope, placed ..." -> (["Merope"], "she"). The speaker is
+    read even when the words name nothing to look for.
     """
+    speaker: str | None = None
     for field_value in (req.description, req.literal):
         match = _CUE_TRIGGER_RE.search(field_value or "")
         if match is None:
             continue
+        speaker = speaker or " ".join(match.group("speaker").lower().split())
         words = _CUE_TRIGGER_END_RE.split(match.group("trigger"), maxsplit=1)[0]
         words = " ".join(words.split()).strip(" \"'\u201c\u201d")
         tokens = [t for t in re.split(r"\W+", _fold(words)) if t]
@@ -2447,8 +2451,47 @@ def _cue_triggers(req: BriefRequirement) -> list[str]:
             and not all(t in _TRIGGER_STOPWORDS for t in tokens)
             and not _GENERIC_TRIGGER_RE.search(words)
         ):
-            return [words]
-    return []
+            return [words], speaker
+    return [], speaker
+
+
+def _cue_triggers(req: BriefRequirement) -> list[str]:
+    """The words right after a cue verb ("when voiceover says the medal, show ...").
+
+    A guess at what the creator named without quoting it, in their own spelling. It only
+    ever CONFIRMS (picks which pop-ins an ask is about, recognises an unheard word); a
+    guess that matches nothing never becomes a "No pop-in for X" verdict.
+    """
+    return _cue_trigger_match(req)[0]
+
+
+# Who a cue names as the speaker when it is someone else in the take ("the first time she
+# says ..."), as `_cue_trigger_match` reads it. "I", "the voiceover" or "anyone" filter
+# nothing the take's words could not already tell.
+_OTHER_SPEAKER_HEADS = frozenset({"she", "he", "they", "her", "his", "their"})
+
+
+def worded_spoken_cue(req: BriefRequirement) -> tuple[tuple[str, ...], str | None]:
+    """KRI-791: the spoken words a text ask waits for, and who says them, as its own wording
+    names them, for when the model left `facts.triggers` / `facts.speaker` out.
+
+    Only an ask worded as a spoken cue counts ("... the first time she says Merope",
+    "“Atakan” dediğimde ..."): the words after the cue verb, else the quoted words that
+    are not the text itself. A described word ("the café's name") or a plain text ask
+    ("Show SALE in big letters") names no word, so nothing is guessed.
+    """
+    if req.scope == "title" or not _worded_spoken_cue(req):
+        return (), None
+    triggers, speaker = _cue_trigger_match(req)
+    if not triggers:
+        literal = (req.literal or "").strip()
+        triggers = [
+            quoted
+            for quoted in (" ".join(q.split()) for q in _quoted_triggers(req))
+            if quoted and quoted != literal
+        ]
+    other = speaker if speaker and speaker.split()[0] in _OTHER_SPEAKER_HEADS else None
+    return tuple(_dedupe_names(triggers)), other
 
 
 def _dedupe_names(named: Iterable[str]) -> list[str]:
@@ -2822,11 +2865,28 @@ _TALKING_SPOKEN_TEXT_PLAN = (
     "I'll show it the moment you say that word in your take; if I don't hear the word, it "
     "won't appear"
 )
+# KRI-791: the take's words don't say who speaks, so "the first time SHE says it" is shown
+# the first time anyone says the word -- said before approval and on the finished video.
+_TALKING_SPOKEN_TEXT_ANY_VOICE = (
+    "I'll show it the first time that word is said in your take; I can't tell who's "
+    "speaking, so it may appear when someone else says it"
+)
+_SPOKEN_TEXT_FIRST_HEARD = (
+    "I can't tell who's speaking, so it shows the first time anyone says that word"
+)
+# KRI-791: a text asked for at a spoken word whose word the ask doesn't name ("when she says
+# the café's name"): the phone could show it, the server can't tell which word.
+_TALKING_SPOKEN_TEXT_NO_WORD = (
+    "I couldn't tell which spoken word to wait for, so tell me the exact word to show it on"
+)
 _TALKING_HONEST_EN: tuple[str, ...] = (
     _TALKING_NO_SUCH_EDIT,
     _TALKING_NO_SPOKEN_TEXT,
     _TALKING_OPENING_CUT_PLAN,
     _TALKING_SPOKEN_TEXT_PLAN,
+    _TALKING_SPOKEN_TEXT_ANY_VOICE,
+    _SPOKEN_TEXT_FIRST_HEARD,
+    _TALKING_SPOKEN_TEXT_NO_WORD,
 )
 
 # The Turkish twin of every static reason above (KRI-520). Reasons are written into
@@ -2897,6 +2957,17 @@ _REASON_TR: dict[str, str] = {
     ),
     _TALKING_SPOKEN_TEXT_PLAN: (
         "Çekiminde o kelimeyi söylediğin anda yazıyı gösteririm; kelimeyi duymazsam yazı çıkmaz"
+    ),
+    _TALKING_SPOKEN_TEXT_ANY_VOICE: (
+        "Yazıyı çekiminde o kelime ilk söylendiğinde gösteririm; kimin konuştuğunu ayırt "
+        "edemiyorum, o yüzden başka biri söylediğinde çıkabilir"
+    ),
+    _SPOKEN_TEXT_FIRST_HEARD: (
+        "Kimin konuştuğunu ayırt edemiyorum, o yüzden yazı o kelime ilk söylendiğinde çıkıyor"
+    ),
+    _TALKING_SPOKEN_TEXT_NO_WORD: (
+        "Hangi kelimeyi beklemem gerektiğini anlayamadım; yazının çıkacağı kelimeyi tam olarak "
+        "söyle"
     ),
     "Some requested text ends before the video does.": "Bazı yazılar video bitmeden kayboluyor.",
 }
@@ -4031,6 +4102,7 @@ def _with_text_look(
     """Add the look check to a text requirement's presence check (KRI-558)."""
     base = _with_title_face(req, facts, base)
     base = _with_spoken_text_face(req, facts, base)
+    base = _with_spoken_text_speaker(req, facts, base)
     if not text_look_facts(req) or base.status != "met":
         return base
     look = check_text_look(req, facts)
@@ -4297,6 +4369,22 @@ def _with_spoken_text_face(
             tr=f"{text} yüzünün üstüne denk geliyor; yüzünü açıkta bırakan bir yer bulamadım",
         ),
     )
+
+
+def _with_spoken_text_speaker(
+    req: BriefRequirement, facts: PlanFacts, base: RequirementReceipt
+) -> RequirementReceipt:
+    """KRI-791: "the first time SHE says it" was shown the first time anyone said the word,
+    so the finished video says so instead of "met" (the take's words don't say who speaks)."""
+    fact = _spoken_text_fact(facts, req) if base.status == "met" else None
+    if fact is None or fact.status != "placed":
+        return base
+    from app.kria.spoken_text_ask import requirement_spoken_text  # noqa: PLC0415
+
+    ask = requirement_spoken_text(req)
+    if ask is None or not ask.speaker:
+        return base
+    return _receipt(req, "partial", _SPOKEN_TEXT_FIRST_HEARD)
 
 
 def _title_face_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
@@ -5347,10 +5435,19 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         if spoken is not None:
             # KRI-707: the phone Talking render recorded why this text isn't on screen.
             return _spoken_text_miss(req, spoken)
-        if facts.phone_talking and not facts.rendered_variant and _talking_shows_spoken_text(req):
-            # KRI-707: the phone Talking worker places it on the word itself, so the draft
-            # says what it will do (like the start cut), never "a simpler version?".
-            return _receipt(req, "partial", _TALKING_SPOKEN_TEXT_PLAN)
+        if facts.phone_talking and _talking_spoken_text_lane():
+            from app.kria.spoken_text_ask import requirement_spoken_text  # noqa: PLC0415
+
+            ask = requirement_spoken_text(req)
+            if ask is None and req.scope == "global":
+                # KRI-791: the phone could show it; what's missing is which word to wait for.
+                return _receipt(req, "not_possible", _TALKING_SPOKEN_TEXT_NO_WORD)
+            if ask is not None and not facts.rendered_variant:
+                # KRI-707: the phone Talking worker places it on the word itself, so the draft
+                # says what it will do (like the start cut), never "a simpler version?".
+                # KRI-791: and that it can't tell one voice from another.
+                plan = _TALKING_SPOKEN_TEXT_ANY_VOICE if ask.speaker else _TALKING_SPOKEN_TEXT_PLAN
+                return _receipt(req, "partial", plan)
         # KRI-705: a Talking edit has the same gap (a pinned line has no trigger field), and the
         # reply says so plainly instead of holding the draft behind "a simpler version?".
         return _receipt(req, "not_possible", _TALKING_NO_SPOKEN_TEXT)
@@ -5385,9 +5482,12 @@ def _is_spoken_text_cue(req: BriefRequirement) -> bool:
     """
     if req.scope == "title":
         return False
-    return any(req.facts.get(key) for key in _SPOKEN_TEXT_CUE_KEYS) or bool(
-        _SPOKEN_CUE_RE.search(_fold(req.description or ""))
-    )
+    return any(req.facts.get(key) for key in _SPOKEN_TEXT_CUE_KEYS) or _worded_spoken_cue(req)
+
+
+def _worded_spoken_cue(req: BriefRequirement) -> bool:
+    """The ask's own description words a spoken cue ("when I say", "dediğimde")."""
+    return bool(_SPOKEN_CUE_RE.search(_fold(req.description or "")))
 
 
 def spoken_text_literals(brief: CreativeBrief | None) -> tuple[str, ...]:
@@ -5407,13 +5507,22 @@ def spoken_text_literals(brief: CreativeBrief | None) -> tuple[str, ...]:
     )
 
 
-def _talking_shows_spoken_text(req: BriefRequirement) -> bool:
-    """KRI-707: the phone Talking worker can place this text: its fields name the text and
-    the spoken word (`spoken_text_ask`), and the lane is rolled out."""
-    from app.kria.spoken_text_ask import requirement_spoken_text  # noqa: PLC0415
+def is_spoken_text_cue(req: BriefRequirement) -> bool:
+    """A whole-video text line asked to appear when someone says something, whether or not
+    its word could be read (KRI-791: a Talking render contract never pins one)."""
+    return (
+        req.kind == "text"
+        and req.scope == "global"
+        and bool(req.literal)
+        and _is_spoken_text_cue(req)
+    )
+
+
+def _talking_spoken_text_lane() -> bool:
+    """KRI-707: the phone Talking worker places texts on spoken words (rolled out)."""
     from app.services.phone_rollout import phone_subtitled_spoken_text_supported  # noqa: PLC0415
 
-    return requirement_spoken_text(req) is not None and phone_subtitled_spoken_text_supported()
+    return phone_subtitled_spoken_text_supported()
 
 
 def _is_voiceover_edit(facts: PlanFacts) -> bool:
@@ -6596,6 +6705,7 @@ __all__ = [
     "is_format_limit",
     "is_judged",
     "is_no_title_reason",
+    "is_spoken_text_cue",
     "judged_at_render",
     "narrated_alignment_recovery",
     "needs_creator_choice",
