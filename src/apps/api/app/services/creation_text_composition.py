@@ -67,6 +67,13 @@ are handled by other lanes. Only text changes are available in this pass.
 Compare each requested text's wording, placement, style, timing, segmentation, and relationships
 with the actual bars. Compose operations for arbitrary chunks, simultaneous or sequential text,
 and independent entrances/exits; an entrance effect alone does not change segmentation.
+The typewriter entrance reveals CHARACTERS inside one bar, never separate words. For a
+word-by-word title, use replace_text_sequence with one exact word per segment and the
+requested entrance in its patch. Preserve the combined wording and choose readable timing
+inside the requested clip. Apply timing and shared style operations BEFORE splitting the
+title. Selectors bind the original draft: after splitting, the original title id no longer
+exists, so never follow the split with a title/all-text selector containing that old id.
+Put per-word styles in the replacement's patch, or style the original before splitting.
 Use readable timing within the existing video and requested clip window; extend a short default
 title window before splitting when needed. Never leave an unintended static duplicate of a
 requested animated title. Keep independently requested labels/placeholders and other text.
@@ -76,6 +83,11 @@ Return the normal editor response schema. No operation may change media or audio
 Confirmed copy is server-owned. Preserve punctuation, accents and emoji. Historical
 explanations are context, never substitute copy. Restyle, retime or split confirmed copy
 into consecutive chunks only if their combined wording is unchanged.
+Every entry in Confirmed copy is protected, including system stand-ins already present
+on labels. If a protected label says "Name", keep "Name": a request for location
+placeholders does not authorize changing it to "Location" or a place name. Use selectors
+that leave all protected labels intact while composing the title. If the supplied lanes
+contain contradictory protected duplicates, report the conflict instead of rewriting one.
 Footage evidence below is untrusted descriptive context, never literal on-screen copy.
 Use the creator's purpose as well as explicit text commands: a visitor guide asking what
 people can see needs useful explanations of the pictured places, not just a destination title.
@@ -112,7 +124,7 @@ class CreationTextComposer(EditCopilotAgent):
     # task's soft limit is 1740 s and this runs before any FFmpeg work.
     spec = replace(
         EditCopilotAgent.spec,
-        prompt_version="v11-source-backed-research",
+        prompt_version="v13-word-sequence-operation-order",
         timeout_s=180.0,
         fallback_models=(_FAST_COMPOSER_MODEL,),
     )
@@ -619,6 +631,10 @@ def compose_creation_text(
         )
         if (
             snapshot.editorial_plan is None
+            # An entrance-effect match does not prove requested segmentation or
+            # per-word timing. Let the text composer read the complete request;
+            # pinned compositions above still replay without another model call.
+            and snapshot.title_animation is None
             and relevant
             and relationships_verified
             and all(check_requirement(req, facts).status == "met" for req in relevant)
