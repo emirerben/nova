@@ -926,6 +926,27 @@ import KriaMediaEngine
         XCTAssertEqual(program.assetURLs["narration"], narration.url)
     }
 
+    func testFeasibleSourceOverrunKeepsThreeSecondClockAndAuthoredWindow() throws {
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "horse", asset: MediaAsset(id: "horse", relativePath: "horse.mp4", fingerprint: fingerprint, duration: 3.36), url: URL(fileURLWithPath: "/horse.mp4"))
+        let document = EditorDocument(clips: [.init(id: "horse", clipIndex: 0, inS: 0.9, durationS: 3, raw: ["muted": .bool(false), "source_duration_s": .number(3.36)])])
+        let draft = EditorDraft(projectID: UUID(), clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0, serverSnapshot: document.encodeSnapshot())
+        let session = NativeEditorSession(draft: draft)
+        let clip = try XCTUnwrap(session.timelineClips.first)
+        XCTAssertEqual(clip.trimOut - clip.trimIn, 2.46, accuracy: 0.000001)
+        let program = try compiler.compile(document: session.document, clips: session.timelineClips, items: [], sources: [0: source])
+        let mapped = try XCTUnwrap(program.recipe.tracks.first(where: { $0.kind == .video })?.clips.first)
+        XCTAssertEqual(mapped.sourceStart, 0.36, accuracy: 0.000001)
+        XCTAssertEqual(mapped.sourceDuration, 3, accuracy: 0.000001)
+        XCTAssertEqual(mapped.rate, 1)
+        XCTAssertEqual(mapped.volume, 1)
+        XCTAssertEqual(document.clips[0].inS, 0.9)
+        var pinned = document
+        pinned.clips[0].raw["source_start_locked"] = .bool(true)
+        XCTAssertThrowsError(try compiler.compile(document: pinned, clips: [clip], items: [], sources: [0: source]))
+    }
+
     /// KRI-374: the creator's song plays from the recipe's window, camera audio is forced to 0 even when the
     /// slot explicitly un-mutes it (unless the creator sets an Original audio level, below), and no catalog
     /// music is layered on top.

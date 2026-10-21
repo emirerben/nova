@@ -916,12 +916,15 @@ struct EditorCommitResponse: Codable, Sendable {
     let expectedDuration: Double?
     let editorState: String?
     let draft: DraftSnapshot?
-    init(ok: Bool, generation: String, sections: EditorCommitSections, revisionNumber: Int?, revisionHash: String?, expectedDuration: Double?, editorState: String? = nil, draft: DraftSnapshot? = nil) {
+    let renderStarted: Bool?
+    let renderRecovery: String?
+    init(ok: Bool, generation: String, sections: EditorCommitSections, revisionNumber: Int?, revisionHash: String?, expectedDuration: Double?, editorState: String? = nil, draft: DraftSnapshot? = nil, renderStarted: Bool? = nil, renderRecovery: String? = nil) {
         self.ok = ok; self.generation = generation; self.sections = sections
         self.revisionNumber = revisionNumber; self.revisionHash = revisionHash; self.expectedDuration = expectedDuration
         self.editorState = editorState; self.draft = draft
+        self.renderStarted = renderStarted; self.renderRecovery = renderRecovery
     }
-    private enum CodingKeys: String, CodingKey { case ok, generation, sections, draft; case revisionNumber = "revision_number"; case revisionHash = "revision_hash"; case expectedDuration = "expected_duration_s"; case editorState = "editor_state" }
+    private enum CodingKeys: String, CodingKey { case ok, generation, sections, draft; case revisionNumber = "revision_number"; case revisionHash = "revision_hash"; case expectedDuration = "expected_duration_s"; case editorState = "editor_state"; case renderStarted = "render_started"; case renderRecovery = "render_recovery" }
 }
 private struct EditorStatusEnvelope: Decodable {
     let variants: [[String: JSONValue]]
@@ -2455,6 +2458,15 @@ extension DraftSnapshot {
     /// an older head may still exist when the editor is reopened. The status
     /// variant is authoritative for every renderer-owned section and baseline.
     func editorDraft(projectID: UUID, authoritativeVariant: [String: JSONValue]? = nil) -> EditorDraft {
+        if let authoritativeVariant,
+           authoritativeVariant["render_generation_id"]?.stringValue == baseGenerationID,
+           Self.object(snapshot["editor_payload"])?["editor_state_version"] == .number(2) {
+            // A committed full snapshot owns authoring state. The variant is
+            // a render projection and may lag this exact durable revision.
+            var saved = editorDraft(projectID: projectID)
+            saved.serverSnapshot["editor_capabilities"] = authoritativeVariant["editor_capabilities"]
+            return saved
+        }
         var document = snapshot
         if let authoritativeVariant {
             // An explicitly empty saved editor has no render to rebase onto.
@@ -2699,10 +2711,10 @@ extension DraftSnapshot {
             merged.append(slot)
         }
         merged.append(contentsOf: unmatched)
-        // KRI-772: a draft staged before the server fitted chat windows to the footage can carry a
-        // window longer than its clip (Troya: 3 s on 3.36 s from 0.9 s). Repair it as the draft opens,
-        // so the creator edits a window the Save accepts instead of meeting a generic refusal.
-        merged = merged.map(fittedToFootage)
+        // Historical chat drafts can carry a window longer than their clip
+        // (Troya: 3 s on 3.36 s from 0.9 s).
+        // Preserve authoring intent; feasible footage mapping belongs to the
+        // preview/export compiler, never to draft hydration.
         // A tombstone for a slot the base never listed is not a change.
         let baseIDs = Set(base.compactMap { object($0)?["slot_id"]?.stringValue })
         let effective = merged.filter { $0["removed"] != .bool(true) || baseIDs.contains($0["slot_id"]?.stringValue ?? "") }

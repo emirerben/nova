@@ -82,7 +82,7 @@ final class TextDeletionTests: XCTestCase {
         XCTAssertNil(request.timelineSlots)
         XCTAssertNil(request.captionCues)
         XCTAssertNil(request.mix)
-        XCTAssertEqual(request.editorStateVersion, 1)
+        XCTAssertEqual(request.editorStateVersion, 2, "text-only Save uses durable draft persistence")
         XCTAssertEqual(request.deletions, [EditorDeletion(kind: "text", id: "clip-label-unified-cut-1")])
         XCTAssertTrue(session.document.deletions.isEmpty, "successful Save consumes pending deletion intents")
     }

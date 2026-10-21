@@ -1133,6 +1133,25 @@
       "paths": [
         "src/apps/api/tests/fixtures/agent_evals/semantic_edit_proposal/golden/"
       ]
+    },
+    {
+      "id": "editor-durable-save",
+      "needs_native": true,
+      "api_tests": "tests/integration/test_durable_editor_save.py tests/pipeline/test_editor_render_window_intent.py tests/pipeline/test_authored_timeline.py",
+      "xctests": [
+        "KriaTests/ChatDraftStagingTests/testDurableSnapshotReopensExactLanesWithCurrentCapabilities",
+        "KriaTests/NativeEditorRenderCompilerTests/testFeasibleSourceOverrunKeepsThreeSecondClockAndAuthoredWindow",
+        "KriaTests/NativeEditorSessionTests/testPersistedCommitWithFailedEnqueueCanRetryRender"
+      ],
+      "paths": [
+        "src/apps/api/app/pipeline/editor_render_window.py",
+        "src/apps/api/app/pipeline/authored_timeline.py",
+        "src/apps/api/app/pipeline/phone_authored_timeline.py",
+        "src/apps/api/app/services/editor_empty_drafts.py",
+        "src/apps/api/tests/integration/test_durable_editor_save.py",
+        "src/apps/api/tests/pipeline/test_editor_render_window_intent.py",
+        "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift"
+      ]
     }
   ]
 }

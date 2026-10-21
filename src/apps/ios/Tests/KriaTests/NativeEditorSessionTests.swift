@@ -3692,7 +3692,7 @@ final class NativeEditorSessionTests: XCTestCase {
 
         XCTAssertEqual(fake.commitCount, 2)
         XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2")
-        XCTAssertEqual(fake.lastRequest?.editorStateVersion, 1)
+        XCTAssertEqual(fake.lastRequest?.editorStateVersion, 2)
         XCTAssertNil(fake.lastRequest?.deletions)
         XCTAssertEqual(session.document.editorState, "empty")
         XCTAssertEqual(session.document.textElements.first?.text, "Edited while empty")
@@ -3715,7 +3715,7 @@ final class NativeEditorSessionTests: XCTestCase {
         fake.commitResponse = EditorCommitResponse(ok: true, generation: "g3", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: 3, revisionHash: "h3", expectedDuration: 4)
         await session.save()
         XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2")
-        XCTAssertEqual(fake.lastRequest?.editorStateVersion, 1)
+        XCTAssertEqual(fake.lastRequest?.editorStateVersion, 2)
         XCTAssertNil(fake.lastRequest?.deletions)
         XCTAssertEqual(fake.lastRequest?.timelineSlots?.count, 1)
     }
@@ -3747,7 +3747,7 @@ final class NativeEditorSessionTests: XCTestCase {
         fake.commitResponse = emptyCommitResponse(session, generation: "g3")
         await session.save()
         XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2")
-        XCTAssertEqual(fake.lastRequest?.editorStateVersion, 1)
+        XCTAssertEqual(fake.lastRequest?.editorStateVersion, 2)
     }
 
     func testEmptySaveRejectsPreviouslyPendingRenderCompletion() async {
@@ -4950,7 +4950,7 @@ final class NativeEditorSessionTests: XCTestCase {
         let fake = EditorCommitSpy(
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
             authoritativeVariant: ["resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["text_elements": .bool(true)])],
-            commitResponse: EditorCommitResponse(ok: false, generation: "g2", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: 2, revisionHash: "revision-2", expectedDuration: nil)
+            commitResponse: EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: 2, revisionHash: "revision-2", expectedDuration: nil, renderStarted: false)
         )
         let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
         await session.load(api: fake, threadID: threadID)

@@ -18,6 +18,7 @@ from app.kria.recipes import (
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest
 from app.pipeline.authored_timeline import render_presentation
+from app.pipeline.editor_render_window import effective_source_start
 from app.pipeline.phone_captions import (
     caption_font_assets,
     caption_look_from_variant,
@@ -110,10 +111,14 @@ def compile_phone_authored_timeline(
             float(row.get("playback_rate") or 1),
         )
         still = bool(visual and visual.kind == "image")
-        if not still and (
-            source_duration is None or start + duration * rate > source_duration + 0.001
-        ):
-            raise ValueError("authored source window exceeds its original receipt")
+        if not still:
+            start = effective_source_start(
+                start,
+                duration,
+                rate,
+                source_duration,
+                start_locked=bool(row.get("source_start_locked")),
+            )
         if still and (start != 0 or rate != 1):
             raise ValueError("authored image cannot have source trim or speed")
         width = original.width if original else visual.width
@@ -159,7 +164,7 @@ def compile_phone_authored_timeline(
                 timeline_start=cursor,
                 rate=rate,
                 transition=transition,
-                volume=0 if still else 1,
+                volume=0 if still or row.get("muted") else 1,
                 source_crop=row.get("source_crop"),
                 still_layout="supporting_card"
                 if still and row.get("layout") == "supporting_card"

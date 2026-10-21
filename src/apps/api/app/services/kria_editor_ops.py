@@ -1221,7 +1221,11 @@ def _timeline_models(rows: list[dict[str, Any]]) -> list[TimelineSlotEdit]:
             look_preset=row.get("look_preset") or "none",
             look_adjustments=row.get("look_adjustments"),
             # Only guided rows carry these; omission on the wire means "inherit".
-            **{key: row[key] for key in ("playback_rate", "source_crop") if key in row},
+            **{
+                key: row[key]
+                for key in ("playback_rate", "source_crop", "source_start_locked")
+                if key in row
+            },
         )
         for row in rows
     ]
@@ -1975,9 +1979,11 @@ def _op_set_clip_duration(state: _DraftState, op: dict[str, Any]) -> None:
         row["duration_s"] = float(op["duration_s"])
     elif name == "set_clip_in":
         row["in_s"] = float(op["in_s"])
+        row["source_start_locked"] = True
     elif name == "trim_clip_start":
         amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - 0.1))
         row["in_s"] = float(row.get("in_s") or 0.0) + amount * _slot_rate(row)
+        row["source_start_locked"] = True
         row["duration_beats"] = None
         row["duration_s"] = _slot_duration(row) - amount
     else:

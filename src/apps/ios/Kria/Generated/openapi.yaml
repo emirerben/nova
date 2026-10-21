@@ -3587,6 +3587,18 @@
             "title": "Ok",
             "type": "boolean"
           },
+          "render_recovery": {
+            "default": null,
+            "nullable": true,
+            "title": "Render Recovery",
+            "type": "string"
+          },
+          "render_started": {
+            "default": null,
+            "nullable": true,
+            "title": "Render Started",
+            "type": "boolean"
+          },
           "revision_hash": {
             "default": null,
             "nullable": true,
@@ -4305,6 +4317,12 @@
             "nullable": true,
             "title": "Source Duration S",
             "type": "number"
+          },
+          "source_start_locked": {
+            "default": null,
+            "nullable": true,
+            "title": "Source Start Locked",
+            "type": "boolean"
           },
           "transition_after": {
             "default": "cut",
@@ -11714,6 +11732,12 @@
             "nullable": true,
             "title": "Source Crop",
             "type": "object"
+          },
+          "source_start_locked": {
+            "default": null,
+            "nullable": true,
+            "title": "Source Start Locked",
+            "type": "boolean"
           },
           "transition_after": {
             "default": "cut",

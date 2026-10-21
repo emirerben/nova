@@ -272,8 +272,9 @@ def test_cloud_orchestration_never_downloads_deleted_clips(monkeypatch, tmp_path
         (2, "supporting_card", None),
     ],
 )
+@pytest.mark.parametrize("start", [0.2, 1.9])
 def test_authored_ffmpeg_assembly_uses_only_selected_window(
-    monkeypatch, tmp_path, rate, layout, crop
+    monkeypatch, tmp_path, rate, layout, crop, start
 ):
     import shutil
     import subprocess
@@ -333,7 +334,7 @@ def test_authored_ffmpeg_assembly_uses_only_selected_window(
             {
                 "clip_index": 0,
                 "source_gcs_path": "chosen-source",
-                "in_s": 0.2,
+                "in_s": start,
                 "duration_s": 0.8,
                 "playback_rate": rate,
                 "layout": layout,
@@ -364,7 +365,11 @@ def test_authored_ffmpeg_assembly_uses_only_selected_window(
     assert render_occurrence.call_args.kwargs["playback_rate"] == rate
     assert render_occurrence.call_args.kwargs["source_crop"] == crop
     assert render_occurrence.call_args.kwargs["layout"] == layout
-    assert render_occurrence.call_args.kwargs["end_s"] == pytest.approx(0.2 + 0.8 * rate)
+    effective_start = min(start, 2 - 0.8 * rate)
+    assert render_occurrence.call_args.kwargs["start_s"] == pytest.approx(effective_start)
+    assert render_occurrence.call_args.kwargs["end_s"] == pytest.approx(
+        effective_start + 0.8 * rate
+    )
     assert result.duration_s == pytest.approx(0.8, abs=0.12)
     assert result.has_audio
     assert Path(out).stat().st_size > 0
