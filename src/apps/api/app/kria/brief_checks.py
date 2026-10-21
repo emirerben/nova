@@ -6353,7 +6353,11 @@ def _talking_honest_receipt(
     bed_ask = _wants_bed_under_voice(req) or _wants_bed_muted(req)  # footage sound level
     if req.kind not in {"audio", "timing", "select"} and not bed_ask:
         return receipt
-    if _has_checker(req) and not bed_ask:
+    # A speech-excerpt reading ("sesim öne çıksın", "so my voice comes through") only has a
+    # checker on a plan with speech sections; a Talking plan has none, so that reading must
+    # not keep an engine-noise ask silent.
+    speech_unjudgeable = _wants_speech(req) and facts.speech_sections is None
+    if _has_checker(req) and not bed_ask and not speech_unjudgeable:
         return receipt
     return _receipt(req, "not_possible", _TALKING_NO_SUCH_EDIT)
 
