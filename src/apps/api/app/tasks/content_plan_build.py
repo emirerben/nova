@@ -2740,6 +2740,36 @@ def _dispatch_item_render(
         if guided_voiceover:
             snapshot["guided_edit"]["execution_contract"] = GUIDED_VOICEOVER_CONTRACT
             snapshot["guided_edit"]["creator_execution_identity"] = creator_identity
+        diagnostics = proposal_state.get("planning_diagnostics") or {}
+        prepared = diagnostics.get("prepared_collection_story")
+        if prepared is not None:
+            from app.pipeline.guided_story import compile_execution_plan
+            from app.services.media_collection_preparation import (
+                PreparedCollectionStory,
+                execution_digest,
+            )
+
+            pinned_story = PreparedCollectionStory.model_validate(prepared)
+            from app.services.media_collection_preparation import install_approved_story
+
+            try:
+                install_approved_story(
+                    session,
+                    item=item,
+                    owner=plan.user_id,
+                    raw=prepared,
+                    strategy=creator_strategy or {},
+                    dry_run=True,
+                )
+            except ValueError:
+                return DispatchResult("proposal_stale")
+            # Recompile only deterministically, under dispatch's item lock. The
+            # worker consumes this persisted plan and cannot match music/replan.
+            frozen = compile_execution_plan(snapshot["guided_edit"], track=None)
+            if execution_digest({**frozen, "proposal_version": 1}) != pinned_story.compiled_digest:
+                return DispatchResult("proposal_stale")
+            snapshot["guided_story_execution_plan"] = frozen
+            snapshot["prepared_collection_story"] = prepared
         job.assembly_plan = snapshot
     elif creator_guided_attempt_id is not None:
         if not bypass_guided_edit_gate:

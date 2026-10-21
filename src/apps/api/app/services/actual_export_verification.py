@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import math
+import os
 import re
 import subprocess
 import tempfile
@@ -28,7 +29,8 @@ from app.kria.recipes import MediaTransform
 from app.kria.recipes_v2 import EditRecipeV2
 from app.pipeline.cloud_render_evidence import normalize_text
 
-VERIFIER_VERSION = "phone-simple-cut-v1"
+VERIFIER_VERSION = "phone-simple-cut-v2"
+HISTORICAL_VERIFIER_VERSIONS = frozenset({"phone-simple-cut-v1", VERIFIER_VERSION})
 POLICY_FIELD = "actual_export_policy"
 SAMPLE_RATE = 8000
 # Both the phone export and its analysis proxies are local ISO media files.
@@ -114,8 +116,16 @@ def unsupported_reasons(recipe) -> list[str]:
     return sorted(set(reasons))
 
 
-def _run(arguments: list[str], *, data: bytes | None = None) -> bytes:
-    return subprocess.run(arguments, input=data, check=True, capture_output=True, timeout=20).stdout
+def _run(
+    arguments: list[str],
+    *,
+    data: bytes | None = None,
+    timeout: float = 20,
+    env: Mapping[str, str] | None = None,
+) -> bytes:
+    return subprocess.run(
+        arguments, input=data, check=True, capture_output=True, timeout=timeout, env=env
+    ).stdout
 
 
 def _probe(path: Path) -> dict:
@@ -173,7 +183,29 @@ def _frame(
     ).convert("RGB")
 
 
-def _audio(path: Path, start: float, duration: float) -> np.ndarray:
+def _audio(
+    path: Path, start: float, duration: float, *, preserve_channels=False, probe=None
+) -> np.ndarray:
+    filters = []
+    if preserve_channels:
+        audio = next(
+            (
+                value
+                for value in (probe or _probe(path))["streams"]
+                if value["codec_type"] == "audio"
+            ),
+            None,
+        )
+        if audio is None:
+            return np.zeros((round(duration * SAMPLE_RATE), 2))
+        channels = audio.get("channels")
+        if channels not in (1, 2):
+            raise ValueError("unsupported_audio_channels")
+        # AVFoundation maps a mono source to both stereo channels at the same
+        # sample amplitude. FFmpeg's default stereo-to-mono energy fold adds
+        # sqrt(2), so compare both channels without that lossy downmix.
+        if channels == 1:
+            filters = ["-af", "pan=stereo|c0=c0|c1=c0"]
     raw = _run(
         [
             "ffmpeg",
@@ -187,8 +219,9 @@ def _audio(path: Path, start: float, duration: float) -> np.ndarray:
             "-t",
             str(duration),
             "-vn",
+            *filters,
             "-ac",
-            "1",
+            "2" if preserve_channels else "1",
             "-ar",
             str(SAMPLE_RATE),
             "-f",
@@ -196,7 +229,8 @@ def _audio(path: Path, start: float, duration: float) -> np.ndarray:
             "-",
         ]
     )
-    return np.frombuffer(raw, dtype="<f4").astype(np.float64)
+    samples = np.frombuffer(raw, dtype="<f4").astype(np.float64)
+    return samples.reshape(-1, 2) if preserve_channels else samples
 
 
 def _frames(path: Path, times, *, size: tuple[int, int], probe=None, deadline=None, region=None):
@@ -335,6 +369,16 @@ def _picture_similarity(expected: np.ndarray, actual: np.ndarray, mask: np.ndarr
     return float(np.mean(scores))
 
 
+def _watermark_bounds(width: float, height: float) -> tuple[float, float, float, float]:
+    """Approved native brand tile, in top-left canvas coordinates.
+
+    Mirrors KriaBranding.watermarkTileRect: one constrained scale for the mark,
+    inset and padded shadow tile. BrandingTests supplies the parity oracle.
+    """
+    scale = min(width / 1080, height / 1920)
+    return 30 * scale, height - 534 * scale, 223 * scale, height - 415 * scale
+
+
 def _bounds(layer, recipe) -> tuple[int, int, int, int]:
     # Runs carry absolute positions and glyph origins. A conservative OCR region
     # includes ascenders, descenders and the final glyph, never the whole frame.
@@ -355,24 +399,36 @@ def _bounds(layer, recipe) -> tuple[int, int, int, int]:
     )
 
 
-def _read_text(image: Image.Image, colors: list[tuple[int, int, int]]) -> set[str]:
-    image = image.resize((image.width * 2, image.height * 2))
-    pixels = np.asarray(image, dtype=float)
-    distance = np.min([np.linalg.norm(pixels - color, axis=2) for color in colors], axis=0)
-    # A second OCR view isolates the recipe's opaque paint colour from a busy
-    # background. It still reads actual pixels; it never draws the desired words.
-    # Keep the same confidence bar for both views (the physical Gameday export
-    # reads correctly at a cut but Tesseract gives the unprocessed word 0 confidence).
-    painted = Image.fromarray(np.where(distance < 70, 0, 255).astype(np.uint8))
+def _read_text(
+    image: Image.Image, colors: list[tuple[int, int, int]], *, wanted: str | None = None
+) -> set[str]:
     candidates = set()
-    for view in (image, painted):
-        buffer = io.BytesIO()
-        view.save(buffer, format="PNG")
-        raw = _run(["tesseract", "stdin", "stdout", "--psm", "6", "tsv"], data=buffer.getvalue())
-        rows = csv.DictReader(io.StringIO(raw.decode()), delimiter="\t")
-        candidates.add(
-            normalize_text(" ".join(row["text"] for row in rows if float(row["conf"]) >= 40))
-        )
+    # Enlargement helps small type but can join background specks to large
+    # glyphs. Read native pixels too; every candidate still needs exact copy
+    # and the same confidence bar. Never synthesize the expected words.
+    for scale in (2, 1):
+        scaled = image.resize((image.width * scale, image.height * scale))
+        pixels = np.asarray(scaled, dtype=float)
+        distance = np.min([np.linalg.norm(pixels - color, axis=2) for color in colors], axis=0)
+        painted = Image.fromarray(np.where(distance < 70, 0, 255).astype(np.uint8))
+        for view in (scaled, painted):
+            buffer = io.BytesIO()
+            view.save(buffer, format="PNG")
+            raw = _run(
+                ["tesseract", "stdin", "stdout", "--psm", "6", "tsv"],
+                data=buffer.getvalue(),
+                timeout=5,
+                # OpenMP teams contend across concurrent verifications on a
+                # CPU-limited worker. Bound this child only; retain the exact
+                # OCR algorithm, confidence bar and five-second deadline.
+                env={**os.environ, "OMP_THREAD_LIMIT": "1"},
+            )
+            rows = csv.DictReader(io.StringIO(raw.decode()), delimiter="\t")
+            candidates.add(
+                normalize_text(" ".join(row["text"] for row in rows if float(row["conf"]) >= 40))
+            )
+            if wanted in candidates:
+                return candidates
     return candidates
 
 
@@ -389,14 +445,14 @@ def _audio_measurement(expected: np.ndarray, actual: np.ndarray) -> dict:
     if rms < 0.0001:
         actual_rms = float(np.sqrt(np.mean(centre**2)))
         return {"status": "passed" if actual_rms < 0.002 else "failed", "rms": round(actual_rms, 6)}
-    expected = expected - expected.mean()
-    expected_energy = float(expected @ expected)
+    expected = expected - expected.mean(axis=0)
+    expected_energy = float(expected.ravel() @ expected.ravel())
     best = (-1.0, 0.0, 0)
     for lag in range(-80, 81):
         observed = actual[margin + lag : margin + lag + n]
-        observed = observed - observed.mean()
-        energy = float(observed @ observed)
-        cross = float(expected @ observed)
+        observed = observed - observed.mean(axis=0)
+        energy = float(observed.ravel() @ observed.ravel())
+        cross = float(expected.ravel() @ observed.ravel())
         corr = cross / math.sqrt(expected_energy * energy) if energy > 0 else 0
         if corr > best[0]:
             best = (corr, cross / expected_energy, lag)
@@ -425,6 +481,7 @@ def verify_actual_export(
     recipe = status.request.recipe
     report = {
         "verifier_version": VERIFIER_VERSION,
+        "audio_comparison": "sample-amplitude-per-stereo-channel-v1",
         "identity": status.request.identity.model_dump(mode="json"),
         "status": "partial",
         "checks": [],
@@ -464,7 +521,15 @@ def verify_actual_export(
         mask = np.ones((size[1], size[0]), dtype=bool)
         # The shipped watermark is fixed brand furniture, not authored content.
         if brand_tail == "standard":
-            mask[int(size[1] * 0.85) :, int(size[0] * 0.6) :] = False
+            x0, y0, x1, y1 = _watermark_bounds(recipe.canvas.width, recipe.canvas.height)
+            mask[
+                int(y0 * size[1] / recipe.canvas.height) : math.ceil(
+                    y1 * size[1] / recipe.canvas.height
+                ),
+                int(x0 * size[0] / recipe.canvas.width) : math.ceil(
+                    x1 * size[0] / recipe.canvas.width
+                ),
+            ] = False
         for x0, y0, x1, y1 in rects:
             if x1 <= x0 or y1 <= y0:
                 raise ValueError("unmeasurable_text_region")
@@ -545,11 +610,24 @@ def verify_actual_export(
                 )
                 has_audio = any(s["codec_type"] == "audio" for s in source_probe["streams"])
                 gain = clip.volume * recipe.audio.original_volume
-                observed = _audio(output, clip.timeline_start, clip.source_duration)
+                observed = _audio(
+                    output,
+                    clip.timeline_start,
+                    clip.source_duration,
+                    preserve_channels=True,
+                    probe=probe,
+                )
                 expected = (
-                    _audio(source, clip.source_start, clip.source_duration) * gain
+                    _audio(
+                        source,
+                        clip.source_start,
+                        clip.source_duration,
+                        preserve_channels=True,
+                        probe=source_probe,
+                    )
+                    * gain
                     if has_audio and gain
-                    else np.zeros(round(clip.source_duration * SAMPLE_RATE))
+                    else np.zeros((round(clip.source_duration * SAMPLE_RATE), 2))
                 )
                 # Whole-clip correlation must not hide a short missing/extra sound.
                 for chunk, start in enumerate(range(0, len(expected), SAMPLE_RATE)):
@@ -588,7 +666,7 @@ def verify_actual_export(
                     )
                     for run in layer.runs
                 ]
-                observed_text = _read_text(text_frame, colors)
+                observed_text = _read_text(text_frame, colors, wanted=wanted)
                 matches = wanted in observed_text
                 checks.append(
                     {

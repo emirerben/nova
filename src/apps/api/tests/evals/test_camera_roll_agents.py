@@ -1,0 +1,491 @@
+"""Synthetic contract replay only; these responses do not measure model relevance."""
+
+import json
+
+import pytest
+from pydantic import ValidationError
+
+from app.agents._runtime import SchemaError
+from app.agents.camera_roll_stories import CameraRollStoriesAgent
+from app.agents.media_moment_relevance import (
+    MomentCandidate,
+    MomentRelevanceAgent,
+    MomentRelevanceInput,
+)
+
+from .runners.eval_runner import CassetteModelClient, build_eval_run_context
+
+
+def evidence():
+    return MomentRelevanceInput(
+        query="Find the illuminated house at the end of the take",
+        candidates=[
+            MomentCandidate(
+                id="11111111-1111-1111-1111-111111111111",
+                source="22222222-2222-2222-2222-222222222222",
+                kind="visual",
+                text="An illuminated house beside the ferry",
+                quality_notes="Dark evening footage; the house is the subject",
+                start_s=170,
+                end_s=177,
+            )
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "agent_cls,raw",
+    [
+        (MomentRelevanceAgent, '{"moment_ids": []}'),
+        (CameraRollStoriesAgent, '{"stories": []}'),
+    ],
+)
+def test_no_match_is_valid_with_one_bounded_replay_call(agent_cls, raw):
+    client = CassetteModelClient(raw)
+    agent = agent_cls(client)
+    result = agent.run(
+        evidence().model_dump(), ctx=build_eval_run_context("camera-roll/no-match", is_live=False)
+    )
+    assert result.model_dump() in ({"moment_ids": []}, {"stories": []})
+    assert client.invocations == 1
+    assert agent.spec.max_attempts == 1
+    assert agent.spec.sensitive_io
+    assert agent.spec.timeout_s <= 20
+
+
+def test_relevance_replay_cannot_invent_or_duplicate_source_intervals():
+    value = evidence()
+    known = value.candidates[0].id
+    client = CassetteModelClient(json.dumps({"moment_ids": ["not-owned", known, known]}))
+    agent = MomentRelevanceAgent(client)
+    output = agent.run(value, ctx=build_eval_run_context("camera-roll/source-ids", is_live=False))
+    assert output.moment_ids == [known]
+    assert value.candidates[0].start_s == 170 and value.candidates[0].end_s == 177
+    prompt = agent.render_prompt(value)
+    assert "Dark evening" in prompt and "fallible" in prompt
+    assert client.invocations == 1
+
+
+def test_story_replay_separates_review_reasoning_from_proposed_creative_copy():
+    value = evidence()
+    story = {
+        "title": "Arrival after dark",
+        "moment_ids": [value.candidates[0].id],
+        "content_plan": {
+            "audience": "Evening walkers",
+            "angle": "A crossing ends in an unexpected light",
+            "why_it_works": "The last view answers the opening question.",
+            "opening_text": "What is waiting across the water?",
+            "closing_text": None,
+            "caption": "An evening crossing.",
+            "beat_reasons": ["The light resolves the question"],
+        },
+    }
+    client = CassetteModelClient(json.dumps({"stories": [story]}))
+    agent = CameraRollStoriesAgent(client)
+    output = agent.run(
+        value.model_dump(), ctx=build_eval_run_context("camera-roll/late-arrival", is_live=False)
+    )
+    assert output.stories[0].moment_ids == [value.candidates[0].id]
+    assert "on_screen_copy" not in output.model_dump()
+    assert "PROPOSED copy requiring creator review" in agent.render_prompt(value)
+    assert output.stories[0].content_plan.opening_text == "What is waiting across the water?"
+    assert output.stories[0].rationale == story["content_plan"]["why_it_works"]
+    assert client.invocations == 1
+    with pytest.raises(SchemaError):
+        agent.parse(json.dumps({"stories": [story] * 4}), value)
+
+
+def test_candidate_budget_cannot_grow_with_collection_size():
+    value = evidence()
+    with pytest.raises(ValidationError):
+        MomentRelevanceInput(query=value.query, candidates=value.candidates * 101)
+
+
+# Failure catalogue: long moment/source UUIDs are easy to confuse; a model must
+# select only this request's short references. Unknown references, repeats and
+# aliases colliding with an exact legacy ID must fail without another paid call.
+def test_story_replay_resolves_request_local_references_to_exact_sources():
+    value = evidence()
+    story = {
+        "title": "Evening crossing",
+        "moment_ids": ["m1"],
+        "content_plan": {
+            "audience": "Evening walkers",
+            "angle": "An illuminated house seen from the ferry",
+            "why_it_works": "The actual final view supplies the atmosphere.",
+            "opening_text": "An evening crossing",
+            "caption": "The last view from the ferry.",
+            "beat_reasons": ["End on the illuminated house"],
+        },
+    }
+    client = CassetteModelClient(json.dumps({"stories": [story]}))
+    agent = CameraRollStoriesAgent(client)
+    prompt = agent.render_prompt(value)
+    assert value.candidates[0].id not in prompt
+    assert value.candidates[0].source not in prompt
+    assert '"id": "m1"' in prompt
+    output = agent.run(
+        value.model_dump(), ctx=build_eval_run_context("camera-roll/local-refs", is_live=False)
+    )
+    assert output.stories[0].moment_ids == [value.candidates[0].id]
+    assert client.invocations == 1
+    for bad in (["m2"], ["s1"], ["m1", "m1"], ["m1", value.candidates[0].id]):
+        rejected = dict(
+            story,
+            moment_ids=bad,
+            content_plan=dict(story["content_plan"], beat_reasons=["A beat"] * len(bad)),
+        )
+        with pytest.raises(SchemaError):
+            agent.parse(json.dumps({"stories": [rejected]}), value)
+
+
+@pytest.mark.parametrize("references", [[], ["fact-unknown"], ["fact-0", "fact-0"]])
+def test_researched_story_cannot_invent_or_duplicate_citations(references):
+    from app.agents.camera_roll_stories import CameraRollStoriesInput
+    from app.schemas.research import ResearchEvidence
+
+    value = CameraRollStoriesInput(
+        **evidence().model_dump(),
+        research_topic="Public building history",
+        public_research=ResearchEvidence(
+            facts=[
+                dict(
+                    id="fact-0",
+                    text="Recorded building history.",
+                    sources=[dict(title="Public archive", url="https://si.edu/recorded-fixture")],
+                )
+            ],
+            retrieved_at="2026-10-21T00:00:00Z",
+            search_entry_html="<div>Recorded attribution</div>",
+        ),
+    )
+    story = dict(
+        title="Building history",
+        moment_ids=["m1"],
+        research_fact_ids=references,
+        content_plan=dict(
+            audience="Walkers",
+            angle="Building history",
+            why_it_works="A specific fact adds context.",
+            opening_text="An evening crossing",
+            caption="Evening light",
+            beat_reasons=["Atmosphere, not object identification"],
+        ),
+    )
+    with pytest.raises(SchemaError):
+        CameraRollStoriesAgent(None).parse(json.dumps(dict(stories=[story])), value)
+    story["research_fact_ids"] = ["fact-0"]
+    valid = CameraRollStoriesAgent(None).parse(json.dumps(dict(stories=[story])), value)
+    assert valid.stories[0].research.evidence.facts[0].sources[0].url == (
+        "https://si.edu/recorded-fixture"
+    )
+    without_research = value.model_copy(update={"public_research": None, "research_topic": ""})
+    with pytest.raises(SchemaError):
+        CameraRollStoriesAgent(None).parse(json.dumps(dict(stories=[story])), without_research)
+
+
+def test_verbose_research_review_preserves_rejection_without_another_call():
+    """Real failure shape, synthetic text: diagnostic verbosity cannot lose a verdict."""
+    from app.agents.camera_roll_stories import CameraRollStoriesInput, CameraRollStoriesOutput
+    from app.services.story_idea_research import StoryResearchReviewAgent, StoryResearchReviewInput
+
+    client = CassetteModelClient(
+        json.dumps(
+            {
+                "approved": False,
+                "reason": "An unidentified building was named as a museum. " * 40,
+            }
+        )
+    )
+    result = StoryResearchReviewAgent(client).run(
+        StoryResearchReviewInput(
+            request=CameraRollStoriesInput(**evidence().model_dump()),
+            proposed=CameraRollStoriesOutput(stories=[]),
+        ),
+        ctx=build_eval_run_context("camera-roll/verbose-research-decline", is_live=False),
+    )
+    assert result.approved is False
+    assert result.reason.startswith("An unidentified building") and len(result.reason) <= 500
+    assert client.invocations == 1
+
+
+# Failure catalogue: a holistic "approved" can overlook one invented identity;
+# omitted/duplicate beat checks, unknown references and invented evidence quotes
+# must never produce an approved result. A rejected beat overrides the summary.
+def _paired_review_fixture():
+    from app.agents.camera_roll_stories import CameraRollStoriesInput
+    from app.services.story_idea_research import StoryResearchReviewInput
+
+    value = CameraRollStoriesInput(**evidence().model_dump())
+    value.candidates[0].text = "establishing shot of modern building"
+    proposed = CameraRollStoriesAgent(None).parse(
+        json.dumps(
+            dict(
+                stories=[
+                    dict(
+                        title="A rebuilding story",
+                        moment_ids=["m1"],
+                        content_plan=dict(
+                            audience="History visitors",
+                            angle="Rebuilding over time",
+                            why_it_works="Historical background accompanies the outing.",
+                            opening_text="A site rebuilt over earlier settlements",
+                            caption="Historical background for this outing.",
+                            beat_reasons=["Shows the modern museum building"],
+                        ),
+                    )
+                ]
+            )
+        ),
+        value,
+    )
+    return StoryResearchReviewInput(request=value, proposed=proposed)
+
+
+@pytest.mark.parametrize("failure", ["omitted", "duplicate", "unknown", "invented_quote"])
+def test_research_review_approval_requires_complete_exact_source_checks(failure):
+    from app.services.story_idea_research import StorySourceReviewAgent
+
+    value = _paired_review_fixture()
+    check = dict(
+        story_index=0,
+        beat_index=0,
+        supported=True,
+        source_quote="modern building",
+        reason="Recorded synthetic review",
+    )
+    checks = [check]
+    if failure == "omitted":
+        checks = []
+    elif failure == "duplicate":
+        checks *= 2
+    elif failure == "unknown":
+        checks = [dict(check, beat_index=1)]
+    else:
+        checks = [dict(check, source_quote="modern museum building")]
+    with pytest.raises(SchemaError):
+        StorySourceReviewAgent(None).parse(
+            json.dumps(
+                dict(
+                    approved=True,
+                    copy_supported=True,
+                    reason="Looks supported",
+                    beat_checks=checks,
+                )
+            ),
+            value,
+        )
+
+
+def test_individual_unsupported_beat_overrides_holistic_research_approval():
+    from app.services.story_idea_research import StorySourceReviewAgent
+
+    value = _paired_review_fixture()
+    client = CassetteModelClient(
+        json.dumps(
+            dict(
+                approved=True,
+                copy_supported=True,
+                reason="General historical context is supported",
+                beat_checks=[
+                    dict(
+                        story_index=0,
+                        beat_index=0,
+                        supported=False,
+                        source_quote="modern building",
+                        reason="Museum identity is absent",
+                    )
+                ],
+            )
+        )
+    )
+    agent = StorySourceReviewAgent(client)
+    prompt = agent.render_prompt(value)
+    payload = json.loads(prompt.split("\nData:\n", 1)[1])
+    beat = payload["stories"][0]["beats"][0]
+    assert beat["source_description"] == "establishing shot of modern building"
+    assert beat["proposed_reason"] == "Shows the modern museum building"
+    result = agent.run(
+        value, ctx=build_eval_run_context("camera-roll/paired-review", is_live=False)
+    )
+    assert result.approved is False
+    assert "Museum identity is absent" in result.reason
+    assert client.invocations == 1
+
+
+def test_complete_paired_research_review_retains_a_supported_approval():
+    from app.services.story_idea_research import StorySourceReviewAgent
+
+    value = _paired_review_fixture()
+    value.proposed.stories[0].content_plan.beat_reasons = [
+        "Background over an unidentified building"
+    ]
+    result = StorySourceReviewAgent(None).parse(
+        json.dumps(
+            dict(
+                approved=True,
+                copy_supported=True,
+                reason="Background is distinguished from identity",
+                beat_checks=[
+                    dict(
+                        story_index=0,
+                        beat_index=0,
+                        supported=True,
+                        source_quote="modern building",
+                        identity_terms=[],
+                        reason="Building remains unidentified",
+                    )
+                ],
+            )
+        ),
+        value,
+    )
+    assert result.approved is True
+
+
+def test_source_identity_review_cannot_see_outing_context_or_research():
+    from app.services.story_idea_research import StorySourceReviewAgent
+
+    value = _paired_review_fixture()
+    value.request.query = "Private outing to Troy and its museum"
+    value.request.editorial_taste_context = "Private preference"
+    prompt = StorySourceReviewAgent(None).render_prompt(value)
+    assert "Private outing" not in prompt and "Private preference" not in prompt
+    assert "Troy" not in prompt
+    payload = json.loads(prompt.split("\nData:\n", 1)[1])
+    assert payload["stories"][0]["beats"][0]["source_description"] == (
+        "establishing shot of modern building"
+    )
+    assert set(payload["stories"][0]) == {"story_index", "beats"}
+
+
+def test_source_identity_term_must_actually_exist_in_its_source():
+    from app.services.story_idea_research import StorySourceReviewAgent
+
+    value = _paired_review_fixture()
+    result = StorySourceReviewAgent(None).parse(
+        json.dumps(
+            dict(
+                approved=True,
+                copy_supported=True,
+                reason="Looks supported",
+                beat_checks=[
+                    dict(
+                        story_index=0,
+                        beat_index=0,
+                        supported=True,
+                        source_quote="modern building",
+                        identity_terms=["museum"],
+                        reason="The source says building, not museum",
+                    )
+                ],
+            )
+        ),
+        value,
+    )
+    assert result.approved is False
+    assert "museum" in result.reason
+
+
+def test_source_review_accepts_generic_artifact_and_extra_source_only_terms():
+    from app.services.story_idea_research import StorySourceReviewAgent
+
+    value = _paired_review_fixture()
+    value.request.candidates[0].text = "sarcophagus displayed in museum"
+    value.proposed.stories[0].content_plan.beat_reasons = ["Highlights a museum artifact"]
+    result = StorySourceReviewAgent(None).parse(
+        json.dumps(
+            dict(
+                approved=True,
+                copy_supported=True,
+                reason="The identity is supported",
+                beat_checks=[
+                    dict(
+                        story_index=0,
+                        beat_index=0,
+                        supported=True,
+                        source_quote="museum",
+                        identity_terms=["museum", "artifact", "sarcophagus"],
+                        reason="The source identifies the museum context",
+                    )
+                ],
+            )
+        ),
+        value,
+    )
+    assert result.approved is True
+
+
+def test_historical_copy_review_does_not_rejudge_visual_sequence():
+    from app.services.story_idea_research import StoryResearchReviewAgent
+
+    value = _paired_review_fixture()
+    agent = StoryResearchReviewAgent(None)
+    payload = json.loads(agent.render_prompt(value).split("\nData:\n", 1)[1])
+    assert "beats" not in payload["stories"][0]
+    assert "beat_reasons" not in payload["stories"][0]["copy_and_reasoning"]
+    assert payload["stories"][0]["source_descriptions"] == ["establishing shot of modern building"]
+    result = agent.parse(
+        json.dumps(dict(approved=True, copy_supported=True, reason="Supported")), value
+    )
+    assert result.approved
+
+
+def test_source_verdict_comes_from_complete_checks_instead_of_contradictory_summary():
+    from app.services.story_idea_research import StorySourceReviewAgent
+
+    value = _paired_review_fixture()
+    value.proposed.stories[0].content_plan.beat_reasons = ["Background over a modern building"]
+    result = StorySourceReviewAgent(None).parse(
+        json.dumps(
+            dict(
+                approved=False,
+                reason="One or more beats unsupported",
+                copy_supported=True,
+                beat_checks=[
+                    dict(
+                        story_index=0,
+                        beat_index=0,
+                        supported=True,
+                        source_quote="modern building",
+                        identity_terms=[],
+                        reason="The description directly supports the reason",
+                    )
+                ],
+            )
+        ),
+        value,
+    )
+    assert result.approved is True
+
+
+def test_source_review_accepts_generic_structure_for_a_house():
+    from app.services.story_idea_research import StorySourceReviewAgent
+
+    value = _paired_review_fixture()
+    value.request.candidates[0].text = "establishing shot of stone house"
+    value.proposed.stories[0].content_plan.beat_reasons = [
+        "Presents a stone house, representing a structure"
+    ]
+    result = StorySourceReviewAgent(None).parse(
+        json.dumps(
+            dict(
+                approved=True,
+                copy_supported=True,
+                reason="Supported",
+                beat_checks=[
+                    dict(
+                        story_index=0,
+                        beat_index=0,
+                        supported=True,
+                        source_quote="stone house",
+                        identity_terms=["stone house", "structure"],
+                        reason="House is the source-described structure",
+                    )
+                ],
+            )
+        ),
+        value,
+    )
+    assert result.approved is True
