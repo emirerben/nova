@@ -161,3 +161,36 @@ def test_is_mishearing_matches_what_the_respelling_would_fix(shown, target, mish
     from app.pipeline.caption_spelling import is_mishearing
 
     assert is_mishearing(shown, target) is misheard
+
+
+def test_two_phrases_sharing_a_word_keep_cue_text_and_words_in_step():
+    cue = {
+        "text": "dulse de leche condensata",
+        "words": [
+            {"text": "dulse", "start_s": 0.0, "end_s": 0.3},
+            {"text": "de", "start_s": 0.3, "end_s": 0.4},
+            {"text": "leche", "start_s": 0.4, "end_s": 0.7},
+            {"text": "condensata", "start_s": 0.7, "end_s": 1.2},
+        ],
+    }
+    [out] = apply_spelling_to_cues([cue], _T1_SPELLINGS)
+    assert out["text"] == "dulce de leche condensada"
+    assert " ".join(w["text"] for w in out["words"]) == out["text"]
+
+
+@pytest.mark.parametrize(
+    ("heard", "written"),
+    [
+        ("Ole de la Casa'da tatlı", "Oblea de la Casa'da tatlı"),  # the ending stays
+        ("Meropeye gittik", "Merope'ye gittik"),  # right name, only the apostrophe missing
+    ],
+)
+def test_turkish_endings_on_listed_names(heard, written):
+    assert respell_text(heard, _T1_SPELLINGS) == written
+
+
+def test_a_short_listed_word_is_never_fuzzy_matched():
+    from app.pipeline.caption_spelling import is_mishearing
+
+    assert respell_text("kasada ödedik", ("Casa",)) == "kasada ödedik"
+    assert is_mishearing("kasa", "Casa") is False

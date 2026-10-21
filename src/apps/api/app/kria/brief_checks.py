@@ -5012,9 +5012,10 @@ def _colon_list(text: str) -> list[str]:
 
     "correct spellings: Oblea de la Casa, dulce de leche, leche condensada, Merope": the
     colon makes the creator's own list explicit, so "dulce de leche" counts although it is
-    not capitalized. Items are split on commas and "and" / "ve" / "ile" / "&"; the list ends
-    at the first item longer than a name. A lone lowercase item ("spelling: make sure") is
-    not read as one.
+    not capitalized. Items are split on commas and "and" / "ve" / "ile" / "&". An item is a
+    name ("Oblea de la Casa": capitalized words, lowercase particles between them) or, in a
+    list of two or more, a short lowercase phrase ("dulce de leche"). The list ends at the
+    first item that is neither ("Merope not Meropa", "keep it short", "names must be ...").
     """
     items: list[list[str]] = [[]]
     for token in _NAME_TOKEN_RE.findall(text):
@@ -5024,13 +5025,22 @@ def _colon_list(text: str) -> list[str]:
             continue
         items[-1].append(token)
     names: list[str] = []
-    for words in items:
-        if not words:
-            continue
-        if len(words) > _MAX_LISTED_WORDS:
+    lowercase: list[bool] = []
+    for words in (item for item in items if item):
+        named = _capitalized(words[0]) and _capitalized(words[-1])
+        named = named and all(
+            _capitalized(word) or word.casefold() in _NAME_PARTICLES for word in words
+        )
+        phrase = (
+            not any(_capitalized(word) for word in words)
+            and len(words) < _MAX_LISTED_WORDS
+            and loose_text(words[0]) not in _NOT_NAMES
+        )
+        if len(words) > _MAX_LISTED_WORDS or not (named or phrase):
             break
         names.append(" ".join(words))
-    if len(names) == 1 and not _capitalized(names[0]):
+        lowercase.append(phrase)
+    if len(names) == 1 and lowercase[0]:
         return []
     return names
 
@@ -5062,12 +5072,21 @@ def _spellings_fact(req: BriefRequirement) -> tuple[str, ...]:
         raw = [raw]
     if not isinstance(raw, list):
         return ()
-    names = (
-        " ".join(unicodedata.normalize("NFC", value).split())
-        for value in raw
-        if isinstance(value, str)
-    )
-    return tuple(dict.fromkeys(name for name in names if 0 < len(name) <= 80))[:_MAX_SPELLED_NAMES]
+    names: list[str] = []
+    for value in raw:
+        if not isinstance(value, str) or len(value) > 80:
+            continue
+        # Words only, as `_clean_name` reads a listed name: no edge punctuation ("Merope."),
+        # no Turkish case ending ("Kadıköy'ü" -> "Kadıköy").
+        words = [
+            token
+            for token in _NAME_TOKEN_RE.findall(unicodedata.normalize("NFC", value))
+            if token not in {",", "&"}
+        ]
+        name = _clean_name(" ".join(words)) if words else None
+        if name:
+            names.append(name)
+    return tuple(dict.fromkeys(names))[:_MAX_SPELLED_NAMES]
 
 
 def _spelled_names(req: BriefRequirement) -> tuple[str, ...] | None:
@@ -5327,17 +5346,12 @@ def _caption_words_plan(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     captions (everything said in the take, an off-camera voice too), the language, and the
     words the render will spell the creator's way, then checks in the finished video. Its
     reason starts with a Talking plan prefix, so it is an answer, never the "simpler
-    version?" question. A draft whose captions are off, or sentence captions for a
-    word-by-word ask, is a real miss and says so.
+    version?" question. Sentence captions for a word-by-word ask are a real miss and say so.
     """
     style = facts.caption_style
-    if style == "none":
-        return _receipt(
-            req,
-            "partial",
-            say(en="Captions are off in this draft.", tr="Bu taslakta altyazılar kapalı."),
-        )
-    if _wants_word_captions(req) and style not in {None, "auto", "karaoke", "kinetic"}:
+    # The phone Talking writer captions every take whatever the strategy's style says (the
+    # style only picks word or sentence lines), so a "none" style is no reason to say "off".
+    if _wants_word_captions(req) and style not in {None, "auto", "none", "karaoke", "kinetic"}:
         return _receipt(
             req,
             "partial",

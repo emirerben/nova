@@ -119,7 +119,13 @@ def _sounds_like(stem: str, target: str) -> bool:
 
 
 def _match_word(word: str, target: str) -> str | None:
-    """``word`` respelled as ``target`` (with its ending kept), or None to leave it."""
+    """``word`` respelled as ``target`` (with its ending kept), or None to leave it.
+
+    A target shorter than ``_MIN_TARGET_LEN`` is never matched: "Casa" would take Turkish
+    "kasada" (KRI-793 brief lists can hold short words).
+    """
+    if len(_fold(target)) < _MIN_TARGET_LEN:
+        return None
     stem_part, apostrophe, tail = re.match(r"([^'’]*)(['’]?)(.*)", word).groups()  # type: ignore[union-attr]
     if apostrophe:
         # "komünite'nin": the creator-visible ending is already split off.
@@ -129,6 +135,12 @@ def _match_word(word: str, target: str) -> str | None:
     low = _fold(word)
     if low == _fold(target):
         return None
+    # The name spelled right with a Turkish ending glued on ("Meropeye"): only the
+    # apostrophe is missing, so no shorter misheard stem may claim it ("Merope'e").
+    for cut in range(len(word) - 1, _MIN_TARGET_LEN - 2, -1):
+        ending = low[cut:]
+        if ending in _SUFFIXES and _fold(word[:cut]) == _fold(target):
+            return _recase(word[0], target) + "'" + _TRUNCATED_GENITIVE.get(ending, word[cut:])
     # Longest stem first, with a Turkish ending, so "komünitenin" keeps its "nin".
     for cut in range(len(word) - 1, _MIN_TARGET_LEN - 2, -1):
         ending = low[cut:]
@@ -160,16 +172,22 @@ def _match_phrase(words: Sequence[str], target: str) -> list[str] | None:
     wanted = _phrase_words(target)
     if len(words) != len(wanted) or len(wanted) < 2:
         return None
-    if any(_APOSTROPHE.search(word) for word in words):
+    if any(_APOSTROPHE.search(word) for word in words[:-1]):
         return None  # a case ending closes a name ("Casa'da" is not mid-phrase)
-    if [_fold(word) for word in words] == [_fold(word) for word in wanted]:
+    # A Turkish ending on the last word stays ("Ole de la Casa'da" -> "Oblea de la Casa'da").
+    last, apostrophe, ending = _APOSTROPHE_SPLIT.match(words[-1]).groups()  # type: ignore[union-attr]
+    stems = [*words[:-1], last]
+    if [_fold(word) for word in stems] == [_fold(word) for word in wanted]:
         return None
-    if not _sounds_like("".join(words), "".join(wanted)):
+    if not _sounds_like("".join(stems), "".join(wanted)):
         return None
-    return [_recase(words[0][0], wanted[0]), *wanted[1:]]
+    out = [_recase(words[0][0], wanted[0]), *wanted[1:]]
+    out[-1] += apostrophe + ending
+    return out
 
 
 _APOSTROPHE = re.compile(r"['’]")
+_APOSTROPHE_SPLIT = re.compile(r"([^'’]*)(['’]?)(.*)", re.DOTALL)
 _SPACES_ONLY = re.compile(r"\s+")
 
 
@@ -250,16 +268,16 @@ def _respell_word_list(words: list[dict[str, Any]], targets: Sequence[str]) -> l
     new_texts = list(texts)
     for target in (t for t in targets if len(_phrase_words(t)) > 1):
         for index, word in _respell_phrase_tokens(tokens, [*joined, False], target).items():
-            match = singles[index][0]
-            new_texts[index] = texts[index][: match.start()] + word + texts[index][match.end() :]
-            tokens[index] = ""  # respelled once; never again by a later target
+            match, text = singles[index][0], new_texts[index]
+            new_texts[index] = text[: match.start()] + word + text[match.end() :]
+            # The next target reads the respelled word, exactly as the cue text pass does
+            # ("dulse de leche condensata" with "dulce de leche" and "leche condensada").
+            tokens[index] = word
+            singles[index] = list(_TOKEN.finditer(new_texts[index]))
     single_targets = [t for t in targets if len(_phrase_words(t)) == 1]
     return [
-        {
-            **word,
-            "text": respell_text(new_text, single_targets) if new_text == texts[i] else new_text,
-        }
-        for i, (word, new_text) in enumerate(zip(words, new_texts, strict=True))
+        {**word, "text": respell_text(new_text, single_targets)}
+        for word, new_text in zip(words, new_texts, strict=True)
     ]
 
 

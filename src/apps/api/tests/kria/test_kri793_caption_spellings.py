@@ -24,7 +24,8 @@ Before approval
  6. "Both voices" is never answered (are off-camera lines captioned?).
  7. A Turkish chat gets English.
  8. The model's structured `facts.spellings` is ignored, or a malformed one crashes.
- 9. Captions off in the draft still promises spellings.
+ 9. A "none" caption style reads as "captions are off", though the Talking writer
+    always captions.
 10. Another row of the brief stays silent (an ask no checker judges before render).
 11. Drafts that never reach the phone Talking writer change.
 
@@ -200,6 +201,12 @@ def test_turkish_chat_reads_the_line_in_turkish():
         (R5.description, {"spellings": [3, None, ""]}, SPELLINGS),
         # A lone lowercase item after a colon is not a list of names.
         ("spelling: make sure it is right", {}, ()),
+        # The list ends at the first item that is not a name or a short phrase.
+        ("correct spelling: Merope not Meropa", {}, ("Merope",)),
+        ("spelling: Merope, and keep it short", {}, ("Merope",)),
+        ("Spelling: names must be correct, and captions on", {}, ()),
+        # The model's words are read as a listed name is: no edge punctuation, no ending.
+        ("captions please", {"spellings": ["Kadıköy'ü", "Merope."]}, ("Kadıköy", "Merope")),
     ],
 )
 def test_the_words_to_spell(description, facts, names):
@@ -245,10 +252,12 @@ def test_a_spellings_fact_alone_makes_a_captions_ask():
 # -- 9, 11 and the other shapes of the ask --------------------------------------------------
 
 
-def test_captions_off_in_the_draft_is_a_real_miss():
+def test_a_none_caption_style_still_gets_the_plan_line():
+    # The phone Talking writer captions every take; the strategy's style only picks word or
+    # sentence lines, so "none" must not turn into a false "captions are off" miss.
     receipt = _one(R5, _draft_facts({**T1_STRATEGY, "caption_style": "none"}))
-    assert receipt.reason == "Captions are off in this draft."
-    assert needs_creator_choice(receipt)
+    assert receipt.reason == PLAN_LINE
+    assert not needs_creator_choice(receipt)
 
 
 def test_a_language_only_ask_says_the_language():
