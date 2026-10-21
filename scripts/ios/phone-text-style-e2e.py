@@ -23,6 +23,7 @@ os.environ["PYTHONPATH"] = str(ROOT / "src/apps/api") + (
 )
 
 from app.agents._schemas.text_element import TextElement
+from app.pipeline.font_coverage import missing_glyphs
 from app.pipeline.phone_narrated_plan import (
     NarratedPhoneStep,
     compile_phone_narrated_plan,
@@ -30,12 +31,53 @@ from app.pipeline.phone_narrated_plan import (
     with_pinned_text_layers,
 )
 from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
-from app.pipeline.phone_text_style import animation_box, measure_box, resolve_phone_text_style
+from app.pipeline.phone_text_style import (
+    animation_box,
+    coverage_text,
+    measure_box,
+    resolve_phone_text_style,
+)
 from app.pipeline.phone_voiceover_montage_plan import compile_phone_voiceover_montage_plan
 from app.schemas.edit_proposal import PinnedText
-from app.schemas.phone_text_style import CURATED_PHONE_FONTS
+from app.schemas.phone_text_style import CURATED_PHONE_FONTS, TextStyleRule
 from app.services.creator_render_contract import CreatorRenderContractError
 from app.services.phone_text_styling import generation_style_fields, phone_text_policy_scope
+
+
+def verify_font_coverage():
+    """KRI-785: preserve Turkish text with its partner; retain real coverage refusals."""
+    original = TextElement(id="title", text="İstanbul", start_s=0, end_s=3).model_dump(mode="json")
+    rows = resolve_phone_text_style([original], requested={"title": {"font_family": "Big Curls"}})
+    assert len(rows) == 1, "Font fallback must not add or drop text rows"
+    row = rows[0]
+    for field in ("id", "text", "start_s", "end_s"):
+        assert row[field] == original[field], f"Font fallback changed {field}"
+    assert row["font_family"] == "Great Vibes", "Big Curls must use its registered partner"
+    missing = missing_glyphs(row["font_family"], coverage_text(row))
+    assert not missing, f"The fallback still lacks displayed glyphs: {missing}"
+
+    try:
+        resolve_phone_text_style(
+            [TextElement(id="title", text="東京", start_s=0, end_s=3).model_dump(mode="json")],
+            requested={"title": {"font_family": "Big Curls"}},
+        )
+    except CreatorRenderContractError as exc:
+        assert exc.decline_reason == "needs_choice"
+        assert exc.field_path == "phone_text_style"
+    else:
+        raise AssertionError("Truly uncovered text must still require clarification")
+
+    try:
+        TextStyleRule(font_family="Unknown font")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Unknown fonts must still be rejected")
+    return {
+        "text": row["text"],
+        "font_family": row["font_family"],
+        "missing_glyphs": sorted(missing),
+    }
 
 
 def main():
@@ -392,14 +434,7 @@ def main():
             == recipe.text_layers
         )
 
-    try:
-        resolve_phone_text_style(
-            [TextElement(id="title", text="İstanbul", start_s=0, end_s=3).model_dump(mode="json")],
-            requested={"title": {"font_family": "Big Curls"}},
-        )
-        raise AssertionError("Explicit limited-coverage font must require clarification")
-    except CreatorRenderContractError as exc:
-        assert exc.decline_reason == "needs_choice"
+    font_coverage = verify_font_coverage()
 
     if len(sys.argv) > 2:
         # Optional installed sample photograph: pan a real face over changing
@@ -531,7 +566,12 @@ def main():
     )
     (out / "kri648-measurements.json").write_text(
         json.dumps(
-            {"synthetic_face_regions": True, "platform_clearance": "unverified", "cases": reports},
+            {
+                "synthetic_face_regions": True,
+                "platform_clearance": "unverified",
+                "font_coverage": font_coverage,
+                "cases": reports,
+            },
             indent=2,
         )
     )
