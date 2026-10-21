@@ -72,9 +72,10 @@ from app.kria.brief_checks import spoken_text_literals, whole_line_quotes
 from app.kria.brief_route import loose_text
 from app.kria.clip_exclusions import (
     carry_forward_exclusions,
-    contested_exclusions,
     earlier_exclusions,
     exclusion_question,
+    exclusions_to_ask,
+    with_exclusion_categories,
 )
 from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope
 from app.kria.contracts import KriaTurnPlan
@@ -2904,34 +2905,6 @@ async def _plan_creator_action(
                     manifest_hash=manifest.manifest_hash,
                     context_hash=manifest.context_hash,
                 )
-        if (
-            planned.resolution.status != "resolved"
-            or planned.resolution.needs_creator
-            or planned.resolution.deferred_queries
-        ):
-            return PlannedKriaTurn(
-                plan=_clip_intent_resolution_plan(
-                    question=planned.resolution.question,
-                    status=(
-                        "needs_creator"
-                        if planned.resolution.needs_creator
-                        else planned.resolution.status
-                    ),
-                    diagnostics=_resolution_diagnostics(planned.resolution),
-                    clip_question=(
-                        planned.resolution.clip_question
-                        if planned.resolution.needs_creator
-                        else None
-                    ),
-                ),
-                manifest_hash=manifest.manifest_hash,
-                context_hash=manifest.context_hash,
-                # KRI-709: only a budget/deadline stop continues. A question for the
-                # creator or a provider failure needs their reply or a fresh attempt.
-                continuable=(
-                    planned.resolution.status == "pending" and not planned.resolution.needs_creator
-                ),
-            )
         if settings.clip_intent_exclude_enabled:
             # KRI-761: the resolver is not deterministic and the whole request is re-planned
             # every turn, so an ask it matched in the draft before keeps that match when it
@@ -2946,13 +2919,54 @@ async def _plan_creator_action(
                 planned = replace(
                     planned, resolution=replace(planned.resolution, intents=carried_intents)
                 )
-            # KRI-761: an exclude that names a clip another ask pins, or that look-alikes
-            # share, is the creator's to settle: the picker, never a guess.
-            contested = (
-                contested_exclusions(planned.resolution.intents, action.strategy)
-                if settings.kria_clip_selection_questions_enabled
-                else []
+        # KRI-761: an exclude that names a clip another ask pins, or that look-alikes share,
+        # is the creator's to settle: the picker, never a guess. KRI-807: so is one that
+        # matched no clip ("skip the blurry shot"), never a free-text ask.
+        contested = (
+            exclusions_to_ask(
+                planned.resolution.intents,
+                action.strategy,
+                suspects=planned.resolution.exclusion_suspects,
+                clip_count=len(intent_clips),
             )
+            if settings.clip_intent_exclude_enabled
+            and settings.kria_clip_selection_questions_enabled
+            else []
+        )
+        if (
+            planned.resolution.status != "resolved"
+            or planned.resolution.needs_creator
+            or planned.resolution.deferred_queries
+        ):
+            question = planned.resolution.question
+            clip_question = (
+                planned.resolution.clip_question if planned.resolution.needs_creator else None
+            )
+            if clip_question is not None and contested:
+                # KRI-807: the skips ride in the resolver's picker, one card and one turn.
+                question, clip_question = with_exclusion_categories(
+                    question, clip_question, contested, intent_clips
+                )
+            return PlannedKriaTurn(
+                plan=_clip_intent_resolution_plan(
+                    question=question,
+                    status=(
+                        "needs_creator"
+                        if planned.resolution.needs_creator
+                        else planned.resolution.status
+                    ),
+                    diagnostics=_resolution_diagnostics(planned.resolution),
+                    clip_question=clip_question,
+                ),
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
+                # KRI-709: only a budget/deadline stop continues. A question for the
+                # creator or a provider failure needs their reply or a fresh attempt.
+                continuable=(
+                    planned.resolution.status == "pending" and not planned.resolution.needs_creator
+                ),
+            )
+        if settings.clip_intent_exclude_enabled:
             asked = exclusion_question(contested, intent_clips)
             if asked is not None:
                 log.info(
@@ -2960,12 +2974,21 @@ async def _plan_creator_action(
                     thread_id=str(thread_id),
                     asks=len(contested),
                     pinned=sum(1 for c in contested if c.blocked),
+                    unmatched=sum(1 for c in contested if not c.matched),
+                    suspected=sum(1 for c in contested if not c.matched and c.suggested),
                 )
                 return PlannedKriaTurn(
                     plan=_clip_intent_resolution_plan(
                         question=asked[0],
                         status="needs_creator",
-                        diagnostics={"stage": "exclusion", "reason": "contested"},
+                        diagnostics={
+                            "stage": "exclusion",
+                            "reason": (
+                                "unmatched"
+                                if all(not c.matched for c in contested)
+                                else "contested"
+                            ),
+                        },
                         clip_question=asked[1],
                     ),
                     manifest_hash=manifest.manifest_hash,
@@ -3151,8 +3174,9 @@ def _unapplied_exclusions(planned: PlannedIntentResolution) -> int:
     """How many "leave these clips out" asks leave nothing out (KRI-680).
 
     The planner could not tie the ask to clips (`exclusion_dropped`), or the resolver
-    matched no clip confidently: an exclude never asks the creator, so without a notice
-    the ask vanishes and the clips play.
+    matched no clip confidently: without a notice the ask vanishes and the clips play.
+    KRI-807: an unmatched exclude asks with the clip picker first, so this is left for a
+    dropped ask, the picker flag off, a one-clip project or nothing left to tap.
     """
     unmatched = sum(
         1

@@ -214,6 +214,10 @@ class IntentResolution:
     # KRI-282: the thumbnail clip-picker payload for a `needs_creator` question (see
     # ``services.clip_selection``); None keeps the question text-only.
     clip_question: dict[str, Any] | None = None
+    # KRI-807: {intent id: clips, in clip order} for an exclude that left nothing out, the
+    # clips the resolver put forward for it below the bar or for a vision check. Never left
+    # out on their own: only the creator's exclude picker pre-ticks them. In memory only.
+    exclusion_suspects: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def needs_creator(self) -> bool:
@@ -2131,12 +2135,19 @@ async def resolve_clip_intents_for_turn(
         "named_guesses_settled": named_guesses_settled,
         "single_take_settled": single_take_settled,
     }
+    clip_order = {clip.media_id: index for index, clip in enumerate(clips)}
+    exclusion_suspects = {
+        w.intent.intent_id: sorted(w.considered_media_ids, key=clip_order.__getitem__)
+        for w in work_by_id.values()
+        if w.intent.op == "exclude" and not w.kept and w.considered_media_ids
+    }
 
     if not unresolved_work:
         return IntentResolution(
             intents=resolved_intents,
             question=None,
             vision_answers=vision_answers,
+            exclusion_suspects=exclusion_suspects,
             status="resolved",
             diagnostics={
                 "stage": "membership",
@@ -2229,6 +2240,7 @@ async def resolve_clip_intents_for_turn(
         intents=final_intents,
         question=turn_question,
         vision_answers=vision_answers,
+        exclusion_suspects=exclusion_suspects,
         status=status,
         error_code=error_code,
         deferred_queries=list(deferred.values()),

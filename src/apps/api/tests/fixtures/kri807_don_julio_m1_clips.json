@@ -1,0 +1,369 @@
+{
+ "_source": "prod thread F4083F1D-A56A-42DC-92C5-487B076FE9B4 (Don Julio M1, 2026-10-21), plan item 7a4ce1d5-fe4c-44b4-9ddd-e64ee2e4c01c: the clip records the planner read on the held-draft turn (media_context, attachment order: M1_09 first), and the resolver stats of turn bce4a799. KRI-807.",
+ "creator_request": "Montage of our lunch at Don Julio in Buenos Aires. Open on the waiter smiling at the camera and keep his name exchange audible (\"What's your name?\" \"Lucas.\"). Then the sauce bowls, the big wooden menus, and the cheers under the Don Julio sign; keep that \"Cheers!\" audible too. End on my friend in the red cap smiling at the camera. Skip the blurry shot of the empty table. Put \"chimichurri + salsa criolla\" on the sauce bowls. Title: \"Lunch at Don Julio :flag-ar:\". Suggest an upbeat tango song for it. Make it 15 seconds.",
+ "resolver_intent_stats": [
+  "order_waiter_first:n=1:min=0.90:max=0.90:nv=0:q=0",
+  "caption_sauce_bowls:n=2:min=0.90:max=0.90:nv=0:q=0",
+  "order_sequence:n=4:min=0.80:max=0.90:nv=0:q=0",
+  "order_friend_last:n=0:min=0.00:max=0.00:nv=1:q=0",
+  "exclude_blurry_table:n=0:min=0.00:max=0.00:nv=1:q=0"
+ ],
+ "clips": [
+  {
+   "media_id": "analysis-proxy-ios-7D28DB8F-1FE2-47CE-ADAF-6F3180D43B8A.mp4",
+   "file_name": "M1_09_footage",
+   "duration_s": 2.5,
+   "record": {
+    "people": {
+     "note": "a waiter and three diners",
+     "count": 4,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "segments": [
+      {
+       "e": 0.8,
+       "s": 0.0,
+       "text": "Спасибо."
+      }
+     ],
+     "to_camera": false,
+     "has_speech": true,
+     "transcript": "Gracias."
+    },
+    "setting": "outdoor restaurant patio during the day",
+    "subject": "waiter carrying a tray",
+    "summary": "A waiter at an outdoor restaurant carries a rectangular tray past a dining table.",
+    "activity": "waiter carrying a tray",
+    "audio_type": "dialogue",
+    "content_type": "broll",
+    "notable_moments": [
+     {
+      "end_s": 1.5,
+      "start_s": 0.0,
+      "description": "waiter holding tray"
+     },
+     {
+      "end_s": 3.0,
+      "start_s": 2.0,
+      "description": "waiter lowers tray"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-58172AFF-3DAF-4272-949D-DD19B515C277.mp4",
+   "file_name": "M1_08_footage",
+   "duration_s": 2.7,
+   "record": {
+    "people": {
+     "note": "waiter and two restaurant patrons",
+     "count": 3,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "segments": [
+      {
+       "e": 2.1,
+       "s": 0.0,
+       "text": "Acá tenemos salsas tradicionales argentinas."
+      }
+     ],
+     "to_camera": false,
+     "has_speech": true,
+     "transcript": "Acá tenemos salsas tradicionales argentinas."
+    },
+    "setting": "outdoor restaurant dining area",
+    "subject": "waiter presenting sauces",
+    "summary": "A waiter at a restaurant presents three traditional Argentine sauces to a diner. The sauces are in small wooden bowls on a white tablecloth, alongside bread rolls.",
+    "activity": "waiter presenting condiments to a customer",
+    "audio_type": "dialogue",
+    "content_type": "broll",
+    "notable_moments": [
+     {
+      "end_s": 1.7,
+      "start_s": 0.0,
+      "description": "waiter presenting sauces"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-A13F5BC3-DFD1-4B04-A248-5212F73E247F.mp4",
+   "file_name": "M1_07_footage",
+   "duration_s": 1.8,
+   "record": {
+    "people": {
+     "note": "three men at a table",
+     "count": 3,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "segments": [
+      {
+       "e": 0.8,
+       "s": 0.0,
+       "text": "isteyebilirim."
+      },
+      {
+       "e": 1.2,
+       "s": 1.0,
+       "text": "Evet."
+      }
+     ],
+     "to_camera": false,
+     "has_speech": true,
+     "transcript": "Kim diyebilirim, evet."
+    },
+    "setting": "outdoor restaurant",
+    "subject": "group of men at a restaurant table",
+    "summary": "A group of men are seated around a table at what appears to be an outdoor restaurant, engaged in conversation. One man speaks and gestures while holding a phone, and another man also speaks and gestur",
+    "activity": "dining and conversing",
+    "audio_type": "dialogue",
+    "content_type": "broll",
+    "notable_moments": [
+     {
+      "end_s": 3.7,
+      "start_s": 2.6,
+      "description": "man in black jacket gesturing while speaking"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-628DBF54-A63F-4FD6-8A7A-809266D5D77B.mp4",
+   "file_name": "M1_06_footage",
+   "duration_s": 2.0,
+   "record": {
+    "people": {
+     "note": "A person in a patterned shirt",
+     "count": 1,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "segments": [
+      {
+       "e": 1.4,
+       "s": 0.0,
+       "text": "Biliyorum ya."
+      },
+      {
+       "e": 2.0,
+       "s": 1.4,
+       "text": "Yandık ya."
+      }
+     ],
+     "to_camera": false,
+     "has_speech": true,
+     "transcript": "Video, yeah. Video. Video. Video. Video video. Video video. Video. Video. Video."
+    },
+    "setting": "Restaurant interior during the day",
+    "subject": "Diner at a restaurant table with food",
+    "summary": "A person is seated at a restaurant table, holding a menu, with various dishes and drinks spread out. The table is set with a white tablecloth, bread, dips, and a glass of water.",
+    "activity": "Dining at a restaurant",
+    "audio_type": "dialogue",
+    "content_type": "broll",
+    "notable_moments": [
+     {
+      "end_s": 3.0,
+      "start_s": 0.0,
+      "description": "Diner holding a menu at table"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-D0BD8AF7-0904-4AE2-B585-5BE68623369E.mp4",
+   "file_name": "M1_05_footage",
+   "duration_s": 4.0,
+   "record": {
+    "people": {
+     "note": "a waiter and a customer, with another customer in the background",
+     "count": 3,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "segments": [
+      {
+       "e": 0.8,
+       "s": 0.0,
+       "text": "Ne isminiz?"
+      },
+      {
+       "e": 2.5,
+       "s": 1.9,
+       "text": "Lucas"
+      }
+     ],
+     "to_camera": false,
+     "has_speech": true,
+     "transcript": "Español, yeah. What's your name? Hey Lucas. Lucas. Yeah."
+    },
+    "setting": "outdoor restaurant patio",
+    "subject": "waiter at restaurant",
+    "summary": "A person asks a waiter, Lucas, if he speaks Spanish and then asks his name.",
+    "activity": "speaking with a waiter",
+    "audio_type": "dialogue",
+    "content_type": "broll",
+    "notable_moments": [
+     {
+      "end_s": 1.43,
+      "start_s": 0.0,
+      "description": "customer asks about language"
+     },
+     {
+      "end_s": 4.16,
+      "start_s": 3.09,
+      "description": "waiter introduces self"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-B71B8367-5C8F-4B93-90B4-73F77B695CE8.mp4",
+   "file_name": "M1_04_footage",
+   "duration_s": 2.6,
+   "record": {
+    "people": {
+     "note": "people's hands and torsos are visible around the table",
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "segments": [
+      {
+       "e": 0.2,
+       "s": 0.0,
+       "text": "Ne?"
+      },
+      {
+       "e": 1.0,
+       "s": 0.4,
+       "text": "Hiçbir şey bilmiyorum."
+      }
+     ],
+     "to_camera": false,
+     "has_speech": true,
+     "transcript": "Ne, hiçbir şey bilmedi. Bütün şeyler, var mı?"
+    },
+    "setting": "restaurant interior",
+    "subject": "restaurant table setting",
+    "summary": "The camera pans across a restaurant table set with plates, cutlery, and glasses of water, showing people's hands and torsos but no faces.",
+    "activity": "dining at a table",
+    "audio_type": "dialogue",
+    "content_type": "broll",
+    "notable_moments": [
+     {
+      "end_s": 4.5,
+      "start_s": 3.0,
+      "description": "overhead pan of table"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-2306BCCD-ED46-4925-B766-1229D6A961EA.mp4",
+   "file_name": "M1_03_footage",
+   "duration_s": 3.5,
+   "record": {
+    "people": {
+     "note": "a male waiter and a partially visible customer",
+     "count": 2,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "segments": [
+      {
+       "e": 2.7,
+       "s": 0.0,
+       "text": "salsa criolla, chivichurri con salma y limón."
+      }
+     ],
+     "to_camera": false,
+     "has_speech": true,
+     "transcript": "Salsa criolla, chimichurri con sal marina."
+    },
+    "setting": "restaurant outdoor patio",
+    "subject": "waiter serving condiments",
+    "summary": "A waiter at a restaurant presents small bowls of salsa criolla, chimichurri, and sea salt to a customer at a table.",
+    "activity": "waiter presenting condiments",
+    "audio_type": "dialogue",
+    "content_type": "broll",
+    "notable_moments": [
+     {
+      "end_s": 1.4,
+      "start_s": 0.0,
+      "description": "waiter gesturing at condiments"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-38A1FAF8-FA26-4257-B8CA-4D488D26A94C.mp4",
+   "file_name": "M1_02_footage",
+   "duration_s": 1.133333,
+   "record": {
+    "people": {
+     "note": "two young men in casual clothes",
+     "count": 2,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "to_camera": false,
+     "has_speech": true,
+     "transcript": "Right. Mhm. So I'm gonna ask you right now, you can leave. I'm going to start asking questions. You can leave. Okay. Mhm. Mhm. Yes."
+    },
+    "setting": "outdoor cafe patio",
+    "subject": "two men sitting at a table",
+    "summary": "Two men are sitting at an outdoor restaurant. One man speaks, telling another that he will start asking questions and the other can leave if they wish, while the second man nods and smiles.",
+    "activity": "conversation at a restaurant table",
+    "audio_type": "dialogue",
+    "content_type": "broll"
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-C42C7783-1F0B-40FD-A266-9CC911F44B35.mp4",
+   "file_name": "M1_01_footage",
+   "duration_s": 3.4,
+   "record": {
+    "people": {
+     "note": "a man dining and a waiter",
+     "count": 2,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "segments": [
+      {
+       "e": 0.5,
+       "s": 0.0,
+       "text": "şu an."
+      },
+      {
+       "e": 1.6,
+       "s": 0.9,
+       "text": "Biliyor mu?"
+      },
+      {
+       "e": 1.9,
+       "s": 1.7,
+       "text": "Cheers."
+      },
+      {
+       "e": 2.7,
+       "s": 1.9,
+       "text": "Biliyor mu?"
+      }
+     ],
+     "to_camera": false,
+     "has_speech": true,
+     "transcript": "Cheers. Cheers."
+    },
+    "setting": "outdoor restaurant patio",
+    "subject": "man toasting at restaurant",
+    "summary": "A man is seated at an outdoor restaurant table, smiling and raising a glass of water as if toasting, while a waiter stands behind him.",
+    "activity": "toasting with a glass of water at a restaurant",
+    "audio_type": "dialogue",
+    "content_type": "broll"
+   }
+  }
+ ]
+}
