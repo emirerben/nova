@@ -256,3 +256,12 @@ reproduction (49 passed/two partial failures before, 51 passed after). Both corr
 ending text and text leaking into the real tail retain their original verdicts.
 No product verifier or threshold changed. The earlier CI corrected-export refusal
 was not reproduced by this separate fixture finding and is not claimed fixed by it.
+
+After integrating `fb516fb26` from main, the combined backend selection passes
+2,257 checks (15 skipped, seven expected failures), including editor-save contracts,
+all free agent replays and the export/publication matrix. All four collection,
+story and taste simulator UI journeys and five editor-save code-catalog checks
+pass (`.dev/editorial-taste-final-merged-native.xcresult`, Xcode 26.6). Generated
+runtime/mobile/OpenAPI contracts match and the mapped pre-PR gates pass. Remote
+CI confirmation remains separate; the original corrected-export refusal remains
+an explicitly unresolved historical failure rather than a claimed fixture fix.
