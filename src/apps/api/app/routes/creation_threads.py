@@ -59,6 +59,14 @@ from app.kria.media_sources import (
     lenient_capture_field,
 )
 from app.kria.plan_contract import CONTRACT_VERSION
+from app.kria.reply_language import (
+    detect_chat_language,
+    remember_reply_language,
+    reply_language_for,
+    resolve_reply_language,
+    say,
+    thread_reply_language,
+)
 from app.kria.runtime import RuntimeFailure, read_delta
 from app.limiter import limiter
 from app.models import (
@@ -2050,6 +2058,12 @@ async def _prerequisite_prompt_is_current(
     return latest_prompt > latest_transition
 
 
+def _thread_say(thread: CreationThread, *, en: str, tr: str) -> str:
+    """v1 chat copy in the chat's own language (KRI-784); English when unknown."""
+    with reply_language_for(thread_reply_language(thread)):
+        return say(en=en, tr=tr)
+
+
 async def _append(
     db: AsyncSession,
     thread: CreationThread,
@@ -2868,22 +2882,54 @@ def _status_message(
     *, thread: CreationThread, session: CreatorAgentSession | None, job: Job | None
 ) -> str:
     if job is not None and job.status == "queued":
-        return "Your render is queued. I’ll keep watching it and update this chat when it starts."
+        return say(
+            en="Your render is queued. I’ll keep watching it and update this chat when it starts.",
+            tr="Videon sırada. Takipteyim, başlayınca bu sohbete yazacağım.",
+        )
     if job is not None and job.status not in PLAN_ITEM_JOB_TERMINAL:
         phase = str(job.current_phase or "").replace("_", " ").strip()
-        return (
-            f"Kria is rendering your video ({phase}). I’ll update this chat when it’s ready."
-            if phase
-            else "Kria is rendering your video. I’ll update this chat when it’s ready."
+        # The phase is an English pipeline name, so the Turkish line leaves it out.
+        return say(
+            en=(
+                f"Kria is rendering your video ({phase}). I’ll update this chat when it’s ready."
+                if phase
+                else "Kria is rendering your video. I’ll update this chat when it’s ready."
+            ),
+            tr="Kria videonu hazırlıyor. Hazır olunca bu sohbete yazacağım.",
         )
     creator_status = str(getattr(session, "status", "") or "")
     if creator_status == "executing":
-        return "Kria is preparing the render from your confirmed direction."
+        return say(
+            en="Kria is preparing the render from your confirmed direction.",
+            tr="Kria onayladığın yöne göre videoyu hazırlamaya başlıyor.",
+        )
     if creator_status in {"rendering", "reviewing"}:
-        return "Kria is still working on the confirmed cut. I’ll update this chat when it’s ready."
+        return say(
+            en="Kria is still working on the confirmed cut. I’ll update this chat when it’s ready.",
+            tr="Kria onayladığın kurgu üzerinde çalışmaya devam ediyor. Hazır olunca bu sohbete "
+            "yazacağım.",
+        )
     if job is not None and job.status in PLAN_ITEM_JOB_TERMINAL:
-        return "That render has settled. I’ve refreshed the project status for you."
-    return "I’ve refreshed your project status."
+        return say(
+            en="That render has settled. I’ve refreshed the project status for you.",
+            tr="O video işlemi sona erdi. Projenin durumunu senin için güncelledim.",
+        )
+    return say(en="I’ve refreshed your project status.", tr="Projenin durumunu güncelledim.")
+
+
+def _localized_status_message(
+    *, thread: CreationThread, session: CreatorAgentSession | None, job: Job | None
+) -> str:
+    with reply_language_for(thread_reply_language(thread)):
+        return _status_message(thread=thread, session=session, job=job)
+
+
+def _format_prompt_copy(language: str | None) -> str:
+    with reply_language_for(language):
+        return say(
+            en="What are we making? Pick a format and we’ll shape it together.",
+            tr="Ne yapıyoruz? Bir format seç, birlikte şekillendirelim.",
+        )
 
 
 async def _load_authorized_projection_rows(
@@ -3022,9 +3068,16 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> bool:
                     thread,
                     event_type="status_update",
                     role="assistant",
-                    content=(
-                        "I’ve saved your request. I’m analyzing your clips and will continue "
-                        "automatically."
+                    content=_thread_say(
+                        thread,
+                        en=(
+                            "I’ve saved your request. I’m analyzing your clips and will continue "
+                            "automatically."
+                        ),
+                        tr=(
+                            "İsteğini kaydettim. Kliplerini inceliyorum, bitince kendiliğinden "
+                            "devam edeceğim."
+                        ),
                     ),
                     client_event_id=receipt_id,
                 )
@@ -3908,7 +3961,6 @@ async def create_thread(
                 code="kria_runtime_unavailable",
                 message="Creation chat unavailable",
             )
-    _ = request
     # Serialize creation receipts before their lookup. Otherwise concurrent
     # retries can both observe no receipt and mint two projects.
     user_row = await db.get(type(user), user.id, with_for_update=True)
@@ -3976,12 +4028,18 @@ async def create_thread(
         content=body.message,
         client_event_id=body.client_event_id,
     )
+    # KRI-784: a clearly Turkish/English first message sets the chat's language, so
+    # a short follow-up ("ok") keeps it. The device language only picks this
+    # prompt's copy and is never stored.
+    remember_reply_language(thread, detect_chat_language(body.message))
     await _append(
         db,
         thread,
         event_type="format_prompt",
         role="assistant",
-        content="What are we making? Pick a format and we’ll shape it together.",
+        content=_format_prompt_copy(
+            resolve_reply_language(body.message, locale=request.headers.get("accept-language"))
+        ),
         payload={
             "kind": "select_format",
             "formats": _available_formats(
@@ -4578,6 +4636,15 @@ async def message_thread(
         return await _response(db, thread)
 
     _stamp_device_intent(thread, user, native_client)
+    # KRI-784: the chat's language after this message, so v1 copy answers in it.
+    remember_reply_language(
+        thread,
+        resolve_reply_language(
+            body.message,
+            previous=thread_reply_language(thread),
+            locale=request.headers.get("accept-language"),
+        ),
+    )
     await _append(
         db,
         thread,
@@ -4642,7 +4709,9 @@ async def message_thread(
             db,
             thread,
             event_type="status_update",
-            content=_status_message(thread=thread, session=status_session, job=status_job),
+            content=_localized_status_message(
+                thread=thread, session=status_session, job=status_job
+            ),
             payload={
                 "kind": "status",
                 "status": (
@@ -4671,7 +4740,11 @@ async def message_thread(
                 db,
                 thread,
                 event_type="revision_queued",
-                content="I saved that direction and will apply it when this cut is ready.",
+                content=_thread_say(
+                    thread,
+                    en="I saved that direction and will apply it when this cut is ready.",
+                    tr="Bu yönlendirmeyi kaydettim, bu kurgu hazır olunca uygulayacağım.",
+                ),
                 payload={"job_id": str(current_job.id)},
             )
             await db.commit()
@@ -4730,7 +4803,11 @@ async def message_thread(
                 thread,
                 event_type="format_prompt",
                 role="assistant",
-                content="Choose a format and I’ll shape the edit around it.",
+                content=_thread_say(
+                    thread,
+                    en="Choose a format and I’ll shape the edit around it.",
+                    tr="Bir format seç, kurguyu ona göre şekillendireyim.",
+                ),
                 payload={
                     "kind": "select_format",
                     "formats": _available_formats(
@@ -4758,7 +4835,11 @@ async def message_thread(
                 thread,
                 event_type="media_prompt",
                 role="assistant",
-                content="Add some footage and I’ll design the first direction.",
+                content=_thread_say(
+                    thread,
+                    en="Add some footage and I’ll design the first direction.",
+                    tr="Birkaç video ekle, ilk taslağı ben hazırlayayım.",
+                ),
                 payload={"kind": "collect_media"},
             )
         await db.commit()
@@ -7380,7 +7461,7 @@ async def archive_thread(
         db,
         thread,
         event_type="thread_archived",
-        content="This project is archived.",
+        content=_thread_say(thread, en="This project is archived.", tr="Bu proje arşivlendi."),
         client_event_id=body.client_event_id,
     )
     await db.commit()

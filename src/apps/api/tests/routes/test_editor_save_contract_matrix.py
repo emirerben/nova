@@ -459,6 +459,15 @@ def _trim_min_trailing_row(in_s: float, flow: str = "authored") -> Row:
     )
 
 
+def _new_placement_got_a_permanent_id(minted: str) -> Callable[[Outcome], None]:
+    def check(outcome: Outcome) -> None:
+        saved = _first_kept_slot(outcome)
+        assert saved["slot_id"] and saved["slot_id"] != minted, saved["slot_id"]
+        assert not saved["slot_id"].startswith("cs-")
+
+    return check
+
+
 def _kept_window(in_s: float) -> Callable[[Outcome], None]:
     def check(outcome: Outcome) -> None:
         saved = _first_kept_slot(outcome)
@@ -653,6 +662,22 @@ ROWS: list[Row] = [
         "guided_direct",
         Expect(ok=True),
         Edit(flow="direct", first_slot=FirstSlot(in_s=1.0, duration_s=0.5)),
+    ),
+    # 8b. ids the phone sends for a clip the server has no record of (KRI-773) --------------------
+    # Before #1698 the chat compile minted `cs-<state>-<n>` for any clip without an id (Troya's
+    # restored car clip). Those ids were stored in the draft the phone opens, and every Save then
+    # failed 409 TIMELINE_STALE; "Reload and keep my edits" re-applied the same local timeline.
+    Row(
+        "legacy-minted-slot-id-is-a-new-placement",
+        "guided_authored",
+        Expect(ok=True, check=_new_placement_got_a_permanent_id("cs-369BA950-52A-27")),
+        Edit(first_slot=FirstSlot(in_s=1.0, duration_s=2.0, slot_id="cs-369BA950-52A-27")),
+    ),
+    Row(
+        "unknown-real-looking-slot-id-is-still-stale",
+        "guided_authored",
+        Expect(ok=False, status=409, code="TIMELINE_STALE"),
+        Edit(first_slot=FirstSlot(in_s=1.0, duration_s=2.0, slot_id="unified-cut-99")),
     ),
     # 9. a Save never answers 500 for a state it can name (KRI-770) -------------------------------
     Row(

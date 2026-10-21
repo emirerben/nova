@@ -27,7 +27,12 @@ from app.agents.music_matcher import _sanitize_text
 from app.auth import CurrentUser
 from app.config import settings
 from app.kria.brief_route import fold_text, loose_text
-from app.kria.reply_language import SUPPORTED_REPLY_LANGUAGES
+from app.kria.reply_language import (
+    SUPPORTED_REPLY_LANGUAGES,
+    locale_language,
+    reply_language_for,
+    say,
+)
 from app.limiter import limiter
 from app.routes.waitlist import get_real_ip
 
@@ -200,6 +205,12 @@ def _strip_trailing_filler(text: str) -> str:
     return " ".join(words)
 
 
+def _creator_error(language: str | None, *, en: str, tr: str, code: int = 422) -> HTTPException:
+    """An error the app may show the creator, in their language (KRI-784)."""
+    with reply_language_for(language):
+        return HTTPException(status_code=code, detail=say(en=en, tr=tr))
+
+
 @router.post("/transcribe", response_model=DictationOut)
 @limiter.limit("30/minute", key_func=_dictation_rate_key)
 async def transcribe_dictation(
@@ -211,12 +222,17 @@ async def transcribe_dictation(
 ) -> DictationOut:
     if not settings.voice_dictation_enabled:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    # The phone's hint, else the device language; Whisper still auto-detects without it.
+    language = locale_language(locale_hint) or locale_language(
+        request.headers.get("accept-language")
+    )
 
     content_type = (file.content_type or "").split(";")[0].strip().lower()
     if content_type not in _ALLOWED_CONTENT_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Dictation must be an audio recording",
+        raise _creator_error(
+            language,
+            en="Dictation must be an audio recording",
+            tr="Dikte bir ses kaydı olmalı",
         )
 
     suffix = os.path.splitext(file.filename or "")[1][:8] or ".m4a"
@@ -228,28 +244,29 @@ async def transcribe_dictation(
             while chunk := await file.read(256 * 1024):
                 total += len(chunk)
                 if total > _MAX_AUDIO_BYTES:
-                    raise HTTPException(
-                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        detail="Recording is too long — keep it under two minutes",
+                    raise _creator_error(
+                        language,
+                        en="Recording is too long — keep it under two minutes",
+                        tr="Kayıt çok uzun, iki dakikanın altında tut",
                     )
                 tmp.write(chunk)
         if total == 0:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Recording is empty"
-            )
+            raise _creator_error(language, en="Recording is empty", tr="Kayıt boş")
 
         from app.services.audio_download import probe_duration  # noqa: PLC0415
 
         duration_s = await run_in_threadpool(probe_duration, local_path)
         if duration_s is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="We couldn't read that recording — try again",
+            raise _creator_error(
+                language,
+                en="We couldn't read that recording — try again",
+                tr="Bu kaydı okuyamadık, tekrar dene",
             )
         if duration_s > _MAX_AUDIO_DURATION_S:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Recording is too long — keep it under two minutes",
+            raise _creator_error(
+                language,
+                en="Recording is too long — keep it under two minutes",
+                tr="Kayıt çok uzun, iki dakikanın altında tut",
             )
 
         lang = whisper_language(locale_hint)
@@ -268,17 +285,20 @@ async def transcribe_dictation(
             timeout=_TRANSCRIPTION_TIMEOUT_S,
         )
     except TimeoutError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Transcription timed out — try again",
+        raise _creator_error(
+            language,
+            en="Transcription timed out — try again",
+            tr="Yazıya dökme zaman aşımına uğradı, tekrar dene",
+            code=status.HTTP_503_SERVICE_UNAVAILABLE,
         ) from exc
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001 — the app keeps its live text on any failure
         log.warning("dictation_transcription_failed", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="We couldn't understand that recording — try again",
+        raise _creator_error(
+            language,
+            en="We couldn't understand that recording — try again",
+            tr="Bu kaydı anlayamadık, tekrar dene",
         ) from exc
     finally:
         if local_path and os.path.exists(local_path):
