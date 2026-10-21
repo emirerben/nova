@@ -133,6 +133,29 @@ def _sfx_name(text: str) -> str | None:
     return name.casefold() if name else None
 
 
+def _states_two_seconds(text: str) -> bool:
+    from app.routes.creator_agent import _excerpt_states_seconds
+
+    return _excerpt_states_seconds(text, 2.0)
+
+
+def _generic_sfx_ask(text: str) -> bool:
+    from app.services.creator_sessions import _GENERIC_SOUND_EFFECT_REQUEST_RE
+
+    return bool(_GENERIC_SOUND_EFFECT_REQUEST_RE.search(text))
+
+
+def _review_timing_kept(text: str) -> bool:
+    """True when a draft-review message keeps the current photo/video timing profile."""
+    from app.routes.plan_items import _review_mixed_media_timing
+    from app.schemas.edit_proposal import MixedMediaTimingProfile
+
+    current = MixedMediaTimingProfile(
+        image_hold="very_fast", video_hold="longer", boundary_style="cut"
+    )
+    return _review_mixed_media_timing(current, text) is current
+
+
 def _render_intent(text: str) -> Any:
     from app.agents._schemas.creator_agent import CreativeStrategy
     from app.routes.creator_agent import _apply_explicit_render_intent
@@ -361,7 +384,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": "SON DURUM NE?",
             "tr_mixed": "status ne?",
         },
-        gaps=_gaps("English-only _STATUS_ONLY_RE", "tr", "tr_ascii", "tr_upper", "tr_mixed"),
     ),
     # D02: the runtime's inert status question (no new edit).
     Case(
@@ -373,6 +395,17 @@ CASES: tuple[Case, ...] = (
         "how is it going?",
         True,
         {"tr": "Nasıl gidiyor?", "tr_ascii": "nasil gidiyor", "tr_upper": "NASIL GİDİYOR?"},
+    ),
+    # DC1-6: an English contraction reaches the shared status vocabulary ("how's").
+    Case(
+        "DC1-6",
+        "chat_routing",
+        "kria.language.is_status_question",
+        "status question (contraction)",
+        _status_question,
+        "how's it going?",
+        True,
+        {"tr": "Nasıl gidiyor?", "tr_mixed": "status ne?"},
     ),
     # D03: capability help question, never an edit.
     Case(
@@ -522,13 +555,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": "TÜM VİDEOLARI KULLAN",
             "tr_mixed": "bütün clipleri kullan",
         },
-        gaps=_gaps(
-            "English-only all-media regex; tüm/bütün never read",
-            "tr",
-            "tr_ascii",
-            "tr_upper",
-            "tr_mixed",
-        ),
     ),
     # D13: "keep the order" preserves the creator's source sequence.
     Case(
@@ -545,9 +571,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": "KLİPLERİN SIRASINI KORU",
             "tr_mixed": "clip sırasını koru",
         },
-        gaps=_gaps(
-            "English-only keep/preserve ... order regex", "tr", "tr_ascii", "tr_upper", "tr_mixed"
-        ),
     ),
     # D14: a named sound effect becomes a required SFX request.
     Case(
@@ -564,9 +587,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": "WHOOSH SES EFEKTİNİ EKLE",
             "tr_mixed": "whoosh sfx ekle",
         },
-        gaps=_gaps(
-            "needs English verb (add/use) before the name", "tr", "tr_ascii", "tr_upper", "tr_mixed"
-        ),
     ),
     # D15: quoted opening title copy is extracted literally.
     Case(
@@ -583,12 +603,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": 'BAŞLIK "Yaz Tatili" OLSUN',
             "tr_mixed": 'title "Yaz Tatili" olsun',
         },
-        gaps=_gaps(
-            "legacy title grammar needs the English noun title/intro/hook",
-            "tr",
-            "tr_ascii",
-            "tr_upper",
-        ),
     ),
     # D16: quoted closing title copy is extracted literally.
     Case(
@@ -605,9 +619,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": 'KAPANIŞ BAŞLIĞI "Görüşürüz" OLSUN',
             "tr_mixed": 'outro yazısı "Görüşürüz" olsun',
         },
-        gaps=_gaps(
-            "closing cue and title noun are English-only", "tr", "tr_ascii", "tr_upper", "tr_mixed"
-        ),
     ),
     # D17: stated pacing sets strategy.pacing.
     Case(
@@ -624,7 +635,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": "HIZLI TEMPO OLSUN",
             "tr_mixed": "pacing hızlı olsun",
         },
-        gaps=_gaps("pacing regex is English-only", "tr", "tr_ascii", "tr_upper", "tr_mixed"),
     ),
     # D18: an exact sub-second photo hold among videos (route-level, incl. fallback).
     Case(
@@ -655,6 +665,82 @@ CASES: tuple[Case, ...] = (
             "tr_ascii": "videolarin arasinda fotograflar 0,3 saniye kalsin",
             "tr_upper": "VİDEOLARIN ARASINDA FOTOĞRAFLAR 0,3 SANİYE KALSIN",
             "tr_mixed": "fotoğraflar 0.3 sn, videolar daha uzun",
+        },
+    ),
+    # DC1-1: a title hold stated as a number word ("two seconds") grounds the model's value.
+    Case(
+        "DC1-1",
+        "brief_parsing",
+        "routes.creator_agent._excerpt_states_seconds",
+        "seconds as a number word",
+        _states_two_seconds,
+        "hold the title for two seconds",
+        True,
+        {
+            "tr": "Başlık iki saniye kalsın",
+            "tr_ascii": "baslik iki saniye kalsin",
+            "tr_upper": "BAŞLIK İKİ SANİYE KALSIN",
+        },
+    ),
+    # DC1-2: a generic sound-effect ask gets the "name a moment" notice on iPhone.
+    Case(
+        "DC1-2",
+        "brief_parsing",
+        "services.creator_sessions._GENERIC_SOUND_EFFECT_REQUEST_RE",
+        "generic sound-effect ask",
+        _generic_sfx_ask,
+        "add some sound effects",
+        True,
+        {
+            "tr": "Biraz ses efekti ekle",
+            "tr_ascii": "biraz ses efekti ekle",
+            "tr_upper": "BİRAZ SES EFEKTİ EKLE",
+        },
+    ),
+    # DC1-3: a draft review that resets the photo/video timing drops the profile.
+    Case(
+        "DC1-3",
+        "brief_parsing",
+        "routes.plan_items._review_mixed_media_timing",
+        "reset mixed-media timing",
+        _review_timing_kept,
+        "reset the timing",
+        False,
+        {
+            "tr": "Zamanlamayı sıfırla",
+            "tr_ascii": "zamanlamayi sifirla",
+            "tr_upper": "ZAMANLAMAYI SIFIRLA",
+            "tr_mixed": "timing'i sıfırla",
+        },
+    ),
+    # DC1-4: "don't change the timing" keeps the profile.
+    Case(
+        "DC1-4",
+        "brief_parsing",
+        "routes.plan_items._review_mixed_media_timing",
+        "keep mixed-media timing",
+        _review_timing_kept,
+        "don't change the timing",
+        True,
+        {
+            "tr": "Zamanlamayı değiştirme",
+            "tr_ascii": "zamanlamayi degistirme",
+            "tr_upper": "ZAMANLAMAYI DEĞİŞTİRME",
+        },
+    ),
+    # DC1-5: "don't make the photos very fast" retracts the fast-photo profile.
+    Case(
+        "DC1-5",
+        "brief_parsing",
+        "routes.plan_items._review_mixed_media_timing",
+        "retract fast photos",
+        _review_timing_kept,
+        "don't make the photos very fast",
+        False,
+        {
+            "tr": "Fotoğrafları hızlı geçirme",
+            "tr_ascii": "fotograflari hizli gecirme",
+            "tr_upper": "FOTOĞRAFLARI HIZLI GEÇİRME",
         },
     ),
     # D20: quick photos + longer videos profile.

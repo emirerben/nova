@@ -50,6 +50,8 @@ _STATUS_QUESTIONS = {
     "nasil gidiyor",
     "ne oluyor",
     "neredeyiz",
+    # Turkish with the English product word ("status ne?").
+    "status ne",
 }
 
 _HELP_QUESTIONS = {
@@ -77,7 +79,9 @@ def _normalized(value: str) -> str:
     Letters of every script are kept, so a reply written in Japanese or Arabic is
     never mistaken for an empty one.
     """
-    return " ".join(re.findall(r"[^\W_]+", loose_text(value)))
+    # An apostrophe joins a contraction instead of splitting it: "how's" -> "hows", so
+    # the "hows it going" / "whats happening" entries match (KRI-782).
+    return " ".join(re.findall(r"[^\W_]+", loose_text(value).replace("'", "").replace("’", "")))
 
 
 def is_paraphrase_only(*, user_message: str, assistant_message: str) -> bool:

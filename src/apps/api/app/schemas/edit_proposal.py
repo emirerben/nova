@@ -523,7 +523,7 @@ def _turkish_total_duration_s(loose: str) -> int | float | None:
 # Media scope ("use all my clips" / "only the best ones") in Turkish. Plural forms
 # only for "all": a singular "tüm video" usually means "the whole video".
 # "görsel" is left out on purpose: in Kria it names Visuals (overlay media), not the clips.
-_TR_ALL_NOUN = r"(?:kli[pb]|video|fotograf|foto|resim|cekim|goruntu)(?:ler|lar)\w*"
+_TR_ALL_NOUN = r"(?:kli[pb]|clip|video|fotograf|foto|resim|cekim|goruntu)(?:ler|lar)\w*"
 _TR_COUNT_NOUN = (
     r"(?:kli[pb]\w*|video\w*|fotograf\w*|foto\w*|resim\w*|resm\w*|cekim\w*|"
     r"goruntu\w*|medya\w*)"
