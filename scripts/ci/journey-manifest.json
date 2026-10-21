@@ -574,6 +574,14 @@
       ]
     },
     {
+      "id": "kri-777-freeze-frame",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri777_freeze_frame_ask.py tests/kria/test_kri777_freeze_frame_postgres.py tests/tasks/test_kri777_freeze_render.py",
+      "paths": [
+        "src/apps/api/app/kria/freeze_ask.py"
+      ]
+    },
+    {
       "id": "kri-742-dictation",
       "needs_native": true,
       "api_tests": "tests/routes/test_dictation.py",

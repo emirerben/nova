@@ -207,6 +207,22 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   `tests/kria/test_kri689_clip_speed_ask.py`, `tests/kria/test_kri689_speed_notice_postgres.py`,
   `tests/tasks/test_kri689_speed_review.py`, the KRI-689 cases in
   `tests/tasks/test_unified_montage_dispatch.py`.
+- **Freeze frame (KRI-777).** No edit can hold a frame (no strategy field; neither the
+  phone recipe nor the cloud renderer freezes a creator-chosen frame). Café M2 filed
+  "freeze the frame for one second on Atakan's bite" as `timing/global {"duration_s": 1,
+  "freeze_frame": true}`: the draft and approval card promised the freeze, and the phone
+  receipt read "This draft is about 4.7s; you asked for 1s." Now a freeze ask is an honest
+  `not_possible` format limit on every draft and finished render (KRI-700's rule, not the
+  KRI-689 notice: the receipt replaces the model's summary, so neither the reply, the change
+  list nor the card can promise it). The phone montage draft checks it although it defers
+  every other `timing` ask to the render. `kria/freeze_ask.py` reads `facts.freeze_frame`
+  (or `freeze`) first, else a narrow EN/TR wording fallback (no `re.*`). Its
+  `times_one_moment` (a freeze, a clip-speed ask, "N seconds on <a moment>") keeps those
+  seconds out of everything that treats a timing ask as the video's length: the global
+  timing receipt, `length_policy.creator_duration_s`, the duration-conflict questions, the
+  render contract and the phone planner's target (`unified_montage.brief_view`). Pins:
+  `tests/kria/test_kri777_freeze_frame_ask.py`, `tests/kria/test_kri777_freeze_frame_postgres.py`,
+  `tests/tasks/test_kri777_freeze_render.py`.
 - **Cost.** With a render present the flag adds one Main Creator call to
   editor-op turns (the planner extracts requirements before the router runs).
   If that call fails, a plain edit falls back to the legacy copilot-first path

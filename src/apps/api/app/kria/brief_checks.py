@@ -37,6 +37,7 @@ from app.kria.brief_route import (
     wants_hour_only_text,
 )
 from app.kria.contracts import InferredLabel, RequirementReceipt
+from app.kria.freeze_ask import asks_freeze_frame, times_one_moment
 from app.kria.reply_language import current_reply_language, say
 from app.kria.speed_ask import asks_clip_speed
 from app.kria.spoken_text_ask import SPOKEN_TEXT_CUE_KEYS
@@ -2871,6 +2872,9 @@ _CLEANUP_NOT_RUN = "Speech cleanup didn't run on this video, so the long pauses 
 _LIGHT_UNAVAILABLE = (
     "I can't change how bright or dark clips look in this edit yet, so they keep their own light"
 )
+# KRI-777: no edit can hold a frame (see `kria.freeze_ask`). Said on the draft, before the
+# approval card, and again on the finished video's receipt.
+_NO_FREEZE_FRAME = "I can't freeze a frame in this edit yet, so that moment plays normally"
 
 # KRI-705: what a phone Talking edit says, before approval and after render, about an ask
 # outside what it can draw. Static strings: `is_judged` / `is_format_limit` read them by prefix.
@@ -2930,6 +2934,9 @@ _REASON_TR: dict[str, str] = {
     _CANT_CHECK_MIX: "Bu taslakta ses karışımını henüz kontrol edemiyorum.",
     _NO_CLIP_SPEED: (
         "iPhone'unda klip hızını henüz değiştiremiyorum, o yüzden klipler normal hızda oynuyor"
+    ),
+    _NO_FREEZE_FRAME: (
+        "Bu düzenlemede henüz bir kareyi donduramıyorum, o yüzden o an normal akıyor"
     ),
     _BED_STILL_PLAYS: "Çekim sesi hâlâ çalıyor",
     _CLEANUP_PLANNED: "Konuşma temizliği uzun duraklamaları keser",
@@ -3020,6 +3027,7 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _CLEANUP_NOT_RUN,
     _BED_STILL_PLAYS,
     _NO_CLIP_SPEED,
+    _NO_FREEZE_FRAME,
     _LIGHT_UNAVAILABLE,
     *_TALKING_HONEST_EN,
 )
@@ -3695,7 +3703,7 @@ def _merge_cleanup_timing(
     req: BriefRequirement, facts: PlanFacts, cleanup: RequirementReceipt
 ) -> RequirementReceipt:
     """Retain cleanup facts while an explicit creator target judges actual duration."""
-    if not _has_duration_target(req):
+    if not _has_duration_target(req) or times_one_moment(req):
         return cleanup
     timing = _check_timing(req, facts)
     if timing.status == "met":
@@ -4500,10 +4508,12 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
         if facts.narrated_steps is not None:
             return _check_narrated_timing(req, facts)
         return _receipt(req, "partial", _CANT_CHECK_TIMING)
-    if req.scope != "global":
+    if req.scope != "global" or times_one_moment(req):
         # The total edit length cannot establish a clip or text duration. Until
         # that requirement has resolved target windows, report missing evidence
         # instead of rejecting a valid edit (or falsely passing an equal total).
+        # KRI-777: nor a moment's or an effect's seconds filed as global ("freeze the frame
+        # for one second on Atakan's bite" is not a one-second video).
         return _receipt(req, "partial", _CANT_CHECK_TIMING)
     strategy = {
         "edit_format": facts.edit_format or "montage",
@@ -6069,7 +6079,7 @@ def _check_source_sound(req: BriefRequirement, facts: PlanFacts) -> RequirementR
 
 def _has_checker(req: BriefRequirement) -> bool:
     """True when ``check_requirement`` can actually verify this requirement."""
-    if _wants_speaker_framing(req) or wants_light_change(req):
+    if _wants_speaker_framing(req) or wants_light_change(req) or asks_freeze_frame(req):
         return True
     if asks_clip_speed(req):
         # KRI-689: judged wherever the plan knows it cannot retime (the phone montage); a plan
@@ -6128,6 +6138,12 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_speech_cleanup(req, facts)
     if _wants_speaker_framing(req):
         return _check_speaker_framing(req, facts)
+    if asks_freeze_frame(req) and (facts.rendered_variant or not facts.editor):
+        # KRI-777: a draft or a finished render never holds a frame, so the draft's reply and
+        # approval card say "Couldn't" instead of the model's summary promising it (KRI-700's
+        # rule), and its seconds are never judged as the video's length. An editor turn keeps
+        # its own receipts (the before/after diff names what its ops changed).
+        return _receipt(req, "not_possible", _NO_FREEZE_FRAME)
     if facts.speed_unsupported and asks_clip_speed(req):
         # KRI-689: the creator is told before approving (`clip_speed_notice`); the finished
         # video's receipt then says "Couldn't", never "have a look" at a speed that is not there.
@@ -6325,7 +6341,8 @@ def requirements_to_check_at_draft(
     premature failure notice; the render's own receipts (met / partial / not possible,
     plus guessed names) follow. A phone Voiceover draft likewise leaves its first/last
     order, clip-timing and caption-language asks to the render's record (KRI-533), and a
-    phone Talking draft its caption-language / name-spelling asks (KRI-549).
+    phone Talking draft its caption-language / name-spelling asks (KRI-549). A freeze-frame
+    ask stays: no plan can carry it, so its "Couldn't" belongs before approval (KRI-777).
     Otherwise this is the unchanged, full list.
     """
     strategy = strategy or {}
@@ -6352,7 +6369,7 @@ def requirements_to_check_at_draft(
     return [
         req
         for req in requirements
-        if not (defers and req.kind in UNIFIED_SETTLED_KINDS)
+        if not (defers and req.kind in UNIFIED_SETTLED_KINDS and not asks_freeze_frame(req))
         and not (narrated and _settled_by_narrated_render(req, strategy))
         and not (phone_captions and _wants_captions(req) and _caption_words_ask(req))
     ]
