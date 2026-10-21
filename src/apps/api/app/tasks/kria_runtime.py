@@ -1243,6 +1243,15 @@ def _complete_draft_turn(
 
             if brief is None:
                 brief = load_latest_brief_sync(db, thread.id)
+            # KRI-774: the same text the approval binding pins, so a later recheck agrees.
+            _readiness_source = db.get(CreationThreadEvent, turn.source_event_id)
+            _readiness_request = (
+                _full_creator_request_sync(
+                    db, thread_id=thread.id, through_sequence=int(_readiness_source.sequence)
+                )
+                if _readiness_source is not None
+                else None
+            )
             readiness_report = assess_readiness(
                 brief,
                 document.strategy or {},
@@ -1252,6 +1261,7 @@ def _complete_draft_turn(
                 manifest=planned.readiness_manifest,
                 editor_payload=document.editor_payload,
                 editor_text_diff=document.editor_text_diff,
+                creator_request=_readiness_request,
             )
             if not readiness_report["ready"]:
                 reply_text = readiness_reply(brief, readiness_report)
@@ -1314,6 +1324,7 @@ def _complete_draft_turn(
                     if planned.media_snapshot is not None
                     else _readiness_media(item),
                     manifest=planned.readiness_manifest,
+                    creator_request=_readiness_request,
                 )
             log.info(
                 "kria_simpler_version_drafted",
