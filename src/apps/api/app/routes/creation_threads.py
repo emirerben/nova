@@ -47,6 +47,7 @@ from app.db_locks import (
 from app.kria.api_schemas import EDITOR_STATE_MAX_BYTES, KriaProblemOut, ThreadDeltaOut
 from app.kria.device_render import DeviceRenderCapabilities
 from app.kria.http import KriaFailureRoute, problem_response
+from app.kria.language import is_status_question
 from app.kria.media_sources import (
     PROXY_MEDIA_PREFIX,
     AnalysisProxyDescriptor,
@@ -2542,7 +2543,9 @@ def _creator_agent_projection(
 def _is_status_only_message(message: str) -> bool:
     """Return whether *message* is a bounded render-status question."""
 
-    return bool(_STATUS_ONLY_RE.fullmatch(" ".join(message.split())))
+    # KRI-782: the runtime's shared bilingual vocabulary ("durum ne?", "bitti mi?")
+    # backs up the v1 English grammar, so both paths agree on what is status-only.
+    return bool(_STATUS_ONLY_RE.fullmatch(" ".join(message.split()))) or is_status_question(message)
 
 
 def _creator_progress_status(session: CreatorAgentSession | None) -> str | None:
