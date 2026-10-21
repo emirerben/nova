@@ -355,7 +355,6 @@
         "src/apps/api/app/kria/brief.py",
         "src/apps/api/app/kria/brief_checks.py",
         "src/apps/api/app/kria/brief_route.py",
-        "src/apps/api/app/kria/creator_cues.py",
         "src/apps/api/app/kria/duplicate_uploads.py",
         "src/apps/api/app/kria/language.py",
         "src/apps/api/app/kria/plan_blocks.py",
@@ -575,6 +574,14 @@
       ]
     },
     {
+      "id": "kri-777-freeze-frame",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri777_freeze_frame_ask.py tests/kria/test_kri777_freeze_frame_postgres.py tests/tasks/test_kri777_freeze_render.py",
+      "paths": [
+        "src/apps/api/app/kria/freeze_ask.py"
+      ]
+    },
+    {
       "id": "kri-742-dictation",
       "needs_native": true,
       "api_tests": "tests/routes/test_dictation.py",
@@ -654,6 +661,17 @@
       "paths": [
         "src/apps/api/app/kria/planner.py",
         "src/apps/api/app/pipeline/unified_montage.py"
+      ]
+    },
+    {
+      "id": "kri-775-phone-preflight",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri775_merope_m2_replay.py tests/kria/test_kri775_phone_montage_preflight.py tests/kria/test_kri775_preflight_runtime_postgres.py",
+      "paths": [
+        "src/apps/api/app/services/phone_montage_preflight.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/fixtures/kri775_merope_m2_turns.json"
       ]
     },
     {
@@ -1095,6 +1113,7 @@
         "src/apps/api/tests/parity/",
         "src/apps/api/tests/evals/parity/",
         "src/apps/api/tests/fixtures/parity_pairs/",
+        "src/apps/api/app/kria/creator_cues.py",
         "docs/reviews/turkish-parity-map-2026-10.md"
       ]
     },
@@ -1113,6 +1132,25 @@
       "api_tests": "tests/kria/test_turkish_chat_guard.py tests/evals/test_semantic_edit_proposal_evals.py",
       "paths": [
         "src/apps/api/tests/fixtures/agent_evals/semantic_edit_proposal/golden/"
+      ]
+    },
+    {
+      "id": "editor-durable-save",
+      "needs_native": true,
+      "api_tests": "tests/integration/test_durable_editor_save.py tests/pipeline/test_editor_render_window_intent.py tests/pipeline/test_authored_timeline.py",
+      "xctests": [
+        "KriaTests/ChatDraftStagingTests/testDurableSnapshotReopensExactLanesWithCurrentCapabilities",
+        "KriaTests/NativeEditorRenderCompilerTests/testFeasibleSourceOverrunKeepsThreeSecondClockAndAuthoredWindow",
+        "KriaTests/NativeEditorSessionTests/testPersistedCommitWithFailedEnqueueCanRetryRender"
+      ],
+      "paths": [
+        "src/apps/api/app/pipeline/editor_render_window.py",
+        "src/apps/api/app/pipeline/authored_timeline.py",
+        "src/apps/api/app/pipeline/phone_authored_timeline.py",
+        "src/apps/api/app/services/editor_empty_drafts.py",
+        "src/apps/api/tests/integration/test_durable_editor_save.py",
+        "src/apps/api/tests/pipeline/test_editor_render_window_intent.py",
+        "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift"
       ]
     },
     {

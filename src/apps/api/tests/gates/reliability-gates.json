@@ -1848,6 +1848,58 @@
         "cloud/slides/effects adapters"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-775-phone-preflight",
+      "tickets": [
+        "KRI-775",
+        "KRI-776",
+        "KRI-777"
+      ],
+      "symptom": "A phone montage draft the unified phone planner refuses was offered for approval; the render failed phone_plan_unsupported ten seconds after the creator approved it (Merope M2: 4.7 s draft vs a 14 s ask).",
+      "boundary": "contract",
+      "status": "open_pr",
+      "owner": "KRI-775",
+      "journey": "kri-775-phone-preflight",
+      "paths": [
+        "src/apps/api/app/services/phone_montage_preflight.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/tests/fixtures/kri775_merope_m2_turns.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri775_merope_m2_replay.py",
+        "tests/kria/test_kri775_phone_montage_preflight.py",
+        "tests/kria/test_kri775_preflight_runtime_postgres.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": "kria_phone_montage_preflight_enabled",
+      "evidence": {
+        "offline_replay": "Prod's approved brief, strategy and clip record for jobs 417eecd4 and 50f67a06: the real gate rebuilds prod's length plan and the real phone worker reproduces prod's refusal (word for word on 857ab6738). Red before the fix: a real runtime turn over scratch Postgres offered the approval card; green after: held back with the reason and the simpler-version choice.",
+        "live_model": "Not run; no paid calls. The check makes no model call.",
+        "native_output": "unknown; the hold-back is a chat reply, no render runs.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "both M2 renders (original prompt, recovery message)",
+        "a buildable draft is not held back",
+        "text asks stay with the render",
+        "cloud render, voiceover lane, creator song, voice-behind-footage route, Talking edit, no brief binding",
+        "an open length choice stays the gate's question",
+        "Turkish chat",
+        "kill switch, preflight crash (fail open)",
+        "the simpler-version answer never loops into the same hold-back"
+      ],
+      "neighbours_gap": [
+        "Under approval readiness (KRI-721) the check does not run.",
+        "Planner refusals raised inside plan_unified_montage are logged, not surfaced before approval.",
+        "After the simpler version drops the length rows, a clip-scoped timing is read as the whole video's length (xfail in test_kri775_preflight_runtime_postgres.py)."
+      ],
+      "follow_ups": [
+        "KRI-776",
+        "KRI-777"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

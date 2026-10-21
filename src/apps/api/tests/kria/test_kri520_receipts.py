@@ -502,7 +502,8 @@ def test_title_block_recovery_in_english_is_unchanged() -> None:
         'Tell me the words for the title, or say "continue without a title".'
     )
     generic = render_block_recovery([{"reason": "x"}])
-    assert generic.message == "x Your draft is saved. Should I try again or simplify this request?"
+    # KRI-778: every reason is shown as a sentence of its own.
+    assert generic.message == "X. Your draft is saved. Should I try again or simplify this request?"
 
 
 def test_title_block_turkish_way_forward_is_an_answer_the_gate_accepts() -> None:

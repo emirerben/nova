@@ -12,6 +12,7 @@ from collections.abc import Iterable, Mapping
 from typing import Literal
 
 from app.kria.brief import CreativeBrief
+from app.kria.freeze_ask import times_one_moment
 from app.schemas.edit_proposal import recognize_total_duration_s
 from app.services.choice_questions import (
     CONFLICT_DURATION_VS_COUNT,
@@ -173,10 +174,14 @@ def creator_duration_s(
         if value is not None:
             return float(value)
     if brief is not None:
+        # KRI-777: a freeze's or a moment's seconds ("freeze the frame for one second on the
+        # bite") are not the video's length, so they never make a real length ambiguous.
         values = [
             float(requirement.facts["duration_s"])
             for requirement in brief.live()
-            if requirement.kind == "timing" and requirement.facts.get("duration_s") is not None
+            if requirement.kind == "timing"
+            and requirement.facts.get("duration_s") is not None
+            and not times_one_moment(requirement)
         ]
         if len(set(values)) == 1 and values:
             return values[0]

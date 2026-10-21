@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.kria.brief import CreativeBrief
 from app.kria.brief_route import chapter_list
+from app.kria.freeze_ask import times_one_moment
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
 from app.kria.reply_language import say
@@ -1115,7 +1116,12 @@ def build_render_contract(
     talking_edit = str(raw.get("edit_format") or "") in {"subtitled", "talking_head"}
     if brief:
         for requirement in brief.live():
-            if requirement.kind == "timing" and requirement.facts.get("duration_s") is not None:
+            if (
+                requirement.kind == "timing"
+                and requirement.facts.get("duration_s") is not None
+                # KRI-777: a freeze's or a moment's seconds are not the video's length.
+                and not times_one_moment(requirement)
+            ):
                 if owner != "creator":
                     continue
                 answered = answers.get(CONFLICT_DURATION_VS_COUNT) or answers.get(

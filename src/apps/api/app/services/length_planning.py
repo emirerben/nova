@@ -207,6 +207,7 @@ def build_length_plan(
     closing_quote: Mapping[str, Any] | None = None,
     moment_count: int | None = None,
     moment_max_s: float | None = None,
+    moment_each_s: float | None = None,
     spoken_moments: Mapping[str, tuple[float, float]] | None = None,
     quiet_moments: Mapping[str, tuple[float, float]] | None = None,
     spoken_order: Mapping[str, Any] | None = None,
@@ -219,7 +220,8 @@ def build_length_plan(
 
     A montage may take several moments from one take (KRI-596): ``moment_count``
     moments, or as many ``moment_max_s`` moments as the target needs, when that is
-    more than one per take. A found ``closing_quote`` (KRI-597,
+    more than one per take; with no creator total they are ``moment_each_s`` long, the
+    length the creator gave each one (KRI-776). A found ``closing_quote`` (KRI-597,
     ``spoken_quotes.ground_closing_quote``) pins its take's last window to the
     creator's quoted line; the record rides on the plan either way, so the
     receipt can say whether the line was found and held; a song-owned montage pins it
@@ -417,6 +419,7 @@ def build_length_plan(
             moment_count,
             moment_max_s,
             natural_duration_s,
+            moment_each_s,
         )
     ):
         result = moment_windows
@@ -579,12 +582,14 @@ def _moment_or_quote_windows(
     moment_count: int | None,
     moment_max_s: float | None,
     natural_duration_s: float | None = None,
+    moment_each_s: float | None = None,
 ) -> BestPartsResult | None:
     """Moments inside long takes, and/or a held closing line; None keeps the selector.
 
     Only a montage of videos qualifies: voiceover edits and photos keep one window per
-    source exactly as before. Moments (footage-owned only) share the creator's length,
-    or ``DEFAULT_MOMENT_S`` each when they gave none. A closing line is also held when a
+    source exactly as before. Moments (footage-owned only) share the creator's length; with
+    no length they are the creator's own length each ("about 2 seconds each", KRI-776), else
+    ``DEFAULT_MOMENT_S`` each. A closing line is also held when a
     song section owns the length (KRI-681: music on the other clips, the line in its own
     sound); the section's length is then the target the creator did not give.
     """
@@ -596,7 +601,7 @@ def _moment_or_quote_windows(
     ):
         return None
     if natural_owner == "song":
-        moment_count = moment_max_s = None
+        moment_count = moment_max_s = moment_each_s = None
         if creator_target_s is None:
             creator_target_s = natural_duration_s
     pinned: tuple[str, float, float] | None = None
@@ -617,7 +622,9 @@ def _moment_or_quote_windows(
         moments = select_moment_windows(
             sources,
             target_duration_s=(
-                creator_target_s if creator_target_s is not None else count * DEFAULT_MOMENT_S
+                creator_target_s
+                if creator_target_s is not None
+                else count * (moment_each_s or DEFAULT_MOMENT_S)
             ),
             moment_count=count,
             pinned_last=pinned,

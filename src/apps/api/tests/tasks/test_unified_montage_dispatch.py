@@ -1427,3 +1427,97 @@ def test_the_worker_language_does_not_leak_into_the_next_task(harness, monkeypat
     job = _unmet_sequence_job(harness, monkeypatch, language="tr")
     _blocked_recovery(job)
     assert current_reply_language() is None
+
+
+# --- KRI-778: the blocked render's message reads as sentences (café M2, jobs 417eecd4/50f67a06) ---
+# The chat card said: "some of the groups you named are not where you said This draft is about
+# 4.7s; you asked for 1s. This draft is about 4.7s; you asked for 14s. Your draft is saved. ..."
+# The M2 brief: one described order, a freeze ask the brief scoped globally with a 1 s length,
+# and the creator's "about 14 seconds". The plan seated the take once, so every later moment of
+# the order sits inside an earlier group and the last one ("bye-bye wave") missed its spot.
+
+_M2_ORDER = (
+    "Caro arriving with tray, her hello wave, Cotopaxi photo, plate pushed close, "
+    "Atakan's bite, his thumbs-up, Caro's bye-bye wave"
+)
+_M2_OUTCOMES = [
+    {"op": "order", "name": "first: Caro arriving with tray", "position": "first",
+     "status": "met", "code": "landed"},
+    *(
+        {"op": "order", "name": f"then: {name}", "position": "then",
+         "status": "not_possible", "code": "contained"}
+        for name in ("her hello wave", "plate pushed close", "Atakan's bite", "his thumbs-up")
+    ),
+    {"op": "order", "name": "then: Cotopaxi photo", "position": "then",
+     "status": "not_possible", "code": "visual"},
+    {"op": "order", "name": "last: Caro's bye-bye wave", "position": "last",
+     "status": "not_possible", "code": "contained"},
+]  # fmt: skip
+
+
+def _m2_job(harness, monkeypatch, *, language: str | None):
+    from app.kria import brief_checks
+    from app.kria.brief_binding import BriefBinding
+
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(id="r1", kind="order", scope="global", description=_M2_ORDER),
+            BriefRequirement(
+                id="r3",
+                kind="timing",
+                scope="global",
+                description="Freeze the frame for one second on Atakan's bite",
+                facts={"duration_s": 1, "freeze_frame": True},
+            ),
+            BriefRequirement(
+                id="r7",
+                kind="timing",
+                scope="global",
+                description="About 14 seconds",
+                facts={"duration_s": 14},
+            ),
+        ],
+    )
+    job, *_ = harness(brief=brief)
+    job.assembly_plan["creator_brief_binding"] = BriefBinding.create(
+        uuid.uuid4(), brief
+    ).model_dump(mode="json")
+    if language is not None:
+        job.assembly_plan["creator_reply_language"] = language
+    real = brief_checks.plan_facts_from_unified_montage
+    monkeypatch.setattr(
+        brief_checks,
+        "plan_facts_from_unified_montage",
+        lambda record: real({**record, "intent_outcomes": _M2_OUTCOMES, "duration_s": 4.7}),
+    )
+    return job
+
+
+def test_the_m2_block_message_is_whole_sentences_with_one_length(harness, monkeypatch):
+    job = _m2_job(harness, monkeypatch, language=None)
+    message, receipts = _blocked_recovery(job)
+    assert message == (
+        "I couldn't place everything you listed in the order you gave. "
+        "Caro's bye-bye wave (last) isn't where you asked. "
+        "This draft is about 4.7s; you asked for 14s. "
+        "Your draft is saved. Should I try again or simplify this request?"
+    )
+    # Only the copy changed: the same three receipts block, with the same statuses.
+    blocking = {
+        row["requirement_id"]: row["status"]
+        for row in receipts
+        if row["verification"] == "checked" and row["status"] != "met"
+    }
+    assert blocking == {"r1": "partial", "r3": "partial", "r7": "partial"}
+
+
+def test_the_m2_block_message_reads_the_same_in_a_turkish_chat(harness, monkeypatch):
+    job = _m2_job(harness, monkeypatch, language="tr")
+    message, _receipts = _blocked_recovery(job)
+    assert message == (
+        "Saydığın her şeyi verdiğin sıraya yerleştiremedim. "
+        "Caro's bye-bye wave (son) istediğin yerde değil. "
+        "Bu taslak yaklaşık 4.7 saniye; sen 14 saniye istedin. "
+        "Taslağın kaydedildi. Tekrar mı deneyeyim, yoksa isteği sadeleştireyim mi?"
+    )
