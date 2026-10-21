@@ -2990,3 +2990,17 @@ token to `current_detector_policy` / bump `DETECTOR_VERSION` (retires `ready` an
 **Why:** Troya Road Trip could not be saved after a clip trim. The trailing-edge drag to the 0.1 s minimum encoded `(in_s + 0.1) - in_s` = `0.09999999999999998`; the resolvers refused it with `TIMELINE_INVALID_WINDOW` / `TIMELINE_INVALID_DURATION`, which the app words only as the generic line. Nothing recorded the refusal, so the cause had to be re-derived from code. The same shape (phone allows, server refuses, creator sees nothing specific) had already cost five PRs in KRI-736.
 **Also closed in the same change:** guided-story Saves now fit a submitted text lane to the trimmed total (the authored path already did); the capability map no longer advertises `clips.playback_rate` on a device-rendered guided story (the phone compiler refuses any rate but 1); three non-HTTP failures in the Save prepare path now answer 409/422 instead of 500; a talking-source clip has no trim handle.
 **Revisit if:** the phone compiler learns story-footage retime (reopen `clips.playback_rate` on device), or a Save refusal needs structured per-clip detail in the app.
+
+---
+
+## [2026-10-21] Language policy: models understand, code stays language-neutral (KRI-773, KRI-786)
+
+**Decision:** Kria treats Turkish and English as equals by keeping language out of rule-based code:
+1. **Models own understanding.** The model that reads the message records the meaning in a structured field (brief `facts`, clip-intent ops, copilot `claimed_ops`). Server code checks that field. No new regex or `word in text.casefold()` test that guesses intent from words.
+2. **One fold.** `app/kria/brief_route.py` `fold_text` (İ/I/ı → i, casefold) and `loose_text` (plus diacritics stripped). No private fold tables, `.replace("ı", ...)` chains, or NFKD + ascii-ignore copies.
+3. **Server copy goes through `say(en=, tr=)`** (`app/kria/reply_language.py`).
+4. **Prompts get the language.** Every agent that writes text a creator reads takes `prompt_language_line(...)` or a `{language}` placeholder. Agents that write no creator prose are listed as language-neutral with a reason.
+5. **Parity suite + guards.** `tests/parity/test_decision_parity.py` runs every rule-based decision on English and Turkish phrasings (gaps are strict xfails). `tests/evals/parity/` checks model-layer pairs from recorded cassettes. Guards, all ratchets that fail only when a count goes up: `tests/kria/test_kri667_no_new_intent_regexes.py` (regexes + word-membership tests on folded text), `tests/kria/test_single_text_fold.py`, `tests/kria/test_prompt_language_input.py`, `tests/parity/test_map_coverage.py` (every language-sensitive row in `docs/reviews/turkish-parity-map-2026-10.md` has a table row or a reason). All run in `make verify-kria`.
+
+**Why:** KRI-520 added ~170 Turkish regex twins in a week. They drifted (the legacy fold broke English "TRY AGAIN"), missed paraphrases, and older layers kept overriding the model with English-only rules. A Turkish creator got the model's guess; an English creator got a deterministic fix.
+**Revisit if:** a third creator language arrives (the same rules apply; the fold and `say()` grow a language, not a twin per module).

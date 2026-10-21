@@ -5,14 +5,32 @@ Turkish ones in a week) and still misses paraphrases. The model that reads the m
 records the meaning in a structured field instead (brief `facts`, the clip-intent `exclude`
 op, the copilot's `claimed_ops`), and the server checks that field.
 
-This is a ratchet: the count of `re.*` calls per module may only go down, and the baseline
-must follow it down. A regex that reads no creator or model text (ids, file names, ffmpeg
-output) is exempt with `# kri667: <why>` on the line of the call.
+Two ratchets per module, both fail only when a count goes UP (KRI-786):
+
+1. ``re.*`` calls (``BASELINE``).
+2. Word-membership tests on lowered/folded text (``MEMBERSHIP_BASELINE``). The same
+   English-only guess as a regex, written as ``"always" in text.casefold()``,
+   ``any(m in folded for m in MARKERS)`` or ``folded.startswith("just")`` (map D49/D50).
+
+   Heuristic, kept narrow so it stays low on false positives. A "folded" expression is a
+   call to ``.lower()`` / ``.casefold()`` or to a fold helper (``fold_text``, ``loose_text``,
+   ``loose_creator_text``, any ``*fold*`` function), or a local name assigned from one
+   inside the same function. Counted:
+     - ``<str literal or loop name> in|not in <folded>`` (substring test on the text), and
+     - ``<folded>.startswith(...)`` / ``<folded>.endswith(...)``.
+   Not counted: ``<folded> in {...}`` (exact match of the whole text against a set), and
+   ``.startswith/.endswith`` whose literal arguments all look like file extensions or paths
+   (start with ``.`` or contain ``/``).
+
+When a count goes DOWN the tests stay green and print a hint to lower the baseline, so lanes
+that delete regexes in parallel never fail each other. A check that reads no creator or
+model text (ids, file names, ffmpeg output) is exempt with ``# kri667: <why>`` on its line.
 """
 
 from __future__ import annotations
 
 import ast
+import warnings
 from pathlib import Path
 
 _API = Path(__file__).resolve().parents[2]
@@ -21,46 +39,80 @@ _RE_FUNCS = frozenset(
     {"compile", "search", "match", "fullmatch", "findall", "finditer", "sub", "subn", "split"}
 )
 _EXEMPT = "# kri667:"
+_FOLD_METHODS = frozenset({"lower", "casefold"})
+_FOLD_FUNCS = frozenset({"fold_text", "loose_text", "loose_creator_text"})
+_AFFIX_METHODS = frozenset({"startswith", "endswith"})
 
-# Modules outside app/kria that read creator or model wording. Every app/kria module is
-# scanned too; a new one starts at zero.
-_OTHER_MODULES = (
-    "agents/_schemas/creator_policy.py",
-    "agents/brief_extractor.py",
-    "agents/clip_intent_planner.py",
-    "agents/clip_request_resolver.py",
-    "agents/edit_copilot.py",
-    "agents/main_creator.py",
-    "agents/spoken_script.py",
-    "routes/_copilot.py",
-    "routes/creator_agent.py",
-    "schemas/edit_proposal.py",
-    "services/choice_questions.py",
-    "services/clip_intent_resolution.py",
+# Modules outside app/kria that read creator or model wording, mapped to the top-level
+# functions to scan (None = the whole module). Every app/kria module is scanned too; a new
+# one starts at zero.
+_OTHER_MODULES: dict[str, tuple[str, ...] | None] = {
+    "agents/_schemas/creator_policy.py": None,
+    "agents/brief_extractor.py": None,
+    "agents/clip_intent_planner.py": None,
+    "agents/clip_request_resolver.py": None,
+    "agents/edit_copilot.py": None,
+    # KRI-786 (parity map D30, D31): exclusive-quote and ungrounded-caption guards.
+    "agents/edit_proposal.py": None,
+    # KRI-786 (D47): model-refusal detectors.
+    "agents/intro_writer.py": None,
+    "agents/main_creator.py": None,
+    # KRI-786 (D38): quote harvest.
+    "agents/semantic_edit_proposal.py": None,
+    "agents/spoken_script.py": None,
+    # KRI-786 (D47).
+    "agents/voiceover_script_writer.py": None,
+    # KRI-786 (D42, D43): hook filler penalty, spoken score labels.
+    "pipeline/narration_labels.py": None,
+    "pipeline/score.py": None,
+    "routes/_copilot.py": None,
+    # KRI-786 (D01, O19): v1 chat routing.
+    "routes/creation_threads.py": None,
+    "routes/creator_agent.py": None,
+    # KRI-786 (D11): draft-review timing opt-outs.
+    "routes/plan_items.py": None,
+    "schemas/edit_proposal.py": None,
+    "services/choice_questions.py": None,
+    "services/clip_intent_resolution.py": None,
     # KRI-796: reads where a creator seated a Visual among named moments, by folded words.
-    "services/clip_order_sequence.py",
-    "services/clip_selection.py",
-    "services/creative_copy_decisions.py",
-    "services/creator_direction.py",
-    "services/creator_memory_learning.py",
-    "services/kria_editor_ops_diff.py",
-    "services/sfx_catalog.py",
-    "services/spoken_quotes.py",
+    "services/clip_order_sequence.py": None,
+    "services/clip_selection.py": None,
+    "services/creative_copy_decisions.py": None,
+    "services/creator_direction.py": None,
+    "services/creator_memory_learning.py": None,
+    # KRI-786 (D32): generic-SFX notice.
+    "services/creator_sessions.py": None,
+    # KRI-786 (D50): "just this once" markers.
+    "services/finished_style_learning.py": None,
+    "services/kria_editor_ops_diff.py": None,
+    "services/sfx_catalog.py": None,
+    "services/spoken_quotes.py": None,
     # KRI-585: reads the clips' own speech for its spoken role, by folded tokens only.
-    "services/spoken_roles.py",
-    "services/visual_treatment_planner.py",
-    "tasks/kria_runtime.py",
-)
+    "services/spoken_roles.py": None,
+    "services/visual_treatment_planner.py": None,
+    # KRI-786 (D44, D45): only the narrated-storyboard readers of the creator brief; the
+    # rest of this 25k-line module parses ids, paths and ffmpeg output.
+    "tasks/generative_build.py": (
+        "_creator_requests_narrated_treatment",
+        "_narrated_storyboard_text_elements",
+    ),
+    "tasks/kria_runtime.py": None,
+}
 
-# Counted on the KRI-667 branch (475 calls, unchanged from main). Lower a number when you
-# delete regexes; never raise one.
+# re.* calls per module (counted on codex/turkish-parity, KRI-786: the 22 original modules are
+# unchanged from KRI-667; the KRI-786 additions start at today's count). Lower a number when
+# you delete regexes; never raise one.
 BASELINE: dict[str, int] = {
     "agents/_schemas/creator_policy.py": 8,
     "agents/clip_intent_planner.py": 19,
     "agents/clip_request_resolver.py": 3,
     "agents/edit_copilot.py": 26,
+    "agents/edit_proposal.py": 10,
+    "agents/intro_writer.py": 20,
     "agents/main_creator.py": 4,
+    "agents/semantic_edit_proposal.py": 1,
     "agents/spoken_script.py": 11,
+    "agents/voiceover_script_writer.py": 9,
     "kria/brief.py": 27,
     "kria/brief_checks.py": 70,
     "kria/brief_route.py": 4,
@@ -74,46 +126,201 @@ BASELINE: dict[str, int] = {
     "kria/strategy_policy.py": 4,
     "kria/style_asks.py": 25,
     "kria/voiceover_clips.py": 12,
+    "pipeline/narration_labels.py": 2,
     "routes/_copilot.py": 8,
+    "routes/creation_threads.py": 2,
     "routes/creator_agent.py": 39,
-    "schemas/edit_proposal.py": 62,
+    "routes/plan_items.py": 6,
+    "schemas/edit_proposal.py": 63,
     "services/choice_questions.py": 2,
     "services/clip_intent_resolution.py": 2,
     "services/clip_selection.py": 1,
     "services/creator_direction.py": 6,
+    "services/creator_sessions.py": 1,
     "services/kria_editor_ops_diff.py": 3,
     "services/sfx_catalog.py": 2,
     "services/spoken_quotes.py": 2,
     "services/visual_treatment_planner.py": 8,
+    "tasks/generative_build.py": 7,
+}
+
+# Word-membership tests on folded text per module (see the module docstring).
+MEMBERSHIP_BASELINE: dict[str, int] = {
+    "agents/edit_copilot.py": 1,
+    "agents/main_creator.py": 2,
+    "kria/brief_route.py": 1,
+    "kria/editor_receipts.py": 1,
+    "kria/planner.py": 1,
+    "routes/plan_items.py": 2,
+    "services/clip_intent_resolution.py": 2,
+    "services/creator_direction.py": 3,
+    "services/creator_memory_learning.py": 4,
+    "services/finished_style_learning.py": 1,
+    "services/sfx_catalog.py": 1,
 }
 
 
-def _modules() -> list[Path]:
-    kria = sorted((_APP / "kria").rglob("*.py"))
-    return [*kria, *(_APP / rel for rel in _OTHER_MODULES)]
+def _modules() -> list[tuple[str, Path, tuple[str, ...] | None]]:
+    kria = [(str(p.relative_to(_APP)), p, None) for p in sorted((_APP / "kria").rglob("*.py"))]
+    return [*kria, *((rel, _APP / rel, scope) for rel, scope in _OTHER_MODULES.items())]
 
 
-def _regex_calls(path: Path) -> int:
+def _scoped_roots(tree: ast.Module, scope: tuple[str, ...] | None) -> list[ast.AST]:
+    if scope is None:
+        return [tree]
+    return [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name in scope
+    ]
+
+
+def _walk_unique(roots: list[ast.AST]):
+    seen: set[int] = set()
+    for root in roots:
+        for node in ast.walk(root):
+            if id(node) not in seen:
+                seen.add(id(node))
+                yield node
+
+
+def _is_regex_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "re"
+        and node.func.attr in _RE_FUNCS
+    )
+
+
+def _callee_name(call: ast.Call) -> str | None:
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr
+    return None
+
+
+def _is_fold_call(node: ast.AST) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    name = _callee_name(node)
+    if name is None:
+        return False
+    if isinstance(node.func, ast.Attribute) and name in _FOLD_METHODS:
+        return True
+    lowered = name.lower()
+    return name in _FOLD_FUNCS or "fold" in lowered
+
+
+def _folded_names(func: ast.AST) -> set[str]:
+    names: set[str] = set()
+    for node in ast.walk(func):
+        if isinstance(node, ast.Assign) and _is_fold_call(node.value):
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif (
+            isinstance(node, ast.AnnAssign | ast.NamedExpr)
+            and node.value is not None
+            and _is_fold_call(node.value)
+            and isinstance(node.target, ast.Name)
+        ):
+            names.add(node.target.id)
+    return names
+
+
+def _is_folded(node: ast.AST, names: set[str]) -> bool:
+    return _is_fold_call(node) or (isinstance(node, ast.Name) and node.id in names)
+
+
+def _path_like_affix(call: ast.Call) -> bool:
+    literals = [
+        n.value
+        for arg in call.args
+        for n in ast.walk(arg)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    ]
+    return bool(literals) and all(v.startswith(".") or "/" in v for v in literals)
+
+
+def _membership_nodes(roots: list[ast.AST]) -> list[ast.AST]:
+    found: list[ast.AST] = []
+    funcs = [
+        n
+        for n in _walk_unique(roots)
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda)
+    ]
+    seen: set[int] = set()
+    for func in funcs:
+        names = _folded_names(func)
+        for node in ast.walk(func):
+            if id(node) in seen:
+                continue
+            if isinstance(node, ast.Compare):
+                left = node.left
+                left_ok = (isinstance(left, ast.Constant) and isinstance(left.value, str)) or (
+                    isinstance(left, ast.Name)
+                )
+                for op, right in zip(node.ops, node.comparators, strict=True):
+                    if left_ok and isinstance(op, ast.In | ast.NotIn) and _is_folded(right, names):
+                        seen.add(id(node))
+                        found.append(node)
+                        break
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _AFFIX_METHODS
+                and _is_folded(node.func.value, names)
+                and not _path_like_affix(node)
+            ):
+                seen.add(id(node))
+                found.append(node)
+    return found
+
+
+def _counts(path: Path, scope: tuple[str, ...] | None) -> tuple[int, int]:
     source = path.read_text(encoding="utf-8")
     lines = source.splitlines()
-    count = 0
-    for node in ast.walk(ast.parse(source)):
-        if not (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "re"
-            and node.func.attr in _RE_FUNCS
-        ):
-            continue
-        if _EXEMPT in lines[node.lineno - 1]:
-            continue
-        count += 1
-    return count
+    roots = _scoped_roots(ast.parse(source), scope)
+
+    def live(node: ast.AST) -> bool:
+        return _EXEMPT not in lines[node.lineno - 1]
+
+    regexes = sum(1 for n in _walk_unique(roots) if _is_regex_call(n) and live(n))
+    membership = sum(1 for n in _membership_nodes(roots) if live(n))
+    return regexes, membership
+
+
+def _all_counts() -> dict[str, tuple[int, int]]:
+    return {rel: _counts(path, scope) for rel, path, scope in _modules() if path.exists()}
 
 
 def current_counts() -> dict[str, int]:
-    return {str(path.relative_to(_APP)): _regex_calls(path) for path in _modules() if path.exists()}
+    return {rel: pair[0] for rel, pair in _all_counts().items()}
+
+
+def current_membership_counts() -> dict[str, int]:
+    return {rel: pair[1] for rel, pair in _all_counts().items()}
+
+
+def _ratchet(counts: dict[str, int], baseline: dict[str, int], name: str) -> dict:
+    grew = {
+        rel: (count, baseline.get(rel, 0))
+        for rel, count in counts.items()
+        if count > baseline.get(rel, 0)
+    }
+    shrank = {
+        rel: (counts.get(rel, 0), base)
+        for rel, base in baseline.items()
+        if counts.get(rel, 0) < base
+    }
+    if shrank:
+        hint = ", ".join(f'"{rel}": {now}' for rel, (now, _) in sorted(shrank.items()))
+        warnings.warn(
+            f"KRI-667 {name}: counts went down, nice. Lower the baseline to lock it in: {hint}",
+            stacklevel=2,
+        )
+    return grew
 
 
 def test_every_scanned_module_exists():
@@ -121,26 +328,40 @@ def test_every_scanned_module_exists():
     assert not missing, f"update _OTHER_MODULES: {missing}"
 
 
+def test_scoped_functions_exist():
+    missing = []
+    for rel, scope in _OTHER_MODULES.items():
+        if scope is None:
+            continue
+        tree = ast.parse((_APP / rel).read_text(encoding="utf-8"))
+        names = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
+        missing += [f"{rel}::{fn}" for fn in scope if fn not in names]
+    assert not missing, f"scoped functions renamed or removed; update _OTHER_MODULES: {missing}"
+
+
 def test_no_module_gains_a_regex_that_reads_meaning_from_words():
-    grew = {
-        rel: (count, BASELINE.get(rel, 0))
-        for rel, count in current_counts().items()
-        if count > BASELINE.get(rel, 0)
-    }
+    grew = _ratchet(current_counts(), BASELINE, "BASELINE")
     assert not grew, (
         "KRI-667: these modules gained regexes (now, baseline): "
         f"{grew}. Don't guess what the creator meant from words; have the model that reads "
         "the message record it in a structured field (brief `facts`, clip-intent op, "
         "`claimed_ops`) and check that field. A regex that reads no creator or model text "
-        "can carry `# kri667: <why>` on its line."
+        "can carry `# kri667: <why>` on its line. See agents/DECISIONS.md 'Language policy'."
     )
 
 
-def test_the_baseline_follows_removed_regexes_down():
-    counts = current_counts()
-    stale = {
-        rel: (counts.get(rel, 0), base)
-        for rel, base in BASELINE.items()
-        if counts.get(rel, 0) < base
-    }
-    assert not stale, f"regexes were removed; lower BASELINE to the new counts: {stale}"
+def test_no_module_gains_a_word_membership_test_on_folded_text():
+    grew = _ratchet(current_membership_counts(), MEMBERSHIP_BASELINE, "MEMBERSHIP_BASELINE")
+    assert not grew, (
+        "KRI-786: these modules gained `word in folded_text` / `.startswith(...)` checks "
+        f"(now, baseline): {grew}. That is a regex by another name: it reads English (or "
+        "Turkish) words and misses the other language. Trust a structured field the model "
+        "returns, or use a shared bilingual helper (kria/language.py, kria/brief_route.py). "
+        "A check that reads no creator or model text can carry `# kri667: <why>` on its line."
+    )
+
+
+def test_baselines_name_only_scanned_modules():
+    scanned = {rel for rel, _, _ in _modules()}
+    unknown = sorted((set(BASELINE) | set(MEMBERSHIP_BASELINE)) - scanned)
+    assert not unknown, f"baseline names modules that are not scanned: {unknown}"
