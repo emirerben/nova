@@ -67,6 +67,7 @@ from app.services.choice_questions import (
     ChoiceSelectionIn,
     delegated_choice,
     latest_open_choice_question,
+    match_answered_choice,
     match_open_choice,
     tag_event,
 )
@@ -337,7 +338,7 @@ _FREE_TEXT_CHOICE_WINDOW = 60
 
 async def _free_text_choice_selection(
     db: AsyncSession, thread: CreationThread, message: str
-) -> tuple[ChoiceSelectionIn, bool] | None:
+) -> tuple[ChoiceSelectionIn, bool, bool] | None:
     """KRI-476: a plain message that IS an answer becomes a server-owned ``choice_selection``.
 
     Deterministic and exact: the message must normalise (case, punctuation, whitespace)
@@ -348,6 +349,10 @@ async def _free_text_choice_selection(
     last assistant turn (``latest_open_choice_question``), so a later text question's
     answer is never read as this one's; the planner gate re-asks at most once
     (``MAX_ASKS_PER_QUESTION``), never in a loop.
+
+    Returns ``(selection, delegated, reanswer)``. ``reanswer`` (KRI-794): the message
+    named another option of an already-answered, closed gate question
+    (``match_answered_choice``); that selection replaces the earlier answer.
     """
 
     rows = (
@@ -368,20 +373,32 @@ async def _free_text_choice_selection(
     events = [
         tag_event(role, payload, event_type, content) for role, payload, event_type, content in rows
     ]
-    question = latest_open_choice_question(events[-_FREE_TEXT_CHOICE_WINDOW:])
+    window = events[-_FREE_TEXT_CHOICE_WINDOW:]
+    question = latest_open_choice_question(window)
     if question is None or not settings.kria_choice_questions_enabled:
         question = latest_open_creative_question(events)
-    if question is None:
+    if question is not None:
+        option_key = match_open_choice(question, message)
+        delegated = False
+        if option_key is None:
+            option_key = delegated_choice(question, message)
+            delegated = option_key is not None
+        if option_key is not None:
+            selection = ChoiceSelectionIn(
+                question_id=str(question["question_id"]), option_key=option_key
+            )
+            return selection, delegated, False
+    if not settings.kria_choice_questions_enabled:
         return None
-    option_key = match_open_choice(question, message)
-    delegated = False
-    if option_key is None:
-        option_key = delegated_choice(question, message)
-        delegated = option_key is not None
-    if option_key is None:
+    # KRI-794: the label of another option of a question already answered and closed
+    # ("Continue without a fixed order" after "Use the order you added the clips")
+    # replaces that answer. Same server-owned selection; it targets a closed question.
+    reanswer = match_answered_choice(window, message)
+    if reanswer is None:
         return None
-    selection = ChoiceSelectionIn(question_id=str(question["question_id"]), option_key=option_key)
-    return selection, delegated
+    answered, option_key = reanswer
+    selection = ChoiceSelectionIn(question_id=str(answered["question_id"]), option_key=option_key)
+    return selection, False, True
 
 
 async def _owned_thread(
@@ -661,6 +678,7 @@ async def submit_turn(
         if question is None or question.get("question_id") != choice_selection.question_id:
             choice_selection = None
     choice_delegated = False
+    choice_reanswer = False
     if (
         choice_selection is None
         and body.clip_selection is None
@@ -672,14 +690,16 @@ async def submit_turn(
         # the stored event carries the derived selection.
         derived = await _free_text_choice_selection(db, thread, body.message)
         if derived is not None:
-            choice_selection, choice_delegated = derived
+            choice_selection, choice_delegated, choice_reanswer = derived
     if body.clip_selection is not None and settings.kria_clip_selection_questions_enabled:
         await _validate_clip_selection(db, thread, body.clip_selection)
     if body.song_order is not None and settings.user_song_montage_enabled:
         await _validate_song_order(db, thread, body.song_order)
     if body.song_range is not None and settings.song_filming_range_enabled:
         await _apply_song_range_answer(db, thread, body.song_range)
-    if choice_selection is not None:
+    if choice_selection is not None and not choice_reanswer:
+        # A derived re-answer targets a question the server asked and has closed
+        # (KRI-794); every client-sent selection must still answer the open one.
         await _validate_choice_selection(db, thread, choice_selection)
 
     active = (
@@ -957,6 +977,7 @@ async def submit_turn(
                     "choice_selection": {
                         **choice_selection.model_dump(mode="json"),
                         **({"delegated": True} if choice_delegated else {}),
+                        **({"reanswer": True} if choice_reanswer else {}),
                     }
                 }
                 if choice_selection is not None

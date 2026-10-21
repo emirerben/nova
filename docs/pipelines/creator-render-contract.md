@@ -230,6 +230,23 @@ reaches the strategy or the pinned brief) and the gate asks once more, within th
 after the cap the plan goes through unchanged and the old answer is never silently
 re-applied.
 
+**Changing a closed answer by typing it (KRI-794).** With no question open, a plain message
+that exactly names a DIFFERENT option of an already-answered gate question (its label, or for
+the order basis a topical alias such as "no fixed order"; never a list number, an internal
+key, "you choose" or the generic "fark etmez") becomes a server-derived `choice_selection`
+on the latest question asked for that conflict, stored with `"reanswer": true`
+(`match_answered_choice`); last answer wins. A client-sent selection for a closed question is
+still `choice_selection_stale`. Naming the standing answer again stays a plain message unless
+a render refusal of that choice came after it. On later turns a standing answer is disclosed
+as kept ("As agreed earlier: … To change it, reply "…".") rather than as a fresh promise.
+
+**A refusal re-opens its choice once.** An unresolved ORDER line (`ORDER_BASIS_UNRESOLVED`)
+raises with `field_path = "ordering_choice"`, which rides the typed decline onto the
+`assistant_render_failed` event. When that refusal follows the order answer, the next turn's
+gate asks the order question again (same digest, the refused option not recommended, "I
+couldn't make your last video with this choice.") instead of drafting the refused edit; past
+the ask limit the answer keeps applying.
+
 **Never a default.** Length and source-coverage conflicts get one card per unchanged
 input digest. The pre-approval backstop keeps unanswered conflicts pending with a plain
 explanation; it does not dispatch after the ask limit. Other choices retain their
