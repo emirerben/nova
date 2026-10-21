@@ -34,9 +34,9 @@ stopwords, so it is the wrong fit here.)
 from __future__ import annotations
 
 import re
-import unicodedata
 
 from app.agents._schemas.content_plan import PlanItemSpec
+from app.text_fold import loose_text
 
 __all__ = [
     "DEFAULT_MAX_FRACTION",
@@ -129,8 +129,8 @@ _STOPWORDS = frozenset(
 
 def _idea_tokens(s: str) -> set[str]:
     """Lowercased, accent-folded `[a-z0-9]` tokens with stopwords removed."""
-    folded = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
-    return {t for t in _TOKEN_RE.findall(folded.lower()) if t not in _STOPWORDS}
+    # KRI-781: the shared Turkish-aware fold; ascii-ignore used to DELETE "ı" ("krmz").
+    return {t for t in _TOKEN_RE.findall(loose_text(s)) if t not in _STOPWORDS}
 
 
 def idea_similarity(a: str, b: str) -> float:

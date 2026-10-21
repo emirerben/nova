@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import re
 
+from app.text_fold import loose_case
+
 # The languages the caption stack (correction prompt, editor chip, D5 override)
 # is tuned for. Detection outside this set still captions the spoken language.
 SUPPORTED_CAPTION_LANGUAGES: frozenset[str] = frozenset({"en", "tr"})
@@ -35,13 +37,13 @@ SOURCE_DETECTED = "detected"
 SOURCE_TRANSCRIPT_TEXT = "transcript_text"
 SOURCE_FALLBACK = "fallback"
 
-_FOLD = str.maketrans({"ı": "i", "ş": "s", "ç": "c", "ğ": "g", "ö": "o", "ü": "u", "â": "a"})
-
 
 def _fold(text: str) -> str:
-    """Lowercase + ASCII-fold Turkish letters so one pattern matches both spellings."""
-    # "İ".lower() is "i̇" (i + combining dot) — map it before lowercasing.
-    return (text or "").replace("İ", "i").replace("I", "i").lower().translate(_FOLD)
+    """Lowercase + ASCII-fold Turkish letters so one pattern matches both spellings.
+
+    The shared Turkish-aware fold (KRI-781), line breaks kept for the clause split.
+    """
+    return loose_case(text or "")
 
 
 _CAPTION_KEYWORD = re.compile(

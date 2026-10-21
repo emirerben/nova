@@ -510,7 +510,9 @@ async def _validate_scoped_turn(
             current_revision=revision,
         )
     try:
-        scope = plan_review.validate_scope(body.scope)
+        # KRI-784: the refusal is shown to the creator, in the chat's language.
+        with reply_language_for(thread_reply_language(thread)):
+            scope = plan_review.validate_scope(body.scope)
     except plan_review.ScopeError as exc:
         raise RuntimeFailure(
             exc.status, exc.code, str(exc), recovery="manual", current_revision=revision

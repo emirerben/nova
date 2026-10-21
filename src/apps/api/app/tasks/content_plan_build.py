@@ -78,6 +78,36 @@ def _item_direction_snapshot(session, item: PlanItem, plan: ContentPlan) -> dict
     return plan_snapshot if isinstance(plan_snapshot, dict) else None
 
 
+def _item_chat_language(
+    session,  # noqa: ANN001
+    item: PlanItem,
+    user_id: uuid.UUID,
+    creator_brief_binding: dict | None,
+) -> str:
+    """The render language for an item a chat drives: the chat's reply language (KRI-780).
+
+    The Job's ``all_candidates["language"]`` picks the hook language (intro_writer), the
+    quote/overlay agents' language, and the spoken-caption fallback. Without this a
+    Turkish chat rendered an English hook. The approved binding names its thread;
+    otherwise the creator's chat whose active item this is. No chat, an English or
+    undetected chat, or the reply-language kill switch off all keep "en" (unchanged).
+    """
+    from app.kria.reply_language import thread_reply_language  # noqa: PLC0415
+
+    query = select(CreationThread).where(
+        CreationThread.active_plan_item_id == item.id,
+        CreationThread.creator_id == user_id,
+    )
+    raw_thread_id = (creator_brief_binding or {}).get("thread_id")
+    if raw_thread_id:
+        try:
+            query = query.where(CreationThread.id == uuid.UUID(str(raw_thread_id)))
+        except ValueError:
+            pass  # The binding block below rejects a malformed binding.
+    thread = session.execute(query.limit(1)).scalar_one_or_none()
+    return (thread_reply_language(thread) if thread is not None else None) or "en"
+
+
 def _coerce_dispatch_epoch(value: object) -> int | None:
     """Normalize the producer-bound ownership epoch.
 
@@ -2472,6 +2502,9 @@ def _dispatch_item_render(
             user_id=plan.user_id,
             clip_paths=clip_paths,
             mode="content_plan",
+            # KRI-780: the chat's language is the render's language (hook, quotes,
+            # caption fallback); "en" when no chat drives this item.
+            language=_item_chat_language(session, item, plan.user_id, creator_brief_binding),
             content_plan_item_id=item.id,
             content_plan_ownership_epoch=ownership_epoch,
             persona_tone=str(persona_data.get("tone", "") or ""),

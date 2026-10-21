@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
 from app.agents.music_matcher import _sanitize_text
+from app.kria.reply_language import agent_reply_language, with_prompt_language
 
 # Hard cap: the interview closes at this many turns regardless of what the model
 # wants (the route also enforces it as the backstop). "A few questions", per the
@@ -39,6 +40,9 @@ class VoiceoverInterviewerInput(BaseModel):
     brief: str = ""
     turns: list[VoiceoverTurn] = Field(default_factory=list)
     turn_count: int = 0
+    # KRI-784: the creator's language ("tr"/"en"), from the chat or the caller. None:
+    # read from the creator's own words below; English/unknown renders byte-identical.
+    reply_language: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class VoiceoverInterviewerOutput(BaseModel):
@@ -61,7 +65,7 @@ class VoiceoverInterviewerAgent(Agent[VoiceoverInterviewerInput, VoiceoverInterv
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.voiceover.interviewer",
         prompt_id="voiceover_interview",
-        prompt_version="2026-07-01",
+        prompt_version="2026-10-21-language",
         model="gemini-2.5-flash",
         max_attempts=3,
         timeout_s=20.0,
@@ -80,13 +84,21 @@ class VoiceoverInterviewerAgent(Agent[VoiceoverInterviewerInput, VoiceoverInterv
         from app.pipeline.prompt_loader import load_prompt  # noqa: PLC0415
 
         footage = _sanitize_text(input.footage_summary) or "(no footage summary available)"
-        return load_prompt(
+        prompt = load_prompt(
             "voiceover_interview",
             footage_summary=footage,
             brief=_sanitize_text(input.brief) or "(none)",
             history=_format_history(input.turns),
             turns_so_far=str(max(0, int(input.turn_count or 0))),
             max_turns=str(_MAX_TURNS),
+        )
+        return with_prompt_language(
+            prompt,
+            agent_reply_language(
+                input.reply_language,
+                input.brief,
+                [t.content for t in input.turns if t.role == "user"],
+            ),
         )
 
     def parse(

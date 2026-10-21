@@ -22,11 +22,12 @@ from pydantic import BaseModel, Field, ValidationError
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
 from app.agents.interviewer_agent import ConversationTurn, _format_history
 from app.agents.music_matcher import _sanitize_text
+from app.kria.reply_language import agent_reply_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-ADVISOR_PROMPT_VERSION = "2026-07-11-kria"
+ADVISOR_PROMPT_VERSION = "2026-10-21-language"
 
 _MAX_SUGGESTED_NOTE = 140
 
@@ -46,6 +47,9 @@ class PlanItemAdvisorInput(BaseModel):
     job_phase: str = "no render yet"
     persona_summary: str = ""
     content_mode: str = "create_new"
+    # KRI-784: the creator's language ("tr"/"en"), from the chat or the caller. None:
+    # read from the creator's own words below; English/unknown renders byte-identical.
+    reply_language: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class PlanItemAdvisorOutput(BaseModel):
@@ -119,7 +123,7 @@ class PlanItemAdvisorAgent(Agent[PlanItemAdvisorInput, PlanItemAdvisorOutput]):
         return ["reply"]
 
     def render_prompt(self, input: PlanItemAdvisorInput) -> str:  # noqa: A002
-        return load_prompt(
+        prompt = load_prompt(
             "plan_item_advisor",
             theme=_sanitize_text(input.theme),
             idea=_sanitize_text(input.idea),
@@ -131,6 +135,15 @@ class PlanItemAdvisorAgent(Agent[PlanItemAdvisorInput, PlanItemAdvisorOutput]):
             persona_summary=_sanitize_text(input.persona_summary),
             content_mode=_sanitize_text(input.content_mode),
             history=_format_history(input.turns),
+        )
+        return with_prompt_language(
+            prompt,
+            agent_reply_language(
+                input.reply_language,
+                [t.content for t in input.turns if t.role == "user"],
+                input.theme,
+                input.idea,
+            ),
         )
 
     def parse(

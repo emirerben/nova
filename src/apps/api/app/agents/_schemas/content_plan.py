@@ -66,7 +66,7 @@ from app.agents._schemas.persona import Persona
 #              Persona.idea_seeds → byte-identical to baseline when seeds are absent.
 #              Directive: prefer and deepen the user's own ideas first; use the
 #              market IDEA_BANK only to fill remaining slots.
-CONTENT_PLAN_PROMPT_VERSION = "2026-09-06-v3-creator-direction"
+CONTENT_PLAN_PROMPT_VERSION = "2026-10-21-language"
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60
@@ -126,6 +126,9 @@ class ContentPlanInput(BaseModel):
     # Account-wide creator direction, resolved at dispatch and sanitized by the
     # agent boundary. Empty means memory is disabled or has no active rows.
     creator_direction: str = ""
+    # KRI-784: the creator's language ("tr"/"en"), from the chat or the caller. None:
+    # read from the creator's own words below; English/unknown renders byte-identical.
+    reply_language: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class PlanItemSpec(BaseModel):

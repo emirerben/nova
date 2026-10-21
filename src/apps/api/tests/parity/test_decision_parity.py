@@ -133,6 +133,29 @@ def _sfx_name(text: str) -> str | None:
     return name.casefold() if name else None
 
 
+def _states_two_seconds(text: str) -> bool:
+    from app.routes.creator_agent import _excerpt_states_seconds
+
+    return _excerpt_states_seconds(text, 2.0)
+
+
+def _generic_sfx_ask(text: str) -> bool:
+    from app.services.creator_sessions import _GENERIC_SOUND_EFFECT_REQUEST_RE
+
+    return bool(_GENERIC_SOUND_EFFECT_REQUEST_RE.search(text))
+
+
+def _review_timing_kept(text: str) -> bool:
+    """True when a draft-review message keeps the current photo/video timing profile."""
+    from app.routes.plan_items import _review_mixed_media_timing
+    from app.schemas.edit_proposal import MixedMediaTimingProfile
+
+    current = MixedMediaTimingProfile(
+        image_hold="very_fast", video_hold="longer", boundary_style="cut"
+    )
+    return _review_mixed_media_timing(current, text) is current
+
+
 def _render_intent(text: str) -> Any:
     from app.agents._schemas.creator_agent import CreativeStrategy
     from app.routes.creator_agent import _apply_explicit_render_intent
@@ -257,10 +280,96 @@ def _receipt_font_cue(text: str) -> bool:
     return "font" in _named_cues(req, words(text))
 
 
+def _unsupported_claim(text: str) -> bool:
+    from app.agents.edit_proposal import ai_draft_thought_has_unsupported_claim
+
+    return ai_draft_thought_has_unsupported_claim(text)
+
+
+def _spoken_score(text: str) -> tuple[int | None, ...]:
+    from app.pipeline.narration_labels import _score_value
+
+    return tuple(_score_value(word) for word in text.split())
+
+
+def _receipt_timing_cue(text: str) -> bool:
+    from app.kria.brief import BriefRequirement
+    from app.kria.editor_receipts import _named_cues
+    from app.kria.style_asks import words
+
+    req = BriefRequirement(id="r1", kind="timing", scope="title", description=text)
+    return "timing" in _named_cues(req, words(text))
+
+
+def _narrated_score_overlay(text: str) -> bool:
+    """A creator brief turns the narrated "3-1" into a score overlay (or withdraws it)."""
+    from types import SimpleNamespace
+
+    from app.pipeline.transcribe import Transcript, Word
+    from app.tasks.generative_build import _narrated_storyboard_text_elements
+
+    spoken = ["Final", "score", "3-1"]
+    transcript = Transcript(
+        words=[Word(word, i * 0.2, (i + 1) * 0.2, 1.0) for i, word in enumerate(spoken)],
+        language="en",
+    )
+    elements = _narrated_storyboard_text_elements(
+        transcript=transcript,
+        step_timings=[SimpleNamespace(step_id="step_0", start_s=0.0, end_s=2.0)],
+        clip_assignments=[],
+        clip_id_by_path={},
+        creator_request=text,
+        explicit_opening_title=None,
+        storyboard={"overlays": []},
+    )
+    return any(
+        "score:" in str(item["source_params"].get("narrated_storyboard", "")) for item in elements
+    )
+
+
+def _hook_refusal(text: str) -> bool:
+    from app.agents.intro_writer import _is_refusal_text
+
+    return _is_refusal_text(text)
+
+
 def _caption_language(text: str) -> str | None:
     from app.pipeline.caption_language import parse_caption_language_request
 
     return parse_caption_language_request(text)
+
+
+def _chat_and_render_language(text: str) -> tuple[str | None, str]:
+    """The chat language ``text`` sets, and the render language a plan item it drives gets."""
+    import uuid
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from app.kria.reply_language import resolve_reply_language
+    from app.tasks.content_plan_build import _item_chat_language
+
+    chat = resolve_reply_language(text)
+    thread = SimpleNamespace(state={"reply_language": chat} if chat else {})
+    session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = thread
+    item = SimpleNamespace(id=uuid.uuid4())
+    return chat, _item_chat_language(session, item, uuid.uuid4(), None)
+
+
+def _hook_in_chat_language(text: str) -> bool:
+    from app.agents.intro_writer import _language_instruction
+
+    chat, render = _chat_and_render_language(text)
+    return chat is not None and _language_instruction(render) == _language_instruction(chat)
+
+
+def _caption_fallback_in_chat_language(text: str) -> bool:
+    from app.pipeline.caption_language import resolve_spoken_caption_language
+
+    chat, render = _chat_and_render_language(text)
+    # Whisper heard no language and the transcript is too short to guess from.
+    language, _source = resolve_spoken_caption_language(None, transcript_text="", fallback=render)
+    return chat is not None and language == chat
 
 
 def _filler_token(text: str) -> bool:
@@ -311,10 +420,56 @@ def _seed_tokens(text: str) -> frozenset[str]:
     return frozenset(_tokens(text))
 
 
-def _upper(text: str) -> str:
+def _upper_auto(text: str) -> str:
+    # No language known (a stored text element): rules follow the text's own letters.
     from app.agents._schemas.text_element import apply_text_case
 
     return apply_text_case(text, "upper")
+
+
+def _title_auto(text: str) -> str:
+    from app.agents._schemas.text_element import apply_text_case
+
+    return apply_text_case(text, "title")
+
+
+def _narrated_norm(text: str) -> str:
+    from app.pipeline.narrated_alignment import _norm
+
+    return _norm(text)
+
+
+def _clip_intent_words(text: str) -> tuple[str, ...]:
+    from app.services.clip_selection import _words
+
+    return tuple(_words(text))
+
+
+def _lrclib_title_tokens(text: str) -> frozenset[str]:
+    from app.services.lrclib_client import _tokenize_title
+
+    return frozenset(_tokenize_title(text))
+
+
+def _stateful(text: str) -> bool:
+    from app.services.creator_memory_learning import requires_stateful_extraction
+
+    return requires_stateful_extraction(text)
+
+
+def _artist_gate(text: str) -> bool:
+    from app.services.lrclib_client import _artists_match
+
+    return _artists_match(text, "Barış Manço")
+
+
+def _karaoke_upper_composes(text: str) -> bool:
+    # generative_overlays cases the element text whole and each word_timings entry alone;
+    # rebuild_word_timings_for_text keeps the beat-snapped timings only when they agree.
+    from app.agents._schemas.text_element import apply_text_case
+
+    whole = apply_text_case(text, "upper").split()
+    return whole == [apply_text_case(word, "upper") for word in text.split()]
 
 
 def _lower(text: str) -> str:
@@ -361,7 +516,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": "SON DURUM NE?",
             "tr_mixed": "status ne?",
         },
-        gaps=_gaps("English-only _STATUS_ONLY_RE", "tr", "tr_ascii", "tr_upper", "tr_mixed"),
     ),
     # D02: the runtime's inert status question (no new edit).
     Case(
@@ -373,6 +527,17 @@ CASES: tuple[Case, ...] = (
         "how is it going?",
         True,
         {"tr": "Nasıl gidiyor?", "tr_ascii": "nasil gidiyor", "tr_upper": "NASIL GİDİYOR?"},
+    ),
+    # DC1-6: an English contraction reaches the shared status vocabulary ("how's").
+    Case(
+        "DC1-6",
+        "chat_routing",
+        "kria.language.is_status_question",
+        "status question (contraction)",
+        _status_question,
+        "how's it going?",
+        True,
+        {"tr": "Nasıl gidiyor?", "tr_mixed": "status ne?"},
     ),
     # D03: capability help question, never an edit.
     Case(
@@ -403,12 +568,6 @@ CASES: tuple[Case, ...] = (
             "tr_ascii": "Basligin daha buyuk ve altin rengi olmasini istiyorsun.",
             "tr_upper": "BAŞLIĞIN DAHA BÜYÜK VE ALTIN RENGİ OLMASINI İSTİYORSUN.",
         },
-        gaps=_gaps(
-            "only acknowledgement prefixes are matched; Turkish restates with -istiyorsun",
-            "tr",
-            "tr_ascii",
-            "tr_upper",
-        ),
     ),
     # D05: "from scratch" is a full re-plan, not an editor op.
     Case(
@@ -522,13 +681,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": "TÜM VİDEOLARI KULLAN",
             "tr_mixed": "bütün clipleri kullan",
         },
-        gaps=_gaps(
-            "English-only all-media regex; tüm/bütün never read",
-            "tr",
-            "tr_ascii",
-            "tr_upper",
-            "tr_mixed",
-        ),
     ),
     # D13: "keep the order" preserves the creator's source sequence.
     Case(
@@ -545,9 +697,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": "KLİPLERİN SIRASINI KORU",
             "tr_mixed": "clip sırasını koru",
         },
-        gaps=_gaps(
-            "English-only keep/preserve ... order regex", "tr", "tr_ascii", "tr_upper", "tr_mixed"
-        ),
     ),
     # D14: a named sound effect becomes a required SFX request.
     Case(
@@ -564,9 +713,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": "WHOOSH SES EFEKTİNİ EKLE",
             "tr_mixed": "whoosh sfx ekle",
         },
-        gaps=_gaps(
-            "needs English verb (add/use) before the name", "tr", "tr_ascii", "tr_upper", "tr_mixed"
-        ),
     ),
     # D15: quoted opening title copy is extracted literally.
     Case(
@@ -583,12 +729,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": 'BAŞLIK "Yaz Tatili" OLSUN',
             "tr_mixed": 'title "Yaz Tatili" olsun',
         },
-        gaps=_gaps(
-            "legacy title grammar needs the English noun title/intro/hook",
-            "tr",
-            "tr_ascii",
-            "tr_upper",
-        ),
     ),
     # D16: quoted closing title copy is extracted literally.
     Case(
@@ -605,9 +745,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": 'KAPANIŞ BAŞLIĞI "Görüşürüz" OLSUN',
             "tr_mixed": 'outro yazısı "Görüşürüz" olsun',
         },
-        gaps=_gaps(
-            "closing cue and title noun are English-only", "tr", "tr_ascii", "tr_upper", "tr_mixed"
-        ),
     ),
     # D17: stated pacing sets strategy.pacing.
     Case(
@@ -624,7 +761,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": "HIZLI TEMPO OLSUN",
             "tr_mixed": "pacing hızlı olsun",
         },
-        gaps=_gaps("pacing regex is English-only", "tr", "tr_ascii", "tr_upper", "tr_mixed"),
     ),
     # D18: an exact sub-second photo hold among videos (route-level, incl. fallback).
     Case(
@@ -655,6 +791,254 @@ CASES: tuple[Case, ...] = (
             "tr_ascii": "videolarin arasinda fotograflar 0,3 saniye kalsin",
             "tr_upper": "VİDEOLARIN ARASINDA FOTOĞRAFLAR 0,3 SANİYE KALSIN",
             "tr_mixed": "fotoğraflar 0.3 sn, videolar daha uzun",
+        },
+    ),
+    # DC1-1: a title hold stated as a number word ("two seconds") grounds the model's value.
+    Case(
+        "DC1-1",
+        "brief_parsing",
+        "routes.creator_agent._excerpt_states_seconds",
+        "seconds as a number word",
+        _states_two_seconds,
+        "hold the title for two seconds",
+        True,
+        {
+            "tr": "Başlık iki saniye kalsın",
+            "tr_ascii": "baslik iki saniye kalsin",
+            "tr_upper": "BAŞLIK İKİ SANİYE KALSIN",
+        },
+    ),
+    # DC1-2: a generic sound-effect ask gets the "name a moment" notice on iPhone.
+    Case(
+        "DC1-2",
+        "brief_parsing",
+        "services.creator_sessions._GENERIC_SOUND_EFFECT_REQUEST_RE",
+        "generic sound-effect ask",
+        _generic_sfx_ask,
+        "add some sound effects",
+        True,
+        {
+            "tr": "Biraz ses efekti ekle",
+            "tr_ascii": "biraz ses efekti ekle",
+            "tr_upper": "BİRAZ SES EFEKTİ EKLE",
+        },
+    ),
+    # DC1-3: a draft review that resets the photo/video timing drops the profile.
+    Case(
+        "DC1-3",
+        "brief_parsing",
+        "routes.plan_items._review_mixed_media_timing",
+        "reset mixed-media timing",
+        _review_timing_kept,
+        "reset the timing",
+        False,
+        {
+            "tr": "Zamanlamayı sıfırla",
+            "tr_ascii": "zamanlamayi sifirla",
+            "tr_upper": "ZAMANLAMAYI SIFIRLA",
+            "tr_mixed": "timing'i sıfırla",
+        },
+    ),
+    # DC1-4: "don't change the timing" keeps the profile.
+    Case(
+        "DC1-4",
+        "brief_parsing",
+        "routes.plan_items._review_mixed_media_timing",
+        "keep mixed-media timing",
+        _review_timing_kept,
+        "don't change the timing",
+        True,
+        {
+            "tr": "Zamanlamayı değiştirme",
+            "tr_ascii": "zamanlamayi degistirme",
+            "tr_upper": "ZAMANLAMAYI DEĞİŞTİRME",
+        },
+    ),
+    # DC1-5: "don't make the photos very fast" retracts the fast-photo profile.
+    Case(
+        "DC1-5",
+        "brief_parsing",
+        "routes.plan_items._review_mixed_media_timing",
+        "retract fast photos",
+        _review_timing_kept,
+        "don't make the photos very fast",
+        False,
+        {
+            "tr": "Fotoğrafları hızlı geçirme",
+            "tr_ascii": "fotograflari hizli gecirme",
+            "tr_upper": "FOTOĞRAFLARI HIZLI GEÇİRME",
+        },
+    ),
+    # DC1-7: a generic Turkish SFX ask names no effect ("videoya" is "to the video").
+    Case(
+        "DC1-7",
+        "brief_parsing",
+        "routes.creator_agent._explicit_sfx_name",
+        "generic sound-effect ask is unnamed",
+        _sfx_name,
+        "add a sound effect to the video",
+        None,
+        {
+            "tr": "Videoya ses efekti ekle",
+            "tr_ascii": "videoya ses efekti ekle",
+            "tr_upper": "VİDEOYA SES EFEKTİ EKLE",
+            "tr_mixed": "komik yerlere sfx ekle",
+        },
+    ),
+    # DC1-8: a passing mention of an effect is not a request for it.
+    Case(
+        "DC1-8",
+        "brief_parsing",
+        "routes.creator_agent._explicit_sfx_name",
+        "declined or described effect is unnamed",
+        _sfx_name,
+        "use a different sound effect, not the whoosh sfx second time",
+        None,
+        {
+            "tr": "Farklı bir ses efekti kullan, whoosh olmasın",
+            "tr_ascii": "farkli bir ses efekti kullan, whoosh olmasin",
+            "tr_mixed": "geçiş sfx sakin olsun",
+        },
+    ),
+    # DC1-9: "don't forget to add" asks for the effect.
+    Case(
+        "DC1-9",
+        "brief_parsing",
+        "routes.creator_agent._explicit_sfx_name",
+        "named sound effect (don't forget)",
+        _sfx_name,
+        "don't forget to add the whoosh sound effect",
+        "whoosh",
+        {
+            "tr": "Whoosh ses efektini eklemeyi unutma",
+            "tr_ascii": "whoosh ses efektini eklemeyi unutma",
+            "tr_upper": "WHOOSH SES EFEKTİNİ EKLEMEYİ UNUTMA",
+        },
+    ),
+    # DC1-10: "don't reset the timing" keeps the profile.
+    Case(
+        "DC1-10",
+        "brief_parsing",
+        "routes.plan_items._review_mixed_media_timing",
+        "keep timing (negated reset)",
+        _review_timing_kept,
+        "don't reset the timing",
+        True,
+        {
+            "tr": "Zamanlamayı sıfırlama",
+            "tr_ascii": "zamanlamayi sifirlama",
+            "tr_upper": "ZAMANLAMAYI SIFIRLAMA",
+            "tr_mixed": "timing'i iptal etme",
+        },
+    ),
+    # DC1-11: a refused title is not rendered.
+    Case(
+        "DC1-11",
+        "brief_parsing",
+        "routes.creator_agent._apply_explicit_render_intent",
+        "refused opening title",
+        _opening_title,
+        "don't use the title 'Emir'",
+        None,
+        {
+            "tr": "'Emir' başlığını koyma",
+            "tr_ascii": "'Emir' basligini koyma",
+            "tr_upper": "'Emir' BAŞLIĞINI KOYMA",
+            "tr_mixed": "title 'Emir' olmasın",
+        },
+    ),
+    # DC1-12: copy placed at the end is the closing title.
+    Case(
+        "DC1-12",
+        "brief_parsing",
+        "routes.creator_agent._apply_explicit_render_intent",
+        "closing title from an end cue",
+        _closing_title,
+        "end title 'Görüşürüz'",
+        "Görüşürüz",
+        {
+            "tr": "Sona 'Görüşürüz' yazısı ekle",
+            "tr_ascii": "videonun sonunda 'Görüşürüz' yazisi olsun",
+            "tr_upper": "SONA 'Görüşürüz' YAZISI EKLE",
+            "tr_mixed": "'Görüşürüz' kapanış title olsun",
+        },
+    ),
+    # DC1-13: quoted words in an edit to existing text are not a new title.
+    Case(
+        "DC1-13",
+        "brief_parsing",
+        "routes.creator_agent._apply_explicit_render_intent",
+        "edit of existing text is no title",
+        _opening_title,
+        "in the text replace 'Sen' with 'Siz'",
+        None,
+        {
+            "tr": "Yazıda 'Sen' yerine 'Siz' kullan",
+            "tr_ascii": "yazida 'Sen' yerine 'Siz' kullan",
+            "tr_upper": "YAZIDA 'Sen' YERİNE 'Siz' KULLAN",
+        },
+    ),
+    # DC1-14: digits with the Turkish seconds unit ground the model's value.
+    Case(
+        "DC1-14",
+        "brief_parsing",
+        "routes.creator_agent._excerpt_states_seconds",
+        "seconds as digits",
+        _states_two_seconds,
+        "hold the title for 2 seconds",
+        True,
+        {
+            "tr": "Başlık 2 sn kalsın",
+            "tr_ascii": "baslik 2 sn kalsin",
+            "tr_upper": "BAŞLIK 2 SANİYE KALSIN",
+            "tr_mixed": "title 2sn kalsın",
+        },
+    ),
+    # DC1-15: a status question with a subject ("is the video ready?").
+    Case(
+        "DC1-15",
+        "chat_routing",
+        "routes.creation_threads._is_status_only_message",
+        "status question with a subject",
+        _status_only,
+        "is the video ready?",
+        True,
+        {
+            "tr": "Video hazır mı?",
+            "tr_ascii": "video hazirmi?",
+            "tr_upper": "VİDEO HAZIR MI?",
+            "tr_mixed": "render bitti mi?",
+        },
+    ),
+    # DC1-16: "a fast pace" with the indefinite article.
+    Case(
+        "DC1-16",
+        "brief_parsing",
+        "routes.creator_agent._apply_explicit_render_intent",
+        "fast pacing (indefinite)",
+        _pacing,
+        "a fast pace",
+        "fast",
+        {
+            "tr": "Hızlı bir tempo olsun",
+            "tr_ascii": "hizli bir tempo olsun",
+            "tr_upper": "HIZLI BİR TEMPO OLSUN",
+        },
+    ),
+    # DC1-17: "use every clip" widens media scope.
+    Case(
+        "DC1-17",
+        "brief_parsing",
+        "routes.creator_agent._explicit_media_scope",
+        "use every clip",
+        _media_scope,
+        "use every clip",
+        "all",
+        {
+            "tr": "Her klibi kullan",
+            "tr_ascii": "her klibi kullan",
+            "tr_upper": "HER KLİBİ KULLAN",
+            "tr_mixed": "hiçbirini atlama",
         },
     ),
     # D20: quick photos + longer videos profile.
@@ -732,7 +1116,6 @@ CASES: tuple[Case, ...] = (
             "tr_ascii": "fotograflari kirpma",
             "tr_upper": "FOTOĞRAFLARI KIRPMA",
         },
-        gaps=_gaps("recognize_image_layout is English-only", "tr", "tr_ascii", "tr_upper"),
     ),
     # D25: "fullscreen photos" fills the frame.
     Case(
@@ -748,7 +1131,6 @@ CASES: tuple[Case, ...] = (
             "tr_ascii": "fotograflar tam ekran olsun",
             "tr_upper": "FOTOĞRAFLAR TAM EKRAN OLSUN",
         },
-        gaps=_gaps("recognize_image_layout is English-only", "tr", "tr_ascii", "tr_upper"),
     ),
     # D26: "only write 'X'" makes the quoted copy the complete caption list.
     Case(
@@ -765,7 +1147,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": 'SADECE "Summer 26" YAZ',
             "tr_mixed": 'yalnızca "Summer 26" yazsın',
         },
-        gaps=_gaps("_EXCLUSIVE_QUOTE_RE is only/just", "tr", "tr_ascii", "tr_upper", "tr_mixed"),
     ),
     # D27: a quote attributed to someone ("he said") is story dialogue, not an overlay.
     Case(
@@ -781,12 +1162,6 @@ CASES: tuple[Case, ...] = (
             "tr_ascii": 'arkadasim "bu hayatimin en guzel gunu" dedi',
             "tr_upper": 'ARKADAŞIM "bu hayatımın en güzel günü" DEDİ',
         },
-        gaps=_gaps(
-            "attribution verb must precede the quote; Turkish 'dedi' follows it",
-            "tr",
-            "tr_ascii",
-            "tr_upper",
-        ),
     ),
     # D28: a quote tagged as voiceover script is spoken, never on-screen copy.
     Case(
@@ -803,9 +1178,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": 'SESLENDİRME: "sonunda zirveye ulaştık"',
             "tr_mixed": 'VO: "sonunda zirveye ulaştık"',
         },
-        gaps=_gaps(
-            "_SPOKEN_SCRIPT_CUE_RE has no Turkish cue (seslendirme)", "tr", "tr_ascii", "tr_upper"
-        ),
     ),
     # D29: an audio ask to play the creator's own spoken words.
     Case(
@@ -822,7 +1194,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": "KLİPLERDEKİ KONUŞMAMI KULLAN",
             "tr_mixed": "klipteki speech'imi kullan",
         },
-        gaps=_gaps("_SPEECH_EXCERPT_RE is English-only", "tr", "tr_ascii", "tr_upper"),
     ),
     # ---------------------------------------------------------------- style + memory
     # D30: a durable "always use <font>" instruction becomes a typed font constraint.
@@ -840,7 +1211,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": "HER ZAMAN INTER FONTUNU KULLAN",
             "tr_mixed": "always Inter font kullan",
         },
-        gaps=_gaps("_FONT_PATTERNS are English-only", "tr", "tr_ascii", "tr_upper", "tr_mixed"),
     ),
     # D31: "always ..." is explicit durable memory.
     Case(
@@ -871,11 +1241,6 @@ CASES: tuple[Case, ...] = (
             "tr_ascii": "tum videolarimda bu fontu kullan",
             "tr_upper": "TÜM VİDEOLARIMDA BU FONTU KULLAN",
         },
-        gaps=_gaps(
-            "literal 'tüm videolarımda' substring; ASCII and casefolded İ miss",
-            "tr_ascii",
-            "tr_upper",
-        ),
     ),
     # D33: an ordinary edit is NOT durable memory ("başlasın" must not hit "asla").
     Case(
@@ -891,7 +1256,6 @@ CASES: tuple[Case, ...] = (
             "tr_ascii": "plaj klibiyle baslasin",
             "tr_upper": "PLAJ KLİBİYLE BAŞLASIN",
         },
-        gaps={"tr_ascii": "'asla' substring matches inside 'baslasin'"},
     ),
     # D34: a temporary style change is not learned as a preference.
     Case(
@@ -907,9 +1271,6 @@ CASES: tuple[Case, ...] = (
             "tr_ascii": "gecici olarak sari yazi kullan",
             "tr_upper": "GEÇİCİ OLARAK SARI YAZI KULLAN",
         },
-        gaps=_gaps(
-            "literal 'geçici' substring; ASCII and casefolded İ miss", "tr_ascii", "tr_upper"
-        ),
     ),
     # D35: the editor receipt names a font change as a sub-ask to verify.
     Case(
@@ -926,13 +1287,6 @@ CASES: tuple[Case, ...] = (
             "tr_upper": "YAZI TİPİNİ DEĞİŞTİR",
             "tr_mixed": "fontu değiştir",
         },
-        gaps=_gaps(
-            "font cue needs English verb + font noun or a registry font name",
-            "tr",
-            "tr_ascii",
-            "tr_upper",
-            "tr_mixed",
-        ),
     ),
     # ---------------------------------------------------------------- captions + transcript
     # D36: "English captions" requests English caption language.
@@ -964,6 +1318,38 @@ CASES: tuple[Case, ...] = (
             "tr_ascii": "turkce altyazi",
             "tr_upper": "TÜRKÇE ALTYAZI",
             "tr_mixed": "Türkçe captions olsun",
+        },
+    ),
+    # O18 (KRI-780): a chat-driven plan item's hook is written in the chat's language.
+    Case(
+        "O18",
+        "captions_transcript",
+        "tasks.content_plan_build._item_chat_language",
+        "hook written in the chat language",
+        _hook_in_chat_language,
+        "Make my trip video upbeat and add captions",
+        True,
+        {
+            "tr": "Gezi videomu enerjik yap ve altyazı ekle",
+            "tr_ascii": "gezi videomu enerjik yap ve altyazi ekle",
+            "tr_upper": "GEZİ VİDEOMU ENERJİK YAP VE ALTYAZI EKLE",
+            "tr_mixed": "Gezi videomu upbeat yap, captions ekle",
+        },
+    ),
+    # O27 (KRI-780): spoken captions with no detectable language fall back to the chat's.
+    Case(
+        "O27",
+        "captions_transcript",
+        "pipeline.caption_language.resolve_spoken_caption_language",
+        "caption fallback follows the chat language",
+        _caption_fallback_in_chat_language,
+        "Make my trip video upbeat and add captions",
+        True,
+        {
+            "tr": "Gezi videomu enerjik yap ve altyazı ekle",
+            "tr_ascii": "gezi videomu enerjik yap ve altyazi ekle",
+            "tr_upper": "GEZİ VİDEOMU ENERJİK YAP VE ALTYAZI EKLE",
+            "tr_mixed": "Gezi videomu upbeat yap, captions ekle",
         },
     ),
     # D38: a hesitation vocalization in the transcript is a lexical filler (cut).
@@ -998,9 +1384,301 @@ CASES: tuple[Case, ...] = (
         "um so here's the thing",
         True,
         {"tr": "ııı yani olay şu", "tr_ascii": "yani olay su", "tr_upper": "YANİ OLAY ŞU"},
-        gaps=_gaps(
-            "FILLER_WORDS is English-only; ııı/yani not penalized", "tr", "tr_ascii", "tr_upper"
-        ),
+    ),
+    # ---------------------------------------------------------------- KRI-783 additions
+    # C2-01: a reply that ASKS (not restates) is not a paraphrase.
+    Case(
+        "C2-01",
+        "chat_routing",
+        "kria.language.is_paraphrase_only",
+        "question is not a paraphrase",
+        _paraphrase_only,
+        "Do you want the title gold or yellow?",
+        False,
+        {
+            "tr": "Başlık altın mı sarı mı olsun istiyorsun?",
+            "tr_ascii": "Baslik altin mi sari mi olsun istiyor musun?",
+        },
+    ),
+    # C2-02: a model caption claiming taste or a first-person experience is ungrounded.
+    Case(
+        "C2-02",
+        "brief_parsing",
+        "agents.edit_proposal.ai_draft_thought_has_unsupported_claim",
+        "ungrounded caption claim",
+        _unsupported_claim,
+        "A delicious coffee",
+        True,
+        {"tr": "Nefis bir kahve", "tr_ascii": "nefis bir kahve", "tr_upper": "NEFİS BİR KAHVE"},
+    ),
+    # C2-03: spoken numbers become a score label ("three one" -> 3-1).
+    Case(
+        "C2-03",
+        "captions_transcript",
+        "pipeline.narration_labels._score_value",
+        "spoken score words",
+        _spoken_score,
+        "three one",
+        (3, 1),
+        {"tr": "üç bir", "tr_ascii": "uc bir", "tr_upper": "ÜÇ BİR"},
+    ),
+    # C2-05: a model refusal is never burned as the hook (or spoken as the script).
+    Case(
+        "C2-05",
+        "captions_transcript",
+        "agents.intro_writer._is_refusal_text",
+        "model refusal rejected",
+        _hook_refusal,
+        "I need more information to write this hook",
+        True,
+        {
+            "tr": "Bu kancayı yazmak için daha fazla bilgiye ihtiyacım var",
+            "tr_ascii": "bu kancayi yazmak icin daha fazla bilgiye ihtiyacim var",
+            "tr_upper": "DAHA FAZLA BİLGİYE İHTİYACIM VAR",
+        },
+    ),
+    # C2-04: the editor receipt names a timing sub-ask ("the text should appear later").
+    Case(
+        "C2-04",
+        "style_memory",
+        "kria.editor_receipts._named_cues",
+        "timing cue",
+        _receipt_timing_cue,
+        "the text should come in later",
+        True,
+        {
+            "tr": "Yazı daha geç çıksın",
+            "tr_ascii": "yazi daha gec ciksin",
+            "tr_upper": "YAZI DAHA GEÇ ÇIKSIN",
+        },
+    ),
+    # C2-06: a durable rule that FORBIDS a font is never saved as "always use it".
+    Case(
+        "C2-06",
+        "style_memory",
+        "services.creator_direction.infer_typed_direction",
+        "negated durable font rule",
+        _durable_font,
+        "Always avoid the Inter font",
+        (None, None),
+        {
+            "tr": "Artık Inter fontunu kullanma",
+            "tr_ascii": "artik inter fontunu kullanma",
+            "tr_upper": "ARTIK INTER FONTUNU KULLANMA",
+            "tr_alt": "Bundan sonra Inter font istemiyorum",
+        },
+    ),
+    # C2-07: a first-person experience on the verb ("denedim") is an ungrounded claim.
+    Case(
+        "C2-07",
+        "brief_parsing",
+        "agents.edit_proposal.ai_draft_thought_has_unsupported_claim",
+        "first-person experience claim",
+        _unsupported_claim,
+        "I tried this coffee and loved it",
+        True,
+        {
+            "tr": "Bu kahveyi denedim ve bayıldım",
+            "tr_ascii": "bu kahveyi denedim ve bayildim",
+            "tr_upper": "BU KAHVEYİ DENEDİM VE BAYILDIM",
+        },
+    ),
+    # C2-08: a third-person action line (or a name like "Ben") is not a claim.
+    Case(
+        "C2-08",
+        "brief_parsing",
+        "agents.edit_proposal.ai_draft_thought_has_unsupported_claim",
+        "third-person line is not a claim",
+        _unsupported_claim,
+        "Ben lands the kickflip",
+        False,
+        {
+            "tr": "Kaan kickflipi yapıyor",
+            "tr_ascii": "kaan kickflipi yapiyor",
+            "tr_upper": "KAAN KİCKFLİPİ YAPIYOR",
+        },
+    ),
+    # C2-09: an everyday "for more info" call to action is not a model refusal.
+    Case(
+        "C2-09",
+        "captions_transcript",
+        "agents.intro_writer._is_refusal_text",
+        "call to action is not a refusal",
+        _hook_refusal,
+        "For more information, follow along",
+        False,
+        {
+            "tr": "Daha fazla bilgi için takip et",
+            "tr_ascii": "daha fazla bilgi icin takip et",
+            "tr_upper": "DAHA FAZLA BİLGİ İÇİN TAKİP ET",
+        },
+    ),
+    # C2-10: a negated score ask ("no scores") never burns a score overlay.
+    Case(
+        "C2-10",
+        "captions_transcript",
+        "tasks.generative_build._narrated_storyboard_text_elements",
+        "negated score treatment",
+        _narrated_score_overlay,
+        "No scores please",
+        False,
+        {
+            "tr": "Skor olmasın",
+            "tr_ascii": "skor olmasin",
+            "tr_upper": "SKORLARI GÖSTERME",
+            "tr_alt": "Sonuçta güzel bir gün oldu",
+        },
+    ),
+    # C2-11: a positive score ask does burn it.
+    Case(
+        "C2-11",
+        "captions_transcript",
+        "tasks.generative_build._narrated_storyboard_text_elements",
+        "score treatment requested",
+        _narrated_score_overlay,
+        "show the scores",
+        True,
+        {
+            "tr": "Skorları göster",
+            "tr_ascii": "skorlari goster",
+            "tr_upper": "SKORLARI GÖSTER",
+            "tr_mixed": "Başlıksız olsun, score göster",
+        },
+    ),
+    # C2-12: a reply that reports work and gives the reason last is not a paraphrase.
+    Case(
+        "C2-12",
+        "chat_routing",
+        "kria.language.is_paraphrase_only",
+        "work report with a reason is not a paraphrase",
+        _paraphrase_only,
+        "I moved the coffee clips first because you wanted a calm opening.",
+        False,
+        {
+            "tr": "Kahve kliplerini başa aldım, sakin bir açılış istedin.",
+            "tr_ascii": "kahve kliplerini basa aldim, sakin bir acilis istedin.",
+            "tr_upper": "KAHVE KLİPLERİNİ BAŞA ALDIM, SAKİN BİR AÇILIŞ İSTEDİN.",
+        },
+    ),
+    # C2-13: a voiceover line the creator asks to put on screen stays on-screen copy.
+    Case(
+        "C2-13",
+        "brief_parsing",
+        "agents.spoken_script.is_spoken_script_quote",
+        "voiceover quote with a display ask is copy",
+        _voiceover_script,
+        'VO: "today I show you my favorite cafe", put it on screen',
+        False,
+        {
+            "tr": (
+                'Seslendirmedeki "bugün sana en sevdiğim kafeyi gösteriyorum" cümlesini ekrana yaz'
+            ),
+            "tr_ascii": (
+                'seslendirmedeki "bugun sana en sevdigim kafeyi gosteriyorum" cumlesini ekrana yaz'
+            ),
+            "tr_alt": '"bugün sana en sevdiğim kafeyi gösteriyorum" diyorum, bunu ekrana da yaz',
+        },
+    ),
+    # C2-14: a surprise exclamation opening a hook is not a filler.
+    Case(
+        "C2-14",
+        "captions_transcript",
+        "pipeline.score._adjust_hook_score",
+        "exclamation opener not penalized",
+        _hook_filler_penalty,
+        "Oh no, look at this",
+        False,
+        {"tr": "Aaa, şuna bak", "tr_ascii": "aaa, suna bak", "tr_upper": "AAA, ŞUNA BAK"},
+    ),
+    # C2-15: "only" this quote, in Turkish's other ways to say it.
+    Case(
+        "C2-15",
+        "brief_parsing",
+        "agents.edit_proposal._creator_quoted_captions_are_exhaustive",
+        "exclusive quote (yalnız / bir tek / no other text)",
+        _exclusive_quotes,
+        'Only "Paris 2024" on screen',
+        True,
+        {
+            "tr": 'Yalnız "Paris 2024" yazsın',
+            "tr_alt": 'Bir tek "Paris 2024" yazsın',
+            "tr_mixed": '"Paris 2024" yazısı olsun, başka yazı olmasın',
+        },
+    ),
+    # C2-16: the spoken Turkish score form puts a dative on the first number.
+    Case(
+        "C2-16",
+        "captions_transcript",
+        "pipeline.narration_labels._score_value",
+        "dative score words",
+        _spoken_score,
+        "three one",
+        (3, 1),
+        {"tr": "üçe bir", "tr_ascii": "uce bir", "tr_upper": "ÜÇE BİR"},
+    ),
+    # D50: a Turkish word that merely starts like a marker is not durable memory.
+    Case(
+        "D50",
+        "style_memory",
+        "services.creator_memory_learning.classify_memory_candidate",
+        "no false durable marker (prefix words)",
+        _memory_candidate,
+        "add a lion roar to the video as usual",
+        "noop",
+        {
+            "tr": "Her zamanki gibi videoya aslan sesi ekle",
+            "tr_ascii": "her zamanki gibi videoya aslan sesi ekle",
+            "tr_upper": "HER ZAMANKİ GİBİ VİDEOYA ASLAN SESİ EKLE",
+        },
+    ),
+    # D51: natural Turkish wordings of a durable rule are explicit memory.
+    Case(
+        "D51",
+        "style_memory",
+        "services.creator_memory_learning.classify_memory_candidate",
+        "durable memory (natural wordings)",
+        _memory_candidate,
+        "never use yellow",
+        "explicit",
+        {
+            "tr": "Hiçbir zaman sarı kullanma",
+            "tr_every": "her videoda Inter kullan",
+            "tr_daima": "daima Inter fontu kullan",
+            "tr_ascii": "bundan boyle Inter kullan",
+            "tr_upper": "TÜM VİDEOLARDA INTER OLSUN",
+        },
+    ),
+    # D52: "stop using / instead / forget" needs current-memory judgment.
+    Case(
+        "D52",
+        "style_memory",
+        "services.creator_memory_learning.requires_stateful_extraction",
+        "stateful memory change",
+        _stateful,
+        "stop using this font",
+        True,
+        {
+            "tr": "Artık bu fontu kullanma",
+            "tr_instead": "Playfair yerine Inter kullan",
+            "tr_ascii": "sariyi kullanmayi birak",
+            "tr_upper": "FONTUMU DEĞİŞTİR",
+        },
+    ),
+    # D53: a one-off style change in Turkish is not learned as a preference.
+    Case(
+        "D53",
+        "style_memory",
+        "services.finished_style_learning.explicitly_temporary",
+        "temporary style change (one-off wordings)",
+        _temporary,
+        "make it yellow this time only",
+        True,
+        {
+            "tr": "Bu seferlik sarı yap",
+            "tr_only": "yalnızca bu videoda sarı yap",
+            "tr_ascii": "bir seferlik sari yap",
+            "tr_upper": "BU SEFERLİK SARI YAP",
+        },
     ),
     # ---------------------------------------------------------------- normalization
     # N01: shared Turkish-aware fold: every spelling of "kırmızı" folds alike.
@@ -1035,7 +1713,6 @@ CASES: tuple[Case, ...] = (
         "do it again",
         "do it again",
         {"en_upper": "DO IT AGAIN"},
-        gaps={"en_upper": "maps I -> dotless ı, so 'DO IT AGAIN' -> 'do ıt agaın'"},
     ),
     # N04: ...which makes an uppercase English redo miss the re-plan route.
     Case(
@@ -1047,7 +1724,6 @@ CASES: tuple[Case, ...] = (
         "do it again",
         True,
         {"en_upper": "DO IT AGAIN"},
-        gaps={"en_upper": "_legacy_fold maps I -> ı before the English patterns"},
     ),
     # N05: lyric alignment matches Whisper and canonical lyric words letter-insensitively.
     Case(
@@ -1059,7 +1735,6 @@ CASES: tuple[Case, ...] = (
         "kiz",
         "kiz",
         {"tr": "kız", "tr_upper": "KIZ", "tr_title": "Kız"},
-        gaps=_gaps("dotless ı has no NFKD base letter, stripped to 'kz'", "tr", "tr_title"),
     ),
     # N06: idea dedup tokens fold every spelling alike.
     Case(
@@ -1071,7 +1746,6 @@ CASES: tuple[Case, ...] = (
         "kirmizi elbise",
         frozenset({"kirmizi", "elbise"}),
         {"tr": "kırmızı elbise", "tr_upper": "KIRMIZI ELBİSE"},
-        gaps={"tr": "NFKD + ascii-ignore drops ı, 'krmz'"},
     ),
     # N07: seed provenance tokens fold every spelling alike.
     Case(
@@ -1083,7 +1757,6 @@ CASES: tuple[Case, ...] = (
         "kirmizi elbise",
         frozenset({"kirmizi", "elbise"}),
         {"tr": "kırmızı elbise", "tr_upper": "KIRMIZI ELBİSE"},
-        gaps={"tr": "NFKD + ascii-ignore drops ı, 'krmz'"},
     ),
     # N08: on-screen UPPER case of Turkish text keeps the dotted capital İ.
     Case(
@@ -1091,11 +1764,15 @@ CASES: tuple[Case, ...] = (
         "normalization",
         "agents._schemas.text_element.apply_text_case",
         "text_case upper",
-        _upper,
+        _upper_auto,
         "İSTANBUL",
         "İSTANBUL",
         {"tr": "istanbul", "tr_title": "İstanbul"},
-        gaps={"tr": "str.upper maps i to I, not İ"},
+        gaps=_gaps(
+            "renderers carry no job language (needs a schema field); a word with no "
+            "ı/İ/ğ/ş is cased the English way",
+            "tr",
+        ),
     ),
     # N09: on-screen lower case of Turkish text keeps dotless ı.
     Case(
@@ -1107,7 +1784,95 @@ CASES: tuple[Case, ...] = (
         "ışık",
         "ışık",
         {"tr_upper": "IŞIK"},
-        gaps={"tr_upper": "str.lower maps I to i, not ı"},
+    ),
+    # N10: English on-screen casing never picks up Turkish i rules (KRI-781 guard).
+    Case(
+        "N10",
+        "normalization",
+        "agents._schemas.text_element.apply_text_case",
+        "English upper unchanged",
+        _upper_auto,
+        "TITLE",
+        "TITLE",
+        {"en_lower": "title", "en_title": "Title"},
+    ),
+    # N11: title case of Turkish text keeps İ/ı and never capitalizes after apostrophes.
+    Case(
+        "N11",
+        "normalization",
+        "agents._schemas.text_element.apply_text_case",
+        "text_case title",
+        _title_auto,
+        "İstanbul'da Işıklar",
+        "İstanbul'da Işıklar",
+        {"tr": "istanbul'da ışıklar", "tr_upper": "İSTANBUL'DA IŞIKLAR"},
+        gaps=_gaps("renderers carry no job language: 'istanbul'da' has no ı/İ/ğ/ş", "tr"),
+    ),
+    # N12: narrated voiceover-to-script alignment keeps Turkish letters (folded).
+    Case(
+        "N12",
+        "normalization",
+        "pipeline.narrated_alignment._norm",
+        "narrated alignment token fold",
+        _narrated_norm,
+        "guzel",
+        "guzel",
+        {"tr": "güzel", "tr_upper": "GÜZEL", "tr_title": "Güzel,"},
+    ),
+    # N13: clip-question intent keys fold every spelling alike.
+    Case(
+        "N13",
+        "normalization",
+        "services.clip_selection._words",
+        "clip intent key words",
+        _clip_intent_words,
+        "isik",
+        ("isik",),
+        {"tr": "ışık", "tr_upper": "IŞIK", "tr_title": "Işık"},
+    ),
+    # N14: song-title matching tokens keep dotless ı (folded, never deleted).
+    Case(
+        "N14",
+        "normalization",
+        "services.lrclib_client._tokenize_title",
+        "song title tokens",
+        _lrclib_title_tokens,
+        "kirmizi isiklar",
+        frozenset({"kirmizi", "isiklar"}),
+        {"tr": "Kırmızı Işıklar", "tr_upper": "KIRMIZI IŞIKLAR"},
+    ),
+    # N15: an English caption naming a Turkish place keeps English i's (KRI-781 guard).
+    Case(
+        "N15",
+        "normalization",
+        "agents._schemas.text_element.apply_text_case",
+        "English upper with a Turkish name",
+        _upper_auto,
+        "VISITING BEŞİKTAŞ IN THE CITY",
+        "VISITING BEŞİKTAŞ IN THE CITY",
+        {"en_lower": "visiting beşiktaş in the city", "en_title": "Visiting Beşiktaş In The City"},
+    ),
+    # N16: karaoke word-by-word casing equals whole-line casing (word timings survive).
+    Case(
+        "N16",
+        "normalization",
+        "agents._schemas.text_element.apply_text_case",
+        "per-word casing composes",
+        _karaoke_upper_composes,
+        "light up the city",
+        True,
+        {"tr": "istanbul ışıkları", "tr_mixed": "bir şey istiyorum"},
+    ),
+    # N17: the lyric-lookup artist gate matches an artist typed without Turkish letters.
+    Case(
+        "N17",
+        "normalization",
+        "services.lrclib_client._artists_match",
+        "song artist gate",
+        _artist_gate,
+        "Barış Manço",
+        True,
+        {"tr_ascii": "Baris Manco", "tr_upper": "BARIŞ MANÇO"},
     ),
 )
 

@@ -163,6 +163,22 @@ Save accepts. `tests/kria/test_chat_ops_fit_footage.py` (red on `origin/main`):
 Phone side: a draft staged before this fix opens repaired (`DraftSnapshot.fittedToFootage`,
 `ChatDraftStagingTests`).
 
+## 11. Ids the phone sends for a clip the server has no record of (KRI-799)
+
+After KRI-770/772, Troya's Save returned 409 `TIMELINE_STALE` on every attempt and "Reload and keep
+my edits" never cleared it. Before #1698 the chat compile minted `cs-<client_state_id[:12]>-<n>` ids
+for any clip without one (the restored car clip); stored drafts still carry them, the phone overlays
+the draft, Save refuses the unknown id, and `rebaseAfterConflict` re-applies the same local timeline.
+
+| Row id | Shape | Outcome | Red before |
+| --- | --- | --- | --- |
+| `legacy-minted-slot-id-is-a-new-placement` | restored clip carries `cs-369BA950-52A-27` | ok, saved with a permanent id | 409 `TIMELINE_STALE` |
+| `unknown-real-looking-slot-id-is-still-stale` | `unified-cut-99` | 409 `TIMELINE_STALE` | green (control) |
+
+Only the exact shape the server minted (`^cs-[A-Za-z0-9_-]{1,12}-\d+$`) is read as a new placement;
+any other unknown id stays stale. The app drops the id of a staged-draft clip that matches no saved
+clip. `editor_commit_stale_slot` logs the offending id.
+
 ## Not covered here on purpose
 
 * Cloud-rendered (non-device) Save: separate contract, separate tests (`test_editor_commit.py`).
