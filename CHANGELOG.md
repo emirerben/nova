@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.1.0] - 2026-10-21
+
+### Changed
+- fix(kria): don't hold back the first draft of an open 'Suggest an edit.' request (KRI-774) (#1705) <!-- release-pr: 1705 -->
+
 ## [0.81.0.0] - 2026-10-21
 
 ### Added
