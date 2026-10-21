@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.6.0] - 2026-10-21
+
+### Changed
+- fix(turkish-parity): Turkish parity A — Chat language reaches the render, dictation and captions (KRI-780) (#1712) <!-- release-pr: 1712 -->
+
 ## [0.81.5.0] - 2026-10-21
 
 ### Changed
