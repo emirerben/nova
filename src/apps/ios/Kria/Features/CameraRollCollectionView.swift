@@ -72,77 +72,7 @@ struct CameraRollCollectionView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        TextField("Collection name", text: $collection.name)
-                            .font(KriaFont.display(30)).accessibilityIdentifier("collection-name")
-                            .submitLabel(.done).onSubmit { persist() }
-                        HStack {
-                            Text("\(collection.entries.count) items")
-                                .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                            Spacer()
-                            Menu {
-                                Button("Photos and videos") { showsPicker = true }
-                                Button("Saved uploads") { showsSaved = true }.disabled(fixture || metadataOnly)
-                            } label: {
-                                Label("Add", systemImage: "plus").font(KriaFont.body(14).weight(.semibold))
-                                    .padding(.horizontal, 14).frame(minHeight: 44)
-                                    .background(KriaColor.selectionSoft, in: Capsule())
-                            }
-                            .accessibilityIdentifier("collection-choose")
-                            .disabled(running || collection.entries.count >= CameraRollCollection.maximumCount)
-                        }
-                    }
-                    if collection.entries.isEmpty {
-                        VStack(spacing: 18) {
-                            Image(systemName: "photo.on.rectangle.angled").font(.system(size: 36)).foregroundStyle(KriaColor.zinc)
-                            Text("What did you capture?").font(KriaFont.display(25))
-                            Button("Add photos and videos") { showsPicker = true }
-                                .buttonStyle(KriaPrimaryButtonStyle())
-                        }.frame(maxWidth: .infinity).padding(.vertical, 64)
-                    }
-                    ForEach(groups) { group in
-                        VStack(alignment: .leading, spacing: 12) {
-                            if groups.count > 1 || group.name != collection.name { groupHeading(group) }
-                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-                                ForEach(group.entries) { entry in
-                                    Color.clear.aspectRatio(1, contentMode: .fit)
-                                        .overlay {
-                                            GeometryReader { geometry in
-                                                CameraRollCollectionThumbnail(entry: entry, api: api, metadataOnly: metadataOnly, size: geometry.size)
-                                            }
-                                        }
-                                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                                        .overlay(alignment: .topTrailing) {
-                                            Button { remove(entry.id) } label: {
-                                                Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
-                                                    .frame(width: 24, height: 24).background(KriaColor.paper.opacity(0.94), in: Circle())
-                                                    .frame(width: 44, height: 44)
-                                            }.buttonStyle(.plain).accessibilityLabel("Remove item")
-                                                .accessibilityIdentifier("collection-remove-\(entry.id)").disabled(running)
-                                        }
-                                        .overlay(alignment: .bottomTrailing) {
-                                            if let duration = videoDuration(entry) {
-                                                Text(LibraryGalleryGrid.duration(duration))
-                                                    .font(KriaFont.body(11).weight(.semibold)).foregroundStyle(.white)
-                                                    .padding(.horizontal, 6).padding(.vertical, 3)
-                                                    .background(KriaColor.ink.opacity(0.75), in: Capsule()).padding(6)
-                                            }
-                                        }
-                                        .accessibilityElement(children: .contain)
-                                        .accessibilityLabel(entry.savedAsset?.displayName ?? (entry.metadata?.kind == "image" ? "Photo" : "Video"))
-                                }
-                            }
-                        }
-                    }
-                    if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .notDetermined {
-                        Button("Suggest groups from Photos dates") {
-                            Task { _ = await PHPhotoLibrary.requestAuthorization(for: .readWrite); await refreshMetadata() }
-                        }.font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk).frame(minHeight: 44)
-                    }
-                }.padding(24)
-            }
+            collectionScroll
             .background(KriaColor.paper)
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) { actionBar }
@@ -194,6 +124,82 @@ struct CameraRollCollectionView: View {
             .onDisappear { work?.cancel(); persist() }
             .interactiveDismissDisabled(running)
             .kriaPage()
+        }
+    }
+
+    private var collectionScroll: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField("Collection name", text: $collection.name)
+                        .font(KriaFont.display(30)).accessibilityIdentifier("collection-name")
+                        .submitLabel(.done).onSubmit { persist() }
+                    HStack {
+                        Text("\(collection.entries.count) items")
+                            .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                        Spacer()
+                        Menu {
+                            Button("Photos and videos") { showsPicker = true }
+                            Button("Saved uploads") { showsSaved = true }.disabled(fixture || metadataOnly)
+                        } label: {
+                            Label("Add", systemImage: "plus").font(KriaFont.body(14).weight(.semibold))
+                                .padding(.horizontal, 14).frame(minHeight: 44)
+                                .background(KriaColor.selectionSoft, in: Capsule())
+                        }
+                        .accessibilityIdentifier("collection-choose")
+                        .disabled(running || collection.entries.count >= CameraRollCollection.maximumCount)
+                    }
+                }
+                if collection.entries.isEmpty {
+                    VStack(spacing: 18) {
+                        Image(systemName: "photo.on.rectangle.angled").font(.system(size: 36)).foregroundStyle(KriaColor.zinc)
+                        Text("What did you capture?").font(KriaFont.display(25))
+                        Button("Add photos and videos") { showsPicker = true }
+                            .buttonStyle(KriaPrimaryButtonStyle())
+                    }.frame(maxWidth: .infinity).padding(.vertical, 64)
+                }
+                ForEach(groups) { group in collectionGroup(group) }
+                if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .notDetermined {
+                    Button("Suggest groups from Photos dates") {
+                        Task { _ = await PHPhotoLibrary.requestAuthorization(for: .readWrite); await refreshMetadata() }
+                    }.font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk).frame(minHeight: 44)
+                }
+            }.padding(24)
+        }
+    }
+
+    private func collectionGroup(_ group: EventGroup) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if groups.count > 1 || group.name != collection.name { groupHeading(group) }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                ForEach(group.entries) { entry in
+                    Color.clear.aspectRatio(1, contentMode: .fit)
+                        .overlay {
+                            GeometryReader { geometry in
+                                CameraRollCollectionThumbnail(entry: entry, api: api, metadataOnly: metadataOnly, size: geometry.size)
+                            }
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .overlay(alignment: .topTrailing) {
+                            Button { remove(entry.id) } label: {
+                                Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
+                                    .frame(width: 24, height: 24).background(KriaColor.paper.opacity(0.94), in: Circle())
+                                    .frame(width: 44, height: 44)
+                            }.buttonStyle(.plain).accessibilityLabel("Remove item")
+                                .accessibilityIdentifier("collection-remove-\(entry.id)").disabled(running)
+                        }
+                        .overlay(alignment: .bottomTrailing) {
+                            if let duration = videoDuration(entry) {
+                                Text(LibraryGalleryGrid.duration(duration))
+                                    .font(KriaFont.body(11).weight(.semibold)).foregroundStyle(.white)
+                                    .padding(.horizontal, 6).padding(.vertical, 3)
+                                    .background(KriaColor.ink.opacity(0.75), in: Capsule()).padding(6)
+                            }
+                        }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityLabel(entry.savedAsset?.displayName ?? (entry.metadata?.kind == "image" ? "Photo" : "Video"))
+                }
+            }
         }
     }
 

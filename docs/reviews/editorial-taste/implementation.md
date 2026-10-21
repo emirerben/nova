@@ -158,10 +158,10 @@ adapter replay accepts all twenty at zero cost. No production rollout occurred.
 CI selection verification passes all 47 checks after registering the new taste UI
 journey and the previously unclassified partial-index collection test. Runtime,
 mobile JSON and mobile OpenAPI generated contracts all match. Pre-PR mapped incident
-gates pass 1,044 checks. The live development preview is paused: automatic approval
-review rejected transmitting private account examples/scene metadata to Gemini with
-paid usage. A specific payload/provider/$0.05 approval is pending; no provider call
-was made and no workaround was attempted.
+gates pass 1,044 checks. The initial automatic approval review rejected transmitting private account
+examples/scene metadata to Gemini until the creator approved the exact payload,
+provider and $0.05 cap. The creator subsequently explicitly consented; the result
+is recorded below.
 
 ## Frozen evaluation failure catalogue (before implementation)
 
@@ -213,6 +213,36 @@ real quality win. Four real CLI journeys pass after the missing-command red run.
 Combined account/CLI/free replay regression: 2,082 passed, 15 skips, seven expected
 failures. The narrower selection differs from the earlier 2,139-check execution run.
 
-The exact pushed-head iOS-contracts CI check passed on 025c7a90b. No production
-activation or paid preview has occurred; the specific Gemini payload approval
-remains pending.
+The exact pushed-head iOS-contracts CI check passed on 87271fc6370d5ac99fd1cab8d127f83fd4fd8af0. No production activation occurred.
+
+## First consented development preview
+
+The creator explicitly approved one Gemini 2.5 Flash request containing the frozen
+eight cached Troya descriptions, four confirmed rules and up to three relevant
+approved-post examples, capped at $0.05 with no video uploads. One attempt at prompt
+version `2026-10-21.1` settled $0.003633 in the development spend ledger. Its response
+failed the unknown/repeated moment-ID guard and was rejected before offering,
+building or rendering a project. Sensitive raw output is intentionally absent from
+general traces; the exact wrong references and wording were not retained. This is
+a failed development sample, not evidence of creative improvement. No paid retry,
+fallback or repair was run.
+
+A new replay oracle first fails on exposed long source/moment UUIDs, then verifies
+request-local `m1` references resolve to exact immutable moments. Unknown references,
+source references, repeats and mixed alias/legacy duplicates still fail. The prompt
+uses only these short references and is bumped to `2026-10-21.2`; the public story
+contract remains exact source IDs. This reduces selection ambiguity but is not yet
+validated by a fresh provider response. A subsequent paid request needs its own
+explicitly bounded authorization; the one-call preview authorization is exhausted.
+
+The follow-up free regression run passes 2,094 checks (15 skipped, seven expected
+failures), including the actual account/collection and full free agent-replay
+suites. The migration-chain guard now explicitly includes additive migration 0124
+and passes all 36 schema checks. Current CI also exposed an Xcode 26.3 type-checking
+timeout in the collection screen's large SwiftUI body. Splitting its scroll and
+group expressions leaves behavior intact; all four existing collection/story/taste
+simulator UI journeys pass locally on Xcode 26.6
+(`.dev/editorial-taste-ci-native.xcresult`). Remote 26.3 confirmation is still needed.
+The corrected-export rejection in the earlier backend CI shard is still under
+investigation; the Mac and CI-font reproductions pass and no verifier threshold
+has been relaxed.

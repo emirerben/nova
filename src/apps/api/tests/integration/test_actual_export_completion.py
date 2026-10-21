@@ -146,7 +146,7 @@ def test_actual_bytes_are_checked_before_publication_and_retry(
         assert fixture.request.identity.recipe_digest == recipe_digest
         assert "actual_export_policy" in device_record(fixture.job, "first")
         response, report = complete(encode(root, sources))
-    assert response.status_code == 200, response.text
+    assert response.status_code == 200, (response.text, report)
     assert report["status"] == "checked"
     assert device_status(fixture.job, "first").phase == "published"
     assert fixture.job.assembly_plan["variants"][0]["actual_export_verification"] == report
