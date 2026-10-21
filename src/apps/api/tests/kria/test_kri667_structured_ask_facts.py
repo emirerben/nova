@@ -181,6 +181,7 @@ _ASK_FACT_KEYS = (
     "keep_whole_take",
     "closing",
     "speech_cleanup",
+    "cut_lines",
     "captions",
     "caption_language",
 )
