@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.3.0] - 2026-10-21
+
+### Changed
+- fix(creator): Turkish parity C1 — Legacy creator path trusts the model, not English regexes (KRI-782) (#1715) <!-- release-pr: 1715 -->
+
 ## [0.81.2.0] - 2026-10-21
 
 ### Changed
