@@ -206,6 +206,22 @@ class ClosingSpeechFact:
 
 
 @dataclass(frozen=True)
+class NamedLineFact:
+    """A spoken line the creator wanted heard whole, and what the montage did with it (KRI-760).
+
+    ``status`` is "held" (the clip that says it is in the edit and its cut covers the line),
+    "not_held" (it is not, or the cut is shorter than the line), "ambiguous" (two clips say it
+    equally) or "not_found" (no clip's words have it).
+    """
+
+    quote: str
+    status: str
+    media_id: str = ""
+    start_s: float | None = None
+    end_s: float | None = None
+
+
+@dataclass(frozen=True)
 class PlanFacts:
     """What a drafted plan verifiably contains. Missing facts stay None/empty."""
 
@@ -414,6 +430,9 @@ class PlanFacts:
     # None = this plan placed no lyric captions (nothing about them is claimed).
     montage_captions: str | None = None
     montage_caption_style: str | None = None
+    # KRI-760: the lines the creator asked to hear whole, as the plan record holds them and the
+    # finished timeline confirms. None = this plan recorded none (nothing is claimed).
+    named_lines: tuple[NamedLineFact, ...] | None = None
     # KRI-689: True when the plan was laid out by the phone unified montage, which plays every
     # clip at its natural speed (the phone recipe has no retime for story footage). A
     # clip-speed ask is then a known miss; any other plan claims nothing about speed.
@@ -756,6 +775,7 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         label_timezone=str(record.get("label_timezone") or ""),
         label_timezone_basis=str(record.get("label_timezone_basis") or ""),
         **_closing_quote_facts(record.get("closing_quote")),
+        named_lines=_named_line_facts(record.get("named_lines")),
         cut_lengths_s=_window_lengths(record.get("best_parts")),
         cut_clip_ids=_window_media_ids(record.get("best_parts")),
         source_durations_s=_source_durations(record.get("clip_durations_s")),
@@ -763,6 +783,47 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         speed_unsupported=True,
         **_montage_caption_facts(record.get("captions")),
     )
+
+
+def _named_line_facts(raw: object) -> tuple[NamedLineFact, ...] | None:
+    """The record's whole-line asks (KRI-760); None when the plan recorded none."""
+    if not isinstance(raw, list):
+        return None
+    return tuple(
+        NamedLineFact(
+            quote=str(row["quote"]),
+            status=str(row["status"]),
+            media_id=str(row.get("media_id") or ""),
+            start_s=_finite_number(row.get("source_start_s")),
+            end_s=_finite_number(row.get("source_end_s")),
+        )
+        for row in raw
+        if isinstance(row, Mapping) and row.get("quote") and row.get("status")
+    )
+
+
+def _confirm_named_lines(
+    lines: tuple[NamedLineFact, ...] | None,
+    cuts: Sequence[tuple[str, float | None, float | None]],
+) -> tuple[NamedLineFact, ...] | None:
+    """A line the plan held is held only if the finished timeline's cut still covers it."""
+    if lines is None or not cuts:
+        return lines
+    out: list[NamedLineFact] = []
+    for line in lines:
+        if line.status == "held" and line.start_s is not None and line.end_s is not None:
+            covered = any(
+                media_id == line.media_id
+                and start is not None
+                and end is not None
+                and start <= line.start_s + _HELD_LINE_TOLERANCE_S
+                and end >= line.end_s - _HELD_LINE_TOLERANCE_S
+                for media_id, start, end in cuts
+            )
+            if not covered:
+                line = dataclasses.replace(line, status="not_held")
+        out.append(line)
+    return tuple(out)
 
 
 def _closing_quote_facts(raw: object) -> dict[str, Any]:
@@ -1517,6 +1578,7 @@ def plan_facts_from_rendered_montage(
         closing_speech=_held_closing_line(record, clip_ids, cuts[-1] if cuts else None),
         closing_quote_status=plan.closing_quote_status,
         closing_quote_text=plan.closing_quote_text,
+        named_lines=_confirm_named_lines(plan.named_lines, cuts),
         cut_lengths_s=tuple(
             round(end - start, 3)
             for _media_id, start, end in cuts
@@ -2411,8 +2473,54 @@ def _round_s(value: float) -> str:
     return f"{round(float(value), 1):g}"
 
 
+# KRI-760: a named spoken line the creator wants heard whole ("\"Hi, I'm Karolina\" dediği
+# cümle baştan sona duyulsun", "let the line \"...\" be heard in full") is a named-line-window
+# ask (KRI-681), never a pop-in: nothing is shown or played on it. The model that read the
+# message records it as `keep_whole_take` (and, as often, files the line under the pop-in key
+# `triggers`), so that recorded flag decides (KRI-667); no wording is re-read here.
+
+
+def _line_names(req: BriefRequirement) -> list[str]:
+    """The lines a whole-line ask names, each in one piece: a `triggers` item is one phrase
+    even with commas in it ("Hi, I'm Karolina, I'm from Ecuador"), else the quoted words."""
+    named: list[str] = []
+    for key in _TRIGGER_FACT_KEYS:
+        value = req.facts.get(key)
+        named.extend(
+            item
+            for item in (value if isinstance(value, list) else [value])
+            if isinstance(item, str)
+        )
+    return _dedupe_names(named or _quoted_triggers(req))
+
+
+def _wants_whole_line(req: BriefRequirement) -> bool:
+    """A named spoken line recorded as `keep_whole_take`, with nothing shown or played on it.
+
+    A photo, sticker or pop-in word, or a word-triggered cue ("when I say ...", "dediğimde"),
+    keeps the ask a pop-in even when the model also flagged the take as kept whole.
+    """
+    if req.kind not in _BEAT_ASK_KINDS or req.scope == "title" or _has_duration_target(req):
+        return False
+    if _fact_flag(req, "keep_whole_take") is not True or not _line_names(req):
+        return False
+    text = _req_text(req)
+    return not (_EXPLICIT_POP_RE.search(text) or _SPOKEN_CUE_RE.search(text))
+
+
+def wants_whole_line(req: BriefRequirement) -> bool:
+    return _wants_whole_line(req)
+
+
+def whole_line_quotes(req: BriefRequirement) -> list[str]:
+    """The lines a whole-line ask names, in the creator's words; [] for any other ask."""
+    return _line_names(req) if _wants_whole_line(req) else []
+
+
 def _wants_beats(req: BriefRequirement) -> bool:
     if req.kind not in _BEAT_ASK_KINDS:
+        return False
+    if _wants_whole_line(req):
         return False
     if req.kind == "timing" and (
         # Timing asks about length or a text's hold window keep their own checkers.
@@ -2487,7 +2595,7 @@ def _closing_photo_ask(req: BriefRequirement, facts: PlanFacts) -> bool:
 
 def _wants_cleanup(req: BriefRequirement) -> bool:
     """A speech-cleanup ask (pauses, retakes, filler) in the creator's own words."""
-    if req.kind not in _CLEANUP_KINDS or _wants_whole_take(req):
+    if req.kind not in _CLEANUP_KINDS or _wants_whole_take(req) or _wants_whole_line(req):
         return False
     if _wants_beats(req) or _wants_closing(req) or _wants_speech(req):
         return False
@@ -5240,6 +5348,23 @@ def _is_spoken_text_cue(req: BriefRequirement) -> bool:
     )
 
 
+def spoken_text_literals(brief: CreativeBrief | None) -> tuple[str, ...]:
+    """KRI-692: the exact text of each live ask to show a line when the creator says a word.
+
+    The clip planner also reads such an ask as a `caption` clip intent, which is a question
+    with no clip to answer it; the planner uses these to keep it out of the clip inventory.
+    """
+    if brief is None:
+        return ()
+    return tuple(
+        dict.fromkeys(
+            req.literal
+            for req in brief.live()
+            if req.kind == "text" and req.literal and _is_spoken_text_cue(req)
+        )
+    )
+
+
 def _talking_shows_spoken_text(req: BriefRequirement) -> bool:
     """KRI-707: the phone Talking worker can place this text: its fields name the text and
     the spoken word (`spoken_text_ask`), and the lane is rolled out."""
@@ -5278,7 +5403,9 @@ _KEEP_ONE_RE = re.compile(
 _ENDING_RE = re.compile(
     r"\b(?:finish|end|close|wrap up|wrap) (?:on|with)\b|\bending (?:on|with)\b"
     r"|\bat the (?:very )?end\b|\bin the end\b|\blast\b|\bclosing\b"
-    r"|\ben son\w*|\bsonda\b|\bsonunda\b|\bsona\b|\bkapanis\w*|\bbitir\w*|\bbitsin\b"
+    # KRI-760: "baştan sona" is "from start to finish", not an ending.
+    r"|\ben son\w*|\bsonda\b|\bsonunda\b|(?<!bastan )\bsona\b|\bkapanis\w*|\bbitir\w*"
+    r"|\bbitsin\b"
 )
 _OWN_SPEECH_RE = re.compile(
     r"\bown (?:voice|sound|audio|words)\b|\b(?:her|his|their|my|your) voice\b"
@@ -5294,6 +5421,76 @@ _NOT_OWN_SPEECH_RE = re.compile(
     r"|\b(?:photo|picture|image|pic|sticker|stamp|badge|logo|emoji)s?\b"
     r"|\bfotograf\w*|\bresim\w*|\bgorsel\w*|\bcikartma\w*"
 )
+
+
+def _check_whole_line(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """Judge "let the line '...' be heard in full" on a finished phone montage (KRI-760).
+
+    Met only when the clip that says each named line is in the edit and its cut covers the
+    line, with the clips' own sound kept. A draft, or a plan that never looked for the
+    line, claims nothing; a line no clip says, two clips say equally, or a cut too short
+    for it is "partly", with the line named.
+    """
+    from app.services.phone_reaction_grounding import fold_tokens  # noqa: PLC0415
+
+    recorded = facts.named_lines
+    if not facts.rendered_montage or recorded is None:
+        return _receipt(req, "partial", _NO_CHECKER)
+    rows: list[NamedLineFact] = []
+    for name in _line_names(req):
+        row = next((r for r in recorded if fold_tokens(r.quote) == fold_tokens(name)), None)
+        if row is None:
+            return _receipt(req, "partial", _NO_CHECKER)
+        rows.append(row)
+    if not rows:
+        return _receipt(req, "partial", _NO_CHECKER)
+    problems: list[str] = []
+    for row in rows:
+        quote = f"“{row.quote}”"
+        if row.status == "not_found":
+            problems.append(
+                say(
+                    en=f"I couldn't find where you say {quote} in your clips",
+                    tr=f"{quote} dediğin yeri kliplerinde bulamadım",
+                )
+            )
+        elif row.status == "ambiguous":
+            problems.append(
+                say(
+                    en=f"More than one clip says {quote}, so I couldn't tell which to keep whole",
+                    tr=f"{quote} birden fazla klipte geçiyor, hangisini bütün bırakacağımı "
+                    "anlayamadım",
+                )
+            )
+        elif row.status == "not_held":
+            problems.append(
+                say(
+                    en=f"The cut doesn't hold the whole line {quote}",
+                    tr=f"Kesit {quote} cümlesinin tamamını içermiyor",
+                )
+            )
+        elif row.status != "held":
+            return _receipt(req, "partial", _NO_CHECKER)
+    if problems:
+        return _receipt(req, "partial", "; ".join(problems) + ".")
+    quotes = _names(f"“{row.quote}”" for row in rows)
+    if facts.source_audio_kept is False:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"{quotes} is in the cut, but the clips' own sound is off",
+                tr=f"{quotes} kesitte var ama kliplerin kendi sesi kapalı",
+            ),
+        )
+    return _receipt(
+        req,
+        "met",
+        say(
+            en=f"{quotes} plays whole, in the clip's own sound",
+            tr=f"{quotes} baştan sona, klibin kendi sesiyle çalıyor",
+        ),
+    )
 
 
 def _wants_one_of_duplicates(req: BriefRequirement) -> bool:
@@ -5334,6 +5531,7 @@ def judged_at_render(req: BriefRequirement) -> bool:
     return (
         _wants_one_of_duplicates(req)
         or _wants_closing_speech(req)
+        or _wants_whole_line(req)
         # KRI-558: a look (title animation, label corner, font, colour) and a per-clip length
         # are read off the finished text lane and timeline, which a plan record never has.
         or bool(text_look_facts(req))
@@ -5622,6 +5820,11 @@ _KEEP_VERB_RE = re.compile(r"\b(?:keep|kept|preserve|retain|leave|use)\b|\btut\b
 def _wants_source_sound_kept(req: BriefRequirement) -> bool:
     if req.kind not in _BEAT_KINDS or _wants_beats(req) or _wants_cleanup(req):
         return False
+    # A model-extracted instruction has semantic intent regardless of the creator's
+    # language or whether its description repeats a keep/use verb. An unknown typed
+    # intent must never fall through to the historical wording recognizer.
+    if "audio_intent" in req.facts:
+        return req.kind == "audio" and req.facts["audio_intent"] == "source_unchanged"
     text = _req_text(req)
     return bool(
         _BED_NAMED_RE.search(text)
@@ -5762,6 +5965,8 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
                 if seated.status != "met":
                     return seated
             return _check_closing_speech(req, facts)
+    if _wants_whole_line(req):
+        return _check_whole_line(req, facts)
     if req.kind == "text":
         if req.scope == "per_clip" or req.scope.startswith("clip:"):
             return _with_text_look(req, facts, _check_per_clip_text(req, facts))

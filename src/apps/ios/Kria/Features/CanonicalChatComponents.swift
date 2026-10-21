@@ -372,7 +372,7 @@ struct FormatStage: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     BundledPosterImage(name: format.imageName)
                                         .scaledToFill()
-                                        .frame(width: 156, height: 164)
+                                        .frame(width: FormatTileMetrics.image.width, height: FormatTileMetrics.image.height)
                                         .clipped()
                                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                     Text(format.title)
@@ -410,7 +410,7 @@ private struct SlidePostFormatCard: View {
             ZStack(alignment: .bottomTrailing) {
                 Button(action: select) {
                     SlidePostFormatCover(paused: $paused)
-                        .frame(width: 156, height: 156)
+                        .frame(width: FormatTileMetrics.image.width, height: FormatTileMetrics.image.height)
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         .contentShape(Rectangle())
                 }
@@ -934,6 +934,11 @@ struct ReadyStage: View {
     let project: ProjectSummary
     let openEditor: () -> Void
     let suggest: (String) -> Void
+    /// KRI-756. Nil or empty = no server chips to show (capability off, still loading, failed, unavailable, or
+    /// everything is already in the edit), so the fixed chips below stay exactly as they were. Non-empty = the
+    /// server owns this row: its chips are sent on tap, and the fixed ones are gone.
+    var serverSuggestions: [SuggestionChip]? = nil
+    var sendSuggestion: (SuggestionChip) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -994,9 +999,18 @@ struct ReadyStage: View {
             Text("What would you like to change?")
                 .font(KriaFont.body(13).weight(.medium))
 
-            HStack(spacing: 8) {
-                PromptChip(text: "Try a stronger opening", action: suggest)
-                PromptChip(text: "Make it warmer", action: suggest)
+            if let serverSuggestions {
+                // Capability on: the server's chips or nothing. The fixed chips are generic and the server's own
+                // stoplist rejects them, so they must not flash while the set loads or fill in when it is empty.
+                if !serverSuggestions.isEmpty {
+                    SuggestionChipRow(chips: serverSuggestions, send: sendSuggestion)
+                        .accessibilityIdentifier("ready-suggestions")
+                }
+            } else {
+                HStack(spacing: 8) {
+                    PromptChip(text: "Try a stronger opening", action: suggest)
+                    PromptChip(text: "Make it warmer", action: suggest)
+                }
             }
         }
     }
@@ -1116,27 +1130,66 @@ struct KriaFilledChip: View {
     let text: String
     var systemImage: String? = nil
     var foreground: Color = KriaColor.ink
+    /// KRI-756: one muted line under the label (footage evidence). Hidden when nil.
+    var caption: String? = nil
+    /// KRI-756: the lead chip of a set (the stock "let Kria cut it" move): butter fill, semibold.
+    var isPrimary = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                Text(text)
-                    .font(KriaFont.body(13).weight(.medium))
-                    .multilineTextAlignment(.leading)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(text)
+                        .font(KriaFont.body(13).weight(isPrimary ? .semibold : .medium))
+                        .multilineTextAlignment(.leading)
+                    if let caption {
+                        Text(caption)
+                            .font(KriaFont.body(11))
+                            .foregroundStyle(foreground.opacity(0.62))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
                 if let systemImage {
                     Image(systemName: systemImage).font(.system(size: 11, weight: .semibold))
                 }
             }
             .foregroundStyle(foreground)
             .padding(.horizontal, 14)
+            .padding(.vertical, caption == nil ? 0 : 6)
             .frame(minHeight: 44)
-            .background(KriaColor.fill)
+            .background(isPrimary ? KriaColor.butter : KriaColor.fill)
             .clipShape(Capsule())
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(text)
+        .accessibilityLabel(caption.map { "\(text), \($0)" } ?? text)
+    }
+}
+
+/// KRI-756: the server's suggestion chips, in rank order (the set arrives sorted; this view never reorders). Tapping one
+/// SENDS its `message`; the label is only what the creator reads. Draws nothing for an empty list. The lead
+/// `default_edit` chip is the primary one.
+struct SuggestionChipRow: View {
+    let chips: [SuggestionChip]
+    let send: (SuggestionChip) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if !chips.isEmpty {
+            PlanChipFlow(spacing: 8) {
+                ForEach(Array(chips.enumerated()), id: \.element.id) { index, chip in
+                    KriaFilledChip(text: chip.label, caption: chip.why, isPrimary: chip.isDefaultEdit) { send(chip) }
+                        .accessibilityIdentifier("suggestion-chip-\(index)")
+                        .accessibilityHint("Sends this to Kria")
+                }
+            }
+            .transition(.opacity)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: chips.map(\.id))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("suggestion-chips")
+        }
     }
 }
 

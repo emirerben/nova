@@ -31,7 +31,7 @@ import re
 import tempfile
 import threading
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
@@ -246,6 +246,25 @@ def grounded_labels(intents: list[ResolvedClipIntent] | None) -> list[GroundedLa
 
 def _alias_for(index: int) -> str:
     return f"m{index + 1:03d}"
+
+
+def _invented_selection(evidence: object, alias: str, resolver_request: str) -> bool:
+    """True when the resolver cites the internal handle ``alias`` as its grounds but the
+    request it read never names that handle (KRI-763).
+
+    Aliases (``m001``...) are internal: the only way one reaches the request is
+    ``_replace_known_media_ids_with_aliases`` swapping a clip id the creator really named,
+    and evidence is meant to quote the clip's record, which never contains one. Creator
+    words like a file name ("M1_08") are not the alias ``m008``, yet the resolver answered
+    "creator explicitly selected m008" for it, pinning the 8th attachment at confidence 1.0.
+    Structural only: it compares the handle, never what the evidence or the request means.
+    """
+    handle = alias.casefold()
+    return (
+        isinstance(evidence, str)
+        and handle in evidence.casefold()
+        and handle not in resolver_request.casefold()
+    )
 
 
 def _replace_known_media_ids_with_aliases(
@@ -778,12 +797,11 @@ def picker_eligible(intent: ClipIntent) -> bool:
 
     Membership ops, and labels/captions whose TEXT is already fixed (creator's words or
     the placeholder). A per-clip authored label or an authored caption still needs a
-    model, so those stay text questions. An exclude (KRI-667) is never asked about at all,
-    so it is never a picker category either.
+    model, so those stay text questions. An exclude (KRI-667) is never asked about by the
+    resolver, so it is never in ``creator_work``; but the clips a creator taps (or names by
+    file name) fully answer it, so it settles like the other membership ops (KRI-761).
     """
-    if intent.op == "exclude":
-        return False
-    if intent.op in {"group", "include", "order"}:
+    if intent.op in {"group", "include", "order", "exclude"}:
         return True
     if intent.op == "label":
         if intent.placeholder:
@@ -796,7 +814,9 @@ def picker_eligible(intent: ClipIntent) -> bool:
 
 
 def _build_clip_question(
-    creator_work: list[_IntentWork], clips: list[IntentClip]
+    creator_work: list[_IntentWork],
+    clips: list[IntentClip],
+    creator_words: Mapping[str, str] | None = None,
 ) -> dict[str, Any] | None:
     """One picker category per TAPPABLE unresolved intent, or None when none can be tapped.
 
@@ -819,7 +839,9 @@ def _build_clip_question(
         categories.append(
             {
                 "key": intent_key(work.intent),
-                "label": category_label(work.intent),
+                "label": category_label(
+                    work.intent, creator_words=(creator_words or {}).get(work.intent.intent_id)
+                ),
                 "op": work.intent.op,
                 "intent_id": work.intent.intent_id,
                 "creator_text": work.intent.creator_text,
@@ -1050,13 +1072,16 @@ async def resolve_clip_intents_for_turn(
     max_vision_requeries: int | None = None,
     vision_deadline_s: float | None = None,
     filming_order: bool = False,
+    creator_words: Mapping[str, str] | None = None,
 ) -> IntentResolution:
     """Resolve ``intents`` against ``clips``.
 
     ``max_vision_requeries`` / ``vision_deadline_s`` raise the FOREGROUND vision
     budget for callers (the Kria v2 chat turn) that have no background lane.
     ``filming_order`` (KRI-516): the creator asked for filming order, so the resolver
-    reads the clips in that order (see ``_build_resolver_input``)."""
+    reads the clips in that order (see ``_build_resolver_input``).
+    ``creator_words`` (KRI-692): intent_id -> the creator's verbatim sentence, shown as a
+    picker row's label when the model wrote that label in the wrong language."""
     ctx: RunContext = run_context if isinstance(run_context, RunContext) else RunContext()
 
     # This resolver has no pinned narration/timeline authority. Never send
@@ -1219,7 +1244,11 @@ async def resolve_clip_intents_for_turn(
             # returned -- the creator would be asked to do the matching themselves.
             stray_questions_ignored += 1
 
-        assignment_by_media = {a.media: a for a in resolved.assignments}
+        assignment_by_media = {
+            a.media: a
+            for a in resolved.assignments
+            if not _invented_selection(a.evidence, a.media, resolver_input.creator_request)
+        }
         vision_media = {nv.media: nv.question for nv in resolved.needs_vision}
         work.had_any_candidate = bool(assignment_by_media or vision_media)
         if intent.op == "caption" and not intent.creator_text:
@@ -2025,7 +2054,7 @@ async def resolve_clip_intents_for_turn(
         and creator_work
         and settings.kria_clip_selection_questions_enabled
     ):
-        clip_question = _build_clip_question(creator_work, clips)
+        clip_question = _build_clip_question(creator_work, clips, creator_words)
         if clip_question is not None:
             turn_question = clip_question_text(clip_question["categories"])
             leftover = [w for w in creator_work if not picker_eligible(w.intent)]

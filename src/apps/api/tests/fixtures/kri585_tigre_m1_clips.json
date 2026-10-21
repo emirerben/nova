@@ -1,0 +1,742 @@
+{
+ "source": "prod thread 7ccbde0a, job 136712e8 (2026-10-11, cabin kit M1); ids renamed to the kit's upload files",
+ "creator_request": "Full creator request (chronological):\nTigre’de kiraladığımız ahşap kulübenin turu. Başlık: “Tigre’de bir kulübe”. Nehirle başla, Deniz’in laptop başında oturduğu klip en sonda olsun. Şu çekimlere kısa bir yer etiketi koy: Mutfak, Çatı katı, Banyo, İskele. Nehir kenarında kendimi çektiğim selfie klibini kullanma. Hızlı kesmeler. 20 saniye olsun\n\nCreative brief v1 (everything the creator has asked for, still in force):\n- [r1] [text/title] \"Tigre’de bir kulübe\"\n- [r2] [order/global] start with the river, end with Deniz at his laptop facts={\"first_clip\":\"the river\",\"last_clip\":\"Deniz at his laptop\"}\n- [r3] [text/per_clip] label for the kitchen clip (\"Mutfak\")\n- [r4] [text/per_clip] label for the attic clip (\"Çatı katı\")\n- [r5] [text/per_clip] label for the bathroom clip (\"Banyo\")\n- [r6] [text/per_clip] label for the pier clip (\"İskele\")\n- [r7] [select/global] exclude the selfie clip by the river\n- [r8] [style/global] fast cuts\n- [r9] [timing/global] 20 seconds long facts={\"duration_s\":20}\nLatest message: Tigre’de kiraladığımız ahşap kulübenin turu. Başlık: “Tigre’de bir kulübe”. Nehirle başla, Deniz’in laptop başında oturduğu klip en sonda olsun. Şu çekimlere kısa bir yer etiketi koy: Mutfak, Çatı katı, Banyo, İskele. Nehir kenarında kendimi çektiğim selfie klibini kullanma. Hızlı kesmeler. 20 saniye olsun",
+ "brief": [
+  {
+   "id": "r1",
+   "kind": "text",
+   "facts": {},
+   "scope": "title",
+   "status": "open",
+   "literal": "Tigre’de bir kulübe",
+   "description": null
+  },
+  {
+   "id": "r2",
+   "kind": "order",
+   "facts": {
+    "last_clip": "Deniz at his laptop",
+    "first_clip": "the river"
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "start with the river, end with Deniz at his laptop"
+  },
+  {
+   "id": "r3",
+   "kind": "text",
+   "facts": {},
+   "scope": "per_clip",
+   "status": "open",
+   "literal": "Mutfak",
+   "description": "label for the kitchen clip"
+  },
+  {
+   "id": "r4",
+   "kind": "text",
+   "facts": {},
+   "scope": "per_clip",
+   "status": "open",
+   "literal": "Çatı katı",
+   "description": "label for the attic clip"
+  },
+  {
+   "id": "r5",
+   "kind": "text",
+   "facts": {},
+   "scope": "per_clip",
+   "status": "open",
+   "literal": "Banyo",
+   "description": "label for the bathroom clip"
+  },
+  {
+   "id": "r6",
+   "kind": "text",
+   "facts": {},
+   "scope": "per_clip",
+   "status": "open",
+   "literal": "İskele",
+   "description": "label for the pier clip"
+  },
+  {
+   "id": "r7",
+   "kind": "select",
+   "facts": {},
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "exclude the selfie clip by the river"
+  },
+  {
+   "id": "r8",
+   "kind": "style",
+   "facts": {},
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "fast cuts"
+  },
+  {
+   "id": "r9",
+   "kind": "timing",
+   "facts": {
+    "duration_s": 20
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "20 seconds long"
+  }
+ ],
+ "selected_media_ids": [
+  "m1_12",
+  "m1_11",
+  "m1_10",
+  "m1_09",
+  "m1_08",
+  "m1_06",
+  "m1_05",
+  "m1_04",
+  "m1_03",
+  "m1_02",
+  "m1_01"
+ ],
+ "resolved_clip_intents": [
+  {
+   "op": "order",
+   "status": "resolved",
+   "position": "first",
+   "attribute": "Nehir",
+   "intent_id": "start_with_river",
+   "assignments": [
+    {
+     "evidence": "river with wooden pier, muddy brown river",
+     "media_id": "m1_02",
+     "confidence": 0.95
+    }
+   ]
+  },
+  {
+   "op": "order",
+   "status": "resolved",
+   "position": "last",
+   "attribute": "Deniz’in laptop başında oturduğu klip",
+   "intent_id": "end_with_deniz_laptop",
+   "assignments": [
+    {
+     "evidence": "A man named Deniz is introduced by an off-camera speaker while sitting at a wooden table with a laptop.",
+     "media_id": "m1_04",
+     "confidence": 0.98
+    }
+   ]
+  },
+  {
+   "op": "label",
+   "status": "resolved",
+   "attribute": "Mutfak",
+   "intent_id": "label_kitchen",
+   "assignments": [
+    {
+     "value": "Mutfak",
+     "evidence": "rustic cabin kitchen, Mutfuğunu görüyorsunuz.",
+     "media_id": "m1_09",
+     "grounding": "creator_text",
+     "confidence": 1.0
+    },
+    {
+     "value": "Mutfak",
+     "evidence": "rustic kitchen interior",
+     "media_id": "m1_03",
+     "grounding": "creator_text",
+     "confidence": 1.0
+    }
+   ],
+   "creator_text": "Mutfak"
+  },
+  {
+   "op": "label",
+   "status": "resolved",
+   "attribute": "Çatı katı",
+   "intent_id": "label_attic",
+   "assignments": [
+    {
+     "value": "Çatı katı",
+     "evidence": "attic room, attic loft",
+     "media_id": "m1_06",
+     "grounding": "creator_text",
+     "confidence": 1.0
+    }
+   ],
+   "creator_text": "Çatı katı"
+  },
+  {
+   "op": "label",
+   "status": "resolved",
+   "attribute": "Banyo",
+   "intent_id": "label_bathroom",
+   "assignments": [
+    {
+     "value": "Banyo",
+     "evidence": "wooden-paneled bathroom, rustic bathroom interior",
+     "media_id": "m1_01",
+     "grounding": "creator_text",
+     "confidence": 1.0
+    }
+   ],
+   "creator_text": "Banyo"
+  },
+  {
+   "op": "label",
+   "status": "resolved",
+   "attribute": "İskele",
+   "intent_id": "label_pier",
+   "assignments": [
+    {
+     "value": "İskele",
+     "evidence": "wooden pier over a body of water, iskelemize doğru gidiyoruz",
+     "media_id": "m1_08",
+     "grounding": "creator_text",
+     "confidence": 1.0
+    },
+    {
+     "value": "İskele",
+     "evidence": "river with wooden pier, as seen from a wooden pier",
+     "media_id": "m1_02",
+     "grounding": "creator_text",
+     "confidence": 1.0
+    }
+   ],
+   "creator_text": "İskele"
+  }
+ ],
+ "clips": [
+  {
+   "media_id": "m1_12",
+   "duration_s": 6.0,
+   "analysis": {
+    "duration_s": 6.0,
+    "description": "room overview with bed air conditioner reveal",
+    "transcript": "Gördüğünüz üzere",
+    "best_moments": [
+     {
+      "end_s": 1.5,
+      "energy": 3.0,
+      "start_s": 0.0,
+      "description": "room overview with bed"
+     },
+     {
+      "end_s": 4.5,
+      "energy": 4.0,
+      "start_s": 2.5,
+      "description": "air conditioner reveal"
+     }
+    ],
+    "understanding": {
+     "summary": "The video shows a panoramic view of a cozy room with wooden walls and ceiling, featuring a bed, a bedside table with a lamp, and a window.",
+     "audio_type": "dialogue",
+     "people": {
+      "note": "",
+      "count": null,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "language": "tr",
+      "segments": [
+       {
+        "text": "gördüğünüz üzere",
+        "end_s": 2.06,
+        "start_s": 0.0
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Gördüğünüz üzere"
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_11",
+   "duration_s": 9.0,
+   "analysis": {
+    "duration_s": 9.0,
+    "description": "house becomes visible stairs to house revealed full view of house exterior",
+    "transcript": "",
+    "best_moments": [
+     {
+      "end_s": 2.5,
+      "energy": 5.0,
+      "start_s": 1.0,
+      "description": "house becomes visible"
+     },
+     {
+      "end_s": 5.0,
+      "energy": 6.0,
+      "start_s": 3.5,
+      "description": "stairs to house revealed"
+     },
+     {
+      "end_s": 8.0,
+      "energy": 7.0,
+      "start_s": 6.0,
+      "description": "full view of house exterior"
+     }
+    ],
+    "understanding": {
+     "summary": "The camera slowly pans right, revealing a rustic-style house with a corrugated iron roof and wooden stairs leading up to its entrance, surrounded by lush green foliage and trees on a sunny day.",
+     "audio_type": "ambient",
+     "people": {
+      "note": "",
+      "count": null,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "to_camera": false,
+      "has_speech": false,
+      "transcript": ""
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_10",
+   "duration_s": 6.0,
+   "analysis": {
+    "duration_s": 6.0,
+    "description": "reveal of outside view through screen door view of wooden staircase and bar area",
+    "transcript": "Başka yerleri çekiyor.",
+    "best_moments": [
+     {
+      "end_s": 2.5,
+      "energy": 5.0,
+      "start_s": 1.2,
+      "description": "reveal of outside view through screen door"
+     },
+     {
+      "end_s": 7.3,
+      "energy": 7.0,
+      "start_s": 4.9,
+      "description": "view of wooden staircase and bar area"
+     }
+    ],
+    "understanding": {
+     "summary": "The video shows a quick pan across a rustic wooden cabin interior, revealing a dining area, a door to the outside, and a wooden staircase.",
+     "audio_type": "mixed",
+     "people": {
+      "note": "",
+      "count": null,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "language": "tr",
+      "segments": [
+       {
+        "text": "Başka yerleri çekiyor.",
+        "end_s": 0.82,
+        "start_s": 0.0
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Başka yerleri çekiyor."
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_09",
+   "duration_s": 5.0,
+   "analysis": {
+    "duration_s": 5.0,
+    "description": "viewing kitchen shelves panning to living room",
+    "transcript": "Mutfuğunu görüyorsunuz. Burası eee, Buenos Aires'in kuzeyinde kalan müthiş",
+    "best_moments": [
+     {
+      "end_s": 1.2,
+      "energy": 4.0,
+      "start_s": 0.0,
+      "description": "viewing kitchen shelves"
+     },
+     {
+      "end_s": 4.8,
+      "energy": 4.0,
+      "start_s": 3.4,
+      "description": "panning to living room"
+     }
+    ],
+    "understanding": {
+     "summary": "The video shows a pan across a rustic cabin kitchen, revealing wooden architecture, shelves with kitchen items, a refrigerator, and then a glimpse into an adjacent living area.",
+     "audio_type": "dialogue",
+     "people": {
+      "note": "",
+      "count": null,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "language": "tr",
+      "segments": [
+       {
+        "text": "görüyorsunuz.",
+        "end_s": 1.78,
+        "start_s": 1.06
+       },
+       {
+        "text": "Burası ııı Buenos Aires'in kuzeyinde kalan mükemmel",
+        "end_s": 4.98,
+        "start_s": 1.78
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Mutfuğunu görüyorsunuz. Burası eee, Buenos Aires'in kuzeyinde kalan müthiş"
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_08",
+   "duration_s": 10.0,
+   "analysis": {
+    "duration_s": 10.0,
+    "description": "",
+    "transcript": "Şimdi iskelemize doğru gidiyoruz. O ayaklarımda sadece çorap var.",
+    "best_moments": [],
+    "understanding": {
+     "summary": "The video shows a person walking towards a wooden pier over a body of water on a sunny day. They comment that they are only wearing socks.",
+     "audio_type": "dialogue",
+     "people": {
+      "note": "",
+      "count": null,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "language": "tr",
+      "segments": [
+       {
+        "text": "Şimdi iskelemize doğru gidiyoruz",
+        "end_s": 1.72,
+        "start_s": 0.0
+       },
+       {
+        "text": "Bora ayaklarında sadece çorap var",
+        "end_s": 5.38,
+        "start_s": 3.62
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Şimdi iskelemize doğru gidiyoruz. O ayaklarımda sadece çorap var."
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_07",
+   "duration_s": 5.5,
+   "analysis": {
+    "duration_s": 5.5,
+    "description": "man speaking to camera man continues speaking to camera",
+    "transcript": "Bu da ben, sayın seyirciler.",
+    "best_moments": [
+     {
+      "end_s": 1.0,
+      "energy": 3.0,
+      "start_s": 0.0,
+      "description": "man speaking to camera"
+     },
+     {
+      "end_s": 4.0,
+      "energy": 3.0,
+      "start_s": 2.2,
+      "description": "man continues speaking to camera"
+     }
+    ],
+    "understanding": {
+     "summary": "A man wearing glasses and a black t-shirt is standing outdoors by a river, speaking directly to the camera. He gives a thumbs up gesture briefly.",
+     "audio_type": "dialogue",
+     "people": {
+      "note": "a man in glasses",
+      "count": 1,
+      "speaks_to_camera": true
+     },
+     "speech": {
+      "language": "tr",
+      "segments": [
+       {
+        "text": "Bu da ben sayın seyirciler",
+        "end_s": 2.18,
+        "start_s": 0.78
+       }
+      ],
+      "to_camera": true,
+      "has_speech": true,
+      "transcript": "Bu da ben, sayın seyirciler."
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_06",
+   "duration_s": 5.5,
+   "analysis": {
+    "duration_s": 5.5,
+    "description": "revealing floor fan below showing attic room with bed",
+    "transcript": "Dün akşam ben burada kaldım.",
+    "best_moments": [
+     {
+      "end_s": 2.5,
+      "energy": 4.0,
+      "start_s": 0.9,
+      "description": "revealing floor fan below"
+     },
+     {
+      "end_s": 6.0,
+      "energy": 6.0,
+      "start_s": 3.7,
+      "description": "showing attic room with bed"
+     }
+    ],
+    "understanding": {
+     "summary": "The video shows someone ascending a wooden staircase into a cozy, wood-paneled attic room, revealing a bed and a fan.",
+     "audio_type": "dialogue",
+     "people": {
+      "note": "",
+      "count": null,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "language": "tr",
+      "segments": [
+       {
+        "text": "Dün akşam ben burada kaldım.",
+        "end_s": 5.48,
+        "start_s": 2.6
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Dün akşam ben burada kaldım."
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_05",
+   "duration_s": 5.0,
+   "analysis": {
+    "duration_s": 5.0,
+    "description": "camera pans to a decorated wooden wall",
+    "transcript": "ben üst tarafta kalıyorum bu arada. Orayı da size çıkarıp gösterebilirim.",
+    "best_moments": [
+     {
+      "end_s": 2.94,
+      "energy": 5.0,
+      "start_s": 1.45,
+      "description": "camera pans to a decorated wooden wall"
+     }
+    ],
+    "understanding": {
+     "summary": "The camera pans around the interior of a room constructed primarily of wood, showing exposed beams, a loft area, and various wall decorations including string lights and plates.",
+     "audio_type": "dialogue",
+     "people": {
+      "note": "",
+      "count": null,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "language": "tr",
+      "segments": [
+       {
+        "text": "Ben üst tarafta kalıyorum bu arada.",
+        "end_s": 1.66,
+        "start_s": 0.0
+       },
+       {
+        "text": "Orayı da size çıkarıp gösterebilirim.",
+        "end_s": 3.42,
+        "start_s": 1.9
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "ben üst tarafta kalıyorum bu arada. Orayı da size çıkarıp gösterebilirim."
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_04",
+   "duration_s": 6.0,
+   "analysis": {
+    "duration_s": 6.0,
+    "description": "man picks up purple object",
+    "transcript": "Bu da Deniz. Merhaba. Kanalımızın kurucu ekibinden.",
+    "best_moments": [
+     {
+      "end_s": 4.9,
+      "energy": 5.0,
+      "start_s": 3.3,
+      "description": "man picks up purple object"
+     }
+    ],
+    "understanding": {
+     "summary": "A man named Deniz is introduced by an off-camera speaker while sitting at a wooden table with a laptop. He smiles at the camera and then picks up a small purple object.",
+     "audio_type": "dialogue",
+     "people": {
+      "note": "A man with a mustache",
+      "count": 1,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "language": "tr",
+      "segments": [
+       {
+        "text": "Bu da Deniz,",
+        "end_s": 1.22,
+        "start_s": 0.0
+       },
+       {
+        "text": "kanalımızın kurucu ekibinden.",
+        "end_s": 5.74,
+        "start_s": 3.3
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Bu da Deniz. Merhaba. Kanalımızın kurucu ekibinden."
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_03",
+   "duration_s": 4.5,
+   "analysis": {
+    "duration_s": 4.5,
+    "description": "panning across kitchen with exposed pipes reveal of kitchen counter and window view",
+    "transcript": "Evet arkadaşlar, Tigre'de ev turumuza hoş geldiniz.",
+    "best_moments": [
+     {
+      "end_s": 1.7,
+      "energy": 4.0,
+      "start_s": 0.0,
+      "description": "panning across kitchen with exposed pipes"
+     },
+     {
+      "end_s": 4.0,
+      "energy": 5.0,
+      "start_s": 2.2,
+      "description": "reveal of kitchen counter and window view"
+     }
+    ],
+    "understanding": {
+     "summary": "The video shows a tour of a rustic kitchen interior with wooden walls and exposed pipes, featuring a counter with snacks and a refrigerator.",
+     "audio_type": "dialogue",
+     "people": {
+      "note": "",
+      "count": null,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "language": "tr",
+      "segments": [
+       {
+        "text": "Evet arkadaşlar,",
+        "end_s": 1.14,
+        "start_s": 0.0
+       },
+       {
+        "text": "Tigre'de ev turumuza hoş geldiniz.",
+        "end_s": 3.4,
+        "start_s": 1.94
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Evet arkadaşlar, Tigre'de ev turumuza hoş geldiniz."
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_02",
+   "duration_s": 12.0,
+   "analysis": {
+    "duration_s": 12.0,
+    "description": "river water rippling river current flowing",
+    "transcript": "",
+    "best_moments": [
+     {
+      "end_s": 5.0,
+      "energy": 5.0,
+      "start_s": 0.0,
+      "description": "river water rippling"
+     },
+     {
+      "end_s": 13.0,
+      "energy": 6.0,
+      "start_s": 7.0,
+      "description": "river current flowing"
+     }
+    ],
+    "understanding": {
+     "summary": "The video shows a wide shot of a muddy brown river with waves flowing, as seen from a wooden pier. The opposite bank of the river is lined with green trees and a few small houses or structures on stilts.",
+     "audio_type": "ambient",
+     "people": {
+      "note": "",
+      "count": null,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "to_camera": false,
+      "has_speech": false,
+      "transcript": ""
+     }
+    }
+   }
+  },
+  {
+   "media_id": "m1_01",
+   "duration_s": 10.0,
+   "analysis": {
+    "duration_s": 10.0,
+    "description": "Burada bir 40 ayak vardı.",
+    "transcript": "böyle korkalım bilmiyorum. 40 ayak gitmiş galiba. Burada bir 40 ayak vardı. 40 ayak bir yerlere gitmiş.",
+    "best_moments": [],
+    "understanding": {
+     "summary": "The video shows a wooden-paneled bathroom. The speaker points out where a centipede previously was, noting it has now disappeared.",
+     "audio_type": "dialogue",
+     "people": {
+      "note": "",
+      "count": null,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "language": "tr",
+      "segments": [
+       {
+        "text": "Niye böyle korkalım bilmiyorum Kırk ayak gitmiş galiba",
+        "end_s": 3.66,
+        "start_s": 0.0
+       },
+       {
+        "text": "Burada bir kırk ayak vardı",
+        "end_s": 6.24,
+        "start_s": 4.74
+       },
+       {
+        "text": "Kırk ayak bir yerlere gitmiş",
+        "end_s": 9.04,
+        "start_s": 7.5
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "böyle korkalım bilmiyorum. 40 ayak gitmiş galiba. Burada bir 40 ayak vardı. 40 ayak bir yerlere gitmiş."
+     }
+    }
+   }
+  }
+ ]
+}

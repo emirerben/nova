@@ -502,6 +502,33 @@
       ]
     },
     {
+      "id": "kri-766-label-bound",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri766_label_stays_bound.py tests/evals/test_clip_request_resolver_evals.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri766_label_echo_vs_described_action.json",
+        "src/apps/api/tests/kria/test_kri766_label_stays_bound.py"
+      ]
+    },
+    {
+      "id": "kri-761-look-alike-exclusions",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri761_look_alike_exclusions.py",
+      "paths": [
+        "src/apps/api/app/kria/clip_exclusions.py"
+      ]
+    },
+    {
+      "id": "kri-585-spoken-order",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri585_spoken_order_montage.py tests/pipeline/test_unified_montage_spoken_order.py tests/services/test_spoken_roles.py",
+      "paths": [
+        "src/apps/api/app/kria/narration_notes.py",
+        "src/apps/api/app/services/spoken_roles.py",
+        "src/apps/api/tests/fixtures/kri585_tigre_m1_clips.json"
+      ]
+    },
+    {
       "id": "kri-680-dark-clips",
       "needs_native": false,
       "api_tests": "tests/services/test_kri680_clip_exposure.py tests/kria/test_kri667_clip_exclusions.py",
@@ -608,6 +635,15 @@
         "src/apps/api/app/services/length_planning.py",
         "src/apps/api/app/services/spoken_quotes.py",
         "src/apps/api/tests/fixtures/kri681_tigre_night_m1_clips.json"
+      ]
+    },
+    {
+      "id": "kri-760-whole-line-ask",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_whole_line_routing.py tests/tasks/test_whole_line_ask_montage.py",
+      "paths": [
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/pipeline/unified_montage.py"
       ]
     },
     {
@@ -747,16 +783,27 @@
     },
     {
       "id": "kri-736-save-after-delete",
-      "needs_native": false,
-      "api_tests": "tests/routes/test_phone_guided_clip_delete_text_fit.py tests/routes/test_phone_guided_clip_delete_order_contract.py tests/routes/test_phone_manual_edits_win.py",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_editor_save_contract_matrix.py",
+      "xctests": [
+        "KriaTests/EditorSaveMatrixTests/testEverySourceWindowVerdictMatchesTheServer",
+        "KriaTests/EditorSaveMatrixTests/testTheIncidentWindowsAreInTheMatrix",
+        "KriaTests/EditorSaveMatrixTests/testBoundToleranceIsTheServers",
+        "KriaTests/EditorSaveMatrixTests/testANewTextIsEncodedWithTheRoleTheServerAccepts"
+      ],
       "paths": [
+        "src/apps/api/app/agents/_schemas/text_element.py",
         "src/apps/api/app/pipeline/phone_authored_timeline.py",
+        "src/apps/api/app/services/authored_editor.py",
         "src/apps/api/app/services/authored_text_fit.py",
         "src/apps/api/app/services/creator_render_contract.py",
         "src/apps/api/app/services/phone_editor.py",
-        "src/apps/api/tests/routes/test_phone_guided_clip_delete_text_fit.py",
-        "src/apps/api/tests/routes/test_phone_guided_clip_delete_order_contract.py",
-        "src/apps/api/tests/routes/test_phone_manual_edits_win.py",
+        "src/apps/ios/Kria/Core/NativeEditorDocument.swift",
+        "src/apps/ios/Kria/Features/KriaCropEditor.swift",
+        "src/apps/ios/Tests/Fixtures/editor_save_matrix.json",
+        "src/apps/ios/Tests/KriaTests/EditorSaveMatrixTests.swift",
+        "src/apps/api/tests/routes/_editor_save_matrix.py",
+        "src/apps/api/tests/routes/test_editor_save_contract_matrix.py",
         "src/apps/api/tests/services/test_phone_editor_render_contract.py"
       ]
     },
@@ -804,6 +851,167 @@
       ]
     },
     {
+      "id": "kri-721-approval-readiness",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py",
+      "paths": [
+        "src/apps/api/app/kria/approval_readiness.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/kria/plan_review.py",
+        "src/apps/api/app/kria/render_retry.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/config.py",
+        "src/apps/api/tests/kria/test_approval_readiness_postgres.py"
+      ]
+    },
+    {
+      "id": "troya-footage-research",
+      "needs_native": true,
+      "api_tests": "tests/evals/request_following/test_troya_context_journey.py tests/evals/request_following/test_researched_text.py tests/services/test_kria_editor_clip_context.py",
+      "xctests": [
+        "KriaTests/NativeResearchSourcesTests/testSourcesSurviveDocumentSaveAndFlagChangedCopy",
+        "KriaTests/NativeResearchSourcesTests/testUnsafeSourceSchemesAndPrivateHostsCannotOpen"
+      ],
+      "paths": [
+        "src/apps/api/app/schemas/editorial_plan.py",
+        "src/apps/api/app/services/editorial_plan.py",
+        "src/apps/api/app/services/researched_text.py",
+        "src/apps/api/app/services/ai_cost_control.py",
+        "src/apps/api/app/services/kria_editor_ops_text.py",
+        "src/apps/api/tests/evals/request_following/test_troya_context_journey.py",
+        "src/apps/api/tests/evals/request_following/test_researched_text.py",
+        "src/apps/ios/Kria/Core/ResearchCitation.swift",
+        "src/apps/ios/Kria/Features/NativeResearchSourcesView.swift",
+        "src/apps/ios/Tests/KriaTests/NativeResearchSourcesTests.swift"
+      ]
+    },
+    {
+      "id": "kri-756-suggestion-chips",
+      "needs_native": true,
+      "api_tests": "tests/evals/test_suggestion_chips_evals.py tests/evals/test_chip_suggester_evals.py tests/services/test_suggestion_chips_guards.py tests/scripts/test_suggestion_chip_funnel.py",
+      "xctests": [
+        "KriaTests/SuggestionChipsTests/testContractResponseDecodesInRankOrderAndDropsOnlyTheBrokenChip",
+        "KriaTests/SuggestionChipsTests/testADeliveredSetIsNeverReRankedOrRelabelledUnderTheSameSetID",
+        "KriaTests/SuggestionChipsTests/testTheTurnBodyCarriesTheTapOnlyWhenThereIsOne"
+      ],
+      "paths": [
+        "src/apps/api/app/agents/_registry.py",
+        "src/apps/api/app/agents/chip_suggester.py",
+        "src/apps/api/app/cli/kria_contracts.py",
+        "src/apps/api/app/services/suggestion_chip_copy.py",
+        "src/apps/api/app/services/suggestion_chips.py",
+        "src/apps/api/app/services/suggestion_serve.py",
+        "src/apps/api/app/services/suggestion_store.py",
+        "src/apps/api/app/tasks/kria_clip_understanding.py",
+        "src/apps/api/app/tasks/kria_suggester.py",
+        "src/apps/api/app/worker.py",
+        "src/apps/api/prompts/chip_suggester.txt",
+        "src/apps/api/scripts/suggestion_chip_funnel.py",
+        "src/apps/api/scripts/suggestion_chip_report.py",
+        "src/apps/api/tests/evals/README.md",
+        "src/apps/api/tests/evals/chip_suggester_harness.py",
+        "src/apps/api/tests/evals/rubrics/suggestion_chips.md",
+        "src/apps/api/tests/evals/suggestion_chips_harness.py",
+        "src/apps/api/tests/evals/test_chip_suggester_evals.py",
+        "src/apps/api/tests/evals/test_suggestion_chips_evals.py",
+        "src/apps/api/tests/fixtures/agent_evals/README.md",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/already_in_edit_guess.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/cross_kind_label.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/dark_kind_guess.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/default_edit_cid_is_not_a_candidate.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/digit_quote_emoji_labels.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/duplicate_cid_and_kind.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/empty_ranking_is_honest.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/flag_off_capability_guess.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/footage_text_in_label.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/good_en_first_prompt.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/good_ready_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/good_tr_first_prompt.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/hype_labels.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/invented_cid.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/label_corpus.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/markdown_fenced_json.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/message_and_kind_override.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/over_limit_dupes.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/prompt_injection_label.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/ranked_not_a_list.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/reorder_follows_model.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/schema_garbage.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/ungrounded_why.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/unknown_placeholder.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/why_with_handle_digits_url.json",
+        "src/apps/api/tests/fixtures/agent_evals/chip_suggester/wrong_language_labels.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/contract_example_first_prompt.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/contract_example_pending.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/contract_example_ready.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/contract_example_unavailable.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/executability_cassettes.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_caption_style_off.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_cloud_all_on.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_default_edit_gated_off.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_duplicate_subject_pair.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_manifest_baseline_refused.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_mixed_photos_and_video.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_no_media.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_no_witness_fails_closed.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_phone_no_sfx_no_looks.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_photos_only.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_sfx_flag_off.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_silent_broll_music.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_single_clip_broll.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_single_clip_talking.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_speech_and_broll.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_subtitled_format_speech.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_transitions_and_sfx_off_speech.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_turkish_silent.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_turkish_speech.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_twelve_clips_kri126.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_understanding_empty.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_understanding_pending.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_v1_agent_off.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/fp_v1_agent_on.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/none_failed_render.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/none_open_question.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/none_render_in_progress.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/none_v1_no_snapshot.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_captions_already_on.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_captions_off_no_cues.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_captions_off_with_cues.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_clip_family_absent.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_everything_present.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_generative_intro_bar_present.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_music_led_no_speech.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_music_loud.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_music_quiet.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_music_with_voice_to_camera.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_no_music.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_no_witness_fails_closed.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_plain_montage.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_sfx_already_placed.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_sfx_empty_catalog.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_sfx_family_absent.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_single_slot.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_title_animated.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_title_animation_wrong_archetype.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_title_family_without_text_family.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_title_present_guided_story.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_title_unified_montage.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_transitions_already_set.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_turkish.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/rd_turkish_music_voice.json",
+        "src/apps/api/tests/kria/test_plan_review.py",
+        "src/apps/api/tests/routes/test_kria_runtime.py",
+        "src/apps/api/tests/scripts/test_suggestion_chip_funnel.py",
+        "src/apps/api/tests/services/test_suggestion_chips_guards.py",
+        "src/apps/api/tests/services/test_suggestion_chips_postgres.py",
+        "src/apps/api/tests/tasks/test_task_time_limits.py",
+        "src/apps/ios/Kria/Core/CreationFlow.swift",
+        "src/apps/ios/Kria/Core/SuggestionChips.swift",
+        "src/apps/ios/Tests/KriaTests/SuggestionChipsTests.swift"
+      ]
+    },
+    {
       "id": "kri-729-camera-roll-recommendations",
       "needs_native": true,
       "api_tests": "tests/integration/test_media_collections.py tests/integration/test_camera_roll_execution.py tests/integration/test_camera_roll_pilot_cli.py tests/integration/test_camera_roll_retrieval_eval_cli.py tests/integration/test_actual_export_verification.py tests/integration/test_actual_export_completion.py tests/routes/test_actual_export_publication.py",
@@ -840,27 +1048,6 @@
         "src/apps/api/tests/integration/test_camera_roll_execution.py",
         "src/apps/api/tests/integration/test_camera_roll_pilot_cli.py",
         "src/apps/api/tests/integration/test_camera_roll_retrieval_eval_cli.py"
-      ]
-    },
-    {
-      "id": "troya-footage-research",
-      "needs_native": true,
-      "api_tests": "tests/evals/request_following/test_troya_context_journey.py tests/evals/request_following/test_researched_text.py tests/services/test_kria_editor_clip_context.py",
-      "xctests": [
-        "KriaTests/NativeResearchSourcesTests/testSourcesSurviveDocumentSaveAndFlagChangedCopy",
-        "KriaTests/NativeResearchSourcesTests/testUnsafeSourceSchemesAndPrivateHostsCannotOpen"
-      ],
-      "paths": [
-        "src/apps/api/app/schemas/editorial_plan.py",
-        "src/apps/api/app/services/editorial_plan.py",
-        "src/apps/api/app/services/researched_text.py",
-        "src/apps/api/app/services/ai_cost_control.py",
-        "src/apps/api/app/services/kria_editor_ops_text.py",
-        "src/apps/api/tests/evals/request_following/test_troya_context_journey.py",
-        "src/apps/api/tests/evals/request_following/test_researched_text.py",
-        "src/apps/ios/Kria/Core/ResearchCitation.swift",
-        "src/apps/ios/Kria/Features/NativeResearchSourcesView.swift",
-        "src/apps/ios/Tests/KriaTests/NativeResearchSourcesTests.swift"
       ]
     }
   ]

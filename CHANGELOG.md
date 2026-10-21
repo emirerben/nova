@@ -2,6 +2,106 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.68.0] - 2026-10-20
+
+### Changed
+- KRI-766: a dictated shot label stays bound across turns and asks with the clip picker (#1697) <!-- release-pr: 1697 -->
+
+## [0.80.67.0] - 2026-10-20
+
+### Changed
+- KRI-761: a look-alike or clashing exclude asks which clip to leave out (#1696) <!-- release-pr: 1696 -->
+
+## [0.80.66.0] - 2026-10-20
+
+### Changed
+- KRI-762: first/last clip pins are not an order-basis question (#1694) <!-- release-pr: 1694 -->
+
+## [0.80.65.0] - 2026-10-20
+
+### Changed
+- KRI-759: a "simpler version?" refusal names what it dropped, has buttons, and "yes" drafts it (#1695) <!-- release-pr: 1695 -->
+
+## [0.80.64.0] - 2026-10-20
+
+### Changed
+- KRI-763: a file name in a first/last pin is never read as an attachment number (#1693) <!-- release-pr: 1693 -->
+
+## [0.80.63.0] - 2026-10-20
+
+### Fixed
+- KRI-760: a quoted line to hear in full keeps its clip window, never a pop-in (#1692) <!-- release-pr: 1692 -->
+
+## [0.80.62.0] - 2026-10-20
+
+### Changed
+- KRI-765: failure cards read in the chat's language, name the cause, and never replay an old failure (#1691) <!-- release-pr: 1691 -->
+
+## [0.80.61.0] - 2026-10-20
+
+### Fixed
+- KRI-767 fix(text): a label the composer moves to another clip is not a copy change (#1690) <!-- release-pr: 1690 -->
+
+## [0.80.60.0] - 2026-10-20
+
+### Changed
+- KRI-758: one described clip ("…bıraktığı kısa klibi kullanma") is no longer read as "skip the short clips" (#1689) <!-- release-pr: 1689 -->
+
+## [0.80.59.0] - 2026-10-19
+
+### Changed
+- fix: keep restored clips previewable and saveable through chat (#1698) <!-- release-pr: 1698 -->
+
+## [0.80.58.0] - 2026-10-19
+
+### Changed
+- feat(chat): footage-aware suggestion chips, iOS only, dark (KRI-756) (#1699) <!-- release-pr: 1699 -->
+
+## [0.80.57.0] - 2026-10-19
+
+### Changed
+- test(editor): one Save contract matrix for every edit shape (KRI-750) (#1681) <!-- release-pr: 1681 -->
+
+## [0.80.56.0] - 2026-10-19
+
+### Changed
+- fix(ios): retain newly restored clips in chat drafts (#1688) <!-- release-pr: 1688 -->
+
+## [0.80.55.0] - 2026-10-19
+
+### Fixed
+- fix(montage): a camera-sound montage follows what the clips say (KRI-585) (#1675) <!-- release-pr: 1675 -->
+
+## [0.80.54.0] - 2026-10-19
+
+### Changed
+- fix(kria): understand unchanged camera audio before approval (KRI-721) (#1687) <!-- release-pr: 1687 -->
+
+## [0.80.53.0] - 2026-10-19
+
+### Changed
+- fix(kria): a text-on-a-spoken-word ask is never a clip-picker question on a Voiceover edit (KRI-692) (#1668) <!-- release-pr: 1668 -->
+
+## [0.80.52.0] - 2026-10-19
+
+### Changed
+- fix: preserve clip targets and expose unused uploaded footage (#1686) <!-- release-pr: 1686 -->
+
+## [0.80.51.0] - 2026-10-19
+
+### Changed
+- ci(preship): journey-mapping check + second-fix-PR rule (KRI-749, KRI-751) (#1680) <!-- release-pr: 1680 -->
+
+## [0.80.50.0] - 2026-10-19
+
+### Changed
+- fix(ios): slide-post rename alert + Slider format tile size, sliding and Lisbon Taberna photos (#1684) <!-- release-pr: 1684 -->
+
+## [0.80.49.0] - 2026-10-19
+
+### Fixed
+- fix(kria): require executable evidence before approval (KRI-721) (#1683) <!-- release-pr: 1683 -->
+
 ## [0.80.48.0] - 2026-10-19
 
 ### Changed

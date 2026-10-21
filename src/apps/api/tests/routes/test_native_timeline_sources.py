@@ -13,7 +13,7 @@ from app.services.phone_sources import PHONE_SOURCES_FIELD
 
 
 def admitted_phone_job(monkeypatch, mode="guided"):
-    from tests.routes.test_phone_guided_timeline_commit import _guided_phone_job
+    from tests.routes._editor_save_matrix import guided_phone_job as _guided_phone_job
 
     job, variant, _ = _guided_phone_job(monkeypatch, count=1, clip_s=3)
     monkeypatch.setattr(routes.settings, "phone_editor_media_enabled", True)

@@ -324,6 +324,33 @@ async def prepare_render_retry(
             "render_retry_target_stale",
             "You have changed this project since that failure. Refresh and use the current edit.",
         )
+    from app.kria.approval_readiness import (  # noqa: PLC0415
+        NOT_READY,
+        ApprovalReadinessError,
+        assess_saved_document,
+        requires_readiness,
+    )
+
+    readiness_report = None
+    raw_draft = rows[CreatorEditDraft].snapshot_json or {}
+    if settings.approval_readiness_for(creator_id) or (
+        isinstance(raw_draft, dict)
+        and (raw_draft.get("brief_coverage") or {}).get("approval_readiness") is not None
+    ):
+        try:
+            readiness_document = KriaDraftDocument.model_validate(raw_draft)
+            # Historical snapshots without the requirement binding stay legacy.
+            if requires_readiness(readiness_document, creator_id):
+                readiness_report = await assess_saved_document(
+                    db, rows[PlanItem], readiness_document
+                )
+        except ApprovalReadinessError as exc:
+            raise _failure(NOT_READY, str(exc)) from exc
+        except ValueError as exc:
+            raise _failure(
+                NOT_READY,
+                "The saved edit's rendering evidence is unavailable. Ask Kria to prepare it again.",
+            ) from exc
     if existing is not None:
         current_approval = await db.get(
             CreatorAgentApproval,
@@ -454,6 +481,14 @@ async def prepare_render_retry(
         started_at=now,
         awaiting_approval_at=now,
         result={
+            **(
+                {
+                    "approval_readiness": readiness_report,
+                    "approval_readiness_digest": readiness_report["digest"],
+                }
+                if readiness_report is not None
+                else {}
+            ),
             RETRY_FIELD: {
                 "source_execution_id": str(source.id),
                 "failed_identity": status.request.identity.model_dump(mode="json"),

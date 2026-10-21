@@ -7,6 +7,7 @@ follows, computed independently from the compiled ``timeline_slots``.
 from __future__ import annotations
 
 import copy
+import json
 import uuid
 
 import pytest
@@ -603,3 +604,111 @@ def test_manual_label_offset_travels_with_reordered_segment(guided) -> None:
     )
     bar = _bar(compiled, "m2")
     assert (bar["start_s"], bar["end_s"]) == (0.5, 2.0)
+
+
+def test_reorder_then_retime_uses_the_snapshot_clip_not_its_new_neighbour(guided):
+    # Production replay: moving slot 18 first then retiming slot 18 lengthened
+    # the former slot 17. Snapshot indices must remain bound across the bundle.
+    job, variant, _revision = guided
+    compiled = compile_editor_ops(
+        job,
+        variant,
+        [
+            {"op": "reorder_clip", "from_index": 2, "to_index": 0},
+            {"op": "set_clip_duration", "slot_index": 2, "duration_s": 3.0},
+            {"op": "set_clip_duration", "slot_index": 1, "duration_s": 4.0},
+        ],
+    )
+    segments = _segments(guided, compiled)
+    assert [row["media_id"] for row in segments] == ["m2", "m0", "m1", "m3"]
+    assert [row["duration_s"] for row in segments] == [3.0, 2.0, 4.0, 2.0]
+    _assert_labels_follow(guided, compiled, ["m0", "m1", "m2", "m3"])
+
+
+def test_reorder_then_patch_selector_keeps_snapshot_identity(guided):
+    job, variant, _revision = guided
+    compiled = compile_editor_ops(
+        job,
+        variant,
+        [
+            {"op": "reorder_clip", "from_index": 2, "to_index": 0},
+            {"op": "patch_slots", "selector": {"slot_indexes": [2]}, "patch": {"duration_s": 3.0}},
+        ],
+    )
+    segments = _segments(guided, compiled)
+    assert [row["duration_s"] for row in segments] == [3.0, 2.0, 2.0, 2.0]
+
+
+def test_unused_approved_source_reaches_prompt_and_restored_guided_save(guided):
+    from app.agents._runtime import ModelClient
+    from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
+
+    job, variant, revision = guided
+    job.all_candidates["clip_paths"] = [r["gcs_path"] for r in revision["sources"]]
+    variant["guided_draft_slots"] = ops._variant_slots(variant, job)[:3]
+    source = revision["sources"][3]
+    job.assembly_plan["guided_edit"]["approved_proposal"] = {
+        "media": [
+            {
+                **source,
+                "analysis": {
+                    "subject": "people in a car",
+                    "description": "people in a car turn towards the camera",
+                },
+            }
+        ]
+    }
+    snapshot = build_editor_snapshot(job, variant)
+    unused = snapshot["source_pool"][3]
+    assert unused["used"] is False
+    assert unused["duration_s"] == source["duration_s"]
+    assert "car" in unused["seen"]["text"]
+    agent = EditCopilotAgent(ModelClient())
+    inputs = EditCopilotInput(
+        utterance="Restore the unused car clip", prior_turns=[], variant_snapshot=snapshot
+    )
+    prompt = agent.render_prompt(inputs)
+    assert "UNUSED SOURCE ASSETS" in prompt
+    assert "people in a car" in prompt
+    assert source["gcs_path"] not in prompt
+    output = agent.parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "reply": "Restored the only unused clip.",
+                "confidence": 1,
+                "ops": [
+                    {
+                        "op": "add_unused_sources",
+                        "selector": {
+                            "scope": "unused_sources",
+                            "media_kind": "video",
+                            "quantifier": "all",
+                        },
+                    }
+                ],
+            }
+        ),
+        inputs,
+    )
+    compiled = compile_editor_ops(job, variant, output.ops)
+    segments = _segments(guided, compiled)
+    assert [row["media_id"] for row in segments] == ["m0", "m1", "m2", "m3"]
+    assert segments[-1]["duration_s"] == 3.0
+
+
+def test_unused_source_description_rejects_changed_approved_generation(guided):
+    job, variant, revision = guided
+    job.all_candidates["clip_paths"] = [r["gcs_path"] for r in revision["sources"]]
+    variant["guided_draft_slots"] = ops._variant_slots(variant, job)[:3]
+    job.assembly_plan["guided_edit"]["approved_proposal"] = {
+        "media": [
+            {
+                **revision["sources"][3],
+                "generation": "old",
+                "analysis": {"subject": "unverified car"},
+            }
+        ]
+    }
+    unused = build_editor_snapshot(job, variant)["source_pool"][3]
+    assert not unused.get("seen")

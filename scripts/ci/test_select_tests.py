@@ -617,8 +617,12 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-524-creation,kri-557-thinking,kri-577-reliability-gates",
+                    "kri-524-creation,kri-557-thinking,kri-577-reliability-gates,kri-760-whole-line-ask,kri-721-approval-readiness",
                 ),
+            ),
+            (
+                "src/apps/api/app/kria/approval_readiness.py",
+                (True, "covered", "kri-721-approval-readiness"),
             ),
             (
                 "src/apps/api/app/tasks/content_plan_build.py",
@@ -729,6 +733,26 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-623-ruled-out-clips"),
             ),
             (
+                "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri766_label_echo_vs_described_action.json",
+                (True, "covered", "kri-766-label-bound"),
+            ),
+            (
+                "src/apps/api/tests/kria/test_kri766_label_stays_bound.py",
+                (True, "covered", "kri-766-label-bound"),
+            ),
+            (
+                "src/apps/api/app/kria/narration_notes.py",
+                (True, "covered", "kri-585-spoken-order"),
+            ),
+            (
+                "src/apps/api/app/services/spoken_roles.py",
+                (True, "covered", "kri-585-spoken-order"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/kri585_tigre_m1_clips.json",
+                (True, "covered", "kri-585-spoken-order"),
+            ),
+            (
                 "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
                 (True, "covered", "kri-625-moment-quality"),
             ),
@@ -787,6 +811,14 @@ class GitDiffTests(unittest.TestCase):
             (
                 "src/apps/api/tests/fixtures/kri681_tigre_night_m1_clips.json",
                 (True, "covered", "kri-681-named-line-windows"),
+            ),
+            (
+                "src/apps/api/app/pipeline/unified_montage.py",
+                (
+                    True,
+                    "covered",
+                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates,kri-760-whole-line-ask,kri-648-phone-text",
+                ),
             ),
             (
                 "src/apps/api/app/pipeline/captions.py",
@@ -899,6 +931,66 @@ class GitDiffTests(unittest.TestCase):
             self.assertEqual(
                 ci.journey_details("pull_request", "bad", "bad"), (True, "gap", "")
             )
+
+    def unmapped_cli(self, *args, stdin=""):
+        return subprocess.run(
+            [sys.executable, str(SCRIPT.resolve()), "unmapped-paths", *args],
+            input=stdin,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_unmapped_paths_names_only_unmapped_journey_paths(self):
+        # Failure modes (KRI-749): unmapped path unnamed; mapped path falsely
+        # named; non-journey path failing preship; git error reading as clean.
+        unmapped = "src/apps/api/app/kria/zz_unmapped.py"
+        mapped = next(
+            prefix
+            for journey in ci.JOURNEYS
+            for prefix in journey["paths"]
+            if not prefix.endswith("/")
+        )
+        self.write(unmapped, "x = 1")
+        self.write(mapped, "x = 1")
+        self.write("src/apps/web/unrelated.ts", "export {};")
+        head = self.commit()
+        result = self.unmapped_cli("--base", self.base, "--head", head)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout.split(), [unmapped])
+
+    def test_unmapped_paths_is_quiet_for_mapped_and_non_journey_changes(self):
+        self.write("src/apps/web/unrelated.ts", "export {};")
+        head = self.commit()
+        result = self.unmapped_cli("--base", self.base, "--head", head)
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, ""))
+
+    def test_unmapped_paths_git_error_and_missing_base_are_nonzero(self):
+        self.assertEqual(
+            self.unmapped_cli("--base", "no-such-ref", "--head", "HEAD").returncode, 1
+        )
+        self.assertEqual(self.unmapped_cli().returncode, 2)
+
+    def test_unmapped_paths_agrees_with_the_ci_gap_verdict(self):
+        self.write("src/apps/api/app/kria/zz_unmapped.py", "x = 1")
+        head = self.commit()
+        self.assertEqual(ci.journey_details("pull_request", self.base, head)[1], "gap")
+        self.assertEqual(
+            ci.unmapped_journey_paths(self.base, head),
+            ["src/apps/api/app/kria/zz_unmapped.py"],
+        )
+
+    def test_unmapped_paths_stdin_classifies_uncommitted_files(self):
+        result = self.unmapped_cli(
+            "--stdin", stdin="src/apps/api/app/kria/zz_unmapped.py\nREADME.md\n"
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout.split(), ["src/apps/api/app/kria/zz_unmapped.py"])
+
+    def test_preship_runs_the_journey_mapping_check(self):
+        preship = (SCRIPT.parents[2] / "scripts/preship-check.sh").read_text()
+        self.assertIn("validate-mapping", preship)
+        self.assertIn("unmapped-paths", preship)
+        self.assertIn("-u GITHUB_OUTPUT", preship)
 
     def test_cli_outputs_and_summary(self):
         self.write("src/apps/ios/new.swift", "test")

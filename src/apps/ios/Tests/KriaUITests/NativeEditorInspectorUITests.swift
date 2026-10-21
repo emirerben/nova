@@ -211,8 +211,18 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["Video preview"].firstMatch.waitForExistence(timeout: 12))
         let play = app.buttons["native-editor-play-pause"]
         play.tap()
-        // The ruler is clear of trim handles while no clip is selected.
-        let first = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.05))
+        // Target the audio lane itself: a percentage of the scroll viewport can
+        // fall inside a clip's expanded touch target and select or trim it.
+        let audioRow = app.staticTexts["native-editor-original-audio"]
+        func audioScrubPoint() -> XCUICoordinate {
+            let visible = audioRow.frame.intersection(timeline.frame)
+            XCTAssertFalse(visible.isNull)
+            XCTAssertGreaterThan(visible.height, 10)
+            return app.coordinate(withNormalizedOffset: .zero).withOffset(
+                CGVector(dx: visible.midX, dy: visible.midY)
+            )
+        }
+        let first = audioScrubPoint()
         first.press(forDuration: 0.05, thenDragTo: first.withOffset(CGVector(dx: -20, dy: 0)), withVelocity: 20, thenHoldForDuration: 0.1)
         XCTAssertEqual(play.label, "Play preview", "Scrubbing must stop the playback clock")
         var sampledFirstClip = false
@@ -280,14 +290,13 @@ final class NativeEditorInspectorUITests: XCTestCase {
         // Four samples (0, -90, -180, -90): same travel as the old eight-step walk, half the samples.
         for index in 0..<4 {
             assertDisplayedPreview()
-            let start = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.05))
+            let start = audioScrubPoint()
             start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: index < 2 ? -90 : 90, dy: 0)), withVelocity: 20, thenHoldForDuration: 0.3)
         }
         app.descendants(matching: .any)["native-editor-clip-2"].firstMatch.tap()
         // Selection animates the action tray and moves the timeline. Wait for
         // the audio row to settle, then target its visible area well below
         // the selected clip's trim handles.
-        let audioRow = app.staticTexts["native-editor-original-audio"]
         var previousY: CGFloat?
         let settled = NSPredicate { _, _ in
             let y = audioRow.frame.minY
@@ -295,14 +304,6 @@ final class NativeEditorInspectorUITests: XCTestCase {
             return previousY == y
         }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: settled, object: audioRow)], timeout: 5), .completed)
-        func audioScrubPoint() -> XCUICoordinate {
-            let visible = audioRow.frame.intersection(timeline.frame)
-            XCTAssertFalse(visible.isNull)
-            XCTAssertGreaterThan(visible.height, 10)
-            return app.coordinate(withNormalizedOffset: .zero).withOffset(
-                CGVector(dx: visible.midX, dy: visible.midY)
-            )
-        }
         let nearCut = audioScrubPoint()
         nearCut.press(forDuration: 0.05, thenDragTo: nearCut.withOffset(CGVector(dx: -15, dy: 0)), withVelocity: 20, thenHoldForDuration: 0.3)
         for index in 0..<2 {

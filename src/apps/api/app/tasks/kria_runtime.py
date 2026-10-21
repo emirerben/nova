@@ -107,15 +107,15 @@ from app.services.choice_questions import (
     CONFLICT_WHICH_VOICE,
     KEEP_OPEN_REASON,
     MAX_ASKS_PER_QUESTION,
+    SIMPLER_VERSION_REASON,
     ChoiceCapability,
-    ConflictCandidate,
-    ConflictOption,
     answered_brief,
     build_choice_question,
     choice_question_text,
     count_asks,
     match_open_choice,
     open_conflicts,
+    simpler_version_question,
     tag_event,
 )
 from app.services.creation_thread_titles import conversation_revision_matches_sync
@@ -702,37 +702,6 @@ def _creative_copy_problem_sync(db, thread_id, media, *, strategy=None, resoluti
     )
 
 
-_SIMPLER_VERSION_REASON = "simplification_requires_choice"
-
-
-def _simpler_version_question() -> dict[str, Any]:
-    """Use the existing exact option matcher; an arbitrary next reply is not consent."""
-    return build_choice_question(
-        ConflictCandidate(
-            conflict_id=_SIMPLER_VERSION_REASON,
-            intro="",
-            reason="",
-            options=(
-                ConflictOption(
-                    "different_approach",
-                    label=say(en="Try a different approach", tr="Farklı bir yol dene"),
-                ),
-                ConflictOption(
-                    "simpler_version",
-                    label=say(en="Make this simpler version", tr="Daha basit sürümü hazırla"),
-                    aliases=(
-                        "simpler version",
-                        "make it more basic",
-                        "skip, decide for me",
-                        "Make this simpler version",
-                        "Daha basit sürümü hazırla",
-                    ),
-                ),
-            ),
-        )
-    )
-
-
 def _simpler_version_already_offered(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     thread_id: uuid.UUID,
@@ -763,19 +732,37 @@ def _simpler_version_already_offered(
             return False
         payload = payload if isinstance(payload, Mapping) else {}
         coverage = payload.get("brief_coverage")
-        if not isinstance(coverage, Mapping) or coverage.get("reason") != _SIMPLER_VERSION_REASON:
+        if not isinstance(coverage, Mapping) or coverage.get("reason") not in {
+            SIMPLER_VERSION_REASON,
+            "approval_requirements_not_ready",
+        }:
             continue
+        readiness = coverage.get("approval_readiness")
+        blocked_ids = (
+            {
+                row.get("requirement_id")
+                for row in readiness.get("requirements", [])
+                if row.get("disposition") not in {"executable", "delegated"}
+            }
+            if isinstance(readiness, Mapping)
+            else None
+        )
         receipts = [
             receipt
             for receipt in payload.get("requirement_receipts") or []
-            if isinstance(receipt, Mapping) and needs_creator_choice(receipt)
+            if isinstance(receipt, Mapping)
+            and (
+                receipt.get("requirement_id") in blocked_ids
+                if blocked_ids is not None
+                else needs_creator_choice(receipt)
+            )
         ]
         offered = {str(receipt.get("requirement_id")) for receipt in receipts}
         if set(requirement_ids) != offered or {r.get("brief_version") for r in receipts} != {
             brief.version
         }:
             return False
-        question = payload.get("choice_question") or _simpler_version_question()
+        question = payload.get("choice_question") or simpler_version_question()
         selection = (source_event.payload or {}).get("choice_selection")
         if isinstance(selection, Mapping):
             return (
@@ -1099,6 +1086,10 @@ def _complete_draft_turn(
         reply_lead: str | None = None
         also_changed: list[str] = []
         effective_brief_updates = planned.brief_updates
+        readiness_required = render_intent is not None and settings.approval_readiness_for(
+            thread.creator_id
+        )
+        readiness_report = None
         brief = None
         speed_notice: str | None = None  # KRI-689
         if planned.brief_route is not None:
@@ -1148,12 +1139,16 @@ def _complete_draft_turn(
                     # KRI-190: the unified montage planner writes the per-clip text,
                     # order and title at render time and reports on them then. Judging
                     # them against this text-free draft would only mislead.
-                    checked = requirements_to_check_at_draft(
-                        checked,
-                        creator_id=thread.creator_id,
-                        strategy=document.strategy,
-                        item_edit_format=item.edit_format,
-                        clip_paths=item.clip_gcs_paths or (),
+                    checked = (
+                        checked
+                        if readiness_required
+                        else requirements_to_check_at_draft(
+                            checked,
+                            creator_id=thread.creator_id,
+                            strategy=document.strategy,
+                            item_edit_format=item.edit_format,
+                            clip_paths=item.clip_gcs_paths or (),
+                        )
                     )
                     # KRI-689: a phone montage plays every clip at natural speed. Say so
                     # before approval; the render-ready review reports it as "Couldn't".
@@ -1216,7 +1211,7 @@ def _complete_draft_turn(
                         # can show is said nothing about now (the render-ready review judges
                         # it), never "couldn't verify" (KRI-558). (An editor turn whose receipts
                         # could not be bound keeps its open items, listed calmly.)
-                        if not editor_turn:
+                        if not editor_turn and not readiness_required:
                             receipts = [r for r in receipts if r.verification != "unchecked"]
                         reply_text = reply_from_receipts(
                             CreativeBrief(version=brief.version, requirements=checked),
@@ -1241,11 +1236,38 @@ def _complete_draft_turn(
             requirement_receipts = [
                 {**receipt, "brief_version": brief.version} for receipt in requirement_receipts
             ]
+        if readiness_required:
+            from app.kria.approval_readiness import (  # noqa: PLC0415
+                assess_readiness,
+                readiness_reply,
+            )
+            from app.kria.brief_binding import snapshot_media as _readiness_media  # noqa: PLC0415
+
+            if brief is None:
+                brief = load_latest_brief_sync(db, thread.id)
+            readiness_report = assess_readiness(
+                brief,
+                document.strategy or {},
+                media=planned.media_snapshot
+                if planned.media_snapshot is not None
+                else _readiness_media(item),
+                manifest=planned.readiness_manifest,
+                editor_payload=document.editor_payload,
+                editor_text_diff=document.editor_text_diff,
+            )
+            if not readiness_report["ready"]:
+                reply_text = readiness_reply(brief, readiness_report)
         unmet_ids = [
             str(receipt.get("requirement_id"))
             for receipt in requirement_receipts
             if needs_creator_choice(receipt)
         ]
+        if readiness_report is not None:
+            unmet_ids = [
+                row["requirement_id"]
+                for row in readiness_report["requirements"]
+                if row["disposition"] not in {"executable", "delegated"}
+            ]
         simpler_version_chosen = (
             bool(unmet_ids)
             and apply_intent.tool_name == "draft.apply_strategy"
@@ -1253,6 +1275,7 @@ def _complete_draft_turn(
             # A concurrent/new instruction needs its own offer, even if its stable
             # requirement IDs happen to be the same. Never waive model-authored updates.
             and not planned.brief_updates
+            and not (readiness_report or {}).get("policy_problem")
             and _simpler_version_already_offered(
                 db,
                 thread.id,
@@ -1285,6 +1308,15 @@ def _complete_draft_turn(
                 r for r in requirement_receipts if r["requirement_id"] not in unmet_ids
             ]
             checked = [req for req in checked if req.id not in unmet_ids]
+            if readiness_required:
+                readiness_report = assess_readiness(
+                    brief,
+                    document.strategy or {},
+                    media=planned.media_snapshot
+                    if planned.media_snapshot is not None
+                    else _readiness_media(item),
+                    manifest=planned.readiness_manifest,
+                )
             log.info(
                 "kria_simpler_version_drafted",
                 thread_id=str(thread.id),
@@ -1311,12 +1343,16 @@ def _complete_draft_turn(
             reply_text = "\n".join(part for part in (lead, kept, omissions, speed_notice) if part)
         if (
             settings.brief_binding_for(thread.creator_id)
-            and unmet_ids
+            and (unmet_ids or (readiness_report is not None and not readiness_report["ready"]))
             and not simpler_version_chosen
             # KRI-558: an editor draft that really changed something is kept, and its
             # Partly / Couldn't lines say what is missing. Only an edit that changed
             # nothing falls back to the "different approach?" question.
-            and (apply_intent.tool_name == "draft.apply_strategy" or compiled.diff.empty())
+            and (
+                readiness_required
+                or apply_intent.tool_name == "draft.apply_strategy"
+                or compiled.diff.empty()
+            )
         ):
             # Do not replace a creator's current draft with a known partial edit.
             # Roll back the speculative draft/brief work, then persist the request
@@ -1333,18 +1369,36 @@ def _complete_draft_turn(
                     en="I held this first draft back.", tr="Bu ilk taslağı şimdilik beklettim."
                 )
             )
+            can_offer_simpler = (
+                not readiness_required
+                or bool(unmet_ids)
+                and not (readiness_report or {}).get("policy_problem")
+            )
             recovery = KriaTurnPlan(
                 mode="respond",
                 turn_value="question",
-                choice_question=_simpler_version_question(),
+                choice_question=simpler_version_question() if can_offer_simpler else None,
                 response=(
                     f"{reply_text}\n{draft_state} "
-                    + say(
-                        en="Should I try a different approach, or make this simpler version?",
-                        tr=(
-                            "Farklı bir yol mu deneyeyim, yoksa bunun daha basit bir "
-                            "sürümünü mü hazırlayayım?"
-                        ),
+                    + (
+                        say(
+                            en="Should I try a different approach, or make this simpler version?",
+                            tr=(
+                                "Farklı bir yol mu deneyeyim, yoksa bunun daha basit bir "
+                                "sürümünü mü hazırlayayım?"
+                            ),
+                        )
+                        if can_offer_simpler
+                        else say(
+                            en=(
+                                "Please clarify the requested changes "
+                                "so I can prepare the edit again."
+                            ),
+                            tr=(
+                                "Düzenlemeyi yeniden hazırlayabilmem için "
+                                "istediğin değişiklikleri netleştir."
+                            ),
+                        )
                     )
                 ),
             )
@@ -1359,7 +1413,10 @@ def _complete_draft_turn(
                 brief_coverage={
                     **(planned.brief_coverage or {}),
                     "stage": "draft",
-                    "reason": _SIMPLER_VERSION_REASON,
+                    "reason": "approval_requirements_not_ready"
+                    if readiness_required
+                    else SIMPLER_VERSION_REASON,
+                    **({"approval_readiness": readiness_report} if readiness_required else {}),
                 },
                 brief_expected_version=planned.brief_expected_version,
             )
@@ -1477,6 +1534,10 @@ def _complete_draft_turn(
             if source_event is not None and full_request is None:
                 raise ApprovedCreatorRequestTooLongError
             coverage = dict(planned.brief_coverage or {})
+            if readiness_required:
+                if readiness_report is None or not readiness_report["ready"]:
+                    raise RuntimeError("Render approval requires executable requirement evidence")
+                coverage["approval_readiness"] = readiness_report
             if simpler_version_chosen:
                 coverage["accepted_omission_ids"] = unmet_ids
                 coverage["applicable_ids"] = [req.id for req in brief.live()]
@@ -1673,6 +1734,11 @@ def _complete_draft_turn(
             status="awaiting_approval",
             result={
                 "consequence": "Start one render from this exact draft.",
+                **(
+                    {"approval_readiness_digest": readiness_report["digest"]}
+                    if readiness_required
+                    else {}
+                ),
                 "creator_request": render_brief_request(brief)
                 if brief is not None
                 else document.intent,
@@ -1874,7 +1940,7 @@ async def _plan_with_live_agent(
                     creator_id=uuid.UUID(str(snapshot["creator_id"])),
                 )
             with bind_thought_publisher(thought_publisher):
-                return await plan_live_turn(
+                planned = await plan_live_turn(
                     db,
                     thread_id=uuid.UUID(str(snapshot["thread_id"])),
                     item_id=uuid.UUID(str(snapshot["item_id"])),
@@ -1886,6 +1952,84 @@ async def _plan_with_live_agent(
                     **({"answers_clip_question": True} if answers_clip_question else {}),
                     **scoped,
                 )
+                if (
+                    settings.approval_readiness_for(snapshot["creator_id"])
+                    and planned.plan.mode == "act"
+                ):
+                    strategy_intent = next(
+                        (
+                            intent
+                            for intent in planned.plan.intents
+                            if intent.tool_name == "draft.apply_strategy"
+                        ),
+                        None,
+                    )
+                    if any(intent.tool_name == "render.request" for intent in planned.plan.intents):
+                        from app.kria.approval_readiness import (
+                            resolve_readiness_manifest,  # noqa: PLC0415
+                        )
+
+                        item = await db.get(
+                            PlanItem, uuid.UUID(str(snapshot["item_id"])), populate_existing=True
+                        )
+                        manifest = await resolve_readiness_manifest(
+                            db,
+                            item,
+                            strategy_intent.arguments["strategy"] if strategy_intent else None,
+                        )
+                        if strategy_intent is not None:
+                            from app.agents._schemas.creator_agent import (
+                                CreativeStrategy,  # noqa: PLC0415
+                            )
+                            from app.kria.strategy_policy import (  # noqa: PLC0415
+                                RefusedStrategy,
+                                check_strategy_for_runtime_v2,
+                            )
+
+                            # Resolve defaults against the PROPOSED renderer before
+                            # offering approval, then save that exact canonical strategy.
+                            # The assessor and approval reader still reject later repairs.
+                            checked = check_strategy_for_runtime_v2(
+                                manifest,
+                                CreativeStrategy.model_validate(
+                                    strategy_intent.arguments["strategy"]
+                                ),
+                                ask_before_simplifying=True,
+                                ask_about_stated_settings=True,
+                            )
+                            if not isinstance(checked, RefusedStrategy):
+                                canonical = strategy_intent.model_copy(
+                                    update={
+                                        "arguments": {
+                                            **strategy_intent.arguments,
+                                            "strategy": checked.strategy.model_dump(
+                                                mode="json", exclude_none=True
+                                            ),
+                                            "summary": " ".join(
+                                                [
+                                                    str(
+                                                        strategy_intent.arguments.get("summary")
+                                                        or ""
+                                                    ),
+                                                    *checked.notices,
+                                                ]
+                                            ).strip()[:1000],
+                                        },
+                                    }
+                                )
+                                planned = replace(
+                                    planned,
+                                    plan=planned.plan.model_copy(
+                                        update={
+                                            "intents": [
+                                                canonical if i is strategy_intent else i
+                                                for i in planned.plan.intents
+                                            ],
+                                        }
+                                    ),
+                                )
+                        planned = replace(planned, readiness_manifest=manifest)
+                return planned
     finally:
         turn_deadline.reset(deadline)
         stop.set()
@@ -5394,6 +5538,11 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 )
                 turn.observed_event_id = review.id
                 db.commit()
+                # KRI-756: the render settled ready: word the follow-up suggestion chips for it
+                # (flag-checked, enqueue-only, never raises).
+                from app.services.suggestion_serve import enqueue_for_thread  # noqa: PLC0415
+
+                enqueue_for_thread(thread.id, trigger="render_ready", creator_id=thread.creator_id)
                 return "completed", _promote_queued_successor_sync(thread.id)
 
         failure_code = variant_failure_code or (
@@ -5484,6 +5633,13 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             JOB_FAILURE_MESSAGES,
         )
 
+        # KRI-673/KRI-765: every code with a sentence of its own says why the render stopped.
+        cause_codes = {
+            "phone_capability_unavailable",
+            "creation_text_failed",
+            *CREATOR_FACING_DETAIL_CODES,
+            *JOB_FAILURE_MESSAGES,
+        }
         recovery_receipts: list[dict[str, Any]] = []
         recovery_message: str | None = None
         raw_recovery = (job.assembly_plan or {}).get("request_recovery")
@@ -5584,6 +5740,16 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 tr="iPhone'un bu dışa aktarımı durdurdu. Onayladığın düzenleme kayıtlı. "
                 "Yeniden denemeden önce cihazdaki hatayı kontrol et.",
             )
+        elif native_without_program and failure_code in cause_codes:
+            # No exact retry exists for this render, but the cause is known: name it, then
+            # the real way forward (KRI-765: "creation_text_failed" read as a generic stop).
+            failure_content = (
+                f"{_job_failure_copy(failure_code, getattr(job, 'error_detail', None))} "
+                + say(
+                    en="To try again, ask for a new version and review its approval.",
+                    tr="Tekrar denemek için yeni bir sürüm isteyip onayını gözden geçir.",
+                )
+            )
         elif native_without_program:
             failure_content = say(
                 en=(
@@ -5614,12 +5780,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             # KRI-701: the plan lacked something the creator confirmed; the iPhone can render
             # it, so the "can't render yet" table line would blame the wrong thing.
             failure_content = _phone_evidence_refusal_copy(typed_decline)
-        elif deterministic or failure_code in {
-            "phone_capability_unavailable",
-            "creation_text_failed",
-            *CREATOR_FACING_DETAIL_CODES,
-            *JOB_FAILURE_MESSAGES,
-        }:
+        elif deterministic or failure_code in cause_codes:
             # Retryable, but the generic "didn't finish" copy would hide WHY (KRI-286).
             # Creator-facing codes (KRI-466) show the job's own actionable detail.
             # KRI-673: every code with a table sentence says why; the generic line is

@@ -8,6 +8,10 @@
 #   3. release-metadata ownership check (post-merge automation owns versions)
 #   4. list the [skip-*] CI markers relevant to this diff
 #   5. run the KRI-577 reliability gates mapped to the changed incident paths
+#   6. journey-mapping check: the same fail-closed mapping CI enforces, so an
+#      unmapped path is named here instead of discovered in CI (KRI-749)
+#   7. fix-chain warning: a 3rd fix PR on one KRI ticket needs a failure-mode
+#      list first (KRI-751; docs/runbooks/linear-workflow.md)
 #
 # Usage: bash scripts/preship-check.sh   (from the feature worktree, pre-PR)
 # Exit 0 = ship; non-zero = fix the FAILs first.
@@ -32,7 +36,7 @@ CHANGED="$( { git diff --name-only "$MB" HEAD; git diff --name-only HEAD; git di
 echo "preship-check vs origin/main ($(git rev-parse --short origin/main)), branch point $(git rev-parse --short "$MB")"
 
 # ── 1. Scoped ruff on changed API .py files ───────────────────────────────────
-echo "[1/5] scoped ruff"
+echo "[1/7] scoped ruff"
 PY_CHANGED="$(echo "$CHANGED" | grep -E '^src/apps/api/.*\.py$' || true)"
 if [ -z "$PY_CHANGED" ]; then
   info "no API .py changes — skipped"
@@ -58,7 +62,7 @@ else
 fi
 
 # ── 2. Drift: my files that also changed on origin/main since branch point ───
-echo "[2/5] file drift vs origin/main"
+echo "[2/7] file drift vs origin/main"
 MAIN_CHANGED="$(git diff --name-only "$MB" origin/main | sort -u)"
 DRIFT="$(comm -12 <(echo "$CHANGED") <(echo "$MAIN_CHANGED") | grep -vE '^(VERSION|CHANGELOG\.md)$' || true)"
 if [ -n "$DRIFT" ]; then
@@ -69,7 +73,7 @@ else
 fi
 
 # ── 3. Release metadata ownership ─────────────────────────────────────────────
-echo "[3/5] release metadata ownership"
+echo "[3/7] release metadata ownership"
 if OUT="$(python3 scripts/release_metadata.py guard --base "$MB" --head HEAD 2>&1)" \
   && OUT_WORKING="$(python3 scripts/release_metadata.py guard --base HEAD --working 2>&1)"; then
   pass "feature PR leaves release metadata to post-merge automation"
@@ -78,7 +82,7 @@ else
 fi
 
 # ── 4. CI skip-markers relevant to this diff ──────────────────────────────────
-echo "[4/5] CI [skip-*] markers"
+echo "[4/7] CI [skip-*] markers"
 MARKERS="$(grep -rhoE '\[skip-[a-z0-9-]+\]' .github/workflows/ 2>/dev/null | sort -u)"
 if [ -n "$MARKERS" ]; then
   info "markers honored by CI (add to PR body ONLY with a reason):"
@@ -88,7 +92,7 @@ else
 fi
 
 # ── 5. Reliability gates for changed incident paths (KRI-577) ────────────────
-echo "[5/5] reliability gates"
+echo "[5/7] reliability gates"
 if [ -f "$REPO/.dev/test-db-url" ] && [ -z "${DATABASE_URL:-}" ]; then
   DATABASE_URL="$(cat "$REPO/.dev/test-db-url")"; export DATABASE_URL
 fi
@@ -103,6 +107,72 @@ else
   else
     fail "a mapped incident gate failed — the original incident or a neighbour regressed:"
     echo "$OUT" | tail -15 | sed 's/^/         /'
+  fi
+fi
+
+# ── 6. Journey mapping (KRI-749) ──────────────────────────────────────────────
+# Runs the CI selector's journey logic locally. It diffs COMMITTED history from
+# the merge-base (exactly like CI), so commit before trusting this step. It
+# checks the mapping only; journey api tests / xctests still run in CI.
+echo "[6/7] journey mapping"
+SELECT="scripts/ci/select-tests.py"
+if [ ! -f "$SELECT" ]; then
+  info "no $SELECT — skipped"
+elif [ -z "$(git diff --name-only "$MB" HEAD)" ]; then
+  info "no committed changes vs origin/main — skipped (commit first; CI diffs commits only)"
+else
+  if SEL="$(env -u GITHUB_OUTPUT -u GITHUB_STEP_SUMMARY CI_EVENT=pull_request CI_BASE="$MB" CI_HEAD=HEAD python3 "$SELECT" 2>&1)"; then
+    J_SEL="$(echo "$SEL" | sed -n 's/^journey=//p' | head -1)"
+    J_COV="$(echo "$SEL" | sed -n 's/^journey_coverage=//p' | head -1)"
+    J_IDS="$(echo "$SEL" | sed -n 's/^journey_ids=//p' | head -1)"
+    if [ "$J_SEL" = "false" ]; then
+      pass "no journey-affecting paths in this diff"
+    elif OUT="$(COVERAGE="$J_COV" JOURNEY_IDS="$J_IDS" python3 "$SELECT" validate-mapping 2>&1)"; then
+      pass "every journey-relevant path is mapped; CI will run $(echo "$J_IDS" | tr ',' '\n' | grep -c .) journey(s)"
+    else
+      fail "journey mapping would fail CI (coverage=$J_COV) — unmapped path(s):"
+      UNMAPPED="$(python3 "$SELECT" unmapped-paths --base "$MB" --head HEAD 2>&1)"
+      if [ -n "$UNMAPPED" ]; then
+        echo "$UNMAPPED" | sed 's/^/         /'
+      else
+        echo "         (selector reported a gap but no unmapped path — empty diff or git error)"
+      fi
+      info "fix: add each path to a journey in scripts/ci/journey-manifest.json"
+    fi
+    info "limit: mapping only — journey api tests / xctests run in CI"
+  else
+    fail "journey selector crashed:"
+    echo "$SEL" | tail -8 | sed 's/^/         /'
+  fi
+  # Uncommitted files are invisible to the selector; flag the ones that would
+  # be unmapped once committed.
+  COMMITTED="$(git diff --name-only "$MB" HEAD | sort -u)"
+  UNCOMMITTED="$(comm -23 <(echo "$CHANGED") <(echo "$COMMITTED"))"
+  if [ -n "$UNCOMMITTED" ]; then
+    UNCOMMITTED_UNMAPPED="$(echo "$UNCOMMITTED" | python3 "$SELECT" unmapped-paths --stdin 2>/dev/null)"
+    if [ -n "$UNCOMMITTED_UNMAPPED" ]; then
+      warn "uncommitted file(s) are journey-relevant but unmapped (selector sees committed history only):"
+      echo "$UNCOMMITTED_UNMAPPED" | sed 's/^/         /'
+    fi
+  fi
+fi
+
+# ── 7. Fix-chain warning (KRI-751) ───────────────────────────────────────────
+# Offline: counts fix-subject commits already on origin/main for this ticket.
+echo "[7/7] fix-chain check"
+BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+TICKET="$(echo "$BRANCH" | grep -oiE 'kri-[0-9]+' | head -1 | tr 'a-z' 'A-Z')"
+if [ -z "$TICKET" ]; then
+  info "no KRI-<n> in branch name '$BRANCH' — skipped"
+else
+  # -i grep, then an explicit digit boundary (git's regex has no portable \b).
+  FIXES="$(git log origin/main --format=%s -i --grep="$TICKET" 2>/dev/null \
+    | grep -iE "$TICKET([^0-9]|$)" | grep -icE '^fix' || true)"
+  FIXES="${FIXES:-0}"
+  if [ "$FIXES" -ge 2 ]; then
+    warn "$TICKET already has $FIXES fix PR(s) on main — this would be fix #$((FIXES + 1)). Write the failure-mode list first (each mode: covered by test X, or 'uncovered - adding test X'): docs/runbooks/linear-workflow.md#fix-chains-the-second-fix-pr-rule"
+  else
+    pass "$TICKET has $FIXES fix PR(s) on main — no fix chain"
   fi
 fi
 

@@ -115,6 +115,42 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertEqual(s1.clipIndex, 0)
     }
 
+    // New source placements have no server slot ID until Save. They must survive
+    // draft hydration, the live timeline, and the next client-state/commit round trip.
+    func testRestoredUnusedSourceWithoutSlotIDSurvivesStagingAndSave() async throws {
+        for explicitNull in [false, true] {
+            var payload = Self.chatPayload(shape: .flatOnly)
+            var restored: [String: JSONValue] = [
+                "clip_index": .number(3), "in_s": .number(0),
+                "duration_s": .number(3), "removed": .bool(false),
+                "transition_after": .string("cut"), "look_preset": .string("none"),
+            ]
+            if explicitNull { restored["slot_id"] = .null }
+            payload["timeline_slots"] = .array([.object(restored)])
+            let snapshot = DraftSnapshot(draftID: "restored", itemID: "item", variantKey: "initial", draftRevision: 4,
+                snapshotHash: "h", etag: "e", baseJobID: Self.jobID, baseGenerationID: "g1",
+                snapshot: ["kind": .string("editor"), "editor_payload": .object(payload)], canUndo: true, createdAt: .now)
+            let (session, fake) = await loaded(snapshot)
+            XCTAssertEqual(session.document.clips.map(\.clipIndex), [3, 0, 1, 2])
+            XCTAssertEqual(session.timelineClips.count, 4)
+            XCTAssertTrue(session.document.opaqueRecords.values.allSatisfy(\.isEmpty), "valid restored clips must not block native preview as opaque content")
+            let added = try XCTUnwrap(session.document.clips.first { $0.clipIndex == 3 })
+            XCTAssertNil(added.id, "inventing an ID would fail the server's stale-slot validation")
+            XCTAssertEqual(added.durationS, 3)
+            let nextMessage = try XCTUnwrap(session.exportEditorState())
+            XCTAssertEqual(nextMessage.lanes.timelineSlots?.count, 4, "the next chat turn must retain the restored clip")
+            await session.save()
+            let rows = try XCTUnwrap(fake.lastRequest?.timelineSlots)
+            XCTAssertEqual(rows.count, 4)
+            guard case let .object(first) = rows[0] else { return XCTFail("Missing restored source") }
+            XCTAssertEqual(first["clip_index"], .number(3))
+            XCTAssertTrue(first["slot_id"] == nil || first["slot_id"] == .null)
+            let (undoable, _) = await loaded(snapshot)
+            undoable.undo()
+            XCTAssertEqual(undoable.document.clips.map(\.clipIndex), [0, 1, 2])
+        }
+    }
+
     func testStagedEditIsUndoableAndSavedThroughTheNormalCommit() async throws {
         let (session, fake) = await loaded(Self.chatSnapshot())
         await session.save()

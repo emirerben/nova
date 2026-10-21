@@ -71,6 +71,20 @@ targets:
         buildPhase: resources
       - path: ../web/public/plan/type-posters/talking.jpg
         buildPhase: resources
+      - path: ../web/public/plan/type-posters/slider-lisbon-taberna-1.jpg
+        buildPhase: resources
+      - path: ../web/public/plan/type-posters/slider-lisbon-taberna-2.jpg
+        buildPhase: resources
+      - path: ../web/public/plan/type-posters/slider-lisbon-taberna-3.jpg
+        buildPhase: resources
+      - path: ../web/public/plan/type-posters/slider-lisbon-taberna-4.jpg
+        buildPhase: resources
+      - path: ../web/public/plan/type-posters/slider-lisbon-taberna-5.jpg
+        buildPhase: resources
+      - path: ../web/public/plan/type-posters/slider-lisbon-taberna-6.jpg
+        buildPhase: resources
+      - path: ../web/public/plan/type-posters/slider-lisbon-taberna-7.jpg
+        buildPhase: resources
       - path: ../web/public/landing/raw-story/trulli-street.jpg
         buildPhase: resources
       - path: ../web/public/landing/raw-story/istanbul.mp4
@@ -122,6 +136,8 @@ targets:
       - path: Tests/Fixtures/editor-commit-picker-contract.json
         buildPhase: resources
       - path: Tests/Fixtures/guided_label_rebase_vectors.json
+        buildPhase: resources
+      - path: Tests/Fixtures/editor_save_matrix.json
         buildPhase: resources
     dependencies:
       - target: Kria

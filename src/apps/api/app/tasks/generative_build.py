@@ -6094,6 +6094,20 @@ def _resolve_phone_song_bed(job_id: str, user_song: Any) -> Any:
     )
 
 
+def _worker_reply_language(snapshot: dict):
+    """The chat's language for the requirement copy this worker writes (KRI-765).
+
+    The dispatch stamps ``creator_reply_language`` beside the approved brief binding. Binding
+    it around the receipts and the block recovery keeps a reason with clip names in it in one
+    language: the chat can only re-word a stored reason that matches a static English sentence.
+    Absent (English chat, older job) or unsupported -> unbound, English, as before.
+    """
+    from app.kria.reply_language import reply_language_for  # noqa: PLC0415
+
+    language = snapshot.get("creator_reply_language")
+    return reply_language_for(language if isinstance(language, str) else None)
+
+
 def _save_request_recovery(
     job_id: str,
     snapshot: dict,
@@ -6212,9 +6226,17 @@ def _run_phone_unified_montage_job(
 
     # KRI-578: a plan-authority job (stamp + pinned contract) takes the lyric-caption
     # decision from the approved strategy; only legacy jobs re-read the saved request.
-    from app.services.creator_render_contract import stamped_plan_contract  # noqa: PLC0415
+    from app.services.creator_render_contract import (  # noqa: PLC0415
+        read_render_contract,
+        stamped_plan_contract,
+    )
 
     plan_authority = stamped_plan_contract(snapshot, all_candidates) is not None
+    # KRI-585: a pinned contract that requires an order is verified cut for cut, so what
+    # the clips say never moves one there.
+    contract = read_render_contract(snapshot)
+    from app.kria.narration_notes import speech_order_approved  # noqa: PLC0415
+
     user_id, assignments, brief = _load_unified_montage_inputs(job_id)
     approved_length_plan = _approved_length_plan_envelope(snapshot)
     view = brief_view(brief)
@@ -6326,6 +6348,9 @@ def _run_phone_unified_montage_job(
                 output_orientation=_creator_shape_orientation(all_candidates),
                 creator_duration_proven=creator_duration_proven,
                 approved_length_plan=approved_length_plan,
+                # KRI-585: what the clips say orders them only where the approved plan
+                # recorded it (and the reply said so), never against a pinned order.
+                speech_order=speech_order_approved(strategy, contract, approved_length_plan),
             )
     # Complete the initial text lane before the canonical generation is pinned.
     # This uses the request already bound to this job, never a newer thread message.
@@ -6359,18 +6384,19 @@ def _run_phone_unified_montage_job(
         )
 
         record["generation_id"] = generation
-        record["requirement_receipts"] = [
-            {
-                **receipt.model_dump(mode="json"),
-                "brief_version": brief.version,
-                "generation_id": generation,
-            }
-            for receipt in build_receipts(
-                brief.live(),
-                plan_facts_from_unified_montage(record),
-                include_unchecked=bool(snapshot.get("creator_brief_binding")),
-            )
-        ]
+        with _worker_reply_language(snapshot):
+            record["requirement_receipts"] = [
+                {
+                    **receipt.model_dump(mode="json"),
+                    "brief_version": brief.version,
+                    "generation_id": generation,
+                }
+                for receipt in build_receipts(
+                    brief.live(),
+                    plan_facts_from_unified_montage(record),
+                    include_unchecked=bool(snapshot.get("creator_brief_binding")),
+                )
+            ]
         # A checked receipt that only states a limit of the phone montage (KRI-689: it plays
         # every clip at natural speed, and the draft already said so) never blocks the render.
         if snapshot.get("creator_brief_binding") and any(
@@ -6392,7 +6418,8 @@ def _run_phone_unified_montage_job(
             )
             from app.kria.brief_checks import render_block_recovery  # noqa: PLC0415
 
-            block = render_block_recovery(failures)
+            with _worker_reply_language(snapshot):
+                block = render_block_recovery(failures)
             recovery_message = block.message
             if not _save_request_recovery(
                 job_id,
@@ -9589,9 +9616,12 @@ def _run_phone_narrated_job(
                     _media_id_for_clip(clip_id) for clip_id in moved_clip_ids
                 ),
             )
-            narrated_failures = _narrated_alignment_receipts(
-                narrated_record, narrated_brief, bound=bool(snapshot.get("creator_brief_binding"))
-            )
+            with _worker_reply_language(snapshot):
+                narrated_failures = _narrated_alignment_receipts(
+                    narrated_record,
+                    narrated_brief,
+                    bound=bool(snapshot.get("creator_brief_binding")),
+                )
             if narrated_failures:
                 from app.kria.brief_checks import render_block_recovery  # noqa: PLC0415
 
@@ -9605,7 +9635,8 @@ def _run_phone_narrated_job(
                         "requirement_receipts": narrated_failures,
                     },
                 )
-                recovery_message = render_block_recovery(narrated_failures).message
+                with _worker_reply_language(snapshot):
+                    recovery_message = render_block_recovery(narrated_failures).message
                 if not _save_request_recovery(
                     job_id,
                     snapshot,

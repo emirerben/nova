@@ -1,0 +1,29 @@
+{
+ "id": "ungrounded_why",
+ "description": "A why that shares no word with the footage is dropped; the label is kept.",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "default_label": null,
+  "ranked": [
+   {
+    "cid": "{{cid:hook}}",
+    "label_template": "Open with a hook",
+    "why": "Skateboard tricks at sunset"
+   }
+  ]
+ },
+ "expect": {
+  "label_source": {
+   "hook": "agent"
+  },
+  "why": {
+   "hook": false
+  },
+  "drops": {
+   "why_ungrounded": 1
+  }
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

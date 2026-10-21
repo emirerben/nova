@@ -1,0 +1,43 @@
+{
+ "name": "fp_subtitled_format_speech",
+ "description": "A subtitled (talking) edit always captions what is said, so a captions chip would be a no-op.",
+ "tags": [
+  "speech",
+  "format"
+ ],
+ "context": {
+  "thread_id": "thread-fp_subtitled_format_speech",
+  "state": "first_prompt",
+  "language": "en",
+  "client_protocol": 2,
+  "media_digest": "digest-fp_subtitled_format_speech",
+  "understanding": "complete",
+  "runtime_version": 2,
+  "edit_format": "subtitled",
+  "clips": [
+   {
+    "media_id": "clip-1",
+    "ordinal": 1,
+    "kind": "video",
+    "subject": "creator talking to camera in a kitchen",
+    "setting": "",
+    "has_speech": true,
+    "to_camera": true,
+    "duration_s": 9.0,
+    "notable_moments": [
+     {
+      "start_s": 0.5,
+      "end_s": 2.0,
+      "label": "greeting"
+     }
+    ]
+   }
+  ],
+  "render_program": "guided"
+ },
+ "expect": {
+  "kinds_exclude": [
+   "captions"
+  ]
+ }
+}

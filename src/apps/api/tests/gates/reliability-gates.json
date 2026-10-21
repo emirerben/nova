@@ -1658,6 +1658,64 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-721-approval-readiness",
+      "tickets": [
+        "KRI-721",
+        "KRI-705",
+        "KRI-700"
+      ],
+      "symptom": "Approval omitted unchecked requirements and accepted unsupported format limits without a revision-bound waiver.",
+      "boundary": "contract",
+      "status": "open_pr",
+      "owner": "KRI-721",
+      "journey": "kri-721-approval-readiness",
+      "paths": [
+        "src/apps/api/app/kria/approval_readiness.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/kria/plan_review.py",
+        "src/apps/api/app/kria/render_retry.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/config.py",
+        "src/apps/api/tests/kria/test_approval_readiness_postgres.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_approval_readiness_postgres.py",
+        "tests/kria/test_runtime_simpler_version_loop.py",
+        "tests/kria/test_render_retry_postgres.py",
+        "tests/kria/test_plan_review.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": "kria_approval_readiness_enabled",
+      "evidence": {
+        "offline_replay": "Provider transport replay through real parsing, runtime, source-window validation, PostgreSQL and HTTP approval; baseline accepted the wind-noise request without evidence.",
+        "live_model": "unknown; no paid model calls",
+        "native_output": "unknown; physical approval UI is a separate evidence tier",
+        "production": "not deployed"
+      },
+      "neighbours_covered": [
+        "missing evidence",
+        "typed unsupported exposure",
+        "exact omissions and generic replies",
+        "capability/source withdrawal",
+        "direct and repeated HTTP approval",
+        "scoped editor extraction",
+        "legacy unstamped drafts",
+        "exact Retry and Undo regression suites"
+      ],
+      "neighbours_gap": [
+        "KRI-722/723 prepared-execution and montage coverage",
+        "KRI-724/725 wider speech/cloud/slide execution proof"
+      ],
+      "follow_ups": [
+        "KRI-722",
+        "KRI-723",
+        "KRI-724",
+        "KRI-725"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-729-camera-roll-approval",
       "tickets": [
         "KRI-729",

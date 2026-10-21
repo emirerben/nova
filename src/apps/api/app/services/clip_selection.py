@@ -27,7 +27,8 @@ from typing import Any, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.kria.reply_language import say
+from app.kria.reply_language import current_reply_language, detect_chat_language, say
+from app.kria.text_trim import trim_at_word
 from app.schemas.clip_intents import ClipIntent, ClipIntentOp
 
 CLIP_QUESTION_VERSION = 1
@@ -38,7 +39,7 @@ _KEY_MAX = 120
 _FALLBACK_MIN_SIMILARITY = 0.5
 # Ops whose picker answers may stand in for each other. KRI-667: never `exclude`, so the
 # clips a creator tapped for "include: laundry" can never become the clips an
-# "exclude: laundry" leaves out (an exclude is never a picker category of its own).
+# "exclude: laundry" leaves out (an exclude is its own picker category, KRI-761).
 _MEMBERSHIP_OPS = frozenset({"group", "include"})
 # KRI-697: an `intent_id` binds an answer only with a 4+ letter word outside these generic
 # words AND not as one word plus digits ("clip_1", "media2"): a re-plan may reuse those
@@ -130,9 +131,21 @@ def _identities(intent_id: object, creator_text: object) -> list[str]:
 # ── Question construction ─────────────────────────────────────────────────────
 
 
-def category_label(intent: ClipIntent) -> str:
-    """The creator's own description of WHICH clips (never the text printed on them)."""
-    return " ".join(intent.attribute.split()) or "these clips"
+_LABEL_MAX = 80  # build_clip_question's row-label bound
+
+
+def category_label(intent: ClipIntent, *, creator_words: str | None = None) -> str:
+    """The creator's own description of WHICH clips (never the text printed on them).
+
+    KRI-692: in a Turkish chat a model-written label that clearly reads English ("the moment
+    'yirmi dakika' is said") is shown as ``creator_words`` instead, the creator's verbatim
+    sentence for this intent. Display only: the intent's ``attribute`` (what the resolver
+    searches by and the key an answer binds to) is never rewritten.
+    """
+    label = " ".join(intent.attribute.split()) or "these clips"
+    if creator_words and current_reply_language() == "tr" and detect_chat_language(label) == "en":
+        return trim_at_word(" ".join(creator_words.split()), _LABEL_MAX) or label
+    return label
 
 
 def _photo_candidates(

@@ -242,6 +242,117 @@ python -m tests.evals.request_following.report --phase P0 \
   is on the clip record, never in `facts`). Pass `guesses={clip_id: name}` to score a live
   `landmark_guess` run against the same footage.
 
+## Suggestion-chip replay eval (`test_suggestion_chips_evals.py`, `test_chip_suggester_evals.py`, KRI-756)
+
+iOS app only (the web client ignores the feature). Two layers, both free, offline, no network, no
+skia, no paid call:
+
+1. the **deterministic chip engine** (`app/services/suggestion_chips.py`) decides which chips MAY
+   exist: is every chip real, enabled, not already in the edit, and executable on the compile path?
+2. the **wording agent** `nova.chat.suggester` only ranks and words those candidates: whatever it
+   says, can the served set break the contract, and how much of its wording survives validation?
+
+```bash
+cd src/apps/api
+pytest tests/evals/test_suggestion_chips_evals.py tests/evals/test_chip_suggester_evals.py \
+  tests/services/test_suggestion_chips_guards.py tests/scripts/test_suggestion_chip_funnel.py -q
+.venv/bin/python scripts/suggestion_chip_report.py                   # -> <repo>/.chip-eval/report.md
+.venv/bin/python scripts/suggestion_chip_report.py --write-contract  # regenerate the iOS mock JSON
+.venv/bin/python scripts/suggestion_chip_funnel.py --fixture         # shown/tapped/kept derivation
+```
+
+### Engine (`test_suggestion_chips_evals.py`)
+
+- **Fixtures** (`tests/fixtures/agent_evals/suggestion_chips/*.json`): `{name, description,
+  context, expect}`. The context is the engine's `SuggestionContext`; ready-state snapshots use
+  a preset (`snapshot_preset`) plus a `snapshot` patch (`null` deletes a key). The `nermin-*`
+  turn fixtures and `east-run-brief` (Turkish, 5 clips, hand-authored analysis) in
+  `tests/fixtures/kria_turns` are projected into first-prompt and ready cases at load time. The
+  12-clip case is seeded from the redacted KRI-126 prod input (real notable moments);
+  `loader_projection` re-projects all 30 through the loader's own `_clip_rows`.
+- **Real witnesses.** First-prompt levers are dry-run through a real `ResolvedCreatorManifest`
+  and `check_strategy_for_runtime_v2`; ready-state levers through `parse_editor_operation` +
+  `compile_editor_ops` over a synthetic variant (`runners/snapshot_variant.py`). Nothing is
+  faked unless a fixture says `"witness": "none"`. The report prints each chip's **witness tier**
+  (`strategy` | `editor` | `policy_only`) so "executable" is never claimed more strongly than it was
+  proven.
+- **Gates**, run on every fixture, each with negative controls so it cannot pass vacuously:
+  G1 grounding, G2 capability matrix (dark kinds `opener_clip` / `pinned_text` never), G3 not
+  already in the edit, G4 diversity (1-based dense ranks, 1 chip per kind, at most one copy-bearing
+  chip), G5 chip #1 is `default_edit` / `Suggest an edit.`, G6 hygiene (length, language, quotes,
+  stoplist, label parity for agent labels, grounded `why`), G7 closed template set (Gemini text
+  only ever in `why`, never in a label or message), G8 determinism, G11 wire contract (status /
+  state / retry / closed kind enum). The oracles (`KIND_REQUIRES`, `MESSAGE_DECK`, `LABEL_DECK`,
+  `_is_title_like`) are restated from the planner's sources, not imported from the engine.
+- **G1 is not a specificity measure.** It validates only an anchor a chip carries; the template
+  engine emits a closed deck of generic labels (about a dozen distinct labels across ~150 chips,
+  almost none anchored), so a 100% G1 and an empty stoplist do NOT show the chips fit THIS footage.
+  No offline gate measures that. The report prints the numbers (`specificity_stats`); the real bar is
+  the paid live replay + judge on `specificity_to_this_footage`, still an open TODO needing approval.
+- **G9 executability (COMPILE PATH ONLY).** `executability_cassettes.json` holds a hand-authored
+  planner answer per (kind, state), replayed through `replay_v2_strategy` / `replay_v2_editor`.
+  Pre-render treatment kinds also diff `optional_treatments` before/after
+  `check_strategy_for_runtime_v2`, because the policy drops disabled treatments silently. This does
+  NOT prove today's prompts choose that answer. The first-prompt `hook` is graded "reaches wording
+  approval with a candidate", not "executes an op".
+- **Known gaps** are strict xfails (`KNOWN_GAPS` in `suggestion_chips_harness.py`; empty today).
+
+### Wording agent (`test_chip_suggester_evals.py`, `chip_suggester_harness.py`)
+
+- **Cassettes** (`tests/fixtures/agent_evals/chip_suggester/*.json`, 25): hand-authored raw model
+  answers, NOT recorded output, natural and adversarial (invented / duplicate / guessed cids for
+  gated-off, already-in-edit and dark kinds, extra `message` / `kind` keys on a row, cross-kind,
+  hype, digit / quote / emoji, footage text in a label, prompt injection, unknown placeholders,
+  wrong language, ungrounded and handle / URL `why`, non-JSON, wrong shape, fenced JSON). Each is
+  replayed through the REAL agent `parse`, the REAL task body `kria_suggester._run_agent` (with the
+  model client and Redis swapped for in-memory fakes) and the REAL serve join. `{{cid:<kind>}}`
+  is the live candidate id; `{{guess:<kind>}}` is the id an adversary who knows the cid formula
+  would mint (live only if the engine allowed that kind).
+- **G10 fuzz.** 45 contexts x 30 seeded answers (random cids from this and other contexts, junk and
+  plausible labels, grounded and hostile `why`, extra row keys, broken JSON) must leave the served
+  set contract-clean: every chip a live candidate with `message`, `kind`, `capability`, `anchor`
+  and `requires_protocol` copied from it, no flag-off / already-in-edit / dark kind, label and
+  `why` valid, Gemini text out of labels and messages, limits held. Mutation controls break the
+  label validator, the `why` validator and the pool check in turn and require the fuzz to go red.
+- **Label acceptance** (`label_corpus.json`, 130 hand-authored labels): recall of plausible
+  creator-voiced rewordings (bar >= 80%), rejection of cringe / wrong-kind / leaking / hostile
+  labels (bar 100%), and how much loosening to stoplist-only would let through. The corpus is MY
+  guess of the model, so the rate is a floor on strictness, not a measurement of Flash.
+- **Backend gaps** found by the eval are strict xfails (`BACKEND_GAPS` in
+  `chip_suggester_harness.py`), listed in the report.
+
+### Telemetry (contract section 8), asserted with `structlog.testing.capture_logs`
+
+`suggestion_chips.shown` (once per final `set_id`; the pending set does not emit),
+`suggestion_chips.agent_run` (one per run, with `fallback_reason` in schema_error | label_rejected |
+timeout | budget | stale_digest | flag_off | run_cap, each triggered from its real cause) and
+`suggestion_chips.tap` (the 8-key stamp). The stamp round-trips into
+`scripts/suggestion_chip_funnel.py`, which derives offered / tapped / kept, split by `label_source`
+and `wording`, and prints the chip-#1 bias (a media-only send counts as a tap of chip #1 because the
+stamp has no explicit-vs-text flag). The old iOS PromptChips only filled the composer, so there is
+NO tap baseline: compare completed first renders and chat edits per render between a flag-off and a
+flag-on cohort, not a tap rate.
+
+### Paid / approval-needed items (NOT run; nothing here spends money)
+
+1. **Live tap-to-op proof.** Run today's `main_creator` and `edit_copilot` on each chip message and
+   check the claimed op appears (development ledger, hard cap $2, no judge; bar 95%). First record
+   a cassette per kind from the live answer; the hand-authored answers in
+   `executability_cassettes.json` are the reference to diff against. Until then the executability
+   bar is proven only on the compile path.
+2. **Empathy / cringe judge** of the finite template set and of recorded agent labels with
+   `audit-user-empathy` (paid Anthropic grader; use the worktree `.venv`). The deck is 7 kinds x 2
+   languages.
+3. **Blind old-vs-new pairwise judge** on about 20 real sessions (`llm_judge.py` has no pairwise
+   mode, so this needs a new script beside it; the sessions are not in the repo). Pass bar >= 70%
+   preference, founder agrees on 10. UNMEASURED.
+4. **Flash-vs-template wording A/B** by `label_source` in real taps (needs the flag on for a
+   cohort; fix the `label_source` attribution gap in the report first).
+5. **Live replay of `nova.chat.suggester`** on the nermin / east-run contexts to record real
+   outputs and replace the hand-authored label corpus with a measured acceptance rate.
+6. **`opener_clip` cassette** proving filename-to-hero resolution through the planner; only then
+   may `CLIP_ORDINAL_PROVEN` flip.
+
 ## CI
 
 - **Default CI:** runs structural-only on every PR (~30s, no secrets).

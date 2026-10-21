@@ -63,6 +63,30 @@ enum NativeEditorUITestFixtures {
             caps["text_bend"] = .bool(true)
             value.serverSnapshot["editor_capabilities"] = .object(caps)
         }
+        if arguments.contains("-ui-testing-editor-research-sources") {
+            // Offline UI coverage only; live research is verified separately on device.
+            var payload = value.serverSnapshot["editor_payload"]?.objectValue ?? [:]
+            var sections = payload["sections"]?.objectValue ?? [:]
+            var elements = sections["text_elements"]?.arrayValue ?? []
+            if var first = elements.first?.objectValue {
+                first["source_params"] = .object(["research": .object([
+                    "original_text": first["text"] ?? .string(""),
+                    "start_s": first["start_s"] ?? .number(0),
+                    "end_s": first["end_s"] ?? .number(1.5),
+                    "media_ids": .array([]),
+                    "timeline_binding": sections["timeline_slots"] ?? .array([]),
+                    "sources": .array([.object([
+                        "title": .string("Museum fixture source"),
+                        "url": .string("https://museum.example.org/collection")
+                    ])]),
+                    "retrieved_at": .string("2026-10-19T00:00:00Z")
+                ])])
+                elements[0] = .object(first)
+                sections["text_elements"] = .array(elements)
+                payload["sections"] = .object(sections)
+                value.serverSnapshot["editor_payload"] = .object(payload)
+            }
+        }
         return Fixture(shape: shape, draft: value)
     }
 

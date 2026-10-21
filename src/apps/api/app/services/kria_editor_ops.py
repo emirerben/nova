@@ -568,6 +568,18 @@ def _source_pool_rows(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]]
         for row in slots
         if row.get("clip_index") is not None and row.get("source_duration_s") is not None
     }
+    revision = _guided_v2_revision(job, variant)
+    sources_by_path = {
+        row["gcs_path"]: row
+        for row in (revision or {}).get("sources", [])
+        if isinstance(row, dict) and isinstance(row.get("gcs_path"), str)
+    }
+    context = _approved_research_context(job, variant)
+    for index, path in enumerate(paths):
+        source = sources_by_path.get(path, {})
+        duration = source.get("duration_s")
+        if isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration > 0:
+            durations.setdefault(index, float(duration))
     return [
         {
             "clip_index": index,
@@ -582,6 +594,11 @@ def _source_pool_rows(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]]
             # invalidation this field exists to provide.
             "generation": hashlib.sha256(path.encode("utf-8")).hexdigest()[:12],
             "duration_s": durations.get(index),
+            **(
+                {"seen": {"text": seen, "provenance": "vision"}}
+                if (seen := context["seen"].get(str(sources_by_path.get(path, {}).get("media_id"))))
+                else {}
+            ),
             "used": index in used_clip_indexes,
             "ready": True,
         }
@@ -1398,15 +1415,8 @@ def client_state_payload(client_state: Any) -> dict[str, Any]:
         for key, value in (state.get("lanes") or {}).items()
         if key not in _STATE_DROP_KEYS and value is not None
     }
-    slots = lanes.get("timeline_slots")
-    if isinstance(slots, list):
-        # New (unsaved) rows have no id yet; give them a deterministic one so the
-        # snapshot the model sees and the compile base index the SAME rows.
-        stamp = str(state.get("client_state_id") or "state")[:12]
-        lanes["timeline_slots"] = [
-            row if row.get("slot_id") else {**row, "slot_id": f"cs-{stamp}-{index}"}
-            for index, row in enumerate(slots)
-        ]
+    # Missing slot IDs mean new placements. Keep that meaning through chat so
+    # the Save boundary can assign permanent IDs; fabricated IDs look stale.
     lanes["base_generation"] = str(state.get("base_generation") or "")
     return lanes
 
@@ -1687,6 +1697,8 @@ class _DraftState:
     base_generation: Any
     # Slots as they were before this bundle's ops (guided label rebase reads it).
     initial_slots: list[dict[str, Any]] = field(default_factory=list)
+    # Snapshot indices keep targeting these objects after a reorder, like the web drawer.
+    slot_targets: list[dict[str, Any]] = field(default_factory=list)
     removed_text_bars: set[int] = field(default_factory=set)
     changed: set[str] = field(default_factory=set)
     changes: list[str] = field(default_factory=list)
@@ -1889,9 +1901,23 @@ def _op_patch_text_appearance(state: _DraftState, op: dict[str, Any]) -> None:
     state.changed.add("text")
 
 
+def _snapshot_slot_index(state: _DraftState, index: object) -> int:
+    targets = state.slot_targets or state.slots
+    target = targets[_require_index(targets, index, "Timeline")]
+    for current, row in enumerate(state.slots):
+        if row is target:
+            return current
+    # Splitting replaces the left-hand object but retains its durable slot ID.
+    key = target.get("slot_id")
+    matches = [i for i, row in enumerate(state.slots) if key and row.get("slot_id") == key]
+    if len(matches) == 1:
+        return matches[0]
+    raise KriaEditorOpError("Timeline target changed before this edit could be drafted")
+
+
 def _op_set_clip_duration(state: _DraftState, op: dict[str, Any]) -> None:
     name = str(op.get("op") or "")
-    index = _require_index(state.slots, op.get("slot_index"), "Timeline")
+    index = _snapshot_slot_index(state, op.get("slot_index"))
     row = state.slots[index]
     if name == "set_clip_duration":
         row["duration_beats"] = None
@@ -1933,15 +1959,15 @@ def _op_trim_output_start(state: _DraftState, op: dict[str, Any]) -> None:
 
 
 def _op_reorder_clip(state: _DraftState, op: dict[str, Any]) -> None:
-    source = _require_index(state.slots, op.get("from_index"), "Timeline")
-    target = _require_index(state.slots, op.get("to_index"), "Timeline")
+    source = _snapshot_slot_index(state, op.get("from_index"))
+    target = _snapshot_slot_index(state, op.get("to_index"))
     row = state.slots.pop(source)
     state.slots.insert(target, row)
     state.changed.add("timeline")
 
 
 def _op_remove_clip(state: _DraftState, op: dict[str, Any]) -> None:
-    index = _require_index(state.slots, op.get("slot_index"), "Timeline")
+    index = _snapshot_slot_index(state, op.get("slot_index"))
     if sum(not row.get("removed") for row in state.slots) <= 1:
         raise KriaEditorOpError("The final clip cannot be removed")
     state.slots[index]["removed"] = True
@@ -1949,7 +1975,7 @@ def _op_remove_clip(state: _DraftState, op: dict[str, Any]) -> None:
 
 
 def _op_split_clip(state: _DraftState, op: dict[str, Any]) -> None:
-    index = _require_index(state.slots, op.get("slot_index"), "Timeline")
+    index = _snapshot_slot_index(state, op.get("slot_index"))
     row = state.slots[index]
     duration = _slot_duration(row)
     split_at = float(op["at_s"])
@@ -1987,9 +2013,9 @@ def _op_add_unused_sources(state: _DraftState, op: dict[str, Any]) -> None:
     paths = list((state.job.all_candidates or {}).get("clip_paths") or [])
     used = {int(row.get("clip_index")) for row in state.slots if not row.get("removed")}
     durations = {
-        int(row["clip_index"]): float(row["source_duration_s"])
-        for row in _variant_slots(state.variant, state.job)
-        if row.get("clip_index") is not None and row.get("source_duration_s") is not None
+        int(row["clip_index"]): float(row["duration_s"])
+        for row in _source_pool_rows(state.job, state.variant)
+        if row.get("clip_index") is not None and row.get("duration_s") is not None
     }
     for index, path in enumerate(paths):
         kind = _path_kind(path)
@@ -2266,6 +2292,7 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         ),
     )
     state.initial_slots = copy.deepcopy(state.slots)
+    state.slot_targets = list(state.slots)
     initial_text = copy.deepcopy(state.text)
     try:
         before = snapshot_before(state)
@@ -2479,6 +2506,7 @@ def apply_text_lane_ops(
         base_generation=None,
     )
     state.initial_slots = copy.deepcopy(state.slots)
+    state.slot_targets = list(state.slots)
     for op in ops:
         name = str(op.get("op") or "")
         handler = _OP_HANDLERS.get(name)

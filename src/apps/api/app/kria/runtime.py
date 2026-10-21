@@ -100,6 +100,7 @@ from app.services.speech_cleanup_decision import (
     resolve_next_audio_mode,
     reuse_recorded_cleanup_decision,
 )
+from app.services.suggestion_chips import suggestion_tap_payload
 
 log = structlog.get_logger()
 
@@ -122,7 +123,8 @@ def request_digest(body: SubmitTurnBody) -> str:
     # `clip_selection` stays in the digest (a different tap set under one id is a
     # different request) but is excluded when absent so pre-existing digests hold.
     excluded = (
-        {"editor_state"}
+        # KRI-756: which chip a message came from is telemetry, never part of the request.
+        {"editor_state", "suggestion"}
         | ({"clip_selection"} if body.clip_selection is None else set())
         | ({"choice_selection"} if body.choice_selection is None else set())
         | ({"song_order"} if body.song_order is None else set())  # KRI-374: additive digest
@@ -959,6 +961,16 @@ async def submit_turn(
                 }
                 if choice_selection is not None
                 else {}
+            ),
+            # KRI-756: {"suggestion": {...}} when the message equals an offered chip. Not
+            # part of `request_digest`; flag off => {} (existing payloads byte-identical).
+            **(
+                await suggestion_tap_payload(
+                    db,
+                    thread,
+                    body.message,
+                    suggestion=body.suggestion.model_dump() if body.suggestion else None,
+                )
             ),
         },
         client_event_id=body.client_event_id,
@@ -2339,7 +2351,7 @@ async def decide_approval(
         )
 
     if decision == "approve":
-        from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+        from app.kria.brief_binding import media_identity, snapshot_media  # noqa: PLC0415
 
         copy_document = _parse_draft_document(draft.snapshot_json)
         copy_item = plan_item or await db.get(PlanItem, session.plan_item_id)
@@ -2370,6 +2382,93 @@ async def decide_approval(
                     code="camera_roll_story_stale",
                     message=(
                         "The chosen collection or story changed. Review it again before rendering."
+                    ),
+                )
+        saved_readiness = (
+            (copy_document.brief_coverage or {}).get("approval_readiness")
+            if copy_document is not None
+            else None
+        )
+        if saved_readiness is None and execution is not None:
+            saved_readiness = (execution.result or {}).get("approval_readiness")
+        expected_readiness = (
+            (execution.result or {}).get("approval_readiness_digest") if execution else None
+        )
+        if expected_readiness is not None or saved_readiness is not None:
+            from app.kria.approval_readiness import (  # noqa: PLC0415
+                NOT_READY,
+                assess_readiness,
+                digest,
+                readiness_matches,
+                resolve_readiness_manifest,
+            )
+            from app.services.choice_questions import answered_brief  # noqa: PLC0415
+
+            ready = False
+            if (
+                copy_document is not None
+                and copy_document.brief_binding is not None
+                and copy_item is not None
+            ):
+                try:
+                    pinned_brief = copy_document.brief_binding.resolve(thread.id)
+                    with reply_language_for(thread_reply_language(thread)):
+                        current_brief = answered_brief(
+                            await load_latest_brief(db, thread.id),
+                            copy_document.strategy,
+                        )
+                        current_manifest = await resolve_readiness_manifest(
+                            db,
+                            copy_item,
+                            copy_document.strategy,
+                        )
+                        current_readiness = assess_readiness(
+                            current_brief,
+                            copy_document.strategy,
+                            media=copy_document.brief_binding.media_snapshot,
+                            manifest=current_manifest,
+                            editor_payload=copy_document.editor_payload,
+                            editor_text_diff=copy_document.editor_text_diff,
+                        )
+                    ready = (
+                        digest(media_identity(snapshot_media(copy_item)))
+                        == current_readiness["media_digest"]
+                        and digest(pinned_brief.model_dump(mode="json") if pinned_brief else None)
+                        == current_readiness["brief_digest"]
+                        and (
+                            expected_readiness is None
+                            or expected_readiness == current_readiness["digest"]
+                        )
+                        and readiness_matches(saved_readiness, current_readiness)
+                    )
+                except ValueError:
+                    ready = False
+            if not ready:
+                await _cancel_pending_approval(
+                    db,
+                    thread=thread,
+                    session=session,
+                    turn=turn,
+                    approval=approval,
+                    execution=execution,
+                    plan_item=plan_item,
+                    code=NOT_READY,
+                    message=(
+                        "This draft no longer has current evidence for every requested change. "
+                        "Ask Kria to prepare it again."
+                    ),
+                    event_message=_thread_say(
+                        thread,
+                        en=(
+                            "I cancelled this approval because the draft, footage or available "
+                            "rendering features changed. Your saved edit is unchanged. "
+                            "Ask me to prepare it again from your saved request."
+                        ),
+                        tr=(
+                            "Taslak, çekimler veya kullanılabilir oluşturma özellikleri değiştiği "
+                            "için bu onayı iptal ettim. Kayıtlı düzenlemen değişmedi. "
+                            "Kayıtlı isteğinden yeniden hazırlamamı iste."
+                        ),
                     ),
                 )
         copy_rows = (

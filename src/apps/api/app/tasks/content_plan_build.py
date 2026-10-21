@@ -2600,9 +2600,15 @@ def _dispatch_item_render(
             if thread is None:
                 raise ValueError("Approved request does not belong to this project")
             brief = binding.resolve(thread.id)
+            # KRI-765: the render worker writes requirement copy (a blocked render's reasons)
+            # with no chat in hand; the chat's language rides the Job so it reads in one.
+            from app.kria.reply_language import thread_reply_language  # noqa: PLC0415
+
+            reply_language = thread_reply_language(thread)
             job.assembly_plan = {
                 **job.assembly_plan,
                 "creator_brief_binding": binding.model_dump(mode="json"),
+                **({"creator_reply_language": reply_language} if reply_language else {}),
             }
             # Rebuild the factory-pinned projection against the approved
             # BriefBinding rather than a live thread.  The binding carries the

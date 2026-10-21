@@ -64,6 +64,44 @@ import XCTest
         attach(app, "Native Kria applied proposal")
     }
 
+    /// Slide posts have no header actions menu, so the drawer row is their only way to rename. The alert
+    /// used to hang off that lazy row and vanished when the keyboard came up.
+    func testRenamingASlidePostFromTheDrawerKeepsTheAlertOpen() {
+        let app = openRichWorkspace()
+        app.buttons["slidepost-back"].tap()
+        let menu = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Project actions for'")).firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 5)); menu.tap()
+        app.buttons["Rename project"].tap()
+        let panel = app.alerts["Rename project"]
+        XCTAssertTrue(panel.waitForExistence(timeout: 3))
+        let field = panel.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        field.tap(); field.typeText(" renamed")
+        // Outlast the keyboard layout pass and the workspace's background refresh behind the alert.
+        _ = eventually(timeout: 5) { !panel.exists }
+        XCTAssertTrue(panel.exists, "the rename alert must stay open while the user types")
+        XCTAssertTrue((field.value as? String ?? "").hasSuffix(" renamed"))
+        panel.buttons["Cancel"].tap()
+    }
+
+    /// The Slider tile is the fourth card in the format picker; its picture must be exactly as tall as the others'.
+    func testSliderFormatTileMatchesTheOtherTilesPictureSize() {
+        let app = launchRich()
+        XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 12)); app.buttons["Open projects"].tap()
+        XCTAssertTrue(app.buttons["drawer-new-chat"].waitForExistence(timeout: 5)); app.buttons["drawer-new-chat"].tap()
+        let carousel = app.scrollViews["format-carousel"]
+        XCTAssertTrue(carousel.waitForExistence(timeout: 12))
+        expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: carousel); waitForExpectations(timeout: 20)
+        carousel.swipeLeft()
+        let slides = app.buttons["format-slides"]
+        XCTAssertTrue(slides.waitForExistence(timeout: 5))
+        XCTAssertEqual(slides.frame.height, 164, accuracy: 0.5, "same 156x164 picture as the other format tiles")
+        XCTAssertEqual(slides.frame.width, 156, accuracy: 0.5)
+        // Let it swipe once so the screenshot shows a settled frame, not half of two.
+        _ = eventually(timeout: 3.6) { false }
+        attach(app, "Slider format tile after one swipe")
+    }
+
     // MARK: Redesigned workspace (KRIA_SLIDE_POST_RICH_TEXT=1)
 
     func testLooksAppearOnThePhotoBeforeSavingWhenDeviceCapabilityIsEnabled() {

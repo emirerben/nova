@@ -328,7 +328,41 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   description or a cut-length style; a later "use the short clips too" adds them back.
   Photos and Visuals are never dropped; "skip the dark ones" stays the model's call
   (no lighting signal yet). Incident: cabin kit M2 re-send, prod thread 35ccc8ef.
+  KRI-758: ONE clip told apart by what it shows ("Caro'nun … bıraktığı kısa klibi
+  kullanma", "skip the short clip where …") is never a length group — a singular
+  phrase is the clip-intent `exclude` path; the single "en uzun klibi" / "the longest
+  clip" still scopes, and media the strategy itself places (montage audio source,
+  reaction beats, closing media) is never dropped by a length word. Guard:
+  `tests/kria/test_kri758_singular_clip_is_not_a_length_group.py`. Incident: café kit M1,
+  thread 91256BF1.
   Guard: `tests/kria/test_kri623_ruled_out_clips.py`.
+- *What the clips say orders a camera-sound montage (KRI-585)*: a phone montage with no
+  song, voiceover or named voice source plays every clip's own sound
+  (`narration_notes.keeps_camera_sound`), so the narration is heard cut by cut.
+  `app/services/spoken_roles.py` reads each clip's spoken role from its analysed speech
+  by folded tokens (no regex, KRI-667 ratchet): `opening` ("hoş geldiniz", "welcome
+  to"), `closing` ("görüşmek üzere", "see you next time"; whisper's invented outro is
+  ignored) and `introduction` ("Bu da Deniz", "this is Deniz", with someone on screen).
+  A welcome or sign-off said on more than one clip (a room-by-room tour) moves nothing.
+  Only in an order nobody chose (no filming- or upload-order ask, no grouping answer, no
+  contract-pinned order, no song; a `narrative` / first-last key is not a basis):
+  welcomes lead and sign-offs close, under the creator's own first/last rows.
+  `spoken_seats` is the one rule for the order and two windows: the length plan seats the
+  welcome's whole line (`spoken_moments`) and, for a creator-pinned closing clip whose
+  words only introduce someone, a stretch with no words (`quiet_moments`, capped there);
+  it records `length_plan.spoken_order` (order only, plain windows, if the seats would
+  make the length impossible). The phone unified writer reorders
+  (`plan_unified_montage(speech_order=True)`) only when that record is on the approved
+  plan and the strategy still keeps every clip's sound (`speech_order_approved`), so it
+  never moves a clip the reply did not name. The pre-approval reply then says the
+  narration plays and where those lines go (`narration_note_parts`, EN + TR); it adds
+  nothing when the words changed nothing, and claims the quiet ending only when the
+  approved windows stay off the words. Kill switch `SPOKEN_ORDER_ENABLED` (default on;
+  off = no seats, no record, no reorder, no note): `fly secrets set
+  SPOKEN_ORDER_ENABLED=false -a nova-video`, then restart api and worker. Incident: cabin
+  kit M1, prod thread 7ccbde0a. Guards: `tests/tasks/test_kri585_spoken_order_montage.py`
+  (incl. the worker's negative cases), `tests/pipeline/test_unified_montage_spoken_order.py`,
+  `tests/services/test_spoken_roles.py`.
 - *Clip exclusions (KRI-667)*: "Skip the quad bike clip", "don't use the blurry ones",
   "çamaşır klibini kullanma" are one `exclude` clip intent each, stated by the
   clip-intent planner in any language (`ClipIntentOp` includes `exclude`; before, the
@@ -351,6 +385,18 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   CLIP_INTENT_EXCLUDE_ENABLED=false -a nova-video`, then restart api and worker.
   Guards: `tests/kria/test_kri667_clip_exclusions.py`, the KRI-667 cases in
   `tests/agents/test_clip_intent_planner.py`.
+  *Look-alike and clashing excludes (KRI-761, Merope café M1)*: `app/kria/clip_exclusions.py`.
+  An exclude the resolver matched to a clip another ask pins (a first/last placement, a
+  creator-written label, media the strategy places) or to 2+ clips only just over the bar
+  (< 0.9) is not guessed: the planner asks with the clip picker (category op `exclude`, the
+  creator taps the clips to leave out, pinned clips are never offered, the matches come
+  pre-ticked). Taps and typed file names are the creator's word and are never asked again;
+  the answer rides `fold_clip_selections`, so it holds on later turns. A file name beside
+  an exclude ("M1_05 klibini") now settles without the resolver (`picker_eligible` is true
+  for `exclude`). An exclude the resolver matched in the head draft that matches nothing
+  now keeps that match (`carry_forward_exclusions`, reads `CreatorEditDraft`, fails open).
+  Picker off (`KRIA_CLIP_SELECTION_QUESTIONS_ENABLED=false`) = the silent pin-wins of
+  KRI-667. Guard: `tests/kria/test_kri761_look_alike_exclusions.py`.
 - *Title*: confirmed strategy title > brief title literal > brief global literal
   (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`). With
   none of those sources, the visible opening title is omitted; `Montage` remains
@@ -445,6 +491,12 @@ reply English and prompts byte-identical).
   (`reply_language_for` / `bind_reply_language`): `submit_turn`, `run_kria_turn` (from the
   trusted snapshot), approval dispatch, render observation and expiry. Server copy is written
   `say(en=..., tr=...)`; unbound means English.
+- **Render workers (KRI-765).** A Celery worker has no chat. Dispatch stamps
+  `assembly_plan["creator_reply_language"]` beside `creator_brief_binding`, and the phone
+  montage/narrated writers bind it (`generative_build._worker_reply_language`) around the
+  requirement receipts and the block recovery they store. A reason that names clips can't be
+  re-worded by the chat afterwards, so it must be written in one language. No stamp (English
+  chat, older job) = English, as before.
 - **Models.** Main Creator, the edit copilot and the clip-intent agents get
   `reply_language`; for Turkish their prompt ends with `prompt_language_line("tr")`, which
   asks for every creator-facing sentence in Turkish while on-video text stays exactly as the
