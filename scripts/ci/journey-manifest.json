@@ -1106,6 +1106,16 @@
         "src/apps/api/app/pipeline/narration_labels.py",
         "src/apps/api/app/pipeline/score.py"
       ]
+    },
+    {
+      "id": "kri-793-caption-spellings",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri793_caption_spellings.py tests/tasks/test_kri793_talking_caption_spellings.py tests/pipeline/test_caption_spelling.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri793_t1_caro/t1_brief_and_speech.json",
+        "src/apps/api/tests/kria/test_kri793_caption_spellings.py",
+        "src/apps/api/tests/tasks/test_kri793_talking_caption_spellings.py"
+      ]
     }
   ]
 }
