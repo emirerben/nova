@@ -41,6 +41,9 @@ Detector verdicts (per overlay)
   (Playfair italic, font-cycle) trip OCR, so a clean bbox + noisy OCR is a WARN,
   not a FAIL. A truncated read (OCR is a strict prefix/suffix of the spec — the
   "s not just luck" signature) IS a FAIL.
+- glyphs (KRI-785): FAIL if the resolved face (after the whole-run glyph
+  fallback in `font_coverage`) lacks a letter, digit or punctuation mark of
+  the text. Tofu boxes pass the bbox check and usually OCR too.
 
          recipe overlay
               │
@@ -72,6 +75,7 @@ from typing import Any, Literal
 from PIL import Image, ImageChops
 
 from app.pipeline import text_overlay_skia as tos
+from app.pipeline.font_coverage import missing_glyphs, needed_chars
 from app.pipeline.font_identification import extract_frame_png
 
 # -- Tunables ----------------------------------------------------------------
@@ -387,6 +391,49 @@ def _contrast_bg(text_color_hex: str | None) -> str:
 # -- Verify one overlay / a whole recipe -------------------------------------
 
 
+def missing_rendered_glyphs(overlay: dict) -> list[str]:
+    """Needed characters the resolved Skia typeface cannot draw (tofu).
+
+    Checks the overlay text against the face `text_overlay_skia` actually
+    resolves (whole-run glyph fallback applied), using Skia's own cmap so the
+    check is independent of the fontTools lookup that picks the fallback.
+    Authored handwriting centerlines are not font glyphs and are skipped.
+    """
+    resolution = tos._resolved_typeface_for_render(overlay)
+    if resolution.source == "authored_centerline":
+        return []
+    text = tos._overlay_text(overlay)
+    typeface = resolution.typeface
+    # Skia's cmap catches unmapped codepoints; `missing_glyphs` also catches a
+    # mapped-but-wrong glyph (a dotless ı drawn with a dot, a blank outline).
+    flagged = set(missing_glyphs(resolution.name, text))
+    shaped = _uses_shaped_paragraph(overlay)
+    mgr = tos.skia.FontMgr.RefDefault() if shaped else None
+    missing = []
+    for ch in needed_chars(text):
+        if typeface.unicharToGlyph(ord(ch)) != 0:
+            if ch in flagged:  # mapped, but the glyph is wrong or blank
+                missing.append(ch)
+            continue
+        # The shaped path (`_shaped_paragraph`) fills each unmapped codepoint
+        # from the system font manager (prod ships DejaVu: Arabic, Hebrew), so
+        # there only a codepoint no system face can draw is tofu.
+        if mgr is not None and (
+            mgr.matchFamilyStyleCharacter(
+                typeface.getFamilyName(), typeface.fontStyle(), ["und"], ord(ch)
+            )
+            is not None
+        ):
+            continue
+        missing.append(ch)
+    return missing
+
+
+def _uses_shaped_paragraph(overlay: dict) -> bool:
+    """Mirror of the renderer's shaped-text switch (`_draw_frame`)."""
+    return overlay.get("effect") == "smooth-type" or bool(overlay.get("shape_text"))
+
+
 def verify_overlay(
     overlay: dict,
     *,
@@ -461,6 +508,23 @@ def verify_overlay(
         fp = os.path.join(frame_out_dir, frame_name(slot_index, overlay_index))
         frame.save(fp, "PNG")
         res.frame_path = fp
+
+    # 5. Glyph coverage (KRI-785): Skia draws tofu for a missing glyph and the
+    # bbox/OCR checks above pass it (a box is opaque pixels; OCR shrugs at one
+    # letter). FAIL when the face the renderer resolved — after the whole-run
+    # glyph fallback — still lacks a letter, digit or punctuation mark.
+    missing = missing_rendered_glyphs(overlay)
+    if missing:
+        res.clipping = _worst(res.clipping, "FAIL")
+        res.reasons.append(
+            f"missing glyph(s) in {res.resolved_typeface.get('name')!r}: "
+            + ", ".join(f"U+{ord(ch):04X} ({ch})" for ch in missing)
+        )
+    elif res.resolved_typeface.get("glyph_fallback"):
+        res.reasons.append(
+            f"glyph fallback {res.resolved_typeface.get('requested_font_family')!r} -> "
+            f"{res.resolved_typeface.get('name')!r} (font lacks characters of this text)"
+        )
 
     font_fallback = bool(res.resolved_typeface.get("fallback"))
     if font_fallback:

@@ -42,6 +42,7 @@ Decision points NOT unit-reachable (not covered here):
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -476,6 +477,73 @@ def _lower(text: str) -> str:
     from app.agents._schemas.text_element import apply_text_case
 
     return apply_text_case(text, "lower")
+
+
+def _draws_every_letter(family: str) -> Callable[[str], bool]:
+    """Does the face the Skia renderer resolves for `family` draw every letter of the text?"""
+
+    def check(text: str) -> bool:
+        import skia
+
+        from app.pipeline.font_coverage import missing_glyphs
+        from app.pipeline.text_overlay_skia import _resolve_typeface_for_overlay
+
+        resolved = _resolve_typeface_for_overlay({"font_family": family, "text": text})
+        # Independent of font_coverage's own cmap: every non-space character
+        # must map to a Skia glyph WITH an outline (Big Curls maps ç ö ü to
+        # blank glyphs). `missing_glyphs` adds the dotted-ı check.
+        font = skia.Font(resolved.typeface, 100)
+        chars = [ch for ch in unicodedata.normalize("NFC", text) if not ch.isspace()]
+        glyphs = [resolved.typeface.unicharToGlyph(ord(ch)) for ch in chars]
+        drawn = all(g != 0 and not font.getBounds([g])[0].isEmpty() for g in glyphs)
+        return drawn and not missing_glyphs(resolved.name, text)
+
+    return check
+
+
+def _phone_style_draws(family: str) -> Callable[[str], bool]:
+    """A creator-chosen phone font: drawable as-is or via its glyph-safe partner?"""
+
+    def check(text: str) -> bool:
+        from app.pipeline.phone_text_style import drawable_family
+
+        return drawable_family(family, [text]) is not None
+
+    return check
+
+
+def _montage_keeps_style(family: str) -> Callable[[str], bool]:
+    """Phone montage typography keeps the requested face or its glyph partner."""
+
+    def check(text: str) -> bool:
+        from app.pipeline.font_coverage import glyph_safe_family
+        from app.pipeline.unified_montage import _fit_typography, skia_font_covers
+
+        chosen = _fit_typography(skia_font_covers, family, text, None, {})[0]
+        return chosen in {family, glyph_safe_family(family, text)}
+
+    return check
+
+
+def _one_face_per_track(family: str) -> Callable[[str], bool]:
+    """Lines ("|"-separated) of one track in one family burn in ONE face."""
+
+    def check(text: str) -> bool:
+        from app.pipeline.font_coverage import glyph_safe_overlays
+        from app.pipeline.text_overlay_skia import _resolve_typeface_for_overlay
+
+        lines = [{"font_family": family, "text": line} for line in text.split("|")]
+        faces = {
+            _resolve_typeface_for_overlay(overlay).name for overlay in glyph_safe_overlays(lines)
+        }
+        return len(faces) == 1
+
+    return check
+
+
+def _draws_every_letter_lowered(family: str) -> Callable[[str], bool]:
+    draws = _draws_every_letter(family)
+    return lambda text: draws(_lower(text))
 
 
 # --------------------------------------------------------------------------- table
@@ -1873,6 +1941,166 @@ CASES: tuple[Case, ...] = (
         "Barış Manço",
         True,
         {"tr_ascii": "Baris Manco", "tr_upper": "BARIŞ MANÇO"},
+    ),
+    # ---------------------------------------------------------------- render fonts
+    # O37-O41 (+ O41z, ZT Bros Oskon 90s draws its dotless ı with a dot, found in
+    # KRI-785): the renderer's face must draw every letter of the text. A face
+    # missing Turkish letters falls back for the whole run (font_coverage).
+    Case(
+        "O37",
+        "render_fonts",
+        "pipeline.text_overlay_skia._resolve_typeface_for_overlay",
+        "Alte Haas Grotesk draws every letter",
+        _draws_every_letter("Alte Haas Grotesk"),
+        "Sunny light, so nice!",
+        True,
+        {
+            "tr": "Güneş ışığı, çok güzel!",
+            "tr_ascii": "Gunes isigi, cok guzel!",
+            "tr_upper": "GÜNEŞ IŞIĞI, ÇOK GÜZEL! İŞTE",
+        },
+    ),
+    Case(
+        "O38",
+        "render_fonts",
+        "pipeline.text_overlay_skia._resolve_typeface_for_overlay",
+        "Big Curls draws every letter",
+        _draws_every_letter("Big Curls"),
+        "Sunny light, so nice!",
+        True,
+        {
+            "tr": "Güneş ışığı, çok güzel!",
+            "tr_ascii": "Gunes isigi, cok guzel!",
+            "tr_upper": "GÜNEŞ IŞIĞI, ÇOK GÜZEL! İŞTE",
+        },
+    ),
+    Case(
+        "O39",
+        "render_fonts",
+        "pipeline.text_overlay_skia._resolve_typeface_for_overlay",
+        "Permanent Marker draws every letter",
+        _draws_every_letter("Permanent Marker"),
+        "Sunny light, so nice!",
+        True,
+        {
+            "tr": "Güneş ışığı, çok güzel!",
+            "tr_ascii": "Gunes isigi, cok guzel!",
+            "tr_upper": "GÜNEŞ IŞIĞI, ÇOK GÜZEL! İŞTE",
+        },
+    ),
+    Case(
+        "O40",
+        "render_fonts",
+        "pipeline.text_overlay_skia._resolve_typeface_for_overlay",
+        "Satisfy draws every letter",
+        _draws_every_letter("Satisfy"),
+        "Sunny light, so nice!",
+        True,
+        {
+            "tr": "Güneş ışığı, çok güzel!",
+            "tr_ascii": "Gunes isigi, cok guzel!",
+            "tr_upper": "GÜNEŞ IŞIĞI, ÇOK GÜZEL! İŞTE",
+        },
+    ),
+    Case(
+        "O41",
+        "render_fonts",
+        "pipeline.text_overlay_skia._resolve_typeface_for_overlay",
+        "Rascal draws every letter",
+        _draws_every_letter("Rascal"),
+        "Sunny light, so nice!",
+        True,
+        {
+            "tr": "Güneş ışığı, çok güzel!",
+            "tr_ascii": "Gunes isigi, cok guzel!",
+            "tr_upper": "GÜNEŞ IŞIĞI, ÇOK GÜZEL! İŞTE",
+        },
+    ),
+    Case(
+        "O41z",
+        "render_fonts",
+        "pipeline.text_overlay_skia._resolve_typeface_for_overlay",
+        "ZT Bros Oskon 90s draws every letter",
+        _draws_every_letter("ZT Bros Oskon 90s"),
+        "Sunny light, so nice!",
+        True,
+        {
+            "tr": "Güneş ışığı, çok güzel!",
+            "tr_ascii": "Gunes isigi, cok guzel!",
+            "tr_upper": "GÜNEŞ IŞIĞI, ÇOK GÜZEL! İŞTE",
+        },
+    ),
+    # KRI-785 review rows: Big Curls maps ç ö ü to EMPTY glyphs (no ş in the
+    # text, so only the blank-outline check triggers the fallback); ₺ is
+    # missing from the display default; locale-free lower-casing of İ emits
+    # U+0307; phone pickers declined/replaced a creator's Turkish font; a
+    # lyric track flipped faces line by line.
+    Case(
+        "O41b",
+        "render_fonts",
+        "pipeline.font_coverage.missing_glyphs",
+        "Big Curls draws ç ö ü (blank outlines count as missing)",
+        _draws_every_letter("Big Curls"),
+        "Nice glasses",
+        True,
+        {
+            "tr": "Çok güzel, gözlük",
+            "tr_ascii": "Cok guzel, gozluk",
+            "tr_upper": "ÇOK GÜZEL, GÖZLÜK",
+        },
+    ),
+    Case(
+        "O41c",
+        "render_fonts",
+        "pipeline.font_coverage.needed_chars",
+        "the display default draws a lira price",
+        _draws_every_letter("Playfair Display"),
+        "Only $99",
+        True,
+        {"tr": "Sadece 99₺", "tr_ascii": "Sadece 99 TL", "tr_upper": "SADECE 99₺"},
+    ),
+    Case(
+        "O41d",
+        "render_fonts",
+        "pipeline.font_coverage.needed_chars",
+        "Poppins Bold draws lower-cased text (incl. U+0307 from İ)",
+        _draws_every_letter_lowered("Poppins Bold"),
+        "ONE DAY IN ISTANBUL",
+        True,
+        {"tr": "BİR GÜN İSTANBUL", "tr_ascii": "BIR GUN ISTANBUL"},
+    ),
+    Case(
+        "O41e",
+        "render_fonts",
+        "pipeline.phone_text_style.drawable_family",
+        "a creator's Satisfy is drawable on the phone",
+        _phone_style_draws("Satisfy"),
+        "Sunny light, so nice",
+        True,
+        {"tr": "Güneş ışığı, çok güzel", "tr_ascii": "Gunes isigi, cok guzel"},
+    ),
+    Case(
+        "O41f",
+        "render_fonts",
+        "pipeline.unified_montage._fit_typography",
+        "phone montage keeps a requested Satisfy (or its partner)",
+        _montage_keeps_style("Satisfy"),
+        "Sunny light, so nice",
+        True,
+        {"tr": "Güneş ışığı, çok güzel", "tr_ascii": "Gunes isigi, cok guzel"},
+    ),
+    Case(
+        "O41g",
+        "render_fonts",
+        "pipeline.font_coverage.glyph_safe_overlays",
+        "a Satisfy lyric track burns in one face",
+        _one_face_per_track("Satisfy"),
+        "I love you|My heart is with you|Tonight",
+        True,
+        {
+            "tr": "Seni seviyorum|Gönlüm şimdi sende|Bu gece",
+            "tr_ascii": "Seni seviyorum|Gonlum simdi sende|Bu gece",
+        },
     ),
 )
 

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.18.0] - 2026-10-21
+
+### Changed
+- fix(fonts): Turkish parity E — Fonts without Turkish glyphs fall back per word + verify-overlays catches tofu (KRI-785) (#1721) <!-- release-pr: 1721 -->
+
 ## [0.81.17.0] - 2026-10-21
 
 ### Changed

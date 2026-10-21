@@ -629,7 +629,7 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates,kri-648-phone-text,kri-788-order-answer-dispatch",
+                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates,kri-788-order-answer-dispatch,kri-648-phone-text",
                 ),
             ),
             (

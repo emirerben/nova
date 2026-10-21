@@ -44,12 +44,10 @@ and the caller renders the proven linear intro instead.
 
 from __future__ import annotations
 
-import os
-from functools import lru_cache
-
 import structlog
 
 from app.pipeline.canvas import PORTRAIT, Canvas
+from app.pipeline.font_coverage import font_covers_text, glyph_safe_family
 
 log = structlog.get_logger()
 
@@ -568,42 +566,13 @@ def _regular_sibling(hero_font: str | None, registry_fonts: dict) -> str | None:
     return _active_font("Playfair Display Regular", registry_fonts)
 
 
-@lru_cache(maxsize=128)
-def _font_cmap_covers_text(font_file: str, text: str) -> bool:
-    from fontTools.ttLib import TTFont  # noqa: PLC0415
-
-    from app.pipeline.text_overlay import FONTS_DIR  # noqa: PLC0415
-
-    path = os.path.join(FONTS_DIR, font_file)
-    font = TTFont(path, lazy=True)
-    try:
-        cmap = font.getBestCmap() or {}
-        return all(ch.isspace() or ord(ch) in cmap for ch in text)
-    finally:
-        font.close()
-
-
 def _font_covers_text(font_family: str | None, text: str, registry_fonts: dict) -> bool:
+    """Shared glyph coverage (`font_coverage`, KRI-785); unknown faces never cover."""
     if not font_family or not text:
         return True
-    entry = registry_fonts.get(font_family)
-    if not entry:
+    if not registry_fonts.get(font_family):
         return False
-    try:
-        return _font_cmap_covers_text(str(entry["file"]), text)
-    except Exception as exc:  # noqa: BLE001 - coverage check must fail safe
-        log.warning("cluster_font_cmap_check_failed", font_family=font_family, error=str(exc))
-
-    try:
-        from app.pipeline.text_overlay_skia import (  # noqa: PLC0415
-            _typeface_for_overlay,
-            assert_glyphs_present,
-        )
-
-        assert_glyphs_present(_typeface_for_overlay({"font_family": font_family}), text)
-        return True
-    except Exception:
-        return False
+    return font_covers_text(font_family, text)
 
 
 def _cluster_pairing(
@@ -1225,7 +1194,10 @@ def compute_cluster_blocks(
         return typeface_cache[family]
 
     def _measure(block: dict, scale: float) -> dict:
-        family = role_families.get(block["role"], font_family)
+        # Measure (and emit) the face the renderer will actually draw: a hero
+        # face missing a letter of this block switches to its whole-run
+        # fallback here, so the no-clip measurement matches the render.
+        family = glyph_safe_family(role_families.get(block["role"], font_family), block["text"])
         px = _role_px(block["role"], base_size_px, scale)
         font = skia.Font(_typeface(family), px)
         font.setSubpixel(True)

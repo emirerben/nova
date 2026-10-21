@@ -2254,7 +2254,19 @@ def _fit_typography(
         )
         for text in texts
     ]
-    candidates = list(dict.fromkeys(f for f in (requested, _DEFAULT_FONT, *_FALLBACK_FONTS) if f))
+    # KRI-785: a requested face missing LETTERS of the text (Turkish ğ ş İ ı in
+    # Satisfy) tries its glyph-safe partner next, the face the cloud renderer
+    # and the iOS compiler swap to, before the unrelated default.
+    partner = None
+    if requested:
+        from app.pipeline.font_coverage import glyph_safe_family, missing_glyphs  # noqa: PLC0415
+
+        joined = " ".join(font_texts)
+        if any(ch.isalpha() for ch in missing_glyphs(requested, joined)):
+            partner = glyph_safe_family(requested, joined)
+    candidates = list(
+        dict.fromkeys(f for f in (requested, partner, _DEFAULT_FONT, *_FALLBACK_FONTS) if f)
+    )
     chosen = next(
         (family for family in candidates if all(covers(family, text) for text in font_texts)), None
     )
