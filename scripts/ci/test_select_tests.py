@@ -617,7 +617,7 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-524-creation,kri-557-thinking,kri-577-reliability-gates,kri-760-whole-line-ask,kri-721-approval-readiness",
+                    "kri-524-creation,kri-557-thinking,kri-577-reliability-gates,kri-760-whole-line-ask,kri-721-approval-readiness,kri-787-merope-t1-replay",
                 ),
             ),
             (
@@ -629,7 +629,7 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates,kri-648-phone-text",
+                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates,kri-648-phone-text,kri-787-merope-t1-replay",
                 ),
             ),
             (
@@ -766,11 +766,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/kria/opening_cut_ask.py",
-                (True, "covered", "kri-628-opening-cut"),
+                (True, "covered", "kri-628-opening-cut,kri-787-merope-t1-replay"),
             ),
             (
                 "src/apps/api/app/pipeline/phone_opening_cut.py",
-                (True, "covered", "kri-628-opening-cut"),
+                (True, "covered", "kri-628-opening-cut,kri-787-merope-t1-replay"),
             ),
             (
                 "src/apps/api/app/services/spoken_quotes.py",

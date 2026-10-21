@@ -40,7 +40,9 @@ from dataclasses import dataclass
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
 
 from app.agents._schemas.creator_agent import (
     CreativeStrategy,
@@ -72,6 +74,15 @@ from tests.kria.test_kri787_merope_t1_replay import (
     without_answers,
 )
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
+
+_db_name = make_url(settings.database_url).database or ""
+if not _db_name.endswith("_test"):
+    pytest.skip(f"refusing to write to non-test database {_db_name!r}", allow_module_level=True)
+try:
+    with sync_session() as _probe:
+        _probe.execute(text("select 1"))
+except OperationalError:
+    pytest.skip("nova_test Postgres not reachable", allow_module_level=True)
 
 MESSAGES = FIXTURE["creator_messages"]
 # What the creator tapped in prod, by question (``kind`` or ``conflict``).
