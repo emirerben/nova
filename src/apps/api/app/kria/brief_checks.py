@@ -5290,12 +5290,14 @@ def narrated_alignment_recovery() -> str:
 # KRI-778: `_check_timing`'s sentence for a total length the draft missed. Every global
 # length ask is judged against the same draft, so a brief with two of them (café M2: a freeze
 # the brief scoped as a length, and "about 14 seconds") states the draft's length twice.
-_DRAFT_LENGTH_RE = re.compile(
+_DRAFT_LENGTH_RE = re.compile(  # kri667: our own length sentence, never creator words
     r"^(?:This draft is about \S+s\b.*; you asked for \S+s\."
     r"|Bu taslak yaklaşık \S+ saniye\b.*; sen \S+ saniye istedin\.)$"
 )
 # A sentence already ends: its stop, then any closing quotes or brackets.
-_SENTENCE_END_RE = re.compile(r"[.!?…][\"'”’»)\]]*$")
+_SENTENCE_END_RE = re.compile(  # kri667: punctuation only, reads no meaning
+    r"[.!?…][\"'”’»)\]]*$"
+)
 
 
 def _as_sentence(reason: str) -> str:
