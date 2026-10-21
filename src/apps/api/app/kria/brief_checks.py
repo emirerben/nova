@@ -2178,10 +2178,9 @@ _WHOLE_TAKE_RE = re.compile(
 )
 # Who says the trigger: the creator in the first or second person ("when I say ..."), or,
 # because the brief rewrites asks into third person, their voice ("when the voiceover
-# says ...", "when the narration mentions ..."), or someone in the take ("the first time she
-# says Merope", KRI-791).
+# says ...", "when the narration mentions ...").
 _CUE_SPEAKER = (
-    r"(?:(?:i|you|we|she|he|they|someone|somebody|anyone|anybody|everyone)"
+    r"(?:(?:i|you|we)"
     r"|(?:my |the |our |this |her |his )?"
     r"(?:voice[- ]?over|narration|narrator|recording|audio|script|voice|speech|commentary))"
 )
@@ -2189,9 +2188,7 @@ _CUE_VERB = (
     r"(?:say|says|mention|mentions|hear|hears|name|names|talk(?:s)? about|read(?:s)?"
     r"|bring(?:s)? up|get(?:s)? to)"
 )
-_CUE_OPENER = (
-    r"(?:when|whenever|as soon as|the moment|the second|every time|the (?:first|1st) time)"
-)
+_CUE_OPENER = r"(?:when|whenever|as soon as|the moment|the second|every time)"
 # The creator's voice is the trigger ("when I say ...", "dediğimde"). Without a named word,
 # only this counts as a pop-in ask; "pop up" and "sticker" alone do not.
 _SPOKEN_CUE_RE = re.compile(
@@ -2215,10 +2212,20 @@ _BEAT_CUE_RE = re.compile(
     rf"{_SPOKEN_CUE_RE.pattern}|\bpop(s|ping)?[- ]?(up|in|ups|ins)\b|\b(sticker|stamp)s?\b"
     r"|\b[çc]ikartma"
 )
+# KRI-791: a text on a spoken word is also asked for "the first time ..." and in someone
+# else's voice ("... the first time she says Merope"). Only the trigger reader below knows
+# these: the spoken-cue recogniser the pop-in, whole-line and cut asks share is unchanged, so
+# "keep the whole line when she says it" or "a ding every time someone says cheers" read as
+# before. Someone else's voice counts only with a say-verb ("when they get to the summit" is
+# something seen, not said).
+_TRIGGER_CUE_OPENER = rf"(?:{_CUE_OPENER}|the (?:first|1st) time)"
+_OTHER_CUE_SPEAKER = r"(?:she|he|they|someone|somebody|anyone|anybody|everyone)"
+_SAY_VERB = r"(?:say|says|said|mention|mentions)"
 # The words after the cue verb ("... when voiceover says the medal, show ..."): the trigger
 # the creator named without quoting it.
 _CUE_TRIGGER_RE = re.compile(
-    rf"\b{_CUE_OPENER} (?P<speaker>{_CUE_SPEAKER}) {_CUE_VERB}\s+"
+    rf"\b{_TRIGGER_CUE_OPENER} (?:{_CUE_SPEAKER} {_CUE_VERB}"
+    rf"|(?P<other>{_OTHER_CUE_SPEAKER}) {_SAY_VERB})\s+"
     r"(?:the (?:words?|phrase|name) )?(?P<trigger>.+)",
     re.IGNORECASE,
 )
@@ -2429,18 +2436,24 @@ def _fact_triggers(req: BriefRequirement) -> list[str]:
     return found
 
 
-def _cue_trigger_match(req: BriefRequirement) -> tuple[list[str], str | None]:
-    """The words right after a cue verb, and who the cue says speaks them.
+def _cue_trigger_match(
+    req: BriefRequirement, fields: Sequence[str | None] | None = None
+) -> tuple[list[str], str | None, bool]:
+    """The words right after a cue verb, someone else the cue says speaks them, and whether
+    any cue was found.
 
-    "... the first time she says Merope, placed ..." -> (["Merope"], "she"). The speaker is
-    read even when the words name nothing to look for.
+    "... the first time she says Merope, placed ..." -> (["Merope"], "she", True). The
+    speaker is read even when the words name nothing to look for.
     """
     speaker: str | None = None
-    for field_value in (req.description, req.literal):
+    matched = False
+    for field_value in (req.description, req.literal) if fields is None else fields:
         match = _CUE_TRIGGER_RE.search(field_value or "")
         if match is None:
             continue
-        speaker = speaker or " ".join(match.group("speaker").lower().split())
+        matched = True
+        other = (match.group("other") or "").lower()
+        speaker = speaker or (other if other in _NAMED_OTHER_SPEAKERS else None)
         words = _CUE_TRIGGER_END_RE.split(match.group("trigger"), maxsplit=1)[0]
         words = " ".join(words.split()).strip(" \"'\u201c\u201d")
         tokens = [t for t in re.split(r"\W+", _fold(words)) if t]
@@ -2451,8 +2464,8 @@ def _cue_trigger_match(req: BriefRequirement) -> tuple[list[str], str | None]:
             and not all(t in _TRIGGER_STOPWORDS for t in tokens)
             and not _GENERIC_TRIGGER_RE.search(words)
         ):
-            return [words], speaker
-    return [], speaker
+            return [words], speaker, matched
+    return [], speaker, matched
 
 
 def _cue_triggers(req: BriefRequirement) -> list[str]:
@@ -2465,10 +2478,22 @@ def _cue_triggers(req: BriefRequirement) -> list[str]:
     return _cue_trigger_match(req)[0]
 
 
-# Who a cue names as the speaker when it is someone else in the take ("the first time she
-# says ..."), as `_cue_trigger_match` reads it. "I", "the voiceover" or "anyone" filter
-# nothing the take's words could not already tell.
-_OTHER_SPEAKER_HEADS = frozenset({"she", "he", "they", "her", "his", "their"})
+# Someone else in the take a cue names as the speaker ("the first time she says ..."). "I",
+# "the voiceover" or "anyone" filter nothing the take's words could not already tell.
+_NAMED_OTHER_SPEAKERS = frozenset({"she", "he", "they"})
+# Punctuation around one spoken word ("Merope," / "“Merope”").
+_WORD_EDGE = "\"'.,;:!?()[]{}\u201c\u201d\u2018\u2019\u00ab\u00bb"
+
+
+def _text_head(words: str, literal: str | None) -> str:
+    """The guessed words cut to the shown text when they start with it: "Show MEROPE ... she
+    says Merope in big letters" waits for "Merope", not "Merope in big letters"."""
+    wanted = _fold(literal or "").split()
+    tokens = words.split()
+    if not wanted or len(tokens) <= len(wanted):
+        return words
+    head = [token.strip(_WORD_EDGE) for token in tokens[: len(wanted)]]
+    return " ".join(head) if _fold(" ".join(head)).split() == wanted else words
 
 
 def worded_spoken_cue(req: BriefRequirement) -> tuple[tuple[str, ...], str | None]:
@@ -2476,13 +2501,19 @@ def worded_spoken_cue(req: BriefRequirement) -> tuple[tuple[str, ...], str | Non
     names them, for when the model left `facts.triggers` / `facts.speaker` out.
 
     Only an ask worded as a spoken cue counts ("... the first time she says Merope",
-    "“Atakan” dediğimde ..."): the words after the cue verb, else the quoted words that
-    are not the text itself. A described word ("the café's name") or a plain text ask
-    ("Show SALE in big letters") names no word, so nothing is guessed.
+    "“Atakan” dediğimde ..."): the words after the cue verb (cut to the shown text when they
+    start with it), else the quoted words that are not the text itself. A described word
+    ("the café's name") or a plain text ask ("Show SALE in big letters") names no word, so
+    nothing is guessed. A guess the take never says places nothing, and the finished
+    video's receipt names the word it didn't hear.
     """
-    if req.scope == "title" or not _worded_spoken_cue(req):
+    if req.scope == "title":
         return (), None
-    triggers, speaker = _cue_trigger_match(req)
+    # The ask's own words only: the shown text is copy, never a cue ("WHEN SHE SAYS HI").
+    triggers, speaker, matched = _cue_trigger_match(req, (req.description,))
+    if not (matched or _worded_spoken_cue(req)):
+        return (), None
+    triggers = [_text_head(words, req.literal) for words in triggers]
     if not triggers:
         literal = (req.literal or "").strip()
         triggers = [
@@ -2490,8 +2521,7 @@ def worded_spoken_cue(req: BriefRequirement) -> tuple[tuple[str, ...], str | Non
             for quoted in (" ".join(q.split()) for q in _quoted_triggers(req))
             if quoted and quoted != literal
         ]
-    other = speaker if speaker and speaker.split()[0] in _OTHER_SPEAKER_HEADS else None
-    return tuple(_dedupe_names(triggers)), other
+    return tuple(_dedupe_names(triggers)), speaker
 
 
 def _dedupe_names(named: Iterable[str]) -> list[str]:
@@ -4102,15 +4132,14 @@ def _with_text_look(
     """Add the look check to a text requirement's presence check (KRI-558)."""
     base = _with_title_face(req, facts, base)
     base = _with_spoken_text_face(req, facts, base)
-    base = _with_spoken_text_speaker(req, facts, base)
-    if not text_look_facts(req) or base.status != "met":
-        return base
-    look = check_text_look(req, facts)
-    if look is None:
+    if text_look_facts(req) and base.status == "met":
+        look = check_text_look(req, facts)
         # The words are there; whether they look as asked is not visible here (a record or
         # a draft). A presence check alone never certifies the look (KRI-524).
-        return _receipt(req, "partial", _NO_CHECKER)
-    return combine_receipts(base, look)
+        base = (
+            _receipt(req, "partial", _NO_CHECKER) if look is None else combine_receipts(base, look)
+        )
+    return _with_spoken_text_speaker(req, facts, base)
 
 
 def _check_clip_lengths(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -4375,8 +4404,8 @@ def _with_spoken_text_speaker(
     req: BriefRequirement, facts: PlanFacts, base: RequirementReceipt
 ) -> RequirementReceipt:
     """KRI-791: "the first time SHE says it" was shown the first time anyone said the word,
-    so the finished video says so instead of "met" (the take's words don't say who speaks)."""
-    fact = _spoken_text_fact(facts, req) if base.status == "met" else None
+    so the finished video says so (the take's words don't say who speaks)."""
+    fact = _spoken_text_fact(facts, req)
     if fact is None or fact.status != "placed":
         return base
     from app.kria.spoken_text_ask import requirement_spoken_text  # noqa: PLC0415
@@ -4384,7 +4413,7 @@ def _with_spoken_text_speaker(
     ask = requirement_spoken_text(req)
     if ask is None or not ask.speaker:
         return base
-    return _receipt(req, "partial", _SPOKEN_TEXT_FIRST_HEARD)
+    return combine_receipts(base, _receipt(req, "partial", _SPOKEN_TEXT_FIRST_HEARD))
 
 
 def _title_face_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
@@ -5482,7 +5511,17 @@ def _is_spoken_text_cue(req: BriefRequirement) -> bool:
     """
     if req.scope == "title":
         return False
-    return any(req.facts.get(key) for key in _SPOKEN_TEXT_CUE_KEYS) or _worded_spoken_cue(req)
+    return (
+        any(req.facts.get(key) for key in _SPOKEN_TEXT_CUE_KEYS)
+        or _worded_spoken_cue(req)
+        # KRI-791: "Show MEROPE the first time she says Merope" (whole-video text only, so a
+        # shot label "the shot when she says hi" keeps its own lane).
+        or (
+            req.kind == "text"
+            and req.scope == "global"
+            and _cue_trigger_match(req, (req.description,))[2]
+        )
+    )
 
 
 def _worded_spoken_cue(req: BriefRequirement) -> bool:

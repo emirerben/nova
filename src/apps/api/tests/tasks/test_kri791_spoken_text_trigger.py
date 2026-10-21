@@ -32,6 +32,12 @@ Ways this can go wrong (written before the code):
     trigger.
 12. The kill switch off changes the plain "can't".
 13. The brief prompt still teaches triggers only for photos, videos, stickers and sounds.
+14. (Review) Widening the spoken-cue recogniser every pop-in, whole-line and cut ask shares
+    changes those asks: "play the line in full when she says it" stops being a whole-line
+    ask, "a ding every time someone says cheers" becomes a held pop-in, a shot label "the
+    shot when they get to the summit" loses its own question.
+15. (Review) The guess runs past the word ("... she says Merope in big letters") and the text
+    is never placed; or the shown text itself is read as the cue ("WHEN SHE SAYS HI").
 
 Replayed from the real T1 brief, approved strategy and speech segments
 (``~/Downloads/kria-ecuador-test/T1_caro_full_take_talking/runs/2026-10-21_live/``), no model
@@ -366,6 +372,16 @@ def test_the_t1_draft_reason_is_turkish_in_a_turkish_chat():
         # 11: the Turkish shape (the word, quoted, before the verb).
         ("“Merope” dediğinde ekrana büyük “MEROPE” yazısı gelsin", "MEROPE", ("Merope",), None),
         ("“yirmi dakika” dediğimde ekrana “20 dk” yazısı", "20 dk", ("yirmi dakika",), None),
+        # 15: cut to the shown text when the guess starts with it.
+        (
+            "Show MEROPE the first time she says Merope in big letters",
+            "MEROPE",
+            ("Merope",),
+            "she",
+        ),
+        ("When she says Merope show MEROPE on screen", "MEROPE", ("Merope",), "she"),
+        # A voiceover is the creator's own voice, whoever's "her".
+        ("Show MEROPE when her voiceover says Merope", "MEROPE", ("Merope",), None),
     ],
 )
 def test_the_spoken_word_is_read_off_the_ask_when_its_facts_leave_it_out(
@@ -392,6 +408,37 @@ def test_the_spoken_word_is_read_off_the_ask_when_its_facts_leave_it_out(
 )
 def test_no_word_is_guessed_for_a_plain_or_described_text(description):
     assert requirement_spoken_text(_req("r9", "text", description, literal="MEROPE")) is None
+
+
+def test_the_shown_text_is_never_read_as_the_cue():
+    # 15
+    req = _req("r9", "text", "Big text on screen", literal="WHEN SHE SAYS HI")
+    assert requirement_spoken_text(req) is None
+
+
+def test_asks_outside_on_screen_text_read_exactly_as_before():
+    """14: the pop-in, whole-line and shot-label readers never see the new cue forms."""
+    from app.kria.brief_checks import _wants_beats, whole_line_quotes
+
+    whole_line = _req(
+        "r3",
+        "audio",
+        "Let the line “Hi, I'm Karolina” play in full when she says it",
+        facts={"keep_whole_take": True, "triggers": ["Hi, I'm Karolina"]},
+    )
+    assert whole_line_quotes(whole_line) == ["Hi, I'm Karolina"]
+    ding = _req("r4", "audio", "Add a ding sound every time someone says cheers")
+    assert _wants_beats(ding) is False
+    label = _req(
+        "r8",
+        "text",
+        "the shot the first time she says hi",
+        scope="per_clip",
+        literal="HELLO",
+    )
+    summit = _req("r9", "text", "Show SUMMIT when they get to the summit", literal="SUMMIT")
+    assert spoken_text_literals(_brief(label, summit)) == ()
+    assert requirement_spoken_text(summit) is None
 
 
 def test_a_model_written_trigger_and_speaker_win_over_the_wording():

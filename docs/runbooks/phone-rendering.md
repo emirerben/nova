@@ -2611,10 +2611,13 @@ draft said "that exact text isn't in this draft" and the contract pinned the tex
 - **Prompt (Main Creator v65, extractor v13).** On-screen text timed to a spoken word
   carries `triggers`, plus `speaker` when someone other than the creator says it.
 - **Fallback.** Without `facts.triggers`, `requirement_spoken_text` reads the ask's own
-  wording (`brief_checks.worded_spoken_cue`): the words after the cue verb ("the first
-  time she says **Merope**", cue openers now include "the first time" and speakers
-  she/he/they/anyone), else quoted words that aren't the text (“Atakan” dediğimde ...).
-  A plain "Show SALE in big letters" or a described word ("the café's name") gets none.
+  description (`brief_checks.worded_spoken_cue`): the words after the cue verb, cut to
+  the shown text when they start with it ("the first time she says **Merope** in big
+  letters"), else quoted words that aren't the text (“Atakan” dediğimde ...). Only the
+  trigger reader (`_CUE_TRIGGER_RE`) knows "the first time" and she/he/they + a say-verb,
+  and only whole-video text asks use it; the spoken-cue recogniser that pop-in,
+  whole-line and cut asks share is unchanged. A plain "Show SALE in big letters" or a
+  described word ("the café's name") gets no trigger.
 - **Speaker.** Words carry no speaker, so a named other speaker ("she", `facts.speaker`)
   is placed on the first time anyone says the word. The draft says so ("I can't tell
   who's speaking ...") and the finished video is `partial` with that reason; both are
