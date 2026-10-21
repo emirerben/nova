@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_shorten",
+  "lang": "en",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "It's too long, cut it down to 15 seconds.",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "It's too long, cut it down to 15 seconds."
+  },
+  "prompt_sha256": "61ea9db267e1d698b8d97bb5143a9b394b44800a79e020ccc096269fa75b80fb",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:10:22.225273+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"timing\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"cut it down to 15 seconds\",\n      \"facts\": {\n        \"duration_s\": 15\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"timing\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"cut it down to 15 seconds\",\n      \"facts\": {\n        \"duration_s\": 15\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3233,
+    "out": 95,
+    "thoughts": 393
+  },
+  "computed_cost_usd": 0.004255
+}

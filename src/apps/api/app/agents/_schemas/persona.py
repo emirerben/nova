@@ -39,7 +39,7 @@ from pydantic import BaseModel, Field
 #                "update persona from feedback" re-tunes the lane toward what works.
 # 2026-05-30.1 — added `rationale` (the AI's "why this lane" shown in the dashboard).
 # 2026-05-30 — added $success_factors block + archetype performance ranking.
-PERSONA_PROMPT_VERSION = "2026-07-11-kria"
+PERSONA_PROMPT_VERSION = "2026-10-21-language"
 
 # Upper bounds keep a runaway model response from bloating the persona row.
 _MAX_PILLARS = 8
@@ -77,6 +77,9 @@ class PersonaQuestionnaire(BaseModel):
     # call time by generate_persona and retune_persona_from_feedback. Empty when
     # the analysis hasn't landed yet (race) → prompt byte-identical to baseline.
     tiktok_analysis: str = ""
+    # KRI-784: the creator's language ("tr"/"en"), from the chat or the caller. None:
+    # read from the creator's own words below; English/unknown renders byte-identical.
+    reply_language: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class Persona(BaseModel):

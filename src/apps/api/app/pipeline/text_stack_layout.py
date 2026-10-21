@@ -26,17 +26,13 @@ def row_canvas(row: dict) -> Canvas:
 
 def measure_text_block(row: dict, *, width: float | None = None) -> dict:
     """Use the burn's actual bundled face, wrapping and metrics at the authored size."""
+    from app.agents._schemas.text_element import apply_text_case  # noqa: PLC0415
     from app.pipeline import text_overlay_skia as renderer  # noqa: PLC0415
 
     width = row_canvas(row).width if width is None else width
-    text = str(row.get("text") or "")
-    case = row.get("text_case")
-    if case == "upper":
-        text = text.upper()
-    elif case == "lower":
-        text = text.lower()
-    elif case == "title":
-        text = text.title()
+    # KRI-781: measure exactly what the burn draws (apply_text_case, Turkish-aware),
+    # never str.title() ("Don'T" was measured while "Don't" was drawn).
+    text = apply_text_case(str(row.get("text") or ""), row.get("text_case"))
     face = renderer._resolve_typeface_for_overlay(row).typeface
     size = float(
         row.get("size_px")

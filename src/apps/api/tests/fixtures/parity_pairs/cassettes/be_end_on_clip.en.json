@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_end_on_clip",
+  "lang": "en",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "End the video on the sunset clip.",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "End the video on the sunset clip."
+  },
+  "prompt_sha256": "330c2a943101423134bcb2df0196fb8d8cffcd7b9eb4fe1e7741e54d5664bfad",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:10:36.327217+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"order\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"end the video on the sunset clip\",\n      \"facts\": {\n        \"last_clip\": \"the sunset clip\",\n        \"closing\": \"the sunset clip\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"order\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"end the video on the sunset clip\",\n      \"facts\": {\n        \"last_clip\": \"the sunset clip\",\n        \"closing\": \"the sunset clip\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3226,
+    "out": 106,
+    "thoughts": 1535
+  },
+  "computed_cost_usd": 0.008573
+}

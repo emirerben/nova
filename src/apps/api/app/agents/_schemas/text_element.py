@@ -46,6 +46,9 @@ from app.agents._schemas.text_animation_phases import TextAnimationPhases
 # heavier `app.pipeline.*` builders this module imports lazily inside functions.
 from app.pipeline.canvas import PORTRAIT, Canvas, canvas_for_orientation
 from app.pipeline.font_aliases import LEGACY_FONT_ALIASES
+from app.text_fold import lower as text_lower
+from app.text_fold import title_words
+from app.text_fold import upper as text_upper
 
 log = logging.getLogger(__name__)
 
@@ -168,23 +171,28 @@ PARITY_VERIFIED_FIELDS: frozenset[str] = frozenset(
 )
 
 
-def apply_text_case(text: str, case: str | None) -> str:
+def apply_text_case(text: str, case: str | None, language: str | None = None) -> str:
     """Apply a text_case transform. EXACT mirror of `applyTextCase` in
-    src/apps/web/src/lib/overlay-layout.ts — the CSS preview and the burn
-    must produce identical strings (parity fixture: text_case.json).
+    src/apps/web/src/lib/overlay-layout.ts and `KriaTextCase` in the iOS
+    NativeEditorRenderCompiler.swift — the CSS preview, the phone render and the
+    burn must produce identical strings (parity fixture: text_case.json).
 
     "title" uppercases the FIRST CHARACTER of each whitespace-delimited run
     and lowercases the rest (deliberately not Python's ``str.title()``, which
     capitalizes after apostrophes — "don't" → "Don'T").
+
+    KRI-781: Turkish i rules ("istanbul" → "İSTANBUL", "IŞIK" → "ışık") apply when
+    ``language`` is Turkish or the text contains a Turkish-only letter; English text
+    is cased exactly as ``str.upper``/``str.lower`` ("title" → "TITLE").
     """
     if not case or case == "none":
         return text
     if case == "upper":
-        return text.upper()
+        return text_upper(text, language)
     if case == "lower":
-        return text.lower()
+        return text_lower(text, language)
     if case == "title":
-        return re.sub(r"\S+", lambda m: m.group(0)[:1].upper() + m.group(0)[1:].lower(), text)
+        return title_words(text, language)
     return text
 
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,6 +21,7 @@ from app.smart_edit.schemas import (
     TextLane,
     VisualLane,
 )
+from app.text_fold import loose_text
 
 COMPILER_VERSION = "nova-smart-lanes-2026-07-18.2"
 COMPILER_VERSION_V2 = "nova-smart-lanes-2026-07-20.1"
@@ -122,11 +122,8 @@ class CompiledSmartEdit:
 
 
 def _fold(value: str) -> str:
-    value = value.casefold().translate(str.maketrans("çğıöşü", "cgiosu"))
-    value = "".join(
-        ch for ch in unicodedata.normalize("NFKD", value) if not unicodedata.combining(ch)
-    )
-    return " ".join(re.findall(r"[a-z0-9]+", value))
+    # KRI-781: the shared Turkish-aware fold.
+    return " ".join(re.findall(r"[a-z0-9]+", loose_text(value)))
 
 
 def _stable_id(*parts: object, length: int = 32) -> str:

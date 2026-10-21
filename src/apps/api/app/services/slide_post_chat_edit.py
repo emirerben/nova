@@ -345,13 +345,11 @@ def build_slide_post_snapshot(
 
 
 def _apply_case(text: str, case: object) -> str:
-    if case == "upper":
-        return text.upper()
-    if case == "lower":
-        return text.lower()
-    if case == "title":
-        return text.title()
-    return text
+    # KRI-781: the shared Turkish-aware text_case ("ışık'ta" -> "Işık'ta" for
+    # Turkish; never str.title()'s "Emir'In").
+    from app.agents._schemas.text_element import apply_text_case  # noqa: PLC0415
+
+    return apply_text_case(text, case if isinstance(case, str) else None)
 
 
 def _clamp(value: object, low: float, high: float, default: float) -> float:

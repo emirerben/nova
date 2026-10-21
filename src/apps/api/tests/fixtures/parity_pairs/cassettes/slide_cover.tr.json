@@ -1,0 +1,55 @@
+{
+  "pair_id": "slide_cover",
+  "lang": "tr",
+  "agent": "nova.plan.slide_post_composer",
+  "prompt_version": "2026-09-09-kria",
+  "message": "kapak fotoğrafı gün batımı olsun",
+  "input": {
+    "theme": "solo travel",
+    "idea": "a weekend in Lisbon",
+    "notes": "kapak fotoğrafı gün batımı olsun",
+    "persona_summary": "lowercase, in-the-moment travel creator, second-person voice",
+    "platform_profile": "instagram_carousel",
+    "media": [
+      {
+        "id": "a1",
+        "kind": "image",
+        "description": "airport arrival, golden hour light through terminal windows"
+      },
+      {
+        "id": "a2",
+        "kind": "image",
+        "description": "narrow cobblestone alley in Alfama, laundry lines overhead"
+      },
+      {
+        "id": "a3",
+        "kind": "video",
+        "description": "6s clip riding tram 28 through a curve, hand out the window"
+      },
+      {
+        "id": "a4",
+        "kind": "image",
+        "description": "pastel de nata and coffee on a cafe table, midday"
+      },
+      {
+        "id": "a5",
+        "kind": "image",
+        "description": "sunset over the Tagus river from Miradouro da Senhora do Monte"
+      }
+    ]
+  },
+  "prompt_sha256": "1070a38c457deefe6162e509d5352d3f4b930d97f7b5824b20fe0f7992796851",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:13:06.277720+00:00",
+  "raw_text": "{\n  \"order\": [\n    \"a1\",\n    \"a4\",\n    \"a2\",\n    \"a3\",\n    \"a5\"\n  ],\n  \"cover_id\": \"a5\",\n  \"caption\": \"just me and lisbon for the weekend, you know those trips that feel like a dream? this one was it.\",\n  \"alt_text\": {\n    \"a1\": \"golden hour light filtering through airport terminal windows\",\n    \"a3\": \"person's hand out the window of tram 28 as it turns a corner\",\n    \"a5\": \"sunset over the Tagus river with city lights beginning to glow\"\n  }\n}",
+  "raw_texts": [
+    "{\n  \"order\": [\n    \"a1\",\n    \"a4\",\n    \"a2\",\n    \"a3\",\n    \"a5\"\n  ],\n  \"cover_id\": \"a5\",\n  \"caption\": \"just me and lisbon for the weekend, you know those trips that feel like a dream? this one was it.\",\n  \"alt_text\": {\n    \"a1\": \"golden hour light filtering through airport terminal windows\",\n    \"a3\": \"person's hand out the window of tram 28 as it turns a corner\",\n    \"a5\": \"sunset over the Tagus river with city lights beginning to glow\"\n  }\n}"
+  ],
+  "model_used": "gemini-2.5-flash",
+  "tokens": {
+    "in": 513,
+    "out": 155,
+    "thoughts": 418
+  },
+  "computed_cost_usd": 0.001586
+}

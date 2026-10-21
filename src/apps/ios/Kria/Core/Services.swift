@@ -1260,9 +1260,22 @@ struct KriaAPI: KriaAPIClient {
         body.append(audio)
         append("\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"context_terms\"\r\n\r\n")
         append(String(data: (try? JSONEncoder().encode(contextTerms)) ?? Data("[]".utf8), encoding: .utf8) ?? "[]")
+        // KRI-780: the device's preferred languages, so a short Turkish take is read as Turkish.
+        if let localeHint = Self.dictationLocaleHint() {
+            append("\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"locale_hint\"\r\n\r\n")
+            append(localeHint)
+        }
         append("\r\n--\(boundary)--\r\n")
         return try await request(path: "dictation/transcribe", method: "POST", headers: ["Content-Type": "multipart/form-data; boundary=\(boundary)"], bodyData: body, decode: DictationTranscriptResponse.self, timeoutInterval: 30)
     }
+    /// Dictation `locale_hint`: the device's preferred language tags, best first, comma-joined
+    /// ("en-TR,tr-TR"); nil when none. The server forces Whisper only to a top-ranked Kria
+    /// language and uses later ones just for the spelling-bias word list.
+    static func dictationLocaleHint(preferred: [String] = Locale.preferredLanguages) -> String? {
+        let tags = preferred.prefix(4).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.contains(",") }
+        return tags.isEmpty ? nil : tags.joined(separator: ",")
+    }
+
     func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink {
         try await request(path: "creation-threads/\(threadID.uuidString)/song-audio", method: "GET",
                           query: generation.map { [URLQueryItem(name: "generation", value: String($0))] } ?? [],
@@ -2675,8 +2688,14 @@ extension DraftSnapshot {
         var merged: [[String: JSONValue]] = []
         for value in draft {
             guard let row = object(value) else { continue }
-            var slot = take(row) ?? [:]
+            let matched = take(row)
+            var slot = matched ?? [:]
             for (key, field) in row { slot[key] = field }
+            // KRI-773: a draft clip that matches no saved clip is a new placement. An id it carries
+            // (chat minted `cs-<state>-<n>` ids before #1698, and they live on in stored drafts) was
+            // never a real slot; keeping it made every Save fail 409 TIMELINE_STALE, and "Reload and
+            // keep my edits" re-applied the same timeline.
+            if matched == nil, slot["removed"] != .bool(true), slot["slot_id"] != nil { slot.removeValue(forKey: "slot_id") }
             merged.append(slot)
         }
         merged.append(contentsOf: unmatched)

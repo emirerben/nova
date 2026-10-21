@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 import re
-import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -42,6 +41,7 @@ from app.schemas.edit_proposal import (
     uses_quick_photo_long_video_timing,
 )
 from app.services.proposal_planning import SemanticPlanningError, plan_edit_proposal
+from app.text_fold import loose_text
 
 log = structlog.get_logger()
 
@@ -852,8 +852,8 @@ _LABEL_VIDEO_CAPACITY_MARGIN_S = 0.25
 
 
 def _label_match_tokens(text: str) -> set[str]:
-    decomposed = unicodedata.normalize("NFKD", text.casefold())
-    plain = "".join(char for char in decomposed if not unicodedata.combining(char))
+    # KRI-781: the shared Turkish-aware fold ("IŞIK" and "ışık" both key "isik").
+    plain = loose_text(text)
     tokens: set[str] = set()
     for token in re.findall(r"\w+", plain):
         if len(token) < 3 or token.isdigit() or token in _LABEL_MATCH_STOPWORDS:

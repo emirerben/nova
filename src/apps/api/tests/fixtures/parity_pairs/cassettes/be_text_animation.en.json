@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_text_animation",
+  "lang": "en",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "Make the title appear with a typewriter animation.",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "Make the title appear with a typewriter animation."
+  },
+  "prompt_sha256": "abf2012299b006ca1e768f1922f97d24dbc5b213c05e317e153b88049959d1f7",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:11:31.158345+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"title\",\n      \"literal\": null,\n      \"description\": \"appear with a typewriter animation\",\n      \"facts\": {\n        \"animation\": \"typewriter\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"title\",\n      \"literal\": null,\n      \"description\": \"appear with a typewriter animation\",\n      \"facts\": {\n        \"animation\": \"typewriter\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3227,
+    "out": 91,
+    "thoughts": 1155
+  },
+  "computed_cost_usd": 0.007093
+}

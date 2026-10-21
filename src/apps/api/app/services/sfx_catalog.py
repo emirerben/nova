@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from app.text_fold import loose_text
+
 SFX_CATEGORIES: tuple[str, ...] = (
     "rejection",
     "approval",
@@ -127,8 +129,8 @@ _ONE_SHOT_MAX_S = 3.0
 _TIER_RANK = {"library": 0, "core": 1}
 
 
-# Turkish letters folded to the ASCII the (English) library is written in.
-_TR_FOLD = str.maketrans("çğıöşü", "cgiosu")
+# Turkish letters folded to the ASCII the (English) library is written in: the shared
+# Turkish-aware fold (KRI-781), applied per word.
 _TR_LETTERS = frozenset("çğıöşü")
 
 
@@ -143,7 +145,7 @@ def words(text: object) -> list[str]:
 
     Pure-ASCII text tokenises exactly as ``[a-z0-9]+`` on the casefolded text.
     """
-    return [w.translate(_TR_FOLD) for w in _raw_words(text)]
+    return [loose_text(w) for w in _raw_words(text)]
 
 
 def _stem(word: str) -> str:
@@ -248,7 +250,7 @@ def _is_turkish(raw: Sequence[str], folded: Sequence[str]) -> bool:
 def is_refusal(text: object) -> bool:
     """ "no sound" / "ses olmasın": the creator is declining a sound."""
     raw = _raw_words(text)
-    folded = [w.translate(_TR_FOLD) for w in raw]
+    folded = [loose_text(w) for w in raw]
     if set(folded) & _REFUSAL:
         return True
     return _is_turkish(raw, folded) and bool(set(folded) & _REFUSAL_TR)
@@ -257,7 +259,7 @@ def is_refusal(text: object) -> bool:
 def request_words(text: object) -> list[str]:
     """``words`` for a request: Turkish filler dropped, sound words in English."""
     raw = _raw_words(text)
-    folded = [w.translate(_TR_FOLD) for w in raw]
+    folded = [loose_text(w) for w in raw]
     if not _is_turkish(raw, folded):
         return folded
     out: list[str] = []

@@ -1,0 +1,55 @@
+{
+  "pair_id": "slide_count",
+  "lang": "en",
+  "agent": "nova.plan.slide_post_composer",
+  "prompt_version": "2026-09-09-kria",
+  "message": "Keep it to just 3 slides.",
+  "input": {
+    "theme": "solo travel",
+    "idea": "a weekend in Lisbon",
+    "notes": "Keep it to just 3 slides.",
+    "persona_summary": "lowercase, in-the-moment travel creator, second-person voice",
+    "platform_profile": "instagram_carousel",
+    "media": [
+      {
+        "id": "a1",
+        "kind": "image",
+        "description": "airport arrival, golden hour light through terminal windows"
+      },
+      {
+        "id": "a2",
+        "kind": "image",
+        "description": "narrow cobblestone alley in Alfama, laundry lines overhead"
+      },
+      {
+        "id": "a3",
+        "kind": "video",
+        "description": "6s clip riding tram 28 through a curve, hand out the window"
+      },
+      {
+        "id": "a4",
+        "kind": "image",
+        "description": "pastel de nata and coffee on a cafe table, midday"
+      },
+      {
+        "id": "a5",
+        "kind": "image",
+        "description": "sunset over the Tagus river from Miradouro da Senhora do Monte"
+      }
+    ]
+  },
+  "prompt_sha256": "5808bacbf8f6eaa18d651462475dbc48c2998c3db0520b9a7fe78a452e5e1b9a",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:12:56.822506+00:00",
+  "raw_text": "{\n  \"order\": [\n    \"a1\",\n    \"a4\",\n    \"a3\",\n    \"a2\",\n    \"a5\"\n  ],\n  \"cover_id\": \"a5\",\n  \"caption\": \"you know those weekends where you just pack a bag and go? that was lisbon for me and it was exactly what i needed.\",\n  \"alt_text\": {\n    \"a1\": \"airport terminal bathed in golden hour light, showing an arrival gate\",\n    \"a3\": \"view from inside a tram, hand extended out the window as it rounds a curve\",\n    \"a5\": \"stunning sunset over the Tagus river from a hilltop viewpoint\"\n  }\n}",
+  "raw_texts": [
+    "{\n  \"order\": [\n    \"a1\",\n    \"a4\",\n    \"a3\",\n    \"a2\",\n    \"a5\"\n  ],\n  \"cover_id\": \"a5\",\n  \"caption\": \"you know those weekends where you just pack a bag and go? that was lisbon for me and it was exactly what i needed.\",\n  \"alt_text\": {\n    \"a1\": \"airport terminal bathed in golden hour light, showing an arrival gate\",\n    \"a3\": \"view from inside a tram, hand extended out the window as it rounds a curve\",\n    \"a5\": \"stunning sunset over the Tagus river from a hilltop viewpoint\"\n  }\n}"
+  ],
+  "model_used": "gemini-2.5-flash",
+  "tokens": {
+    "in": 513,
+    "out": 161,
+    "thoughts": 389
+  },
+  "computed_cost_usd": 0.001529
+}

@@ -1,0 +1,64 @@
+{
+  "pair_id": "ec_highlight_word",
+  "lang": "en",
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-10-19-v85",
+  "message": "emphasize Turkey in the captions",
+  "input": {
+    "utterance": "emphasize Turkey in the captions",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "caption"
+      ],
+      "has_narrated_captions": true,
+      "text_bars": [],
+      "slots": [],
+      "total_duration_s": 4,
+      "captions": {
+        "total_cues": 2,
+        "truncated": false,
+        "cues": [
+          {
+            "index": 0,
+            "id": "cue-1",
+            "text": "we flew to Turkey",
+            "start_s": 0,
+            "end_s": 1.2,
+            "smart_role": "hook",
+            "smart_emphasis": false
+          },
+          {
+            "index": 1,
+            "id": "cue-2",
+            "text": "for the summer",
+            "start_s": 1.2,
+            "end_s": 2.2,
+            "smart_role": "context_shift",
+            "smart_emphasis": false
+          }
+        ],
+        "meta": {
+          "enabled": true,
+          "style": "sentence",
+          "font": null,
+          "y_frac": 0.82
+        }
+      }
+    }
+  },
+  "prompt_sha256": "58cd90470df42609f82acc7668f91ff4eab243100b5637f02f0c52c2512b4ecc",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:09:58.658347+00:00",
+  "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"set_caption_emphasis\",\n      \"cue_index\": 0,\n      \"emphasis\": true\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"I've added emphasis to the caption mentioning Turkey.\",\n  \"suggestions\": [\n    \"Change the caption font\",\n    \"Make the captions larger\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [],\n  \"claimed_ops\": [\n    \"set_caption_emphasis\"\n  ]\n}",
+  "raw_texts": [
+    "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"set_caption_emphasis\",\n      \"cue_index\": 0,\n      \"emphasis\": true\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"I've added emphasis to the caption mentioning Turkey.\",\n  \"suggestions\": [\n    \"Change the caption font\",\n    \"Make the captions larger\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [],\n  \"claimed_ops\": [\n    \"set_caption_emphasis\"\n  ]\n}"
+  ],
+  "model_used": "gemini-3.1-pro-preview",
+  "tokens": {
+    "in": 14406,
+    "out": 163,
+    "thoughts": 517
+  },
+  "computed_cost_usd": 0.036972
+}

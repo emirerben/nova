@@ -2,6 +2,51 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.8.0] - 2026-10-21
+
+### Changed
+- fix(editor): a chat-minted slot id no longer traps Save in a stale-edit loop (KRI-799) (#1719) <!-- release-pr: 1719 -->
+
+## [0.81.7.0] - 2026-10-21
+
+### Changed
+- feat(kria): Turkish parity D — Server copy + prompts carry the creator's language (KRI-784) (#1717) <!-- release-pr: 1717 -->
+
+## [0.81.6.0] - 2026-10-21
+
+### Changed
+- fix(turkish-parity): Turkish parity A — Chat language reaches the render, dictation and captions (KRI-780) (#1712) <!-- release-pr: 1712 -->
+
+## [0.81.5.0] - 2026-10-21
+
+### Changed
+- fix(turkish-parity): Turkish parity B — One Turkish-aware text fold + correct İ/ı casing (KRI-781) (#1720) <!-- release-pr: 1720 -->
+
+## [0.81.4.0] - 2026-10-21
+
+### Changed
+- fix(parity): Turkish parity C2 — Edit/speech/receipt/style decisions understand Turkish (KRI-783) (#1718) <!-- release-pr: 1718 -->
+
+## [0.81.3.0] - 2026-10-21
+
+### Changed
+- fix(creator): Turkish parity C1 — Legacy creator path trusts the model, not English regexes (KRI-782) (#1715) <!-- release-pr: 1715 -->
+
+## [0.81.2.0] - 2026-10-21
+
+### Changed
+- test(parity): Turkish↔English parity map + baseline suites (KRI-773) (#1707) <!-- release-pr: 1707 -->
+
+## [0.81.1.0] - 2026-10-21
+
+### Changed
+- fix(kria): don't hold back the first draft of an open 'Suggest an edit.' request (KRI-774) (#1705) <!-- release-pr: 1705 -->
+
+## [0.81.0.0] - 2026-10-21
+
+### Added
+- Add camera-roll content ideas with creator taste and verified project exports (#1685) <!-- release-pr: 1685 -->
+
 ## [0.80.72.0] - 2026-10-21
 
 ### Changed

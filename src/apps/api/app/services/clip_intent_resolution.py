@@ -88,6 +88,7 @@ from app.services.clip_selection import (
     intent_key,
 )
 from app.services.clip_understanding import clip_record
+from app.text_fold import title_like_str
 
 log = structlog.get_logger()
 
@@ -641,9 +642,9 @@ def _caption_authoring_question(intent: ClipIntent) -> str:
 
 def _yes_no(answer: str) -> bool | None:
     word = answer.strip().casefold().split(" ")[0].strip(".,!") if answer.strip() else ""
-    if word in {"yes", "true"}:
+    if word in {"yes", "true", "evet"}:
         return True
-    if word in {"no", "false"}:
+    if word in {"no", "false", "hayır", "hayir"}:
         return False
     return None
 
@@ -682,6 +683,9 @@ def query_clip_vision(
             ClipQuestionInput(
                 file_uri=file_ref.uri,
                 file_mime=getattr(file_ref, "mime_type", None) or "video/mp4",
+                # KRI-784: no reply language here. Membership checks parse an
+                # English "yes"/"no", and answers are cached per question on the
+                # clip with no language in the key.
                 question=question,
             ),
             ctx=run_context,
@@ -2233,7 +2237,7 @@ def _apply_vision_result(
             work.failed_media_ids.add(candidate.media_id)
             return
 
-        value = candidate.fallback_value or clean_label_text(output.answer.title())
+        value = candidate.fallback_value or clean_label_text(title_like_str(output.answer))
         label = ground_label(
             media_id=candidate.media_id,
             value=value,
