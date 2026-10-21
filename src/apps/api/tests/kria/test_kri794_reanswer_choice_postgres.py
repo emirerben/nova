@@ -33,6 +33,11 @@ Ways this can fail (written before the code):
 11. A consent-scoped question (the simpler version) becomes re-answerable by stale text.
 12. The refusal is not linked to the choice by structure (an unresolved ORDER line raises
     with no ``field_path``), so nothing downstream can tell it was about the order.
+13. A render approved BEFORE a typed re-answer is refused after the re-answer is stored: the
+    refusal is blamed on the new answer, which is then re-asked instead of applied.
+14. "You choose" on the refusal re-ask lands on the option that was just refused.
+15. The kept note's "To change it, reply ..." quotes words that do not re-answer once the
+    chat's language has changed.
 """
 
 from __future__ import annotations
@@ -71,7 +76,11 @@ from app.services.creator_render_contract import (
     check_phone_dispatch_contract,
     decline_payload,
 )
-from app.tasks.kria_runtime import _append_sync_event, _observe_dispatched_execution
+from app.tasks.kria_runtime import (
+    _append_sync_event,
+    _observe_dispatched_execution,
+    run_kria_turn,
+)
 from tests.kria.test_choice_conflict_journey import (
     _decide,
     _draft_strategy,
@@ -152,12 +161,13 @@ async def _answered(monkeypatch, option: str = "attachment_order") -> tuple:  # 
     return user_id, thread_id, session_id, question
 
 
-def _refuse_the_approved_render(thread_id: uuid.UUID, session_id: uuid.UUID) -> dict:
-    """The awaiting draft is approved and its phone dispatch is refused, as in the incident.
+def _approve_and_dispatch(thread_id: uuid.UUID, session_id: uuid.UUID) -> uuid.UUID:
+    """The awaiting draft is approved and dispatched; its job has already been refused.
 
     The refusal is the REAL one: the dispatch contract is built from the approved binding with
     the strategy's answer missing (the KRI-788 loss), and ``check_phone_dispatch_contract``
-    raises the typed decline the worker persists. The real observer then writes the chat card.
+    raises the typed decline the worker persists. Nothing is observed yet (the render is in
+    flight as far as the chat knows); ``_observe`` posts the card.
     """
     draft = _head_draft(thread_id)
     binding = BriefBinding.model_validate(draft.snapshot_json["brief_binding"])
@@ -232,12 +242,20 @@ def _refuse_the_approved_render(thread_id: uuid.UUID, session_id: uuid.UUID) -> 
         item.current_job_id = job.id
         thread.active_job_id = job.id
         db.commit()
-        execution_id = execution.id
+        return execution.id
+
+
+def _observe(thread_id: uuid.UUID, execution_id: uuid.UUID) -> dict:
+    """The real render observer settles the refused job and posts the chat card."""
     observed, _ = _observe_dispatched_execution(execution_id)  # runs in a worker thread
     assert observed == "failed"
     card = _last_reply(thread_id)
     assert card.event_type == "assistant_render_failed"
     return card.payload
+
+
+def _refuse_the_approved_render(thread_id: uuid.UUID, session_id: uuid.UUID) -> dict:
+    return _observe(thread_id, _approve_and_dispatch(thread_id, session_id))
 
 
 async def _refused(monkeypatch) -> tuple:  # noqa: ANN001
@@ -328,7 +346,8 @@ async def test_the_next_reply_after_the_refusal_offers_the_order_choice_again(mo
     assert again["conflict"] == "order_basis"
     assert again["input_digest"] == first["input_digest"]
     recommended = {o["key"]: o["recommended"] for o in again["options"]}
-    assert recommended["attachment_order"] is False  # never recommend what was just refused
+    # never recommend what was just refused; recommend the way forward that cannot hit it
+    assert recommended == {"attachment_order": False, "unordered": True}
     reply = _last_reply(thread_id)
     assert reply.content.startswith("I couldn't make your last video with this choice.")
     assert _head_draft(thread_id).draft_revision == revision  # the refused edit is not redrafted
@@ -390,6 +409,77 @@ async def test_a_second_refusal_after_the_reask_keeps_the_answer_without_a_third
         "attachment_order"
     )  # never dropped for the creator
     assert "As agreed earlier" in _last_summary(thread_id)
+
+
+@pytest.mark.asyncio
+async def test_you_choose_on_the_refusal_reask_never_picks_the_refused_option(
+    monkeypatch,
+) -> None:
+    user_id, thread_id, _, _, _ = await _refused(monkeypatch)
+    await _say(user_id, thread_id, "Try again please")
+    assert len(_questions(thread_id)) == 2
+
+    result = await _say(user_id, thread_id, "you choose")
+
+    assert result["status"] == "awaiting_approval"
+    (answer,) = _draft_strategy(_head_draft(thread_id))["choice_answers"]
+    assert (answer["option"], answer["source"]) == ("unordered", "creator_delegated")
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_of_the_render_approved_before_the_re_answer_is_not_blamed_on_it(
+    monkeypatch,
+) -> None:
+    """The creator types the other option while the old render is in flight; that render is
+    refused only after the re-answer is stored (the observer posts the card, then promotes the
+    queued turn). The refusal is about the OLD answer: the new one applies, nothing is re-asked."""
+    user_id, thread_id, session_id, question = await _answered(monkeypatch)
+    execution_id = await asyncio.to_thread(_approve_and_dispatch, thread_id, session_id)
+    with sync_session() as db:
+        revision = db.get(CreationThread, thread_id).revision
+    async with AsyncSessionLocal() as db:
+        accepted, _ = await submit_turn(
+            db,
+            thread_id=thread_id,
+            creator_id=user_id,
+            body=SubmitTurnBody(
+                message=UNORDERED_LABEL,
+                client_event_id=f"q-{uuid.uuid4().hex}",
+                expected_thread_revision=revision,
+            ),
+        )
+    assert accepted.status == "queued"
+    assert _selections(thread_id)[-1] == {
+        "question_id": question["question_id"],
+        "option_key": "unordered",
+        "reanswer": True,
+    }
+    await asyncio.to_thread(_observe, thread_id, execution_id)  # the OLD render's card
+
+    result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+
+    assert result["status"] == "awaiting_approval"
+    assert len(_questions(thread_id)) == 1
+    assert _draft_strategy(_head_draft(thread_id))["choice_answers"][0]["option"] == "unordered"
+    assert UNORDERED_NOTE in _last_summary(thread_id)
+
+
+@pytest.mark.asyncio
+async def test_the_kept_note_quotes_words_that_re_answer_after_the_language_changes(
+    monkeypatch,
+) -> None:
+    user_id, thread_id, _, question = await _answered(monkeypatch)
+    await _decide(user_id, thread_id, "deny")
+
+    await _say(user_id, thread_id, "Biraz daha hızlı yap lütfen")
+
+    summary = _last_summary(thread_id)
+    hint = f'Değiştirmek için "{UNORDERED_LABEL}" yaz.'
+    assert "Daha önce anlaştığımız gibi:" in summary and hint in summary, summary
+    await _decide(user_id, thread_id, "deny")
+    await _say(user_id, thread_id, UNORDERED_LABEL)  # exactly what the note told them to type
+    assert _selections(thread_id)[-1]["option_key"] == "unordered"
+    assert _draft_strategy(_head_draft(thread_id))["choice_answers"][0]["option"] == "unordered"
 
 
 @pytest.mark.asyncio

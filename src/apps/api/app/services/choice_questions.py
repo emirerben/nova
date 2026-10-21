@@ -2665,20 +2665,63 @@ _TOPICAL_ALIAS_KINDS = frozenset({CONFLICT_ORDER_BASIS})
 _CARD_ONLY_ALIASES = frozenset(normalize_reply(a) for a in ("fark etmez",))
 
 
+def _turn_source_index(history: Sequence[tuple[str, Any]], turn_id: object) -> int | None:
+    """Position of the user message that started ``turn_id`` (``None`` when not in view)."""
+
+    if not turn_id:
+        return None
+    return next(
+        (
+            position
+            for position, (role, payload) in enumerate(history)
+            if role == "user" and isinstance(payload, dict) and payload.get("turn_id") == turn_id
+        ),
+        None,
+    )
+
+
 def _refused_since(history: Sequence[tuple[str, Any]], index: int, conflict_id: str) -> bool:
-    """Did a ``needs_choice`` render refusal naming this conflict follow position ``index``?"""
+    """Was a render built with the answer at position ``index`` refused over this conflict?
+
+    The ``needs_choice`` refusal naming the conflict must follow the answer AND come from a
+    turn planned with it. A render approved BEFORE a typed re-answer can be refused after the
+    re-answer is stored (the observer posts the card, then promotes the queued turn): that
+    refusal is about the old answer, never the new one. A refusal whose turn is not in view
+    counts.
+    """
 
     path = REFUSED_CHOICE_FIELD_PATHS.get(conflict_id)
     if path is None:
         return False
-    return any(
-        role == "assistant"
-        and isinstance(payload, dict)
-        and payload.get(EVENT_TYPE_KEY, RENDER_REFUSAL_EVENT_TYPE) == RENDER_REFUSAL_EVENT_TYPE
-        and payload.get("decline_reason") == "needs_choice"
-        and payload.get("field_path") == path
-        for role, payload in history[index + 1 :]
-    )
+    for role, payload in history[index + 1 :]:
+        if not (
+            role == "assistant"
+            and isinstance(payload, dict)
+            and payload.get(EVENT_TYPE_KEY, RENDER_REFUSAL_EVENT_TYPE) == RENDER_REFUSAL_EVENT_TYPE
+            and payload.get("decline_reason") == "needs_choice"
+            and payload.get("field_path") == path
+        ):
+            continue
+        source = _turn_source_index(history, payload.get("turn_id"))
+        if source is None or source >= index:
+            return True
+    return False
+
+
+def _latest_questions(history: Sequence[tuple[str, Any]]) -> dict[str, dict[str, Any]]:
+    """The latest question asked for each gate conflict, as the creator saw it."""
+
+    latest: dict[str, dict[str, Any]] = {}
+    for role, payload in history:
+        question = payload.get("choice_question") if isinstance(payload, dict) else None
+        if (
+            role == "assistant"
+            and isinstance(question, dict)
+            and question.get("conflict") in CONFLICT_PRIORITY
+            and question.get("question_id")
+        ):
+            latest[str(question["conflict"])] = question
+    return latest
 
 
 def _without_card(question: Mapping[str, Any]) -> dict[str, Any]:
@@ -2718,16 +2761,7 @@ def match_answered_choice(events: Events, message: object) -> tuple[dict[str, An
 
     history = _event_list(events)
     answers = fold_scoped_answers(history)
-    latest: dict[str, dict[str, Any]] = {}
-    for role, payload in history:
-        question = payload.get("choice_question") if isinstance(payload, dict) else None
-        if (
-            role == "assistant"
-            and isinstance(question, dict)
-            and question.get("conflict") in CONFLICT_PRIORITY
-            and question.get("question_id")
-        ):
-            latest[str(question["conflict"])] = question
+    latest = _latest_questions(history)
     hits: list[tuple[dict[str, Any], str, bool]] = []
     for conflict, prior in answers.items():
         question = latest.get(conflict)
@@ -2941,9 +2975,22 @@ def _reask_after_refusal(
     ) < _ask_limit(choice)
 
 
-def _refusal_reask(choice: UnresolvedChoice, refused: str) -> UnresolvedChoice:
-    """The question again, saying why, with the refused option no longer recommended."""
+# The option a refusal re-ask recommends: the way forward that cannot hit the same refusal
+# (no order promise to verify). It is also what "you choose" picks on that re-ask.
+_AFTER_REFUSAL = {CONFLICT_ORDER_BASIS: OPT_UNORDERED}
 
+
+def _refusal_reask(choice: UnresolvedChoice, refused: str) -> UnresolvedChoice:
+    """The question again, saying why, recommending a way forward other than the refused one.
+
+    Some option stays recommended, so a delegated "you choose" never lands on the option that
+    was just refused (``delegated_choice`` falls back to the first option otherwise).
+    """
+
+    others = [option.key for option in choice.options if option.key != refused]
+    pick = _AFTER_REFUSAL.get(choice.kind)
+    if pick not in others:
+        pick = others[0] if others else None
     lead = say(
         en="I couldn't make your last video with this choice.",
         tr="Son videonu bu seçimle oluşturamadım.",
@@ -2951,10 +2998,7 @@ def _refusal_reask(choice: UnresolvedChoice, refused: str) -> UnresolvedChoice:
     return replace(
         choice,
         intro=f"{lead} {choice.intro}",
-        options=tuple(
-            replace(option, recommended=False) if option.key == refused else option
-            for option in choice.options
-        ),
+        options=tuple(replace(option, recommended=option.key == pick) for option in choice.options),
     )
 
 
@@ -2967,15 +3011,28 @@ def _answered_earlier(history: Sequence[tuple[str, Any]], prior: ScopedAnswer) -
     )
 
 
-def _kept_note(note: str, choice: UnresolvedChoice, option_key: str) -> str:
+def _kept_note(
+    note: str,
+    choice: UnresolvedChoice,
+    option_key: str,
+    history: Sequence[tuple[str, Any]],
+) -> str:
     """A standing answer on a later turn: said as kept, with the way to change it.
 
     "I'm using the order you added the clips." on every later draft read as a fresh
-    promise, even right after the creator typed the other option (KRI-794).
+    promise, even right after the creator typed the other option (KRI-794). The labels
+    quoted are those of the question as it was asked, the exact words
+    ``match_answered_choice`` accepts, even if the chat's language changed since.
     """
 
     kept = say(en=f"As agreed earlier: {note}", tr=f"Daha önce anlaştığımız gibi: {note}")
-    others = [f'"{o.label}"' for o in choice.options if o.key != option_key]
+    asked = _latest_questions(history).get(choice.conflict_id)
+    options = (
+        [(str(o.get("key")), str(o.get("label") or "")) for o in asked.get("options") or []]
+        if asked
+        else [(o.key, o.label) for o in choice.options]
+    )
+    others = [f'"{label}"' for key, label in options if key != option_key and label]
     if not others or len(others) > 2:
         return kept
     return kept + say(
@@ -3062,7 +3119,7 @@ def resolve_choices(
         if note:
             note = _disclose(note, source)
             if _answered_earlier(history, prior):
-                note = _kept_note(note, choice, option_key)
+                note = _kept_note(note, choice, option_key, history)
             notices.append(note)
     if answers:
         data["choice_answers"] = answers
