@@ -29,7 +29,7 @@ from dataclasses import dataclass
 import httpx
 import structlog
 
-from app.text_fold import fold_text, loose_text
+from app.text_fold import loose_text
 
 log = structlog.get_logger()
 
@@ -519,7 +519,8 @@ def _artists_match(a: str, b: str) -> bool:
 
     def _norm(s: str) -> str:
         s = _ARTIST_TAIL_FEAT_RE.sub("", s.strip())
-        return fold_text(s)
+        # KRI-781: same loose fold as titles ("Baris Manco" == "Barış Manço").
+        return loose_text(s)
 
     return _norm(a) == _norm(b)
 

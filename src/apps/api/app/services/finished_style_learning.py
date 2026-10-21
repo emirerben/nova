@@ -53,6 +53,11 @@ TEMPORARY_MARKERS = (
     "sadece bu videoda",
     "sadece bu sefer",
     "bu videoya özel",
+    "bu seferlik",
+    "bir seferlik",
+    "yalnızca bu video",
+    "yalnızca bu sefer",
+    "sadece burada",
     "geçici",
 )
 

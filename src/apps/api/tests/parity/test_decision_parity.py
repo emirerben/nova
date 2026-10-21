@@ -387,14 +387,6 @@ def _seed_tokens(text: str) -> frozenset[str]:
     return frozenset(_tokens(text))
 
 
-def _upper(text: str) -> str:
-    # The renderer passes the job's language when it knows it; "istanbul" has no
-    # Turkish-only letter, so only the language can say it is Turkish.
-    from app.agents._schemas.text_element import apply_text_case
-
-    return apply_text_case(text, "upper", "tr")
-
-
 def _upper_auto(text: str) -> str:
     # No language known (a stored text element): rules follow the text's own letters.
     from app.agents._schemas.text_element import apply_text_case
@@ -424,6 +416,27 @@ def _lrclib_title_tokens(text: str) -> frozenset[str]:
     from app.services.lrclib_client import _tokenize_title
 
     return frozenset(_tokenize_title(text))
+
+
+def _stateful(text: str) -> bool:
+    from app.services.creator_memory_learning import requires_stateful_extraction
+
+    return requires_stateful_extraction(text)
+
+
+def _artist_gate(text: str) -> bool:
+    from app.services.lrclib_client import _artists_match
+
+    return _artists_match(text, "Barış Manço")
+
+
+def _karaoke_upper_composes(text: str) -> bool:
+    # generative_overlays cases the element text whole and each word_timings entry alone;
+    # rebuild_word_timings_for_text keeps the beat-snapped timings only when they agree.
+    from app.agents._schemas.text_element import apply_text_case
+
+    whole = apply_text_case(text, "upper").split()
+    return whole == [apply_text_case(word, "upper") for word in text.split()]
 
 
 def _lower(text: str) -> str:
@@ -1538,6 +1551,70 @@ CASES: tuple[Case, ...] = (
         (3, 1),
         {"tr": "üçe bir", "tr_ascii": "uce bir", "tr_upper": "ÜÇE BİR"},
     ),
+    # D50: a Turkish word that merely starts like a marker is not durable memory.
+    Case(
+        "D50",
+        "style_memory",
+        "services.creator_memory_learning.classify_memory_candidate",
+        "no false durable marker (prefix words)",
+        _memory_candidate,
+        "add a lion roar to the video as usual",
+        "noop",
+        {
+            "tr": "Her zamanki gibi videoya aslan sesi ekle",
+            "tr_ascii": "her zamanki gibi videoya aslan sesi ekle",
+            "tr_upper": "HER ZAMANKİ GİBİ VİDEOYA ASLAN SESİ EKLE",
+        },
+    ),
+    # D51: natural Turkish wordings of a durable rule are explicit memory.
+    Case(
+        "D51",
+        "style_memory",
+        "services.creator_memory_learning.classify_memory_candidate",
+        "durable memory (natural wordings)",
+        _memory_candidate,
+        "never use yellow",
+        "explicit",
+        {
+            "tr": "Hiçbir zaman sarı kullanma",
+            "tr_every": "her videoda Inter kullan",
+            "tr_daima": "daima Inter fontu kullan",
+            "tr_ascii": "bundan boyle Inter kullan",
+            "tr_upper": "TÜM VİDEOLARDA INTER OLSUN",
+        },
+    ),
+    # D52: "stop using / instead / forget" needs current-memory judgment.
+    Case(
+        "D52",
+        "style_memory",
+        "services.creator_memory_learning.requires_stateful_extraction",
+        "stateful memory change",
+        _stateful,
+        "stop using this font",
+        True,
+        {
+            "tr": "Artık bu fontu kullanma",
+            "tr_instead": "Playfair yerine Inter kullan",
+            "tr_ascii": "sariyi kullanmayi birak",
+            "tr_upper": "FONTUMU DEĞİŞTİR",
+        },
+    ),
+    # D53: a one-off style change in Turkish is not learned as a preference.
+    Case(
+        "D53",
+        "style_memory",
+        "services.finished_style_learning.explicitly_temporary",
+        "temporary style change (one-off wordings)",
+        _temporary,
+        "make it yellow this time only",
+        True,
+        {
+            "tr": "Bu seferlik sarı yap",
+            "tr_only": "yalnızca bu videoda sarı yap",
+            "tr_ascii": "bir seferlik sari yap",
+            "tr_upper": "BU SEFERLİK SARI YAP",
+        },
+    ),
     # ---------------------------------------------------------------- normalization
     # N01: shared Turkish-aware fold: every spelling of "kırmızı" folds alike.
     Case(
@@ -1622,10 +1699,15 @@ CASES: tuple[Case, ...] = (
         "normalization",
         "agents._schemas.text_element.apply_text_case",
         "text_case upper",
-        _upper,
+        _upper_auto,
         "İSTANBUL",
         "İSTANBUL",
         {"tr": "istanbul", "tr_title": "İstanbul"},
+        gaps=_gaps(
+            "renderers carry no job language (needs a schema field); a word with no "
+            "ı/İ/ğ/ş is cased the English way",
+            "tr",
+        ),
     ),
     # N09: on-screen lower case of Turkish text keeps dotless ı.
     Case(
@@ -1659,6 +1741,7 @@ CASES: tuple[Case, ...] = (
         "İstanbul'da Işıklar",
         "İstanbul'da Işıklar",
         {"tr": "istanbul'da ışıklar", "tr_upper": "İSTANBUL'DA IŞIKLAR"},
+        gaps=_gaps("renderers carry no job language: 'istanbul'da' has no ı/İ/ğ/ş", "tr"),
     ),
     # N12: narrated voiceover-to-script alignment keeps Turkish letters (folded).
     Case(
@@ -1692,6 +1775,39 @@ CASES: tuple[Case, ...] = (
         "kirmizi isiklar",
         frozenset({"kirmizi", "isiklar"}),
         {"tr": "Kırmızı Işıklar", "tr_upper": "KIRMIZI IŞIKLAR"},
+    ),
+    # N15: an English caption naming a Turkish place keeps English i's (KRI-781 guard).
+    Case(
+        "N15",
+        "normalization",
+        "agents._schemas.text_element.apply_text_case",
+        "English upper with a Turkish name",
+        _upper_auto,
+        "VISITING BEŞİKTAŞ IN THE CITY",
+        "VISITING BEŞİKTAŞ IN THE CITY",
+        {"en_lower": "visiting beşiktaş in the city", "en_title": "Visiting Beşiktaş In The City"},
+    ),
+    # N16: karaoke word-by-word casing equals whole-line casing (word timings survive).
+    Case(
+        "N16",
+        "normalization",
+        "agents._schemas.text_element.apply_text_case",
+        "per-word casing composes",
+        _karaoke_upper_composes,
+        "light up the city",
+        True,
+        {"tr": "istanbul ışıkları", "tr_mixed": "bir şey istiyorum"},
+    ),
+    # N17: the lyric-lookup artist gate matches an artist typed without Turkish letters.
+    Case(
+        "N17",
+        "normalization",
+        "services.lrclib_client._artists_match",
+        "song artist gate",
+        _artist_gate,
+        "Barış Manço",
+        True,
+        {"tr_ascii": "Baris Manco", "tr_upper": "BARIŞ MANÇO"},
     ),
 )
 

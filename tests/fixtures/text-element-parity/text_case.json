@@ -1,6 +1,6 @@
 {
   "field": "text_case",
-  "contract": "apply_text_case (app/agents/_schemas/text_element.py) and applyTextCase (src/apps/web/src/lib/overlay-layout.ts) must produce IDENTICAL strings. The burn dict (build_overlays_from_text_elements) and the CSS preview layout (resolveTextElementsLayout) both carry the transformed text; the stored element keeps the user's casing. KRI-781: Turkish i rules (i<->İ, ı<->I) apply when the case's optional top-level `language` is Turkish or the text has a Turkish-only letter (ı İ ğ Ğ ş Ş); English is cased exactly as before. Cases with `language` are helper-only (a stored element carries no language), so the burn-dict/layout halves skip them.",
+  "contract": "apply_text_case (app/agents/_schemas/text_element.py) and applyTextCase (src/apps/web/src/lib/overlay-layout.ts) must produce IDENTICAL strings. The burn dict (build_overlays_from_text_elements) and the CSS preview layout (resolveTextElementsLayout) both carry the transformed text; the stored element keeps the user's casing. KRI-781: Turkish i rules (i<->İ, ı<->I) apply to the whole text when the case's optional top-level `language` is Turkish; otherwise only to whitespace-delimited words that contain a Turkish-only letter (ı İ ğ Ğ ş Ş). Every other word is cased exactly as before, so English naming a Turkish place keeps English i's and word-by-word casing equals whole-text casing. Cases with `language` are helper-only (a stored element carries no language), so the burn-dict/layout halves skip them.",
   "asserted_by": [
     "src/apps/api/tests/pipeline/test_text_element_parity_contract.py",
     "src/apps/web/src/__tests__/lib/text-element-parity-contract.test.ts"
@@ -106,13 +106,13 @@
       "name": "upper-turkish-letters",
       "element": {
         "id": "tc-upper-tr-auto",
-        "text": "istanbul ışıkları",
+        "text": "ışıklı şehir",
         "start_s": 0.0,
         "end_s": 2.0,
         "size_px": 72,
         "text_case": "upper"
       },
-      "expected": { "text": "İSTANBUL IŞIKLARI" }
+      "expected": { "text": "IŞIKLI ŞEHİR" }
     },
     {
       "name": "lower-turkish-letters",
@@ -161,6 +161,42 @@
         "text_case": "lower"
       },
       "expected": { "text": "title it" }
+    },
+    {
+      "name": "upper-english-with-turkish-name",
+      "element": {
+        "id": "tc-upper-en-tr-name",
+        "text": "Visiting Beşiktaş in the city",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "text_case": "upper"
+      },
+      "expected": { "text": "VISITING BEŞİKTAŞ IN THE CITY" }
+    },
+    {
+      "name": "lower-english-with-turkish-name",
+      "element": {
+        "id": "tc-lower-en-tr-name",
+        "text": "I LOVE BEŞİKTAŞ",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "text_case": "lower"
+      },
+      "expected": { "text": "i love beşiktaş" }
+    },
+    {
+      "name": "title-english-with-turkish-name",
+      "element": {
+        "id": "tc-title-en-tr-name",
+        "text": "THIS IS İSTANBUL",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "text_case": "title"
+      },
+      "expected": { "text": "This Is İstanbul" }
     }
   ]
 }

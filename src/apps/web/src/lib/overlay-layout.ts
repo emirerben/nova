@@ -440,22 +440,41 @@ export function inferTextBoxPosition({
 
 const TURKISH_ONLY_LETTERS = /[ıİğĞşŞ]/;
 
-/** KRI-781: Turkish i rules when the language is Turkish or the text has a
- *  Turkish-only letter (mirror of `uses_turkish_case` in app/text_fold.py). */
-export function usesTurkishCase(text: string, language?: string | null): boolean {
+function isTurkishLanguage(language?: string | null): boolean {
   const base = (language ?? "").trim().toLowerCase().replace(/_/g, "-").split("-")[0];
-  if (base === "tr" || base === "az") return true;
-  return TURKISH_ONLY_LETTERS.test(text);
+  return base === "tr" || base === "az";
+}
+
+/** KRI-781: true when the language is Turkish or the text has a Turkish-only letter
+ *  anywhere (mirror of `uses_turkish_case` in app/text_fold.py). */
+export function usesTurkishCase(text: string, language?: string | null): boolean {
+  return isTurkishLanguage(language) || TURKISH_ONLY_LETTERS.test(text);
+}
+
+const trUpper = (t: string) =>
+  t.normalize("NFC").replace(/i/g, "\u0130").replace(/ı/g, "I").toUpperCase();
+const trLower = (t: string) =>
+  t.normalize("NFC").replace(/\u0130/g, "i").replace(/I/g, "ı").toLowerCase();
+
+/** Turkish rules for the whole text when the language is Turkish; otherwise only for
+ *  whitespace-delimited words with a Turkish-only letter (mirror of `_per_word`). */
+function perWord(
+  text: string,
+  language: string | null | undefined,
+  turkish: (t: string) => string,
+  english: (t: string) => string,
+): string {
+  if (isTurkishLanguage(language)) return turkish(text);
+  if (!TURKISH_ONLY_LETTERS.test(text)) return english(text);
+  return text.replace(/\S+/g, (w) => (TURKISH_ONLY_LETTERS.test(w) ? turkish(w) : english(w)));
 }
 
 export function textUpper(text: string, language?: string | null): string {
-  if (!usesTurkishCase(text, language)) return text.toUpperCase();
-  return text.normalize("NFC").replace(/i/g, "\u0130").replace(/ı/g, "I").toUpperCase();
+  return perWord(text, language, trUpper, (t) => t.toUpperCase());
 }
 
 export function textLower(text: string, language?: string | null): string {
-  if (!usesTurkishCase(text, language)) return text.toLowerCase();
-  return text.normalize("NFC").replace(/\u0130/g, "i").replace(/I/g, "ı").toLowerCase();
+  return perWord(text, language, trLower, (t) => t.toLowerCase());
 }
 
 /**
@@ -464,7 +483,7 @@ export function textLower(text: string, language?: string | null): string {
  * NativeEditorRenderCompiler.swift (parity fixture: text_case.json).
  * "title" uppercases the FIRST CHARACTER of each whitespace-delimited run and
  * lowercases the rest — identical to the Python regex implementation.
- * KRI-781: Turkish i rules ("istanbul" → "İSTANBUL") when Turkish; English unchanged.
+ * KRI-781: Turkish i rules for Turkish words ("ışıklı" → "IŞIKLI"); English unchanged.
  */
 export function applyTextCase(
   text: string,
@@ -475,11 +494,11 @@ export function applyTextCase(
   if (textCase === "upper") return textUpper(text, language);
   if (textCase === "lower") return textLower(text, language);
   if (textCase === "title") {
-    const lang = usesTurkishCase(text, language) ? "tr" : null;
-    return text.replace(
-      /\S+/g,
-      (w) => textUpper(Array.from(w)[0] ?? "", lang) + textLower(Array.from(w).slice(1).join(""), lang),
-    );
+    return text.replace(/\S+/g, (w) => {
+      const lang = usesTurkishCase(w, language) ? "tr" : null;
+      const chars = Array.from(w);
+      return textUpper(chars[0] ?? "", lang) + textLower(chars.slice(1).join(""), lang);
+    });
   }
   return text;
 }

@@ -345,7 +345,7 @@ def build_slide_post_snapshot(
 
 
 def _apply_case(text: str, case: object) -> str:
-    # KRI-781: the shared Turkish-aware text_case ("istanbul'da" -> "İstanbul'da" when
+    # KRI-781: the shared Turkish-aware text_case ("ışık'ta" -> "Işık'ta" for
     # Turkish; never str.title()'s "Emir'In").
     from app.agents._schemas.text_element import apply_text_case  # noqa: PLC0415
 

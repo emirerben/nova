@@ -4673,11 +4673,12 @@ def _check_narrated_order(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         if want in members:
             continue
         where = members[-1] if spot == "last" else members[0]
-        name = _sentence_case(words)
         problems.append(
             say(
-                en=f"{name} is clip {where + 1} of {len(steps)}, not the {spot} one.",
-                tr=f"{name} {len(steps)} klipten {where + 1}. sırada, {_SPOT_TR[spot]} değil.",
+                en=f"{_sentence_case(words)} is clip {where + 1} of {len(steps)}, "
+                f"not the {spot} one.",
+                tr=f"{capitalize(words.strip(), 'tr')} {len(steps)} klipten {where + 1}. "
+                f"sırada, {_SPOT_TR[spot]} değil.",
             )
         )
     if problems:
@@ -4746,13 +4747,14 @@ def _check_narrated_timing(req: BriefRequirement, facts: PlanFacts) -> Requireme
     if not excerpt:
         return _receipt(req, "partial", _CANT_CHECK_TIMING)
     start, end = steps[first].start_s, steps[last].end_s
-    label = _sentence_case(" and ".join(named))
+    en_label = _sentence_case(" and ".join(named))
+    tr_label = capitalize(" ve ".join(named).strip(), "tr")
     return _receipt(
         req,
         "met",
         say(
-            en=f'{label} clips play from {start:.1f} s to {end:.1f} s, under: "{excerpt}"',
-            tr=f"{label} klipleri {start:.1f} sn ile {end:.1f} sn arasında oynuyor, "
+            en=f'{en_label} clips play from {start:.1f} s to {end:.1f} s, under: "{excerpt}"',
+            tr=f"{tr_label} klipleri {start:.1f} sn ile {end:.1f} sn arasında oynuyor, "
             f'şu sözlerle: "{excerpt}"',
         ),
     )

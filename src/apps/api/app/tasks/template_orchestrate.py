@@ -127,7 +127,7 @@ from app.tasks._job_cancel_fence import (
     new_task_run_id,
 )
 from app.text_fold import lower as text_lower
-from app.text_fold import title_words
+from app.text_fold import title_like_str
 from app.text_fold import upper as text_upper
 from app.worker import celery_app
 
@@ -5995,14 +5995,14 @@ def _match_casing(text: str, sample: str) -> str:
         return text
     if not any(c.isalpha() for c in sample):
         return text
-    # KRI-781: Turkish-aware casing ("kadıköy" -> "KADIKÖY" with a dotted İ never
-    # lost, "Emir'in" never "Emir'In").
+    # KRI-781: Turkish-aware casing for Turkish words ("kadıköy'de" -> "KADIKÖY'DE",
+    # "Kadıköy'de" not "Kadıköy'De"); English text keeps str.title ("Winston-Salem").
     if sample.isupper():
         return text_upper(text)
     if sample.islower():
         return text_lower(text)
     if sample.istitle():
-        return title_words(text)
+        return title_like_str(text)
     return text
 
 
