@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.14.0] - 2026-10-21
+
+### Changed
+- fix(kria): a photo placed between the moments of one take plays there (KRI-796) (#1716) <!-- release-pr: 1716 -->
+
 ## [0.81.13.0] - 2026-10-21
 
 ### Fixed
