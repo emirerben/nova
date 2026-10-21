@@ -26,6 +26,8 @@ from pydantic import BaseModel
 from app.agents.music_matcher import _sanitize_text
 from app.auth import CurrentUser
 from app.config import settings
+from app.kria.brief_route import fold_text, loose_text
+from app.kria.reply_language import SUPPORTED_REPLY_LANGUAGES
 from app.limiter import limiter
 from app.routes.waitlist import get_real_ip
 
@@ -54,12 +56,28 @@ _MAX_TEXT_CHARS = 4000
 _MAX_CONTEXT_TERMS = 40
 _MAX_TERM_CHARS = 60
 _MAX_PROMPT_CHARS = 700
-# Words Kria creators actually say; Whisper's prompt biases spelling toward them.
+# Words Kria creators actually say; Whisper's prompt biases spelling toward them. The
+# product words are said as-is in every language ("music olmasın"); a language's own words
+# join them only when the creator's locale names it. KRI-780: the prompt is a bare word
+# list, never an English sentence, so it does not pull Turkish speech toward English.
 _FIXED_TERMS = ("montage", "lip-sync", "captions", "voiceover", "b-roll", "transition")
+_LOCALE_TERMS: dict[str, tuple[str, ...]] = {
+    "tr": ("altyazı", "seslendirme", "geçiş", "kurgu", "müzik", "şarkı"),
+}
 # Whisper hallucinates on silence/noise, more so with a vocabulary prompt. A transcript whose
 # every segment is this likely non-speech is dropped (KRI-653: a dead mic invented words).
 _NO_SPEECH_PROB = 0.6
-_LANG_RE = re.compile(r"^[a-z]{2}$")
+# Kria's non-English languages: the only ones Whisper is ever forced to (KRI-780 review).
+_FORCED_LANGUAGES = SUPPORTED_REPLY_LANGUAGES - {"en"}
+# Turkish Whisper's silence hallucinations: subtitle credits and YouTube sign-offs it learned
+# from subtitled video. Loose-folded word tuples, dropped only from the END of a take, so a
+# creator who keeps holding the mic after "klipleri sırala" does not send the credit along.
+_TRAILING_FILLER: tuple[tuple[str, ...], ...] = (
+    ("altyazi", "m", "k"),
+    ("izlediginiz", "icin", "tesekkurler"),
+    ("izlediginiz", "icin", "tesekkur", "ederim"),
+    ("abone", "olmayi", "unutmayin"),
+)
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 
@@ -101,11 +119,46 @@ def _parse_terms(raw: str) -> list[str]:
     return terms
 
 
-def build_vocabulary_prompt(terms: list[str]) -> str:
-    """Whisper ``prompt``: the creator's own names first, then Kria's fixed vocabulary."""
+def _locale_tags(locale_hint: str) -> list[str]:
+    """``locale_hint`` is the device's preferred language tags, comma-separated, best first."""
+    tags = [part.strip().lower().replace("_", "-") for part in (locale_hint or "").split(",")]
+    return [tag for tag in tags if tag][:4]
 
-    words = [*terms, *_FIXED_TERMS]
-    prompt = "Video edit request. " + ", ".join(words) + "."
+
+def whisper_language(locale_hint: str) -> str | None:
+    """The language Whisper is told to transcribe, from the app's ``locale_hint``.
+
+    Only the top preference counts, and only when it is a Kria language other than English
+    (today ``"tr-TR"`` -> ``"tr"``). Everything else stays ``None`` (auto-detect): forcing a
+    language on someone speaking another makes Whisper translate, and device codes Whisper
+    does not know (iOS Norwegian "nb") would fail the call outright.
+    """
+    tags = _locale_tags(locale_hint)
+    lang = tags[0].split("-", 1)[0] if tags else ""
+    return lang if lang in _FORCED_LANGUAGES else None
+
+
+def vocabulary_language(locale_hint: str) -> str | None:
+    """The language whose words join the prompt: the first Kria language the creator lists.
+
+    A phone in English with Turkish second ("en-TR,tr-TR") still gets the Turkish spelling
+    bias, without Whisper being forced to Turkish.
+    """
+    for tag in _locale_tags(locale_hint):
+        lang = tag.split("-", 1)[0]
+        if lang in _FORCED_LANGUAGES:
+            return lang
+    return None
+
+
+def build_vocabulary_prompt(terms: list[str], language: str | None = None) -> str:
+    """Whisper ``prompt``: the creator's own names first, then Kria's fixed vocabulary.
+
+    A plain word list with no sentence around it, so it biases spelling, not language.
+    """
+
+    words = [*terms, *_FIXED_TERMS, *_LOCALE_TERMS.get(language or "", ())]
+    prompt = ", ".join(words) + "."
     return prompt[:_MAX_PROMPT_CHARS]
 
 
@@ -127,8 +180,24 @@ def _is_silence(transcript, prompt: str) -> bool:
         return True
     # Whisper echoing the vocabulary prompt back is the classic silence hallucination. Needs 3+
     # words so a creator saying just "captions" or a clip name still comes through.
-    normalized = re.sub(r"\W+", " ", text.lower()).strip()
-    return len(normalized.split()) >= 3 and normalized in re.sub(r"\W+", " ", prompt.lower())
+    # Turkish-aware fold on both sides, so an all-caps "ALTYAZI" echo matches "altyazı".
+    normalized = re.sub(r"\W+", " ", fold_text(text)).strip()
+    return len(normalized.split()) >= 3 and normalized in re.sub(r"\W+", " ", fold_text(prompt))
+
+
+def _strip_trailing_filler(text: str) -> str:
+    """Drop Turkish credit/sign-off hallucinations from the end of a transcript."""
+
+    words = text.split()
+    while words:
+        for k in range(1, min(len(words), 6) + 1):
+            tail = tuple(re.sub(r"\W+", " ", loose_text(" ".join(words[-k:]))).split())
+            if tail in _TRAILING_FILLER:
+                words = words[:-k]
+                break
+        else:
+            break
+    return " ".join(words)
 
 
 @router.post("/transcribe", response_model=DictationOut)
@@ -183,15 +252,17 @@ async def transcribe_dictation(
                 detail="Recording is too long — keep it under two minutes",
             )
 
-        prompt = build_vocabulary_prompt(_parse_terms(context_terms))
-        lang = locale_hint.strip().lower()[:2]
+        lang = whisper_language(locale_hint)
+        prompt = build_vocabulary_prompt(
+            _parse_terms(context_terms), vocabulary_language(locale_hint)
+        )
         from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
 
         transcript = await asyncio.wait_for(
             run_in_threadpool(
                 transcribe_whisper,
                 local_path,
-                language=lang if _LANG_RE.match(lang) else None,
+                language=lang,
                 verbatim_prompt=prompt,
             ),
             timeout=_TRANSCRIPTION_TIMEOUT_S,
@@ -213,10 +284,11 @@ async def transcribe_dictation(
         if local_path and os.path.exists(local_path):
             os.unlink(local_path)
 
-    if _is_silence(transcript, prompt):
+    text = _strip_trailing_filler(_clean_transcript(transcript.full_text or ""))
+    if not text or _is_silence(transcript, prompt):
         log.info("dictation_no_speech", user_id=str(user.id), duration_s=round(duration_s, 1))
         return DictationOut(text="", reason="no_speech")
-    text = _clean_transcript(transcript.full_text or "")[:_MAX_TEXT_CHARS].strip()
+    text = text[:_MAX_TEXT_CHARS].strip()
     log.info(
         "dictation_transcribed",
         user_id=str(user.id),

@@ -35,6 +35,7 @@ from app.services.creator_direction import (
     LimitReached,
     request_fingerprint,
 )
+from app.text_fold import has_marker
 
 service = CreatorDirectionService()
 PROPERTIES = ("font_family", "position", "color", "stroke_width", "shadow_enabled")
@@ -52,6 +53,11 @@ TEMPORARY_MARKERS = (
     "sadece bu videoda",
     "sadece bu sefer",
     "bu videoya özel",
+    "bu seferlik",
+    "bir seferlik",
+    "yalnızca bu video",
+    "yalnızca bu sefer",
+    "sadece burada",
     "geçici",
 )
 
@@ -67,9 +73,9 @@ def learning_available(user_id: uuid.UUID) -> bool:
 
 
 def explicitly_temporary(message: str | None) -> bool:
-    return isinstance(message, str) and any(
-        marker in message.casefold() for marker in TEMPORARY_MARKERS
-    )
+    # KRI-781: word-start markers over the shared Turkish-aware fold ("GEÇİCİ",
+    # ASCII "gecici", "bu videoya ozel" all count).
+    return isinstance(message, str) and has_marker(message, TEMPORARY_MARKERS)
 
 
 def _position(row: dict) -> str | None:

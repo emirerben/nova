@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_closing_title",
+  "lang": "en",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "At the very end, put the text \"See you next summer\".",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "At the very end, put the text \"See you next summer\"."
+  },
+  "prompt_sha256": "b86b7f1fd2bd01f7299580b9ed2415cdb28c92c170069553f0e67297d1dccab1",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:11:12.552852+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"See you next summer\",\n      \"description\": \"at the very end\",\n      \"facts\": {}\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"See you next summer\",\n      \"description\": \"at the very end\",\n      \"facts\": {}\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3232,
+    "out": 82,
+    "thoughts": 996
+  },
+  "computed_cost_usd": 0.006466
+}

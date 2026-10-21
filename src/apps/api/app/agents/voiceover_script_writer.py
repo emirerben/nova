@@ -179,7 +179,9 @@ class VoiceoverScriptWriterAgent(Agent[VoiceoverScriptWriterInput, VoiceoverScri
         text = _sanitize_script(str(data.get("text", "") or ""))
         if not text:
             raise RefusalError("script_writer: empty text after sanitization")
-        if _REFUSAL_RE.search(text):
+        from app.kria.language import is_turkish_refusal  # noqa: PLC0415 - avoids app.kria cycle
+
+        if _REFUSAL_RE.search(text) or is_turkish_refusal(text):
             raise RefusalError("script_writer: refusal/meta text")
 
         lo, hi = self._band(input.target_duration_s)

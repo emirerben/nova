@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_text_color",
+  "lang": "en",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "Make all the text #FFD400.",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "Make all the text #FFD400."
+  },
+  "prompt_sha256": "ac757739a0d6b1ccbddeb38ffd19fc7faa1787fadf1449635dae354ceed2326d",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:11:50.383443+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"Make all the text #FFD400.\",\n      \"facts\": {\n        \"style_intent\": {\n          \"set\": [\n            {\n              \"field\": \"color\",\n              \"value\": \"#FFD400\"\n            }\n          ],\n          \"target\": \"all_text\"\n        }\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"Make all the text #FFD400.\",\n      \"facts\": {\n        \"style_intent\": {\n          \"set\": [\n            {\n              \"field\": \"color\",\n              \"value\": \"#FFD400\"\n            }\n          ],\n          \"target\": \"all_text\"\n        }\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3229,
+    "out": 143,
+    "thoughts": 693
+  },
+  "computed_cost_usd": 0.005557
+}

@@ -98,6 +98,28 @@ async def resolve_readiness_manifest(db, item, strategy):  # noqa: ANN001, ANN20
     return manifest
 
 
+# The sentence the apps send for a media-only send and for the "Let Kria cut the first version"
+# chip. It states no requirement by construction: the creator delegated every choice, so an
+# absent brief is the true record, not missing evidence (KRI-774).
+_OPEN_REQUESTS = frozenset({"suggest an edit"})
+# BriefBinding.create wraps the pinned request in this heading (and repeats the latest
+# message), so the approval-time recheck sees the same text through it.
+_BINDING_HEADING = "Full creator request (chronological):"
+
+
+def _normalized(line: str) -> str:
+    folded = "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in line.casefold())
+    return " ".join(folded.split())
+
+
+def is_open_request(text: str | None) -> bool:
+    """True only when every line is the stock open-request sentence, never prose containing it."""
+    lines = [
+        line for line in (text or "").replace(_BINDING_HEADING, "").splitlines() if line.strip()
+    ]
+    return bool(lines) and all(_normalized(line) in _OPEN_REQUESTS for line in lines)
+
+
 def assess_readiness(
     brief: CreativeBrief | None,
     strategy: Mapping[str, Any] | None,
@@ -106,6 +128,7 @@ def assess_readiness(
     manifest: ResolvedCreatorManifest | None,
     editor_payload: dict | None = None,
     editor_text_diff: list[dict] | None = None,
+    creator_request: str | None = None,
 ) -> dict[str, Any]:
     """Account for every live ID using existing policy, checkers and contract."""
     requirements = brief.live() if brief is not None else []
@@ -163,7 +186,7 @@ def assess_readiness(
                 en="The proposed edit isn't supported by the current renderer or footage.",
                 tr="Önerilen düzenleme mevcut oluşturucu veya çekimlerle desteklenmiyor.",
             )
-    if brief is None:
+    if brief is None and not is_open_request(creator_request):
         policy_problem = say(
             en="I need to establish the requested changes before offering approval.",
             tr="Onay sunmadan önce istenen değişiklikleri belirlemem gerekiyor.",
@@ -386,6 +409,7 @@ async def assess_saved_document(db, item, document, *, require_same_assessment=T
         manifest=manifest,
         editor_payload=document.editor_payload,
         editor_text_diff=document.editor_text_diff,
+        creator_request=document.brief_binding.creator_request,
     )
     if digest(media_identity(snapshot_media(item))) != report["media_digest"]:
         raise ApprovalReadinessError(

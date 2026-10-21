@@ -438,18 +438,67 @@ export function inferTextBoxPosition({
   return match ?? null;
 }
 
+const TURKISH_ONLY_LETTERS = /[ıİğĞşŞ]/;
+
+function isTurkishLanguage(language?: string | null): boolean {
+  const base = (language ?? "").trim().toLowerCase().replace(/_/g, "-").split("-")[0];
+  return base === "tr" || base === "az";
+}
+
+/** KRI-781: true when the language is Turkish or the text has a Turkish-only letter
+ *  anywhere (mirror of `uses_turkish_case` in app/text_fold.py). */
+export function usesTurkishCase(text: string, language?: string | null): boolean {
+  return isTurkishLanguage(language) || TURKISH_ONLY_LETTERS.test(text);
+}
+
+const trUpper = (t: string) =>
+  t.normalize("NFC").replace(/i/g, "\u0130").replace(/ı/g, "I").toUpperCase();
+const trLower = (t: string) =>
+  t.normalize("NFC").replace(/\u0130/g, "i").replace(/I/g, "ı").toLowerCase();
+
+/** Turkish rules for the whole text when the language is Turkish; otherwise only for
+ *  whitespace-delimited words with a Turkish-only letter (mirror of `_per_word`). */
+function perWord(
+  text: string,
+  language: string | null | undefined,
+  turkish: (t: string) => string,
+  english: (t: string) => string,
+): string {
+  if (isTurkishLanguage(language)) return turkish(text);
+  if (!TURKISH_ONLY_LETTERS.test(text)) return english(text);
+  return text.replace(/\S+/g, (w) => (TURKISH_ONLY_LETTERS.test(w) ? turkish(w) : english(w)));
+}
+
+export function textUpper(text: string, language?: string | null): string {
+  return perWord(text, language, trUpper, (t) => t.toUpperCase());
+}
+
+export function textLower(text: string, language?: string | null): string {
+  return perWord(text, language, trLower, (t) => t.toLowerCase());
+}
+
 /**
  * Apply a text_case transform. EXACT mirror of `apply_text_case` in
- * app/agents/_schemas/text_element.py (parity fixture: text_case.json).
+ * app/agents/_schemas/text_element.py and `KriaTextCase` in the iOS
+ * NativeEditorRenderCompiler.swift (parity fixture: text_case.json).
  * "title" uppercases the FIRST CHARACTER of each whitespace-delimited run and
  * lowercases the rest — identical to the Python regex implementation.
+ * KRI-781: Turkish i rules for Turkish words ("ışıklı" → "IŞIKLI"); English unchanged.
  */
-export function applyTextCase(text: string, textCase: string | null | undefined): string {
+export function applyTextCase(
+  text: string,
+  textCase: string | null | undefined,
+  language?: string | null,
+): string {
   if (!textCase || textCase === "none") return text;
-  if (textCase === "upper") return text.toUpperCase();
-  if (textCase === "lower") return text.toLowerCase();
+  if (textCase === "upper") return textUpper(text, language);
+  if (textCase === "lower") return textLower(text, language);
   if (textCase === "title") {
-    return text.replace(/\S+/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+    return text.replace(/\S+/g, (w) => {
+      const lang = usesTurkishCase(w, language) ? "tr" : null;
+      const chars = Array.from(w);
+      return textUpper(chars[0] ?? "", lang) + textLower(chars.slice(1).join(""), lang);
+    });
   }
   return text;
 }

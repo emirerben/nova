@@ -45,6 +45,7 @@ from app.config import settings
 from app.database import get_db
 from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.brief_binding import BriefBinding
+from app.kria.creator_cues import turkish_mixed_timing_review
 from app.kria.media_sources import (
     ClipCapture,
     ClipPlace,
@@ -2630,6 +2631,11 @@ def _review_mixed_media_timing(current, message: str):  # noqa: ANN001, ANN202
     requested = recognize_mixed_media_timing(message)
     if requested is not None:
         return requested
+    # KRI-782: the Turkish opt-out ("zamanlamayı sıfırla", "fotoğrafları hızlı
+    # geçirme") and preserve ("zamanlamayı değiştirme") wording; None for English.
+    turkish = turkish_mixed_timing_review(message)
+    if turkish is not None:
+        return None if turkish == "reset" else current
 
     normalized = " ".join(str(message or "").casefold().split())
     photo = r"(?:photos?|images?|stills?|pictures?)"

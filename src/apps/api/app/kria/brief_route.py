@@ -12,23 +12,17 @@ import unicodedata
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-
-def fold_text(value: str) -> str:
-    """NFC + Turkish-aware case fold ("KIRMIZI" == "Kırmızı"), whitespace collapsed."""
-    text = unicodedata.normalize("NFC", value)
-    text = text.replace("\u0130", "i").replace("I", "i").replace("\u0131", "i")
-    return " ".join(text.casefold().split())
-
-
-def loose_text(value: str) -> str:
-    """``fold_text`` with diacritics stripped too ("Eminönü" == "eminonu").
-
-    Creators type place names without Turkish letters as often as with them; a route
-    match must not depend on which they used.
-    """
-    decomposed = unicodedata.normalize("NFKD", fold_text(value))
-    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
-
+# KRI-781: the one Turkish-aware text fold lives in the dependency-free leaf module
+# ``app.text_fold`` (so agents/pipeline modules can import it without pulling in
+# ``app.kria``); it is re-exported here under its historical names.
+from app.text_fold import (  # noqa: F401
+    fold_case,
+    fold_text,
+    loose_case,
+    loose_text,
+    loose_words,
+    strip_marks,
+)
 
 START_KEYS = ("start", "from", "origin")
 END_KEYS = ("end", "to", "destination", "finish")

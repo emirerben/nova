@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_keep_order",
+  "lang": "en",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "Keep the clips in the order I filmed them.",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "Keep the clips in the order I filmed them."
+  },
+  "prompt_sha256": "a503aaa8277b1dadba161fb8286dad7c11ed5ac13217c54b9d7361c4037c6a38",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:10:29.477838+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"order\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"Keep the clips in the order I filmed them.\",\n      \"facts\": {\n        \"key\": \"capture_time\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"order\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"Keep the clips in the order I filmed them.\",\n      \"facts\": {\n        \"key\": \"capture_time\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3228,
+    "out": 96,
+    "thoughts": 486
+  },
+  "computed_cost_usd": 0.004604
+}

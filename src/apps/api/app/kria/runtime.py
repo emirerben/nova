@@ -2429,6 +2429,7 @@ async def decide_approval(
                             manifest=current_manifest,
                             editor_payload=copy_document.editor_payload,
                             editor_text_diff=copy_document.editor_text_diff,
+                            creator_request=copy_document.brief_binding.creator_request,
                         )
                     ready = (
                         digest(media_identity(snapshot_media(copy_item)))

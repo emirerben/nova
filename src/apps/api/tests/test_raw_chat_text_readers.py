@@ -95,8 +95,13 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
     "kria/approval_readiness.py": (
         "plan_time",
         "readiness_reply quotes already-identified blocked requirements for the creator; "
-        "it never interprets prose or decides route, duration, voice, order or required text",
-        frozenset({"readiness_reply"}),
+        "it never interprets prose or decides route, duration, voice, order or required text. "
+        "assess_readiness / assess_saved_document (KRI-774) pass the pinned request only to "
+        "is_open_request, an exact match of the apps' stock 'Suggest an edit.' sentence that "
+        "lifts the missing-brief block on a request with no stated requirements; it can only "
+        "let the readiness gate pass, never changes route, duration, voice, order or required "
+        "text, and every strategy/manifest/contract check still runs",
+        frozenset({"readiness_reply", "assess_readiness", "assess_saved_document"}),
     ),
     "kria/editor_receipts.py": (
         "plan_time",

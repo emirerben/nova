@@ -87,6 +87,8 @@ describe("text_case contract (fixture: text_case.json)", () => {
     "layout text matches the burn dict: %s",
     (_name: string, c: FixtureCase) => {
       // Same string the Python compiler writes into the burn dict.
+      // Cases with a `language` are helper-only (a stored element has no language).
+      if ((c as { language?: string }).language) return;
       expect(layoutOne(c.element).text).toBe(c.expected.text);
     },
   );
@@ -95,7 +97,11 @@ describe("text_case contract (fixture: text_case.json)", () => {
     "applyTextCase mirrors apply_text_case: %s",
     (_name: string, c: FixtureCase) => {
       expect(
-        applyTextCase(c.element.text as string, c.element.text_case as string | undefined),
+        applyTextCase(
+          c.element.text as string,
+          c.element.text_case as string | undefined,
+          (c as { language?: string }).language,
+        ),
       ).toBe(c.expected.text);
     },
   );

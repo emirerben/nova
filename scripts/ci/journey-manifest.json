@@ -355,6 +355,7 @@
         "src/apps/api/app/kria/brief.py",
         "src/apps/api/app/kria/brief_checks.py",
         "src/apps/api/app/kria/brief_route.py",
+        "src/apps/api/app/kria/creator_cues.py",
         "src/apps/api/app/kria/duplicate_uploads.py",
         "src/apps/api/app/kria/language.py",
         "src/apps/api/app/kria/plan_blocks.py",
@@ -554,6 +555,15 @@
       "api_tests": "tests/kria/test_kri667_structured_ask_facts.py tests/kria/test_turkish_chat_guard.py tests/test_kri667_copilot_claims.py tests/kria/test_kri667_clip_exclusions.py tests/kria/test_kri667_no_new_intent_regexes.py",
       "paths": [
         "src/apps/api/prompts/edit_copilot.txt"
+      ]
+    },
+    {
+      "id": "kri-781-turkish-fold",
+      "needs_native": false,
+      "api_tests": "tests/parity/test_decision_parity.py tests/pipeline/test_lyrics_alignment.py tests/pipeline/test_text_element_parity_contract.py",
+      "paths": [
+        "src/apps/api/app/text_fold.py",
+        "src/apps/api/app/pipeline/lyrics_alignment.py"
       ]
     },
     {
@@ -1075,6 +1085,26 @@
         "src/apps/api/app/services/editorial_taste_evaluation.py",
         "scripts/editorial-taste-eval.py",
         "src/apps/api/tests/journeys/test_editorial_taste_evaluation_cli.py"
+      ]
+    },
+    {
+      "id": "kri-773-turkish-parity",
+      "needs_native": false,
+      "api_tests": "tests/parity tests/evals/parity",
+      "paths": [
+        "src/apps/api/tests/parity/",
+        "src/apps/api/tests/evals/parity/",
+        "src/apps/api/tests/fixtures/parity_pairs/",
+        "docs/reviews/turkish-parity-map-2026-10.md"
+      ]
+    },
+    {
+      "id": "kri-783-turkish-edit-speech",
+      "needs_native": false,
+      "api_tests": "tests/parity tests/pipeline/test_narration_labels.py tests/pipeline/test_score.py",
+      "paths": [
+        "src/apps/api/app/pipeline/narration_labels.py",
+        "src/apps/api/app/pipeline/score.py"
       ]
     }
   ]
