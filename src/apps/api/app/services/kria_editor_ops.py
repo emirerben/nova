@@ -46,6 +46,7 @@ from app.routes.generative_jobs import (
     visual_block_variant_duration,
 )
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
+from app.schemas.editor_window import EDITOR_MIN_CLIP_S, below_editor_minimum
 from app.services.clip_facts import assignment_facts, facts_for_prompt
 from app.services.editor_limits import MAX_EDITOR_OPS
 from app.services.kria_editor_ops_diff import (
@@ -1915,6 +1916,56 @@ def _snapshot_slot_index(state: _DraftState, index: object) -> int:
     raise KriaEditorOpError("Timeline target changed before this edit could be drafted")
 
 
+def _fit_slots_to_footage(state: _DraftState, before: list[dict[str, Any]]) -> None:
+    """Make every window chat changed one the Save accepts (KRI-772).
+
+    ``set_clip_duration`` / ``set_clip_in`` write what was asked. Asked for 3 s on a 3.36 s clip
+    that starts at 0.9 s, they staged a window that needs 3.9 s of footage, and the creator's
+    Save was refused. Chat owns the invariant: ``in_s + duration * rate <= source_duration_s``
+    (the Save's own bound, with its 50 ms slack left to the Save). Shorten first; slide the start
+    back only when less than the editor minimum would remain. A window that already fit, a clip
+    whose footage length is unknown, and a clip chat did not change are never touched. The
+    summary says what was done, so the creator is not surprised by a shorter clip.
+    """
+    from app.services.authored_editor import SOURCE_BOUNDS_TOLERANCE_S  # noqa: PLC0415
+
+    previous = {
+        (row.get("slot_id") or id(row)): (row.get("in_s"), row.get("duration_s")) for row in before
+    }
+    visible = 0
+    for row in state.slots:
+        if row.get("removed"):
+            continue
+        visible += 1
+        source = row.get("source_duration_s")
+        if source is None or row.get("media_kind") == "image" or row.get("kind") == "image":
+            continue
+        try:
+            source = float(source)
+        except (TypeError, ValueError):
+            continue
+        rate = _slot_rate(row)
+        in_s = max(0.0, float(row.get("in_s") or 0.0))
+        duration = _slot_duration(row)
+        if duration <= 0 or in_s + duration * rate <= source + SOURCE_BOUNDS_TOLERANCE_S:
+            continue
+        if previous.get(row.get("slot_id") or id(row)) == (row.get("in_s"), row.get("duration_s")):
+            continue  # chat did not touch this window; the Save's own refusal stays the verdict
+        available = (source - in_s) / rate
+        if not below_editor_minimum(available, EDITOR_MIN_CLIP_S):
+            fitted_in, fitted = in_s, min(duration, available)
+        else:
+            fitted = min(duration, source / rate)
+            fitted_in = max(0.0, source - fitted * rate)
+        fitted = math.floor(fitted * 1e6) / 1e6
+        row["in_s"] = round(fitted_in, 6)
+        row["duration_s"] = fitted
+        row["duration_beats"] = None
+        state.changes.append(
+            f"Clip {visible} only has {fitted:.2f}s of footage, so it is that long"
+        )
+
+
 def _op_set_clip_duration(state: _DraftState, op: dict[str, Any]) -> None:
     name = str(op.get("op") or "")
     index = _snapshot_slot_index(state, op.get("slot_index"))
@@ -2320,6 +2371,9 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
             )
         state.changes.append(state.summary or _summary(op))
         state.summary = None
+
+    if "timeline" in state.changed:
+        _fit_slots_to_footage(state, state.initial_slots)
 
     if "text" in state.changed:
         from app.services.kria_editor_ops_text import normalize_text_relations

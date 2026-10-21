@@ -115,6 +115,40 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertEqual(s1.clipIndex, 0)
     }
 
+    // KRI-772: a chat draft staged before the server fitted windows to the footage (Troya: 3 s asked of a
+    // 3.36 s clip that starts at 0.9 s) opens repaired, so Save is not refused for a window the creator
+    // never typed.
+    func testStagedDraftWindowLongerThanItsFootageOpensFitted() async throws {
+        var payload = Self.chatPayload(shape: .flatOnly)
+        // Base s1 has 6 s of footage. 4 s in + 3 s long needs 7 s.
+        payload["timeline_slots"] = .array([.object([
+            "slot_id": .string("s1"), "clip_index": .number(0), "in_s": .number(4),
+            "duration_s": .number(3), "removed": .bool(false),
+        ])])
+        let snapshot = DraftSnapshot(draftID: "overlong", itemID: "item", variantKey: "initial", draftRevision: 4,
+            snapshotHash: "h", etag: "e", baseJobID: Self.jobID, baseGenerationID: "g1",
+            snapshot: ["kind": .string("editor"), "editor_payload": .object(payload)], canUndo: true, createdAt: .now)
+        let (session, _) = await loaded(snapshot)
+        let s1 = try XCTUnwrap(session.document.clips.first { $0.id == "s1" })
+        XCTAssertEqual(s1.inS, 4, accuracy: 1e-9)
+        XCTAssertEqual(s1.durationS ?? 0, 2, accuracy: 1e-6, "6 s footage - 4 s start = 2 s")
+        XCTAssertLessThanOrEqual(s1.inS + (s1.durationS ?? 0), 6 + 1e-9)
+    }
+
+    func testFittedToFootageLeavesFittingAndUnmeasuredWindowsAlone() {
+        let fits: [String: JSONValue] = ["in_s": .number(1), "duration_s": .number(2), "source_duration_s": .number(6)]
+        XCTAssertEqual(DraftSnapshot.fittedToFootage(fits), fits)
+        let unmeasured: [String: JSONValue] = ["in_s": .number(1), "duration_s": .number(20)]
+        XCTAssertEqual(DraftSnapshot.fittedToFootage(unmeasured), unmeasured)
+        let twice: [String: JSONValue] = ["in_s": .number(1), "duration_s": .number(3), "playback_rate": .number(2), "source_duration_s": .number(3.36)]
+        let fitted = DraftSnapshot.fittedToFootage(twice)
+        XCTAssertEqual(fitted["duration_s"]?.numberValue ?? 0, 1.18, accuracy: 1e-6)
+        let late: [String: JSONValue] = ["in_s": .number(3.3), "duration_s": .number(1), "source_duration_s": .number(3.36)]
+        let slid = DraftSnapshot.fittedToFootage(late)
+        XCTAssertLessThanOrEqual((slid["in_s"]?.numberValue ?? 9) + (slid["duration_s"]?.numberValue ?? 9), 3.36 + 1e-9)
+        XCTAssertGreaterThanOrEqual(slid["duration_s"]?.numberValue ?? 0, 0.1)
+    }
+
     // New source placements have no server slot ID until Save. They must survive
     // draft hydration, the live timeline, and the next client-state/commit round trip.
     func testRestoredUnusedSourceWithoutSlotIDSurvivesStagingAndSave() async throws {

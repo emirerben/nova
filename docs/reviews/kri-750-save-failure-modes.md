@@ -146,6 +146,23 @@ slots (the server answers any window change on them with 409 `TIMELINE_STALE`).
 * The app shows a readable server sentence ("Video media is still being analyzed...") instead of
   discarding it, and records the real server code in diagnostics instead of `"unknown"`.
 
+## 10. Windows chat stages (KRI-772)
+
+The first refusal the new logging captured for Troya was not the float bug: chat was asked for a 3 s
+clip, `set_clip_duration` wrote 3.0 on a 3.36 s clip starting at 0.9 s (needs 3.9 s), the editor opened
+that draft, and Save refused `TIMELINE_OUT_OF_BOUNDS` (overshoot 0.54 s). A producer must emit windows the
+Save accepts. `tests/kria/test_chat_ops_fit_footage.py` (red on `origin/main`):
+
+| Test | Shape | Outcome |
+| --- | --- | --- |
+| `test_troya_three_seconds_on_a_3_36_second_clip_is_fitted_to_the_footage` | `set_clip_duration` 3.0 on 3.36 s footage from 0.9 s | fitted to 2.46 s, the summary says so, the real Save accepts it |
+| `test_a_start_past_the_end_slides_back_instead_of_leaving_nothing` | `set_clip_in` 3.3 on 3.36 s footage | start slides back, length stays >= 0.1 s |
+| `test_playback_rate_is_part_of_the_footage_a_window_needs` | 2x clip asked for 3 s | fitted so `in + duration * rate <= source` |
+| `test_a_window_inside_the_footage_is_untouched` / `test_a_clip_with_no_known_footage_length_is_left_alone` | controls | unchanged |
+
+Phone side: a draft staged before this fix opens repaired (`DraftSnapshot.fittedToFootage`,
+`ChatDraftStagingTests`).
+
 ## Not covered here on purpose
 
 * Cloud-rendered (non-device) Save: separate contract, separate tests (`test_editor_commit.py`).
