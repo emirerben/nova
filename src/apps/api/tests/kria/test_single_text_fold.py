@@ -1,9 +1,13 @@
-"""KRI-786 guard: one Turkish text fold, in ``app/kria/brief_route.py``.
+"""KRI-786 guard: one Turkish text fold, in ``app/text_fold.py``.
 
 Map section 5 (N01-N13): 15+ private copies of "the Turkish fold" drifted apart. One maps
 capital ``I`` to ``ı`` for English patterns (N01, broke "TRY AGAIN"), others delete ``ı``
 (N06-N08) or keep it as a separate letter (N09). ``brief_route.fold_text`` / ``loose_text``
-are the reference: İ/I/ı -> i, casefold, then (loose) diacritics stripped.
+are the reference: İ/I/ı -> i, casefold, then (loose) diacritics stripped. Since KRI-781
+they live in ``app/text_fold.py`` (stdlib-only, importable from agents/pipeline/services);
+``app/kria/brief_route.py`` re-exports them under the same names. Turkish-aware casing
+(``lower`` / ``upper`` / ``capitalize``) lives there too, so ``.replace("I", "ı").lower()``
+copies belong there as ``text_fold.lower(text, "tr")``.
 
 A scope (a function, or a module-level statement) is a fold copy when it contains any of:
 
@@ -20,7 +24,7 @@ A scope (a function, or a module-level statement) is a fold copy when it contain
 Class-level tables count as their own scope.
 
 Each module may have at most its ``BASELINE`` count of such scopes; the count may only go
-down (lane B of the Turkish parity project is replacing them with ``brief_route``). A new
+down (KRI-801 replaces the rest with ``app.text_fold``). A new
 module starts at zero. A fold that is deliberately different (``silence_cut`` maps I to ı on
 purpose) or does not read creator/model text carries ``# single-fold: <why>`` on the flagged
 line.
@@ -33,39 +37,26 @@ import warnings
 from pathlib import Path
 
 _APP = Path(__file__).resolve().parents[2] / "app"
-_CANONICAL = "kria/brief_route.py"
+_CANONICAL = "text_fold.py"
 _EXEMPT = "# single-fold:"
 _TURKISH = frozenset("ıİşŞğĞ")
 # Letters a Turkish diacritic table maps (``{"ç": "c", "ğ": "g", ...}``).
 _FOLD_LETTERS = frozenset("ıİşŞğĞçÇöÖüÜ")
 
-# Fold-copy scopes per module, counted on codex/turkish-parity (KRI-786). Lower a number
-# when you replace a copy with brief_route.fold_text/loose_text; never raise one.
+# Fold-copy scopes per module, recounted on main after Turkish parity lanes A-E (KRI-786).
+# Lower a number when you replace a copy with app.text_fold (fold_text / loose_text /
+# lower / upper); never raise one. The remaining copies are tracked in KRI-801.
 BASELINE: dict[str, int] = {
     "agents/clip_intent_planner.py": 1,
-    "agents/landmark_guess.py": 1,
-    "kria/brief.py": 1,
-    "kria/brief_checks.py": 1,
     "pipeline/caption_correct.py": 1,
-    "pipeline/caption_language.py": 2,
-    "pipeline/caption_spelling.py": 2,
-    "pipeline/lyrics_alignment.py": 1,
-    "pipeline/silence_cut.py": 1,
     "pipeline/song_alignment.py": 1,
     "schemas/clip_intents.py": 2,
     "schemas/edit_proposal.py": 1,
+    "services/choice_questions.py": 1,
     "services/clip_facts.py": 1,
     "services/clip_file_names.py": 1,
-    "services/choice_questions.py": 1,
-    "services/clip_selection.py": 1,
-    "services/content_plan_dedup.py": 1,
-    "services/edit_direction_planner.py": 1,
-    "services/lrclib_client.py": 1,
     "services/phone_reaction_grounding.py": 2,
-    "services/seed_provenance.py": 1,
-    "services/sfx_catalog.py": 1,
     "services/transcript_quality.py": 1,
-    "smart_edit/compiler.py": 1,
     "smart_edit/planner.py": 1,
 }
 
@@ -187,7 +178,13 @@ def current_counts() -> dict[str, int]:
 def test_canonical_fold_still_exists():
     tree = ast.parse((_APP / _CANONICAL).read_text(encoding="utf-8"))
     names = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
-    assert {"fold_text", "loose_text"} <= names
+    assert {"fold_text", "loose_text", "lower", "upper"} <= names
+    # brief_route keeps its historical names as a re-export, never a second copy.
+    from app import text_fold  # noqa: PLC0415
+    from app.kria import brief_route  # noqa: PLC0415
+
+    assert brief_route.fold_text is text_fold.fold_text
+    assert brief_route.loose_text is text_fold.loose_text
 
 
 def test_no_new_private_turkish_fold():
@@ -201,8 +198,8 @@ def test_no_new_private_turkish_fold():
         warnings.warn(f"KRI-786 fold copies went down; lower BASELINE: {hint}", stacklevel=1)
     assert not grew, (
         "KRI-786: new private Turkish text fold (scopes now, baseline): "
-        f"{grew}. Use app.kria.brief_route.fold_text (İ/I/ı -> i, casefold) or loose_text "
-        "(plus diacritics stripped) instead of another copy; the copies drift (parity map "
-        "N01-N13). A deliberately different fold carries `# single-fold: <why>` on its line. "
-        "See agents/DECISIONS.md 'Language policy'."
+        f"{grew}. Use app.text_fold.fold_text (İ/I/ı -> i, casefold), loose_text (plus "
+        "diacritics stripped) or lower/upper(text, language) instead of another copy; the "
+        "copies drift (parity map N01-N13). A deliberately different fold carries "
+        "`# single-fold: <why>` on its line. See agents/DECISIONS.md 'Language policy'."
     )

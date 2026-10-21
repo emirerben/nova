@@ -31,6 +31,7 @@ from __future__ import annotations
 import ast
 import re
 import warnings
+from functools import cache
 from pathlib import Path
 
 _API = Path(__file__).resolve().parents[2]
@@ -54,6 +55,7 @@ LANGUAGE_NEUTRAL: dict[str, str] = {
     "agents/image_metadata.py::ImageMetadataAgent": "machine metadata, never on-screen text",
     "agents/lyric_style_selector.py::LyricStyleSelectorAgent": "picks a style id",
     "agents/lyrics.py::LyricsExtractionAgent": "transcribes lyrics in the song's language",
+    "agents/media_moment_relevance.py::MomentRelevanceAgent": "returns moment ids",
     "agents/narration_focus.py::NarrationFocusAgent": "subject counts and frame ids",
     "agents/output_validator.py::OutputValidatorAgent": "pre-publish technical gate",
     "agents/overlay_placement.py::OverlayPlacementAgent": "overlay positions",
@@ -71,6 +73,8 @@ LANGUAGE_NEUTRAL: dict[str, str] = {
     "agents/tiktok_analyzer.py::TikTokAnalyzerAgent": "internal analysis fed to prompts",
     "agents/transcript.py::TranscriptAgent": "transcribes speech as spoken",
     "agents/transition_picker.py::TransitionPickerAgent": "picks transition ids",
+    "services/story_idea_research.py::StoryResearchReviewAgent": "approval verdict on ideas",
+    "services/story_idea_research.py::StorySourceReviewAgent": "approval verdict on ideas",
 }
 
 # Agents that write creator-facing prose with no language input (parity map O02-O17).
@@ -78,34 +82,21 @@ LANGUAGE_NEUTRAL: dict[str, str] = {
 LANGUAGE_GAPS: frozenset[str] = frozenset(
     {
         "agents/brief_extractor.py::BriefExtractorAgent",
-        "agents/clip_question.py::ClipQuestionAgent",
-        "agents/conformance_feedback.py::ConformanceFeedbackAgent",
-        "agents/content_plan_generator.py::ContentPlanGeneratorAgent",
+        # #1685 (camera-roll ideas): writes title/hook/payoff a creator reads, no language.
+        "agents/camera_roll_stories.py::CameraRollStoriesAgent",
         "agents/creator_memory_extractor.py::CreatorMemoryExtractorAgent",
         "agents/edit_director.py::EditDirectorAgent",
         "agents/edit_guide.py::EditGuideAgent",
-        "agents/edit_proposal.py::EditProposalAgent",
-        "agents/idea_expander.py::IdeaExpanderAgent",
-        "agents/interviewer_agent.py::InterviewerAgent",
         "agents/montage_reviewer.py::MontageReviewAgent",
         "agents/narration_annotations.py::NarrationAnnotationAgent",
-        "agents/persona_generator.py::PersonaGeneratorAgent",
-        "agents/plan_item_advisor.py::PlanItemAdvisorAgent",
-        "agents/platform_copy.py::PlatformCopyAgent",
-        "agents/semantic_edit_proposal.py::SemanticEditProposalAgent",
         # Its input defaults language_hint="en" and generative_build never passes it.
         "agents/sequence_emphasis.py::SequenceEmphasisAgent",
-        "agents/shot_list_writer.py::ShotListWriterAgent",
-        "agents/slide_post_composer.py::SlidePostComposerAgent",
         # Passes language=, but its prompt writes `{language}` (brace): load_prompt never fills
         # it, so the model reads the literal text. See KNOWN_UNFILLED_PLACEHOLDERS.
         "agents/smart_edit_planner.py::SmartEditPlannerAgent",
         "agents/speech_excerpt_planner.py::SpeechExcerptPlannerAgent",
         "agents/style_derivation.py::StyleDerivationAgent",
-        "agents/style_intent.py::StyleIntentAgent",
         "agents/visual_treatment_planner.py::VisualTreatmentPlannerAgent",
-        "agents/voiceover_interviewer.py::VoiceoverInterviewerAgent",
-        "agents/voiceover_script_writer.py::VoiceoverScriptWriterAgent",
         "services/creation_text_composition.py::CreationTextComposer",
         "services/researched_text.py::GroundedResearchAgent",
         "services/researched_text.py::ResearchCopyAgent",
@@ -142,11 +133,12 @@ def _callee(call: ast.Call) -> str | None:
     return None
 
 
-def _app_trees() -> list[tuple[str, ast.Module]]:
-    return [
+@cache  # parsed once per session: every test here walks all of app/
+def _app_trees() -> tuple[tuple[str, ast.Module], ...]:
+    return tuple(
         (str(path.relative_to(_APP)), ast.parse(path.read_text(encoding="utf-8")))
         for path in sorted(_APP.rglob("*.py"))
-    ]
+    )
 
 
 def _defaulted_language_fields(trees) -> dict[str, tuple[str, ...]]:
@@ -207,6 +199,7 @@ def _template_has(text: str, name: str) -> bool:
     return bool(re.search(rf"\$(?:{name}\b|\{{{name}\}})", text))
 
 
+@cache
 def _render_prompt_units() -> dict[str, bool]:
     """``"<module>::<Class>" -> has a language input`` for every class with render_prompt."""
     stems = {p.stem for p in _PROMPTS.glob("*.txt")}

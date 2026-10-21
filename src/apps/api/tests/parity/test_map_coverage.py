@@ -29,65 +29,65 @@ _ROW = re.compile(r"^\|\s*(D\d{2})\s*\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|")
 
 # map row -> parity-table case ids that exercise it.
 COVERAGE: dict[str, tuple[str, ...]] = {
-    "D01": ("D01",),
-    "D02": ("D12",),
+    "D01": ("D01", "DC1-15"),
+    "D02": ("D12", "DC1-17"),
     "D03": ("D15", "D16"),
-    "D06": ("D14",),
+    "D06": ("D14", "DC1-7", "DC1-8", "DC1-9"),
+    "D07": ("DC1-1", "DC1-14"),
     "D08": ("D18",),
     "D09": ("D17",),
     "D10": ("D13",),
+    "D11": ("DC1-3", "DC1-4", "DC1-5", "DC1-10"),
     "D13": ("D24", "D25"),
     "D14": ("D19", "D20"),
     "D15": ("D19", "D20", "D21", "D22", "D23"),
     "D16": ("D05", "D06", "N04"),
     "D17": ("N01", "N02"),
-    "D18": ("D02", "D03"),
+    "D18": ("D02", "D03", "DC1-6"),
     "D19": ("D07",),
     "D23": ("D10", "D11"),
+    "D26": ("C2-04",),
     "D27": ("D35",),
-    "D30": ("D26",),
+    "D30": ("D26", "C2-15"),
+    "D31": ("C2-02", "C2-07", "C2-08"),
+    "D32": ("DC1-2",),
     "D35": ("D29",),
-    "D37": ("D27", "D28"),
+    "D37": ("D27", "D28", "C2-13"),
     "D41": ("D38", "D39"),
-    "D42": ("D40",),
+    "D42": ("D40", "C2-14"),
+    "D43": ("C2-03", "C2-16"),
+    "D44": ("C2-10", "C2-11"),
+    "D47": ("C2-05", "C2-09"),
     "D48": ("D36", "D37"),
-    "D49": ("D31", "D32", "D33"),
-    "D50": ("D34",),
-    "D51": ("D30",),
+    "D49": ("D31", "D32", "D33", "D50", "D51", "D52"),
+    "D50": ("D34", "D53"),
+    "D51": ("D30", "C2-06"),
 }
 
-NOT_UNIT_REACHABLE: dict[str, str] = {
-    "D44": "closures inside _narrated_storyboard_text_elements; needs a full storyboard fixture",
-}
+# D44 left this bucket when lane C2 (#1718) tabled the storyboard score net (C2-10/C2-11).
+NOT_UNIT_REACHABLE: dict[str, str] = {}
 
 # Reachable, no table row yet. Shrink-only.
 NO_ROW_YET: frozenset[str] = frozenset(
     {
         "D04",  # creator_agent font cue words
         "D05",  # creator_agent text colour words
-        "D07",  # creator_agent _SECONDS_WORDS
-        "D11",  # plan_items _review_mixed_media_timing
         "D12",  # edit_proposal media_context_group creator-context field (EN-only)
         "D20",  # main_creator._explicit_media_scope_from_request
         "D21",  # creator_policy stated media count
         "D22",  # smart_edit planner list/ordinal events (TR-only)
         "D24",  # kria *_ask readers
         "D25",  # strategy_policy refusal
-        "D26",  # editor_receipts timing cue
         "D28",  # edit_copilot guards
         "D29",  # _copilot honest-reply guard
-        "D31",  # edit_proposal ungrounded-caption guard
-        "D32",  # creator_sessions generic-SFX notice
         "D33",  # brief_checks unquoted pop-in trigger
         "D34",  # brief_checks whole-video title fallback
         "D36",  # brief_checks leading article
         "D38",  # semantic_edit_proposal quote harvest
         "D39",  # spoken_roles phrases
         "D40",  # spoken_quotes speech cues
-        "D43",  # narration_labels score words
         "D45",  # generative_build _creator_requests_narrated_treatment
         "D46",  # visual_treatment_planner section numbers
-        "D47",  # intro_writer / voiceover_script_writer refusal patterns
     }
 )
 

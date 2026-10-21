@@ -14,7 +14,8 @@ Two ratchets per module, both fail only when a count goes UP (KRI-786):
 
    Heuristic, kept narrow so it stays low on false positives. A "folded" expression is a
    call to ``.lower()`` / ``.casefold()`` or to a text-fold helper (``fold_text``,
-   ``loose_text``, ``fold_tokens``, ``_fold*`` / ``*_fold``), anything derived from one by a
+   ``loose_text``, ``loose_words``, ``text_fold.lower``, ``fold_tokens``, ``_fold*`` /
+   ``*_fold``), anything derived from one by a
    str-call chain (``x.lower().strip()``, ``" ".join(x.casefold().split())``,
    ``set(fold_text(x).split())``), or a local name assigned from any of these inside the
    same function. Counted:
@@ -44,7 +45,20 @@ _RE_FUNCS = frozenset(
 )
 _EXEMPT = "# kri667:"
 _FOLD_METHODS = frozenset({"lower", "casefold"})
-_FOLD_FUNCS = frozenset({"fold", "fold_text", "fold_tokens", "loose_text", "loose_creator_text"})
+# app.text_fold helpers included: ``lower(text, "tr")`` / ``loose_words(text)`` are folded text.
+_FOLD_FUNCS = frozenset(
+    {
+        "fold",
+        "fold_case",
+        "fold_text",
+        "fold_tokens",
+        "loose_case",
+        "loose_creator_text",
+        "loose_text",
+        "loose_words",
+        "lower",
+    }
+)
 _AFFIX_METHODS = frozenset({"startswith", "endswith"})
 # str calls that keep folded text folded (``x.lower().strip()`` is still folded text).
 _CHAIN_METHODS = frozenset(
@@ -123,15 +137,15 @@ _OTHER_MODULES: dict[str, tuple[str, ...] | None] = {
     "tasks/kria_runtime.py": None,
 }
 
-# re.* calls per module (counted on codex/turkish-parity, KRI-786: the 22 original modules are
-# unchanged from KRI-667; the KRI-786 additions start at today's count). Lower a number when
-# you delete regexes; never raise one.
+# re.* calls per module, recounted on main after Turkish parity lanes A-E merged (KRI-786).
+# Lower a number when you delete regexes; never raise one.
 BASELINE: dict[str, int] = {
     "agents/_schemas/creator_policy.py": 8,
     "agents/clip_intent_planner.py": 19,
     "agents/clip_request_resolver.py": 3,
     "agents/edit_copilot.py": 26,
-    "agents/edit_proposal.py": 10,
+    # +1 from the merged Turkish parity lanes (#1712-#1721).
+    "agents/edit_proposal.py": 11,
     "agents/intro_writer.py": 20,
     "agents/main_creator.py": 4,
     "agents/semantic_edit_proposal.py": 1,
@@ -155,7 +169,7 @@ BASELINE: dict[str, int] = {
     "routes/creation_threads.py": 2,
     "routes/creator_agent.py": 39,
     "routes/plan_items.py": 6,
-    "schemas/edit_proposal.py": 63,
+    "schemas/edit_proposal.py": 62,
     "services/choice_questions.py": 2,
     "services/clip_intent_resolution.py": 2,
     "services/clip_selection.py": 1,
@@ -165,7 +179,8 @@ BASELINE: dict[str, int] = {
     "services/sfx_catalog.py": 2,
     "services/spoken_quotes.py": 2,
     "services/visual_treatment_planner.py": 8,
-    "tasks/generative_build.py": 7,
+    # +1 from the merged Turkish parity lanes (#1712-#1721).
+    "tasks/generative_build.py": 8,
 }
 
 # Word-membership tests on folded text per module (see the module docstring).
@@ -175,13 +190,15 @@ MEMBERSHIP_BASELINE: dict[str, int] = {
     "kria/brief_route.py": 1,
     "kria/editor_receipts.py": 1,
     "kria/planner.py": 1,
-    # D42: hook filler penalty (``lower = hook_text.lower().strip()`` + ``.startswith``).
-    "pipeline/score.py": 1,
+    # Lane D's (#1717) Turkish detector: ``loose in _TR_WORDS or loose.endswith(_TR_VERB_ENDINGS)``.
+    "kria/reply_language.py": 1,
+    # D42: hook filler penalty, English prefixes plus lane C2's (#1718) Turkish-hook checks.
+    "pipeline/score.py": 3,
     "services/clip_intent_resolution.py": 2,
     "services/creator_direction.py": 3,
-    "services/creator_memory_learning.py": 4,
-    "services/finished_style_learning.py": 1,
     "services/sfx_catalog.py": 1,
+    # Lane C2 (#1718): ``transcript_language.startswith("tr")``, a language code, not wording.
+    "tasks/generative_build.py": 1,
 }
 
 
