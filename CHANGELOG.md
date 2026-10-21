@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.0.0] - 2026-10-21
+
+### Added
+- Add camera-roll content ideas with creator taste and verified project exports (#1685) <!-- release-pr: 1685 -->
+
 ## [0.80.72.0] - 2026-10-21
 
 ### Changed
