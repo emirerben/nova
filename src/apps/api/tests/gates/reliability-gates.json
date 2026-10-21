@@ -1152,6 +1152,9 @@
       "symptom": "A one-video Talking edit asking to 'Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\"' was asked 'You gave me a specific order for the clips' (attachment order / no fixed order): the brief filed the quoted lines as a key-less order rule, and the render contract left 'I can't verify this ordering rule' for the same one clip (Merope T1).",
       "boundary": "brief",
       "status": "open_pr",
+      "fix_prs": [
+        1731
+      ],
       "owner": "KRI-789",
       "journey": "kri-789-take-trim-not-order",
       "paths": [
