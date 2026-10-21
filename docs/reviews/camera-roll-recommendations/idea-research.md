@@ -85,3 +85,28 @@ and finding its real SwiftUI source-link control. The screenshot was inspected;
 search attribution uses a bounded scrollable area. All 102 iOS orchestration checks,
 generated contracts and the pre-PR gate (1,044 mapped incidents plus journey
 mapping) pass. The physical iPhone was not used for this new adapter.
+
+## Approved live preview and correction
+
+The creator approved the frozen three-call preview, capped at $0.10. It ran once
+and all three reservations settled, totaling **$0.047087**. Public research
+retrieved institutional grounding; the proposal still used generic wording and
+called an unidentified building a museum. The automated reviewer rejected it.
+Its explanation exceeded the 500-character limit, so the original pipeline stopped
+with a schema error. No researched idea was offered, rendered or saved as a project.
+The raw responses, approval and original failed receipt remain private and unchanged.
+
+A synthetic replay reproduced the overlong-rejection failure before the fix. The
+parser now bounds only diagnostic text and preserves the boolean verdict. Replaying
+the actual saved response still rejects the draft; this is not a new model review.
+The idea prompt now requires a concrete fact in the opening itself and excludes
+unsubstantiated object/building identities. The reviewer distinguishes overall
+creator-supplied outing context from individual object identification. Prompt
+versions are `2026-10-21.4` (ideas) and `2026-10-21.2` (review). These wording changes
+have **not** been tested with a fresh model response.
+
+Free verification: 2,073 replay evaluations passed (15 optional skips, seven
+expected failures), and 38 focused collection/project/agent checks passed. The
+three-call authorization is exhausted despite remaining dollar allowance. No retry
+or new paid preview ran. There is no new human verdict on this draft, held-out
+quality result or fine-tuning-readiness claim.

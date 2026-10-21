@@ -183,3 +183,28 @@ def test_researched_story_cannot_invent_or_duplicate_citations(references):
     without_research = value.model_copy(update={"public_research": None, "research_topic": ""})
     with pytest.raises(SchemaError):
         CameraRollStoriesAgent(None).parse(json.dumps(dict(stories=[story])), without_research)
+
+
+def test_verbose_research_review_preserves_rejection_without_another_call():
+    """Real failure shape, synthetic text: diagnostic verbosity cannot lose a verdict."""
+    from app.agents.camera_roll_stories import CameraRollStoriesInput, CameraRollStoriesOutput
+    from app.services.story_idea_research import StoryResearchReviewAgent, StoryResearchReviewInput
+
+    client = CassetteModelClient(
+        json.dumps(
+            {
+                "approved": False,
+                "reason": "An unidentified building was named as a museum. " * 40,
+            }
+        )
+    )
+    result = StoryResearchReviewAgent(client).run(
+        StoryResearchReviewInput(
+            request=CameraRollStoriesInput(**evidence().model_dump()),
+            proposed=CameraRollStoriesOutput(stories=[]),
+        ),
+        ctx=build_eval_run_context("camera-roll/verbose-research-decline", is_live=False),
+    )
+    assert result.approved is False
+    assert result.reason.startswith("An unidentified building") and len(result.reason) <= 500
+    assert client.invocations == 1

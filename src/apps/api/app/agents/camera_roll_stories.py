@@ -50,7 +50,7 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.media.camera_roll_stories",
         prompt_id="camera_roll_stories",
-        prompt_version="2026-10-21.3",
+        prompt_version="2026-10-21.4",
         model="gemini-2.5-flash",
         max_attempts=1,
         timeout_s=20,
@@ -106,7 +106,17 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "never proof of audience performance or a promise of views. "
             "When public_research is supplied, make the specific interesting fact the point of "
             "the idea; do not return a generic advertisement for visiting. Select one to three "
-            "supplied fact IDs in research_fact_ids. Prefer footage that illustrates the point, "
+            "supplied fact IDs. State one concrete supported point in the opening itself, "
+            "as a short sentence someone could say to a friend. A topic heading such as "
+            "'Layers of History' or 'Ancient Stories' is not an explanation. Do not hide the "
+            "interesting point only in why_it_works while showing generic text. "
+            "Keep the title equally specific; do not reuse a rejected brochure-like title. "
+            "Use the current query for the outing's overall context, but identify individual "
+            "objects/buildings only from their own evidence or explicit creator identification. "
+            "A generic modern building is not evidence of a museum. Select fewer moments when "
+            "necessary; do not fill the sequence with unrelated clips merely because they exist. "
+            "Return the selected IDs in research_fact_ids. Prefer footage that illustrates "
+            "the point, "
             "but relevant background is useful even when no clip demonstrates the fact. Explain "
             "that distinction in the beat reasons. Treat all researched facts as background "
             "context, never proof that an unidentified pictured object, wall or building has a "
