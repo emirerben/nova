@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.4.0] - 2026-10-21
+
+### Changed
+- fix(parity): Turkish parity C2 — Edit/speech/receipt/style decisions understand Turkish (KRI-783) (#1718) <!-- release-pr: 1718 -->
+
 ## [0.81.3.0] - 2026-10-21
 
 ### Changed
