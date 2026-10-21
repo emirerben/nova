@@ -264,8 +264,8 @@ def _opens_with_filler(hook_text: str) -> bool:
     The English hesitations in silence_cut's lexicon ("hmm", "er", "mm") keep their
     legacy score: only the English FILLER_WORDS prefixes penalize English hooks.
     """
-    from app.kria.brief_route import loose_text
     from app.pipeline.silence_cut import is_filler_token
+    from app.text_fold import loose_text, lower
 
     tokens = hook_text.split()
     if not tokens:
@@ -276,9 +276,7 @@ def _opens_with_filler(hook_text: str) -> bool:
         return False
     if word in _TR_FILLER_OPENERS:
         return True
-    turkish_cased = "".join(
-        ch for ch in first.replace("İ", "i").replace("I", "ı").lower() if ch.isalpha()
-    )
+    turkish_cased = "".join(ch for ch in lower(first, "tr") if ch.isalpha())
     if len(turkish_cased) >= 2 and set(turkish_cased) == {"e"}:
         return True  # "ee", "eee", "eeee"
     return is_filler_token(first) and turkish_cased.startswith("ı")
