@@ -5321,6 +5321,7 @@ def _localized_block_recovery(message: str, receipts: list[dict[str, Any]]) -> s
     from app.kria.brief_checks import (  # noqa: PLC0415
         NARRATED_ALIGNMENT_RECOVERY,
         narrated_alignment_recovery,
+        needs_creator_choice,
         render_block_recovery,
     )
 
@@ -5329,11 +5330,9 @@ def _localized_block_recovery(message: str, receipts: list[dict[str, Any]]) -> s
     if not receipts:
         return message
 
-    failures = [
-        row
-        for row in receipts
-        if row.get("verification") == "checked" and row.get("status") != "met"
-    ]
+    # The worker's own filter: a format limit (KRI-689) is never in the message, so keeping
+    # it here would rebuild a different English text and leave the card English (KRI-778).
+    failures = [row for row in receipts if needs_creator_choice(row)]
     if not failures:
         return message
     with reply_language_for("en"):
