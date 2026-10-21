@@ -2688,8 +2688,14 @@ extension DraftSnapshot {
         var merged: [[String: JSONValue]] = []
         for value in draft {
             guard let row = object(value) else { continue }
-            var slot = take(row) ?? [:]
+            let matched = take(row)
+            var slot = matched ?? [:]
             for (key, field) in row { slot[key] = field }
+            // KRI-773: a draft clip that matches no saved clip is a new placement. An id it carries
+            // (chat minted `cs-<state>-<n>` ids before #1698, and they live on in stored drafts) was
+            // never a real slot; keeping it made every Save fail 409 TIMELINE_STALE, and "Reload and
+            // keep my edits" re-applied the same timeline.
+            if matched == nil, slot["removed"] != .bool(true), slot["slot_id"] != nil { slot.removeValue(forKey: "slot_id") }
             merged.append(slot)
         }
         merged.append(contentsOf: unmatched)

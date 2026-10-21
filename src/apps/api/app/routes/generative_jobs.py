@@ -9066,6 +9066,17 @@ def resolve_timeline_slots_for_edit(
     # against an outdated timeline (e.g. a sibling tab re-rendered) — reject the
     # whole edit rather than guess at intent.
     known_ids = {s.get("slot_id") for s in [*ai_slots, *user_slots] if s.get("slot_id")}
+    from app.services.authored_editor import is_legacy_minted_slot_id  # noqa: PLC0415
+
+    # KRI-773: an id the chat compile minted before #1698 was never a real slot; it is a new one.
+    slots = [
+        e.model_copy(update={"slot_id": None})
+        if e.slot_id is not None
+        and e.slot_id not in known_ids
+        and is_legacy_minted_slot_id(e.slot_id)
+        else e
+        for e in slots
+    ]
     for e in slots:
         if e.slot_id is not None and e.slot_id not in known_ids:
             raise _timeline_error(status.HTTP_409_CONFLICT, "TIMELINE_STALE")
