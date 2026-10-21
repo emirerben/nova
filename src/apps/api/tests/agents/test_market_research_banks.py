@@ -223,8 +223,9 @@ def test_persona_bank_version_couples_to_prompt_version():
     # Bump 2026-06-14: weekly research refresh — added professional-visual-diary-01 archetype
     #                  (allexmarielle 9to5 professional aesthetic lane).
     # Bump 2026-07-11-kria: product rename only; banks untouched.
+    # Bump 2026-10-21-language: creator-language line (KRI-784); banks untouched.
     assert archetypes_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-07-11-kria"
+    assert PERSONA_PROMPT_VERSION == "2026-10-21-language"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
@@ -246,8 +247,9 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     #             banks untouched (new block is conditional-empty when no seeds).
     # 2026-06-14: weekly research refresh — added 9to5-minimal-glimpse-01 and
     #             parallel-life-aspiration-01 ideas.
+    # 2026-10-21-language: creator-language line (KRI-784); banks untouched.
     assert content_ideas_version() == "2026-06-14"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-09-06-v3-creator-direction"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-10-21-language"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -267,9 +269,10 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # Intro bumped to 2026-08-05: anti-slop pattern-class ban + translate-don't-echo
     #                  (plans/015 — monkey/marketing incident); banks untouched here
     #                  (success-factor bank unchanged; overlay bank moved separately).
+    # Persona/content plan bumped to 2026-10-21-language (KRI-784); banks untouched.
     assert success_factors_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-07-11-kria"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-09-06-v3-creator-direction"
+    assert PERSONA_PROMPT_VERSION == "2026-10-21-language"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-10-21-language"
     # Creator direction was added to the consuming prompt without changing
     # the research bank, so only the agent version advances.
     assert IntroTextWriterAgent.spec.prompt_version == "2026-09-06-creator-direction"

@@ -7,8 +7,10 @@ is sticky: later renders must never re-run an archetype's original assignment.
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any
 
+import structlog
 from fastapi import HTTPException
 
 from app.schemas.editor_window import below_editor_minimum, snap_to_editor_minimum
@@ -114,7 +116,22 @@ def prepare_authored_editor_commit(
 
 # The phone clamps its own windows with this slack (KriaSourceWindowGeometry.boundsTolerance,
 # also the guided-v2 rule): a window it considers legal may end up to 50 ms past the source.
+log = structlog.get_logger(__name__)
+
 SOURCE_BOUNDS_TOLERANCE_S = 0.05
+
+# Slot ids the chat compile minted for clips that had none (``cs-<client_state_id[:12]>-<index>``,
+# removed in #1698). They were never saved, but chat drafts stored before that fix still carry them
+# into the editor, and every Save then refused them as a stale slot. "Reload and keep my edits"
+# re-applies the same local timeline, so the creator could never get out (KRI-773). Only this exact
+# server-minted shape is read as "a new placement"; any other unknown id stays a stale-slot 409.
+_LEGACY_MINTED_SLOT_ID = re.compile(r"^cs-[A-Za-z0-9_-]{1,12}-\d+$")
+
+
+def is_legacy_minted_slot_id(slot_id: str | None) -> bool:
+    return slot_id is not None and _LEGACY_MINTED_SLOT_ID.match(slot_id) is not None
+
+
 # Overshoot at or below this was always persisted untouched (frame rounding); keep it so.
 _SOURCE_BOUNDS_EXACT_S = 0.001
 
@@ -220,7 +237,15 @@ def resolve_authored_phone_slots(
         if slot.removed:
             continue
         if slot.slot_id is not None and slot.slot_id not in known:
-            raise HTTPException(409, detail={"code": "TIMELINE_STALE"})
+            if not is_legacy_minted_slot_id(slot.slot_id):
+                log.warning(
+                    "editor_commit_stale_slot",
+                    slot_id=slot.slot_id,
+                    clip_index=slot.clip_index,
+                    known_slots=len(known),
+                )
+                raise HTTPException(409, detail={"code": "TIMELINE_STALE"})
+            slot = slot.model_copy(update={"slot_id": None})  # a new placement (KRI-773)
         if not 0 <= slot.clip_index < len(catalog):
             raise HTTPException(422, detail={"code": "TIMELINE_UNKNOWN_CLIP"})
         source = catalog[slot.clip_index]
@@ -405,7 +430,15 @@ def resolve_authored_cloud_slots(
         if slot.removed:
             continue
         if slot.slot_id is not None and slot.slot_id not in baseline:
-            raise HTTPException(409, detail={"code": "TIMELINE_STALE"})
+            if not is_legacy_minted_slot_id(slot.slot_id):
+                log.warning(
+                    "editor_commit_stale_slot",
+                    slot_id=slot.slot_id,
+                    clip_index=slot.clip_index,
+                    known_slots=len(baseline),
+                )
+                raise HTTPException(409, detail={"code": "TIMELINE_STALE"})
+            slot = slot.model_copy(update={"slot_id": None})  # a new placement (KRI-773)
         if not 0 <= slot.clip_index < len(catalog):
             raise HTTPException(422, detail={"code": "TIMELINE_UNKNOWN_CLIP"})
         old = baseline.get(slot.slot_id) or {}

@@ -38,7 +38,12 @@ from app.database import sync_session
 from app.kria import plan_payloads
 from app.kria.plan_contract import DETAIL_MAX, SCOPABLE_SECTIONS, SUMMARY_MAX
 from app.kria.plan_contract import SECTION_ORDER as _CONTRACT_SECTION_ORDER
-from app.kria.reply_language import reply_language_for, say, thread_reply_language
+from app.kria.reply_language import (
+    current_reply_language,
+    reply_language_for,
+    say,
+    thread_reply_language,
+)
 from app.text_fold import capitalize
 
 log = structlog.get_logger()
@@ -720,7 +725,9 @@ _PENDING_COPY: dict[str, tuple[Future, float]] = {}
 _PENDING_LOCK = threading.Lock()
 
 
-def _generate_post_caption(hook_text: str, job_id: str) -> dict[str, Any] | None:
+def _generate_post_caption(
+    hook_text: str, job_id: str, language: str | None = None
+) -> dict[str, Any] | None:
     """`PlatformCopyAgent` -> TikTok caption + hashtags. Raises on any failure (the caller
     turns that into a skipped block); the template-copy fallback is deliberately NOT used."""
     from app.agents._model_client import default_client  # noqa: PLC0415
@@ -728,7 +735,7 @@ def _generate_post_caption(hook_text: str, job_id: str) -> dict[str, Any] | None
     from app.agents.platform_copy import PlatformCopyAgent, PlatformCopyInput  # noqa: PLC0415
 
     out = PlatformCopyAgent(default_client()).run(
-        PlatformCopyInput(hook_text=hook_text[:300], has_transcript=False),
+        PlatformCopyInput(hook_text=hook_text[:300], has_transcript=False, reply_language=language),
         ctx=RunContext(job_id=job_id),
     )
     tiktok = out.value.tiktok
@@ -747,7 +754,13 @@ def _start_post_caption(job_id: str, hook_text: str) -> None:
         ]:
             _PENDING_COPY.pop(stale, None)  # a job that never finalized must not leak
         _PENDING_COPY[job_id] = (
-            _POST_CAPTION_POOL.submit(_generate_post_caption, hook_text, job_id),
+            # KRI-784: the pool thread does not inherit the bound reply language.
+            _POST_CAPTION_POOL.submit(
+                _generate_post_caption,
+                hook_text,
+                job_id,
+                **({"language": language} if (language := current_reply_language()) else {}),
+            ),
             time.monotonic(),
         )
 

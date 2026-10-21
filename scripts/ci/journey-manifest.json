@@ -1108,6 +1108,14 @@
       ]
     },
     {
+      "id": "kri-784-creator-language-prompts",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_turkish_chat_guard.py tests/evals/test_semantic_edit_proposal_evals.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/agent_evals/semantic_edit_proposal/golden/"
+      ]
+    },
+    {
       "id": "editor-durable-save",
       "needs_native": true,
       "api_tests": "tests/integration/test_durable_editor_save.py tests/pipeline/test_editor_render_window_intent.py tests/pipeline/test_authored_timeline.py",

@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.8.0] - 2026-10-21
+
+### Changed
+- fix(editor): a chat-minted slot id no longer traps Save in a stale-edit loop (KRI-799) (#1719) <!-- release-pr: 1719 -->
+
+## [0.81.7.0] - 2026-10-21
+
+### Changed
+- feat(kria): Turkish parity D — Server copy + prompts carry the creator's language (KRI-784) (#1717) <!-- release-pr: 1717 -->
+
+## [0.81.6.0] - 2026-10-21
+
+### Changed
+- fix(turkish-parity): Turkish parity A — Chat language reaches the render, dictation and captions (KRI-780) (#1712) <!-- release-pr: 1712 -->
+
+## [0.81.5.0] - 2026-10-21
+
+### Changed
+- fix(turkish-parity): Turkish parity B — One Turkish-aware text fold + correct İ/ı casing (KRI-781) (#1720) <!-- release-pr: 1720 -->
+
 ## [0.81.4.0] - 2026-10-21
 
 ### Changed
