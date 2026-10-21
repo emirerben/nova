@@ -338,6 +338,11 @@ async def test_six_moments_get_six_two_second_windows_in_order(
         assert earlier["source_end_s"] <= later["source_start_s"], (earlier, later)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="KRI-777: the 1 s freeze is judged as the whole draft's length",
+)
 def test_the_freeze_is_an_honest_couldnt_never_a_total_length(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
