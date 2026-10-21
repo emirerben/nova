@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_change_font",
+  "lang": "en",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "Change all the text to the Playfair Display font.",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "Change all the text to the Playfair Display font."
+  },
+  "prompt_sha256": "537e04f3fe65f2f257612e82af7f803df65b98bab578464fe48856996b459d71",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:11:43.708522+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"Change all the text to the Playfair Display font.\",\n      \"facts\": {\n        \"style_intent\": {\n          \"set\": [\n            {\n              \"field\": \"font_family\",\n              \"value\": \"Playfair Display\"\n            }\n          ],\n          \"target\": \"all_text\"\n        }\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"Change all the text to the Playfair Display font.\",\n      \"facts\": {\n        \"style_intent\": {\n          \"set\": [\n            {\n              \"field\": \"font_family\",\n              \"value\": \"Playfair Display\"\n            }\n          ],\n          \"target\": \"all_text\"\n        }\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3229,
+    "out": 143,
+    "thoughts": 502
+  },
+  "computed_cost_usd": 0.00484
+}

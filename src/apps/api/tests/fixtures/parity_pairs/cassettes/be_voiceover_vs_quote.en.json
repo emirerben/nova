@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_voiceover_vs_quote",
+  "lang": "en",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "Show my quote \"Never stop exploring\" as text on screen, don't read it out loud.",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "Show my quote \"Never stop exploring\" as text on screen, don't read it out loud."
+  },
+  "prompt_sha256": "ab9c350b06f22ccb76953dcd84917d3af18ac302c49afdd71bd2c56ff751b5f2",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:12:26.063134+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"Never stop exploring\",\n      \"description\": \"show quote as text on screen, don't read it out loud\",\n      \"facts\": {}\n    }\n  ],\n  \"request_scope\": \"rebuild\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"Never stop exploring\",\n      \"description\": \"show quote as text on screen, don't read it out loud\",\n      \"facts\": {}\n    }\n  ],\n  \"request_scope\": \"rebuild\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3239,
+    "out": 92,
+    "thoughts": 1261
+  },
+  "computed_cost_usd": 0.007503
+}
