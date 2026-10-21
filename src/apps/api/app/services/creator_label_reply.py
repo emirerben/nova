@@ -85,7 +85,9 @@ def _reasons(text: str) -> str:
     reasons: list[str] = []
     for problem in creator_label_problems(text):
         if problem == "characters":
-            shown = " ".join(f'"{chars}"' for chars in label_blocked_characters(text))
+            shown = say(en=" or ", tr=" ya da ").join(
+                f'"{chars}"' for chars in label_blocked_characters(text)
+            )
             reasons.append(
                 say(
                     en=f"a label can't show {shown}",
