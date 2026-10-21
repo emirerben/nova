@@ -1122,16 +1122,20 @@ def _complete_draft_turn(
                     )
                     # KRI-705: a phone Talking draft answers every ask plainly, so the
                     # approval text cannot promise a cut or a mix change no receipt backs.
+                    # KRI-793: its captions asks about language or spelling say what the
+                    # render will do (the words it spells) instead of nothing.
+                    talking_writer = defers_caption_words_to_phone_render(
+                        creator_id=thread.creator_id,
+                        edit_format=document.strategy.get("edit_format") or item.edit_format,
+                        audio_strategy=document.strategy.get("audio_strategy"),
+                        clip_paths=item.clip_gcs_paths or (),
+                    )
                     facts = replace(
                         facts,
-                        phone_talking=defers_caption_words_to_phone_render(
-                            creator_id=thread.creator_id,
-                            edit_format=document.strategy.get("edit_format") or item.edit_format,
-                            audio_strategy=document.strategy.get("audio_strategy"),
-                            clip_paths=item.clip_gcs_paths or (),
-                        )
+                        phone_talking=talking_writer
                         and (document.strategy.get("edit_format") or item.edit_format)
                         in {"subtitled", "talking_head"},
+                        caption_words_at_render=talking_writer,
                     )
                     checked = brief.live()
                     # KRI-190: the unified montage planner writes the per-clip text,
@@ -1171,7 +1175,7 @@ def _complete_draft_turn(
                     receipts = build_receipts(
                         checked,
                         facts,
-                        include_unchecked=editor_turn or bound_writer,
+                        include_unchecked=editor_turn or bound_writer or facts.phone_talking,
                         # Listing unchecked asks must not switch on the strict order verdicts
                         # of a creator whose writer is not brief-bound.
                         strict_order=bound_writer,
@@ -1209,7 +1213,9 @@ def _complete_draft_turn(
                         # can show is said nothing about now (the render-ready review judges
                         # it), never "couldn't verify" (KRI-558). (An editor turn whose receipts
                         # could not be bound keeps its open items, listed calmly.)
-                        if not editor_turn and not readiness_required:
+                        # KRI-793: a phone Talking draft lists every ask (KRI-705); one no
+                        # checker can judge yet goes under "have a look", never silence.
+                        if not editor_turn and not readiness_required and not facts.phone_talking:
                             receipts = [r for r in receipts if r.verification != "unchecked"]
                         reply_text = reply_from_receipts(
                             CreativeBrief(version=brief.version, requirements=checked),

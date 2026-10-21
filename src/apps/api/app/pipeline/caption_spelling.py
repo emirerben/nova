@@ -13,6 +13,11 @@ the word and writes it the way it sounds in the spoken language ("komüniti",
 The match is deliberately narrow (a wrong replacement is worse than a missed one): same
 first sound, same last sound class, at most 1-2 sound-folded edits, never a word that
 already reads as the target, and no fuzzy matching for short targets.
+
+KRI-793: a target may be several words ("Oblea de la Casa", the creator's own list in the
+approved brief). Such a phrase is matched only as the same number of adjacent words with
+nothing but spaces between them, so every word keeps its own timing; the same sound rule
+then runs on the words joined ("Ole de la Casa" -> "Oblea de la Casa").
 """
 
 from __future__ import annotations
@@ -141,20 +146,136 @@ def _recase(first: str, target: str) -> str:
 _TOKEN = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)?")
 
 
+def _phrase_words(target: str) -> list[str]:
+    return target.split()
+
+
+def _match_phrase(words: Sequence[str], target: str) -> list[str] | None:
+    """``words`` respelled as the words of the phrase ``target``, or None to leave them.
+
+    Same word count, not already the target, and the joined words sound like the joined
+    target under the single-word rule (first sound, last sound class, 1-2 edits).
+    """
+    wanted = _phrase_words(target)
+    if len(words) != len(wanted) or len(wanted) < 2:
+        return None
+    if any(_APOSTROPHE.search(word) for word in words):
+        return None  # a case ending closes a name ("Casa'da" is not mid-phrase)
+    if [_fold(word) for word in words] == [_fold(word) for word in wanted]:
+        return None
+    if not _sounds_like("".join(words), "".join(wanted)):
+        return None
+    return [_recase(words[0][0], wanted[0]), *wanted[1:]]
+
+
+_APOSTROPHE = re.compile(r"['’]")
+_SPACES_ONLY = re.compile(r"\s+")
+
+
+def _respell_phrase_tokens(
+    tokens: Sequence[str], joined_to_next: Sequence[bool], target: str
+) -> dict[int, str]:
+    """Replacements (token index -> new text) for every run of ``tokens`` heard as ``target``.
+
+    ``joined_to_next[i]`` is True when only spaces separate token ``i`` from ``i + 1``.
+    """
+    size = len(_phrase_words(target))
+    out: dict[int, str] = {}
+    i = 0
+    while i + size <= len(tokens):
+        if all(tokens[i : i + size]) and all(joined_to_next[i : i + size - 1]):
+            replaced = _match_phrase(tokens[i : i + size], target)
+            if replaced is not None:
+                out.update({i + k: word for k, word in enumerate(replaced)})
+                i += size
+                continue
+        i += 1
+    return out
+
+
+def _respell_phrases_in_text(text: str, phrases: Sequence[str]) -> str:
+    for target in phrases:
+        found = list(_TOKEN.finditer(text))
+        joined = [
+            bool(_SPACES_ONLY.fullmatch(text[a.end() : b.start()]))
+            for a, b in zip(found, found[1:], strict=False)
+        ]
+        swaps = _respell_phrase_tokens([m.group(0) for m in found], [*joined, False], target)
+        for index in sorted(swaps, reverse=True):
+            match = found[index]
+            text = text[: match.start()] + swaps[index] + text[match.end() :]
+    return text
+
+
 def respell_text(text: str, targets: Sequence[str]) -> str:
     """``text`` with caption words that sound like a target replaced by that target."""
     if not text or not targets:
         return text
+    phrases = [t for t in targets if len(_phrase_words(t)) > 1]
+    words = [t for t in targets if len(_phrase_words(t)) == 1]
+    text = _respell_phrases_in_text(text, phrases)
+    if not words:
+        return text
 
     def _swap(found: re.Match[str]) -> str:
         word = found.group(0)
-        for target in targets:
+        for target in words:
             replaced = _match_word(word, target)
             if replaced is not None:
                 return replaced
         return word
 
     return _TOKEN.sub(_swap, text)
+
+
+def _respell_word_list(words: list[dict[str, Any]], targets: Sequence[str]) -> list[dict[str, Any]]:
+    """A cue's timed words with the targets applied; a phrase spans adjacent words only.
+
+    A word joins the next one into a phrase only when each holds exactly one token and no
+    punctuation sits between them ("leche," ends a phrase).
+    """
+    texts = [str(w.get("text") or "") for w in words]
+    singles = [list(_TOKEN.finditer(text)) for text in texts]
+    tokens = [found[0].group(0) if len(found) == 1 else "" for found in singles]
+    joined = [
+        bool(
+            tokens[i]
+            and tokens[i + 1]
+            and singles[i][0].end() == len(texts[i].rstrip())
+            and singles[i + 1][0].start() == len(texts[i + 1]) - len(texts[i + 1].lstrip())
+        )
+        for i in range(len(words) - 1)
+    ]
+    new_texts = list(texts)
+    for target in (t for t in targets if len(_phrase_words(t)) > 1):
+        for index, word in _respell_phrase_tokens(tokens, [*joined, False], target).items():
+            match = singles[index][0]
+            new_texts[index] = texts[index][: match.start()] + word + texts[index][match.end() :]
+            tokens[index] = ""  # respelled once; never again by a later target
+    single_targets = [t for t in targets if len(_phrase_words(t)) == 1]
+    return [
+        {
+            **word,
+            "text": respell_text(new_text, single_targets) if new_text == texts[i] else new_text,
+        }
+        for i, (word, new_text) in enumerate(zip(words, new_texts, strict=True))
+    ]
+
+
+def is_mishearing(shown: str, target: str) -> bool:
+    """True when ``shown`` (caption words) is a hearing of ``target`` spelled another way.
+
+    The same narrow rule the respelling applies, so a check after render calls exactly
+    what the render would have fixed a miss (KRI-793): "Meropa" for "Merope", "Ole de la
+    Casa" for "Oblea de la Casa". The target itself, in any case, is never a mishearing.
+    """
+    words = [m.group(0) for m in _TOKEN.finditer(shown)]
+    wanted = _phrase_words(target)
+    if not words or not wanted:
+        return False
+    if len(wanted) == 1:
+        return len(words) == 1 and _match_word(words[0], target) is not None
+    return _match_phrase(words, target) is not None
 
 
 def apply_spelling_to_cues(
@@ -172,7 +293,7 @@ def apply_spelling_to_cues(
         text = respell_text(str(cue.get("text") or ""), targets)
         words = cue.get("words")
         new_words = (
-            [{**w, "text": respell_text(str(w.get("text") or ""), targets)} for w in words]
+            _respell_word_list(words, targets)
             if isinstance(words, list) and all(isinstance(w, dict) for w in words)
             else words
         )

@@ -49,7 +49,7 @@ from app.kria.style_asks import (
     text_look_facts,
     value_matches,
 )
-from app.pipeline.caption_spelling import extract_spelling_asks
+from app.pipeline.caption_spelling import extract_spelling_asks, is_mishearing
 from app.pipeline.sequence_text_evidence import complete_sequences, sequence_lineage
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.text_style_intent import (
@@ -325,6 +325,11 @@ class PlanFacts:
     # a title, captions, a start cut and speech cleanup; an ask outside that set is answered
     # with a plain "can't" before approval and after render (`_talking_honest_receipt`).
     phone_talking: bool = False
+    # KRI-793: True when this draft renders through the phone Talking writer, which captions
+    # the take, spells the creator's listed words their way and records every caption line
+    # (`defers_caption_words_to_phone_render`). A captions ask about language or spelling
+    # then gets a pre-approval line saying what the render will do, never silence.
+    caption_words_at_render: bool = False
     # Seconds of footage the draft would keep whole (the selected video clips' source length);
     # None = unknown, so the length line never states a number it was not given.
     take_duration_s: float | None = None
@@ -2663,7 +2668,11 @@ def _wants_captions(req: BriefRequirement) -> bool:
             return False
     elif not (req.kind == "text" and req.scope == "global" and not req.literal):
         return False
-    if _caption_fact(req) is not None or _caption_language_fact(req) is not None:
+    if (
+        _caption_fact(req) is not None
+        or _caption_language_fact(req) is not None
+        or _spellings_fact(req)  # KRI-793: the words to spell in the captions
+    ):
         return True
     return bool(_CAPTION_RE.search(_req_text(req)))
 
@@ -2822,11 +2831,16 @@ _TALKING_SPOKEN_TEXT_PLAN = (
     "I'll show it the moment you say that word in your take; if I don't hear the word, it "
     "won't appear"
 )
+# KRI-793: what a phone Talking draft says about a captions ask naming a language or words
+# to spell: the writer captions everything said in the take (an off-camera voice too), and
+# the reason goes on to name the language and the words (`_caption_words_plan`).
+_TALKING_CAPTIONS_EVERY_VOICE = "Every voice in your take gets captions, off-camera ones too"
 _TALKING_HONEST_EN: tuple[str, ...] = (
     _TALKING_NO_SUCH_EDIT,
     _TALKING_NO_SPOKEN_TEXT,
     _TALKING_OPENING_CUT_PLAN,
     _TALKING_SPOKEN_TEXT_PLAN,
+    _TALKING_CAPTIONS_EVERY_VOICE,
 )
 
 # The Turkish twin of every static reason above (KRI-520). Reasons are written into
@@ -2897,6 +2911,9 @@ _REASON_TR: dict[str, str] = {
     ),
     _TALKING_SPOKEN_TEXT_PLAN: (
         "Çekiminde o kelimeyi söylediğin anda yazıyı gösteririm; kelimeyi duymazsam yazı çıkmaz"
+    ),
+    _TALKING_CAPTIONS_EVERY_VOICE: (
+        "Çekimindeki her ses altyazıya girer, kamera dışındaki sesler de"
     ),
     "Some requested text ends before the video does.": "Bazı yazılar video bitmeden kayboluyor.",
 }
@@ -4822,7 +4839,7 @@ _LOOSE_CAPTION_LANGUAGE_PATTERNS = (
 # they come first ("A ve B doğru yazılsın", "A and B spelled right"). A colon list
 # ("spelling the names exactly: A, B") always follows.
 _SPELL_CUE_RE = re.compile(
-    r"\b(?P<after>spell(?:ing)?(?:\s+of)?)\b"
+    r"\b(?P<after>spell(?:ings?)?(?:\s+of)?)\b"
     r"|\b(?:spelled|spelt|spells)\b"
     r"|\b(?:do[gğ]ru|d[uü]zg[uü]n|hatas[ıi]z)\s+(?:bir\s+)?yaz\w*"
     r"|\byaz[ıi]m\w*|\bimla\w*",
@@ -4898,15 +4915,16 @@ def _name_lists(text: str) -> tuple[list[str], list[tuple[int, int, list[str]]]]
             if _capitalized(tokens[j]):
                 words.append(tokens[j])
                 j += 1
-            elif (
-                tokens[j].casefold() in _NAME_PARTICLES
-                and j + 1 < len(tokens)
-                and _capitalized(tokens[j + 1])
-            ):
-                words.extend(tokens[j : j + 2])
-                j += 2
             else:
-                break
+                # One or more lowercase particles may join two capitalized words
+                # ("Rio de Janeiro", "Oblea de la Casa").
+                k = j
+                while k < len(tokens) and tokens[k].casefold() in _NAME_PARTICLES:
+                    k += 1
+                if k == j or k >= len(tokens) or not _capitalized(tokens[k]):
+                    break
+                words.extend(tokens[j : k + 1])
+                j = k + 1
         chunks.append((i, j - 1, " ".join(words)))
         i = j
     lists: list[tuple[int, int, list[str]]] = []
@@ -4958,11 +4976,43 @@ def _clean_name(name: str) -> str | None:
     return " ".join(words)
 
 
+_MAX_LISTED_WORDS = 4  # words in one item of a colon list ("Oblea de la Casa")
+
+
+def _colon_list(text: str) -> list[str]:
+    """The items of the list after a spelling cue's colon, lowercase ones too (KRI-793).
+
+    "correct spellings: Oblea de la Casa, dulce de leche, leche condensada, Merope": the
+    colon makes the creator's own list explicit, so "dulce de leche" counts although it is
+    not capitalized. Items are split on commas and "and" / "ve" / "ile" / "&"; the list ends
+    at the first item longer than a name. A lone lowercase item ("spelling: make sure") is
+    not read as one.
+    """
+    items: list[list[str]] = [[]]
+    for token in _NAME_TOKEN_RE.findall(text):
+        if token in {",", "&"} or token.casefold() in _NAME_JOINERS:
+            if items[-1]:
+                items.append([])
+            continue
+        items[-1].append(token)
+    names: list[str] = []
+    for words in items:
+        if not words:
+            continue
+        if len(words) > _MAX_LISTED_WORDS:
+            break
+        names.append(" ".join(words))
+    if len(names) == 1 and not _capitalized(names[0]):
+        return []
+    return names
+
+
 def _names_near_cue(clause: str, cue: re.Match[str]) -> list[str]:
     before, after = clause[: cue.start()], clause[cue.end() :]
     found: list[str] = []
     if ":" in after:
-        found = _list_after(after.split(":", 1)[1], max_gap=1)
+        listed = after.split(":", 1)[1]
+        found = _colon_list(listed) or _list_after(listed, max_gap=1)
     if not found:
         order = (
             ((_list_after, after), (_list_before, before))
@@ -4976,12 +5026,33 @@ def _names_near_cue(clause: str, cue: re.Match[str]) -> list[str]:
     return [name for name in map(_clean_name, found) if name]
 
 
+def _spellings_fact(req: BriefRequirement) -> tuple[str, ...]:
+    """``facts["spellings"]``: the words the model recorded the creator wants spelled their
+    way in the captions (KRI-793), cleaned; () when absent or unusable."""
+    raw = req.facts.get("spellings")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return ()
+    names = (
+        " ".join(unicodedata.normalize("NFC", value).split())
+        for value in raw
+        if isinstance(value, str)
+    )
+    return tuple(dict.fromkeys(name for name in names if 0 < len(name) <= 80))[:_MAX_SPELLED_NAMES]
+
+
 def _spelled_names(req: BriefRequirement) -> tuple[str, ...] | None:
     """The names a requirement asks to be spelled right, as the creator wrote them.
 
-    None when the wording has no spelling cue; () when it has one but no capitalized
-    name list sits next to it (then nothing about spelling can be claimed).
+    The model's ``facts["spellings"]`` decides when present (KRI-667: the server checks the
+    recorded fact, not the words). Otherwise None when the wording has no spelling cue;
+    () when it has one but no capitalized name list (or colon list) sits next to it (then
+    nothing about spelling can be claimed).
     """
+    recorded = _spellings_fact(req)
+    if recorded:
+        return recorded
     text = unicodedata.normalize("NFC", " ".join(x for x in (req.description, req.literal) if x))
     cued = False
     names: list[str] = []
@@ -5077,6 +5148,10 @@ def _caption_spelling(name: str, captions: str, *, turkish: bool) -> tuple[bool,
                 and squashed.startswith(want)
                 and _GLUED_SUFFIX_RE.fullmatch(squashed[len(want) :])
             ):
+                other = shown
+            elif other is None and size == name_words and is_mishearing(shown, name):
+                # KRI-793: the same name heard another way ("Meropa" for Merope, "Ole de
+                # la Casa" for Oblea de la Casa): the rule the render's respelling uses.
                 other = shown
     return exact, other
 
@@ -5207,6 +5282,100 @@ def _check_caption_words(req: BriefRequirement, facts: PlanFacts) -> Requirement
     if unsure:
         return _receipt(req, "partial", " ".join([*unsure, *done]), verification="unchecked")
     return _receipt(req, "met", " ".join(done) or None)
+
+
+def _caption_words_plan(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """What a phone Talking draft will do with a captions ask about language or spelling
+    (KRI-793).
+
+    The draft has no captions to read yet (the render-ready review judges them, KRI-549), but
+    saying nothing left "Captions for both voices, ensuring correct spellings: Oblea de la
+    Casa, ..." silent through a held draft and two approval cards. The line says who gets
+    captions (everything said in the take, an off-camera voice too), the language, and the
+    words the render will spell the creator's way, then checks in the finished video. Its
+    reason starts with a Talking plan prefix, so it is an answer, never the "simpler
+    version?" question. A draft whose captions are off, or sentence captions for a
+    word-by-word ask, is a real miss and says so.
+    """
+    style = facts.caption_style
+    if style == "none":
+        return _receipt(
+            req,
+            "partial",
+            say(en="Captions are off in this draft.", tr="Bu taslakta altyazılar kapalı."),
+        )
+    if _wants_word_captions(req) and style not in {None, "auto", "karaoke", "kinetic"}:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="Captions are on as full sentences, not word by word.",
+                tr="Altyazılar kelime kelime değil, tam cümleler olarak açık.",
+            ),
+        )
+    parts = [_loc(_TALKING_CAPTIONS_EVERY_VOICE)]
+    asked = _asked_caption_language(req)
+    names = _spelled_names(req)
+    if asked is not None:
+        language = _language_name(asked)
+        parts.append(
+            say(en=f"they'll be in {language}", tr=f"altyazılar {language} olacak")
+            if names or _asks_spelling(req)
+            else say(
+                en=f"they'll be in {language}, and I'll check that in the finished video",
+                tr=f"altyazılar {language} olacak, bunu bitmiş videoda kontrol edeceğim",
+            )
+        )
+    if names:
+        one = len(names) == 1
+        parts.append(
+            say(
+                en=(
+                    f"I'll spell {_and_names(names)} the way you wrote "
+                    f"{'it' if one else 'them'} and check {'it' if one else 'them'} in the "
+                    "finished video"
+                ),
+                tr=(
+                    f"{'şunu' if one else 'şunları'} senin yazdığın gibi yazıp bitmiş videoda "
+                    f"kontrol edeceğim: {_and_names(names)}"
+                ),
+            )
+        )
+    elif _asks_spelling(req):
+        parts.append(
+            say(
+                en="write out the words to spell and I'll spell them your way",
+                tr="yazımına dikkat edeceğim kelimeleri tek tek yaz, senin yazdığın gibi yazayım",
+            )
+        )
+    return _receipt(req, "partial", "; ".join(parts))
+
+
+def _plans_caption_words(req: BriefRequirement, facts: PlanFacts) -> bool:
+    """A phone Talking draft's captions ask about language or spelling (KRI-793)."""
+    return (
+        facts.caption_words_at_render
+        and not facts.rendered_variant
+        and not facts.editor
+        and _wants_captions(req)
+        and _caption_words_ask(req)
+    )
+
+
+def brief_caption_spellings(brief: CreativeBrief | None) -> tuple[str, ...]:
+    """The words the creator wants spelled their way in the captions, from every live
+    captions ask of the approved brief, in order (KRI-793).
+
+    The phone Talking writer applies them to its caption cues (`apply_spelling_to_cues`)
+    and the render-ready review checks the same list against the caption lines.
+    """
+    if brief is None:
+        return ()
+    names: list[str] = []
+    for req in brief.live():
+        if _wants_captions(req) and not _wants_no_captions(req):
+            names.extend(_spelled_names(req) or ())
+    return tuple(dict.fromkeys(names))[:_MAX_SPELLED_NAMES]
 
 
 _TITLE_SOURCES_THE_CREATOR_OWNS = frozenset({"creator", "brief"})
@@ -6047,6 +6216,8 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_moments(req, facts)
     elif _wants_source_sound_kept(req):
         return _check_source_sound(req, facts)
+    if _plans_caption_words(req, facts):  # KRI-793: say before approval what the render does
+        return _caption_words_plan(req, facts)
     if _judges_caption_words(req, facts):  # KRI-549: language / names on a finished render
         return _check_caption_words(req, facts)
     if _wants_captions(req):
@@ -6153,8 +6324,8 @@ def defers_caption_words_to_phone_render(
     the render-ready review judges a caption-language or name-spelling ask a text-free draft
     cannot. Mirrors the dispatch gate: phone clips, an enrolled account, phone `subtitled`
     rendering on, and no voiceover lane (a recorded voiceover goes to the Voiceover writer).
-    A draft the gate then refuses never renders, so leaving the ask to the render costs
-    nothing there.
+    The draft itself says what that writer will do with such an ask (KRI-793,
+    `PlanFacts.caption_words_at_render`).
     """
     from app.config import settings  # noqa: PLC0415
     from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
@@ -6183,9 +6354,10 @@ def requirements_to_check_at_draft(
     `timing`) it is left out, so the draft reply is the plain summary instead of a
     premature failure notice; the render's own receipts (met / partial / not possible,
     plus guessed names) follow. A phone Voiceover draft likewise leaves its first/last
-    order, clip-timing and caption-language asks to the render's record (KRI-533), and a
-    phone Talking draft its caption-language / name-spelling asks (KRI-549).
-    Otherwise this is the unchanged, full list.
+    order, clip-timing and caption-language asks to the render's record (KRI-533).
+    A phone Talking draft keeps its caption-language / name-spelling asks: the render
+    judges them (KRI-549), and the draft says what it will do (KRI-793,
+    `PlanFacts.caption_words_at_render`). Otherwise this is the unchanged, full list.
     """
     strategy = strategy or {}
     clip_paths = list(clip_paths or ())
@@ -6202,18 +6374,11 @@ def requirements_to_check_at_draft(
         audio_strategy=strategy.get("audio_strategy"),
         clip_paths=clip_paths,
     )
-    phone_captions = defers_caption_words_to_phone_render(
-        creator_id=creator_id,
-        edit_format=edit_format,
-        audio_strategy=strategy.get("audio_strategy"),
-        clip_paths=clip_paths,
-    )
     return [
         req
         for req in requirements
         if not (defers and req.kind in UNIFIED_SETTLED_KINDS)
         and not (narrated and _settled_by_narrated_render(req, strategy))
-        and not (phone_captions and _wants_captions(req) and _caption_words_ask(req))
     ]
 
 
@@ -6583,6 +6748,7 @@ __all__ = [
     "NARRATED_ALIGNMENT_FIELD",
     "NarratedStepFact",
     "asks_caption_language",
+    "brief_caption_spellings",
     "keeps_model_summary",
     "wants_light_change",
     "defers_caption_words_to_phone_render",
