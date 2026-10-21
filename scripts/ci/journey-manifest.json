@@ -1152,6 +1152,20 @@
         "src/apps/api/tests/pipeline/test_editor_render_window_intent.py",
         "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift"
       ]
+    },
+    {
+      "id": "kri-785-font-glyph-fallback",
+      "needs_native": false,
+      "api_tests": "tests/parity/test_decision_parity.py tests/pipeline/test_overlay_verify.py tests/pipeline/test_intro_cluster.py tests/pipeline/test_overlay_sizing.py",
+      "paths": [
+        "src/apps/api/app/pipeline/font_coverage.py",
+        "src/apps/api/app/pipeline/intro_cluster.py",
+        "src/apps/api/app/pipeline/overlay_sizing.py",
+        "src/apps/api/app/pipeline/overlay_verify.py",
+        "src/apps/api/app/pipeline/text_overlay.py",
+        "src/apps/api/assets/fonts/glyph-fallbacks.json",
+        "src/apps/api/tests/fixtures/overlay_verify/"
+      ]
     }
   ]
 }
