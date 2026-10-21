@@ -33,7 +33,7 @@ from app.agents._schemas.content_plan import (
 from app.agents._schemas.persona import resolve_content_mode, resolve_posts_per_week
 from app.agents.music_matcher import _sanitize_text
 from app.agents.persona_examples import format_ideas_for_pillars, format_success_factors
-from app.kria.reply_language import creator_text_language, with_prompt_language
+from app.kria.reply_language import agent_reply_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
@@ -351,10 +351,7 @@ class ContentPlanGeneratorAgent(Agent[ContentPlanInput, ContentPlanOutput]):
         )
         return with_prompt_language(
             prompt,
-            input.reply_language
-            or creator_text_language(
-                input.events, input.user_idea_seeds, p.summary, p.goal, p.current_situation
-            ),
+            agent_reply_language(input.reply_language, input.user_idea_seeds, input.events),
         )
 
     def parse(self, raw_text: str, input: ContentPlanInput) -> ContentPlanOutput:  # noqa: A002

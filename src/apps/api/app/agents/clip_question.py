@@ -37,12 +37,26 @@ from typing import ClassVar
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
-from app.kria.reply_language import creator_text_language, with_prompt_language
+from app.kria.reply_language import with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 
 _ANSWER_MAX_WORDS = 3
 _ANSWER_MAX_CHARS = 60
-_UNKNOWN_VALUES = frozenset({"unknown", "n/a", "none", "unclear", "not sure", "not visible"})
+_UNKNOWN_VALUES = frozenset(
+    {
+        "unknown",
+        "n/a",
+        "none",
+        "unclear",
+        "not sure",
+        "not visible",
+        # A model that drifts into Turkish (KRI-784).
+        "bilinmiyor",
+        "belirsiz",
+        "emin değilim",
+        "görünmüyor",
+    }
+)
 
 
 def _normalize_answer(value: object) -> str:
@@ -125,9 +139,13 @@ class ClipQuestionAgent(Agent[ClipQuestionInput, ClipQuestionOutput]):
 
     def render_prompt(self, input: ClipQuestionInput) -> str:  # noqa: A002
         prompt = load_prompt("clip_question", question=input.question)
-        return with_prompt_language(
-            prompt,
-            input.reply_language or creator_text_language(input.question),
+        localized = with_prompt_language(prompt, input.reply_language)
+        if localized == prompt:
+            return prompt
+        # The language line must not reach the machine tokens the callers parse.
+        return (
+            f'{localized} The "answer" to a yes/no question stays exactly "yes", '
+            '"no" or "unknown", in English.'
         )
 
     def parse(self, raw_text: str, input: ClipQuestionInput) -> ClipQuestionOutput:  # noqa: A002

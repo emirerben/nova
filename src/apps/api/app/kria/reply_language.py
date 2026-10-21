@@ -292,24 +292,99 @@ def prompt_language_line(language: str | None) -> str:
     )
 
 
+# Loose-folded Turkish verb endings ("cekiyorum", "isletiyoruz", "yapacagim") that
+# English never ends a word with; they count as Turkish grammar even when typed
+# without diacritics.
+_TR_VERB_ENDINGS = tuple(
+    f"{stem}{person}"
+    for stem in ("iyor", "uyor")
+    for person in ("", "um", "uz", "sun", "lar", "du", "mus")
+) + ("acagim", "ecegim", "acagiz", "ecegiz")
+
+
+def _strict_scores(text: str) -> tuple[int, int, int, int]:
+    """(Turkish evidence, Turkish grammar words, English evidence, word count).
+
+    Stricter than chat detection, for text that has no chat behind it: a
+    capitalized word is likely a name ("Göreme", "Kadıköy", "Çeşme"), so its
+    letters say nothing about the language the sentence is written in. Grammar
+    words and verb endings are the only evidence that can make text Turkish.
+    """
+    normalized = unicodedata.normalize("NFC", text)
+    words = _WORD.findall(normalized)
+    foreign = bool(_NON_TR_LETTERS.search(normalized))
+    tr = grammar = en = 0
+    for word in words:
+        loose = loose_text(word)
+        if loose in _TR_WORDS or loose.endswith(_TR_VERB_ENDINGS):
+            tr += 1
+            grammar += 1
+        elif word[:1].isupper():
+            if fold_text(word) in _EN_WORDS:
+                en += 1
+        elif _STRONG_TR_LETTERS.search(word) or (_SOFT_TR_LETTERS.search(word) and not foreign):
+            tr += 1
+        elif fold_text(word) in _EN_WORDS:
+            en += 1
+    return tr, grammar, en, len(words)
+
+
+def _strict_detect(text: str) -> str | None:
+    if not text or is_client_stock_message(text):
+        return None
+    tr, grammar, en, count = _strict_scores(text)
+    if count == 0:
+        return None
+    if grammar and tr >= 2 * en and tr / count >= 0.2:
+        return "tr"
+    if en and en >= 2 * tr and en / count >= 0.25:
+        return "en"
+    return None
+
+
 def creator_text_language(*texts: object) -> str | None:
     """The language the creator's own words clearly read as, else None (KRI-784).
 
     For agents with no chat behind them (onboarding, plan, voiceover, slide posts):
-    pass only text the creator wrote (answers, a brief, an idea), never model-written
-    summaries, so English context does not drown out a Turkish creator.
+    pass only text the creator wrote (answers, a brief, a request), never
+    model-written summaries, most telling first. Each argument (a string, or a
+    list of strings read together) is checked on its own and the first that
+    clearly reads as one language wins, so an English idea does not drown out a
+    Turkish request. Turkish needs grammar words, not just Turkish letters: an
+    English sentence about Göreme or Kadıköy stays English. None when the
+    ``KRIA_REPLY_LANGUAGE_ENABLED`` kill switch is off.
     """
-    parts: list[str] = []
+    if not enabled():
+        return None
     for text in texts:
         if isinstance(text, str):
-            parts.append(text)
+            joined = text.strip()
         elif isinstance(text, list | tuple):
-            parts.extend(t for t in text if isinstance(t, str))
-    joined = " ".join(p.strip() for p in parts if p.strip())
-    return detect_chat_language(joined) if joined else None
+            joined = " ".join(t.strip() for t in text if isinstance(t, str) and t.strip())
+        else:
+            continue
+        language = _strict_detect(joined) if joined else None
+        if language is not None:
+            return language
+    return None
+
+
+def agent_reply_language(explicit: str | None, *creator_texts: object) -> str | None:
+    """An agent's reply language: the caller's, else the turn's, else the creator's words.
+
+    The order is the evidence order (KRI-784): a language the caller passed (the
+    thread's or device's), then the language bound for this chat turn, then
+    ``creator_text_language`` over the creator-authored fields. None when the
+    kill switch is off.
+    """
+    if not enabled():
+        return None
+    if explicit in SUPPORTED_REPLY_LANGUAGES:
+        return explicit
+    return current_reply_language() or creator_text_language(*creator_texts)
 
 
 def with_prompt_language(prompt: str, language: str | None) -> str:
     """``prompt`` plus the reply-language line; unchanged for English or unknown (KRI-784)."""
-    line = prompt_language_line(language)
+    line = prompt_language_line(language) if enabled() else ""
     return f"{prompt}\n\n{line}" if line else prompt

@@ -60,6 +60,7 @@ from app.kria.media_sources import (
 )
 from app.kria.plan_contract import CONTRACT_VERSION
 from app.kria.reply_language import (
+    detect_chat_language,
     remember_reply_language,
     reply_language_for,
     resolve_reply_language,
@@ -2911,7 +2912,7 @@ def _status_message(
     if job is not None and job.status in PLAN_ITEM_JOB_TERMINAL:
         return say(
             en="That render has settled. I’ve refreshed the project status for you.",
-            tr="O video tamamlandı. Projenin durumunu senin için güncelledim.",
+            tr="O video işlemi sona erdi. Projenin durumunu senin için güncelledim.",
         )
     return say(en="I’ve refreshed your project status.", tr="Projenin durumunu güncelledim.")
 
@@ -4027,12 +4028,15 @@ async def create_thread(
         content=body.message,
         client_event_id=body.client_event_id,
     )
+    # KRI-784: a clearly Turkish/English first message sets the chat's language, so
+    # a short follow-up ("ok") keeps it. The device language only picks this
+    # prompt's copy and is never stored.
+    remember_reply_language(thread, detect_chat_language(body.message))
     await _append(
         db,
         thread,
         event_type="format_prompt",
         role="assistant",
-        # KRI-784: the first message, else the device language (nothing is stored yet).
         content=_format_prompt_copy(
             resolve_reply_language(body.message, locale=request.headers.get("accept-language"))
         ),
@@ -4834,7 +4838,7 @@ async def message_thread(
                 content=_thread_say(
                     thread,
                     en="Add some footage and I’ll design the first direction.",
-                    tr="Biraz görüntü ekle, ilk yönü ben tasarlayayım.",
+                    tr="Birkaç video ekle, ilk taslağı ben hazırlayayım.",
                 ),
                 payload={"kind": "collect_media"},
             )

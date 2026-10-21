@@ -21,7 +21,7 @@ from app.agents._schemas.content_plan import (
     MIN_SHOT_DURATION_S,
 )
 from app.agents.music_matcher import _sanitize_text
-from app.kria.reply_language import creator_text_language, with_prompt_language
+from app.kria.reply_language import agent_reply_language, with_prompt_language
 
 SHOT_LIST_WRITER_PROMPT_VERSION = "2026-10-21-language"
 
@@ -142,7 +142,7 @@ class ShotListWriterAgent(Agent[ShotListWriterInput, ShotListWriterOutput]):
         )
         return with_prompt_language(
             prompt,
-            input.reply_language or creator_text_language(input.theme, input.idea),
+            agent_reply_language(input.reply_language, input.theme, input.idea),
         )
 
     def parse(

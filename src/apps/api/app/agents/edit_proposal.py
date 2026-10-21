@@ -22,7 +22,7 @@ from app.agents.spoken_script import (
     transcript_speaks,
     word_keys,
 )
-from app.kria.reply_language import creator_text_language, with_prompt_language
+from app.kria.reply_language import agent_reply_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.clip_intents import ResolvedClipIntent
 from app.schemas.edit_frame_schedule import EditFrameSchedule
@@ -2695,8 +2695,9 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
         )
         return with_prompt_language(
             prompt,
-            input.reply_language
-            or creator_text_language(input.creator_request, input.idea, input.theme),
+            agent_reply_language(
+                input.reply_language, input.creator_request, input.idea, input.theme
+            ),
         )
 
     def parse(

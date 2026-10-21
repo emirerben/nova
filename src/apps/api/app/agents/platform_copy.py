@@ -19,7 +19,7 @@ from typing import ClassVar
 from pydantic import BaseModel, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
-from app.kria.reply_language import creator_text_language, with_prompt_language
+from app.kria.reply_language import agent_reply_language, with_prompt_language
 from app.pipeline.agents.copy_writer import (
     InstagramCopy,
     PlatformCopy,
@@ -91,8 +91,7 @@ class PlatformCopyAgent(Agent[PlatformCopyInput, PlatformCopyOutput]):
         )
         return with_prompt_language(
             prompt,
-            input.reply_language
-            or creator_text_language(input.hook_text, input.transcript_excerpt),
+            agent_reply_language(input.reply_language, input.transcript_excerpt),
         )
 
     def parse(self, raw_text: str, input: PlatformCopyInput) -> PlatformCopyOutput:  # noqa: A002, ARG002

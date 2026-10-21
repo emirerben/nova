@@ -23,7 +23,7 @@ import structlog
 from pydantic import BaseModel, Field
 
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
-from app.kria.reply_language import creator_text_language, with_prompt_language
+from app.kria.reply_language import agent_reply_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
@@ -151,8 +151,8 @@ class StyleIntentAgent(Agent[StyleIntentInput, StyleIntentOutput]):
         )
         return with_prompt_language(
             prompt,
-            input.reply_language
-            or creator_text_language(
+            agent_reply_language(
+                input.reply_language,
                 input.utterance,
                 [
                     str(t.get("content") or "")

@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
 from app.agents.music_matcher import _sanitize_text
-from app.kria.reply_language import creator_text_language, with_prompt_language
+from app.kria.reply_language import agent_reply_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
@@ -137,8 +137,9 @@ class InterviewerAgent(Agent[InterviewerInput, InterviewerOutput]):
         )
         return with_prompt_language(
             prompt,
-            input.reply_language
-            or creator_text_language([t.content for t in input.turns if t.role == "user"]),
+            agent_reply_language(
+                input.reply_language, [t.content for t in input.turns if t.role == "user"]
+            ),
         )
 
     def parse(

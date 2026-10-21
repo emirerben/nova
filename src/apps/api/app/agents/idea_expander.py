@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
 from app.agents.music_matcher import _sanitize_text
-from app.kria.reply_language import creator_text_language, with_prompt_language
+from app.kria.reply_language import agent_reply_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 
 IDEA_EXPANDER_PROMPT_VERSION = "2026-10-21-language"
@@ -89,7 +89,7 @@ class IdeaExpanderAgent(Agent[IdeaExpanderInput, IdeaExpanderOutput]):
         )
         return with_prompt_language(
             prompt,
-            input.reply_language or creator_text_language(input.idea, input.creator_context),
+            agent_reply_language(input.reply_language, input.idea, input.creator_context),
         )
 
     def parse(

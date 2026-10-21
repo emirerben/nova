@@ -15,6 +15,8 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.kria.reply_language import (
+    current_reply_language,
+    detect_chat_language,
     reply_language_for,
     resolve_reply_language,
     say,
@@ -407,13 +409,24 @@ def _rejection_reply(exc: Exception) -> str:
     """
     if isinstance(exc, HTTPException) and isinstance(exc.detail, dict):
         message = str(exc.detail.get("message") or "").strip()
-        if message:
+        if message and not _mixes_languages(message):
             return f"{message} " + say(en="Nothing was changed.", tr="Hiçbir şey değişmedi.")
     return _generic_rejection_reply()
 
 
+def _mixes_languages(*texts: str) -> bool:
+    """True when English server text would land inside a Turkish reply (KRI-784).
+
+    Validator messages and op change summaries are still English; a Turkish chat
+    gets the generic Turkish sentence rather than a half-English one.
+    """
+    if current_reply_language() != "tr":
+        return False
+    return any(detect_chat_language(text) != "tr" for text in texts)
+
+
 def _applied_summary(changes: list[str]) -> str:
-    if not changes:
+    if not changes or _mixes_languages(*changes):
         return say(en="Applied your edit", tr="Düzenlemeni uyguladım")
     if len(changes) == 1:
         return changes[0]

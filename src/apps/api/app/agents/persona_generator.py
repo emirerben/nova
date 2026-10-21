@@ -28,7 +28,7 @@ from app.agents._schemas.persona import (
 )
 from app.agents.music_matcher import _sanitize_text
 from app.agents.persona_examples import format_archetypes, format_success_factors
-from app.kria.reply_language import creator_text_language, with_prompt_language
+from app.kria.reply_language import agent_reply_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 
 
@@ -140,8 +140,8 @@ class PersonaGeneratorAgent(Agent[PersonaQuestionnaire, Persona]):
         )
         return with_prompt_language(
             prompt,
-            input.reply_language
-            or creator_text_language(
+            agent_reply_language(
+                input.reply_language,
                 input.work,
                 input.school,
                 input.social,

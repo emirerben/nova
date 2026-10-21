@@ -642,9 +642,9 @@ def _caption_authoring_question(intent: ClipIntent) -> str:
 
 def _yes_no(answer: str) -> bool | None:
     word = answer.strip().casefold().split(" ")[0].strip(".,!") if answer.strip() else ""
-    if word in {"yes", "true"}:
+    if word in {"yes", "true", "evet"}:
         return True
-    if word in {"no", "false"}:
+    if word in {"no", "false", "hayır", "hayir"}:
         return False
     return None
 
@@ -683,9 +683,10 @@ def query_clip_vision(
             ClipQuestionInput(
                 file_uri=file_ref.uri,
                 file_mime=getattr(file_ref, "mime_type", None) or "video/mp4",
+                # KRI-784: no reply language here. Membership checks parse an
+                # English "yes"/"no", and answers are cached per question on the
+                # clip with no language in the key.
                 question=question,
-                # KRI-784: the answer can become a clip label the creator sees.
-                reply_language=current_reply_language(),
             ),
             ctx=run_context,
         )

@@ -20,7 +20,7 @@ import structlog
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.conformance import ConformanceInput, ConformanceOutput
-from app.kria.reply_language import creator_text_language, with_prompt_language
+from app.kria.reply_language import agent_reply_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
@@ -120,8 +120,7 @@ class ConformanceFeedbackAgent(Agent[ConformanceInput, ConformanceOutput]):
         )
         return with_prompt_language(
             prompt,
-            input.reply_language
-            or creator_text_language(input.theme, input.idea, input.user_context),
+            agent_reply_language(input.reply_language, input.theme, input.idea, input.user_context),
         )
 
     def parse(  # noqa: A002

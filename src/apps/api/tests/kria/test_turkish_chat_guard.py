@@ -1085,3 +1085,84 @@ def test_every_worker_sentence_the_chat_rewords_still_exists_and_is_covered() ->
         *(text for pair in generative_build._SPEECH_FALLBACK_DECLINES.values() for text in pair),
     }
     assert not required - set(table), sorted(required - set(table))
+
+
+# ----------------------------------------------------------- KRI-784 prompt-language guard
+# Failure modes for the reply-language line on agents with no chat behind them:
+# 1. An English creator writing about Turkish places ("Göreme", "Kadıköy") is read
+#    as Turkish from the names' letters, and the prompt orders Turkish output.
+# 2. The KRIA_REPLY_LANGUAGE_ENABLED kill switch is off, yet the line still renders.
+# 3. A Turkish chat's language reaches the yes/no clip check, the model answers
+#    "evet"/"hayır", and the English-only parser drops the clip.
+# 4. A Turkish chat gets an English validator sentence or op summary glued to Turkish.
+
+_ENGLISH_ABOUT_TURKEY = (
+    "Paragliding over Ölüdeniz",
+    "Sunrise balloons over Göreme",
+    "Kadıköy, Beşiktaş and Üsküdar food crawl",
+    "Exploring Çeşme and Alaçatı",
+    "Gözleme breakfast",
+)
+
+
+def _shot_list_prompt(idea: str, theme: str = "") -> str:
+    from app.agents.shot_list_writer import ShotListWriterAgent, ShotListWriterInput
+
+    return ShotListWriterAgent(None).render_prompt(ShotListWriterInput(theme=theme, idea=idea))
+
+
+@pytest.mark.parametrize("idea", _ENGLISH_ABOUT_TURKEY)
+def test_english_about_turkish_places_keeps_the_english_prompt(idea: str) -> None:
+    from app.agents.slide_post_composer import SlidePostComposerAgent, SlidePostComposerInput
+    from app.agents.slide_post_composer import SlidePostMediaItem as Media
+
+    assert "Creator chat language" not in _shot_list_prompt(idea, theme=idea)
+    media = [Media.model_validate({"id": "m1", "kind": "image"})]
+    slide = SlidePostComposerAgent(None).render_prompt(
+        SlidePostComposerInput(idea=idea, theme=idea, notes=idea, media=media)
+    )
+    assert "Creator chat language" not in slide
+
+
+def test_turkish_creator_words_still_get_the_turkish_line() -> None:
+    assert "Turkish (tr)" in _shot_list_prompt("Kapadokya balon turu, çok güzel bir gün")
+
+
+def test_the_kill_switch_keeps_every_prompt_english(monkeypatch: pytest.MonkeyPatch) -> None:
+    turkish = "Kapadokya balon turu, çok güzel bir gün"
+    monkeypatch.setattr(settings, "kria_reply_language_enabled", False)
+    off = _shot_list_prompt(turkish)
+    assert "Creator chat language" not in off
+    with reply_language_for("tr"):
+        assert _shot_list_prompt(turkish) == off
+    monkeypatch.setattr(settings, "kria_reply_language_enabled", True)
+    assert _shot_list_prompt(turkish) != off
+
+
+def test_yes_no_clip_checks_survive_a_turkish_answer() -> None:
+    from app.agents.clip_question import ClipQuestionAgent, ClipQuestionInput, _normalize_answer
+    from app.services.clip_intent_resolution import _yes_no
+
+    assert _yes_no("evet") is True and _yes_no("Hayır.") is False
+    assert _normalize_answer("bilinmiyor") == ""
+    prompt = ClipQuestionAgent(None).render_prompt(
+        ClipQuestionInput(file_uri="gs://x", question="Is anyone talking?", reply_language="tr")
+    )
+    assert prompt.rstrip().endswith('stays exactly "yes", "no" or "unknown", in English.')
+
+
+def test_a_turkish_reply_never_glues_english_server_text() -> None:
+    from fastapi import HTTPException
+
+    from app.services.creation_editor_actions import _rejection_reply, build_honest_reply
+
+    english_changes = ["Moved the title to the top", "Made captions bigger"]
+    with reply_language_for("tr"):
+        assert build_honest_reply(english_changes, [], []) == (
+            "Düzenlemeni uyguladım. Geri kalan her şey aynı."
+        )
+        rejected = _rejection_reply(HTTPException(422, detail={"message": "Clip too short."}))
+        assert rejected == "Bu değişikliği güvenle uygulayamadım. Hiçbir şey değişmedi."
+    assert build_honest_reply(english_changes, [], []) == (
+        "Moved the title to the top and Made captions bigger. Everything else is unchanged."
+    )

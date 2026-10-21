@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
 from app.agents.music_matcher import _sanitize_text
-from app.kria.reply_language import creator_text_language, with_prompt_language
+from app.kria.reply_language import agent_reply_language, with_prompt_language
 
 # Hard cap: the interview closes at this many turns regardless of what the model
 # wants (the route also enforces it as the backstop). "A few questions", per the
@@ -94,9 +94,10 @@ class VoiceoverInterviewerAgent(Agent[VoiceoverInterviewerInput, VoiceoverInterv
         )
         return with_prompt_language(
             prompt,
-            input.reply_language
-            or creator_text_language(
-                input.brief, [t.content for t in input.turns if t.role == "user"]
+            agent_reply_language(
+                input.reply_language,
+                input.brief,
+                [t.content for t in input.turns if t.role == "user"],
             ),
         )
 

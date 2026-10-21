@@ -27,7 +27,7 @@ from app.agents.spoken_script import (
     narration_word_keys,
     quote_text,
 )
-from app.kria.reply_language import creator_text_language, with_prompt_language
+from app.kria.reply_language import agent_reply_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.clip_intents import ResolvedClipIntent
 from app.schemas.edit_proposal import creator_copy_match_key
@@ -704,8 +704,9 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
         )
         return with_prompt_language(
             prompt,
-            input.reply_language
-            or creator_text_language(input.creator_request, input.idea, input.theme),
+            agent_reply_language(
+                input.reply_language, input.creator_request, input.idea, input.theme
+            ),
         )
 
     def parse(self, raw_text: str, input: EditProposalAgentInput) -> SemanticEditPlan:  # noqa: A002
