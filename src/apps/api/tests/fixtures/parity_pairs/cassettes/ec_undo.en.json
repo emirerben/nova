@@ -1,0 +1,104 @@
+{
+  "pair_id": "ec_undo",
+  "lang": "en",
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-10-19-v85",
+  "message": "undo that, I liked it better before",
+  "input": {
+    "utterance": "undo that, I liked it better before",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "clip",
+        "text",
+        "transition",
+        "history"
+      ],
+      "editor_ops_version": 2,
+      "slots": [
+        {
+          "key": "s1",
+          "slot_id": "s1",
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 0.0,
+          "output_end_s": 3.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        },
+        {
+          "key": "s2",
+          "slot_id": "s2",
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 3.0,
+          "output_end_s": 6.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        },
+        {
+          "key": "s3",
+          "slot_id": "s3",
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 6.0,
+          "output_end_s": 9.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        },
+        {
+          "key": "s4",
+          "slot_id": "s4",
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 9.0,
+          "output_end_s": 12.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        }
+      ],
+      "text_bars": [],
+      "total_duration_s": 12,
+      "max_duration_s": 120,
+      "remaining_duration_s": 108,
+      "history_state": {
+        "can_undo_last_turn": true,
+        "last_turn_summary": "Sped up clip 2 to 2x"
+      }
+    }
+  },
+  "prompt_sha256": "cf05617e8f397a15a011db0f2d54532ac34882fa0eb2f8af6e91ddb354d10f60",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:09:41.888990+00:00",
+  "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"undo_last_edit\"\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"I've undone the last change and put the clip's speed back to normal.\",\n  \"suggestions\": [\n    \"Make it 10 seconds\",\n    \"Change the title\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [],\n  \"claimed_ops\": [\n    \"undo_last_edit\"\n  ]\n}",
+  "raw_texts": [
+    "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"undo_last_edit\"\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"I've undone the last change and put the clip's speed back to normal.\",\n  \"suggestions\": [\n    \"Make it 10 seconds\",\n    \"Change the title\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [],\n  \"claimed_ops\": [\n    \"undo_last_edit\"\n  ]\n}"
+  ],
+  "model_used": "gemini-3.1-pro-preview",
+  "tokens": {
+    "in": 23990,
+    "out": 155,
+    "thoughts": 569
+  },
+  "computed_cost_usd": 0.056668
+}

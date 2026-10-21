@@ -103,6 +103,82 @@ A server test fails when the checked-in JSON drifts from the real server verdict
 A fixture row that iOS accepts but the server refuses (or the reverse) is the bug class behind
 KRI-736 #4 (`TIMELINE_OUT_OF_BOUNDS` at 50 ms).
 
+## 8. Trim windows the phone can produce (KRI-770)
+
+Written BEFORE the rows. The Troya Road Trip Save (job `1c22ef40`, authored guided story) was
+refused after a clip trim and the app showed only "This save was rejected." The phone's trailing-edge
+drag to the 0.1 s minimum encoded `(in_s + 0.1) - in_s`, which is `0.09999999999999998` for many
+`in_s` (0.4, 0.5, 0.9, 5.0, 7.0, ...), and every resolver compared it with a bare `< 0.1`.
+
+Result on unmodified `origin/main` (10 of these rows red) and after the fix (all green):
+
+| Row id | Shape | Outcome | Red before |
+| --- | --- | --- | --- |
+| `trim-min-trailing[in_s=0.4\|0.5\|0.9\|5.0\|7.0]` | authored, trailing edge dragged to the minimum | ok, `duration_s` kept as `0.1` | `TIMELINE_INVALID_WINDOW` |
+| `trim-min-exact` | the same window with exactly `0.1` | ok (control) | green |
+| `trim-below-min-real` | a real 90 ms window | 422 `TIMELINE_INVALID_WINDOW`, the tolerance must not swallow it | green |
+| `direct-trim-min-trailing[in_s=0.4\|0.9\|5.0]` | the same minimum trim on the non-authored guided editor | ok | `TIMELINE_INVALID_DURATION` |
+| `direct-trim-shortens-clip` | guided editor trims one clip 7.5 s to 3 s, text lane unchanged | ok, no text layer ends past the recipe | `unsupported_phone_edit` "text layer exceeds the timeline" |
+| `device-guided-story-does-not-advertise-speed` | capability map for a device-rendered guided story | `clips.playback_rate` closed (`phone_playback_rate_unsupported`); trim stays open | red: speed advertised, Save always refused (`UnsupportedPhonePlan`) |
+| `authored-total-under-planner-floor` / `direct-total-under-planner-floor` | manual cut under 3 s | ok. The 3 s floor guards AI proposals (`EditProposalSnapshot`), never a manual Save | green (guard) |
+
+The sibling prod failure (job `b5dadbce`, `duration_s` 2.987 < 3) was a generation-time plan from one
+short clip, not a Save, so it is not part of this contract.
+
+Phone side (Swift, `NativeEditorSessionTests`): the same minimum from both edges, a grid of drags
+that must stay inside the server bound at 1x/2x/0.5x, a 2x trailing drag that stops at the footage
+end, no growth when the source length is unknown, and no trim gesture on `native-phone-talking-source`
+slots (the server answers any window change on them with 409 `TIMELINE_STALE`).
+
+## 9. A Save never answers 500 for a state it can name, and every refusal is visible (KRI-770)
+
+| Row id | Shape | Outcome | Red before |
+| --- | --- | --- | --- |
+| `unreadable-source-catalog-is-409` / `source-identity-conflict-is-409` | `phone_editor_source_revision` raises `ValueError` inside prepare | 409 `editor_source_catalog_invalid` | 500 |
+| `index-error-in-prepare-is-422` / `key-error-in-prepare-is-422` | a catalog index or key error inside prepare | 422 `unsupported_phone_edit` (logged with reason) | 500 |
+
+* Every non-2xx editor-commit is logged: `editor_commit_422` for 422 (unchanged), `editor_commit_refused`
+  (status, code, detail, sections) for the rest. Test: `test_editor_commit_409_is_logged_as_refused`.
+* `tests/routes/test_editor_save_code_catalog.py` extracts every machine code the Save path can raise
+  (AST) and requires it in `Tests/Fixtures/editor_save_codes.json` as `mapped` (specific app copy,
+  pinned by `EditorSaveCodeCatalogTests`) or `generic`. The trim family (`TIMELINE_*`,
+  `GUIDED_REVISION_INVALID`, `authored_seconds_required`) must be `mapped`.
+* The app shows a readable server sentence ("Video media is still being analyzed...") instead of
+  discarding it, and records the real server code in diagnostics instead of `"unknown"`.
+
+## 10. Windows chat stages (KRI-772)
+
+The first refusal the new logging captured for Troya was not the float bug: chat was asked for a 3 s
+clip, `set_clip_duration` wrote 3.0 on a 3.36 s clip starting at 0.9 s (needs 3.9 s), the editor opened
+that draft, and Save refused `TIMELINE_OUT_OF_BOUNDS` (overshoot 0.54 s). A producer must emit windows the
+Save accepts. `tests/kria/test_chat_ops_fit_footage.py` (red on `origin/main`):
+
+| Test | Shape | Outcome |
+| --- | --- | --- |
+| `test_troya_three_seconds_on_a_3_36_second_clip_is_fitted_to_the_footage` | `set_clip_duration` 3.0 on 3.36 s footage from 0.9 s | fitted to 2.46 s, the summary says so, the real Save accepts it |
+| `test_a_start_past_the_end_slides_back_instead_of_leaving_nothing` | `set_clip_in` 3.3 on 3.36 s footage | start slides back, length stays >= 0.1 s |
+| `test_playback_rate_is_part_of_the_footage_a_window_needs` | 2x clip asked for 3 s | fitted so `in + duration * rate <= source` |
+| `test_a_window_inside_the_footage_is_untouched` / `test_a_clip_with_no_known_footage_length_is_left_alone` | controls | unchanged |
+
+Phone side: a draft staged before this fix opens repaired (`DraftSnapshot.fittedToFootage`,
+`ChatDraftStagingTests`).
+
+## 11. Ids the phone sends for a clip the server has no record of (KRI-799)
+
+After KRI-770/772, Troya's Save returned 409 `TIMELINE_STALE` on every attempt and "Reload and keep
+my edits" never cleared it. Before #1698 the chat compile minted `cs-<client_state_id[:12]>-<n>` ids
+for any clip without one (the restored car clip); stored drafts still carry them, the phone overlays
+the draft, Save refuses the unknown id, and `rebaseAfterConflict` re-applies the same local timeline.
+
+| Row id | Shape | Outcome | Red before |
+| --- | --- | --- | --- |
+| `legacy-minted-slot-id-is-a-new-placement` | restored clip carries `cs-369BA950-52A-27` | ok, saved with a permanent id | 409 `TIMELINE_STALE` |
+| `unknown-real-looking-slot-id-is-still-stale` | `unified-cut-99` | 409 `TIMELINE_STALE` | green (control) |
+
+Only the exact shape the server minted (`^cs-[A-Za-z0-9_-]{1,12}-\d+$`) is read as a new placement;
+any other unknown id stays stale. The app drops the id of a staged-draft clip that matches no saved
+clip. `editor_commit_stale_slot` logs the offending id.
+
 ## Not covered here on purpose
 
 * Cloud-rendered (non-device) Save: separate contract, separate tests (`test_editor_commit.py`).

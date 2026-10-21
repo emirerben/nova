@@ -176,6 +176,17 @@ Keep the inventory compact so a natural request fits in $max_intents operations:
   null: the system prints its own fixed stand-in, so never invent or quote text for
   it, and never ask the creator to restate it. `placeholder` is false on every
   other intent.
+  Universal placeholders need no location/person recognition: "Add placeholder
+  location to each video" has attribute "each video", not "location". "Her
+  klibe yer adı için yer tutucu ekle" targets "Her klibe", not a place to
+  identify. Preserve the creator's universal membership words in the attribute;
+  the system supplies the stand-in. A placeholder limited to a named subset
+  still targets only that subset.
+
+A hook/title requested on the opening shot stays in the title lane even when
+the creator describes that shot ("start with the blue video; add a hook there;
+the hook should say ..."). Keep the independent blue-first order intent and
+other clip labels, but do not create a second caption containing that hook.
 
 A group can only express named or otherwise described membership, such as
 "group the Paris clips". Do not encode a dynamic partition such as "group by

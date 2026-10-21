@@ -18,7 +18,6 @@ bound to those across turns and the newest answer for an intent wins.
 from __future__ import annotations
 
 import re
-import unicodedata
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -30,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.kria.reply_language import current_reply_language, detect_chat_language, say
 from app.kria.text_trim import trim_at_word
 from app.schemas.clip_intents import ClipIntent, ClipIntentOp
+from app.text_fold import loose_text
 
 CLIP_QUESTION_VERSION = 1
 MAX_QUESTION_CLIPS = 50  # == MAX_CREATOR_MEDIA_REFS
@@ -39,7 +39,7 @@ _KEY_MAX = 120
 _FALLBACK_MIN_SIMILARITY = 0.5
 # Ops whose picker answers may stand in for each other. KRI-667: never `exclude`, so the
 # clips a creator tapped for "include: laundry" can never become the clips an
-# "exclude: laundry" leaves out (an exclude is never a picker category of its own).
+# "exclude: laundry" leaves out (an exclude is its own picker category, KRI-761).
 _MEMBERSHIP_OPS = frozenset({"group", "include"})
 # KRI-697: an `intent_id` binds an answer only with a 4+ letter word outside these generic
 # words AND not as one word plus digits ("clip_1", "media2"): a re-plan may reuse those
@@ -87,9 +87,8 @@ class ClipSelectionIn(_Strict):
 
 
 def _words(text: str) -> list[str]:
-    decomposed = unicodedata.normalize("NFKD", text).casefold()
-    plain = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return [t for t in re.split(r"[^\w]+", plain, flags=re.UNICODE) if t]
+    # KRI-781: the shared Turkish-aware fold ("IŞIK" and "ışık" both key "isik").
+    return [t for t in re.split(r"[^\w]+", loose_text(text), flags=re.UNICODE) if t]
 
 
 def intent_key(intent: ClipIntent) -> str:
@@ -214,9 +213,15 @@ def build_clip_question(
     }
 
 
-def clip_question_text(categories: list[dict[str, Any]]) -> str:
-    """Self-sufficient human copy for the question (the app also shows thumbnails)."""
+def clip_question_text(categories: list[dict[str, Any]], *, only_video: bool = False) -> str:
+    """Self-sufficient human copy for the question (the app also shows thumbnails).
+
+    ``only_video`` (KRI-779): every category's one candidate is the project's only video,
+    so there is no "which clip" to ask: the question is whether the moment is in it at all.
+    """
     labels = [c["label"] for c in categories]
+    if only_video:
+        return _not_in_the_video_text(labels)
     if len(labels) == 1:
         return say(
             en=(
@@ -241,6 +246,35 @@ def clip_question_text(categories: list[dict[str, Any]]) -> str:
         tr=(
             f"Şunlar için hangi klipleri kastettiğini anlayamadım: {shown}{more}. "
             "Her biri için klipleri seç ya da hiç klibi olmayanları işaretle."
+        ),
+    )
+
+
+def _not_in_the_video_text(labels: list[str]) -> str:
+    if len(labels) == 1:
+        return say(
+            en=(
+                f'I couldn\'t find "{labels[0]}" in your video. '
+                "Tap the video if it's in there, or tell me it isn't."
+            ),
+            tr=(
+                f'Videonda "{labels[0]}" olan yeri bulamadım. '
+                "Varsa videoya dokun, yoksa olmadığını söyle."
+            ),
+        )
+    shown = ", ".join(f'"{label}"' for label in labels[:4])
+    more = say(
+        en=f" and {len(labels) - 4} more" if len(labels) > 4 else "",
+        tr=f" ve {len(labels) - 4} tane daha" if len(labels) > 4 else "",
+    )
+    return say(
+        en=(
+            f"I couldn't find {shown}{more} in your video. "
+            "Tap the video for each one that's in it, or mark the ones that aren't."
+        ),
+        tr=(
+            f"Videonda şunları bulamadım: {shown}{more}. "
+            "Videoda olanlar için videoya dokun, olmayanları işaretle."
         ),
     )
 

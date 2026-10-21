@@ -991,6 +991,9 @@ class TimelineSlotEdit(BaseModel):
     # Camera sound for this occurrence: True silences it. None = an older client omitted
     # the field; the saved value is kept. Honoured on phone-rendered guided edits only.
     muted: bool | None = None
+    # Explicit source selection, separate from a generated/default in-point.
+    # Omission inherits the saved constraint; render projection cannot move it.
+    source_start_locked: bool | None = None
 
     @field_validator("source_crop")
     @classmethod
@@ -1461,7 +1464,7 @@ def normalize_editor_deletion_request(
     """
     if not body.deletions:
         return body
-    if body.editor_state_version != 1:
+    if body.editor_state_version not in (1, 2):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="editor_state_version=1 is required for deletions",
@@ -1601,6 +1604,8 @@ class EditorCommitResponse(BaseModel):
     editor_state: Literal["renderable", "empty"] = "renderable"
     draft: DraftSnapshotOut | None = None
     ok: bool
+    render_started: bool | None = None
+    render_recovery: str | None = None
     generation: str
     sections: EditorCommitSections
     revision_number: int | None = None
@@ -2718,7 +2723,9 @@ def _variants_for_response(job: Job) -> list[dict]:
 
             source_revision = phone_editor_source_revision(job, v) or {}
             v["editor_revision_number"] = source_revision.get("revision_number")
-        out.append(v)
+        from app.services.editor_empty_drafts import public_saved_editor_variant
+
+        out.append(public_saved_editor_variant(job, v))
     return project_public_assembly_plan(out)
 
 
@@ -7527,6 +7534,12 @@ def _compute_base_editor_capabilities(job: Job, variant: dict) -> dict:
             # The footage's own sound (per clip, and one level for the whole video). Only the
             # phone compiler plays it at a creator-set level; the cloud render ignores both.
             on_device = variant.get("render_destination") == "device"
+            # KRI-770: the phone's story compiler has no retime (`phone_guided_plan` refuses any
+            # rate but 1), so advertising speed here made every chat/editor speed change a
+            # refused Save. A lane that is advertised editable must be saveable.
+            clips["playback_rate"] = operation(
+                not on_device, "phone_playback_rate_unsupported" if on_device else None
+            )
             clips["audio"] = operation(
                 on_device, None if on_device else "original_audio_phone_only"
             )
@@ -8232,6 +8245,17 @@ def dispatch_get_timeline(
             editor_state="empty",
             draft=draft.model_dump(mode="json"),
             base_generation=variant_render_baseline(variant),
+        )
+    elif variant and variant.get("editor_state_version") == 2:
+        from app.services.editor_empty_drafts import saved_editor_draft
+
+        draft = saved_editor_draft(job, variant_id)
+        sections = (draft.snapshot.get("editor_payload") or {}).get("sections") or {}
+        timeline.update(
+            slots=copy.deepcopy(sections.get("timeline_slots") or []),
+            draft=draft.model_dump(mode="json"),
+            base_generation=variant_render_baseline(variant),
+            has_user_edits=True,
         )
     return timeline
 
@@ -9020,7 +9044,7 @@ def _timeline_override_for_reassembly(slots: list[dict]) -> list[dict]:
 
 
 def resolve_timeline_slots_for_edit(
-    job: Job, variant: dict, slots: list[TimelineSlotEdit]
+    job: Job, variant: dict, slots: list[TimelineSlotEdit], *, preserve_intent: bool = False
 ) -> list[dict]:
     """Validate a posted slot list against this variant → resolved slot dicts.
 
@@ -9041,7 +9065,7 @@ def resolve_timeline_slots_for_edit(
             if variant.get("render_destination") == "device"
             else resolve_authored_cloud_slots
         )
-        return resolver(job, variant, slots)
+        return resolver(job, variant, slots, preserve_intent=preserve_intent)
     reason = _timeline_ineligibility(job, variant)
     if reason is not None:
         raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, reason)
@@ -9060,6 +9084,17 @@ def resolve_timeline_slots_for_edit(
     # against an outdated timeline (e.g. a sibling tab re-rendered) — reject the
     # whole edit rather than guess at intent.
     known_ids = {s.get("slot_id") for s in [*ai_slots, *user_slots] if s.get("slot_id")}
+    from app.services.authored_editor import is_legacy_minted_slot_id  # noqa: PLC0415
+
+    # KRI-773: an id the chat compile minted before #1698 was never a real slot; it is a new one.
+    slots = [
+        e.model_copy(update={"slot_id": None})
+        if e.slot_id is not None
+        and e.slot_id not in known_ids
+        and is_legacy_minted_slot_id(e.slot_id)
+        else e
+        for e in slots
+    ]
     for e in slots:
         if e.slot_id is not None and e.slot_id not in known_ids:
             raise _timeline_error(status.HTTP_409_CONFLICT, "TIMELINE_STALE")
@@ -9643,6 +9678,26 @@ def _validate_projected_guided_lane_shapes(raw: dict[str, Any]) -> None:
             ) from None
 
 
+def _fit_guided_text_to_segments(
+    job: Job, variant: dict, *, old_revision: dict[str, Any], raw: dict[str, Any]
+) -> list[dict]:
+    """Keep a Save's submitted text lane inside the trimmed story (KRI-770).
+
+    The authored path fits text to the new total (KRI-736); the guided story path took a
+    client-submitted lane as-is, so a clip trim from a build that did not re-time its text
+    reached the recipe validator ("text layer exceeds the timeline") and the creator saw a
+    generic refusal. Same helper, same rules: windows that already fit are untouched.
+    """
+    from app.services.authored_text_fit import fit_text_to_timeline  # noqa: PLC0415
+
+    segment_layout, _ = _guided_v2_layouts(job, variant)
+    return fit_text_to_timeline(
+        list(raw.get("text_elements") or []),
+        old_rows=_guided_v2_slot_rows(old_revision, segment_layout, include_source_path=False),
+        new_rows=_guided_v2_slot_rows(raw, segment_layout, include_source_path=False),
+    )
+
+
 def _guided_text_revision_state(
     current: dict[str, Any], submitted: list[dict]
 ) -> tuple[list[dict], list[dict]]:
@@ -10018,6 +10073,10 @@ def _guided_v2_revision_from_commit(
                 if value is not None
             },
         )
+        if text_elements is not None:
+            raw["text_elements"] = _fit_guided_text_to_segments(
+                job, variant, old_revision=current, raw=raw
+            )
         _validate_projected_guided_lane_shapes(raw)
     if payload.music_window is not None:
         effective_track_id = payload.music_track_id or variant.get("music_track_id")
@@ -10277,7 +10336,7 @@ def prepare_editor_commit(
     variant = _find_variant(job, variant_id)
     if variant is not None:
         _require_render_affecting_mutation_allowed(
-            job, variant, allow_authored=payload.editor_state_version == 1
+            job, variant, allow_authored=payload.editor_state_version in (1, 2)
         )
     if variant is not None and variant.get("render_destination") == "device":
         from app.services.phone_editor import prepare_phone_editor_commit  # noqa: PLC0415
@@ -10771,8 +10830,17 @@ def _prepare_editor_commit(
 
     resolved_slots: list[dict] | None = None
     if payload.timeline_slots is not None and not guided_v2:
-        resolved_slots = resolve_timeline_slots_for_edit(job, variant, payload.timeline_slots)
-        if validated_elements is not None and variant.get("editor_timeline_mode") == "authored":
+        resolved_slots = resolve_timeline_slots_for_edit(
+            job,
+            variant,
+            payload.timeline_slots,
+            preserve_intent=payload.editor_state_version == 2,
+        )
+        if (
+            validated_elements is not None
+            and variant.get("editor_timeline_mode") == "authored"
+            and payload.editor_state_version != 2
+        ):
             # KRI-736: a text window past the new total can never compile (the recipe
             # validator is zero-tolerance). Fit it here so a Save from ANY app build
             # persists a lane that fits the cut it ships with.
@@ -11723,6 +11791,7 @@ def _prepare_editor_commit(
 
     return {
         "generation": new_gen or payload.base_generation,
+        "preserve_editor_intent": payload.editor_state_version == 2,
         "authored_timeline": variant.get("editor_timeline_mode") == "authored",
         "render_task_id": render_task_id if new_gen is not None else None,
         "guided_revision": guided_revision if guided_v2 else None,

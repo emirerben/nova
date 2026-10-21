@@ -1,0 +1,28 @@
+{
+  "pair_id": "cip_use_all_clips",
+  "lang": "en",
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-18.1",
+  "message": "Make an 8 second fast montage using all my clips.",
+  "input": {
+    "candidate_intents": null,
+    "clip_facts": true,
+    "clip_exclusions": true,
+    "creator_request": "Make an 8 second fast montage using all my clips.",
+    "latest_user_message": "Make an 8 second fast montage using all my clips."
+  },
+  "prompt_sha256": "e16f5206975481713e14b64b5bdb6ad2dfc434eb2163759e54240f188e8baa65",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:10:12.721265+00:00",
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"include_all_clips\",\n      \"op\": \"include\",\n      \"attribute\": \"all my clips\",\n      \"label_source\": null,\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"using all my clips\"\n    }\n  ],\n  \"question\": null\n}",
+  "raw_texts": [
+    "{\n  \"intents\": [\n    {\n      \"intent_id\": \"include_all_clips\",\n      \"op\": \"include\",\n      \"attribute\": \"all my clips\",\n      \"label_source\": null,\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"using all my clips\"\n    }\n  ],\n  \"question\": null\n}"
+  ],
+  "model_used": "gemini-2.5-flash",
+  "tokens": {
+    "in": 3443,
+    "out": 129,
+    "thoughts": 308
+  },
+  "computed_cost_usd": 0.002125
+}

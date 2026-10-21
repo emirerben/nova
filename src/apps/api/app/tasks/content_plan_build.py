@@ -78,6 +78,36 @@ def _item_direction_snapshot(session, item: PlanItem, plan: ContentPlan) -> dict
     return plan_snapshot if isinstance(plan_snapshot, dict) else None
 
 
+def _item_chat_language(
+    session,  # noqa: ANN001
+    item: PlanItem,
+    user_id: uuid.UUID,
+    creator_brief_binding: dict | None,
+) -> str:
+    """The render language for an item a chat drives: the chat's reply language (KRI-780).
+
+    The Job's ``all_candidates["language"]`` picks the hook language (intro_writer), the
+    quote/overlay agents' language, and the spoken-caption fallback. Without this a
+    Turkish chat rendered an English hook. The approved binding names its thread;
+    otherwise the creator's chat whose active item this is. No chat, an English or
+    undetected chat, or the reply-language kill switch off all keep "en" (unchanged).
+    """
+    from app.kria.reply_language import thread_reply_language  # noqa: PLC0415
+
+    query = select(CreationThread).where(
+        CreationThread.active_plan_item_id == item.id,
+        CreationThread.creator_id == user_id,
+    )
+    raw_thread_id = (creator_brief_binding or {}).get("thread_id")
+    if raw_thread_id:
+        try:
+            query = query.where(CreationThread.id == uuid.UUID(str(raw_thread_id)))
+        except ValueError:
+            pass  # The binding block below rejects a malformed binding.
+    thread = session.execute(query.limit(1)).scalar_one_or_none()
+    return (thread_reply_language(thread) if thread is not None else None) or "en"
+
+
 def _coerce_dispatch_epoch(value: object) -> int | None:
     """Normalize the producer-bound ownership epoch.
 
@@ -2472,6 +2502,9 @@ def _dispatch_item_render(
             user_id=plan.user_id,
             clip_paths=clip_paths,
             mode="content_plan",
+            # KRI-780: the chat's language is the render's language (hook, quotes,
+            # caption fallback); "en" when no chat drives this item.
+            language=_item_chat_language(session, item, plan.user_id, creator_brief_binding),
             content_plan_item_id=item.id,
             content_plan_ownership_epoch=ownership_epoch,
             persona_tone=str(persona_data.get("tone", "") or ""),
@@ -2600,9 +2633,15 @@ def _dispatch_item_render(
             if thread is None:
                 raise ValueError("Approved request does not belong to this project")
             brief = binding.resolve(thread.id)
+            # KRI-765: the render worker writes requirement copy (a blocked render's reasons)
+            # with no chat in hand; the chat's language rides the Job so it reads in one.
+            from app.kria.reply_language import thread_reply_language  # noqa: PLC0415
+
+            reply_language = thread_reply_language(thread)
             job.assembly_plan = {
                 **job.assembly_plan,
                 "creator_brief_binding": binding.model_dump(mode="json"),
+                **({"creator_reply_language": reply_language} if reply_language else {}),
             }
             # Rebuild the factory-pinned projection against the approved
             # BriefBinding rather than a live thread.  The binding carries the
@@ -2734,6 +2773,36 @@ def _dispatch_item_render(
         if guided_voiceover:
             snapshot["guided_edit"]["execution_contract"] = GUIDED_VOICEOVER_CONTRACT
             snapshot["guided_edit"]["creator_execution_identity"] = creator_identity
+        diagnostics = proposal_state.get("planning_diagnostics") or {}
+        prepared = diagnostics.get("prepared_collection_story")
+        if prepared is not None:
+            from app.pipeline.guided_story import compile_execution_plan
+            from app.services.media_collection_preparation import (
+                PreparedCollectionStory,
+                execution_digest,
+            )
+
+            pinned_story = PreparedCollectionStory.model_validate(prepared)
+            from app.services.media_collection_preparation import install_approved_story
+
+            try:
+                install_approved_story(
+                    session,
+                    item=item,
+                    owner=plan.user_id,
+                    raw=prepared,
+                    strategy=creator_strategy or {},
+                    dry_run=True,
+                )
+            except ValueError:
+                return DispatchResult("proposal_stale")
+            # Recompile only deterministically, under dispatch's item lock. The
+            # worker consumes this persisted plan and cannot match music/replan.
+            frozen = compile_execution_plan(snapshot["guided_edit"], track=None)
+            if execution_digest({**frozen, "proposal_version": 1}) != pinned_story.compiled_digest:
+                return DispatchResult("proposal_stale")
+            snapshot["guided_story_execution_plan"] = frozen
+            snapshot["prepared_collection_story"] = prepared
         job.assembly_plan = snapshot
     elif creator_guided_attempt_id is not None:
         if not bypass_guided_edit_gate:

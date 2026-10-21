@@ -12,12 +12,13 @@ import shutil
 import subprocess
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from app.kria.device_render import DeviceRenderStatus, make_device_request
 from app.kria.recipes_v2 import EditRecipeV2
@@ -44,6 +45,42 @@ FFMPEG = (
 )
 
 
+@pytest.mark.parametrize(
+    "canvas,expected",
+    [
+        ((1080, 1920), (30, 1386, 223, 1505)),
+        ((2160, 3840), (60, 2772, 446, 3010)),
+        ((1080, 1350), (21.09375, 974.53125, 156.796875, 1058.203125)),
+    ],
+)
+def test_watermark_evidence_bounds_match_native_compositor(canvas, expected):
+    # Independent placement oracle: KriaMediaEngine BrandingTests pins these
+    # approved tile bounds, including the 4:5 height-constrained scale.
+    assert measured._watermark_bounds(*canvas) == pytest.approx(expected)
+
+
+def test_concurrent_text_evidence_survives_an_oversubscribed_parent(monkeypatch):
+    """Actual OCR pixels/processes, no wider deadline or altered recognition bar.
+
+    Failure: inherited OpenMP teams compete under CPU quotas and exhaust the
+    five-second read budget. A child resource policy must isolate OCR from an
+    oversubscribed parent while still reading the exact displayed word.
+    """
+    assert FONT is not None, "Text evidence requires the integration font"
+    image = Image.new("RGB", (1000, 180), "white")
+    ImageDraw.Draw(image).text(
+        (20, 40), "Approved", fill="black", font=ImageFont.truetype(str(FONT), 72)
+    )
+    monkeypatch.setenv("OMP_NUM_THREADS", "64")
+    monkeypatch.setenv("OMP_THREAD_LIMIT", "64")
+    wanted = measured.normalize_text("Approved")
+    with ThreadPoolExecutor(max_workers=32) as pool:
+        results = list(
+            pool.map(lambda _: measured._read_text(image, [(0, 0, 0)], wanted=wanted), range(32))
+        )
+    assert all(wanted in result for result in results)
+
+
 def ffmpeg(*args):
     subprocess.run(
         [FFMPEG, "-hide_banner", "-loglevel", "error", "-y", *map(str, args)],
@@ -51,6 +88,24 @@ def ffmpeg(*args):
         capture_output=True,
         timeout=30,
     )
+
+
+@pytest.fixture(autouse=True)
+def report_missing_export_evidence(monkeypatch):
+    """Keep a failed CI measurement actionable without changing its verdict."""
+    run = measured._run
+
+    def diagnose(arguments, **kwargs):
+        try:
+            return run(arguments, **kwargs)
+        except subprocess.SubprocessError as exc:
+            stderr = getattr(exc, "stderr", b"") or b""
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode(errors="replace")
+            print("Export measurement failed:", type(exc).__name__, arguments, stderr[-2000:])
+            raise
+
+    monkeypatch.setattr(measured, "_run", diagnose)
 
 
 @pytest.fixture(scope="module")
@@ -172,6 +227,7 @@ def encode(
     order=("a", "b"),
     start=0,
     title=True,
+    title_text="Approved",
     title_window=(0, 1.5),
     title_y=35,
     gain=1,
@@ -189,14 +245,15 @@ def encode(
     picture, audio = "v", "a"
     if tail:
         graph += (
-            f";[v]tpad=stop_mode=clone:stop_duration={tail}[tail];[a]apad=pad_dur={tail}[padded]"
+            f";[v]fps=30,tpad=stop_mode=clone:stop_duration={tail}[tail];"
+            f"[a]apad=pad_dur={tail}[padded]"
         )
         picture, audio = "tail", "padded"
     if title:
         assert FONT is not None, "Actual-export fixture needs the production font bundle"
         graph += (
             f";[{picture}]drawtext=fontfile={FONT}:"
-            f"text=Approved:fontsize=32:fontcolor=white:x=45:y={title_y}:"
+            f"text={title_text}:fontsize=32:fontcolor=white:x=45:y={title_y}:"
             f"enable='between(t,{title_window[0]},{title_window[1]})'[t]"
         )
     ffmpeg(
@@ -248,6 +305,9 @@ def test_decoded_picture_audio_and_text_match_the_approved_windows(exports):
         ("order", {"order": ("b", "a")}, "picture"),
         ("window", {"start": 2}, "picture"),
         ("text", {"title": False}, "text"),
+        ("wrong_copy", {"title_text": "Rejected"}, "text"),
+        ("missing_letter", {"title_text": "pproved"}, "text"),
+        ("extra_punctuation", {"title_text": "Approved?"}, "text"),
         ("position", {"title_y": 200}, "text"),
         ("text_time", {"title_window": (0, 0.3)}, "text"),
         ("extra_text_time", {"title_window": (0, 3)}, "text"),
@@ -281,8 +341,14 @@ def test_title_ending_at_edit_boundary_cannot_leak_into_the_brand_tail(
     recipe = copy.deepcopy(recipe)
     recipe.text_layers[0].end = 3
     file = encode(root, sources, tail=1.6, title_window=(0, title_end))
+    # A long audio stream alone does not prove the fixture contains tail frames.
+    video = next(s for s in measured._probe(file)["streams"] if s["codec_type"] == "video")
+    assert float(video["duration"]) == pytest.approx(4.6, abs=1 / 30)
     report = verify_actual_export(file, status(recipe), sources, brand_tail="standard")
-    assert report["status"] == expected, report
+    assert report["status"] == expected, {
+        "status": report["status"],
+        "incomplete_checks": [c for c in report["checks"] if c["status"] != "passed"],
+    }
     assert any(
         c["kind"] == "text" and c.get("expected_visible") is False for c in report["checks"]
     ), report
@@ -547,3 +613,49 @@ def test_decoder_optimization_preserves_reference_pixels_and_pcm(tmp_path, timin
             timeout=20,
         ).stdout
         assert np.array_equal(_audio(source, at, 0.75), np.frombuffer(pcm, dtype="<f4"))
+
+
+@pytest.mark.parametrize(
+    "treatment,expected",
+    [("duplicate", "checked"), ("left_muted", "rejected"), ("double", "rejected")],
+)
+def test_native_mono_to_stereo_preserves_samples_without_hiding_channel_errors(
+    exports, treatment, expected
+):
+    root, sources, recipe = exports
+    mono = encode(root, sources)
+    output = root / f"channels-{treatment}.mp4"
+    audio = {
+        "duplicate": "pan=stereo|c0=c0|c1=c0",
+        "left_muted": "pan=stereo|c0=0*c0|c1=c0",
+        "double": "volume=2,pan=stereo|c0=c0|c1=c0",
+    }[treatment]
+    ffmpeg("-i", mono, "-c:v", "copy", "-af", audio, "-c:a", "aac", output)
+    report = verify_actual_export(output, status(recipe), sources)
+    assert report["status"] == expected, report
+    if expected == "rejected":
+        assert any(
+            value["kind"] == "audio" and value["status"] == "failed" for value in report["checks"]
+        )
+
+
+def test_silent_sources_accept_silent_export_and_reject_unrequested_audio(exports):
+    root, sources, recipe = exports
+    audible = encode(root, sources)
+    silent = root / "silent-export.mp4"
+    ffmpeg("-i", audible, "-c:v", "copy", "-an", silent)
+    silent_sources = {}
+    for key, source in sources.items():
+        path = root / f"silent-source-{key}.mp4"
+        ffmpeg("-i", source, "-c:v", "copy", "-an", path)
+        silent_sources[key] = path
+    report = verify_actual_export(silent, status(recipe), silent_sources)
+    assert report["status"] == "checked", {
+        "status": report["status"],
+        "incomplete_checks": [c for c in report["checks"] if c["status"] != "passed"],
+    }
+    wrong = verify_actual_export(audible, status(recipe), silent_sources)
+    assert wrong["status"] == "rejected", wrong
+    assert any(
+        value["kind"] == "audio" and value["status"] == "failed" for value in wrong["checks"]
+    )

@@ -2,6 +2,166 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.18.0] - 2026-10-21
+
+### Changed
+- fix(fonts): Turkish parity E — Fonts without Turkish glyphs fall back per word + verify-overlays catches tofu (KRI-785) (#1721) <!-- release-pr: 1721 -->
+
+## [0.81.17.0] - 2026-10-21
+
+### Changed
+- fix(editor): save exact drafts independently of render windows (#1725) <!-- release-pr: 1725 -->
+
+## [0.81.16.0] - 2026-10-21
+
+### Changed
+- fix(kria): a freeze-frame ask is a plain "Couldn't", and its seconds are never the video's length (KRI-777) (#1710) <!-- release-pr: 1710 -->
+
+## [0.81.15.0] - 2026-10-21
+
+### Changed
+- fix(kria): post a render's chat card within seconds, not on the minute sweep (#1722) <!-- release-pr: 1722 -->
+
+## [0.81.14.0] - 2026-10-21
+
+### Changed
+- fix(kria): a photo placed between the moments of one take plays there (KRI-796) (#1716) <!-- release-pr: 1716 -->
+
+## [0.81.13.0] - 2026-10-21
+
+### Fixed
+- KRI-775: a phone montage draft the planner will refuse never reaches the approval card (#1713) <!-- release-pr: 1713 -->
+
+## [0.81.12.0] - 2026-10-21
+
+### Changed
+- KRI-776: "six moments, about 2 seconds each" reaches the brief and the plan (#1711) <!-- release-pr: 1711 -->
+
+## [0.81.11.0] - 2026-10-21
+
+### Fixed
+- fix(clips): one video never gets a "which of your clips" picker (KRI-779) (#1709) <!-- release-pr: 1709 -->
+
+## [0.81.10.0] - 2026-10-21
+
+### Changed
+- fix(kria): a blocked render's message reads as whole sentences (KRI-778) (#1708) <!-- release-pr: 1708 -->
+
+## [0.81.9.0] - 2026-10-21
+
+### Changed
+- fix(ci): turn main green after the Turkish parity merges (#1734) <!-- release-pr: 1734 -->
+
+## [0.81.8.0] - 2026-10-21
+
+### Changed
+- fix(editor): a chat-minted slot id no longer traps Save in a stale-edit loop (KRI-799) (#1719) <!-- release-pr: 1719 -->
+
+## [0.81.7.0] - 2026-10-21
+
+### Changed
+- feat(kria): Turkish parity D — Server copy + prompts carry the creator's language (KRI-784) (#1717) <!-- release-pr: 1717 -->
+
+## [0.81.6.0] - 2026-10-21
+
+### Changed
+- fix(turkish-parity): Turkish parity A — Chat language reaches the render, dictation and captions (KRI-780) (#1712) <!-- release-pr: 1712 -->
+
+## [0.81.5.0] - 2026-10-21
+
+### Changed
+- fix(turkish-parity): Turkish parity B — One Turkish-aware text fold + correct İ/ı casing (KRI-781) (#1720) <!-- release-pr: 1720 -->
+
+## [0.81.4.0] - 2026-10-21
+
+### Changed
+- fix(parity): Turkish parity C2 — Edit/speech/receipt/style decisions understand Turkish (KRI-783) (#1718) <!-- release-pr: 1718 -->
+
+## [0.81.3.0] - 2026-10-21
+
+### Changed
+- fix(creator): Turkish parity C1 — Legacy creator path trusts the model, not English regexes (KRI-782) (#1715) <!-- release-pr: 1715 -->
+
+## [0.81.2.0] - 2026-10-21
+
+### Changed
+- test(parity): Turkish↔English parity map + baseline suites (KRI-773) (#1707) <!-- release-pr: 1707 -->
+
+## [0.81.1.0] - 2026-10-21
+
+### Changed
+- fix(kria): don't hold back the first draft of an open 'Suggest an edit.' request (KRI-774) (#1705) <!-- release-pr: 1705 -->
+
+## [0.81.0.0] - 2026-10-21
+
+### Added
+- Add camera-roll content ideas with creator taste and verified project exports (#1685) <!-- release-pr: 1685 -->
+
+## [0.80.72.0] - 2026-10-21
+
+### Changed
+- fix(ai): honor word-by-word titles and preserve placeholders (#1706) <!-- release-pr: 1706 -->
+
+## [0.80.71.0] - 2026-10-21
+
+### Changed
+- fix(editor): chat never stages a clip window longer than its footage (KRI-772) (#1704) <!-- release-pr: 1704 -->
+
+## [0.80.70.0] - 2026-10-21
+
+### Changed
+- KRI-764: a restated first/last pin no longer refuses the render (#1703) <!-- release-pr: 1703 -->
+
+## [0.80.69.0] - 2026-10-21
+
+### Changed
+- fix(editor): a trimmed clip always saves, and every refused Save says why (KRI-770) (#1702) <!-- release-pr: 1702 -->
+
+## [0.80.68.0] - 2026-10-20
+
+### Changed
+- KRI-766: a dictated shot label stays bound across turns and asks with the clip picker (#1697) <!-- release-pr: 1697 -->
+
+## [0.80.67.0] - 2026-10-20
+
+### Changed
+- KRI-761: a look-alike or clashing exclude asks which clip to leave out (#1696) <!-- release-pr: 1696 -->
+
+## [0.80.66.0] - 2026-10-20
+
+### Changed
+- KRI-762: first/last clip pins are not an order-basis question (#1694) <!-- release-pr: 1694 -->
+
+## [0.80.65.0] - 2026-10-20
+
+### Changed
+- KRI-759: a "simpler version?" refusal names what it dropped, has buttons, and "yes" drafts it (#1695) <!-- release-pr: 1695 -->
+
+## [0.80.64.0] - 2026-10-20
+
+### Changed
+- KRI-763: a file name in a first/last pin is never read as an attachment number (#1693) <!-- release-pr: 1693 -->
+
+## [0.80.63.0] - 2026-10-20
+
+### Fixed
+- KRI-760: a quoted line to hear in full keeps its clip window, never a pop-in (#1692) <!-- release-pr: 1692 -->
+
+## [0.80.62.0] - 2026-10-20
+
+### Changed
+- KRI-765: failure cards read in the chat's language, name the cause, and never replay an old failure (#1691) <!-- release-pr: 1691 -->
+
+## [0.80.61.0] - 2026-10-20
+
+### Fixed
+- KRI-767 fix(text): a label the composer moves to another clip is not a copy change (#1690) <!-- release-pr: 1690 -->
+
+## [0.80.60.0] - 2026-10-20
+
+### Changed
+- KRI-758: one described clip ("…bıraktığı kısa klibi kullanma") is no longer read as "skip the short clips" (#1689) <!-- release-pr: 1689 -->
+
 ## [0.80.59.0] - 2026-10-19
 
 ### Changed

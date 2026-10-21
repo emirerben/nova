@@ -1225,27 +1225,37 @@ def _phone_rendering_globally_available() -> bool:
 
 
 def _with_owned_job_fence(fn):  # noqa: ANN001, ANN202
-    """Wrap every generative task entry in the same owner/cancellation gate."""
+    """Wrap every generative task entry in the same owner/cancellation gate.
+
+    On the way out it also nudges Kria's observer: the task may just have made the Job
+    ready or failed, and the chat card should not wait for the minute sweep.
+    """
 
     @wraps(fn)
     def wrapped(self, job_id: str, *args, **kwargs):  # noqa: ANN001, ANN202
         from app.services.cloud_render_policy import block_cloud_render_task  # noqa: PLC0415
         from app.services.creator_direction_snapshot import renderer_policy_scope
+        from app.tasks.kria_runtime import nudge_kria_observer  # noqa: PLC0415
 
-        if block_cloud_render_task(job_id, task_name=fn.__name__):
-            _clear_blocked_variant_rerender(fn, self, job_id, args, kwargs)
-            log.info("generative_cloud_render_blocked", job_id=job_id, task=fn.__name__)
-            return None
-        fence = (
-            _owned_job_task_fence(job_id, allow_phone_planning=True)
-            if fn.__name__ == "orchestrate_generative_job"
-            else _owned_job_task_fence(job_id)
-        )
-        with renderer_policy_scope(), fence as accepted:
-            if not accepted:
-                log.info("generative_task_entry_rejected", job_id=job_id, task=fn.__name__)
+        try:
+            if block_cloud_render_task(job_id, task_name=fn.__name__):
+                _clear_blocked_variant_rerender(fn, self, job_id, args, kwargs)
+                log.info("generative_cloud_render_blocked", job_id=job_id, task=fn.__name__)
                 return None
-            return fn(self, job_id, *args, **kwargs)
+            fence = (
+                _owned_job_task_fence(job_id, allow_phone_planning=True)
+                if fn.__name__ == "orchestrate_generative_job"
+                else _owned_job_task_fence(job_id)
+            )
+            with renderer_policy_scope(), fence as accepted:
+                if not accepted:
+                    log.info("generative_task_entry_rejected", job_id=job_id, task=fn.__name__)
+                    return None
+                return fn(self, job_id, *args, **kwargs)
+        finally:
+            # Every write above has committed by now; a nudge that finds the Job still
+            # rendering (retry, deferral) settles nothing.
+            nudge_kria_observer(job_id)
 
     return wrapped
 
@@ -5628,58 +5638,81 @@ def _load_unified_montage_visuals(job_id: str, *, selected: frozenset[str] | Non
     guided proposal's ``_pool_refs`` does, so the phone binder's exact
     generation recheck matches it.
     """
-    from sqlalchemy import select  # noqa: PLC0415
-
     from app import storage  # noqa: PLC0415
-    from app.models import PlanItemAsset  # noqa: PLC0415
-    from app.pipeline.unified_montage import UnifiedClip  # noqa: PLC0415
 
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
         if job is None or job.content_plan_item_id is None:
             return []
-        rows = [
-            row
-            for row in db.execute(
-                select(PlanItemAsset)
-                .where(
-                    PlanItemAsset.plan_item_id == job.content_plan_item_id,
-                    PlanItemAsset.user_id == job.user_id,
-                    PlanItemAsset.status == "ready",
-                    PlanItemAsset.deduplicated_to_asset_id.is_(None),
-                    PlanItemAsset.created_at <= job.created_at,
-                )
-                .order_by(PlanItemAsset.created_at, PlanItemAsset.id)
-            ).scalars()
-            if selected is None or f"asset-{row.id}" in selected
-        ]
+        rows = ready_visual_rows(
+            db,
+            plan_item_id=job.content_plan_item_id,
+            user_id=job.user_id,
+            selected=selected,
+            created_before=job.created_at,
+        )
         missing_generation = [row for row in rows if not row.gcs_generation]
         for row in missing_generation:
             row.gcs_generation = str(storage.object_metadata(row.gcs_path).generation)
         if missing_generation:
             db.commit()
-        visuals = []
-        for row in rows:
-            kind = "image" if row.kind == "image" else "video"
-            if kind == "video" and not (row.duration_s and row.duration_s > 0):
-                raise ValueError("a Visuals video has no measured length")
-            visuals.append(
-                UnifiedClip(
-                    media_id=str(row.id),
-                    proxy_path=row.gcs_path,
-                    generation=str(row.gcs_generation),
-                    duration_s=float(row.duration_s or 0.0),
-                    analysis=dict(row.analysis or {}),
-                    lane="asset",
-                    kind=kind,
-                    manifest_id=f"asset-{row.id}",
-                    aspect=float(row.aspect) if row.aspect else None,
-                    source_filename=row.source_filename or "",
-                    user_context=row.user_context or "",
-                    content_hash=row.content_hash,
-                )
-            )
+        visuals = [unified_visual(row) for row in rows]
     return visuals
+
+
+def ready_visual_rows(
+    db: Any,
+    *,
+    plan_item_id: Any,
+    user_id: Any,
+    selected: frozenset[str] | None,
+    created_before: Any = None,
+) -> list:
+    """The item's ready ``PlanItemAsset`` rows a unified montage places, in upload order.
+
+    Read-only. ``created_before`` (the job's mint time) leaves out a later upload; the
+    pre-approval check (KRI-775) passes none: whatever is ready now is what approval pins.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.models import PlanItemAsset  # noqa: PLC0415
+
+    query = select(PlanItemAsset).where(
+        PlanItemAsset.plan_item_id == plan_item_id,
+        PlanItemAsset.user_id == user_id,
+        PlanItemAsset.status == "ready",
+        PlanItemAsset.deduplicated_to_asset_id.is_(None),
+    )
+    if created_before is not None:
+        query = query.where(PlanItemAsset.created_at <= created_before)
+    return [
+        row
+        for row in db.execute(query.order_by(PlanItemAsset.created_at, PlanItemAsset.id)).scalars()
+        if selected is None or f"asset-{row.id}" in selected
+    ]
+
+
+def unified_visual(row: Any) -> Any:
+    """A ready Visuals row as the ``UnifiedClip`` the montage planner places (KRI-217)."""
+    from app.pipeline.unified_montage import UnifiedClip  # noqa: PLC0415
+
+    kind = "image" if row.kind == "image" else "video"
+    if kind == "video" and not (row.duration_s and row.duration_s > 0):
+        raise ValueError("a Visuals video has no measured length")
+    return UnifiedClip(
+        media_id=str(row.id),
+        proxy_path=row.gcs_path,
+        generation=str(row.gcs_generation or ""),
+        duration_s=float(row.duration_s or 0.0),
+        analysis=dict(row.analysis or {}),
+        lane="asset",
+        kind=kind,
+        manifest_id=f"asset-{row.id}",
+        aspect=float(row.aspect) if row.aspect else None,
+        source_filename=row.source_filename or "",
+        user_context=row.user_context or "",
+        content_hash=row.content_hash,
+    )
 
 
 # User-facing text for each way the lip-sync planner can decline (KRI-374). The
@@ -6094,6 +6127,20 @@ def _resolve_phone_song_bed(job_id: str, user_song: Any) -> Any:
     )
 
 
+def _worker_reply_language(snapshot: dict):
+    """The chat's language for the requirement copy this worker writes (KRI-765).
+
+    The dispatch stamps ``creator_reply_language`` beside the approved brief binding. Binding
+    it around the receipts and the block recovery keeps a reason with clip names in it in one
+    language: the chat can only re-word a stored reason that matches a static English sentence.
+    Absent (English chat, older job) or unsupported -> unbound, English, as before.
+    """
+    from app.kria.reply_language import reply_language_for  # noqa: PLC0415
+
+    language = snapshot.get("creator_reply_language")
+    return reply_language_for(language if isinstance(language, str) else None)
+
+
 def _save_request_recovery(
     job_id: str,
     snapshot: dict,
@@ -6143,6 +6190,93 @@ def _save_request_recovery(
     return True
 
 
+def _unified_montage_clips(
+    clip_paths: Sequence[str],
+    entries: Sequence[Mapping[str, Any]],
+    binding_by_path: Mapping[str, Any],
+    *,
+    facts_on: bool,
+) -> list:
+    """One ``UnifiedClip`` per montage clip, in ``clip_paths`` order (KRI-190).
+
+    Its phone original's shape and length, the clip record's analysis and, with clip facts
+    on, the facts that record carries. Shared with the pre-approval check (KRI-775,
+    ``app.services.phone_montage_preflight``), which builds the same clips from the media
+    snapshot approval pins.
+    """
+    from app.pipeline.unified_montage import UnifiedClip  # noqa: PLC0415
+    from app.services.clip_facts import (  # noqa: PLC0415
+        assignment_facts,
+        capture_time_from_facts,
+        facts_for_prompt,
+    )
+
+    clips: list[UnifiedClip] = []
+    for path, entry in zip(clip_paths, entries, strict=True):
+        binding = binding_by_path[path]
+        facts = facts_for_prompt(assignment_facts(entry)) if facts_on and entry else []
+        original = binding.original
+        clips.append(
+            UnifiedClip(
+                media_id=binding.media_id,
+                proxy_path=binding.proxy_path,
+                generation=binding.generation,
+                duration_s=float(original.duration_s),
+                width=original.width,
+                height=original.height,
+                orientation_degrees=int(original.orientation_degrees),
+                analysis=entry.get("analysis") or {},
+                facts=tuple(facts),
+                capture_time=capture_time_from_facts(facts),
+            )
+        )
+    return clips
+
+
+def _plan_phone_unified_montage(
+    clips: list,
+    view: Any,
+    *,
+    strategy: Any,
+    visuals: list,
+    all_candidates: dict,
+    creator_duration_proven: bool,
+    approved_length_plan: Mapping[str, Any] | None,
+    contract: Any,
+) -> Any:
+    """The phone montage plan of a job with no creator song (KRI-190).
+
+    Deterministic: no model call, no storage, no write. The pre-approval check (KRI-775)
+    runs this same plan on the brief, strategy and media snapshot approval pins, so a draft
+    this plan would refuse never reaches the approval card.
+    """
+    from app.kria.narration_notes import speech_order_approved  # noqa: PLC0415
+    from app.pipeline.unified_montage import (  # noqa: PLC0415
+        plan_unified_montage,
+        skia_font_covers,
+    )
+
+    return plan_unified_montage(
+        clips,
+        view,
+        strategy=strategy if isinstance(strategy, dict) else {},
+        clip_intents_enabled=settings.clip_intents_enabled,
+        font_covers=skia_font_covers,
+        creator_order=[
+            value
+            for value in all_candidates.get("creator_clip_order") or []
+            if isinstance(value, int) and not isinstance(value, bool)
+        ],
+        visuals=visuals,
+        output_orientation=_creator_shape_orientation(all_candidates),
+        creator_duration_proven=creator_duration_proven,
+        approved_length_plan=approved_length_plan,
+        # KRI-585: what the clips say orders them only where the approved plan
+        # recorded it (and the reply said so), never against a pinned order.
+        speech_order=speech_order_approved(strategy, contract, approved_length_plan),
+    )
+
+
 @phone_text_generation
 def _run_phone_unified_montage_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
@@ -6170,18 +6304,11 @@ def _run_phone_unified_montage_job(
     )
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
     from app.pipeline.unified_montage import (  # noqa: PLC0415
-        UnifiedClip,
         brief_view,
-        plan_unified_montage,
         selected_visual_ids,
         skia_font_covers,
     )
-    from app.services.clip_facts import (  # noqa: PLC0415
-        assignment_facts,
-        capture_time_from_facts,
-        enrich_clip_facts,
-        facts_for_prompt,
-    )
+    from app.services.clip_facts import enrich_clip_facts  # noqa: PLC0415
     from app.services.device_render import DEVICE_RENDER_FIELD  # noqa: PLC0415
     from app.services.length_policy import creator_duration_s  # noqa: PLC0415
     from app.services.phone_destination import phone_drawable_visual_kinds  # noqa: PLC0415
@@ -6221,7 +6348,6 @@ def _run_phone_unified_montage_job(
     # KRI-585: a pinned contract that requires an order is verified cut for cut, so what
     # the clips say never moves one there.
     contract = read_render_contract(snapshot)
-    from app.kria.narration_notes import speech_order_approved  # noqa: PLC0415
 
     user_id, assignments, brief = _load_unified_montage_inputs(job_id)
     approved_length_plan = _approved_length_plan_envelope(snapshot)
@@ -6275,25 +6401,7 @@ def _run_phone_unified_montage_job(
                 dict(enriched_by_path.get(path) or entry)
                 for path, entry in zip(clip_paths, entries, strict=True)
             ]
-        clips: list[UnifiedClip] = []
-        for path, entry in zip(clip_paths, entries, strict=True):
-            binding = binding_by_path[path]
-            facts = facts_for_prompt(assignment_facts(entry)) if facts_on and entry else []
-            original = binding.original
-            clips.append(
-                UnifiedClip(
-                    media_id=binding.media_id,
-                    proxy_path=binding.proxy_path,
-                    generation=binding.generation,
-                    duration_s=float(original.duration_s),
-                    width=original.width,
-                    height=original.height,
-                    orientation_degrees=int(original.orientation_degrees),
-                    analysis=entry.get("analysis") or {},
-                    facts=tuple(facts),
-                    capture_time=capture_time_from_facts(facts),
-                )
-            )
+        clips = _unified_montage_clips(clip_paths, entries, binding_by_path, facts_on=facts_on)
         user_song = all_candidates.get("user_song")
         if isinstance(user_song, dict) and user_song.get("gcs_path"):
             plan = _plan_phone_user_song_montage(
@@ -6319,24 +6427,15 @@ def _run_phone_unified_montage_job(
                 _decline_pinned_song_captions_without_song(strategy)
             else:
                 _decline_song_captions_without_song(_creator_request_text(all_candidates), strategy)
-            plan = plan_unified_montage(
+            plan = _plan_phone_unified_montage(
                 clips,
                 view,
-                strategy=strategy if isinstance(strategy, dict) else {},
-                clip_intents_enabled=settings.clip_intents_enabled,
-                font_covers=skia_font_covers,
-                creator_order=[
-                    value
-                    for value in all_candidates.get("creator_clip_order") or []
-                    if isinstance(value, int) and not isinstance(value, bool)
-                ],
+                strategy=strategy,
                 visuals=visuals,
-                output_orientation=_creator_shape_orientation(all_candidates),
+                all_candidates=all_candidates,
                 creator_duration_proven=creator_duration_proven,
                 approved_length_plan=approved_length_plan,
-                # KRI-585: what the clips say orders them only where the approved plan
-                # recorded it (and the reply said so), never against a pinned order.
-                speech_order=speech_order_approved(strategy, contract, approved_length_plan),
+                contract=contract,
             )
     # Complete the initial text lane before the canonical generation is pinned.
     # This uses the request already bound to this job, never a newer thread message.
@@ -6370,18 +6469,19 @@ def _run_phone_unified_montage_job(
         )
 
         record["generation_id"] = generation
-        record["requirement_receipts"] = [
-            {
-                **receipt.model_dump(mode="json"),
-                "brief_version": brief.version,
-                "generation_id": generation,
-            }
-            for receipt in build_receipts(
-                brief.live(),
-                plan_facts_from_unified_montage(record),
-                include_unchecked=bool(snapshot.get("creator_brief_binding")),
-            )
-        ]
+        with _worker_reply_language(snapshot):
+            record["requirement_receipts"] = [
+                {
+                    **receipt.model_dump(mode="json"),
+                    "brief_version": brief.version,
+                    "generation_id": generation,
+                }
+                for receipt in build_receipts(
+                    brief.live(),
+                    plan_facts_from_unified_montage(record),
+                    include_unchecked=bool(snapshot.get("creator_brief_binding")),
+                )
+            ]
         # A checked receipt that only states a limit of the phone montage (KRI-689: it plays
         # every clip at natural speed, and the draft already said so) never blocks the render.
         if snapshot.get("creator_brief_binding") and any(
@@ -6403,7 +6503,8 @@ def _run_phone_unified_montage_job(
             )
             from app.kria.brief_checks import render_block_recovery  # noqa: PLC0415
 
-            block = render_block_recovery(failures)
+            with _worker_reply_language(snapshot):
+                block = render_block_recovery(failures)
             recovery_message = block.message
             if not _save_request_recovery(
                 job_id,
@@ -9600,9 +9701,12 @@ def _run_phone_narrated_job(
                     _media_id_for_clip(clip_id) for clip_id in moved_clip_ids
                 ),
             )
-            narrated_failures = _narrated_alignment_receipts(
-                narrated_record, narrated_brief, bound=bool(snapshot.get("creator_brief_binding"))
-            )
+            with _worker_reply_language(snapshot):
+                narrated_failures = _narrated_alignment_receipts(
+                    narrated_record,
+                    narrated_brief,
+                    bound=bool(snapshot.get("creator_brief_binding")),
+                )
             if narrated_failures:
                 from app.kria.brief_checks import render_block_recovery  # noqa: PLC0415
 
@@ -9616,7 +9720,8 @@ def _run_phone_narrated_job(
                         "requirement_receipts": narrated_failures,
                     },
                 )
-                recovery_message = render_block_recovery(narrated_failures).message
+                with _worker_reply_language(snapshot):
+                    recovery_message = render_block_recovery(narrated_failures).message
                 if not _save_request_recovery(
                     job_id,
                     snapshot,
@@ -9870,6 +9975,9 @@ def _guided_execution_plan(
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
         existing = copy.deepcopy((job.assembly_plan or {}).get("guided_story_execution_plan"))
+        prepared_collection_story = copy.deepcopy(
+            (job.assembly_plan or {}).get("prepared_collection_story")
+        )
         raw_strategy = copy.deepcopy(
             (getattr(job, "all_candidates", None) or {}).get("creator_strategy")
         )
@@ -9898,6 +10006,22 @@ def _guided_execution_plan(
         raise SpeechCleanupFailure(
             "snapshot_mismatch", "cleaned narration is outside the Job's derivative prefix"
         )
+
+    if prepared_collection_story is not None:
+        from app.services.media_collection_preparation import (
+            PreparedCollectionStory,
+            execution_digest,
+        )
+
+        prepared = PreparedCollectionStory.model_validate(prepared_collection_story)
+        frozen = validate_execution_plan(existing, guided_snapshot)
+        if execution_digest({**frozen, "proposal_version": 1}) != prepared.compiled_digest:
+            raise ValueError("Prepared story execution changed after approval")
+        # This exact plan was frozen before approval and rechecked at dispatch.
+        # Do not materialize labels, SFX or music from later planning inputs.
+        if emit_decided:
+            _emit_plan_blocks(job_id, _blocks_from_guided_plan(frozen))
+        return frozen, None
 
     def guided_resolved_clip_intents() -> list[Any]:
         """Return persisted resolved intents, failing closed on malformed JSONB."""
@@ -25079,19 +25203,69 @@ def _narrated_clip_alignment_steps(
         return _fallback("agent_error", error=f"{type(exc).__name__}: {str(exc)[:200]}")
 
 
-def _creator_requests_narrated_treatment(request: str, pattern: str) -> bool:
-    """Return true only for a positive treatment mention in the creator brief."""
+# KRI-783: Turkish negates AFTER the noun ("başlık olmasın", "isim koyma"); these words
+# (Turkish-folded) in the rest of the clause withdraw the treatment.
+_TR_TREATMENT_NEGATIONS = frozenset(
+    {"olmasin", "olmayacak", "olmayan", "yok", "istemiyorum", "istemem", "degil", "asla"}
+)
+# Negative verb stems ("koyma", "koymayın", "eklemeyelim", "göstermesin"). The positive
+# forms that share them ("eklemeni istiyorum", "koymak", "eklemeli") continue with n/k/l.
+_TR_TREATMENT_NEGATED_VERB_STEMS = (
+    "koyma",
+    "yazma",
+    "ekleme",
+    "gosterme",
+    "kullanma",
+    "istemi",
+    "yapma",
+    "olma",
+)
 
-    for match in re.finditer(pattern, request, re.IGNORECASE):
-        clause_start = max(
-            request.rfind(delimiter, 0, match.start()) for delimiter in (".", "!", "?", ";")
-        )
-        clause_prefix = request[clause_start + 1 : match.start()]
-        if not re.search(
-            r"\b(?:do\s+not|don't|dont|without|no|exclude|omit|skip)\b",
-            clause_prefix,
-            re.IGNORECASE,
-        ):
+
+def _tr_treatment_negated(rest: str, matched: str) -> bool:
+    """The Turkish clause after a treatment noun withdraws it, or the noun says "without"."""
+    from app.kria.brief_route import loose_text  # noqa: PLC0415
+
+    noun = loose_text(matched)
+    if len(noun) > 4 and noun.endswith(("siz", "suz")):
+        return True  # "başlıksız", "skorsuz": without a title / score
+    rest_words = "".join(ch if ch.isalnum() else " " for ch in loose_text(rest)).split()
+    if _TR_TREATMENT_NEGATIONS.intersection(rest_words):
+        return True
+    return any(
+        word.startswith(stem) and word[len(stem) : len(stem) + 1] in ("", "y", "s", "d", "z")
+        for word in rest_words
+        for stem in _TR_TREATMENT_NEGATED_VERB_STEMS
+    )
+
+
+def _creator_requests_narrated_treatment(request: str, pattern: str) -> bool:
+    """Return true only for a positive treatment mention in the creator brief.
+
+    ``pattern`` carries Turkish alternatives in folded form; it also runs on the
+    Turkish-folded request (KRI-783) so "BAŞLIK", "başlık" and "baslik" read alike.
+    """
+    from app.kria.brief_route import loose_text  # noqa: PLC0415
+
+    for text in dict.fromkeys((request, loose_text(request))):
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            clause_start = max(
+                text.rfind(delimiter, 0, match.start()) for delimiter in (".", "!", "?", ";")
+            )
+            clause_prefix = text[clause_start + 1 : match.start()]
+            if re.search(
+                r"\b(?:do\s+not|don't|dont|without|no|exclude|omit|skip)\b",
+                clause_prefix,
+                re.IGNORECASE,
+            ):
+                continue
+            rest = text[match.end() :]
+            clause_end = min(
+                (i for i in (rest.find(d) for d in (".", "!", "?", ";", ",")) if i >= 0),
+                default=len(rest),
+            )
+            if _tr_treatment_negated(rest[:clause_end], match.group(0)):
+                continue
             return True
     return False
 
@@ -25124,7 +25298,7 @@ def _narrated_storyboard_text_elements(
     raw_overlays = list(storyboard.get("overlays") or [])
     request = creator_request or ""
     wants_intro = _creator_requests_narrated_treatment(
-        request, r"\b(?:intro(?:duction)?|title|hook|opening)\b"
+        request, r"\b(?:intro(?:duction)?|title|hook|opening|giris\w*|baslik\w*|acilis\w*)\b"
     )
     if explicit_opening_title or wants_intro:
         first = words[0]
@@ -25158,7 +25332,8 @@ def _narrated_storyboard_text_elements(
             )
 
     wants_players = _creator_requests_narrated_treatment(
-        request, r"\b(?:player|participant|name|everyone|person)\b"
+        request,
+        r"\b(?:player|participant|name|everyone|person|oyuncu\w*|katilimci\w*|isim\w*|isimler\w*|herkes\w*)\b",
     )
     player_by_clip: dict[str, int] = {}
     canonical_player_numbers = {
@@ -25208,7 +25383,9 @@ def _narrated_storyboard_text_elements(
     # the deterministic parser canonicalizes them to the smallest score phrase
     # and also handles missing or narrow anchors.
     request_wants_scores = _creator_requests_narrated_treatment(
-        request, r"\b(?:score|scores|scoreboard|result|results)\b"
+        request,
+        r"\b(?:score|scores|scoreboard|result|results|skor\w*|"
+        r"sonuc(?:u|unu|lar|lari|larini))\b",
     )
     number_words = {
         "zero",
@@ -25249,12 +25426,53 @@ def _narrated_storyboard_text_elements(
         r"\b(?:score|scores|scoreboard|result|results|final|won|wins|winner|beat|beats|"
         r"defeated|level|levels|tied|tie|game|games|match|matches|takes|took)\b"
     )
+    # KRI-783: Turkish numbers and score context read only a transcript that reads as
+    # Turkish, so English "Kirk", "UC" or "Mac" never become score words.
+    from app.kria.brief_route import loose_text  # noqa: PLC0415
+    from app.kria.reply_language import detect_chat_language  # noqa: PLC0415
+    from app.pipeline.narration_labels import turkish_score_number  # noqa: PLC0415
+
+    transcript_language = str(
+        (transcript.get("language") if isinstance(transcript, Mapping) else None)
+        or getattr(transcript, "language", None)
+        or ""
+    ).casefold()
+    transcript_is_turkish = transcript_language.startswith("tr") or (
+        not transcript_language
+        and detect_chat_language(" ".join(str(word["text"]) for word in words)) == "tr"
+    )
+    tr_score_context_re = re.compile(
+        r"\b(?:skor\w*|sonuc(?:u|unu|lar|lari|larini)?|kazan\w*|yendi\w*|yenildi\w*|"
+        r"berabere\w*|mac(?:ta|i|in|tan)?|oyun(?:u|da|un)?|set\w*|gol\w*)\b"
+    )
 
     def _score_value(text: Any) -> str | None:
         token = re.sub(r"^[^a-z0-9]+|[^a-z0-9]+$", "", str(text).casefold())
         if token.isdigit() or token in score_value_words:
             return token
+        if transcript_is_turkish and turkish_score_number(text) is not None:
+            return str(text)
         return None
+
+    def _turkish_pair_is_idiom(left_text: Any, right_text: Any, *, anchored: bool) -> bool:
+        """A Turkish number pair that is not a score.
+
+        "bir iki" (a couple), "iki üç" / "üç beş" (a few) are ascending approximations,
+        and "bir" alone is also the article "a". A dative left number ("üçe bir",
+        "ikiye sıfır") is the spoken score form and always counts; a bare pair counts
+        only inside an agent score anchor, never ascending and never "bir" first.
+        """
+        left = turkish_score_number(left_text)
+        right = turkish_score_number(right_text)
+        if left is None and right is None:
+            return False
+        if left is not None and left[1]:
+            return False
+        if not anchored:
+            return True
+        if left is None or right is None:
+            return False
+        return left[0] == 1 or right[0] > left[0]
 
     hybrid_score_re = re.compile(
         r"(?P<left>[0-9]{1,3}|[a-z]+)(?P<separator>[-–:])"
@@ -25282,7 +25500,9 @@ def _narrated_storyboard_text_elements(
             str(words[index]["text"]).casefold()
             for index in range(max(0, start_index - 5), min(len(words), end_index + 6))
         )
-        return bool(score_context_re.search(context))
+        if score_context_re.search(context):
+            return True
+        return transcript_is_turkish and bool(tr_score_context_re.search(loose_text(context)))
 
     score_spans: list[tuple[int, int]] = []
 
@@ -25306,12 +25526,21 @@ def _narrated_storyboard_text_elements(
             ]
             score_spans.append((start_index, end_index))
 
-    def _add_spoken_score_spans(start_index: int, end_index: int) -> None:
+    def _add_spoken_score_spans(start_index: int, end_index: int, *, anchored: bool) -> None:
         for index in range(start_index, end_index + 1):
             if _is_hybrid_score_token(words[index]["text"]):
                 _add_score_span(index, index)
         for index in range(start_index, end_index):
-            if _score_value(words[index]["text"]) and _score_value(words[index + 1]["text"]):
+            if (
+                _score_value(words[index]["text"])
+                and _score_value(words[index + 1]["text"])
+                and not (
+                    transcript_is_turkish
+                    and _turkish_pair_is_idiom(
+                        words[index]["text"], words[index + 1]["text"], anchored=anchored
+                    )
+                )
+            ):
                 _add_score_span(index, index + 1)
         for index in range(start_index, end_index - 1):
             if (
@@ -25332,7 +25561,7 @@ def _narrated_storyboard_text_elements(
         end_index = index_by_id[end_id]
         if end_index < start_index or end_index - start_index > 8:
             continue
-        _add_spoken_score_spans(start_index, end_index)
+        _add_spoken_score_spans(start_index, end_index, anchored=True)
 
     transcript_text = " ".join(str(word["text"]) for word in words)
     score_re = re.compile(r"\b\d{1,3}\s*[-–:]\s*\d{1,3}\b")
@@ -25353,7 +25582,7 @@ def _narrated_storyboard_text_elements(
 
     # Consecutive spoken numbers and “six to four” / “6 to 4” are common
     # speech-recognition shapes.
-    _add_spoken_score_spans(0, len(words) - 1)
+    _add_spoken_score_spans(0, len(words) - 1, anchored=False)
 
     for start_index, end_index in sorted(score_spans):
         start_s = float(words[start_index]["start_s"])

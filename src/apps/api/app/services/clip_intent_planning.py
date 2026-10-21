@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
+from pydantic import ValidationError
 
 from app.agents._model_client import default_client
 from app.agents._runtime import RunContext, TerminalSchemaError
@@ -20,11 +22,13 @@ from app.agents.clip_intent_planner import (
     salvage_question,
 )
 from app.config import settings
-from app.kria.brief_route import fold_text
+from app.kria.brief_route import fold_text, loose_text
 from app.kria.reply_language import current_reply_language, say
 from app.schemas.clip_intents import (
     CLIP_DESCRIPTION_ATTRIBUTE,
     CREATOR_LABEL_MAX_WORDS,
+    CREATOR_SELECTED_EVIDENCE,
+    FILE_NAME_EVIDENCE,
     LABEL_MAX_CHARS,
     MAX_CLIP_INTENTS,
     ClipAssignment,
@@ -49,6 +53,9 @@ from app.services.clip_intent_resolution import (
 from app.services.clip_selection import ClipSelections
 from app.services.clip_understanding import clip_record, understanding_incomplete
 from app.services.spoken_quotes import regound_quoted_intents
+
+if TYPE_CHECKING:
+    from app.kria.brief import CreativeBrief
 
 log = structlog.get_logger()
 
@@ -309,12 +316,69 @@ def apply_creator_selections(
             dropped.add(intent.intent_id)
             continue
         media_ids = sorted((m for m in entry.media_ids if m in by_id), key=order.__getitem__)
-        resolved = _settle(intent, media_ids, by_id, creator_request, evidence="creator selected")
+        resolved = _settle(
+            intent, media_ids, by_id, creator_request, evidence=CREATOR_SELECTED_EVIDENCE
+        )
         if resolved is None:
             remaining.append(intent)
             continue
         settled.append(resolved)
     return settled, remaining, dropped
+
+
+def _nameable(intent: ClipIntent) -> bool:
+    """True when a clip the creator names by file name fully answers this intent.
+
+    Whatever a tapped clip answers (``picker_eligible``), plus ``exclude`` (KRI-763): "skip
+    M1_05" names the clip to leave out, and an exclude is never a picker category.
+    """
+    return intent.op == "exclude" or picker_eligible(intent)
+
+
+def superseded_pin_ids(
+    *,
+    intents: list[ClipIntent],
+    pinned: list[ResolvedClipIntent],
+    latest_user_message: str | None,
+    quotes: Mapping[str, str],
+) -> set[str]:
+    """Earlier first/last pins that a file-name pin in the latest message replaces (KRI-763).
+
+    The whole conversation is re-planned every turn, so "first = the clip where Caro brings
+    the tray" (message 1) and "first clip M1_08" (message 2) both come back as ``first``
+    pins: two clips led the edit, or the first one was asked about again though the creator
+    had just named the clip. A later message that pins a position by file name decides it.
+
+    ``pinned`` are the intents settled by file name this turn; ``quotes`` maps intent ids to
+    the creator words each came from. Only a pin whose words are NOT in the latest message
+    is replaced: pins from one message stack as before, and an intent of unknown origin
+    stays. ``then`` rows (no position) are never touched.
+    """
+    latest = fold_text(latest_user_message or "")
+    if not latest:
+        return set()
+
+    def in_latest(intent_id: str) -> bool:
+        quote = quotes.get(intent_id)
+        return bool(quote) and fold_text(quote) in latest
+
+    positions = {
+        pin.position
+        for pin in pinned
+        if pin.op == "order"
+        and pin.position in ("first", "last")
+        and len(pin.assignments) == 1
+        and in_latest(pin.intent_id)
+    }
+    return {
+        intent.intent_id
+        for intent in intents
+        if intent.op == "order"
+        and intent.position in positions
+        and not intent.order_by
+        and intent.intent_id in quotes
+        and not in_latest(intent.intent_id)
+    }
 
 
 def apply_file_name_references(
@@ -342,7 +406,7 @@ def apply_file_name_references(
     by_id = {clip.media_id: clip for clip in clips}
     named: dict[str, list[NameReference]] = {}
     for intent in intents:
-        if intent.label_source != "clip" or intent.order_by or not picker_eligible(intent):
+        if intent.label_source != "clip" or intent.order_by or not _nameable(intent):
             continue
         refs, others = index.references(intent.attribute)
         if refs and names_only(others) and all(ref.media_id for ref in refs):
@@ -374,7 +438,7 @@ def apply_file_name_references(
                 for number, media_id in enumerate(kept, start=1)
             ]
             seated = [
-                _settle(piece, [media_id], by_id, creator_request, evidence="file name")
+                _settle(piece, [media_id], by_id, creator_request, evidence=FILE_NAME_EVIDENCE)
                 for piece, media_id in zip(pieces, kept, strict=True)
             ]
             if any(piece is None for piece in seated):
@@ -383,12 +447,202 @@ def apply_file_name_references(
             settled.extend(piece for piece in seated if piece is not None)
             split[intent.intent_id] = pieces
             continue
-        resolved = _settle(intent, media_ids, by_id, creator_request, evidence="file name")
+        resolved = _settle(intent, media_ids, by_id, creator_request, evidence=FILE_NAME_EVIDENCE)
         if resolved is None:
             remaining.append(intent)
             continue
         settled.append(resolved)
     return settled, remaining, split
+
+
+@dataclass(frozen=True)
+class BriefLabel:
+    """Exact words the creator dictated for one described shot (a brief ``is_shot_text``)."""
+
+    literal: str
+    description: str
+
+
+@dataclass(frozen=True)
+class KeptLabel:
+    """A label the current draft already printed on these clips."""
+
+    text: str
+    media_ids: tuple[str, ...]
+
+
+def label_key(text: str | None) -> str:
+    """A label's words without case, accents or punctuation ("Oblea de la Casa!" == itself)."""
+    return " ".join(re.findall(r"\w+", loose_text(text or "")))
+
+
+def brief_label_asks(
+    brief: CreativeBrief | None,
+    placed_texts: Sequence[str],
+    spoken_text: Sequence[str] = (),
+) -> list[BriefLabel]:
+    """The brief's live dictated shot texts that no positional ``shot_labels`` row carries.
+
+    A text in ``placed_texts`` is already pinned by shot index (the render contract reads
+    that row), so asking where it goes would be a second, conflicting placement. A text
+    timed to a spoken word (``spoken_text``) is a moment in the voiceover, never a clip.
+    """
+    if brief is None:
+        return []
+    placed = {label_key(text) for text in [*placed_texts, *spoken_text]}
+    asks: list[BriefLabel] = []
+    seen: set[str] = set()
+    for requirement in brief.live():
+        if not requirement.is_shot_text:
+            continue
+        key = label_key(requirement.literal)
+        if not key or key in placed or key in seen:
+            continue
+        seen.add(key)
+        asks.append(BriefLabel(str(requirement.literal), str(requirement.description)))
+    return asks
+
+
+def kept_labels_from_strategy(strategy: Mapping[str, Any] | None) -> list[KeptLabel]:
+    """Creator-worded labels a draft's strategy already resolved, with the clips they sit on.
+
+    Only an intent's own ``creator_text`` counts: a per-clip ``value`` the model wrote
+    ("Name", "Players stretching") is not words the creator chose and never binds.
+    """
+    rows = strategy.get("resolved_clip_intents") if isinstance(strategy, Mapping) else None
+    if not isinstance(rows, Sequence) or isinstance(rows, str):
+        return []
+    texts: dict[str, str] = {}
+    media: dict[str, list[str]] = {}
+    for intent in rows:
+        if not isinstance(intent, Mapping) or intent.get("op") != "label":
+            continue
+        if str(intent.get("status") or "resolved") != "resolved":
+            continue
+        for row in intent.get("assignments") or []:
+            if not isinstance(row, Mapping):
+                continue
+            media_id = str(row.get("media_id") or "")
+            text = intent.get("creator_text")
+            key = label_key(text) if isinstance(text, str) else ""
+            if not media_id or not key:
+                continue
+            texts.setdefault(key, str(text))
+            if media_id not in media.setdefault(key, []):
+                media[key].append(media_id)
+    return [KeptLabel(text=texts[key], media_ids=tuple(ids)) for key, ids in media.items()]
+
+
+def with_brief_labels(intents: list[ClipIntent], asks: Sequence[BriefLabel]) -> list[ClipIntent]:
+    """Add the dictated shot text the inventory planner left out of this turn's intents (KRI-766).
+
+    The planner re-reads the whole thread every turn and may not repeat a label the creator
+    asked for earlier ("first = the tray clip" says nothing about it). The brief still holds
+    the words and the shot, and the render contract refuses a text nobody placed, so the
+    label joins the inventory and is resolved, or asked with the picker, like any other.
+    One the planner did emit (same words, whatever the case) is left as it is, whether it
+    wrote a label or a caption for it. Words a label can never print (too long, odd
+    characters) are not added: the render contract's own reply names them, and a new
+    "label too long" question would blame the creator for text that was valid.
+    """
+    have = {
+        label_key(i.creator_text)
+        for i in intents
+        if i.op in {"label", "caption"} and i.creator_text
+    }
+    taken = {intent.intent_id for intent in intents}
+    added: list[ClipIntent] = []
+    for ask in asks:
+        key = label_key(ask.literal)
+        if not key or key in have or len(intents) + len(added) >= MAX_CLIP_INTENTS:
+            continue
+        if creator_label_problem(ask.literal) is not None:
+            continue
+        intent_id, n = fit_intent_id(f"label-{key.replace(' ', '-')}"), 2
+        while intent_id in taken:
+            intent_id, n = fit_intent_id(f"label-{key.replace(' ', '-')}-{n}"), n + 1
+        try:
+            added.append(
+                ClipIntent(
+                    intent_id=intent_id,
+                    op="label",
+                    attribute=" ".join(ask.description.split())[:160],
+                    creator_text=ask.literal,
+                )
+            )
+        except ValidationError:
+            continue
+        have.add(key)
+        taken.add(intent_id)
+    return [*intents, *added] if added else intents
+
+
+# Words that mean "the text on a clip" in the chats we serve (folded: no case, no accents).
+_LABEL_NOUNS = ("label", "etiket", "yazi", "caption")
+_LONGER_WORD = 4
+
+
+def _touches_label(said: str, label_text: str) -> bool:
+    """True when the creator's message (already ``label_key``-folded) is about this label.
+
+    Its whole phrase, any word of it with at least four letters ("the Oblea label" for
+    "Oblea de la casa"), or a general word for on-screen text: any of them can be the
+    creator re-describing where the label goes, so the old placement must not decide.
+    """
+    if not said:
+        return False
+    words = said.split()
+    label_words = label_key(label_text).split()
+    return (
+        f" {' '.join(label_words)} " in f" {said} "
+        or any(w in words for w in label_words if len(w) >= _LONGER_WORD)
+        or any(w.startswith(_LABEL_NOUNS) for w in words)
+    )
+
+
+def apply_kept_labels(
+    intents: list[ClipIntent],
+    *,
+    clips: list[IntentClip],
+    kept: Sequence[KeptLabel],
+    latest_user_message: str | None,
+    creator_request: str,
+) -> tuple[list[ResolvedClipIntent], list[ClipIntent]]:
+    """A label the draft already placed stays on the same clips unless the creator touches it.
+
+    Returns ``(settled, remaining)``. The planner and resolver re-decide every intent each
+    turn, so an unrelated message (a new order, a title) could move a label the creator
+    never mentioned (KRI-766). The latest message touching the label (its words, any longer
+    word of them, or the word "label"/"etiket"/"yazı") is a change and resolves it fresh,
+    as does a bound clip that left the project. A tapped picker answer is applied before
+    this and wins.
+    """
+    if not kept:
+        return [], list(intents)
+    by_id = {c.media_id: c for c in clips}
+    order = {c.media_id: i for i, c in enumerate(clips)}
+    bound = {label_key(entry.text): entry for entry in kept}
+    said = label_key(latest_user_message)
+    settled: list[ResolvedClipIntent] = []
+    remaining: list[ClipIntent] = []
+    for intent in intents:
+        entry = bound.get(label_key(intent.creator_text)) if intent.op == "label" else None
+        if (
+            entry is None
+            or _touches_label(said, entry.text)
+            or not all(media_id in by_id for media_id in entry.media_ids)
+        ):
+            remaining.append(intent)
+            continue
+        media_ids = sorted(entry.media_ids, key=order.__getitem__)
+        resolved = _settle(
+            intent, media_ids, by_id, creator_request, evidence="kept from your draft"
+        )
+        if resolved is None:
+            remaining.append(intent)
+            continue
+        settled.append(resolved)
+    return settled, remaining
 
 
 def _settle(
@@ -403,7 +657,7 @@ def _settle(
     assignments = _selected_assignments(
         intent, media_ids, by_id, creator_request, evidence=evidence
     )
-    if not media_ids or not picker_eligible(intent) or assignments is None:
+    if not media_ids or not _nameable(intent) or assignments is None:
         return None
     caption_text = caption_grounding = None
     if intent.op == "caption":
@@ -502,12 +756,19 @@ async def plan_and_resolve_clip_intents(
     clip_selections: ClipSelections | None = None,
     describe_clips: bool = False,
     spoken_text: Sequence[str] = (),
+    brief_labels: Sequence[BriefLabel] = (),
+    kept_labels: Sequence[KeptLabel] = (),
 ) -> PlannedIntentResolution:
     """``describe_clips`` (KRI-612): the Creative Brief asks for a line on each clip saying
     what it shows, so the inventory always carries one description label for it.
 
     ``spoken_text`` (KRI-692): exact texts the creator wants on screen when they say a word,
-    on an edit that cannot draw them. A caption intent for one is never a clip question."""
+    on an edit that cannot draw them. A caption intent for one is never a clip question.
+
+    ``brief_labels`` / ``kept_labels`` (KRI-766): the brief's dictated shot texts the planner may
+    not repeat this turn (added to the inventory, so each is resolved or asked with the picker),
+    and the labels the current draft already placed (kept on the same clips unless the creator
+    names them again)."""
     if len(creator_request) > CREATOR_REQUEST_MAX_CHARS:
         return PlannedIntentResolution(
             [],
@@ -650,6 +911,8 @@ async def plan_and_resolve_clip_intents(
     intents = without_spoken_text_captions(intents, spoken_text)
     if describe_clips:
         intents = with_clip_descriptions(intents)
+    if brief_labels:
+        intents = with_brief_labels(intents, brief_labels)
     # KRI-678: a creator label that can never be printed is a question about the TEXT,
     # never about clips. Asked before the picker, so a tapped answer cannot loop.
     label_question = unusable_label_question(intents)
@@ -676,6 +939,25 @@ async def plan_and_resolve_clip_intents(
     named, visual_intents, split = apply_file_name_references(
         visual_intents, clips=clips, creator_request=creator_request
     )
+    # KRI-763: a first/last pin named by file in the latest message replaces an earlier one.
+    superseded = superseded_pin_ids(
+        intents=intents,
+        pinned=named,
+        latest_user_message=latest_user_message,
+        quotes={i.intent_id: i.source_quote for i in output.intents},
+    )
+    if superseded:
+        dropped_ids = dropped_ids | superseded
+        selected = [s for s in selected if s.intent_id not in superseded]
+        visual_intents = [i for i in visual_intents if i.intent_id not in superseded]
+    # KRI-766: a label the draft already placed stays there unless the creator names it again.
+    kept, visual_intents = apply_kept_labels(
+        visual_intents,
+        clips=clips,
+        kept=kept_labels,
+        latest_user_message=latest_user_message,
+        creator_request=creator_request,
+    )
     if dropped_ids or split:
         intents = [
             piece
@@ -683,7 +965,7 @@ async def plan_and_resolve_clip_intents(
             if intent.intent_id not in dropped_ids
             for piece in split.get(intent.intent_id, [intent])
         ]
-    resolved_orders = [*selected, *named, *resolved_orders]
+    resolved_orders = [*selected, *named, *kept, *resolved_orders]
     # Transcript labels are fulfilled later from the pinned narration and
     # final timeline. They remain in the complete requested inventory, but
     # must never enter the vision resolver.

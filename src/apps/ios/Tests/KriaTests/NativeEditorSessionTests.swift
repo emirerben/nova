@@ -3297,6 +3297,96 @@ final class NativeEditorSessionTests: XCTestCase {
         session.redo(); XCTAssertEqual(session.draft.clips[0].end, 0.1, accuracy: 0.0001)
     }
 
+    // MARK: KRI-770 — every window an edge drag can produce is a window the server accepts
+
+    private func trimSession(inS: Double, duration: Double, sourceDuration: Double?, rate: Double? = nil, slotID: String? = nil) -> (NativeEditorSession, UUID) {
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: duration, trimIn: inS, trimOut: inS + duration, sourceDuration: sourceDuration)
+        let session = NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: [clip], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        if rate != nil || slotID != nil {
+            var next = session.document
+            if let rate { next.clips[0].raw["playback_rate"] = .number(rate) }
+            if let slotID { next.clips[0].id = slotID }
+            session.replaceDocumentForTesting(next)
+        }
+        return (session, clip.id)
+    }
+
+    /// The Troya vector: a trailing drag to the 0.1 s minimum encoded `(in + 0.1) - in`, e.g.
+    /// `0.09999999999999998` for in = 0.9, which the server refused as `TIMELINE_INVALID_WINDOW`.
+    func testTrailingDragToMinimumNeverEncodesBelowTheServerMinimum() {
+        for inS in [0.0, 0.4, 0.5, 0.9, 1.1467331879425209, 2.2, 3.0, 5.0, 7.0, 0.333333, 1.933334] {
+            let (session, id) = trimSession(inS: inS, duration: 0.666667, sourceDuration: 30)
+            session.beginTrim(clipID: id, edge: .trailing)
+            session.updateTrim(by: -100)
+            session.endTrim()
+            let duration = session.document.clips[0].durationS ?? 0
+            XCTAssertGreaterThanOrEqual(duration, KriaSourceWindowGeometry.minimumLength, "in_s \(inS)")
+            XCTAssertEqual(duration, 0.1, accuracy: 1e-9, "in_s \(inS)")
+        }
+    }
+
+    func testLeadingDragToMinimumNeverEncodesBelowTheServerMinimum() {
+        for out in [0.666667, 5.76, 1.92, 7.666667, 3.666667] {
+            let (session, id) = trimSession(inS: 0, duration: out, sourceDuration: 30)
+            session.beginTrim(clipID: id, edge: .leading)
+            session.updateTrim(by: 100)
+            session.endTrim()
+            let duration = session.document.clips[0].durationS ?? 0
+            XCTAssertGreaterThanOrEqual(duration, KriaSourceWindowGeometry.minimumLength, "out \(out)")
+        }
+    }
+
+    /// Whatever the drag, the result is inside the server's bound: `in_s >= 0`, length >= 0.1 and
+    /// `in_s + length * rate <= source + 0.05` (`KriaSourceWindowGeometry.isWithinBounds`).
+    func testEveryEdgeDragStaysWithinTheServerBound() {
+        let source = 10.08
+        for rate in [1.0, 2.0, 0.5] {
+            for edge in [NativeTrimEdge.leading, .trailing] {
+                for delta in stride(from: -12.0, through: 12.0, by: 0.37) {
+                    let (session, id) = trimSession(inS: 5.0, duration: 0.666667, sourceDuration: source, rate: rate)
+                    session.beginTrim(clipID: id, edge: edge)
+                    session.updateTrim(by: delta)
+                    session.endTrim()
+                    let slot = session.document.clips[0]
+                    let window = KriaSourceWindowGeometry.Window(start: slot.inS, length: slot.durationS ?? 0)
+                    XCTAssertTrue(KriaSourceWindowGeometry.isWithinBounds(window, rate: rate, sourceDuration: source), "edge \(edge) rate \(rate) delta \(delta) -> \(window)")
+                    XCTAssertGreaterThanOrEqual(window.length, 0.1, "edge \(edge) rate \(rate) delta \(delta)")
+                }
+            }
+        }
+    }
+
+    /// At 2x the trailing edge reaches the end of the footage in half the output time: it must stop there,
+    /// not at `in + length` (which would read past the end and be refused as TIMELINE_OUT_OF_BOUNDS).
+    func testTrailingDragAtDoubleSpeedStopsAtTheFootageEnd() {
+        let (session, id) = trimSession(inS: 6.0, duration: 1.0, sourceDuration: 10.0, rate: 2.0)
+        session.beginTrim(clipID: id, edge: .trailing)
+        session.updateTrim(by: 100)
+        session.endTrim()
+        let slot = session.document.clips[0]
+        XCTAssertLessThanOrEqual(slot.inS + (slot.durationS ?? 0) * 2.0, 10.0 + 1e-9)
+        XCTAssertEqual(slot.durationS ?? 0, 2.0, accuracy: 1e-9)
+    }
+
+    /// No known source length: the server refuses an unmeasured source, so the end can shrink but never grow.
+    func testTrailingDragWithUnknownSourceLengthCannotGrow() {
+        let (session, id) = trimSession(inS: 1.0, duration: 2.0, sourceDuration: nil)
+        session.beginTrim(clipID: id, edge: .trailing)
+        session.updateTrim(by: 50)
+        session.endTrim()
+        XCTAssertEqual(session.document.clips[0].durationS ?? 0, 2.0, accuracy: 1e-9)
+    }
+
+    /// The server pins a talking-source slot to its approved cut (409 TIMELINE_STALE on any change).
+    func testTalkingSourceClipHasNoTrimGesture() {
+        let (session, id) = trimSession(inS: 0, duration: 3.0, sourceDuration: 10.0, slotID: "native-phone-talking-source-0")
+        session.beginTrim(clipID: id, edge: .trailing)
+        session.updateTrim(by: -2)
+        session.endTrim()
+        XCTAssertEqual(session.document.clips[0].durationS ?? 0, 3.0, accuracy: 1e-9)
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
     func testLeadingTrimAdvancesSourceWithoutLeavingTimelineGap() {
         let first = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 4, start: 0, end: 4, trimIn: 1, trimOut: 5, sourceDuration: 8)
         let second = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 7, start: 4, end: 6, trimIn: 0, trimOut: 2, sourceDuration: 3)
@@ -3602,7 +3692,7 @@ final class NativeEditorSessionTests: XCTestCase {
 
         XCTAssertEqual(fake.commitCount, 2)
         XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2")
-        XCTAssertEqual(fake.lastRequest?.editorStateVersion, 1)
+        XCTAssertEqual(fake.lastRequest?.editorStateVersion, 2)
         XCTAssertNil(fake.lastRequest?.deletions)
         XCTAssertEqual(session.document.editorState, "empty")
         XCTAssertEqual(session.document.textElements.first?.text, "Edited while empty")
@@ -3625,7 +3715,7 @@ final class NativeEditorSessionTests: XCTestCase {
         fake.commitResponse = EditorCommitResponse(ok: true, generation: "g3", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: 3, revisionHash: "h3", expectedDuration: 4)
         await session.save()
         XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2")
-        XCTAssertEqual(fake.lastRequest?.editorStateVersion, 1)
+        XCTAssertEqual(fake.lastRequest?.editorStateVersion, 2)
         XCTAssertNil(fake.lastRequest?.deletions)
         XCTAssertEqual(fake.lastRequest?.timelineSlots?.count, 1)
     }
@@ -3657,7 +3747,7 @@ final class NativeEditorSessionTests: XCTestCase {
         fake.commitResponse = emptyCommitResponse(session, generation: "g3")
         await session.save()
         XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2")
-        XCTAssertEqual(fake.lastRequest?.editorStateVersion, 1)
+        XCTAssertEqual(fake.lastRequest?.editorStateVersion, 2)
     }
 
     func testEmptySaveRejectsPreviouslyPendingRenderCompletion() async {
@@ -4860,7 +4950,7 @@ final class NativeEditorSessionTests: XCTestCase {
         let fake = EditorCommitSpy(
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
             authoritativeVariant: ["resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["text_elements": .bool(true)])],
-            commitResponse: EditorCommitResponse(ok: false, generation: "g2", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: 2, revisionHash: "revision-2", expectedDuration: nil)
+            commitResponse: EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: 2, revisionHash: "revision-2", expectedDuration: nil, renderStarted: false)
         )
         let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
         await session.load(api: fake, threadID: threadID)

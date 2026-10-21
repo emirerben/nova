@@ -3406,6 +3406,9 @@ struct NativeEditorTemporaryVideo {
     /// translations cannot be applied repeatedly to an already-trimmed clip.
     func beginTrim(clipID: UUID, edge: NativeTrimEdge) {
         guard canEditTimeline, draft.clips.contains(where: { $0.id == clipID }) else { return }
+        // KRI-770: the server pins a talking-source slot's window to its approved cut and answers any
+        // change with 409 TIMELINE_STALE, so the handle must not start a gesture that can never save.
+        if let index = clipSlotIndex(clipID.uuidString), Self.isTalkingSourceSlot(document.clips[index]) { return }
         activeTrim = ActiveTrim(
             clipID: clipID,
             edge: edge,
@@ -3424,23 +3427,35 @@ struct NativeEditorTemporaryVideo {
         let sourceDuration = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"])
         let sourceIn = max(0, slot.inS)
         let currentDuration = max(minimumClipDuration, slot.durationS ?? minimumClipDuration)
+        // One geometry for every way of changing a window (KRI-770): the Range sheet and this edge drag both
+        // go through `KriaSourceWindowGeometry`, which is rate-aware, never returns a length under the 0.1 s
+        // minimum (computing `(in + 0.1) - in` directly gives 0.09999999999999998, which the server refused),
+        // and mirrors the server's bound. A drag is in output seconds, so it moves the source by `* rate`.
+        let rate = Self.explicitPlaybackRate(slot)
+        let window = KriaSourceWindowGeometry.Window(start: sourceIn, length: currentDuration)
+        let resized: KriaSourceWindowGeometry.Window
         switch active.edge {
         case .leading:
-            // Left trim preserves the source Out point. A negative translation
-            // restores earlier source frames until the file's beginning.
-            let sourceOut = max(minimumClipDuration, min(sourceIn + currentDuration, sourceDuration ?? sourceIn + currentDuration))
-            slot.inS = min(max(0, sourceIn + translation), max(0, sourceOut - minimumClipDuration))
-            slot.durationS = max(minimumClipDuration, sourceOut - slot.inS)
+            // Left trim preserves the source Out point. A negative translation restores earlier source frames
+            // until the file's beginning. A slot that already overruns its footage is cut back to the footage.
+            var base = window
+            if let sourceDuration, KriaSourceWindowGeometry.sourceEnd(window, rate: rate) > sourceDuration {
+                base.length = max(minimumClipDuration, (sourceDuration - sourceIn) / rate)
+            }
+            resized = KriaSourceWindowGeometry.resizedLeading(base, by: translation * rate, rate: rate)
         case .trailing:
-            // Right trim preserves source In. Later clips are not a ceiling:
-            // they ripple after this duration changes. A clip already longer
-            // than its footage (narrated footage slowed to fill its voiceover
-            // step) can shrink smoothly instead of snapping to the footage end.
-            let currentOut = sourceIn + currentDuration
-            let maximumOut = sourceDuration.map { max(sourceIn + minimumClipDuration, $0, currentOut) } ?? .greatestFiniteMagnitude
-            let nextOut = min(max(currentOut + translation, sourceIn + minimumClipDuration), maximumOut)
-            slot.durationS = nextOut - sourceIn
+            // Right trim preserves source In. Later clips are not a ceiling: they ripple after this duration
+            // changes. A clip already longer than its footage (narrated footage slowed to fill its voiceover
+            // step) can shrink smoothly. With no known source length the end can shrink but never grow past
+            // what is there now, because the server refuses an unmeasured source (`source_unmeasured`).
+            let end = KriaSourceWindowGeometry.sourceEnd(window, rate: rate)
+            resized = KriaSourceWindowGeometry.resizedTrailing(window, by: translation * rate, rate: rate, sourceDuration: sourceDuration ?? end)
         }
+        // A gesture that lands back on the baseline must compare equal to it (no phantom undo step).
+        if abs(resized.start - slot.inS) >= 1e-9 { slot.raw["source_start_locked"] = .bool(true) }
+        slot.inS = abs(resized.start - slot.inS) < 1e-9 ? slot.inS : resized.start
+        slot.durationS = abs(resized.length - currentDuration) < 1e-9 && slot.durationS != nil
+            ? slot.durationS : max(minimumClipDuration, resized.length)
         slot.durationBeats = nil; next.clips[index] = slot
         // Later clips ripple by construction (windows are a walk of the slot durations); the
         // per-clip labels must ripple with them, derived from the gesture baseline every update.
@@ -3461,6 +3476,23 @@ struct NativeEditorTemporaryVideo {
         activeTrim = active
         refreshDirtyState()
         refreshDuration()
+    }
+
+    #if DEBUG
+    /// Test seam (KRI-770): stage slot fields (`playback_rate`, a talking-source id) that a bare draft cannot carry.
+    func replaceDocumentForTesting(_ value: EditorDocument) { document = value }
+    #endif
+
+    /// The creator-set playback rate (`playback_rate`), 1 when none. Derived rates (slowed narration) are
+    /// not edge-draggable at a different speed, so they trim as they always did.
+    static func explicitPlaybackRate(_ slot: EditorTimelineSlot) -> Double {
+        if let explicit = slot.raw["playback_rate"]?.numberValue, explicit.isFinite, explicit > 0 { return explicit }
+        return 1
+    }
+
+    /// Slots cut from the approved talking take: the server rejects any window change on them.
+    static func isTalkingSourceSlot(_ slot: EditorTimelineSlot) -> Bool {
+        slot.id?.hasPrefix("native-phone-talking-source") == true
     }
 
     func endTrim() {
@@ -3499,7 +3531,10 @@ struct NativeEditorTemporaryVideo {
         let span = length * (found.map { effectiveSourceRate(slot: $0.slot, clip: $0.clip) } ?? 1)
         let sourceEnd = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"]) ?? slot.inS + span
         let start = min(max(0, slot.inS + offset), max(0, sourceEnd - span))
-        transactDocument(section: .timeline) { $0.clips[index].inS = start }
+        transactDocument(section: .timeline) {
+            $0.clips[index].inS = start
+            if start != slot.inS { $0.clips[index].raw["source_start_locked"] = .bool(true) }
+        }
     }
 
     // MARK: - Typed clip inspector mutations
@@ -5607,7 +5642,22 @@ struct NativeEditorTemporaryVideo {
                 setAuthoritativeDuration(expectedDuration)
                 refreshDuration()
             }
-            acknowledge(acknowledged, generation: response.generation, submittedDocument: submittedDocument)
+            var savedSubmission = submittedDocument
+            if let draft = response.draft, acknowledged.contains(.timeline) {
+                let savedSlots = EditorDocument(snapshot: draft.snapshot).clips
+                if savedSlots.count == submittedDocument.clips.count {
+                    for index in savedSlots.indices where submittedDocument.clips[index].id == nil {
+                        let submitted = submittedDocument.clips[index]
+                        savedSubmission.clips[index].id = savedSlots[index].id
+                        // Only replace identity on an unchanged submitted row;
+                        // never overwrite edits made during the request.
+                        if let current = document.clips.firstIndex(of: submitted) {
+                            document.clips[current].id = savedSlots[index].id
+                        }
+                    }
+                }
+            }
+            acknowledge(acknowledged, generation: response.generation, submittedDocument: savedSubmission)
             if hasPostSubmitEdits {
                 let acknowledgedRevision = document.revision
                 let rebaseSong = userSongRebase
@@ -5636,7 +5686,7 @@ struct NativeEditorTemporaryVideo {
             // timeline-only save). Reconcile the committed variant as soon as
             // it is durable; polling remains the fallback when this read is
             // unavailable or still stale.
-            if let saveJobID,
+            if response.draft == nil, let saveJobID,
                response.generation == document.revision.baseGeneration {
                 do {
                     let committedVariant = try await api.editorVariant(jobID: saveJobID, variantID: saveVariantKey)
@@ -5656,7 +5706,7 @@ struct NativeEditorTemporaryVideo {
                 }
             }
             guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
-            if response.ok {
+            if response.renderStarted ?? response.ok {
                 // The commit is durable even while its render is pending. Keep
                 // the acknowledged sections retryable until a matching ready
                 // generation is observed.
@@ -5668,7 +5718,7 @@ struct NativeEditorTemporaryVideo {
                 startPreviewRefresh(generation: response.generation)
             } else {
                 pendingRenderRetrySections = acknowledged
-                saveState = .renderRetryNeeded("Your edit is saved. Its preview render did not start, so you can retry it safely.")
+                saveState = .renderRetryNeeded(response.renderRecovery ?? "Your edit is saved. Its preview render did not start, so you can retry it safely.")
             }
         } catch APIError.conflict {
             guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
@@ -5920,6 +5970,7 @@ struct NativeEditorTemporaryVideo {
         // A pure slide writes `in_s` alone, so a beat-bound slot keeps `duration_beats`; a new length is a fixed length.
         mutateClip(clipID: selection.id) { slot in
             slot.inS = max(0, window.start)
+            if moved { slot.raw["source_start_locked"] = .bool(true) }
             if resized { slot.durationS = max(minimumClipDuration, window.length); slot.durationBeats = nil }
         }
         return true
@@ -6416,7 +6467,7 @@ struct NativeEditorTemporaryVideo {
             carouselMoment: changedSections.contains(.carouselMoment) ? (carouselObject.map(EditorCarouselMomentPatch.replace) ?? .remove) : .omitted,
             title: changedSections.contains(.title) ? value["title"]?.stringValue : nil,
             guidedRevisionNumber: guidedRevisionNumber,
-            editorStateVersion: 1,
+            editorStateVersion: 2,
             deletions: document.deletions.isEmpty ? nil : document.deletions,
             baseGeneration: baseGeneration
         )

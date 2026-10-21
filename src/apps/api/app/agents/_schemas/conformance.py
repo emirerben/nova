@@ -30,6 +30,9 @@ class ConformanceInput(BaseModel):
     # vegan restaurant in Buenos Aires"). UNTRUSTED user free-text — rendered as
     # DATA; it can legitimately upgrade a verdict. "" = no note.
     user_context: str = ""
+    # KRI-784: the creator's language ("tr"/"en"), from the chat or the caller. None:
+    # read from the creator's own words below; English/unknown renders byte-identical.
+    reply_language: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ConformanceOutput(BaseModel):

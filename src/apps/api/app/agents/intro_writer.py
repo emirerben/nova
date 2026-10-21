@@ -205,7 +205,11 @@ def _clamp(s: str) -> str:
 
 def _is_refusal_text(s: str) -> bool:
     normalized = re.sub(r"\s+", " ", s.lower()).strip()
-    return any(pattern.search(normalized) for pattern in _REFUSAL_PATTERNS)
+    if any(pattern.search(normalized) for pattern in _REFUSAL_PATTERNS):
+        return True
+    from app.kria.language import is_turkish_refusal  # noqa: PLC0415 - avoids app.kria cycle
+
+    return is_turkish_refusal(s)
 
 
 _LANGUAGE_INSTRUCTIONS: dict[str, str] = {

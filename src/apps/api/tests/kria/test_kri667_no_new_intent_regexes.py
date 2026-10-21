@@ -37,6 +37,8 @@ _OTHER_MODULES = (
     "schemas/edit_proposal.py",
     "services/choice_questions.py",
     "services/clip_intent_resolution.py",
+    # KRI-796: reads where a creator seated a Visual among named moments, by folded words.
+    "services/clip_order_sequence.py",
     "services/clip_selection.py",
     "services/creative_copy_decisions.py",
     "services/creator_direction.py",
@@ -74,7 +76,7 @@ BASELINE: dict[str, int] = {
     "kria/voiceover_clips.py": 12,
     "routes/_copilot.py": 8,
     "routes/creator_agent.py": 39,
-    "schemas/edit_proposal.py": 63,
+    "schemas/edit_proposal.py": 62,
     "services/choice_questions.py": 2,
     "services/clip_intent_resolution.py": 2,
     "services/clip_selection.py": 1,

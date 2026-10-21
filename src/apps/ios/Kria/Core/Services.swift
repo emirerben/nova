@@ -116,6 +116,23 @@ protocol SlidePostProposalClient: Sendable {
 }
 
 protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
+    func editorialTaste() async throws -> EditorialTasteProfile
+    func saveEditorialTaste(_ body: EditorialTasteWrite) async throws -> EditorialTasteProfile
+    func forgetEditorialTaste(revision: Int, eventID: String) async throws -> EditorialTasteProfile
+    func recordIdeaFeedback(_ body: IdeaFeedbackWrite) async throws -> IdeaFeedbackReceipt
+    func updateCameraRollContentPlan(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, plan: CameraRollContentPlan) async throws -> CameraRollStory
+    func changeCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, order: [UUID]?, audioPolicy: String?, eventID: String) async throws -> CameraRollStory
+    func indexCameraRollCollection(id: UUID, revision: Int, offset: Int) async throws -> CameraRollIndexPass
+    func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool) async throws -> CameraRollStories
+    func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool, researchTopic: String?) async throws -> CameraRollStories
+    func recordCameraRollStoryExposure(collectionID: UUID, story: CameraRollStory, collectionRevision: Int) async throws
+    func correctCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, index: Int, momentID: UUID, eventID: String) async throws -> CameraRollStory
+    func rejectCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, eventID: String) async throws -> CameraRollStory
+    func selectCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, threadID: UUID, threadRevision: Int, eventID: String) async throws -> TurnAccepted
+    func createCameraRollStoryThread(id: UUID, revision: Int) async throws -> CreationThread
+    func inspectCameraRollMoment(collectionID: UUID, revision: Int, momentID: UUID, question: String, cacheOnly: Bool) async throws -> CameraRollInspection
+    func importCollectionMedia(file: URL, kind: String) async throws -> SavedMediaAsset
+    func saveCameraRollCollection(_ collection: CameraRollCollection, revision: Int) async throws -> SavedCameraRollCollection
     func repairSavedMedia(asset: SavedMediaAsset, file: URL) async throws -> SavedMediaAsset
     var mediaLibraryOwner: String? { get }
     func savedMedia(query: String, kind: String?, cursor: String?) async throws -> SavedMediaPage
@@ -899,12 +916,15 @@ struct EditorCommitResponse: Codable, Sendable {
     let expectedDuration: Double?
     let editorState: String?
     let draft: DraftSnapshot?
-    init(ok: Bool, generation: String, sections: EditorCommitSections, revisionNumber: Int?, revisionHash: String?, expectedDuration: Double?, editorState: String? = nil, draft: DraftSnapshot? = nil) {
+    let renderStarted: Bool?
+    let renderRecovery: String?
+    init(ok: Bool, generation: String, sections: EditorCommitSections, revisionNumber: Int?, revisionHash: String?, expectedDuration: Double?, editorState: String? = nil, draft: DraftSnapshot? = nil, renderStarted: Bool? = nil, renderRecovery: String? = nil) {
         self.ok = ok; self.generation = generation; self.sections = sections
         self.revisionNumber = revisionNumber; self.revisionHash = revisionHash; self.expectedDuration = expectedDuration
         self.editorState = editorState; self.draft = draft
+        self.renderStarted = renderStarted; self.renderRecovery = renderRecovery
     }
-    private enum CodingKeys: String, CodingKey { case ok, generation, sections, draft; case revisionNumber = "revision_number"; case revisionHash = "revision_hash"; case expectedDuration = "expected_duration_s"; case editorState = "editor_state" }
+    private enum CodingKeys: String, CodingKey { case ok, generation, sections, draft; case revisionNumber = "revision_number"; case revisionHash = "revision_hash"; case expectedDuration = "expected_duration_s"; case editorState = "editor_state"; case renderStarted = "render_started"; case renderRecovery = "render_recovery" }
 }
 private struct EditorStatusEnvelope: Decodable {
     let variants: [[String: JSONValue]]
@@ -1243,9 +1263,22 @@ struct KriaAPI: KriaAPIClient {
         body.append(audio)
         append("\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"context_terms\"\r\n\r\n")
         append(String(data: (try? JSONEncoder().encode(contextTerms)) ?? Data("[]".utf8), encoding: .utf8) ?? "[]")
+        // KRI-780: the device's preferred languages, so a short Turkish take is read as Turkish.
+        if let localeHint = Self.dictationLocaleHint() {
+            append("\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"locale_hint\"\r\n\r\n")
+            append(localeHint)
+        }
         append("\r\n--\(boundary)--\r\n")
         return try await request(path: "dictation/transcribe", method: "POST", headers: ["Content-Type": "multipart/form-data; boundary=\(boundary)"], bodyData: body, decode: DictationTranscriptResponse.self, timeoutInterval: 30)
     }
+    /// Dictation `locale_hint`: the device's preferred language tags, best first, comma-joined
+    /// ("en-TR,tr-TR"); nil when none. The server forces Whisper only to a top-ranked Kria
+    /// language and uses later ones just for the spelling-bias word list.
+    static func dictationLocaleHint(preferred: [String] = Locale.preferredLanguages) -> String? {
+        let tags = preferred.prefix(4).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.contains(",") }
+        return tags.isEmpty ? nil : tags.joined(separator: ",")
+    }
+
     func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink {
         try await request(path: "creation-threads/\(threadID.uuidString)/song-audio", method: "GET",
                           query: generation.map { [URLQueryItem(name: "generation", value: String($0))] } ?? [],
@@ -1596,9 +1629,13 @@ struct KriaAPI: KriaAPIClient {
             }
             if http.statusCode == 422, path.hasSuffix("/editor-commit") {
                 let saveError = EditorSaveError.from(responseData: data)
+                // The real server code, even for one the app does not word specially: "unknown"
+                // here cost the Troya Save its only client-side clue (KRI-770).
                 NativePreviewDiagnostics.record("editor-save-rejected", fields: [
                     "status": "422",
-                    "code": saveError.diagnosticCode,
+                    "code": saveError == .rejected
+                        ? (EditorSaveError.serverCode(from: data) ?? saveError.diagnosticCode)
+                        : saveError.diagnosticCode,
                 ])
                 throw saveError
             }
@@ -1742,6 +1779,12 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
     case userSongLipsyncLocked
     /// Less than a second of the song would remain after the start; `reason` is the server's own words.
     case userSongWindowOutOfRange(reason: String?)
+    /// KRI-770: a timeline refusal (`TIMELINE_*`, `GUIDED_REVISION_INVALID`, ...) keeps its server
+    /// code so the creator is told which kind of clip problem blocked the Save.
+    case timeline(code: String)
+    /// A readable sentence the server wrote for this refusal ("Video media is still being
+    /// analyzed. Try again when its duration is ready."). Shown instead of the generic line.
+    case serverMessage(String)
     case rejected
 
     var errorDescription: String? {
@@ -1762,8 +1805,65 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
         case .userSongWindowOutOfRange(let reason):
             reason?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmptyString
                 ?? "That start point leaves less than a second of your song. Slide it earlier."
+        case .timeline(let code):
+            Self.timelineCopy[code] ?? "This save was rejected. Your edits are still here."
+        case .serverMessage(let message):
+            message
         case .rejected:
             "This save was rejected. Your edits are still here."
+        }
+    }
+
+    /// Specific, recoverable copy per timeline refusal. The set of codes is pinned by
+    /// `Tests/Fixtures/editor_save_codes.json`, which the API's `test_editor_save_code_catalog`
+    /// keeps equal to what the server can raise: a new server code fails CI until it is worded here.
+    static let timelineCopy: [String: String] = {
+        let tooShort = "A clip is shorter than the 0.1 second minimum. Lengthen it a little and save again. Your edits are still here."
+        let pastEnd = "A clip runs past the end of its footage. Shorten it or move its start earlier, then save again. Your edits are still here."
+        let reopen = "A clip’s footage is no longer available to this edit. Reopen the editor to continue."
+        let timeline = "This timeline couldn’t be saved. Undo your last change and try again. Your edits are still here."
+        return [
+            "TIMELINE_INVALID_WINDOW": tooShort,
+            "TIMELINE_INVALID_DURATION": tooShort,
+            "TIMELINE_OUT_OF_BOUNDS": pastEnd,
+            "TIMELINE_SOURCE_BOUNDS": pastEnd,
+            "TIMELINE_UNKNOWN_CLIP": reopen,
+            "sources_expired": reopen,
+            "authored_source_required": reopen,
+            "TIMELINE_EMPTY": "A video needs at least one clip. Keep a clip and save again. Your edits are still here.",
+            "TIMELINE_TOO_LONG": "This video is longer than an edit can be. Trim or remove some clips and save again. Your edits are still here.",
+            "TIMELINE_BEATS_EXHAUSTED": "The song runs out of beats for these clips. Shorten a clip or remove one and save again. Your edits are still here.",
+            "TIMELINE_INVALID_PARENT": timeline,
+            "TIMELINE_IMAGE_SPLIT_UNSUPPORTED": "A photo can’t be split. Keep it whole or trim it instead. Your edits are still here.",
+            "authored_seconds_required": timeline,
+            "GUIDED_REVISION_INVALID": timeline,
+            "GUIDED_TEXT_IDENTITY_MISMATCH": timeline,
+            "GUIDED_TOMBSTONE_LIMIT": "This edit has too many removed items to save. Restore or re-add a few and try again. Your edits are still here.",
+            "GUIDED_REVISION_WIRE_UNSUPPORTED": "Update Kria to save this edit.",
+            "LOOK_PRESET_NOT_AVAILABLE": "That clip look isn’t available for this video. Remove it and save again. Your edits are still here.",
+            "phone_edit_unsupported": "That clip look can’t be saved on this iPhone yet. Remove it and save again. Your edits are still here.",
+            "transitions_disabled": "Transitions aren’t available right now. Set the clip to a cut and save again. Your edits are still here.",
+            "song_shorter_than_video": "The song is shorter than your video. Pick a longer song or shorten the video, then save again. Your edits are still here.",
+            "music_track_unavailable": "That song isn’t available any more. Pick another song and save again. Your edits are still here.",
+            "track_duration_unknown": timeline,
+            "video_duration_unknown": timeline,
+            "guided_story_revision_unavailable": reopen,
+        ]
+    }()
+
+    /// A plain-English sentence (not a machine code) short enough to show as is.
+    static func isReadableServerMessage(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.count >= 12 && trimmed.count <= 160 && trimmed.contains(" ")
+            && trimmed.first?.isLetter == true && !trimmed.contains("`") && !trimmed.contains("_")
+    }
+
+    /// The server's own code, for diagnostics, when it is not one the app words specially.
+    fileprivate static func serverCode(from data: Data) -> String? {
+        guard let detail = (try? JSONDecoder().decode(EditorSaveErrorEnvelope.self, from: data))?.detail else { return nil }
+        switch detail {
+        case .code(let code, _): return code.isEmpty ? nil : code
+        case .validation: return "validation"
         }
     }
 
@@ -1776,6 +1876,8 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
         case .userSongUnavailable: "user_song_unavailable"
         case .userSongLipsyncLocked: "user_song_lipsync_locked"
         case .userSongWindowOutOfRange: "user_song_window_out_of_range"
+        case .timeline(let code): code
+        case .serverMessage: "server_message"
         case .rejected: "unknown"
         }
     }
@@ -1789,6 +1891,11 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
         case .code("user_song_unavailable", let reason): return .userSongUnavailable(reason: reason)
         case .code("user_song_lipsync_locked", _): return .userSongLipsyncLocked
         case .code("user_song_window_out_of_range", let reason): return .userSongWindowOutOfRange(reason: reason)
+        case .code(let code, _) where Self.timelineCopy[code] != nil: return .timeline(code: code)
+        case .code(let message, _) where Self.isReadableServerMessage(message):
+            let sentence = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            let closed = sentence.hasSuffix(".") || sentence.hasSuffix("!") || sentence.hasSuffix("?") ? sentence : sentence + "."
+            return .serverMessage("\(closed) Your edits are still here.")
         case .validation(let issues) where issues.contains(where: { $0.loc?.contains(.string("text_elements")) == true }):
             return .invalidTextSettings
         default: return .rejected
@@ -2351,6 +2458,15 @@ extension DraftSnapshot {
     /// an older head may still exist when the editor is reopened. The status
     /// variant is authoritative for every renderer-owned section and baseline.
     func editorDraft(projectID: UUID, authoritativeVariant: [String: JSONValue]? = nil) -> EditorDraft {
+        if let authoritativeVariant,
+           authoritativeVariant["render_generation_id"]?.stringValue == baseGenerationID,
+           Self.object(snapshot["editor_payload"])?["editor_state_version"] == .number(2) {
+            // A committed full snapshot owns authoring state. The variant is
+            // a render projection and may lag this exact durable revision.
+            var saved = editorDraft(projectID: projectID)
+            saved.serverSnapshot["editor_capabilities"] = authoritativeVariant["editor_capabilities"]
+            return saved
+        }
         var document = snapshot
         if let authoritativeVariant {
             // An explicitly empty saved editor has no render to rebase onto.
@@ -2584,16 +2700,52 @@ extension DraftSnapshot {
         var merged: [[String: JSONValue]] = []
         for value in draft {
             guard let row = object(value) else { continue }
-            var slot = take(row) ?? [:]
+            let matched = take(row)
+            var slot = matched ?? [:]
             for (key, field) in row { slot[key] = field }
+            // KRI-773: a draft clip that matches no saved clip is a new placement. An id it carries
+            // (chat minted `cs-<state>-<n>` ids before #1698, and they live on in stored drafts) was
+            // never a real slot; keeping it made every Save fail 409 TIMELINE_STALE, and "Reload and
+            // keep my edits" re-applied the same timeline.
+            if matched == nil, slot["removed"] != .bool(true), slot["slot_id"] != nil { slot.removeValue(forKey: "slot_id") }
             merged.append(slot)
         }
         merged.append(contentsOf: unmatched)
+        // Historical chat drafts can carry a window longer than their clip
+        // (Troya: 3 s on 3.36 s from 0.9 s).
+        // Preserve authoring intent; feasible footage mapping belongs to the
+        // preview/export compiler, never to draft hydration.
         // A tombstone for a slot the base never listed is not a change.
         let baseIDs = Set(base.compactMap { object($0)?["slot_id"]?.stringValue })
         let effective = merged.filter { $0["removed"] != .bool(true) || baseIDs.contains($0["slot_id"]?.stringValue ?? "") }
         guard strippingNulls(.array(effective.map(JSONValue.object))) != strippingNulls(.array(base)) else { return nil }
         return merged.map(JSONValue.object)
+    }
+
+    /// Shortens a window that needs more footage than its clip has (`in_s + duration * rate >
+    /// source_duration_s`, the Save's own bound). Shorten first; slide the start back only when less
+    /// than the minimum length would remain. Untouched when the footage length is unknown.
+    static func fittedToFootage(_ row: [String: JSONValue]) -> [String: JSONValue] {
+        guard row["removed"] != .bool(true),
+              row["media_kind"]?.stringValue != "image", row["kind"]?.stringValue != "image",
+              let source = (row["source_duration_s"] ?? row["source_duration"])?.numberValue, source > 0,
+              let duration = row["duration_s"]?.numberValue, duration > 0 else { return row }
+        let rate = row["playback_rate"]?.numberValue.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? 1
+        let start = max(0, row["in_s"]?.numberValue ?? 0)
+        guard start + duration * rate > source + KriaSourceWindowGeometry.boundsTolerance else { return row }
+        let available = (source - start) / rate
+        var fittedStart = start
+        var fitted = min(duration, available)
+        if available < KriaSourceWindowGeometry.minimumLength - 1e-6 {
+            fitted = min(duration, source / rate)
+            fittedStart = max(0, source - fitted * rate)
+        }
+        fitted = (fitted * 1e6).rounded(.down) / 1e6
+        var next = row
+        next["in_s"] = .number(fittedStart)
+        next["duration_s"] = .number(fitted)
+        if next["duration_beats"] != nil { next["duration_beats"] = .null }
+        return next
     }
 
     /// Structural comparison key that treats absent and null fields alike (the

@@ -617,7 +617,7 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-524-creation,kri-557-thinking,kri-577-reliability-gates,kri-721-approval-readiness",
+                    "kri-524-creation,kri-557-thinking,kri-577-reliability-gates,kri-760-whole-line-ask,kri-721-approval-readiness",
                 ),
             ),
             (
@@ -733,6 +733,14 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-623-ruled-out-clips"),
             ),
             (
+                "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri766_label_echo_vs_described_action.json",
+                (True, "covered", "kri-766-label-bound"),
+            ),
+            (
+                "src/apps/api/tests/kria/test_kri766_label_stays_bound.py",
+                (True, "covered", "kri-766-label-bound"),
+            ),
+            (
                 "src/apps/api/app/kria/narration_notes.py",
                 (True, "covered", "kri-585-spoken-order"),
             ),
@@ -803,6 +811,14 @@ class GitDiffTests(unittest.TestCase):
             (
                 "src/apps/api/tests/fixtures/kri681_tigre_night_m1_clips.json",
                 (True, "covered", "kri-681-named-line-windows"),
+            ),
+            (
+                "src/apps/api/app/pipeline/unified_montage.py",
+                (
+                    True,
+                    "covered",
+                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates,kri-760-whole-line-ask,kri-648-phone-text",
+                ),
             ),
             (
                 "src/apps/api/app/pipeline/captions.py",

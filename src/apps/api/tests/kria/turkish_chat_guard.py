@@ -2,12 +2,13 @@
 
 English kept slipping into Turkish chats one phone test at a time (KRI-592, KRI-630):
 every chat event has many writers and no single choke point. ``turkish_chat_net`` wraps
-the v2 event writers (``_append_sync_event``, ``runtime._append_event``,
-``drafts._append_event``) and backstops direct ``CreationThreadEvent(...)`` construction
-with a SQLAlchemy ``init`` listener. For every non-user event written while the chat is
-Turkish it classifies the content and the creator-facing payload text, records each
-English segment, and fails the test at teardown (it never raises inside a writer: the
-best-effort writers swallow exceptions, which would hide the leak).
+the chat event writers (``_append_sync_event``, ``runtime._append_event``,
+``drafts._append_event``, v1 ``creation_threads._append``) and backstops direct
+``CreationThreadEvent(...)`` construction with a SQLAlchemy ``init`` listener. For every
+non-user event written while the chat is Turkish it classifies the content and the
+creator-facing payload text, records each English segment, and fails the test at teardown
+(it never raises inside a writer: the best-effort writers swallow exceptions, which would
+hide the leak).
 
 Failure modes, written before the code:
 
@@ -359,6 +360,7 @@ def install(net: TurkishChatNet, monkeypatch: pytest.MonkeyPatch) -> None:
     """Wrap the v2 writers and listen for direct construction; undone by ``uninstall``."""
     import app.kria.drafts as drafts
     import app.kria.runtime as runtime
+    import app.routes.creation_threads as creation_threads
     import app.tasks.kria_runtime as kria_runtime
 
     monkeypatch.setattr(
@@ -367,6 +369,12 @@ def install(net: TurkishChatNet, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runtime, "_append_event", net.wrap_async(runtime._append_event))
     monkeypatch.setattr(
         drafts, "_append_event", net.wrap_async(drafts._append_event, "drafts._append_event")
+    )
+    # KRI-784: the v1 chat writer (creation_threads and creation_editor_actions).
+    monkeypatch.setattr(
+        creation_threads,
+        "_append",
+        net.wrap_async(creation_threads._append, "creation_threads._append"),
     )
     sa_event.listen(CreationThreadEvent, "init", net._on_event_init)
     sa_event.listen(CreationThread, "init", net._on_thread)

@@ -50,6 +50,7 @@ from app.kria.brief_checks import (
     reply_from_receipts,
     requirements_to_check_at_draft,
     speech_cleanup_review_note,
+    with_planned_cuts,
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
@@ -107,15 +108,15 @@ from app.services.choice_questions import (
     CONFLICT_WHICH_VOICE,
     KEEP_OPEN_REASON,
     MAX_ASKS_PER_QUESTION,
+    SIMPLER_VERSION_REASON,
     ChoiceCapability,
-    ConflictCandidate,
-    ConflictOption,
     answered_brief,
     build_choice_question,
     choice_question_text,
     count_asks,
     match_open_choice,
     open_conflicts,
+    simpler_version_question,
     tag_event,
 )
 from app.services.creation_thread_titles import conversation_revision_matches_sync
@@ -222,6 +223,7 @@ class _ApprovalDispatchClaim:
     # What the plan item pointed at BEFORE a strategy dispatch mints its new Job, so a
     # failure after the pointer moves can put it back (never leave an orphan target).
     prior_item_status: str | None = None
+    creator_guided_attempt_id: str | None = None
 
 
 def _snapshot(thread: CreationThread) -> dict[str, Any]:
@@ -701,37 +703,6 @@ def _creative_copy_problem_sync(db, thread_id, media, *, strategy=None, resoluti
     )
 
 
-_SIMPLER_VERSION_REASON = "simplification_requires_choice"
-
-
-def _simpler_version_question() -> dict[str, Any]:
-    """Use the existing exact option matcher; an arbitrary next reply is not consent."""
-    return build_choice_question(
-        ConflictCandidate(
-            conflict_id=_SIMPLER_VERSION_REASON,
-            intro="",
-            reason="",
-            options=(
-                ConflictOption(
-                    "different_approach",
-                    label=say(en="Try a different approach", tr="Farklı bir yol dene"),
-                ),
-                ConflictOption(
-                    "simpler_version",
-                    label=say(en="Make this simpler version", tr="Daha basit sürümü hazırla"),
-                    aliases=(
-                        "simpler version",
-                        "make it more basic",
-                        "skip, decide for me",
-                        "Make this simpler version",
-                        "Daha basit sürümü hazırla",
-                    ),
-                ),
-            ),
-        )
-    )
-
-
 def _simpler_version_already_offered(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     thread_id: uuid.UUID,
@@ -763,7 +734,7 @@ def _simpler_version_already_offered(
         payload = payload if isinstance(payload, Mapping) else {}
         coverage = payload.get("brief_coverage")
         if not isinstance(coverage, Mapping) or coverage.get("reason") not in {
-            _SIMPLER_VERSION_REASON,
+            SIMPLER_VERSION_REASON,
             "approval_requirements_not_ready",
         }:
             continue
@@ -792,7 +763,7 @@ def _simpler_version_already_offered(
             brief.version
         }:
             return False
-        question = payload.get("choice_question") or _simpler_version_question()
+        question = payload.get("choice_question") or simpler_version_question()
         selection = (source_event.payload or {}).get("choice_selection")
         if isinstance(selection, Mapping):
             return (
@@ -846,6 +817,7 @@ def _complete_draft_turn(
             edit_format=arguments.strategy.edit_format,
             strategy=arguments.strategy.model_dump(mode="json", exclude_none=True),
             changes=changes,
+            prepared_collection_story=getattr(planned, "prepared_collection_story", None),
         )
         snapshot, snapshot_hash = canonical_snapshot(document)
 
@@ -1121,6 +1093,7 @@ def _complete_draft_turn(
         readiness_report = None
         brief = None
         speed_notice: str | None = None  # KRI-689
+        phone_blockers: list = []  # KRI-775
         if planned.brief_route is not None:
             # KRI-188: persist this turn's requirements (idempotent per turn),
             # then check each one deterministically against what was drafted.
@@ -1164,6 +1137,9 @@ def _complete_draft_turn(
                         and (document.strategy.get("edit_format") or item.edit_format)
                         in {"subtitled", "talking_head"},
                     )
+                    # KRI-776: a moment ask is judged against the windows the approved length
+                    # plan will cut, so the card never promises moments the plan doesn't hold.
+                    facts = with_planned_cuts(facts, planned.media_snapshot)
                     checked = brief.live()
                     # KRI-190: the unified montage planner writes the per-clip text,
                     # order and title at render time and reports on them then. Judging
@@ -1188,6 +1164,27 @@ def _complete_draft_turn(
                         item_edit_format=item.edit_format,
                         clip_paths=item.clip_gcs_paths or (),
                     )
+                    if not readiness_required:
+                        # KRI-775: the phone montage worker refuses a draft whose order or
+                        # length falls short. Plan it now (deterministic, fail-open) so its
+                        # receipts hold the draft back here instead of after approval.
+                        from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+                        from app.services.phone_montage_preflight import (  # noqa: PLC0415
+                            phone_montage_blockers,
+                            with_blocked_requirements,
+                        )
+
+                        phone_blockers = phone_montage_blockers(
+                            db,
+                            creator_id=thread.creator_id,
+                            item=item,
+                            brief=brief,
+                            strategy=document.strategy,
+                            media_snapshot=planned.media_snapshot
+                            if planned.media_snapshot is not None
+                            else snapshot_media(item),
+                        )
+                        checked = with_blocked_requirements(checked, brief, phone_blockers)
                 else:
                     # Editor operations verify only the requirements stated in
                     # this very turn, against what the ops changed (KRI-558).
@@ -1207,6 +1204,13 @@ def _complete_draft_turn(
                         # of a creator whose writer is not brief-bound.
                         strict_order=bound_writer,
                     )
+                    if phone_blockers:
+                        from app.services.phone_montage_preflight import (  # noqa: PLC0415
+                            with_blocker_receipts,
+                        )
+
+                        # KRI-775: a requirement the phone plan falls short on is judged by it.
+                        receipts = with_blocker_receipts(receipts, phone_blockers)
                     bound = False
                     if editor_turn and not compiled.diff.unavailable:
                         try:
@@ -1274,6 +1278,15 @@ def _complete_draft_turn(
 
             if brief is None:
                 brief = load_latest_brief_sync(db, thread.id)
+            # KRI-774: the same text the approval binding pins, so a later recheck agrees.
+            _readiness_source = db.get(CreationThreadEvent, turn.source_event_id)
+            _readiness_request = (
+                _full_creator_request_sync(
+                    db, thread_id=thread.id, through_sequence=int(_readiness_source.sequence)
+                )
+                if _readiness_source is not None
+                else None
+            )
             readiness_report = assess_readiness(
                 brief,
                 document.strategy or {},
@@ -1283,6 +1296,7 @@ def _complete_draft_turn(
                 manifest=planned.readiness_manifest,
                 editor_payload=document.editor_payload,
                 editor_text_diff=document.editor_text_diff,
+                creator_request=_readiness_request,
             )
             if not readiness_report["ready"]:
                 reply_text = readiness_reply(brief, readiness_report)
@@ -1345,6 +1359,7 @@ def _complete_draft_turn(
                     if planned.media_snapshot is not None
                     else _readiness_media(item),
                     manifest=planned.readiness_manifest,
+                    creator_request=_readiness_request,
                 )
             log.info(
                 "kria_simpler_version_drafted",
@@ -1406,7 +1421,7 @@ def _complete_draft_turn(
             recovery = KriaTurnPlan(
                 mode="respond",
                 turn_value="question",
-                choice_question=_simpler_version_question() if can_offer_simpler else None,
+                choice_question=simpler_version_question() if can_offer_simpler else None,
                 response=(
                     f"{reply_text}\n{draft_state} "
                     + (
@@ -1444,7 +1459,7 @@ def _complete_draft_turn(
                     "stage": "draft",
                     "reason": "approval_requirements_not_ready"
                     if readiness_required
-                    else _SIMPLER_VERSION_REASON,
+                    else SIMPLER_VERSION_REASON,
                     **({"approval_readiness": readiness_report} if readiness_required else {}),
                 },
                 brief_expected_version=planned.brief_expected_version,
@@ -1958,6 +1973,16 @@ async def _plan_with_live_agent(
                     scope=scoped["scope"],
                     manual_edit_count=len(scoped["manual_edits"]),
                 )
+            if snapshot.get("camera_roll_story"):
+                from app.services.media_collection_preparation import plan_selected_story
+
+                return await plan_selected_story(
+                    db,
+                    reference=snapshot["camera_roll_story"],
+                    thread_id=uuid.UUID(str(snapshot["thread_id"])),
+                    item_id=uuid.UUID(str(snapshot["item_id"])),
+                    creator_id=uuid.UUID(str(snapshot["creator_id"])),
+                )
             with bind_thought_publisher(thought_publisher):
                 planned = await plan_live_turn(
                     db,
@@ -2198,6 +2223,9 @@ def _claim(
         if thread is None or source is None:
             return None
         claimed_snapshot = {**_snapshot(thread), "client_request_id": turn.client_event_id}
+        source_payload = getattr(source, "payload", None)
+        if isinstance(source_payload, dict) and source_payload.get("camera_roll_story"):
+            claimed_snapshot["camera_roll_story"] = source_payload["camera_roll_story"]
         live_scope = _scoped_turn_fields(source)
         if live_scope is not None:
             # KRI-441: rides the snapshot dict so the claim tuple keeps its shape.
@@ -2617,7 +2645,9 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
         else None
     )
     try:
-        if settings.main_creator_agent_enabled and snapshot.get("item_id"):
+        if (
+            settings.main_creator_agent_enabled or snapshot.get("camera_roll_story")
+        ) and snapshot.get("item_id"):
             planned = asyncio.run(
                 _plan_with_live_agent(
                     snapshot,
@@ -3223,6 +3253,24 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                     and approval.target_generation_id == execution.target_generation_id
                 )
 
+        if (
+            target_valid
+            and document is not None
+            and getattr(document, "prepared_collection_story", None) is not None
+        ):
+            from app.services.media_collection_preparation import install_approved_story
+
+            try:
+                install_approved_story(
+                    db,
+                    item=item,
+                    owner=thread.creator_id,
+                    raw=document.prepared_collection_story,
+                    strategy=document.strategy,
+                    dry_run=True,
+                )
+            except ValueError:
+                target_valid = False
         now = datetime.now(UTC)
         if not target_valid:
             approval.status = "cancelled"
@@ -3263,6 +3311,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             db.commit()
             return None
 
+        creator_guided_attempt_id = None
         strategy_payload: dict[str, Any] | None = None
         editor_prep: dict[str, Any] | None = None
         preflight_analysis_id: uuid.UUID | None = None
@@ -3346,6 +3395,16 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             elif strategy.caption_style == "none":
                 item.voiceover_caption_style = None
             item.user_edited = True
+            if getattr(document, "prepared_collection_story", None) is not None:
+                from app.services.media_collection_preparation import install_approved_story
+
+                creator_guided_attempt_id = install_approved_story(
+                    db,
+                    item=item,
+                    owner=thread.creator_id,
+                    raw=document.prepared_collection_story,
+                    strategy=strategy_payload,
+                )
             # KRI-205: `decide_approval` stashed the speech-cleanup decision it
             # (or its legacy default) already validated at approval time --
             # read it back rather than asking the creator again here. Absent
@@ -3527,6 +3586,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             item_id=item.id,
             ownership_epoch=int(session.ownership_epoch),
             draft_kind=document.kind,
+            creator_guided_attempt_id=creator_guided_attempt_id,
             strategy=strategy_payload,
             editor_prep=editor_prep,
             target_job_id=current_job.id if current_job is not None else None,
@@ -4642,7 +4702,12 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
         result = dispatch_item_render_for(
             str(claim.item_id),
             claim.ownership_epoch,
-            bypass_guided_edit_gate=True,
+            bypass_guided_edit_gate=not bool(getattr(claim, "creator_guided_attempt_id", None)),
+            **(
+                {"creator_guided_attempt_id": claim.creator_guided_attempt_id}
+                if getattr(claim, "creator_guided_attempt_id", None)
+                else {}
+            ),
             # KRI-187: a phone account has no approved guided proposal on this
             # path; the flag inside dispatch decides whether it may proceed to
             # the device montage compiler. Non-phone accounts ignore it.
@@ -4697,6 +4762,10 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
             )
         else:
             raise
+    if status == "dispatched" and result_job_id is not None:
+        # The render may have finished before this receipt read `dispatched` (a fast phone-plan
+        # refusal); its own end-of-task nudge then found nothing to settle.
+        nudge_kria_observer(result_job_id)
     if successor_id is not None:
         run_kria_turn.apply_async(
             args=[successor_id],
@@ -5289,6 +5358,7 @@ def _localized_block_recovery(message: str, receipts: list[dict[str, Any]]) -> s
     from app.kria.brief_checks import (  # noqa: PLC0415
         NARRATED_ALIGNMENT_RECOVERY,
         narrated_alignment_recovery,
+        needs_creator_choice,
         render_block_recovery,
     )
 
@@ -5297,11 +5367,9 @@ def _localized_block_recovery(message: str, receipts: list[dict[str, Any]]) -> s
     if not receipts:
         return message
 
-    failures = [
-        row
-        for row in receipts
-        if row.get("verification") == "checked" and row.get("status") != "met"
-    ]
+    # The worker's own filter: a format limit (KRI-689) is never in the message, so keeping
+    # it here would rebuild a different English text and leave the card English (KRI-778).
+    failures = [row for row in receipts if needs_creator_choice(row)]
     if not failures:
         return message
     with reply_language_for("en"):
@@ -5612,6 +5680,13 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             JOB_FAILURE_MESSAGES,
         )
 
+        # KRI-673/KRI-765: every code with a sentence of its own says why the render stopped.
+        cause_codes = {
+            "phone_capability_unavailable",
+            "creation_text_failed",
+            *CREATOR_FACING_DETAIL_CODES,
+            *JOB_FAILURE_MESSAGES,
+        }
         recovery_receipts: list[dict[str, Any]] = []
         recovery_message: str | None = None
         raw_recovery = (job.assembly_plan or {}).get("request_recovery")
@@ -5712,6 +5787,16 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 tr="iPhone'un bu dışa aktarımı durdurdu. Onayladığın düzenleme kayıtlı. "
                 "Yeniden denemeden önce cihazdaki hatayı kontrol et.",
             )
+        elif native_without_program and failure_code in cause_codes:
+            # No exact retry exists for this render, but the cause is known: name it, then
+            # the real way forward (KRI-765: "creation_text_failed" read as a generic stop).
+            failure_content = (
+                f"{_job_failure_copy(failure_code, getattr(job, 'error_detail', None))} "
+                + say(
+                    en="To try again, ask for a new version and review its approval.",
+                    tr="Tekrar denemek için yeni bir sürüm isteyip onayını gözden geçir.",
+                )
+            )
         elif native_without_program:
             failure_content = say(
                 en=(
@@ -5742,12 +5827,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             # KRI-701: the plan lacked something the creator confirmed; the iPhone can render
             # it, so the "can't render yet" table line would blame the wrong thing.
             failure_content = _phone_evidence_refusal_copy(typed_decline)
-        elif deterministic or failure_code in {
-            "phone_capability_unavailable",
-            "creation_text_failed",
-            *CREATOR_FACING_DETAIL_CODES,
-            *JOB_FAILURE_MESSAGES,
-        }:
+        elif deterministic or failure_code in cause_codes:
             # Retryable, but the generic "didn't finish" copy would hide WHY (KRI-286).
             # Creator-facing codes (KRI-466) show the job's own actionable detail.
             # KRI-673: every code with a table sentence says why; the generic line is
@@ -6087,9 +6167,17 @@ def _reconcile_kria_turns_body() -> dict[str, int]:
             task_id=f"kria-approval:{approval_id}",
             queue="agent-control",
         )
+    return {
+        "published": len(identifiers) + len(approval_identifiers),
+        "settled": _settle_dispatched_executions(dispatched_execution_ids),
+    }
+
+
+def _settle_dispatched_executions(execution_ids: list[uuid.UUID]) -> int:
+    """Observe each dispatched receipt; publish the queued turns the settled ones release."""
     settled = 0
     successors: list[str] = []
-    for execution_id in dispatched_execution_ids:
+    for execution_id in execution_ids:
         outcome, successor_id = _observe_dispatched_execution(execution_id)
         if outcome in {"completed", "failed"}:
             settled += 1
@@ -6101,10 +6189,62 @@ def _reconcile_kria_turns_body() -> dict[str, int]:
             task_id=successor_id,
             queue="agent-control",
         )
-    return {
-        "published": len(identifiers) + len(approval_identifiers),
-        "settled": settled,
-    }
+    return settled
+
+
+# A nudge still queued after this long is moot: the minute sweep has settled the Job by then.
+OBSERVE_NUDGE_TTL_S = 120
+
+
+@celery_app.task(
+    name="tasks.observe_kria_job",
+    soft_time_limit=30,
+    time_limit=45,
+    max_retries=0,
+)
+def observe_kria_job(job_id: str) -> dict[str, int]:
+    """Settle the chat receipts waiting on one Job, right after that Job changed.
+
+    The minute sweep used to be the only thing that posted a render's ready/failed card, so
+    the creator waited up to a minute for it (café M2 job 50f67a06 failed at 13:05:12; its
+    card came at 13:05:53). The render tasks, the phone's publish/failure reports and the
+    approval dispatch nudge this task instead. It runs the sweep's own observer, which
+    row-locks and re-checks each receipt, so a nudge racing the sweep posts one card; the
+    sweep stays the fallback for a nudge that never arrives.
+    """
+
+    if not settings.kria_runtime_v2_enabled:
+        return {"settled": 0}
+    with sync_session() as db:
+        execution_ids = list(
+            db.execute(
+                select(CreatorAgentExecution.id)
+                .where(
+                    CreatorAgentExecution.target_job_id == uuid.UUID(job_id),
+                    CreatorAgentExecution.status == "dispatched",
+                )
+                .order_by(CreatorAgentExecution.dispatched_at, CreatorAgentExecution.id)
+                .limit(50)
+            ).scalars()
+        )
+    return {"settled": _settle_dispatched_executions(execution_ids)}
+
+
+def nudge_kria_observer(job_id: object) -> None:
+    """Ask `observe_kria_job` to settle this Job's chat receipts now. Never raises.
+
+    Call it after the Job write commits. A lost nudge (broker down, worker killed) only
+    means the minute sweep posts the card instead.
+    """
+
+    try:
+        if not settings.kria_runtime_v2_enabled:
+            return
+        observe_kria_job.apply_async(
+            args=[str(job_id)], queue="agent-control", expires=OBSERVE_NUDGE_TTL_S
+        )
+    except Exception:  # noqa: BLE001 - the sweep settles whatever a lost nudge misses
+        log.warning("kria_observe_nudge_failed", job_id=str(job_id), exc_info=True)
 
 
 @celery_app.task(

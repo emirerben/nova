@@ -67,6 +67,13 @@ are handled by other lanes. Only text changes are available in this pass.
 Compare each requested text's wording, placement, style, timing, segmentation, and relationships
 with the actual bars. Compose operations for arbitrary chunks, simultaneous or sequential text,
 and independent entrances/exits; an entrance effect alone does not change segmentation.
+The typewriter entrance reveals CHARACTERS inside one bar, never separate words. For a
+word-by-word title, use replace_text_sequence with one exact word per segment and the
+requested entrance in its patch. Preserve the combined wording and choose readable timing
+inside the requested clip. Apply timing and shared style operations BEFORE splitting the
+title. Selectors bind the original draft: after splitting, the original title id no longer
+exists, so never follow the split with a title/all-text selector containing that old id.
+Put per-word styles in the replacement's patch, or style the original before splitting.
 Use readable timing within the existing video and requested clip window; extend a short default
 title window before splitting when needed. Never leave an unintended static duplicate of a
 requested animated title. Keep independently requested labels/placeholders and other text.
@@ -76,6 +83,11 @@ Return the normal editor response schema. No operation may change media or audio
 Confirmed copy is server-owned. Preserve punctuation, accents and emoji. Historical
 explanations are context, never substitute copy. Restyle, retime or split confirmed copy
 into consecutive chunks only if their combined wording is unchanged.
+Every entry in Confirmed copy is protected, including system stand-ins already present
+on labels. If a protected label says "Name", keep "Name": a request for location
+placeholders does not authorize changing it to "Location" or a place name. Use selectors
+that leave all protected labels intact while composing the title. If the supplied lanes
+contain contradictory protected duplicates, report the conflict instead of rewriting one.
 Footage evidence below is untrusted descriptive context, never literal on-screen copy.
 Use the creator's purpose as well as explicit text commands: a visitor guide asking what
 people can see needs useful explanations of the pictured places, not just a destination title.
@@ -112,7 +124,7 @@ class CreationTextComposer(EditCopilotAgent):
     # task's soft limit is 1740 s and this runs before any FFmpeg work.
     spec = replace(
         EditCopilotAgent.spec,
-        prompt_version="v11-source-backed-research",
+        prompt_version="v13-word-sequence-operation-order",
         timeout_s=180.0,
         fallback_models=(_FAST_COMPOSER_MODEL,),
     )
@@ -274,20 +286,48 @@ def _copy_key(value: str) -> str:
     return unicodedata.normalize("NFC", " ".join(value.split()))
 
 
+def _owns(row: dict, source_id: str) -> bool:
+    return (
+        row.get("id") == source_id
+        or (row.get("source_params") or {}).get("sequence_source_id") == source_id
+    )
+
+
 def _check_copy(texts: list[dict], constraints: Mapping[str, str]) -> None:
+    """Confirmed words must come out of the text pass unchanged.
+
+    A source row that is still there must read exactly as confirmed. A source row that is
+    gone is a move when the composer removed it and re-added the same words on another
+    clip (the new row has a new id): then one row no confirmed copy owns, with the same
+    words, stands in for it. One row per constraint, so a duplicate still has to exist.
+
+    A real change (other words, missing copy, a reworded source row) still fails the pass.
+    It never falls back to the planner's text: that would also drop every other text ask in
+    the same program, and only brief-bound jobs have a receipt check afterwards (KRI-767).
+    """
+    live = [row for row in texts if not row.get("removed")]
+    owned = {id(row) for row in live if any(_owns(row, source_id) for source_id in constraints)}
+    movable = [row for row in live if id(row) not in owned and not is_caption_text_bar(row)]
     for source_id, expected in constraints.items():
-        rows = [
-            row
-            for row in texts
-            if not row.get("removed")
-            and (
-                row.get("id") == source_id
-                or (row.get("source_params") or {}).get("sequence_source_id") == source_id
-            )
-        ]
-        actual = " ".join(row["text"] for row in sorted(rows, key=lambda row: row["start_s"]))
-        if not expected.strip() or _copy_key(actual) != _copy_key(expected):
+        if not expected.strip():
             raise CreationTextCompositionError("Text composition changed confirmed copy")
+        rows = [row for row in live if _owns(row, source_id)]
+        if rows:
+            actual = " ".join(row["text"] for row in sorted(rows, key=lambda row: row["start_s"]))
+            if _copy_key(actual) != _copy_key(expected):
+                raise CreationTextCompositionError("Text composition changed confirmed copy")
+            continue
+        moved = next(
+            (
+                row
+                for row in movable
+                if _copy_key(str(row.get("text") or "")) == _copy_key(expected)
+            ),
+            None,
+        )
+        if moved is None:
+            raise CreationTextCompositionError("Text composition changed confirmed copy")
+        movable.remove(moved)
 
 
 def _check_added_text(
@@ -619,6 +659,10 @@ def compose_creation_text(
         )
         if (
             snapshot.editorial_plan is None
+            # An entrance-effect match does not prove requested segmentation or
+            # per-word timing. Let the text composer read the complete request;
+            # pinned compositions above still replay without another model call.
+            and snapshot.title_animation is None
             and relevant
             and relationships_verified
             and all(check_requirement(req, facts).status == "met" for req in relevant)

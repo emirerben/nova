@@ -16,14 +16,17 @@ from __future__ import annotations
 
 import re
 import string
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from app.agents._schemas.text_element import _HEX_COLOR_RE
 from app.kria.brief import (
     BriefRequirement,
+    BriefUpdate,
+    BriefUpdateBatchError,
     CreativeBrief,
+    apply_updates,
     normalize_style_intent,
     resolve_font_name,
 )
@@ -514,13 +517,28 @@ def _counted_spans(tokens: list[str]) -> list[tuple[int, int, str | None]]:
             if length is not None and length[2] in _SECOND_ADJECTIVES:
                 # "8 2-second moments": the length sits between the count and the noun.
                 after, limit = length[1], limit + 2
-            elif tokens[after] in _MOMENT_FILLERS:
+            elif tokens[after] in _MOMENT_FILLERS or _adjective_of_noun(tokens, after):
                 after += 1
             else:
                 break
             end = after
         spans.append((index, end, noun))
     return spans
+
+
+def _adjective_of_noun(tokens: list[str], index: int) -> bool:
+    """KRI-776: one word right before the noun describes it ("six separate moments", "altı
+    ayrı an", "the 6 exact moments"), unless it changes what is counted ("2 more moments") or
+    is a unit of time ("5 minute shots") or a function word ("3 and an outro")."""
+    word = tokens[index]
+    return bool(
+        index + 1 < len(tokens)
+        and (tokens[index + 1] in _MOMENT_NOUNS or tokens[index + 1] in _FOOTAGE_NOUNS)
+        and word.isalpha()
+        and word not in _MOMENT_NOUNS
+        and word not in _FOOTAGE_NOUNS
+        and word not in _NOT_MOMENT_ADJECTIVES
+    )
 
 
 def _counts_footage(tokens: list[str], index: int, end: int, noun: str | None) -> bool:
@@ -553,6 +571,57 @@ _SECOND_UNITS = frozenset({"s", "sec", "secs", "second", "seconds", "sn", "saniy
 _SECOND_ADJECTIVES = frozenset({"second", "saniyelik"})
 # A moment noun that is never an English article ("an" is Turkish for "moment" too).
 _MOMENT_WORDS = _MOMENT_NOUNS - {"an"}
+# KRI-776: words between a count and its noun that are not an adjective of the noun. "2 more
+# moments" adds to a count, "5 minute shots" measures them, "3 and an outro" is two phrases.
+_NOT_MOMENT_ADJECTIVES = _SECOND_UNITS | frozenset(
+    {
+        "more",
+        "fewer",
+        "less",
+        "extra",
+        "additional",
+        "other",
+        "others",
+        "minute",
+        "minutes",
+        "min",
+        "mins",
+        "hour",
+        "hours",
+        "and",
+        "or",
+        "of",
+        "the",
+        "a",
+        "an",
+        "to",
+        "in",
+        "on",
+        "at",
+        "for",
+        "with",
+        "per",
+        "from",
+        "by",
+        "times",
+        "then",
+        "plus",
+        "x",
+        "daha",
+        "fazla",
+        "ek",
+        "baska",
+        "diger",
+        "dakika",
+        "dakikalik",
+        "dk",
+        "saat",
+        "saatlik",
+        "ve",
+        "ile",
+        "veya",
+    }
+)
 _BARE_COUNT_AFTER = frozenset({("of", "them"), ("of", "those"), ("of", "these"), ("in", "total")})
 _BARE_COUNT_WORDS = frozenset({"total", "altogether"})
 _COUNT_CLASSIFIERS = frozenset({"tane", "adet"})
@@ -764,17 +833,25 @@ def _recorded_seconds(value: object) -> float | None:
 
 
 def moment_ask(req: BriefRequirement) -> MomentAsk | None:
-    from app.services.phone_reaction_grounding import fold_tokens  # noqa: PLC0415
-
     if req.kind == "text":
         return None
-    text = req.description or ""
+    return moment_ask_in_text(req.description or "", req.facts)
+
+
+def moment_ask_in_text(text: str, facts: Mapping[str, Any] | None = None) -> MomentAsk | None:
+    """The moment ask in ``text`` (a requirement's words, a message, a draft summary).
+
+    A recorded ``moment_count`` / ``moment_length_s`` in ``facts`` decides over the words.
+    """
+    from app.services.phone_reaction_grounding import fold_tokens  # noqa: PLC0415
+
+    facts = facts or {}
     tokens = fold_tokens(_keep_decimals(text))
     count: int | None = None
-    fact = req.facts.get("moment_count")
+    fact = facts.get("moment_count")
     if isinstance(fact, int) and not isinstance(fact, bool) and 2 <= fact <= MAX_MOMENT_COUNT:
         count = fact
-    each_s = _recorded_seconds(req.facts.get("moment_length_s"))
+    each_s = _recorded_seconds(facts.get("moment_length_s"))
     footage: set[int] = set()
     bare: list[tuple[int, int]] = []
     for index, end, noun in _counted_spans(tokens):
@@ -830,3 +907,148 @@ def brief_moment_ask(brief: CreativeBrief | None) -> MomentAsk | None:
         excludes=any(ask.excludes for ask in asks),
         each_s=lengths[-1] if lengths else None,
     )
+
+
+# KRI-776: the brief carries the creator's own moment numbers. "Make a montage of six moments
+# from it, about 2 seconds each, in this order: ..." reached the brief as a bare `order` list
+# with no facts, so no moment windows were planned and the 68 s take was cut once. The planner
+# reads the creator's message with the same token reader and records what it says as
+# `moment_count` / `moment_length_s` facts on a `select` requirement (the kind the moment
+# receipt judges), so the model's paraphrase is never the only carrier.
+_SENTENCE_ENDS = frozenset(".!?\n")
+_DESCRIPTION_MAX = 300
+
+
+def _sentences(text: str) -> list[str]:
+    """``text`` cut after ".", "!", "?" or a line break that ends a word ("1.5" stays whole)."""
+    out: list[str] = []
+    start = 0
+    for index, char in enumerate(text):
+        if char in _SENTENCE_ENDS and (index + 1 == len(text) or text[index + 1].isspace()):
+            out.append(text[start : index + 1].strip())
+            start = index + 1
+    out.append(text[start:].strip())
+    return [sentence for sentence in out if sentence]
+
+
+def _unquoted(text: str) -> str:
+    """``text`` without its quoted phrases: a quoted title ("Top 5 moments") is words for the
+    screen, not five moments to cut."""
+    from app.services.spoken_quotes import quoted_spans  # noqa: PLC0415
+
+    for start, end, _phrase in reversed(quoted_spans(text)):
+        text = f"{text[:start]} {text[end:]}"
+    return text
+
+
+def _gives_numbers(ask: MomentAsk | None) -> bool:
+    return ask is not None and (ask.count is not None or ask.each_s is not None)
+
+
+def _asks_moments(update: BriefUpdate) -> bool:
+    """A `select` update about moments, with or without numbers ("the best moments")."""
+    from app.services.phone_reaction_grounding import fold_tokens  # noqa: PLC0415
+
+    if update.operation == "remove" or update.kind != "select":
+        return False
+    text = update.description or ""
+    return moment_ask_in_text(text, update.facts) is not None or bool(
+        _MOMENT_WORDS & set(fold_tokens(text))
+    )
+
+
+def message_moment_ask(
+    message: str, *, on_screen: Sequence[str] = ()
+) -> tuple[MomentAsk, str] | None:
+    """The moment numbers the creator's own message gives, with the sentence that asks.
+
+    The numbers are read over the whole message ("Pick 8 moments. Each about 2 seconds."), the
+    sentence is the first one that gives a number itself. Quoted phrases and the ``on_screen``
+    words (the brief's exact text, "Title: 6 moments of joy") are words to show, never moments
+    to cut. A list after a colon ("..., in this order: Caro arriving with the black tray, ...")
+    is left to the order ask that holds it when the words before the colon give the same
+    numbers, and the sentence is cut to the brief's 300 characters.
+    """
+    for words in on_screen:
+        if words.strip():
+            message = message.replace(words, " ")
+    ask = moment_ask_in_text(_unquoted(message))
+    if ask is None or not _gives_numbers(ask):
+        return None
+    sentence = next(
+        (s for s in _sentences(message) if _gives_numbers(moment_ask_in_text(_unquoted(s)))),
+        message.strip(),
+    )
+    head = sentence.split(":", 1)[0].strip()
+    if head != sentence and moment_ask_in_text(_unquoted(head)) == moment_ask_in_text(
+        _unquoted(sentence)
+    ):
+        sentence = head
+    if len(sentence) > _DESCRIPTION_MAX:
+        sentence = sentence[: _DESCRIPTION_MAX - 1].rsplit(" ", 1)[0] + "…"
+    return ask, sentence
+
+
+def carry_moment_ask(
+    prior: CreativeBrief | None, updates: Sequence[BriefUpdate], message: str
+) -> tuple[BriefUpdate, ...]:
+    """This turn's brief updates, carrying the moment numbers the creator's message gives.
+
+    Unchanged when the message gives none or the brief already carries them (the model
+    recorded them, or an earlier turn did). Otherwise the numbers go, as facts, onto this
+    turn's `select` moment requirement when the model wrote one, else onto the live one from an
+    earlier turn, else onto a new `select` requirement worded as the creator's own sentence. A
+    batch the brief would refuse, or one that changes or withdraws an earlier moment ask
+    another way, stays exactly as the model wrote it.
+    """
+    batch = tuple(updates)
+    try:
+        effective = apply_updates(prior, batch, source_turn_id=None)
+    except BriefUpdateBatchError:
+        return batch
+    said = message_moment_ask(
+        message or "",
+        on_screen=[req.literal for req in effective.live() if req.kind == "text" and req.literal],
+    )
+    if said is None:
+        return batch
+    ask, sentence = said
+    numbers: dict[str, Any] = {
+        key: value
+        for key, value in (("moment_count", ask.count), ("moment_length_s", ask.each_s))
+        if value is not None
+    }
+    kept = brief_moment_ask(effective)
+    if (
+        kept is not None
+        and numbers.get("moment_count", kept.count) == kept.count
+        and (numbers.get("moment_length_s", kept.each_s) == kept.each_s)
+    ):
+        return batch
+    for index, update in enumerate(batch):
+        if _asks_moments(update):
+            carried = BriefUpdate.model_validate(
+                {**update.model_dump(), "facts": {**update.facts, **numbers}}
+            )
+            return (*batch[:index], carried, *batch[index + 1 :])
+    targeted = {update.target_requirement_id for update in batch if update.operation != "add"}
+    earlier = [req for req in (prior.live() if prior else []) if moment_ask(req) is not None]
+    if any(req.id in targeted for req in earlier):
+        return batch  # the creator changed or withdrew that moment ask in this message
+    selects = [req for req in earlier if req.kind == "select"]
+    if prior is not None and selects:
+        req = selects[-1]
+        return (
+            *batch,
+            BriefUpdate(
+                operation="change",
+                target_requirement_id=req.id,
+                expected_version=prior.version,
+                kind=req.kind,
+                scope=req.scope,
+                literal=req.literal,
+                description=sentence,
+                facts={**req.facts, **numbers},
+            ),
+        )
+    return (*batch, BriefUpdate(kind="select", scope="global", description=sentence, facts=numbers))

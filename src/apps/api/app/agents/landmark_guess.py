@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.pipeline.prompt_loader import load_prompt
+from app.text_fold import fold_case
 
 _NAME_MAX_WORDS = 6
 _NAME_MAX_CHARS = 60
@@ -46,8 +47,11 @@ _UNKNOWN_VALUES = frozenset(
 
 
 def _fold(value: str) -> str:
-    """casefold with Turkish dotted/dotless I folded to plain i ("İ".casefold() is "i̇")."""
-    return value.replace("İ", "i").replace("ı", "i").casefold()
+    """casefold with Turkish dotted/dotless I folded to plain i ("İ".casefold() is "i̇").
+
+    The shared Turkish-aware fold (KRI-781).
+    """
+    return fold_case(value)
 
 
 _FOLDED_UNKNOWN = frozenset(_fold(value) for value in _UNKNOWN_VALUES)

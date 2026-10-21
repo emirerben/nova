@@ -143,6 +143,15 @@ def prepare_authored_assembly(
                 )
             _render_image_moment(source, output, duration_s=duration, **common)
         else:
+            from app.pipeline.editor_render_window import effective_source_start
+
+            start = effective_source_start(
+                start,
+                duration,
+                rate,
+                probe_video(local_by_path[path]).duration_s,
+                start_locked=bool(row.get("source_start_locked")),
+            )
             _render_video_moment(
                 local_by_path[path],
                 output,

@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.kria.brief import CreativeBrief
 from app.kria.brief_route import chapter_list
+from app.kria.freeze_ask import times_one_moment
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
 from app.kria.reply_language import say
@@ -37,6 +38,8 @@ from app.services.choice_questions import (
     OPT_ATTACHMENT_ORDER,
     OPT_SILENT_TAIL,
     OPT_UNORDERED,
+    is_pin_only_order,
+    pin_anchors,
 )
 from app.services.clip_order_sequence import (
     apply_sequence,
@@ -813,6 +816,17 @@ _SEQUENCE_UNRESOLVED = (
 )
 
 
+def _pin_not_found(words: str) -> str:
+    """A stated first / last clip the server could not place, in the chat's language."""
+    return say(
+        en=f"I couldn't tell which clip \"{words}\" means, so I can't confirm the order.",
+        tr=(
+            f'"{words}" derken hangi klibi kastettiğini anlayamadım, '
+            "o yüzden sırayı doğrulayamıyorum."
+        ),
+    )
+
+
 def _clip_intents_on() -> bool:
     """The planner seats a described sequence only when clip intents are on; so does the
     contract, or the two would disagree after a flag flip."""
@@ -1094,10 +1108,20 @@ def build_render_contract(
     sequence_placed = all(status == "resolved" for _p, _n, _m, status in sequence) and any(
         clip_ids.intersection(members) for _p, _n, members, _s in sequence
     )
+    placed_positions = {
+        position
+        for position, _name, members, status in sequence
+        if position and status == "resolved" and clip_ids.intersection(members)
+    }
     talking_edit = str(raw.get("edit_format") or "") in {"subtitled", "talking_head"}
     if brief:
         for requirement in brief.live():
-            if requirement.kind == "timing" and requirement.facts.get("duration_s") is not None:
+            if (
+                requirement.kind == "timing"
+                and requirement.facts.get("duration_s") is not None
+                # KRI-777: a freeze's or a moment's seconds are not the video's length.
+                and not times_one_moment(requirement)
+            ):
                 if owner != "creator":
                     continue
                 answered = answers.get(CONFLICT_DURATION_VS_COUNT) or answers.get(
@@ -1213,7 +1237,24 @@ def build_render_contract(
                     # basis; a bare brief key stays unresolved exactly as before.
                     attachment_order = True
                 elif key not in CAPTURE_ORDER_KEYS:
-                    unresolved.append("I can't verify this ordering rule from the approved media.")
+                    # KRI-762: first / last clips the server could not place are named, not
+                    # filed under "an ordering rule I can't verify" (the question gate no
+                    # longer asks about them; the creator's next message names the clip).
+                    missing_pins = (
+                        {
+                            position: words
+                            for position, words in pin_anchors(requirement).items()
+                            if position not in placed_positions
+                        }
+                        if is_pin_only_order(requirement)
+                        else {}
+                    )
+                    if missing_pins:
+                        unresolved.extend(_pin_not_found(words) for words in missing_pins.values())
+                    else:
+                        unresolved.append(
+                            "I can't verify this ordering rule from the approved media."
+                        )
     if order_answer is not None:
         if order_answer.option == OPT_UNORDERED:
             # The creator chose to drop the chronological promise: nothing to verify.
@@ -1313,8 +1354,9 @@ def build_render_contract(
             order_ids = ()
             order_basis = None
             unresolved.extend(
-                f"I couldn't tell which clip \"{words}\" means, so I can't confirm the order."
-                for words in unplaced.values()
+                message
+                for message in map(_pin_not_found, unplaced.values())
+                if message not in unresolved
             )
         elif any(status != "resolved" for _position, _name, _members, status in rows):
             order_ids = ()

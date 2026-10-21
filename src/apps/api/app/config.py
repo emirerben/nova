@@ -571,6 +571,22 @@ class Settings(BaseSettings):
     # after their API and physical-device evidence is complete.
     media_library_enabled: bool = False
     media_collection_proposals_enabled: bool = False
+    media_collection_proposal_user_ids: list[UUID] = Field(default_factory=list)
+    media_collection_cache_only: bool = True
+    # Explicit, per-account calibrated examples; no automatic public rollout.
+    creator_editorial_taste_enabled: bool = False
+    creator_editorial_taste_user_ids: list[str] = []
+
+    def creator_editorial_taste_for(self, user_id: object) -> bool:
+        return self.creator_editorial_taste_enabled and str(user_id) in {
+            value.strip() for value in self.creator_editorial_taste_user_ids
+        }
+
+    def media_collection_proposals_for(self, user_id: object) -> bool:
+        return self.media_collection_proposals_enabled and str(user_id) in {
+            str(value) for value in self.media_collection_proposal_user_ids
+        }
+
     # Daily comparison of delayed Standard Usage Cost export with Nova's
     # settled reservation ledger. Targets and project attribution stay JSON so
     # both billing accounts can be added without shipping account IDs in git.
@@ -847,6 +863,12 @@ class Settings(BaseSettings):
     # Deploy readers everywhere before enabling snapshot writers.
     kria_brief_binding_enabled: bool = False
     kria_brief_binding_user_ids: Annotated[list[str], NoDecode] = []
+    # KRI-775: before the approval card, run the phone montage plan the worker will run
+    # (`app.services.phone_montage_preflight`) and hold back a draft it would refuse,
+    # with the reason and the "simpler version?" choice. Deterministic, fail-open.
+    # Default TRUE; kill switch = false + restart (api + worker): approval is offered
+    # exactly as before and the worker's own check is the only one.
+    kria_phone_montage_preflight_enabled: bool = True
     # KRI-721: enroll new approval writers only after API/worker readers deploy.
     # Existing stamped assessments remain mandatory when enrollment is disabled.
     kria_approval_readiness_enabled: bool = False

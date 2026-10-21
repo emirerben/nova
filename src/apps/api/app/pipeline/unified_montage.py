@@ -55,6 +55,7 @@ from app.kria.brief_route import (
     wants_filming_time_text,
     wants_hour_only_text,
 )
+from app.kria.freeze_ask import times_one_moment
 from app.pipeline.best_parts import BestPart, BestPartsResult, select_best_parts
 from app.pipeline.pinned_text import drawable_pins, pins_from_strategy
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
@@ -84,7 +85,13 @@ from app.services.clip_facts import (
     format_capture_hour,
     order_by_capture_time,
 )
-from app.services.clip_order_sequence import apply_sequence, sequence_rows
+from app.services.clip_order_sequence import (
+    MomentSeats,
+    apply_sequence,
+    moment_seats,
+    row_relations,
+    sequence_rows,
+)
 from app.services.length_policy import natural_length_owner
 from app.services.spoken_quotes import is_outro_hallucination
 from app.services.spoken_roles import (
@@ -271,7 +278,8 @@ def brief_view(brief: Any) -> BriefView:
             # A "narrative" or a first/last-clip key is not a basis: it is what the
             # creator's own sequence rows (and the clips' words, KRI-585) decide.
             basis_stated = basis_stated or key.casefold() == ATTACHMENT_ORDER_KEY
-        elif req.kind == "timing":
+        elif req.kind == "timing" and not times_one_moment(req):
+            # KRI-777: "freeze the frame for one second on the bite" is not a one-second video.
             raw = (req.facts or {}).get("duration_s")
             if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0:
                 target = float(raw)
@@ -471,6 +479,10 @@ class UnifiedMontagePlan:
     spoken_roles: dict[str, str] = field(default_factory=dict)
     opening_speech: dict[str, Any] = field(default_factory=dict)
     closing_quiet: dict[str, Any] = field(default_factory=dict)
+    # KRI-760: the lines the creator asked to hear whole, one row per quote: {quote, status
+    # ("held" / "not_held" / "ambiguous" / "not_found"), media_id, source_start_s,
+    # source_end_s}. Empty without such an ask, so every earlier record is unchanged.
+    named_lines: list[dict[str, Any]] = field(default_factory=list)
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
@@ -497,6 +509,7 @@ class UnifiedMontagePlan:
         song = {"user_song": dict(self.song_receipt)} if self.song_receipt else {}
         speech = {"closing_speech": dict(self.closing_speech)} if self.closing_speech else {}
         quote = {"closing_quote": dict(self.closing_quote)} if self.closing_quote else {}
+        named = {"named_lines": [dict(row) for row in self.named_lines]} if self.named_lines else {}
         best_parts = (
             {"best_parts": list(self.best_parts_receipt)} if self.best_parts_receipt else {}
         )
@@ -559,6 +572,7 @@ class UnifiedMontagePlan:
             **outcomes,
             **choice,
             **zone,
+            **named,
             **song,
             **speech,
             **quote,
@@ -863,6 +877,35 @@ def _closing_records(
     return {}, {}
 
 
+def _named_line_records(cuts: Sequence[FastMontageCut], planned: object) -> list[dict[str, Any]]:
+    """The approved plan's whole-line rows (KRI-760), "held" only when a cut covers the line.
+
+    A line the approved plan found is "held" when some cut of its clip covers the sentence's
+    seconds and "not_held" when none does (the clip was left out, or its cut is shorter than
+    the line); a line it could not place stays as it was.
+    """
+    out: list[dict[str, Any]] = []
+    for row in planned if isinstance(planned, list) else []:
+        if not isinstance(row, Mapping) or not row.get("quote") or not row.get("status"):
+            continue
+        record: dict[str, Any] = {"quote": str(row["quote"]), "status": str(row["status"])}
+        start, end = _source_second(row.get("start_s")), _source_second(row.get("end_s"))
+        if record["status"] == "found" and start is not None and end is not None and end > start:
+            record.update(media_id=str(row.get("media_id") or ""))
+            record.update(source_start_s=start, source_end_s=end)
+            held = any(
+                cut.media_id == record["media_id"]
+                and cut.source_start_s <= start + _HELD_LINE_TOLERANCE_S
+                and cut.source_end_s >= end - _HELD_LINE_TOLERANCE_S
+                for cut in cuts
+            )
+            record["status"] = "held" if held else "not_held"
+        elif record["status"] == "found":
+            continue
+        out.append(record)
+    return out
+
+
 def _story_beats(cuts: Sequence[FastMontageCut]) -> list[StoryBeat]:
     beats: list[StoryBeat] = []
     for index in range(0, len(cuts), 4):
@@ -964,24 +1007,45 @@ def _apply_sequence(
 
 
 def _sequence_outcomes(
-    rows: Sequence[tuple[str | None, str, list[str], str]], ordered: Sequence[UnifiedClip]
+    rows: Sequence[tuple[str | None, str, list[str], str]],
+    ordered: Sequence[UnifiedClip],
+    *,
+    seats: MomentSeats | None = None,
+    cuts: Sequence[tuple[str, float]] = (),
 ) -> list[dict[str, Any]]:
     """Did each described group land where the creator said? Read off the finished order.
 
     Every row also carries a ``code`` (KRI-503) so the receipt never re-parses ``reason``:
     ``landed`` / ``misplaced`` (a described group is not where it was asked), ``absent`` (none
-    of its clips are in the edit), ``contained`` (all its clips are already in an earlier
-    group), ``visual`` (its members are Visuals-pool items, which no sequence rule seats) and
-    ``unresolved``. ``status`` keeps its meaning for every other consumer.
+    of its clips are in the edit), ``contained`` (a ``then`` group whose clips are all already
+    in an earlier group), ``repeat`` (a first / last group naming clips an earlier group
+    already seated at that same spot: the creator said it twice, KRI-764), ``conflict`` (a
+    first / last group naming clips an earlier group seated at another spot: one clip cannot
+    be both, the earlier claim stands), ``visual`` (its members are Visuals-pool items, which
+    no sequence rule seats) and ``unresolved``. ``status`` keeps its meaning for every other
+    consumer.
+
+    ``seats`` (KRI-796) are the rows read as moments of one take (``moment_seats``) and
+    ``cuts`` the finished cut order as (clip ref, source start): those rows are judged off
+    the cuts by ``_moment_outcomes`` and carry the ``moment`` they name or follow.
     """
     spot = {clip.ref_id: i for i, clip in enumerate(c for c in ordered if c.lane == "clip")}
     visuals = {clip.ref_id for clip in ordered if clip.lane != "clip"}
     named = {m for _p, _n, members, _s in rows for m in members if m in spot}
+    relations = row_relations(rows, present=spot)
+    moments = _moment_outcomes(seats, cuts) if seats is not None else {}
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for position, name, members, status in rows:
+    landed_clips: set[str] = set()
+    for index, ((position, name, members, status), relation) in enumerate(
+        zip(rows, relations, strict=True)
+    ):
         label = f"{position or 'then'}: {name}" if name else "the order you described"
         row = {"op": "order", "name": label, "position": position or "then"}
+        if index in moments:
+            seen.update(m for m in members if m in spot)
+            out.append({**row, **moments[index]})
+            continue
         mine = [m for m in members if m in spot and m not in seen]
         if status != "resolved":
             out.append(
@@ -990,6 +1054,28 @@ def _sequence_outcomes(
                     "status": "not_possible",
                     "code": "unresolved",
                     "reason": "I couldn't tell which clips",
+                }
+            )
+            continue
+        if relation == "repeat":
+            # The same ask twice: it stands or falls with the group that seated those clips.
+            met = all(m in landed_clips for m in members if m in spot)
+            out.append(
+                {
+                    **row,
+                    "status": "met" if met else "partial",
+                    "code": "repeat",
+                    "reason": None if met else "the clips did not end up there",
+                }
+            )
+            continue
+        if relation == "conflict":
+            out.append(
+                {
+                    **row,
+                    "status": "partial",
+                    "code": "conflict",
+                    "reason": "its clips are already placed at another spot",
                 }
             )
             continue
@@ -1011,6 +1097,8 @@ def _sequence_outcomes(
             or (position == "first" and max(ahead) < min(others))
             or (position == "last" and min(ahead) > max(others))
         )
+        if met:
+            landed_clips.update(mine)
         out.append(
             {
                 **row,
@@ -1020,6 +1108,70 @@ def _sequence_outcomes(
             }
         )
     return out
+
+
+def _moment_outcomes(
+    seats: MomentSeats, cuts: Sequence[tuple[str, float]]
+) -> dict[int, dict[str, Any]]:
+    """KRI-796: each row ``moment_seats`` read, judged off the finished cuts.
+
+    A moment's row is met when the take plays as exactly its windows, in take order (the
+    i-th cut of the take is the i-th moment). A Visual's row is met when every Visual it
+    names plays right after its moment: as many cuts of the take before it as the moment's
+    number. Never read off the seating itself, so a layout that misses the spot says so.
+    """
+    starts = [start for ref, start in cuts if ref == seats.take]
+    in_order = len(starts) == seats.moments and starts == sorted(starts)
+    out: dict[int, dict[str, Any]] = {}
+    for index, moment in seats.named.items():
+        out[index] = {
+            "status": "met" if in_order else "partial",
+            "code": "landed" if in_order else "misplaced",
+            "reason": None if in_order else "the clips did not end up there",
+            "moment": moment,
+        }
+    for index, (moment, members) in seats.placed.items():
+        spots = [next((i for i, (ref, _s) in enumerate(cuts) if ref == m), None) for m in members]
+        if None in spots:
+            out[index] = {
+                "status": "not_possible",
+                "code": "absent",
+                "reason": "I found no clips of it",
+                "moment": moment,
+            }
+            continue
+        met = in_order and all(
+            sum(ref == seats.take for ref, _s in cuts[:spot]) == moment for spot in spots
+        )
+        out[index] = {
+            "status": "met" if met else "partial",
+            "code": "landed" if met else "misplaced",
+            "reason": None if met else "the clips did not end up there",
+            "moment": moment,
+        }
+    return out
+
+
+_Slot = tuple[int, UnifiedClip, int, BestPart | None]
+
+
+def _seat_among_moments(slots: list[_Slot], seats: MomentSeats) -> list[_Slot]:
+    """KRI-796: a seated Visual's cut plays right after its moment, the take's n-th window.
+
+    ``slots`` are the cuts to emit as (index into ``ordered``, clip, frames, window), in
+    the order the clips were laid out; every other cut keeps its place.
+    """
+    moved = [slot for slot in slots if slot[1].ref_id in seats.after]
+    out: list[_Slot] = []
+    played = 0
+    for slot in slots:
+        if slot[1].ref_id in seats.after:
+            continue
+        out.append(slot)
+        if slot[1].ref_id == seats.take:
+            played += 1
+            out.extend(m for m in moved if seats.after[m[1].ref_id] == played)
+    return out if len(out) == len(slots) else slots
 
 
 def _ordering_choice(strategy: Mapping[str, Any], enabled: bool) -> str | None:
@@ -1520,6 +1672,22 @@ def plan_unified_montage(
     windows_by_id: dict[str, list[BestPart]] = {}
     for part in best_parts.parts if best_parts else ():
         windows_by_id.setdefault(part.media_id, []).append(part)
+    # KRI-796: "six moments, in this order: A, B, C ... the photo right after B". The
+    # creator's moments are the take's approved windows, and a Visual they seated among
+    # them plays there instead of after the whole take.
+    moment_seating = (
+        moment_seats(
+            sequence,
+            windows={
+                clip.ref_id: len(windows_by_id[clip.media_id])
+                for clip in ordered
+                if clip.lane == "clip" and clip.media_id in windows_by_id
+            },
+            visuals={visual.ref_id for visual in visuals},
+        )
+        if sequence and approved_windows
+        else None
+    )
     wanted: list[int] = []
     capacity: list[int] = []
     short: list[str] = []
@@ -1729,42 +1897,47 @@ def plan_unified_montage(
 
     spans: list[tuple[str, float, float, bool]] = []  # media id, start, end, approved
     refs: list[MediaRef] = []
-    for index, (clip, frames) in enumerate(zip(ordered, wanted, strict=True)):
-        for selected_window in windows_by_id.get(clip.media_id) or [None]:
-            duration = (
-                selected_window.duration_s
-                if selected_window is not None
-                else cut_ms[index] / 1000
-                if cut_ms is not None
-                else frames / FPS
-            )
-            if clip.kind == "image":
-                start, end = 0.0, round(duration, 3)
-            elif selected_window is not None:
-                start, end = selected_window.source_start_s, selected_window.source_end_s
-            elif clip.duration_s < MIN_VIDEO_CUT_S:
-                # Whole frames stop a fraction of a frame short of a 0.298s clip,
-                # which the snapshot refuses: a clip this short is shown whole.
-                start, end = 0.0, math.floor(clip.duration_s * 1000) / 1000
+    slots: list[_Slot] = [
+        (index, clip, frames, selected_window)
+        for index, (clip, frames) in enumerate(zip(ordered, wanted, strict=True))
+        for selected_window in windows_by_id.get(clip.media_id) or [None]
+    ]
+    if moment_seating is not None and moment_seating.after:
+        slots = _seat_among_moments(slots, moment_seating)
+    for index, clip, frames, selected_window in slots:
+        duration = (
+            selected_window.duration_s
+            if selected_window is not None
+            else cut_ms[index] / 1000
+            if cut_ms is not None
+            else frames / FPS
+        )
+        if clip.kind == "image":
+            start, end = 0.0, round(duration, 3)
+        elif selected_window is not None:
+            start, end = selected_window.source_start_s, selected_window.source_end_s
+        elif clip.duration_s < MIN_VIDEO_CUT_S:
+            # Whole frames stop a fraction of a frame short of a 0.298s clip,
+            # which the snapshot refuses: a clip this short is shown whole.
+            start, end = 0.0, math.floor(clip.duration_s * 1000) / 1000
+        else:
+            closing_line = speech_span is not None and index == len(ordered) - 1
+            if closing_line:
+                start = speech_span[0]
+            elif index == opening_index and seats.opening is not None:
+                start = seats.opening[1][0]
+            elif index == quiet_index and seats.quiet_close is not None:
+                # Centred in the quiet stretch: as far from the words as it can be.
+                quiet_start, quiet_end = seats.quiet_close[1]
+                start = round(quiet_start + max(0.0, (quiet_end - quiet_start - duration) / 2), 3)
             else:
-                closing_line = speech_span is not None and index == len(ordered) - 1
-                if closing_line:
-                    start = speech_span[0]
-                elif index == opening_index and seats.opening is not None:
-                    start = seats.opening[1][0]
-                elif index == quiet_index and seats.quiet_close is not None:
-                    # Centred in the quiet stretch: as far from the words as it can be.
-                    quiet_start, quiet_end = seats.quiet_close[1]
-                    start = round(
-                        quiet_start + max(0.0, (quiet_end - quiet_start - duration) / 2), 3
-                    )
-                else:
-                    start = _window_start_s(clip, duration)
+                start = _window_start_s(clip, duration)
+            end = round(start + duration, 3)
+            if end > clip.duration_s + 0.001:
+                start = round(max(0.0, clip.duration_s - duration), 3)
                 end = round(start + duration, 3)
-                if end > clip.duration_s + 0.001:
-                    start = round(max(0.0, clip.duration_s - duration), 3)
-                    end = round(start + duration, 3)
-            spans.append((clip.media_id, start, end, selected_window is not None))
+        spans.append((clip.media_id, start, end, selected_window is not None))
+    for clip in ordered:
         aspect = clip.aspect
         if clip.width and clip.height:
             swapped = clip.orientation_degrees in (90, 270)
@@ -1804,9 +1977,13 @@ def plan_unified_montage(
         speech_span,
         approved_length_plan.get("closing_quote") if approved_length_plan is not None else None,
     )
+    named_lines = _named_line_records(
+        cuts, approved_length_plan.get("named_lines") if approved_length_plan is not None else None
+    )
     # Keep the exact frame sum: rounding it to milliseconds can disagree with
     # the frame-aligned cuts by a third of a frame.
     total_s = sum(cut.output_duration_s for cut in cuts)
+    ref_of = {clip.media_id: clip.ref_id for clip in ordered}
     pins = drawable_pins(pins, total_s, [cut.output_duration_s for cut in cuts])
 
     snapshot_kwargs: dict[str, Any] = {}
@@ -1883,7 +2060,14 @@ def plan_unified_montage(
         label_scope_clip_ids=[
             clip.media_id for clip in ordered if clip.ref_id in (described or intent_labels)
         ],
-        intent_outcomes=_intent_outcomes(strategy, clip_intents_enabled, ordered, labels),
+        intent_outcomes=_intent_outcomes(
+            strategy,
+            clip_intents_enabled,
+            ordered,
+            labels,
+            seats=moment_seating,
+            cuts=[(ref_of[cut.media_id], cut.source_start_s) for cut in cuts],
+        ),
         ordering_choice=choice,
         dropped_label_clip_ids=dropped,
         short_label_clip_ids=short,
@@ -1913,6 +2097,7 @@ def plan_unified_montage(
         spoken_roles=spoken_roles,
         opening_speech=opening_speech,
         closing_quiet=closing_quiet,
+        named_lines=named_lines,
     )
 
 
@@ -2070,7 +2255,19 @@ def _fit_typography(
         )
         for text in texts
     ]
-    candidates = list(dict.fromkeys(f for f in (requested, _DEFAULT_FONT, *_FALLBACK_FONTS) if f))
+    # KRI-785: a requested face missing LETTERS of the text (Turkish ğ ş İ ı in
+    # Satisfy) tries its glyph-safe partner next, the face the cloud renderer
+    # and the iOS compiler swap to, before the unrelated default.
+    partner = None
+    if requested:
+        from app.pipeline.font_coverage import glyph_safe_family, missing_glyphs  # noqa: PLC0415
+
+        joined = " ".join(font_texts)
+        if any(ch.isalpha() for ch in missing_glyphs(requested, joined)):
+            partner = glyph_safe_family(requested, joined)
+    candidates = list(
+        dict.fromkeys(f for f in (requested, partner, _DEFAULT_FONT, *_FALLBACK_FONTS) if f)
+    )
     chosen = next(
         (family for family in candidates if all(covers(family, text) for text in font_texts)), None
     )
@@ -2312,6 +2509,9 @@ def _intent_outcomes(
     enabled: bool,
     ordered: Sequence[UnifiedClip],
     labels: Mapping[str, ClipLabel],
+    *,
+    seats: MomentSeats | None = None,
+    cuts: Sequence[tuple[str, float]] = (),
 ) -> list[dict[str, Any]]:
     """What each requested group / sport label / chapter text did in this plan (KRI-282).
 
@@ -2321,7 +2521,9 @@ def _intent_outcomes(
     """
     if not enabled:
         return []
-    sequence = _sequence_outcomes(_sequence_intents(strategy, enabled), ordered)
+    sequence = _sequence_outcomes(
+        _sequence_intents(strategy, enabled), ordered, seats=seats, cuts=cuts
+    )
     position = {clip.ref_id: i for i, clip in enumerate(ordered)}
     printed = {
         clip.ref_id: labels[clip.media_id].text for clip in ordered if clip.media_id in labels

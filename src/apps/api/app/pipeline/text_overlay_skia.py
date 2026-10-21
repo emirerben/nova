@@ -65,6 +65,7 @@ from app.pipeline.dissolve_effect import (
     render_dissolve_skia_image,
 )
 from app.pipeline.font_aliases import registry_font_name
+from app.pipeline.font_coverage import glyph_safe_family, glyph_safe_overlays
 from app.pipeline.generative_overlays import (
     resolve_letter_spacing_em,
     resolve_letter_spacing_px,
@@ -861,14 +862,25 @@ class TypefaceResolution:
     name: str
     file: str
     source: str
+    # Face resolved BEFORE the whole-run glyph fallback (KRI-785); None when no
+    # glyph swap happened. Keeps an unknown/unresolved requested family visible
+    # as `fallback` even when a glyph swap follows it.
+    pre_glyph_name: str | None = None
+
+    @property
+    def glyph_fallback(self) -> bool:
+        return self.source == "glyph_fallback"
 
     @property
     def fallback(self) -> bool:
+        # A glyph fallback is a deliberate whole-run swap to a face that covers
+        # the text (KRI-785), not an unresolved font: reported separately. The
+        # unknown-font check runs against the face resolved before that swap.
         if self.source == "authored_centerline":
             return False
+        honored = self.pre_glyph_name if self.glyph_fallback else self.name
         return bool(
-            self.requested_font_family
-            and self.name != registry_font_name(self.requested_font_family)
+            self.requested_font_family and honored != registry_font_name(self.requested_font_family)
         )
 
     def report_dict(self) -> dict[str, Any]:
@@ -879,6 +891,7 @@ class TypefaceResolution:
             "file": self.file,
             "source": self.source,
             "fallback": self.fallback,
+            "glyph_fallback": self.glyph_fallback,
         }
 
     def event_typeface_dict(self) -> dict[str, str]:
@@ -961,6 +974,39 @@ def _registry_typeface(name: str) -> tuple[str, str, skia.Typeface] | None:
 
 
 def _resolve_typeface_for_overlay(
+    overlay: dict, font_name_override: str | None = None
+) -> TypefaceResolution:
+    """Resolve the overlay's typeface, then make it glyph-safe for its text.
+
+    When the chosen registry face lacks a glyph the overlay text needs (Turkish
+    ğ ş İ in Satisfy, Rascal, ...), the whole run switches to the shared
+    `font_coverage.glyph_safe_family` fallback — the same rule the Pillow/libass
+    path, overlay_verify and the iOS compiler apply (KRI-785).
+    """
+    resolution = _resolve_requested_typeface(overlay, font_name_override)
+    if resolution.source == "last_resort":
+        return resolution
+    text = _overlay_text(overlay)
+    if not text:
+        return resolution
+    safe = glyph_safe_family(resolution.name, text)
+    if not safe or safe == resolution.name:
+        return resolution
+    resolved = _registry_typeface(safe)
+    if resolved is None:
+        return resolution
+    resolved_name, file_name, tf = resolved
+    return replace(
+        resolution,
+        typeface=tf,
+        name=resolved_name,
+        file=file_name,
+        source="glyph_fallback",
+        pre_glyph_name=resolution.name,
+    )
+
+
+def _resolve_requested_typeface(
     overlay: dict, font_name_override: str | None = None
 ) -> TypefaceResolution:
     """Resolve a typeface for an overlay following the same priority as
@@ -1052,7 +1098,7 @@ def _resolved_typeface_for_render(overlay: dict) -> TypefaceResolution:
 
 def _record_font_resolved_event(overlay: dict, overlay_index: int) -> None:
     resolution = _resolved_typeface_for_render(overlay)
-    level = "warning" if resolution.fallback else "info"
+    level = "warning" if resolution.fallback or resolution.glyph_fallback else "info"
     try:
         from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -1067,6 +1113,7 @@ def _record_font_resolved_event(overlay: dict, overlay_index: int) -> None:
                 "requested_font_style": resolution.requested_font_style,
                 "resolved_typeface": resolution.event_typeface_dict(),
                 "fallback": resolution.fallback,
+                "glyph_fallback": resolution.glyph_fallback,
                 "level": level,
             },
         )
@@ -4254,6 +4301,9 @@ def render_text_overlay_sequences(
     overlays = apply_direction_overrides(overlays)
     if not overlays:
         return [], None
+    # KRI-785: one glyph-safe face per requested family across the burn, so a
+    # Turkish lyric track never flips fonts line by line.
+    overlays = glyph_safe_overlays(overlays)
 
     complexity_error = text_motion_complexity_error(overlays)
     if complexity_error is not None:

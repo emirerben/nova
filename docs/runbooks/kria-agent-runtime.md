@@ -58,6 +58,15 @@ The terminal state determines the wording and safe action:
 Never retry an ambiguous dispatch by creating a new Job. Reconcile the committed
 Job and deterministic task identity first.
 
+A `dispatched` receipt settles (and its ready/failed chat card posts) in
+`_observe_dispatched_execution`. `tasks.observe_kria_job` (agent-control) runs it
+for one Job within seconds of the Job changing: every generative render task
+nudges it on exit (`_with_owned_job_fence`), the approval dispatch nudges it once
+the receipt reads `dispatched`, and the phone's publish/failure/refusal routes
+nudge it. The minute sweep (`reconcile_kria_turns`) is the fallback. A card that
+lands about a minute after the worker's terminal log line means the nudge was
+lost: search the logs for `kria_observe_nudge_failed`.
+
 ## Retry an approved edit (KRI-674)
 
 For a failed runtime-v2 native export, the iPhone sends

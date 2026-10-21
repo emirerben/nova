@@ -68,8 +68,14 @@ from app.kria.brief import (
     route_requirements,
     wants_clip_descriptions,
 )
-from app.kria.brief_checks import spoken_text_literals
+from app.kria.brief_checks import spoken_text_literals, whole_line_quotes
 from app.kria.brief_route import loose_text
+from app.kria.clip_exclusions import (
+    carry_forward_exclusions,
+    contested_exclusions,
+    earlier_exclusions,
+    exclusion_question,
+)
 from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope
 from app.kria.contracts import KriaTurnPlan
 from app.kria.duplicate_send import is_duplicate_answer
@@ -87,7 +93,7 @@ from app.kria.strategy_policy import (
     song_captions_refusal,
     transcript_labels_dropped_notice,
 )
-from app.kria.style_asks import brief_moment_ask
+from app.kria.style_asks import brief_moment_ask, carry_moment_ask, moment_ask_in_text
 from app.kria.voiceover_clips import keep_every_voiceover_clip
 from app.models import (
     ContentPlan,
@@ -108,6 +114,7 @@ from app.schemas.user_song import SONG_ALIGNMENT_VERSION
 from app.services.choice_questions import (
     CONFLICT_ORDER_VS_GROUP,
     ORDER_VS_GROUP_OPTIONS,
+    SIMPLER_VERSION_REASON,
     ChoiceCapability,
     answered_brief,
     ask_user_choice,
@@ -117,11 +124,16 @@ from app.services.choice_questions import (
     fold_choice_answers,
     length_inputs_waiting,
     resolve_choices,
+    simpler_version_accepted,
+    simpler_version_question,
     tag_event,
 )
 from app.services.clip_intent_answers import persist_clip_intent_vision_answers
 from app.services.clip_intent_planning import (
+    KeptLabel,
     PlannedIntentResolution,
+    brief_label_asks,
+    kept_labels_from_strategy,
     plan_and_resolve_clip_intents,
 )
 from app.services.clip_intent_resolution import IntentClip
@@ -176,8 +188,9 @@ from app.services.song_range import (
 )
 from app.services.spoken_quotes import (
     closing_quote_notice,
-    described_line_moments,
+    described_lines,
     ground_closing_quote,
+    named_line_records,
 )
 from app.services.spoken_roles import SpokenSeats
 
@@ -238,7 +251,14 @@ def _enrich_best_parts_snapshot(
         if isinstance(closing_quote, Mapping) and closing_quote.get("status") == "found"
         else []
     )
-    described = described_line_moments(_described_clip_texts(brief), media_snapshot, skip_ids=held)
+    quotes = _whole_line_quotes(brief)
+    described = {
+        media_id: found.window
+        for media_id, found in described_lines(
+            _described_clip_texts(brief), media_snapshot, skip_ids=held, lines=quotes
+        ).items()
+    }
+    named = named_line_records(quotes, media_snapshot, skip_ids=held)
 
     def windows_for(seats: SpokenSeats | None) -> dict[str, Any]:
         quiet_id = seats.quiet_close[0] if seats and seats.quiet_close else None
@@ -256,10 +276,12 @@ def _enrich_best_parts_snapshot(
             closing_quote=closing_quote,
             moment_count=moments.count if moments is not None else None,
             moment_max_s=moments.max_s if moments is not None else None,
+            moment_each_s=moments.each_s if moments is not None else None,
             # The creator's own description of a clip outranks its welcome line.
             spoken_moments={**dict([opening] if opening else []), **described},
             quiet_moments=dict([quiet]) if quiet else None,
             spoken_order=seats.record() if seats is not None else None,
+            named_lines=named,
         )
 
     # KRI-585: the clips' words seat the welcome's line and a quiet ending. "Fast cuts" is
@@ -303,6 +325,10 @@ def _described_clip_texts(brief: CreativeBrief | None) -> list[str]:
         return []
     texts: list[str] = []
     for req in brief.live():
+        if whole_line_quotes(req):
+            # KRI-760: "'...' dediği cümle baştan sona duyulsun" names its clip by the line
+            # (`_whole_line_quotes`); the rest of the sentence describes no clip.
+            continue
         if req.kind not in ("audio", "order"):
             continue
         texts.extend(text for text in (req.description, req.literal) if text)
@@ -310,25 +336,45 @@ def _described_clip_texts(brief: CreativeBrief | None) -> list[str]:
     return texts
 
 
+def _whole_line_quotes(brief: CreativeBrief | None) -> list[str]:
+    """The lines the creator wants heard whole (KRI-760), without repeats."""
+    if brief is None:
+        return []
+    return list(dict.fromkeys(quote for req in brief.live() for quote in whole_line_quotes(req)))
+
+
 def _moment_count_notice(
-    strategy: Mapping[str, Any], brief: CreativeBrief | None, length_plan: object
+    strategy: Mapping[str, Any],
+    brief: CreativeBrief | None,
+    length_plan: object,
+    *,
+    summary: str = "",
 ) -> str | None:
-    """KRI-596: the reply says so when the montage can't hold the moments asked for."""
-    ask = brief_moment_ask(brief)
+    """KRI-596: the reply says so when the montage can't hold the moments asked for.
+
+    KRI-776: also when the draft's own summary counts more moments than the plan holds ("I
+    will cut the 6 exact moments" over one cut of the take), whoever gave that number.
+    """
     if (
-        ask is None
-        or ask.count is None
-        or strategy.get("edit_format") != "montage"
+        strategy.get("edit_format") != "montage"
         or not isinstance(length_plan, Mapping)
         or length_plan.get("window_eligible") is not True
     ):
         return None
     planned = len(length_plan.get("windows") or [])
-    if planned == ask.count:
+    ask = brief_moment_ask(brief)
+    promised = moment_ask_in_text(summary) if summary else None
+    if ask is not None and ask.count is not None:
+        if planned == ask.count:
+            return None
+        count = ask.count
+    elif promised is not None and promised.count is not None and promised.count > planned:
+        count = promised.count
+    else:
         return None
     return say(
-        en=f"I could fit {planned} moments, not {ask.count}.",
-        tr=f"{ask.count} değil, {planned} an sığdırabildim.",
+        en=f"I could fit {planned} {'moment' if planned == 1 else 'moments'}, not {count}.",
+        tr=f"{count} değil, {planned} an sığdırabildim.",
     )
 
 
@@ -592,6 +638,7 @@ class PlannedKriaTurn:
     # flight). The runtime re-runs the same turn instead of asking the creator to say
     # "go ahead". Server-only: never reaches `KriaTurnPlan`, which forbids extra fields.
     continuable: bool = False
+    prepared_collection_story: dict | None = None
 
 
 def adapt_creator_action(
@@ -935,6 +982,21 @@ def _with_song_sync(strategy: Any, song_sync: str) -> Any:
     clone = copy.copy(strategy)
     clone.song_sync = song_sync
     return clone
+
+
+async def _load_kept_labels(db: AsyncSession, item_id: uuid.UUID) -> list[KeptLabel]:
+    """Labels the item's current draft already placed on clips (KRI-766), then release the txn."""
+    snapshot = (
+        await db.execute(
+            select(CreatorEditDraft.snapshot_json)
+            .where(CreatorEditDraft.item_id == item_id, CreatorEditDraft.is_head.is_(True))
+            .order_by(CreatorEditDraft.updated_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    await db.rollback()  # no connection pinned across the model calls that follow
+    strategy = snapshot.get("strategy") if isinstance(snapshot, dict) else None
+    return kept_labels_from_strategy(strategy)
 
 
 async def _load_thread_events(
@@ -2081,6 +2143,7 @@ async def _plan_from_creator_output(
     requested_media: Mapping[str, str] | None = None,
     describe_clips: bool = False,
     spoken_text: Sequence[str] = (),
+    effective_brief: CreativeBrief | None = None,
 ) -> PlannedKriaTurn:
     """Turn a Main Creator answer into an inert plan (clip-intent resolution incl.)."""
     decision = getattr(output, "creative_decision", None)
@@ -2128,6 +2191,7 @@ async def _plan_from_creator_output(
         requested_media=requested_media,
         describe_clips=describe_clips,
         spoken_text=spoken_text,
+        effective_brief=effective_brief,
     )
     return replace(planned, creative_copy_resolution=resolution)
 
@@ -2323,6 +2387,17 @@ def title_hold_grounded(
     return False
 
 
+async def _simpler_version_accepted(
+    db: AsyncSession, thread_id: uuid.UUID, fields: Sequence[str]
+) -> bool:
+    """KRI-759: this turn answers a policy refusal's "simpler version?" with yes."""
+    if not fields or not settings.kria_choice_questions_enabled:
+        return False
+    if not isinstance(db, AsyncSession):
+        return False  # no live session (a planner harness), so no thread to read an answer from
+    return simpler_version_accepted(await _load_thread_events(db, thread_id), fields)
+
+
 async def _plan_creator_action(
     db: AsyncSession,
     *,
@@ -2340,6 +2415,7 @@ async def _plan_creator_action(
     requested_media: Mapping[str, str] | None = None,
     describe_clips: bool = False,
     spoken_text: Sequence[str] = (),
+    effective_brief: CreativeBrief | None = None,
 ) -> PlannedKriaTurn:
     action = output.action
     if isinstance(action, ProposeStrategy):
@@ -2478,9 +2554,7 @@ async def _plan_creator_action(
             action = action.model_copy(update={"strategy": scoped})
         # KRI-142: the same server compile v1 runs, so a phone render never
         # silently drops what it can't draw while the reply claims it.
-        checked = check_strategy_for_runtime_v2(
-            manifest,
-            action.strategy,
+        check_kwargs: dict[str, Any] = {
             **({"ask_before_simplifying": True} if settings.brief_binding_for(creator_id) else {}),
             # KRI-476: also ask before a repair drops a title hold / full-screen ask the
             # creator stated. Off with the choice-questions flag: identical to before.
@@ -2515,11 +2589,51 @@ async def _plan_creator_action(
                 or action.strategy.media_scope == "all"
                 else {}
             ),
-        )
+        }
+        checked = check_strategy_for_runtime_v2(manifest, action.strategy, **check_kwargs)
+        if (
+            isinstance(checked, RefusedStrategy)
+            and checked.code == SIMPLER_VERSION_REASON
+            and await _simpler_version_accepted(db, thread_id, checked.fields)
+        ):
+            # KRI-759: the creator took the simpler version this very refusal offered
+            # (a tap, or "evet"). Draft what the check keeps instead of asking again, and
+            # say in the reply what was left out.
+            accepted = check_strategy_for_runtime_v2(
+                manifest,
+                action.strategy,
+                **{
+                    key: value
+                    for key, value in check_kwargs.items()
+                    if key not in ("ask_before_simplifying", "ask_about_stated_settings")
+                },
+            )
+            if not isinstance(accepted, RefusedStrategy):
+                log.info(
+                    "kria_simpler_version_accepted",
+                    thread_id=str(thread_id),
+                    fields=list(checked.fields),
+                )
+                checked = replace(
+                    accepted,
+                    notices=(*accepted.notices, *([checked.agreed] if checked.agreed else [])),
+                )
         if isinstance(checked, RefusedStrategy):
             log.info("kria_strategy_refused", thread_id=str(thread_id), code=checked.code)
             return PlannedKriaTurn(
-                plan=KriaTurnPlan(mode="respond", turn_value="question", response=checked.question),
+                plan=KriaTurnPlan(
+                    mode="respond",
+                    turn_value="question",
+                    response=checked.question,
+                    # KRI-759: a "simpler version?" needs buttons, or a "yes" is only a new
+                    # message that replans into the same refusal.
+                    choice_question=(
+                        simpler_version_question(checked.fields)
+                        if checked.code == SIMPLER_VERSION_REASON
+                        and settings.kria_choice_questions_enabled
+                        else None
+                    ),
+                ),
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
             )
@@ -2627,6 +2741,17 @@ async def _plan_creator_action(
             thread_events = await _load_thread_events(db, thread_id)
         if settings.kria_clip_selection_questions_enabled:
             clip_selections = fold_clip_selections(thread_events)
+        # KRI-766: the texts the creator dictated for a described shot, which this turn's
+        # inventory may not repeat, and the labels the draft already placed.
+        brief_labels = brief_label_asks(
+            effective_brief,
+            getattr(action.strategy, "shot_labels", None) or (),
+            spoken_text,
+        )
+        kept_labels = await _load_kept_labels(db, item_id) if effective_brief is not None else []
+        earlier_excluded = (
+            await _earlier_exclusions(db, item_id) if settings.clip_intent_exclude_enabled else []
+        )
         await _kick_clip_understanding(item_id, intent_clips)
         try:
             planned = await plan_and_resolve_clip_intents(
@@ -2660,6 +2785,8 @@ async def _plan_creator_action(
                 **({"clip_selections": clip_selections} if clip_selections else {}),
                 # KRI-612: "explain the footages" puts a line from the footage on each clip.
                 **({"describe_clips": True} if describe_clips else {}),
+                **({"brief_labels": brief_labels} if brief_labels else {}),
+                **({"kept_labels": kept_labels} if kept_labels else {}),
                 # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
                 # never a clip question; its receipt tells the creator.
                 **(
@@ -2806,6 +2933,44 @@ async def _plan_creator_action(
                 ),
             )
         if settings.clip_intent_exclude_enabled:
+            # KRI-761: the resolver is not deterministic and the whole request is re-planned
+            # every turn, so an ask it matched in the draft before keeps that match when it
+            # comes back empty now.
+            carried_intents, carried = carry_forward_exclusions(
+                planned.resolution.intents,
+                earlier_excluded,
+                clip_ids={clip.media_id for clip in intent_clips},
+            )
+            if carried:
+                log.info("kria_clip_exclusions_carried", thread_id=str(thread_id), carried=carried)
+                planned = replace(
+                    planned, resolution=replace(planned.resolution, intents=carried_intents)
+                )
+            # KRI-761: an exclude that names a clip another ask pins, or that look-alikes
+            # share, is the creator's to settle: the picker, never a guess.
+            contested = (
+                contested_exclusions(planned.resolution.intents, action.strategy)
+                if settings.kria_clip_selection_questions_enabled
+                else []
+            )
+            asked = exclusion_question(contested, intent_clips)
+            if asked is not None:
+                log.info(
+                    "kria_clip_exclusions_contested",
+                    thread_id=str(thread_id),
+                    asks=len(contested),
+                    pinned=sum(1 for c in contested if c.blocked),
+                )
+                return PlannedKriaTurn(
+                    plan=_clip_intent_resolution_plan(
+                        question=asked[0],
+                        status="needs_creator",
+                        diagnostics={"stage": "exclusion", "reason": "contested"},
+                        clip_question=asked[1],
+                    ),
+                    manifest_hash=manifest.manifest_hash,
+                    context_hash=manifest.context_hash,
+                )
             # KRI-667: "Skip the quad bike clip" leaves the clips the resolver confidently
             # matched out of the pick, whatever the model selected. After the strategy
             # check, so the narrowed strategy is checked again (a refusal keeps the pick).
@@ -2956,6 +3121,30 @@ def _creative_copy_turn(
         manifest_hash=manifest.manifest_hash,
         context_hash=manifest.context_hash,
     )
+
+
+async def _earlier_exclusions(db: AsyncSession, item_id: uuid.UUID) -> list[ResolvedClipIntent]:
+    """The ``exclude`` intents the item's head draft resolved (KRI-761); [] when unreadable.
+
+    Fails open: this only lets an ask keep a match it already had, so no read problem may
+    cost the creator a turn. The read runs in a savepoint (a database error cannot poison
+    the turn's transaction) and releases the transaction like the thread-event read before it.
+    """
+    try:
+        async with db.begin_nested():
+            snapshot = (
+                await db.execute(
+                    select(CreatorEditDraft.snapshot_json)
+                    .where(CreatorEditDraft.item_id == item_id, CreatorEditDraft.is_head.is_(True))
+                    .order_by(CreatorEditDraft.updated_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        await db.rollback()  # no connection pinned across the resolver and vision calls
+        return earlier_exclusions(snapshot)
+    except Exception as exc:  # noqa: BLE001 - an earlier match is a convenience, never a gate
+        log.info("kria_earlier_exclusions_unreadable", error_type=type(exc).__name__)
+        return []
 
 
 def _unapplied_exclusions(planned: PlannedIntentResolution) -> int:
@@ -3681,7 +3870,9 @@ async def _gate_unresolved_choices(
             closing_quote_notice(
                 length_plan.get("closing_quote") if isinstance(length_plan, dict) else closing_quote
             ),
-            _moment_count_notice(strategy, brief, length_plan),
+            _moment_count_notice(
+                strategy, brief, length_plan, summary=str(arguments.get("summary") or "")
+            ),
         )
         if notice
     ]
@@ -4258,7 +4449,11 @@ async def _plan_live_turn(
                 for result in extraction_outputs
                 for update in result.brief_updates
             }
-            pre_extracted_updates = tuple(unique_extracted.values())
+            # KRI-776: the creator's own moment numbers ride on the brief, whatever the
+            # extractor's paraphrase kept.
+            pre_extracted_updates = carry_moment_ask(
+                prior_brief, tuple(unique_extracted.values()), user_message
+            )
             effective = apply_updates(prior_brief, pre_extracted_updates, source_turn_id=None)
             extraction_complete = True
             fresh = new_requirements(prior_brief, effective)
@@ -4510,7 +4705,9 @@ async def _plan_live_turn(
             )
         )
     }
-    updates = tuple(unique_updates.values())
+    # KRI-776: the creator's own moment numbers ride on the brief, whatever the Main
+    # Creator's paraphrase kept ("six moments, about 2 seconds each" became a bare order list).
+    updates = carry_moment_ask(prior_brief, tuple(unique_updates.values()), user_message)
     try:
         effective = apply_updates(prior_brief, updates, source_turn_id=None)
     except BriefUpdateBatchError as exc:
@@ -4652,6 +4849,7 @@ async def _plan_live_turn(
         requested_media=requested_media(effective, (media.media_id for media in manifest.media)),
         describe_clips=wants_clip_descriptions(effective),
         spoken_text=spoken_text_literals(effective),
+        effective_brief=effective,
     )
     return replace(
         planned,
@@ -4723,7 +4921,11 @@ async def extract_deferred_brief(
     scope, _clarification = _extraction_request_scope(extraction_outputs)
     if scope == "clarify":
         return (), None
-    updates = tuple(update for output in extraction_outputs for update in output.brief_updates)
+    updates = carry_moment_ask(
+        prior_brief,
+        tuple(update for output in extraction_outputs for update in output.brief_updates),
+        user_message,
+    )
     effective = apply_updates(prior_brief, updates, source_turn_id=None)
     fresh = new_requirements(prior_brief, effective)
     item = await _refetch_item(db, item_id)

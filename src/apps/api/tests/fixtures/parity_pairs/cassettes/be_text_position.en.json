@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_text_position",
+  "lang": "en",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "Put a location label on each clip in the bottom left corner.",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "Put a location label on each clip in the bottom left corner."
+  },
+  "prompt_sha256": "b89184558813177294f0532dfb4b432bd6f20f8f069134787850779823d2c2e6",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:11:23.439858+00:00",
+  "raw_text": "{\"brief_updates\":[{\"operation\":\"add\",\"kind\":\"text\",\"scope\":\"per_clip\",\"literal\":null,\"description\":\"location label on each clip in the bottom left corner\",\"facts\":{\"position\":\"bottom_left\"}}],\"request_scope\":\"edit\"}",
+  "raw_texts": [
+    "{\"brief_updates\":[{\"operation\":\"add\",\"kind\":\"text\",\"scope\":\"per_clip\",\"literal\":null,\"description\":\"location label on each clip in the bottom left corner\",\"facts\":{\"position\":\"bottom_left\"}}],\"request_scope\":\"edit\"}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3231,
+    "out": 51,
+    "thoughts": 513
+  },
+  "computed_cost_usd": 0.004538
+}

@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_brighten",
+  "lang": "tr",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "klipler çok karanlık duruyor, biraz aydınlat",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "klipler çok karanlık duruyor, biraz aydınlat"
+  },
+  "prompt_sha256": "0ae42e833277a11e8888ca686877c5dc5c0e388a8be6b2940661993605690449",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:12:03.480415+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"klipler çok karanlık duruyor, biraz aydınlat\",\n      \"facts\": {\n        \"footage_light\": \"brighter\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"klipler çok karanlık duruyor, biraz aydınlat\",\n      \"facts\": {\n        \"footage_light\": \"brighter\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3230,
+    "out": 100,
+    "thoughts": 460
+  },
+  "computed_cost_usd": 0.004522
+}

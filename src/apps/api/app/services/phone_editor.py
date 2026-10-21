@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from app.config import settings
 from app.kria.device_render import make_device_request
 from app.kria.recipes_v2 import EditRecipeV2
+from app.pipeline.editor_render_window import RenderWindowUnavailable
 from app.pipeline.guided_story import (
     USER_SONG_LIPSYNC_LOCKED,
     USER_SONG_WINDOW_OUT_OF_RANGE,
@@ -703,7 +704,18 @@ def prepare_phone_editor_commit(
             {},
         )
         before_style = style_snapshot(before_variant, learning_sections or set())
-    prep = prepare(staged)
+    try:
+        prep = prepare(staged)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        # KRI-770: an unreadable source catalog is a state problem the creator can recover
+        # from by reloading, not a server fault.
+        if str(exc) in {"editor_source_catalog_invalid", "editor_source_identity_conflict"}:
+            raise HTTPException(409, detail={"code": "editor_source_catalog_invalid"}) from exc
+        raise _unsupported_phone_edit(job, variant_id, exc) from exc
+    except (KeyError, IndexError, TypeError) as exc:
+        raise _unsupported_phone_edit(job, variant_id, exc) from exc
     if not prep["has_render_section"]:
         return {**prep, "render_destination": "device"}
     from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
@@ -761,6 +773,16 @@ def prepare_phone_editor_commit(
                 )
         if relaxed:
             prep["requirements_relaxed"] = relaxed
+    except RenderWindowUnavailable as exc:
+        if not prep.get("preserve_editor_intent"):
+            raise _unsupported_phone_edit(job, variant_id, exc) from exc
+        # Section/source validation has finished. Roll back any partial
+        # compilation only, retaining the validated authored revision and its
+        # new generation for the route's durable snapshot transaction.
+        staged.assembly_plan = staged_before_compile
+        job.assembly_plan = staged.assembly_plan
+        job.status = staged.status
+        return {**prep, "render_destination": "device", "render_recovery": str(exc)}
     except LipsyncSyncError as exc:
         # The message is written for the creator (it says what to undo).
         log.warning(
@@ -780,6 +802,7 @@ def prepare_phone_editor_commit(
         raise HTTPException(422, detail={"code": exc.code, "reason": str(exc)[:300]}) from exc
     except (
         KeyError,
+        IndexError,
         StopIteration,
         TypeError,
         ValueError,

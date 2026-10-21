@@ -1,0 +1,106 @@
+{
+  "pair_id": "mc_photo_timing",
+  "lang": "en",
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-10-19-v64",
+  "message": "Photos should flash by really quickly, the videos can stay on screen longer.",
+  "input": {
+    "user_message": "Photos should flash by really quickly, the videos can stay on screen longer.",
+    "creator_context": "Travel creator; warm and direct.",
+    "item_context": "A day exploring Lisbon.",
+    "media_context": [
+      {
+        "media_id": "clip-1",
+        "kind": "video",
+        "creator_note": "arrival"
+      },
+      {
+        "media_id": "clip-2",
+        "kind": "video",
+        "creator_note": "sunset"
+      },
+      {
+        "media_id": "photo-1",
+        "kind": "image",
+        "creator_note": "city detail"
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-1",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "has_voiceover": false,
+      "media": [
+        {
+          "media_id": "clip-1",
+          "kind": "video",
+          "label": "arrival"
+        },
+        {
+          "media_id": "clip-2",
+          "kind": "video",
+          "label": "sunset"
+        },
+        {
+          "media_id": "photo-1",
+          "kind": "image",
+          "label": "city detail"
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Warm travel beat"
+        }
+      ],
+      "capabilities": {
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "media_overlays": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "transitions": {
+          "available": true
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "prompt_sha256": "b76eab1a97fa96ca1a9f33be9dfe22efe41456670b431b867f2c29b9e2ee2d42",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:07:48.039284+00:00",
+  "raw_text": "{\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"archetype\": \"day_vlog\",\n      \"hero_media_id\": null,\n      \"audio_strategy\": \"licensed_music\",\n      \"execution_contract\": null,\n      \"media_scope\": \"all\",\n      \"clip_intents\": [],\n      \"story_structure\": [\n        \"Arrival in Lisbon\",\n        \"Quick flashes of city details\",\n        \"Sunset over the city\"\n      ],\n      \"caption_style\": \"none\",\n      \"intro_hook\": null,\n      \"opening_title\": null,\n      \"closing_title\": null,\n      \"pacing\": \"fast\",\n      \"target_duration_s\": 10,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"optional_treatments\": [\n        \"transitions\"\n      ],\n      \"overlay_display\": null,\n      \"mixed_media_timing\": {\n        \"image_hold\": \"very_fast\",\n        \"video_hold\": \"longer\",\n        \"boundary_style\": \"cut\"\n      },\n      \"rationale\": \"Applied the requested mixed-media timing to hold on the arrival and sunset videos while flashing the city detail photo quickly. Set up as a chronological day vlog backed by a warm travel beat.\"\n    },\n    \"summary\": \"I'll create a chronological day vlog of your time in Lisbon. The videos will stay on screen longer, while the photo will flash by quickly, all set to a warm travel beat.\",\n    \"render_intent_evidence\": {}\n  }\n}",
+  "raw_texts": [
+    "{\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"archetype\": \"day_vlog\",\n      \"hero_media_id\": null,\n      \"audio_strategy\": \"licensed_music\",\n      \"execution_contract\": null,\n      \"media_scope\": \"all\",\n      \"clip_intents\": [],\n      \"story_structure\": [\n        \"Arrival in Lisbon\",\n        \"Quick flashes of city details\",\n        \"Sunset over the city\"\n      ],\n      \"caption_style\": \"none\",\n      \"intro_hook\": null,\n      \"opening_title\": null,\n      \"closing_title\": null,\n      \"pacing\": \"fast\",\n      \"target_duration_s\": 10,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"optional_treatments\": [\n        \"transitions\"\n      ],\n      \"overlay_display\": null,\n      \"mixed_media_timing\": {\n        \"image_hold\": \"very_fast\",\n        \"video_hold\": \"longer\",\n        \"boundary_style\": \"cut\"\n      },\n      \"rationale\": \"Applied the requested mixed-media timing to hold on the arrival and sunset videos while flashing the city detail photo quickly. Set up as a chronological day vlog backed by a warm travel beat.\"\n    },\n    \"summary\": \"I'll create a chronological day vlog of your time in Lisbon. The videos will stay on screen longer, while the photo will flash by quickly, all set to a warm travel beat.\",\n    \"render_intent_evidence\": {}\n  }\n}"
+  ],
+  "model_used": "gemini-3.1-pro-preview",
+  "tokens": {
+    "in": 9013,
+    "out": 400,
+    "thoughts": 1257
+  },
+  "computed_cost_usd": 0.03791
+}

@@ -7,9 +7,13 @@ is sticky: later renders must never re-run an archetype's original assignment.
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any
 
+import structlog
 from fastapi import HTTPException
+
+from app.schemas.editor_window import below_editor_minimum, snap_to_editor_minimum
 
 AUTHORED_TIMELINE_MODE = "authored"
 
@@ -112,7 +116,22 @@ def prepare_authored_editor_commit(
 
 # The phone clamps its own windows with this slack (KriaSourceWindowGeometry.boundsTolerance,
 # also the guided-v2 rule): a window it considers legal may end up to 50 ms past the source.
+log = structlog.get_logger(__name__)
+
 SOURCE_BOUNDS_TOLERANCE_S = 0.05
+
+# Slot ids the chat compile minted for clips that had none (``cs-<client_state_id[:12]>-<index>``,
+# removed in #1698). They were never saved, but chat drafts stored before that fix still carry them
+# into the editor, and every Save then refused them as a stale slot. "Reload and keep my edits"
+# re-applies the same local timeline, so the creator could never get out (KRI-773). Only this exact
+# server-minted shape is read as "a new placement"; any other unknown id stays a stale-slot 409.
+_LEGACY_MINTED_SLOT_ID = re.compile(r"^cs-[A-Za-z0-9_-]{1,12}-\d+$")
+
+
+def is_legacy_minted_slot_id(slot_id: str | None) -> bool:
+    return slot_id is not None and _LEGACY_MINTED_SLOT_ID.match(slot_id) is not None
+
+
 # Overshoot at or below this was always persisted untouched (frame rounding); keep it so.
 _SOURCE_BOUNDS_EXACT_S = 0.001
 
@@ -184,7 +203,7 @@ def _fit_window_to_source(
             reason="source_window_too_short",
         )
     fitted = math.floor((source_duration - slot.in_s) / rate * 1e6) / 1e6
-    if fitted < minimum_duration:
+    if below_editor_minimum(fitted, minimum_duration):
         raise _out_of_bounds_error(
             slot,
             order=order,
@@ -196,7 +215,9 @@ def _fit_window_to_source(
     return fitted
 
 
-def resolve_authored_phone_slots(job: Any, variant: dict, slots: list[Any]) -> list[dict]:
+def resolve_authored_phone_slots(
+    job: Any, variant: dict, slots: list[Any], *, preserve_intent: bool = False
+) -> list[dict]:
     """Resolve explicit placements against the original/admitted receipt catalog."""
     import math
     import uuid
@@ -209,13 +230,22 @@ def resolve_authored_phone_slots(job: Any, variant: dict, slots: list[Any]) -> l
 
     current = editor_deletion_timeline(job, variant)
     known = {row.get("slot_id") for row in current}
+    baseline = {row.get("slot_id"): row for row in current}
     resolved = []
     total = 0.0
     for slot in slots:
         if slot.removed:
             continue
         if slot.slot_id is not None and slot.slot_id not in known:
-            raise HTTPException(409, detail={"code": "TIMELINE_STALE"})
+            if not is_legacy_minted_slot_id(slot.slot_id):
+                log.warning(
+                    "editor_commit_stale_slot",
+                    slot_id=slot.slot_id,
+                    clip_index=slot.clip_index,
+                    known_slots=len(known),
+                )
+                raise HTTPException(409, detail={"code": "TIMELINE_STALE"})
+            slot = slot.model_copy(update={"slot_id": None})  # a new placement (KRI-773)
         if not 0 <= slot.clip_index < len(catalog):
             raise HTTPException(422, detail={"code": "TIMELINE_UNKNOWN_CLIP"})
         source = catalog[slot.clip_index]
@@ -233,11 +263,12 @@ def resolve_authored_phone_slots(job: Any, variant: dict, slots: list[Any]) -> l
         if (
             not all(math.isfinite(value) for value in (slot.in_s, duration, rate))
             or slot.in_s < 0
-            or duration < minimum_duration
+            or below_editor_minimum(duration, minimum_duration)
         ):
             raise HTTPException(422, detail={"code": "TIMELINE_INVALID_WINDOW"})
+        duration = snap_to_editor_minimum(duration, minimum_duration)
         bound = source.get("duration_s")
-        if source["kind"] == "video":
+        if source["kind"] == "video" and not preserve_intent:
             duration = _fit_window_to_source(
                 slot,
                 order=len(resolved),
@@ -255,9 +286,14 @@ def resolve_authored_phone_slots(job: Any, variant: dict, slots: list[Any]) -> l
                 "slot_id": slot.slot_id or str(uuid.uuid4()),
                 "source_gcs_path": source["gcs_path"],
                 "source_duration_s": bound,
+                "source_kind": source["kind"],
                 "media_id": source["media_id"],
                 "order": len(resolved),
                 "duration_s": duration,
+                "source_start_locked": bool(
+                    slot.source_start_locked
+                    or (baseline.get(slot.slot_id) or {}).get("source_start_locked")
+                ),
             }
         )
     if not resolved:
@@ -362,7 +398,9 @@ def authored_cloud_timeline_clips(
     return result
 
 
-def resolve_authored_cloud_slots(job: Any, variant: dict, slots: list[Any]) -> list[dict]:
+def resolve_authored_cloud_slots(
+    job: Any, variant: dict, slots: list[Any], *, preserve_intent: bool = False
+) -> list[dict]:
     """Preserve exact authored source identities and per-occurrence geometry."""
     import math
     import uuid
@@ -392,7 +430,15 @@ def resolve_authored_cloud_slots(job: Any, variant: dict, slots: list[Any]) -> l
         if slot.removed:
             continue
         if slot.slot_id is not None and slot.slot_id not in baseline:
-            raise HTTPException(409, detail={"code": "TIMELINE_STALE"})
+            if not is_legacy_minted_slot_id(slot.slot_id):
+                log.warning(
+                    "editor_commit_stale_slot",
+                    slot_id=slot.slot_id,
+                    clip_index=slot.clip_index,
+                    known_slots=len(baseline),
+                )
+                raise HTTPException(409, detail={"code": "TIMELINE_STALE"})
+            slot = slot.model_copy(update={"slot_id": None})  # a new placement (KRI-773)
         if not 0 <= slot.clip_index < len(catalog):
             raise HTTPException(422, detail={"code": "TIMELINE_UNKNOWN_CLIP"})
         old = baseline.get(slot.slot_id) or {}
@@ -423,12 +469,14 @@ def resolve_authored_cloud_slots(job: Any, variant: dict, slots: list[Any]) -> l
             duration is None
             or not all(math.isfinite(v) for v in (slot.in_s, duration, rate))
             or slot.in_s < 0
-            or duration < 0.1
+            or below_editor_minimum(duration)
         ):
             raise HTTPException(422, detail={"code": "TIMELINE_INVALID_WINDOW"})
+        duration = snap_to_editor_minimum(duration)
         bound = source.get("source_duration_s")
         if (
-            source["source_kind"] == "video"
+            not preserve_intent
+            and source["source_kind"] == "video"
             and bound is not None
             and slot.in_s + duration * rate > float(bound) + SOURCE_BOUNDS_TOLERANCE_S
         ):
@@ -462,6 +510,9 @@ def resolve_authored_cloud_slots(job: Any, variant: dict, slots: list[Any]) -> l
                 **slot.model_dump(mode="json"),
                 **source,
                 **controls,
+                "source_start_locked": bool(
+                    slot.source_start_locked or old.get("source_start_locked")
+                ),
                 "slot_id": slot.slot_id or str(uuid.uuid4()),
                 "duration_s": float(duration),
                 "look_preset": preset,
@@ -477,5 +528,11 @@ def resolve_authored_cloud_slots(job: Any, variant: dict, slots: list[Any]) -> l
     prefix = _durable_sources_prefix(job)
     for path in {row["source_gcs_path"] for row in resolved}:
         if path.startswith(prefix) and not storage.object_exists(path):
-            raise HTTPException(422, detail={"code": "sources_expired"})
+            if not preserve_intent:
+                raise HTTPException(422, detail={"code": "sources_expired"})
+            # Identity is already admitted from this owned job's catalogue.
+            # Missing bytes prevent rendering, not persistence of that identity.
+            for row in resolved:
+                if row["source_gcs_path"] == path:
+                    row["source_unavailable"] = True
     return resolved

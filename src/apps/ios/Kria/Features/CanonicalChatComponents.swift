@@ -87,6 +87,7 @@ struct ProjectsDrawer: View {
     let close: () -> Void
     let openGallery: () -> Void
     var openAccount: () -> Void = {}
+    var openCollections: (() -> Void)? = nil
     @EnvironmentObject private var model: AppModel
     @AccessibilityFocusState private var menuFocused: Bool
 
@@ -103,6 +104,12 @@ struct ProjectsDrawer: View {
                     Spacer()
                     Text("\(model.libraryProjects.count)\(model.libraryNextCursor == nil ? "" : "+") \(model.libraryProjects.count == 1 && model.libraryNextCursor == nil ? "video" : "videos")").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                 }.frame(minHeight: 44).padding(.horizontal, 12)
+            }
+            if let openCollections {
+                Button(action: openCollections) {
+                    Label("Camera-roll collection", systemImage: "photo.stack")
+                        .font(KriaFont.body(15).weight(.medium)).frame(minHeight: 44).padding(.horizontal, 12)
+                }.accessibilityIdentifier("camera-roll-collection-open")
             }
             VStack(alignment: .leading, spacing: 10) {
                 Text("Recent chats").font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk).padding(.horizontal, 12)
