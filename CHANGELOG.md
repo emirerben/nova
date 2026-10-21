@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.8.0] - 2026-10-21
+
+### Changed
+- fix(editor): a chat-minted slot id no longer traps Save in a stale-edit loop (KRI-799) (#1719) <!-- release-pr: 1719 -->
+
 ## [0.81.7.0] - 2026-10-21
 
 ### Changed
