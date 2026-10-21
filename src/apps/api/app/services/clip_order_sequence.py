@@ -59,10 +59,22 @@ def unresolved_questions(resolved_intents: object) -> list[str]:
             continue
         words = _nfc(intent.get("attribute"))
         if words:
-            out.append(
-                f"I couldn't tell which clips \"{words}\" means, so I can't confirm the order."
-            )
+            out.append(unclear_sequence_words(words))
     return out
+
+
+def unclear_sequence_words(words: str) -> str:
+    """A described sequence the server could not place, in the chat's language (KRI-795:
+    the render worker writes English, and the chat re-words it with this same function)."""
+    from app.kria.reply_language import say  # noqa: PLC0415 - keeps this module import-light
+
+    return say(
+        en=f"I couldn't tell which clips \"{words}\" means, so I can't confirm the order.",
+        tr=(
+            f'"{words}" derken hangi klipleri kastettiğini anlayamadım, '
+            "o yüzden sırayı doğrulayamıyorum."
+        ),
+    )
 
 
 ANCHOR_FACTS = (("first_clip", "first"), ("last_clip", "last"))

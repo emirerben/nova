@@ -826,6 +826,17 @@ def _pin_not_found(words: str) -> str:
     )
 
 
+def text_clip_not_found(literal: str) -> str:
+    """Creator text whose clip the server could not tell, in the chat's language."""
+    return say(
+        en=f"I couldn't tell which clip \"{literal}\" goes on, so I can't confirm that text.",
+        tr=(
+            f'"{literal}" yazısının hangi klibe gideceğini anlayamadım, o yüzden bu yazıyı '
+            "doğrulayamıyorum."
+        ),
+    )
+
+
 def _clip_intents_on() -> bool:
     """The planner seats a described sequence only when clip intents are on; so does the
     contract, or the two would disagree after a flag flip."""
@@ -1169,19 +1180,7 @@ def build_render_contract(
                                 for media_id in placed_ids
                             )
                             continue
-                        unresolved.append(
-                            say(
-                                en=(
-                                    f'I couldn\'t tell which clip "{requirement.literal}" '
-                                    "goes on, so I can't confirm that text."
-                                ),
-                                tr=(
-                                    f'"{requirement.literal}" yazısının hangi klibe '
-                                    "gideceğini anlayamadım, o yüzden bu yazıyı "
-                                    "doğrulayamıyorum."
-                                ),
-                            )
-                        )
+                        unresolved.append(text_clip_not_found(requirement.literal))
                 role: Literal["opening", "closing", "any", "clip"] = (
                     "clip"
                     if requirement.scope.startswith("clip:") or requirement.scope == "per_clip"
