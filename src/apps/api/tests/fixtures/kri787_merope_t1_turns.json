@@ -1,11 +1,11 @@
 {
- "about": "KRI-787 (Merope cafe T1 Talking, prod 042c405c9, Main Creator 2026-10-19-v64, 2026-10-21): thread 32A5B608-6397-4608-889F-DFF5AD9BEC40, plan item b5477ee9, one 68.37 s DJI take. Two approved drafts, two renders refused at dispatch (phone_plan_unsupported): \"I can't verify this ordering rule from the approved media.\" Copied from the run evidence: the chat's events (creator messages, the order_basis question, both drafts' receipts and approval cards, both failure cards), each render's draft strategy (turns.json) and job row (job_debug.json, job2_debug.json: persisted strategy, approved brief + choice answers, render contract, failure). The job-debug export leaves the clip identity (media_id, gcs_path) out of the binding's media snapshot; take_row restores them from item_debug.json. The export also redacts media ids inside the stored contract (order_ids [], no generation_id): its digest is whole. brief_v1 is the brief the turn-2 Main Creator input shows (r2 as first written, r7 live).",
+ "about": "KRI-787 (Merope cafe T1 Talking, prod 042c405c9, Main Creator 2026-10-19-v64, 2026-10-21): thread 32A5B608-6397-4608-889F-DFF5AD9BEC40, plan item b5477ee9, one 68.37 s DJI take. Two approved drafts, two renders refused at dispatch (phone_plan_unsupported): \"I can't verify this ordering rule from the approved media.\" Copied from the run evidence: the chat's events (creator messages, the order_basis question, both drafts' receipts and approval cards, both failure cards), each render's draft strategy (turns.json) and job row (job_debug.json, job2_debug.json: persisted strategy, approved brief + choice answers, render contract, failure). The job-debug export leaves the clip identity (media_id, gcs_path) out of the binding's media snapshot; take_row restores them from item_debug.json. The export also redacts media ids inside the stored contract (order_ids [], no generation_id): its digest is whole. brief_v1 is the brief the turn-2 Main Creator input shows (r2 as first written, r7 live). The creator's account id (also in every storage path) is a synthetic stand-in.",
  "thread_id": "32a5b608-6397-4608-889f-dff5ad9bec40",
- "creator_id": "7b56dd6f-6b9a-4634-89c8-ce91bb50a50d",
+ "creator_id": "48b4c528-e227-50e3-9e0f-e06af2c18099",
  "plan_item_id": "b5477ee9-7581-4f75-b1bd-2053d73ee64c",
  "take": {
   "media_id": "analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4",
-  "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/32a5b608-6397-4608-889f-dff5ad9bec40/analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4",
+  "gcs_path": "users/48b4c528-e227-50e3-9e0f-e06af2c18099/creation-threads/32a5b608-6397-4608-889f-dff5ad9bec40/analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4",
   "duration_s": 68.37
  },
  "creator_messages": [
@@ -1290,7 +1290,7 @@
    "purpose": "analysis_proxy"
   },
   "media_id": "analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4",
-  "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/32a5b608-6397-4608-889f-dff5ad9bec40/analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4",
+  "gcs_path": "users/48b4c528-e227-50e3-9e0f-e06af2c18099/creation-threads/32a5b608-6397-4608-889f-dff5ad9bec40/analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4",
   "manifest_identity": "analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4",
   "storage_generation": "1"
  },
