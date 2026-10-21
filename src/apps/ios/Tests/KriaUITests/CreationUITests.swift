@@ -1128,11 +1128,12 @@ final class CreationUITests: XCTestCase {
         let choose = app.buttons["clip-choose"]
         XCTAssertTrue(choose.exists)
         XCTAssertLessThan(approve.frame.minY, choose.frame.minY, "the cards follow the reply: title first, then clips")
+        let sent = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "You:"))
+        let sentBefore = sent.count
         approve.tap()
         XCTAssertTrue(app.staticTexts["choice-batch-note"].waitForExistence(timeout: 3))
         XCTAssertEqual(approve.value as? String, "Selected")
-        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "You:")).firstMatch.exists,
-                       "the title answer waits for the clips")
+        XCTAssertEqual(sent.count, sentBefore, "the title answer waits for the clips")
         choose.tap()
         XCTAssertTrue(app.descendants(matching: .any)["clip-sheet"].waitForExistence(timeout: 5))
         let redCap = app.buttons["clip-thumb-red_cap-fixture-clip-2"]
@@ -1151,13 +1152,14 @@ final class CreationUITests: XCTestCase {
         let app = launchQuestionBatchFixture()
         let choose = app.buttons["clip-choose"]
         XCTAssertTrue(choose.waitForExistence(timeout: 15))
+        let sent = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "You:"))
+        let sentBefore = sent.count
         choose.tap()
         XCTAssertTrue(app.descendants(matching: .any)["clip-sheet"].waitForExistence(timeout: 5))
         app.buttons["clip-thumb-red_cap-fixture-clip-2"].tap()
         app.buttons["clip-done"].tap()
         XCTAssertTrue(app.staticTexts["clip-batch-note"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "You:")).firstMatch.exists,
-                       "the clips wait for the title answer")
+        XCTAssertEqual(sent.count, sentBefore, "the clips wait for the title answer")
         app.buttons["choice-option-approve"].tap()
         let echo = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "turns[1] choice[approve] answers[red_cap=fixture-clip-2]")).firstMatch
         XCTAssertTrue(echo.waitForExistence(timeout: 10), "one turn carried both structured answers")
