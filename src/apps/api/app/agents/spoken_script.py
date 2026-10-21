@@ -91,6 +91,41 @@ _SPOKEN_SCRIPT_CUE_RE = re.compile(
     r")\s*[:\-–—]?\s*$",
     re.IGNORECASE,
 )
+# KRI-783: Turkish puts the speech verb AFTER the quote ('Arkadaşım "..." dedi') and
+# marks a voiceover line with "Seslendirme:" / "Dış ses:". Matched as whole words of the
+# shared Turkish fold (``loose_text``), so every spelling and case reads alike.
+_TR_ATTRIBUTION_VERBS = frozenset(
+    {
+        "dedi",
+        "demisti",
+        "diyor",
+        "diyordu",
+        "dedim",
+        "dedik",
+        "dediler",
+        "demis",
+        "soyledi",
+        "soyluyor",
+        "soylemisti",
+        "sordu",
+        "bagirdi",
+        "yanitladi",
+        "yazdi",
+    }
+)
+_TR_DISPLAY_CUE_STEMS = ("ekran", "altyazi", "baslik", "etiket")
+_TR_SPOKEN_SCRIPT_CUE_STEMS = ("seslendirme", "anlatim", "anlatici", "senaryo")
+_TR_SPOKEN_SCRIPT_VERBS = frozenset(
+    {
+        "diyorum",
+        "diyecegim",
+        "derim",
+        "dedigim",
+        "soyluyorum",
+        "soyleyecegim",
+        "seslendiriyorum",
+    }
+)
 # A long quote (>= 6 words) that fails an exact transcript match is retried
 # with a bounded number of tolerated word errors — ASR occasionally mis-hears
 # a word or two of an otherwise-correct voiceover line; a short quote never
@@ -108,9 +143,42 @@ def is_reported_speech_quote(request: str, match: re.Match[str]) -> bool:
     an explicit display instruction attached to that quote overrides it.
     """
     prefix = _quote_clause_prefix(request, match)
-    if not _SPEECH_ATTRIBUTION_RE.search(prefix):
+    if _SPEECH_ATTRIBUTION_RE.search(prefix):
+        return not _quote_has_display_instruction(request, match, prefix)
+    return _is_turkish_reported_speech(request, match, prefix)
+
+
+def _tr_words(value: str) -> list[str]:
+    """Whole words of the shared Turkish fold ("DEDİ," -> ["dedi"])."""
+    # Lazy import: app.kria's package init imports the planners that import this module.
+    from app.kria.brief_route import loose_text
+
+    return "".join(ch if ch.isalnum() else " " for ch in loose_text(value)).split()
+
+
+def _first_sentence(value: str) -> str:
+    end = next((i for i, ch in enumerate(value) if ch in ".!?\n;"), len(value))
+    return value[:end]
+
+
+def _tr_leading_verb(value: str, verbs: frozenset[str]) -> bool:
+    """The clause after a quote opens with one of ``verbs`` ("diye" may come first)."""
+    tokens = _tr_words(_first_sentence(value))
+    if tokens[:1] == ["diye"]:
+        tokens = tokens[1:]
+    return bool(tokens) and (tokens[0] in verbs or tokens[:2] == ["cevap", "verdi"])
+
+
+def _is_turkish_reported_speech(request: str, match: re.Match[str], prefix: str) -> bool:
+    """'Arkadaşım "..." dedi': the attribution verb follows the quote in Turkish.
+
+    A display cue in the same clause ("ekranda", "altyazı") keeps the quote as copy.
+    """
+    suffix = request[match.end() :]
+    if not _tr_leading_verb(suffix, _TR_ATTRIBUTION_VERBS):
         return False
-    return not _quote_has_display_instruction(request, match, prefix)
+    clause = _tr_words(f"{prefix} {_first_sentence(suffix)}")
+    return not any(token.startswith(_TR_DISPLAY_CUE_STEMS) for token in clause)
 
 
 def _quote_clause_prefix(request: str, match: re.Match[str]) -> str:
@@ -201,13 +269,27 @@ def is_spoken_script_quote(request: str, match: re.Match[str], spoken: list[str]
     prefix = _quote_clause_prefix(request, head)
     # The short-quote gate guards the transcript rule only: an explicit cue
     # says the creator meant a short line as speech, not as a label.
-    if not _SPOKEN_SCRIPT_CUE_RE.search(prefix) and not transcript_speaks(words, spoken):
+    if not _has_spoken_script_cue(request, prefix, tail) and not transcript_speaks(words, spoken):
         return False
     if _SPOKEN_QUOTE_PLACEMENT_RE.search(prefix) or _SPOKEN_QUOTE_WHERE_RE.match(
         request[tail.end() :]
     ):
         return False
     return not _quote_has_display_instruction(request, tail, prefix)
+
+
+def _has_spoken_script_cue(request: str, prefix: str, tail: re.Match[str]) -> bool:
+    """English cue before the quote, or the Turkish cue before ("Seslendirme:", "Dış ses:")
+    or after it ('"..." diyorum')."""
+    if _SPOKEN_SCRIPT_CUE_RE.search(prefix):
+        return True
+    before = _tr_words(prefix)
+    if before and (
+        before[-1].startswith(_TR_SPOKEN_SCRIPT_CUE_STEMS)
+        or (before[-2:-1] == ["dis"] and before[-1].startswith("ses"))
+    ):
+        return True
+    return _tr_leading_verb(request[tail.end() :], _TR_SPOKEN_SCRIPT_VERBS)
 
 
 def quote_text(match: re.Match[str]) -> str:

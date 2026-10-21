@@ -24,7 +24,14 @@ log = structlog.get_logger()
 CANDIDATE_COUNT = 9
 TOP_N = 3
 SCENE_CUT_PROXIMITY_S = 5.0  # +1 hook bonus if segment starts within 5s of a cut
+# English hook openers, matched as prefixes (unchanged legacy behavior).
 FILLER_WORDS = {"um", "uh", "like", "you know", "so", "basically", "literally"}
+# KRI-783: Turkish discourse openers that play the role of "so"/"like"/"I mean", matched
+# as the whole first word on the Turkish-folded form ("YANİ" == "yani"). Hesitation
+# sounds ("ııı", "eee") come from silence_cut's shared bilingual filler lexicon.
+_TR_FILLER_OPENERS = frozenset({"yani", "hani", "sey", "valla"})
+# Exclamations in that lexicon open strong hooks ("Oh no!"); they are not penalized.
+_HOOK_EXCLAMATIONS = frozenset({"oh", "ah", "eh", "oo"})
 
 # Target clip duration from plan
 CLIP_DURATION_S = 50.0  # midpoint of 45-59s range
@@ -76,10 +83,7 @@ def select_candidates(
             source_ref, segments, job_id=job_id
         )
         # Use Gemini-extracted hook texts where available
-        hook_texts = [
-            gemini_hook_texts[i] or hook_texts[i]
-            for i in range(len(segments))
-        ]
+        hook_texts = [gemini_hook_texts[i] or hook_texts[i] for i in range(len(segments))]
     elif transcript.low_confidence:
         log.info("asr_fallback_mode_engagement_only")
         raw_hook_scores = [0.0] * len(segments)
@@ -106,14 +110,16 @@ def select_candidates(
         else:
             combined = settings.hook_weight * hook + settings.engagement_weight * eng
 
-        candidates.append(ClipCandidate(
-            start_s=start_s,
-            end_s=end_s,
-            hook_text=hook_texts[i],
-            hook_score=hook,
-            engagement_score=eng,
-            combined_score=combined,
-        ))
+        candidates.append(
+            ClipCandidate(
+                start_s=start_s,
+                end_s=end_s,
+                hook_text=hook_texts[i],
+                hook_score=hook,
+                engagement_score=eng,
+                combined_score=combined,
+            )
+        )
 
     candidates.sort(key=lambda c: c.combined_score, reverse=True)
     for i, c in enumerate(candidates):
@@ -158,10 +164,7 @@ def _score_hooks_gemini(
 
     max_workers = min(len(segments), 8)
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {
-            pool.submit(_analyze_one, (i, seg)): i
-            for i, seg in enumerate(segments)
-        }
+        futures = {pool.submit(_analyze_one, (i, seg)): i for i, seg in enumerate(segments)}
         for future in as_completed(futures):
             idx, score, text = future.result()
             scores[idx] = score
@@ -237,9 +240,24 @@ def _adjust_hook_score(
         score += 1.0
     # -1 if starts with filler word
     lower = hook_text.lower().strip()
-    if any(lower.startswith(fw) for fw in FILLER_WORDS):
+    if any(lower.startswith(fw) for fw in FILLER_WORDS) or _opens_with_filler(hook_text):
         score -= 1.0
     return max(0.0, min(10.0, score))
+
+
+def _opens_with_filler(hook_text: str) -> bool:
+    """First word is a hesitation sound (any language) or a Turkish discourse opener."""
+    from app.kria.brief_route import loose_text
+    from app.pipeline.silence_cut import is_filler_token
+
+    tokens = hook_text.split()
+    if not tokens:
+        return False
+    first = tokens[0]
+    word = "".join(ch for ch in loose_text(first) if ch.isalpha())
+    if word in _HOOK_EXCLAMATIONS:
+        return False
+    return is_filler_token(first) or word in _TR_FILLER_OPENERS
 
 
 def _compute_engagement_scores(

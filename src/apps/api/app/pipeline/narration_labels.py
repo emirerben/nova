@@ -69,6 +69,29 @@ _NUMBER_WORDS: dict[str, int] = {
     "ninety": 90,
 }
 _SCORE_WORDS = frozenset(_NUMBER_WORDS) | {"all", "a-piece", "apiece"}
+# KRI-783: Turkish spoken numbers, keyed on the Turkish-folded form ("ÜÇ" == "üç" == "uc").
+# "on" (ten) is left out: it is also the English word "on", and a transcript of either
+# language is read by the same table.
+_TR_NUMBER_WORDS: dict[str, int] = {
+    "sifir": 0,
+    "bir": 1,
+    "iki": 2,
+    "uc": 3,
+    "dort": 4,
+    "bes": 5,
+    "alti": 6,
+    "yedi": 7,
+    "sekiz": 8,
+    "dokuz": 9,
+    "yirmi": 20,
+    "otuz": 30,
+    "kirk": 40,
+    "elli": 50,
+    "altmis": 60,
+    "yetmis": 70,
+    "seksen": 80,
+    "doksan": 90,
+}
 _HYBRID_SCORE_RE = re.compile(
     r"^(?P<left>\d{1,3}|[a-z]+)[-–:]\s*"
     r"(?P<right>\d{1,3}|[a-z]+)[.!?,;:!?]*$",
@@ -748,7 +771,9 @@ def _score_value(text: Any) -> int | None:
         return int(token)
     if token in _SCORE_WORDS:
         return _NUMBER_WORDS.get(token, 0)
-    return None
+    from app.kria.brief_route import loose_text
+
+    return _TR_NUMBER_WORDS.get(_PUNCTUATION_RE.sub("", loose_text(str(text))).strip())
 
 
 def _normalize_words(transcript: Any) -> list[_Word]:

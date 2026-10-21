@@ -24,6 +24,27 @@ _ACKNOWLEDGEMENT_PREFIXES = (
     "dedin ki",
 )
 
+# KRI-783: Turkish restates with the verb at the END of the sentence ("Başlığın daha
+# büyük olmasını istiyorsun."), so the English prefix check cannot see it. Matched as the
+# last word of the reply's first sentence, in ``_normalized`` form.
+_RESTATEMENT_SENTENCE_ENDINGS = frozenset(
+    {"istiyorsun", "istiyorsunuz", "istedin", "istediniz", "diyorsun", "diyorsunuz"}
+)
+
+# KRI-783: Turkish model refusals/meta replies ("Daha fazla bilgiye ihtiyacım var"), in
+# ``_normalized`` form, matched as whole-word phrases. The writers' English refusal
+# patterns stay in their modules; this is the Turkish half they share.
+_TURKISH_REFUSAL_PHRASES = (
+    "daha fazla bilgi",
+    "daha fazla bilgiye",
+    "yapay zeka olarak",
+    "bir yapay zeka",
+    "yazamam",
+    "olusturamam",
+    "yardimci olamam",
+    "bu istegi yerine getiremem",
+)
+
 _STATUS_QUESTIONS = {
     "are you done",
     "hows it going",
@@ -111,7 +132,29 @@ def is_paraphrase_only(*, user_message: str, assistant_message: str) -> bool:
         return True
     if any(assistant.startswith(prefix) for prefix in _ACKNOWLEDGEMENT_PREFIXES):
         return True
+    if _first_sentence_restates(assistant_message):
+        return True
     return len(user) >= 20 and assistant in {user, f"got it {user}", f"sure {user}"}
+
+
+def _first_sentence_restates(message: str) -> bool:
+    """True when the first sentence is a statement ending in a Turkish restating verb.
+
+    A question ("... istiyor musun?") ends in a particle, never in these forms, and a
+    first sentence that ends with "?" is skipped outright.
+    """
+    stripped = message.strip()
+    end = next((i for i, ch in enumerate(stripped) if ch in ".!?\n"), len(stripped))
+    if stripped[end : end + 1] == "?":
+        return False
+    tokens = _normalized(stripped[:end]).split()
+    return bool(tokens) and tokens[-1] in _RESTATEMENT_SENTENCE_ENDINGS
+
+
+def is_turkish_refusal(text: str) -> bool:
+    """A model reply that refuses or asks for more input in Turkish, any spelling."""
+    padded = f" {_normalized(text)} "
+    return any(f" {phrase} " in padded for phrase in _TURKISH_REFUSAL_PHRASES)
 
 
 def is_status_question(message: str) -> bool:

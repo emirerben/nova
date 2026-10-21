@@ -25118,19 +25118,41 @@ def _narrated_clip_alignment_steps(
         return _fallback("agent_error", error=f"{type(exc).__name__}: {str(exc)[:200]}")
 
 
-def _creator_requests_narrated_treatment(request: str, pattern: str) -> bool:
-    """Return true only for a positive treatment mention in the creator brief."""
+# KRI-783: Turkish negates AFTER the noun ("başlık olmasın", "isim koyma"); these words
+# (Turkish-folded) in the rest of the clause withdraw the treatment.
+_TR_TREATMENT_NEGATIONS = frozenset(
+    {"olmasin", "koyma", "yazma", "ekleme", "gosterme", "yok", "istemiyorum", "istemem"}
+)
 
-    for match in re.finditer(pattern, request, re.IGNORECASE):
-        clause_start = max(
-            request.rfind(delimiter, 0, match.start()) for delimiter in (".", "!", "?", ";")
-        )
-        clause_prefix = request[clause_start + 1 : match.start()]
-        if not re.search(
-            r"\b(?:do\s+not|don't|dont|without|no|exclude|omit|skip)\b",
-            clause_prefix,
-            re.IGNORECASE,
-        ):
+
+def _creator_requests_narrated_treatment(request: str, pattern: str) -> bool:
+    """Return true only for a positive treatment mention in the creator brief.
+
+    ``pattern`` carries Turkish alternatives in folded form; it also runs on the
+    Turkish-folded request (KRI-783) so "BAŞLIK", "başlık" and "baslik" read alike.
+    """
+    from app.kria.brief_route import loose_text  # noqa: PLC0415
+
+    for text in dict.fromkeys((request, loose_text(request))):
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            clause_start = max(
+                text.rfind(delimiter, 0, match.start()) for delimiter in (".", "!", "?", ";")
+            )
+            clause_prefix = text[clause_start + 1 : match.start()]
+            if re.search(
+                r"\b(?:do\s+not|don't|dont|without|no|exclude|omit|skip)\b",
+                clause_prefix,
+                re.IGNORECASE,
+            ):
+                continue
+            rest = text[match.end() :]
+            clause_end = min(
+                (i for i in (rest.find(d) for d in (".", "!", "?", ";", ",")) if i >= 0),
+                default=len(rest),
+            )
+            rest_words = "".join(ch if ch.isalnum() else " " for ch in rest[:clause_end]).split()
+            if _TR_TREATMENT_NEGATIONS.intersection(rest_words):
+                continue
             return True
     return False
 
@@ -25163,7 +25185,7 @@ def _narrated_storyboard_text_elements(
     raw_overlays = list(storyboard.get("overlays") or [])
     request = creator_request or ""
     wants_intro = _creator_requests_narrated_treatment(
-        request, r"\b(?:intro(?:duction)?|title|hook|opening)\b"
+        request, r"\b(?:intro(?:duction)?|title|hook|opening|giris\w*|baslik\w*|acilis\w*)\b"
     )
     if explicit_opening_title or wants_intro:
         first = words[0]
@@ -25197,7 +25219,8 @@ def _narrated_storyboard_text_elements(
             )
 
     wants_players = _creator_requests_narrated_treatment(
-        request, r"\b(?:player|participant|name|everyone|person)\b"
+        request,
+        r"\b(?:player|participant|name|everyone|person|oyuncu\w*|katilimci\w*|isim\w*|isimler\w*|herkes\w*)\b",
     )
     player_by_clip: dict[str, int] = {}
     canonical_player_numbers = {
@@ -25247,7 +25270,7 @@ def _narrated_storyboard_text_elements(
     # the deterministic parser canonicalizes them to the smallest score phrase
     # and also handles missing or narrow anchors.
     request_wants_scores = _creator_requests_narrated_treatment(
-        request, r"\b(?:score|scores|scoreboard|result|results)\b"
+        request, r"\b(?:score|scores|scoreboard|result|results|skor\w*|sonuc\w*)\b"
     )
     number_words = {
         "zero",
@@ -25278,6 +25301,22 @@ def _narrated_storyboard_text_elements(
         "seventy",
         "eighty",
         "ninety",
+        # KRI-783: Turkish, folded ("üç" -> "uc"). "on" (ten) is left out: it is also
+        # the English word "on".
+        "sifir",
+        "bir",
+        "iki",
+        "uc",
+        "dort",
+        "bes",
+        "alti",
+        "yedi",
+        "sekiz",
+        "dokuz",
+        "yirmi",
+        "otuz",
+        "kirk",
+        "elli",
     }
     # Score copy is always derived from the canonical transcript.  The
     # storyboard agent is allowed to omit score text (and may omit anchors),
@@ -25286,11 +25325,14 @@ def _narrated_storyboard_text_elements(
     score_value_words = number_words | {"nil", "all"}
     score_context_re = re.compile(
         r"\b(?:score|scores|scoreboard|result|results|final|won|wins|winner|beat|beats|"
-        r"defeated|level|levels|tied|tie|game|games|match|matches|takes|took)\b"
+        r"defeated|level|levels|tied|tie|game|games|match|matches|takes|took|"
+        r"skor\w*|sonuc\w*|kazan\w*|yendi\w*|yenildi\w*|berabere\w*|mac(?:ta|i|in|tan)?|"
+        r"oyun(?:u|da|un)?)\b"
     )
+    from app.kria.brief_route import loose_text  # noqa: PLC0415
 
     def _score_value(text: Any) -> str | None:
-        token = re.sub(r"^[^a-z0-9]+|[^a-z0-9]+$", "", str(text).casefold())
+        token = re.sub(r"^[^a-z0-9]+|[^a-z0-9]+$", "", loose_text(str(text)))
         if token.isdigit() or token in score_value_words:
             return token
         return None
@@ -25318,7 +25360,7 @@ def _narrated_storyboard_text_elements(
 
     def _score_has_context(start_index: int, end_index: int) -> bool:
         context = " ".join(
-            str(words[index]["text"]).casefold()
+            loose_text(str(words[index]["text"]))
             for index in range(max(0, start_index - 5), min(len(words), end_index + 6))
         )
         return bool(score_context_re.search(context))

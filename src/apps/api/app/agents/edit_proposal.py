@@ -70,6 +70,12 @@ _UNSUPPORTED_ACTION_LEAD = re.compile(
     r"visiting|tasting|trying)\b",
     re.IGNORECASE,
 )
+# Turkish twin of the three claim checks above, matched on ``loose_text`` (folded,
+# diacritics stripped): first-person pronouns, and taste/favorite claims.
+_TR_UNSUPPORTED_CLAIM = re.compile(
+    r"\b(?:ben|biz|benim|bizim|bana|bize|lezzetli|nefis|enfes|ferahlatici|favori\w*|"
+    r"en\s+sevdig\w*)\b"
+)
 _FAST_CUT_TOTAL_TOLERANCE_S = 0.15
 _FAST_DURATION_EPSILON_S = 0.001
 EDIT_PROPOSAL_AGENT_MEDIA_LIMIT = 32
@@ -233,11 +239,16 @@ def _neutralize_sensory_modifier(text: str) -> str:
 def ai_draft_thought_has_unsupported_claim(text: str) -> bool:
     """Return whether model-authored copy asserts an unverified experience."""
 
-    return bool(
+    if (
         _PERSONAL_PRONOUN.search(text)
         or _UNSUPPORTED_ACTION_LEAD.search(text)
         or _SENSORY_CLAIM.search(text)
-    )
+    ):
+        return True
+    # KRI-783: the same claims in Turkish copy, on the shared Turkish-folded form.
+    from app.kria.brief_route import loose_text
+
+    return bool(_TR_UNSUPPORTED_CLAIM.search(loose_text(text)))
 
 
 def creator_title_hold_s(input: EditProposalAgentInput) -> float:  # noqa: A002
@@ -1615,7 +1626,8 @@ def _spoken_script_keys(input: EditProposalAgentInput, spoken: list[str]) -> set
 # declaring that quote (or set of quotes) an exhaustive caption list, rather
 # than one caption among others the specialist/planner may still add.
 _EXCLUSIVE_QUOTE_WINDOW_CHARS = 40
-_EXCLUSIVE_QUOTE_RE = re.compile(r"\b(?:only|just)\b", re.IGNORECASE)
+# KRI-783: Turkish "sadece"/"yalnızca" (any spelling or case) mean the same as only/just.
+_EXCLUSIVE_QUOTE_RE = re.compile(r"\b(?:only|just|sadece|yaln[ıiIİ]zca)\b", re.IGNORECASE)
 
 
 def _creator_quoted_captions_are_exhaustive(request: str) -> bool:

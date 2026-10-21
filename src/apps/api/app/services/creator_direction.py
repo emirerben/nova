@@ -58,6 +58,23 @@ _FONT_PATTERNS = (
     ),
 )
 
+# Durable markers, as whole words of ``style_asks.words`` (Turkish-folded) text.
+_DURABLE_MARKERS = (
+    "always",
+    "every time",
+    "from now on",
+    "every video",
+    "her zaman",
+    "hep",
+    "daima",
+    "bundan sonra",
+    "artik",
+    "her seferinde",
+    "her videoda",
+    "tum videolarimda",
+    "butun videolarimda",
+)
+
 
 class DirectionError(ValueError):
     code = "invalid_direction"
@@ -206,7 +223,26 @@ def infer_typed_direction(
                 font_family = match.group(1).strip(" ._-")
                 if font_family and validate_capability_values({"font_family": font_family}):
                     return "font_family", {"font_family": font_family}, "constraint"
+        font_family = _durable_font_from_words(instruction)
+        if font_family and validate_capability_values({"font_family": font_family}):
+            return "font_family", {"font_family": font_family}, "constraint"
     return normalized_key, structured_value, enforcement
+
+
+def _durable_font_from_words(instruction: str) -> str | None:
+    """KRI-783: "Her zaman Inter fontunu kullan" / "always Inter font kullan".
+
+    Any language: a durable marker plus the one registry font the words name, read by the
+    shared bilingual font reader (``style_asks.font_from_words``, which needs a font noun
+    such as "font", "fontunu" or "yazı tipi"). The English patterns above run first.
+    """
+    from app.kria.style_asks import font_from_words, words  # noqa: PLC0415
+
+    folded = words(instruction)
+    padded = f" {folded} "
+    if not any(f" {marker} " in padded for marker in _DURABLE_MARKERS):
+        return None
+    return font_from_words(folded)
 
 
 @dataclass(frozen=True)
