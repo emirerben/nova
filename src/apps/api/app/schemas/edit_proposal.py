@@ -1053,6 +1053,41 @@ def media_context_group(*values: object) -> MediaContextGroup:
     return "other"
 
 
+# Turkish photo nouns (folded): fotoğraf, resim, görsel, foto, kare ("frame/still").
+_TR_IMAGE_NOUN = r"\b(?:fotograf|foto|resim|gorsel)\w*"
+# Turkish negates after "tam ekran": "olmasın", "olmasını istemiyorum", "olmayacak",
+# "koyma", "gösterme", "istemiyorum", "değil" (an inflected "tam ekranda gösterme" too).
+_TR_NEGATION = (
+    r"(?:olmasin|olmasini\s+istemiyorum|olmayacak|olmamali|yapma|koyma|gosterme|"
+    r"istemiyorum|istemem|degil)\b"
+)
+_TR_NOT_NEGATED = r"(?!\w*\s+" + _TR_NEGATION + r")"
+# "kırpma" is also the noun "cropping": "kırpma olsun / uygula" asks FOR a crop.
+_TR_CROP_ASKED = r"\s+(?:olsun|uygula\w*|yap\w*|ekle\w*)\b"
+_TR_IMAGE_CONTAIN_PATTERNS = (
+    # "Fotoğrafları kırpma" / "kırpmadan" / "kırpılmasın" / "kesme" / "kesilmesin"
+    _TR_IMAGE_NOUN
+    + r".{0,24}\b(?:kirpma(?!"
+    + _TR_CROP_ASKED
+    + r")|kirpmadan|kirpilmasin|kirpilmadan|kesme|kesmeden|kesilmesin)\b",
+    r"\b(?:kirpma(?!" + _TR_CROP_ASKED + r")|kirpmadan)\b.{0,16}" + _TR_IMAGE_NOUN,
+    # "fotoğraflar ekranı doldurmasın" / "tamamı görünsün" / "tam sığsın" / "kart olarak"
+    _TR_IMAGE_NOUN + r".{0,32}\b(?:ekrani\s+doldurmasin|tamami\s+gorunsun|tam\s+sigsin|"
+    r"sigdir|kirpilmamis|kart\s+olarak|kart\w*\s+(?:olsun|yap\w*))\b",
+    # "fotoğraflar tam ekran olmasın" / "tam ekranda gösterme" / "tam ekran istemiyorum"
+    _TR_IMAGE_NOUN + r".{0,24}\btam\s*ekran\w*\s+(?:\w+\s+)?" + _TR_NEGATION,
+)
+_TR_IMAGE_COVER_PATTERNS = (
+    # "Fotoğraflar tam ekran olsun" / "tam ekran fotoğraflar" / "ekranı doldursun"
+    _TR_IMAGE_NOUN + r".{0,24}\btam\s*ekran" + _TR_NOT_NEGATED,
+    r"\btam\s*ekran\w*\s+" + _TR_IMAGE_NOUN,
+    _TR_IMAGE_NOUN + r".{0,32}\bekrani\s+doldursun\b",
+    # "Fotoğraflara kırpma uygula" / "fotoğrafları kırp"
+    _TR_IMAGE_NOUN + r".{0,24}\bkirpma" + _TR_CROP_ASKED,
+    _TR_IMAGE_NOUN + r".{0,24}\bkirp(?:in|alim)?\b",
+)
+
+
 def recognize_image_layout(text: str) -> BeatLayout | None:
     """Recognize the creator's latest explicit photo fill/fit instruction.
 
@@ -1091,14 +1126,20 @@ def recognize_image_layout(text: str) -> BeatLayout | None:
         r"\b(?:without|no)\b.{0,24}"
         r"\b(?:card|black\s+bars?|blur(?:red|ry)?\s+background)\b",
     )
-    for pattern in contain_patterns:
-        candidates.extend(
-            (match.start(), "supporting_card") for match in re.finditer(pattern, normalized)
-        )
-    for pattern in cover_patterns:
-        candidates.extend(
-            (match.start(), "fullscreen") for match in re.finditer(pattern, normalized)
-        )
+    # KRI-783: Turkish asks are matched on the shared Turkish-folded form so "KIRPMA",
+    # "kırpma" and "kirpma" read alike. Lazy import: app.kria imports this module.
+    from app.kria.brief_route import loose_text
+
+    folded = loose_text(str(text or ""))
+    searches: tuple[tuple[tuple[str, ...], BeatLayout, str], ...] = (
+        (contain_patterns, "supporting_card", normalized),
+        (cover_patterns, "fullscreen", normalized),
+        (_TR_IMAGE_CONTAIN_PATTERNS, "supporting_card", folded),
+        (_TR_IMAGE_COVER_PATTERNS, "fullscreen", folded),
+    )
+    for patterns, layout, haystack in searches:
+        for pattern in patterns:
+            candidates.extend((match.start(), layout) for match in re.finditer(pattern, haystack))
     return max(candidates, key=lambda candidate: candidate[0])[1] if candidates else None
 
 

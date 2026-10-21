@@ -3364,23 +3364,47 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     return _receipt(req, status, "; ".join(problems) + ".")
 
 
+# KRI-783: each pattern carries its Turkish alternatives too, written Turkish-folded
+# (diacritics stripped); `_speech_cue` also runs it on the `loose_text` form, so
+# "KONUŞMAMI", "konuşmamı" and "konusmami" read alike. Only first-person Turkish forms
+# ("my speech", "what I said"): bare "konuşma"/"ses" also mean "don't talk"/"sound", and a
+# genitive ("konuşmamın yazısı", the text of my speech) is a captions ask, not this one.
 _SPEECH_EXCERPT_RE = re.compile(
     r"\b(?:excerpts?|speech|spoken|my voice|my words|what i (?:say|said|talk)|"
     r"(?:play|use|hear|keep)\s+(?:my|the)\s+(?:\w+\s+){0,3}"
     r"(?:line|lines|sentence|sentences|quote|quotes|"
-    r"talking|speech|voice))\b"
+    r"talking|speech|voice)|"
+    r"(?:konusma|konusmalari|sesi|sozleri|cumleleri)m(?:i|la|le|dan|den)?|"
+    r"(?:konustugum|soyledigim|dedigim)(?:u|i)?|"
+    r"(?:konustuklarim|soylediklerim|dediklerim)(?:i|dan|den)?|alinti\w*)\b"
 )
 _SPEECH_OVER_RE = re.compile(
-    r"\b(?:over|b-?roll|other (?:footage|clips|videos)|while|on top of|under)\b"
+    r"\b(?:over|b-?roll|other (?:footage|clips|videos)|while|on top of|under|"
+    r"ustune|ustunde|uzerine|uzerinde|altinda|arkasinda|"
+    r"diger\s+(?:klip|video|cekim|goruntu)\w*)\b"
 )
 _SPEAKER_RE = re.compile(
-    r"\b(?:cut to me|show me|back to me|cut to the speaker|me talking|on camera|me saying)\b"
+    r"\b(?:cut to me|show me|back to me|cut to the speaker|me talking|on camera|me saying|"
+    r"bana\s+(?:kes|gec|don|geri)\w*|beni\s+(?:de\s+)?goster\w*|konusurken\s+beni|"
+    r"kameraya\s+konus\w*|(?:yuzumu|kendimi)\s+(?:de\s+)?goster\w*)\b"
 )
-_BACK_TO_MONTAGE_RE = re.compile(r"\b(?:back to|return to|then)\b.{0,30}\b(?:montage|cuts|clips)\b")
+# Turkish also puts the back-word after the noun ("montaja geri dön") and says "between
+# my lines" with a postposition ("cümlelerimin arasına hızlı kesimler koy").
+_BACK_TO_MONTAGE_RE = re.compile(
+    r"\b(?:back to|return to|then|sonra|tekrar|geri)\b.{0,30}"
+    r"\b(?:montage|cuts|clips|montaj\w*|kesim\w*|klip\w*)\b"
+    r"|\b(?:montaj|kesim|klip)\w*\s+(?:geri|tekrar)\s+(?:don|gec)\w*"
+    r"|\baras(?:ina|inda)\b.{0,30}\b(?:kesim|montaj)\w*"
+)
+
+
+def _speech_cue(req_text: str, pattern: re.Pattern[str]) -> bool:
+    """The bilingual cue on the folded ask, or on its diacritic-free form."""
+    return bool(pattern.search(req_text) or pattern.search(loose_text(req_text)))
 
 
 def _wants_speech(req: BriefRequirement) -> bool:
-    return req.kind in _BEAT_KINDS and bool(_SPEECH_EXCERPT_RE.search(_req_text(req)))
+    return req.kind in _BEAT_KINDS and _speech_cue(_req_text(req), _SPEECH_EXCERPT_RE)
 
 
 def _check_speech_excerpts(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -3409,14 +3433,14 @@ def _check_speech_excerpts(req: BriefRequirement, facts: PlanFacts) -> Requireme
                 tr=f"Klibinde şunu bulamadım: {missing}",
             )
         )
-    if _SPEECH_OVER_RE.search(text) and not any(s.visual == "cutaways" for s in speech):
+    if _speech_cue(text, _SPEECH_OVER_RE) and not any(s.visual == "cutaways" for s in speech):
         problems.append(
             say(
                 en="Your words never play over the other footage",
                 tr="Sözlerin diğer çekimlerin üzerinde hiç çalmıyor",
             )
         )
-    if _SPEAKER_RE.search(text) and not any(s.visual == "speaker" for s in speech):
+    if _speech_cue(text, _SPEAKER_RE) and not any(s.visual == "speaker" for s in speech):
         problems.append(
             say(
                 en="It never cuts to you talking",
@@ -3429,7 +3453,7 @@ def _check_speech_excerpts(req: BriefRequirement, facts: PlanFacts) -> Requireme
     )
     if (
         first_other is not None
-        and _SPEAKER_RE.search(text)
+        and _speech_cue(text, _SPEAKER_RE)
         and not any(s.visual == "speaker" for s in sections[first_other + 1 :])
     ):
         problems.append(
@@ -3438,7 +3462,7 @@ def _check_speech_excerpts(req: BriefRequirement, facts: PlanFacts) -> Requireme
                 tr="Diğer çekimlerden sonra sana geri dönmüyor",
             )
         )
-    if _BACK_TO_MONTAGE_RE.search(text) and not any(s.kind == "montage" for s in sections):
+    if _speech_cue(text, _BACK_TO_MONTAGE_RE) and not any(s.kind == "montage" for s in sections):
         problems.append(
             say(
                 en="There are no fast cuts between your lines",
