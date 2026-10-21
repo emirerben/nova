@@ -70,6 +70,7 @@ from app.services.choice_questions import (
     match_open_choice,
     tag_event,
 )
+from app.services.client_protocol import current_client_protocol
 from app.services.clip_selection import ClipSelectionIn, latest_open_clip_question
 from app.services.creation_thread_titles import (
     conversation_revision_matches,
@@ -114,6 +115,12 @@ class RuntimeFailure(Exception):
     recovery: Literal["retry", "refresh_replan", "ask_user", "manual", "none"] = "none"
     retryable: bool = False
     current_revision: int | None = None
+
+
+def _answers_batched_questions() -> bool:
+    """KRI-802: the app sending this request answers a reply's cards together."""
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.kria_question_batch_min_client_protocol
 
 
 def request_digest(body: SubmitTurnBody) -> str:
@@ -964,6 +971,10 @@ async def submit_turn(
                 if choice_selection is not None
                 else {}
             ),
+            # KRI-802: this app answers a reply's choice card and clip picker on one turn, so
+            # the planner may ask them together. Not part of `request_digest`; older builds
+            # and the web store nothing (existing payloads byte-identical).
+            **({"answers_batched_questions": True} if _answers_batched_questions() else {}),
             # KRI-756: {"suggestion": {...}} when the message equals an offered chip. Not
             # part of `request_digest`; flag off => {} (existing payloads byte-identical).
             **(

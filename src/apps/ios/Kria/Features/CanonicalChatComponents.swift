@@ -194,6 +194,9 @@ struct ChatMessageRow: View {
     var projectID: UUID? = nil
     /// KRI-282: how to present `message.choiceQuestion`. nil (old server, flag off, not a question) = text question only.
     var choiceQuestionMode: ChoiceQuestionCardMode? = nil
+    /// KRI-802: set when this reply asks the choice card and the clip picker together; their answers wait here and
+    /// go out on one turn. The cards then follow the reply's own order: the choice first, then the clips.
+    var questionBatch: QuestionBatch? = nil
     /// KRI-588: how to present `message.songRangeQuestion`. nil (old server, flag off, not a question) = text only.
     var songRangeMode: SongRangeCardMode? = nil
     /// Tappable answers for a plain `assistant_response` question. nil = not the newest unanswered question
@@ -258,9 +261,10 @@ struct ChatMessageRow: View {
                 if !message.replyOptions.isEmpty, let replyOptionsMode {
                     ReplyOptionChips(options: message.replyOptions, mode: replyOptionsMode)
                 }
+                if questionBatch != nil { choiceCard }
                 if let question = message.clipQuestion, let clipSelectionMode {
                     ClipSelectionCard(question: question, media: clipSelectionMedia, projectID: projectID, mode: clipSelectionMode,
-                                      language: clipSelectionLanguage)
+                                      language: clipSelectionLanguage, note: questionBatch?.clipsNote)
                         .id(question.questionID)
                 }
                 if let question = message.songOrderQuestion, let songOrderMode, let projectID {
@@ -277,10 +281,7 @@ struct ChatMessageRow: View {
                     SongRangeQuestionCard(question: question, fallbackDurationS: songDurationS, mode: songRangeMode)
                         .id(question.questionID)
                 }
-                if let question = message.choiceQuestion, let choiceQuestionMode {
-                    ChoiceQuestionCard(question: question, mode: choiceQuestionMode)
-                        .id(question.questionID)
-                }
+                if questionBatch == nil { choiceCard }
                 if !message.receipts.isEmpty {
                     RequirementChipsView(
                         receipts: message.receipts, requirements: requirements, titlesReady: briefSettled,
@@ -290,6 +291,14 @@ struct ChatMessageRow: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder private var choiceCard: some View {
+        if let question = message.choiceQuestion, let choiceQuestionMode {
+            ChoiceQuestionCard(question: question, mode: choiceQuestionMode,
+                               heldKey: questionBatch?.choice?.optionKey, note: questionBatch?.choiceNote)
+                .id(question.questionID)
         }
     }
 }
@@ -1076,35 +1085,45 @@ struct QuestionOptionButton: View {
     let isRecommended: Bool
     var detail: String? = nil
     var isDisabled = false
+    /// KRI-802: tapped and held (it goes out with the reply's other answer).
+    var isSelected = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 4) {
-                if isRecommended {
-                    Text("RECOMMENDED")
-                        .font(KriaFont.body(10).weight(.semibold))
-                        .tracking(0.4)
-                        .foregroundStyle(KriaColor.success)
-                }
-                Text(text)
-                    .font(KriaFont.body(13).weight(.medium))
-                    .foregroundStyle(KriaColor.ink)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let detail {
-                    Text(detail)
-                        .font(KriaFont.body(12))
-                        .foregroundStyle(KriaColor.mutedInk)
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if isRecommended {
+                        Text("RECOMMENDED")
+                            .font(KriaFont.body(10).weight(.semibold))
+                            .tracking(0.4)
+                            .foregroundStyle(KriaColor.success)
+                    }
+                    Text(text)
+                        .font(KriaFont.body(13).weight(.medium))
+                        .foregroundStyle(KriaColor.ink)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
+                    if let detail {
+                        Text(detail)
+                            .font(KriaFont.body(12))
+                            .foregroundStyle(KriaColor.mutedInk)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(KriaColor.success)
+                        .accessibilityHidden(true)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .frame(minHeight: 44)
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(KriaColor.border, lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(isSelected ? KriaColor.ink : KriaColor.border, lineWidth: isSelected ? 1.5 : 1))
             // A plain-style button only takes taps on drawn pixels, which left
             // the chip's blank interior dead; the whole outlined chip is the target.
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -1113,6 +1132,8 @@ struct QuestionOptionButton: View {
         .disabled(isDisabled)
         .opacity(isDisabled ? 0.55 : 1)
         .accessibilityLabel(isRecommended ? "\(text) (recommended)" : text)
+        .accessibilityValue(isSelected ? "Selected" : "")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
