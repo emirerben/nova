@@ -7527,6 +7527,12 @@ def _compute_base_editor_capabilities(job: Job, variant: dict) -> dict:
             # The footage's own sound (per clip, and one level for the whole video). Only the
             # phone compiler plays it at a creator-set level; the cloud render ignores both.
             on_device = variant.get("render_destination") == "device"
+            # KRI-770: the phone's story compiler has no retime (`phone_guided_plan` refuses any
+            # rate but 1), so advertising speed here made every chat/editor speed change a
+            # refused Save. A lane that is advertised editable must be saveable.
+            clips["playback_rate"] = operation(
+                not on_device, "phone_playback_rate_unsupported" if on_device else None
+            )
             clips["audio"] = operation(
                 on_device, None if on_device else "original_audio_phone_only"
             )
@@ -9643,6 +9649,26 @@ def _validate_projected_guided_lane_shapes(raw: dict[str, Any]) -> None:
             ) from None
 
 
+def _fit_guided_text_to_segments(
+    job: Job, variant: dict, *, old_revision: dict[str, Any], raw: dict[str, Any]
+) -> list[dict]:
+    """Keep a Save's submitted text lane inside the trimmed story (KRI-770).
+
+    The authored path fits text to the new total (KRI-736); the guided story path took a
+    client-submitted lane as-is, so a clip trim from a build that did not re-time its text
+    reached the recipe validator ("text layer exceeds the timeline") and the creator saw a
+    generic refusal. Same helper, same rules: windows that already fit are untouched.
+    """
+    from app.services.authored_text_fit import fit_text_to_timeline  # noqa: PLC0415
+
+    segment_layout, _ = _guided_v2_layouts(job, variant)
+    return fit_text_to_timeline(
+        list(raw.get("text_elements") or []),
+        old_rows=_guided_v2_slot_rows(old_revision, segment_layout, include_source_path=False),
+        new_rows=_guided_v2_slot_rows(raw, segment_layout, include_source_path=False),
+    )
+
+
 def _guided_text_revision_state(
     current: dict[str, Any], submitted: list[dict]
 ) -> tuple[list[dict], list[dict]]:
@@ -10018,6 +10044,10 @@ def _guided_v2_revision_from_commit(
                 if value is not None
             },
         )
+        if text_elements is not None:
+            raw["text_elements"] = _fit_guided_text_to_segments(
+                job, variant, old_revision=current, raw=raw
+            )
         _validate_projected_guided_lane_shapes(raw)
     if payload.music_window is not None:
         effective_track_id = payload.music_track_id or variant.get("music_track_id")

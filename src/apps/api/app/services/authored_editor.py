@@ -11,6 +11,8 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.schemas.editor_window import below_editor_minimum, snap_to_editor_minimum
+
 AUTHORED_TIMELINE_MODE = "authored"
 
 USER_SONG_CLIP_EDIT_UNSUPPORTED = (
@@ -184,7 +186,7 @@ def _fit_window_to_source(
             reason="source_window_too_short",
         )
     fitted = math.floor((source_duration - slot.in_s) / rate * 1e6) / 1e6
-    if fitted < minimum_duration:
+    if below_editor_minimum(fitted, minimum_duration):
         raise _out_of_bounds_error(
             slot,
             order=order,
@@ -233,9 +235,10 @@ def resolve_authored_phone_slots(job: Any, variant: dict, slots: list[Any]) -> l
         if (
             not all(math.isfinite(value) for value in (slot.in_s, duration, rate))
             or slot.in_s < 0
-            or duration < minimum_duration
+            or below_editor_minimum(duration, minimum_duration)
         ):
             raise HTTPException(422, detail={"code": "TIMELINE_INVALID_WINDOW"})
+        duration = snap_to_editor_minimum(duration, minimum_duration)
         bound = source.get("duration_s")
         if source["kind"] == "video":
             duration = _fit_window_to_source(
@@ -423,9 +426,10 @@ def resolve_authored_cloud_slots(job: Any, variant: dict, slots: list[Any]) -> l
             duration is None
             or not all(math.isfinite(v) for v in (slot.in_s, duration, rate))
             or slot.in_s < 0
-            or duration < 0.1
+            or below_editor_minimum(duration)
         ):
             raise HTTPException(422, detail={"code": "TIMELINE_INVALID_WINDOW"})
+        duration = snap_to_editor_minimum(duration)
         bound = source.get("source_duration_s")
         if (
             source["source_kind"] == "video"

@@ -3406,6 +3406,9 @@ struct NativeEditorTemporaryVideo {
     /// translations cannot be applied repeatedly to an already-trimmed clip.
     func beginTrim(clipID: UUID, edge: NativeTrimEdge) {
         guard canEditTimeline, draft.clips.contains(where: { $0.id == clipID }) else { return }
+        // KRI-770: the server pins a talking-source slot's window to its approved cut and answers any
+        // change with 409 TIMELINE_STALE, so the handle must not start a gesture that can never save.
+        if let index = clipSlotIndex(clipID.uuidString), Self.isTalkingSourceSlot(document.clips[index]) { return }
         activeTrim = ActiveTrim(
             clipID: clipID,
             edge: edge,
@@ -3424,23 +3427,34 @@ struct NativeEditorTemporaryVideo {
         let sourceDuration = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"])
         let sourceIn = max(0, slot.inS)
         let currentDuration = max(minimumClipDuration, slot.durationS ?? minimumClipDuration)
+        // One geometry for every way of changing a window (KRI-770): the Range sheet and this edge drag both
+        // go through `KriaSourceWindowGeometry`, which is rate-aware, never returns a length under the 0.1 s
+        // minimum (computing `(in + 0.1) - in` directly gives 0.09999999999999998, which the server refused),
+        // and mirrors the server's bound. A drag is in output seconds, so it moves the source by `* rate`.
+        let rate = Self.explicitPlaybackRate(slot)
+        let window = KriaSourceWindowGeometry.Window(start: sourceIn, length: currentDuration)
+        let resized: KriaSourceWindowGeometry.Window
         switch active.edge {
         case .leading:
-            // Left trim preserves the source Out point. A negative translation
-            // restores earlier source frames until the file's beginning.
-            let sourceOut = max(minimumClipDuration, min(sourceIn + currentDuration, sourceDuration ?? sourceIn + currentDuration))
-            slot.inS = min(max(0, sourceIn + translation), max(0, sourceOut - minimumClipDuration))
-            slot.durationS = max(minimumClipDuration, sourceOut - slot.inS)
+            // Left trim preserves the source Out point. A negative translation restores earlier source frames
+            // until the file's beginning. A slot that already overruns its footage is cut back to the footage.
+            var base = window
+            if let sourceDuration, KriaSourceWindowGeometry.sourceEnd(window, rate: rate) > sourceDuration {
+                base.length = max(minimumClipDuration, (sourceDuration - sourceIn) / rate)
+            }
+            resized = KriaSourceWindowGeometry.resizedLeading(base, by: translation * rate, rate: rate)
         case .trailing:
-            // Right trim preserves source In. Later clips are not a ceiling:
-            // they ripple after this duration changes. A clip already longer
-            // than its footage (narrated footage slowed to fill its voiceover
-            // step) can shrink smoothly instead of snapping to the footage end.
-            let currentOut = sourceIn + currentDuration
-            let maximumOut = sourceDuration.map { max(sourceIn + minimumClipDuration, $0, currentOut) } ?? .greatestFiniteMagnitude
-            let nextOut = min(max(currentOut + translation, sourceIn + minimumClipDuration), maximumOut)
-            slot.durationS = nextOut - sourceIn
+            // Right trim preserves source In. Later clips are not a ceiling: they ripple after this duration
+            // changes. A clip already longer than its footage (narrated footage slowed to fill its voiceover
+            // step) can shrink smoothly. With no known source length the end can shrink but never grow past
+            // what is there now, because the server refuses an unmeasured source (`source_unmeasured`).
+            let end = KriaSourceWindowGeometry.sourceEnd(window, rate: rate)
+            resized = KriaSourceWindowGeometry.resizedTrailing(window, by: translation * rate, rate: rate, sourceDuration: sourceDuration ?? end)
         }
+        // A gesture that lands back on the baseline must compare equal to it (no phantom undo step).
+        slot.inS = abs(resized.start - slot.inS) < 1e-9 ? slot.inS : resized.start
+        slot.durationS = abs(resized.length - currentDuration) < 1e-9 && slot.durationS != nil
+            ? slot.durationS : max(minimumClipDuration, resized.length)
         slot.durationBeats = nil; next.clips[index] = slot
         // Later clips ripple by construction (windows are a walk of the slot durations); the
         // per-clip labels must ripple with them, derived from the gesture baseline every update.
@@ -3461,6 +3475,23 @@ struct NativeEditorTemporaryVideo {
         activeTrim = active
         refreshDirtyState()
         refreshDuration()
+    }
+
+    #if DEBUG
+    /// Test seam (KRI-770): stage slot fields (`playback_rate`, a talking-source id) that a bare draft cannot carry.
+    func replaceDocumentForTesting(_ value: EditorDocument) { document = value }
+    #endif
+
+    /// The creator-set playback rate (`playback_rate`), 1 when none. Derived rates (slowed narration) are
+    /// not edge-draggable at a different speed, so they trim as they always did.
+    static func explicitPlaybackRate(_ slot: EditorTimelineSlot) -> Double {
+        if let explicit = slot.raw["playback_rate"]?.numberValue, explicit.isFinite, explicit > 0 { return explicit }
+        return 1
+    }
+
+    /// Slots cut from the approved talking take: the server rejects any window change on them.
+    static func isTalkingSourceSlot(_ slot: EditorTimelineSlot) -> Bool {
+        slot.id?.hasPrefix("native-phone-talking-source") == true
     }
 
     func endTrim() {

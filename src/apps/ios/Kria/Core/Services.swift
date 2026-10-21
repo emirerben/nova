@@ -1612,9 +1612,13 @@ struct KriaAPI: KriaAPIClient {
             }
             if http.statusCode == 422, path.hasSuffix("/editor-commit") {
                 let saveError = EditorSaveError.from(responseData: data)
+                // The real server code, even for one the app does not word specially: "unknown"
+                // here cost the Troya Save its only client-side clue (KRI-770).
                 NativePreviewDiagnostics.record("editor-save-rejected", fields: [
                     "status": "422",
-                    "code": saveError.diagnosticCode,
+                    "code": saveError == .rejected
+                        ? (EditorSaveError.serverCode(from: data) ?? saveError.diagnosticCode)
+                        : saveError.diagnosticCode,
                 ])
                 throw saveError
             }
@@ -1758,6 +1762,12 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
     case userSongLipsyncLocked
     /// Less than a second of the song would remain after the start; `reason` is the server's own words.
     case userSongWindowOutOfRange(reason: String?)
+    /// KRI-770: a timeline refusal (`TIMELINE_*`, `GUIDED_REVISION_INVALID`, ...) keeps its server
+    /// code so the creator is told which kind of clip problem blocked the Save.
+    case timeline(code: String)
+    /// A readable sentence the server wrote for this refusal ("Video media is still being
+    /// analyzed. Try again when its duration is ready."). Shown instead of the generic line.
+    case serverMessage(String)
     case rejected
 
     var errorDescription: String? {
@@ -1778,8 +1788,65 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
         case .userSongWindowOutOfRange(let reason):
             reason?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmptyString
                 ?? "That start point leaves less than a second of your song. Slide it earlier."
+        case .timeline(let code):
+            Self.timelineCopy[code] ?? "This save was rejected. Your edits are still here."
+        case .serverMessage(let message):
+            message
         case .rejected:
             "This save was rejected. Your edits are still here."
+        }
+    }
+
+    /// Specific, recoverable copy per timeline refusal. The set of codes is pinned by
+    /// `Tests/Fixtures/editor_save_codes.json`, which the API's `test_editor_save_code_catalog`
+    /// keeps equal to what the server can raise: a new server code fails CI until it is worded here.
+    static let timelineCopy: [String: String] = {
+        let tooShort = "A clip is shorter than the 0.1 second minimum. Lengthen it a little and save again. Your edits are still here."
+        let pastEnd = "A clip runs past the end of its footage. Shorten it or move its start earlier, then save again. Your edits are still here."
+        let reopen = "A clip’s footage is no longer available to this edit. Reopen the editor to continue."
+        let timeline = "This timeline couldn’t be saved. Undo your last change and try again. Your edits are still here."
+        return [
+            "TIMELINE_INVALID_WINDOW": tooShort,
+            "TIMELINE_INVALID_DURATION": tooShort,
+            "TIMELINE_OUT_OF_BOUNDS": pastEnd,
+            "TIMELINE_SOURCE_BOUNDS": pastEnd,
+            "TIMELINE_UNKNOWN_CLIP": reopen,
+            "sources_expired": reopen,
+            "authored_source_required": reopen,
+            "TIMELINE_EMPTY": "A video needs at least one clip. Keep a clip and save again. Your edits are still here.",
+            "TIMELINE_TOO_LONG": "This video is longer than an edit can be. Trim or remove some clips and save again. Your edits are still here.",
+            "TIMELINE_BEATS_EXHAUSTED": "The song runs out of beats for these clips. Shorten a clip or remove one and save again. Your edits are still here.",
+            "TIMELINE_INVALID_PARENT": timeline,
+            "TIMELINE_IMAGE_SPLIT_UNSUPPORTED": "A photo can’t be split. Keep it whole or trim it instead. Your edits are still here.",
+            "authored_seconds_required": timeline,
+            "GUIDED_REVISION_INVALID": timeline,
+            "GUIDED_TEXT_IDENTITY_MISMATCH": timeline,
+            "GUIDED_TOMBSTONE_LIMIT": "This edit has too many removed items to save. Restore or re-add a few and try again. Your edits are still here.",
+            "GUIDED_REVISION_WIRE_UNSUPPORTED": "Update Kria to save this edit.",
+            "LOOK_PRESET_NOT_AVAILABLE": "That clip look isn’t available for this video. Remove it and save again. Your edits are still here.",
+            "phone_edit_unsupported": "That clip look can’t be saved on this iPhone yet. Remove it and save again. Your edits are still here.",
+            "transitions_disabled": "Transitions aren’t available right now. Set the clip to a cut and save again. Your edits are still here.",
+            "song_shorter_than_video": "The song is shorter than your video. Pick a longer song or shorten the video, then save again. Your edits are still here.",
+            "music_track_unavailable": "That song isn’t available any more. Pick another song and save again. Your edits are still here.",
+            "track_duration_unknown": timeline,
+            "video_duration_unknown": timeline,
+            "guided_story_revision_unavailable": reopen,
+        ]
+    }()
+
+    /// A plain-English sentence (not a machine code) short enough to show as is.
+    static func isReadableServerMessage(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.count >= 12 && trimmed.count <= 160 && trimmed.contains(" ")
+            && trimmed.first?.isLetter == true && !trimmed.contains("`") && !trimmed.contains("_")
+    }
+
+    /// The server's own code, for diagnostics, when it is not one the app words specially.
+    fileprivate static func serverCode(from data: Data) -> String? {
+        guard let detail = (try? JSONDecoder().decode(EditorSaveErrorEnvelope.self, from: data))?.detail else { return nil }
+        switch detail {
+        case .code(let code, _): return code.isEmpty ? nil : code
+        case .validation: return "validation"
         }
     }
 
@@ -1792,6 +1859,8 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
         case .userSongUnavailable: "user_song_unavailable"
         case .userSongLipsyncLocked: "user_song_lipsync_locked"
         case .userSongWindowOutOfRange: "user_song_window_out_of_range"
+        case .timeline(let code): code
+        case .serverMessage: "server_message"
         case .rejected: "unknown"
         }
     }
@@ -1805,6 +1874,11 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
         case .code("user_song_unavailable", let reason): return .userSongUnavailable(reason: reason)
         case .code("user_song_lipsync_locked", _): return .userSongLipsyncLocked
         case .code("user_song_window_out_of_range", let reason): return .userSongWindowOutOfRange(reason: reason)
+        case .code(let code, _) where Self.timelineCopy[code] != nil: return .timeline(code: code)
+        case .code(let message, _) where Self.isReadableServerMessage(message):
+            let sentence = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            let closed = sentence.hasSuffix(".") || sentence.hasSuffix("!") || sentence.hasSuffix("?") ? sentence : sentence + "."
+            return .serverMessage("\(closed) Your edits are still here.")
         case .validation(let issues) where issues.contains(where: { $0.loc?.contains(.string("text_elements")) == true }):
             return .invalidTextSettings
         default: return .rejected

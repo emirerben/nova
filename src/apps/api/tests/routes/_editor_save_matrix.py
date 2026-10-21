@@ -409,6 +409,18 @@ def _slot(row: dict, **overrides) -> gj.TimelineSlotEdit:
     return gj.TimelineSlotEdit(**{**base, **overrides})
 
 
+def _first_slot_trim(row: dict, spec: FirstSlot) -> gj.TimelineSlotEdit:
+    """The first kept slot with ``spec``'s window (a trim, a rate change or an overshoot)."""
+    span = SOURCE_S + spec.overshoot - spec.in_s
+    change: dict[str, Any] = {
+        "in_s": spec.in_s,
+        "duration_s": spec.duration_s if spec.duration_s is not None else span / (spec.rate or 1.0),
+    }
+    if spec.rate is not None:
+        change["playback_rate"] = spec.rate
+    return _slot(row, **change)
+
+
 def _authored_save(monkeypatch, edit: Edit) -> Outcome:
     job, variant, revision = order_required_job(monkeypatch, order_required=edit.order_required)
     _rebind(job, edit)
@@ -425,15 +437,7 @@ def _authored_save(monkeypatch, edit: Edit) -> Outcome:
         overrides["duration_s"] = edit.clip_s
     slots = [_slot(r, **overrides) for r in rows]
     if edit.first_slot is not None:
-        spec = edit.first_slot
-        span = SOURCE_S + spec.overshoot - spec.in_s
-        change: dict[str, Any] = {
-            "in_s": spec.in_s,
-            "duration_s": spec.duration_s or span / (spec.rate or 1.0),
-        }
-        if spec.rate is not None:
-            change["playback_rate"] = spec.rate
-        slots[0] = _slot(rows[0], **change)
+        slots[0] = _first_slot_trim(rows[0], edit.first_slot)
     if edit.split:
         half = rows[0]["duration_s"] / 2
         slots[0] = _slot(rows[0], duration_s=half)
@@ -501,6 +505,13 @@ def _authored_save(monkeypatch, edit: Edit) -> Outcome:
     return outcome
 
 
+def _direct_slots(rows: list[dict], edit: Edit) -> list[gj.TimelineSlotEdit]:
+    slots = [_slot(r, muted=edit.muted) for r in rows]
+    if edit.first_slot is not None:
+        slots[0] = _first_slot_trim(rows[0], edit.first_slot)
+    return slots
+
+
 def _direct_save(monkeypatch, edit: Edit) -> Outcome:
     """A manual Save on the (non-authored) guided-story editor, via the real commit path."""
     job, variant, revision = order_required_job(monkeypatch, order_required=False)
@@ -511,14 +522,16 @@ def _direct_save(monkeypatch, edit: Edit) -> Outcome:
         next(t for t in lane if t["id"] == "guided-title").update(edit.title)
     for text_id, window in (edit.labels or {}).items():
         next(t for t in lane if t["id"] == text_id).update(window)
+    slots = _direct_slots(rows, edit) if edit.with_timeline else None
     body = gj.EditorCommitRequest(
         base_generation=gj.variant_render_baseline(variant),
         editor_state_version=1,
         guided_revision_number=revision["revision_number"],
-        timeline_slots=([_slot(r, muted=edit.muted) for r in rows] if edit.with_timeline else None),
+        timeline_slots=slots,
         text_elements=lane,
     )
-    outcome = Outcome(job=job)
+    total = sum(s.duration_s for s in slots) if slots else 0.0
+    outcome = Outcome(job=job, total=total)
     try:
         outcome.prep = gj.prepare_editor_commit(job, VARIANT, body)
     except Exception as exc:  # noqa: BLE001

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.69.0] - 2026-10-21
+
+### Changed
+- fix(editor): a trimmed clip always saves, and every refused Save says why (KRI-770) (#1702) <!-- release-pr: 1702 -->
+
 ## [0.80.68.0] - 2026-10-20
 
 ### Changed
