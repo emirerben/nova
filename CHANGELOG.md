@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.15.0] - 2026-10-21
+
+### Changed
+- fix(kria): post a render's chat card within seconds, not on the minute sweep (#1722) <!-- release-pr: 1722 -->
+
 ## [0.81.14.0] - 2026-10-21
 
 ### Changed
