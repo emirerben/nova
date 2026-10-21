@@ -1389,6 +1389,64 @@ def _worded(
     return label, source, checked_why
 
 
+_EVIDENCE_MAX = 48
+
+
+def _evidence(cand: Candidate, ctx: SuggestionContext, state: str) -> str | None:
+    """A one-line, deterministic reason this chip fits THIS footage (KRI-769).
+
+    Built only from counts and edit state the server already holds (never Gemini prose, never
+    ids or times), so it needs no model and cannot invent a moment. Every line states a fact the
+    server measured, not a judgement about quality. Shown as the chip's subtitle whenever the
+    wording agent supplied no grounded ``why`` of its own.
+    """
+    tr = language_of(ctx.language) == "tr"
+    clips = _live_clips(ctx)
+    total = len(clips)
+    speech = sum(1 for c in clips if c.get("has_speech") or c.get("to_camera"))
+    quiet = total - speech
+    kind = cand.kind
+    line: str | None = None
+    if kind is ChipKind.DEFAULT_EDIT:
+        line = (
+            "Kesimi, temposu ve müziği Kria seçer" if tr else "Kria picks the cuts, pace and music"
+        )
+    elif kind is ChipKind.CAPTIONS and speech:
+        if speech == total:
+            line = "Her klipte konuşuyorsun" if tr else "You speak in every clip"
+        else:
+            line = (
+                f"{speech}/{total} klipte konuşuyorsun"
+                if tr
+                else f"You speak in {speech} of {total} clips"
+            )
+    elif kind is ChipKind.SFX:
+        if quiet > 0:
+            line = (
+                f"{quiet} klipte konuşma yok"
+                if tr
+                else ("1 clip has no speech" if quiet == 1 else f"{quiet} clips have no speech")
+            )
+        else:
+            line = "Henüz ses efekti yok" if tr else "No sound effects yet"
+    elif kind is ChipKind.TRANSITION:
+        cuts = len(_slots(ctx)) if state == "ready" else total
+        if cuts > 1:
+            line = (
+                f"{cuts} klip sert kesmelerle bağlı" if tr else f"{cuts} clips joined by hard cuts"
+            )
+    elif kind is ChipKind.HOOK:
+        if state == "first_prompt":
+            line = "Henüz bir açılış cümlesi yok" if tr else "No opening line yet"
+        else:
+            line = "Henüz başlık yok" if tr else "There is no title yet"
+    elif kind is ChipKind.MUSIC:
+        line = "Müzik sesini bastırıyor" if tr else "The music is competing with your voice"
+    elif kind is ChipKind.TITLE_ANIMATION:
+        line = "Başlık sabit duruyor" if tr else "The title just sits there"
+    return line if line and len(line) <= _EVIDENCE_MAX else None
+
+
 def assemble_set(
     ctx: SuggestionContext,
     plan: CandidatePlan,
@@ -1447,7 +1505,7 @@ def assemble_set(
             rank=index + 1,
             label=label,
             source=source,
-            why=why,
+            why=why or _evidence(cand, ctx, plan.state),
             default_edit=cand.kind is ChipKind.DEFAULT_EDIT and plan.state == "first_prompt",
         )
         for index, (cand, label, source, why) in enumerate(chosen)
