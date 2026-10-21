@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.19.0] - 2026-10-21
+
+### Changed
+- test(guards): Turkish parity G — Guards so new code stays bilingual (KRI-786) (#1714) <!-- release-pr: 1714 -->
+
 ## [0.81.18.0] - 2026-10-21
 
 ### Changed

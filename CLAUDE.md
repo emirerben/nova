@@ -108,6 +108,7 @@ make local-render MODE=generative CLIPS="a.mp4 b.mp4 c.mp4"
 - 2 fix PRs on a ticket ⇒ failure-mode list before the 3rd (`docs/runbooks/linear-workflow.md`).
 - **Highly prefer E2E tests as the sole testing mechanism.** Use them to verify complex features work, and end with a verifiable, repeatable artifact (`make verify-overlays` `report.json` + `montage.png`, Playwright report/trace, XCUITest result bundle, `make local-render` MP4 + its command).
 - **If you must test a system in isolation, first write down all the ways it could fail, then write the code.**
+- TR/EN language policy: DECISIONS.md.
 - Exempt (keep current): guard tests named in this file, cross-platform parity fixtures, `tests/evals/` fixtures (replay evals run in `test-api`). Prune audit: `docs/reviews/kri-198-test-prune.md`.
 
 ## Admin API access (for automation / Claude Code)
