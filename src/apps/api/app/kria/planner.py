@@ -93,7 +93,7 @@ from app.kria.strategy_policy import (
     song_captions_refusal,
     transcript_labels_dropped_notice,
 )
-from app.kria.style_asks import brief_moment_ask
+from app.kria.style_asks import brief_moment_ask, carry_moment_ask, moment_ask_in_text
 from app.kria.voiceover_clips import keep_every_voiceover_clip
 from app.models import (
     ContentPlan,
@@ -276,6 +276,7 @@ def _enrich_best_parts_snapshot(
             closing_quote=closing_quote,
             moment_count=moments.count if moments is not None else None,
             moment_max_s=moments.max_s if moments is not None else None,
+            moment_each_s=moments.each_s if moments is not None else None,
             # The creator's own description of a clip outranks its welcome line.
             spoken_moments={**dict([opening] if opening else []), **described},
             quiet_moments=dict([quiet]) if quiet else None,
@@ -343,24 +344,37 @@ def _whole_line_quotes(brief: CreativeBrief | None) -> list[str]:
 
 
 def _moment_count_notice(
-    strategy: Mapping[str, Any], brief: CreativeBrief | None, length_plan: object
+    strategy: Mapping[str, Any],
+    brief: CreativeBrief | None,
+    length_plan: object,
+    *,
+    summary: str = "",
 ) -> str | None:
-    """KRI-596: the reply says so when the montage can't hold the moments asked for."""
-    ask = brief_moment_ask(brief)
+    """KRI-596: the reply says so when the montage can't hold the moments asked for.
+
+    KRI-776: also when the draft's own summary counts more moments than the plan holds ("I
+    will cut the 6 exact moments" over one cut of the take), whoever gave that number.
+    """
     if (
-        ask is None
-        or ask.count is None
-        or strategy.get("edit_format") != "montage"
+        strategy.get("edit_format") != "montage"
         or not isinstance(length_plan, Mapping)
         or length_plan.get("window_eligible") is not True
     ):
         return None
     planned = len(length_plan.get("windows") or [])
-    if planned == ask.count:
+    ask = brief_moment_ask(brief)
+    promised = moment_ask_in_text(summary) if summary else None
+    if ask is not None and ask.count is not None:
+        if planned == ask.count:
+            return None
+        count = ask.count
+    elif promised is not None and promised.count is not None and promised.count > planned:
+        count = promised.count
+    else:
         return None
     return say(
-        en=f"I could fit {planned} moments, not {ask.count}.",
-        tr=f"{ask.count} değil, {planned} an sığdırabildim.",
+        en=f"I could fit {planned} {'moment' if planned == 1 else 'moments'}, not {count}.",
+        tr=f"{count} değil, {planned} an sığdırabildim.",
     )
 
 
@@ -3855,7 +3869,9 @@ async def _gate_unresolved_choices(
             closing_quote_notice(
                 length_plan.get("closing_quote") if isinstance(length_plan, dict) else closing_quote
             ),
-            _moment_count_notice(strategy, brief, length_plan),
+            _moment_count_notice(
+                strategy, brief, length_plan, summary=str(arguments.get("summary") or "")
+            ),
         )
         if notice
     ]
@@ -4432,7 +4448,11 @@ async def _plan_live_turn(
                 for result in extraction_outputs
                 for update in result.brief_updates
             }
-            pre_extracted_updates = tuple(unique_extracted.values())
+            # KRI-776: the creator's own moment numbers ride on the brief, whatever the
+            # extractor's paraphrase kept.
+            pre_extracted_updates = carry_moment_ask(
+                prior_brief, tuple(unique_extracted.values()), user_message
+            )
             effective = apply_updates(prior_brief, pre_extracted_updates, source_turn_id=None)
             extraction_complete = True
             fresh = new_requirements(prior_brief, effective)
@@ -4684,7 +4704,9 @@ async def _plan_live_turn(
             )
         )
     }
-    updates = tuple(unique_updates.values())
+    # KRI-776: the creator's own moment numbers ride on the brief, whatever the Main
+    # Creator's paraphrase kept ("six moments, about 2 seconds each" became a bare order list).
+    updates = carry_moment_ask(prior_brief, tuple(unique_updates.values()), user_message)
     try:
         effective = apply_updates(prior_brief, updates, source_turn_id=None)
     except BriefUpdateBatchError as exc:
@@ -4898,7 +4920,11 @@ async def extract_deferred_brief(
     scope, _clarification = _extraction_request_scope(extraction_outputs)
     if scope == "clarify":
         return (), None
-    updates = tuple(update for output in extraction_outputs for update in output.brief_updates)
+    updates = carry_moment_ask(
+        prior_brief,
+        tuple(update for output in extraction_outputs for update in output.brief_updates),
+        user_message,
+    )
     effective = apply_updates(prior_brief, updates, source_turn_id=None)
     fresh = new_requirements(prior_brief, effective)
     item = await _refetch_item(db, item_id)
