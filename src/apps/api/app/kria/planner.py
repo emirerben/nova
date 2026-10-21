@@ -868,6 +868,7 @@ def _clip_intent_resolution_plan(
     status: str,
     diagnostics: dict[str, Any] | None = None,
     clip_question: dict[str, Any] | None = None,
+    reply_options: Sequence[str] = (),
 ) -> KriaTurnPlan:
     if status == "needs_creator":
         return KriaTurnPlan(
@@ -880,6 +881,8 @@ def _clip_intent_resolution_plan(
             ),
             diagnostics=_safe_diagnostics(status, diagnostics),
             clip_question=clip_question,
+            # KRI-804: tappable answers, e.g. "Keep ... exactly as written" for a label.
+            reply_options=list(reply_options) or None,
         )
     # KRI-282: `pending` is NOT a failure -- the foreground vision budget ran out
     # with answers already cached for the next turn. Saying "couldn't match" made
@@ -2922,6 +2925,9 @@ async def _plan_creator_action(
                         planned.resolution.clip_question
                         if planned.resolution.needs_creator
                         else None
+                    ),
+                    reply_options=(
+                        planned.resolution.reply_options if planned.resolution.needs_creator else ()
                     ),
                 ),
                 manifest_hash=manifest.manifest_hash,

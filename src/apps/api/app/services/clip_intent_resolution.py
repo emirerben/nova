@@ -214,6 +214,9 @@ class IntentResolution:
     # KRI-282: the thumbnail clip-picker payload for a `needs_creator` question (see
     # ``services.clip_selection``); None keeps the question text-only.
     clip_question: dict[str, Any] | None = None
+    # KRI-804: tappable plain-text answers to a `needs_creator` question (the tap sends
+    # the option's text as the creator's message), e.g. how to fix a label's words.
+    reply_options: tuple[str, ...] = ()
 
     @property
     def needs_creator(self) -> bool:

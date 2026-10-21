@@ -47,6 +47,7 @@ from app.services.clip_order_sequence import (
     stated_anchors,
     unresolved_questions,
 )
+from app.services.creator_label_reply import label_text_reply
 from app.services.length_policy import creator_duration_s, length_owner
 
 CONTRACT_FIELD = "creator_render_requirements"
@@ -760,6 +761,37 @@ def _label_intent_media_ids(resolved_intents: object, literal: str) -> tuple[str
     return tuple(ids)
 
 
+def _caption_intent_media_ids(resolved_intents: object, literal: str) -> tuple[str, ...]:
+    """Clips a resolved described-shot caption prints the creator's ``literal`` on (KRI-804).
+
+    "Put "chimichurri & salsa criolla" on the sauce bowls" may travel as a caption with the
+    creator's words (``creator_text``), the lane that prints them as written however long
+    (KRI-296); the montage burns it on exactly its member clips. A chapter caption with no
+    creator words, or one the resolver wrote, is never this placement.
+    """
+    wanted = _normal(literal)
+    ids: list[str] = []
+    for intent in resolved_intents if isinstance(resolved_intents, Sequence) else ():
+        if not isinstance(intent, Mapping) or intent.get("op") != "caption":
+            continue
+        if str(intent.get("status") or "resolved") != "resolved":
+            continue
+        # The montage prints exactly these rows (`unified_montage._described_shot_labels`).
+        text = intent.get("caption_text")
+        if (
+            not intent.get("creator_text")
+            or intent.get("caption_grounding") != "creator_text"
+            or not isinstance(text, str)
+            or _normal(text) != wanted
+        ):
+            continue
+        for row in intent.get("assignments") or []:
+            media_id = str(row.get("media_id") or "") if isinstance(row, Mapping) else ""
+            if media_id and media_id not in ids:
+                ids.append(media_id)
+    return tuple(ids)
+
+
 def _json_value(value: object) -> object:
     if isinstance(value, BaseModel):
         return value.model_dump(mode="json")
@@ -1174,6 +1206,28 @@ def build_render_contract(
                                 )
                                 for media_id in placed_ids
                             )
+                            continue
+                        captioned = _caption_intent_media_ids(
+                            raw.get("resolved_clip_intents"), requirement.literal
+                        )
+                        if len(captioned) == 1:
+                            texts.append(
+                                TextRequirement(
+                                    role="clip", text=requirement.literal, media_id=captioned[0]
+                                )
+                            )
+                            continue
+                        if captioned:
+                            # Neighbouring member clips share ONE title layer across them
+                            # (`unified_montage._chapter_group_ids`), which no single clip
+                            # holds: the words must be on screen; the caption places them.
+                            texts.append(TextRequirement(role="any", text=requirement.literal))
+                            continue
+                        label_reply = label_text_reply([requirement.literal])
+                        if label_reply is not None:
+                            # KRI-804: words a label can't print (a "+", too long) are a
+                            # question about the TEXT, never "which clip".
+                            unresolved.append(label_reply.question)
                             continue
                         unresolved.append(
                             say(

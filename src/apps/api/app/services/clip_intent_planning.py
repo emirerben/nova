@@ -26,10 +26,8 @@ from app.kria.brief_route import fold_text, loose_text
 from app.kria.reply_language import current_reply_language, say
 from app.schemas.clip_intents import (
     CLIP_DESCRIPTION_ATTRIBUTE,
-    CREATOR_LABEL_MAX_WORDS,
     CREATOR_SELECTED_EVIDENCE,
     FILE_NAME_EVIDENCE,
-    LABEL_MAX_CHARS,
     MAX_CLIP_INTENTS,
     ClipAssignment,
     ClipIntent,
@@ -52,6 +50,12 @@ from app.services.clip_intent_resolution import (
 )
 from app.services.clip_selection import ClipSelections
 from app.services.clip_understanding import clip_record, understanding_incomplete
+from app.services.creator_label_reply import (
+    LabelTextReply,
+    can_keep_as_written,
+    keeps_as_written,
+    label_text_reply,
+)
 from app.services.spoken_quotes import regound_quoted_intents
 
 if TYPE_CHECKING:
@@ -211,75 +215,56 @@ def without_spoken_text_captions(
     ]
 
 
-def _label_problem_phrase(text: str, problem: str) -> str:
-    if problem == "too_long":
-        return say(
-            en=(
-                f'The label "{text}" is too long to fit on the video '
-                f"(a label holds up to {LABEL_MAX_CHARS} characters)."
-            ),
-            tr=(
-                f'"{text}" etiketi videoya sığmayacak kadar uzun '
-                f"(etiket en fazla {LABEL_MAX_CHARS} karakter olabilir)."
-            ),
-        )
-    if problem == "too_many_words":
-        return say(
-            en=(
-                f'The label "{text}" has too many words to fit on the video '
-                f"(a label holds up to {CREATOR_LABEL_MAX_WORDS} words)."
-            ),
-            tr=(
-                f'"{text}" etiketinde videoya sığmayacak kadar çok kelime var '
-                f"(etiket en fazla {CREATOR_LABEL_MAX_WORDS} kelime olabilir)."
-            ),
-        )
-    if problem == "characters":
-        return say(
-            en=(
-                f'The label "{text}" has characters a label can\'t show '
-                "(only letters, numbers, spaces, &, apostrophes and hyphens)."
-            ),
-            tr=(
-                f'"{text}" etiketinde etikette gösterilemeyen karakterler var '
-                "(yalnızca harf, rakam, boşluk, &, kesme işareti ve tire)."
-            ),
-        )
-    return say(
-        en=f'The label "{text}" has no letters to show.',
-        tr=f'"{text}" etiketinde gösterilecek harf yok.',
-    )
+def _creator_label_texts(intents: list[ClipIntent]) -> list[str]:
+    """The creator's own words on clip labels (never a placeholder or a narration label)."""
+    return [
+        intent.creator_text
+        for intent in intents
+        if intent.op == "label"
+        and intent.label_source == "clip"
+        and not intent.placeholder
+        and intent.creator_text
+    ]
 
 
-def unusable_label_question(intents: list[ClipIntent]) -> str | None:
-    """A plain reply when the creator's own label words can never be printed (KRI-678).
+def unusable_label_reply(intents: list[ClipIntent]) -> LabelTextReply | None:
+    """A plain question when the creator's own label words can never be printed (KRI-678).
 
     Such a label can never be grounded, so the clip picker would ask "which clips?"
-    again after every answer. Say why the text can't be used and ask for another;
-    None when every creator label can be printed.
+    again after every answer. The reply names every reason the text can't be a label
+    and offers tappable ways forward (KRI-804); None when every creator label can print.
     """
-    phrases: list[str] = []
+    return label_text_reply(_creator_label_texts(intents))
+
+
+def with_labels_kept_as_written(
+    intents: list[ClipIntent], creator_messages: str
+) -> list[ClipIntent]:
+    """A label the creator chose to keep "exactly as written" goes as its shot's caption (KRI-804).
+
+    The described-shot caption lane prints the creator's own words on the clips it is
+    resolved to (KRI-296), with none of a label's length or character bounds. The choice
+    is one of the creator's messages, so it holds on every later turn. Labels that print,
+    or that the creator did not choose to keep, are left as they are.
+    """
+    kept: list[ClipIntent] = []
     for intent in intents:
+        text = intent.creator_text
         if (
-            intent.op != "label"
-            or intent.label_source != "clip"
-            or intent.placeholder
-            or not intent.creator_text
+            text
+            and _creator_label_texts([intent])
+            and creator_label_problem(text) is not None
+            and can_keep_as_written(text)
+            and keeps_as_written(text, creator_messages)
         ):
-            continue
-        problem = creator_label_problem(intent.creator_text)
-        if problem is None:
-            continue
-        phrase = _label_problem_phrase(intent.creator_text, problem)
-        if phrase not in phrases:
-            phrases.append(phrase)
-    if not phrases:
-        return None
-    ask = say(
-        en="What shorter label should I use instead?",
-        tr="Yerine hangi daha kısa etiketi yazayım?",
-    )
-    return " ".join([*phrases, ask])
+            intent = ClipIntent(
+                intent_id=intent.intent_id,
+                op="caption",
+                attribute=intent.attribute,
+                creator_text=text,
+            )
+        kept.append(intent)
+    return kept
 
 
 def apply_creator_selections(
@@ -541,9 +526,11 @@ def with_brief_labels(intents: list[ClipIntent], asks: Sequence[BriefLabel]) -> 
     the words and the shot, and the render contract refuses a text nobody placed, so the
     label joins the inventory and is resolved, or asked with the picker, like any other.
     One the planner did emit (same words, whatever the case) is left as it is, whether it
-    wrote a label or a caption for it. Words a label can never print (too long, odd
-    characters) are not added: the render contract's own reply names them, and a new
-    "label too long" question would blame the creator for text that was valid.
+    wrote a label or a caption for it. Words a label can never print (too long, a "+")
+    were valid dictated text, so asking to shorten them would blame the creator (KRI-766)
+    and skipping them dead-ended the turn on "which clip" (KRI-804): they join as the
+    shot's caption, the lane that prints the creator's words as written (KRI-296). Only
+    words no lane can print join as a label, whose reply names every reason.
     """
     have = {
         label_key(i.creator_text)
@@ -556,16 +543,19 @@ def with_brief_labels(intents: list[ClipIntent], asks: Sequence[BriefLabel]) -> 
         key = label_key(ask.literal)
         if not key or key in have or len(intents) + len(added) >= MAX_CLIP_INTENTS:
             continue
-        if creator_label_problem(ask.literal) is not None:
-            continue
-        intent_id, n = fit_intent_id(f"label-{key.replace(' ', '-')}"), 2
+        op = (
+            "caption"
+            if creator_label_problem(ask.literal) is not None and can_keep_as_written(ask.literal)
+            else "label"
+        )
+        intent_id, n = fit_intent_id(f"{op}-{key.replace(' ', '-')}"), 2
         while intent_id in taken:
-            intent_id, n = fit_intent_id(f"label-{key.replace(' ', '-')}-{n}"), n + 1
+            intent_id, n = fit_intent_id(f"{op}-{key.replace(' ', '-')}-{n}"), n + 1
         try:
             added.append(
                 ClipIntent(
                     intent_id=intent_id,
-                    op="label",
+                    op=op,
                     attribute=" ".join(ask.description.split())[:160],
                     creator_text=ask.literal,
                 )
@@ -913,17 +903,22 @@ async def plan_and_resolve_clip_intents(
         intents = with_clip_descriptions(intents)
     if brief_labels:
         intents = with_brief_labels(intents, brief_labels)
+    # KRI-804: the creator's "keep it exactly as written" answer to the question below.
+    intents = with_labels_kept_as_written(
+        intents, "\n".join(t for t in (creator_request, latest_user_message) if t)
+    )
     # KRI-678: a creator label that can never be printed is a question about the TEXT,
     # never about clips. Asked before the picker, so a tapped answer cannot loop.
-    label_question = unusable_label_question(intents)
-    if label_question is not None:
+    label_reply = unusable_label_reply(intents)
+    if label_reply is not None:
         return PlannedIntentResolution(
             intents,
             IntentResolution(
                 status="needs_creator",
-                question=label_question,
+                question=label_reply.question,
                 error_code="label_text_unusable",
                 diagnostics={"stage": "planning", "reason": "label_text_unusable"},
+                reply_options=label_reply.options,
             ),
         )
     visual_intents = [intent for intent in intents if intent.label_source == "clip"]
