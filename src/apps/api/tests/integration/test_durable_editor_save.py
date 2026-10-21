@@ -219,7 +219,10 @@ async def test_protocol_two_refuses_invalid_save_without_durable_write(
 
 
 @pytest.mark.asyncio
-async def test_new_slot_identity_survives_two_saves_and_reopen(saved_project, monkeypatch):
+@pytest.mark.parametrize("initial_slot_id", [None, "cs-369BA950-52A-27"])
+async def test_new_slot_identity_survives_two_saves_and_reopen(
+    saved_project, monkeypatch, initial_slot_id
+):
     j = saved_project
     monkeypatch.setattr("app.routes.plan_items.enqueue_editor_commit_render", lambda *a, **k: None)
     first = await _editor_commit_item(
@@ -228,13 +231,19 @@ async def test_new_slot_identity_survives_two_saves_and_reopen(saved_project, mo
         EditorCommitRequest(
             base_generation="2026-07-01T00:00:00Z",
             editor_state_version=2,
-            timeline_slots=[TimelineSlotEdit(clip_index=0, in_s=7.54, duration_s=3)],
+            timeline_slots=[
+                TimelineSlotEdit(slot_id=initial_slot_id, clip_index=0, in_s=7.54, duration_s=3)
+            ],
         ),
         SimpleNamespace(id=j.uid),
         j.db,
     )
     rows = first.draft.snapshot["editor_payload"]["sections"]["timeline_slots"]
     assert rows[0]["slot_id"]
+    assert not rows[0]["slot_id"].startswith("cs-")
+    assert rows[0]["clip_index"] == 0
+    assert rows[0]["in_s"] == 7.54
+    assert rows[0]["duration_s"] == 3
     second = await _editor_commit_item(
         str(j.item.id),
         "song_text",
@@ -247,6 +256,17 @@ async def test_new_slot_identity_survives_two_saves_and_reopen(saved_project, mo
         j.db,
     )
     assert second.draft.snapshot["editor_payload"]["sections"]["timeline_slots"][0] == rows[0]
+    j.db.expire_all()
+    draft = await j.db.scalar(select(CreatorEditDraft).where(CreatorEditDraft.creator_id == j.uid))
+    assert draft.creator_id == j.uid
+    assert draft.snapshot_json["editor_payload"]["sections"]["timeline_slots"][0] == rows[0]
+    from app.services.editor_empty_drafts import attach_saved_editor_drafts, saved_editor_draft
+
+    loaded = await j.db.get(Job, draft.base_job_id, populate_existing=True)
+    assert loaded.user_id == j.uid
+    await attach_saved_editor_drafts(j.db, loaded)
+    reopened = saved_editor_draft(loaded, "song_text")
+    assert reopened.snapshot["editor_payload"]["sections"]["timeline_slots"][0] == rows[0]
 
 
 @pytest.mark.asyncio
