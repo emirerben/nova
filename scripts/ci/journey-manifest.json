@@ -657,10 +657,12 @@
     {
       "id": "kri-760-whole-line-ask",
       "needs_native": false,
-      "api_tests": "tests/kria/test_whole_line_routing.py tests/tasks/test_whole_line_ask_montage.py",
+      "api_tests": "tests/kria/test_whole_line_routing.py tests/tasks/test_whole_line_ask_montage.py tests/tasks/test_keep_line_audible_montage.py",
       "paths": [
         "src/apps/api/app/kria/planner.py",
-        "src/apps/api/app/pipeline/unified_montage.py"
+        "src/apps/api/app/pipeline/unified_montage.py",
+        "src/apps/api/app/services/spoken_quotes.py",
+        "src/apps/api/tests/fixtures/kri803_don_julio_m1_clips.json"
       ]
     },
     {
