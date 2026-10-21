@@ -109,6 +109,65 @@ def record_provider(monkeypatch):
     return calls
 
 
+async def test_full_confirmed_project_feedback_keeps_earlier_notes_and_reaches_generation(
+    collection_world, monkeypatch
+):
+    """A full positive proposal must fit alongside earlier scoped judgments.
+
+    Failure catalogue: the old 500-character note ceiling forced dropping prior
+    feedback or keeping a full judgment only in the CLI. Preserve both, keep the
+    generation context bounded, and erase all words through the existing flow.
+    """
+    from app.routes import editorial_taste
+    from app.services.creator_editorial_taste import generation_context
+
+    client, _assets, _sources, owner, app = collection_world
+    app.include_router(editorial_taste.router)
+    monkeypatch.setattr(settings, "creator_editorial_taste_enabled", True)
+    monkeypatch.setattr(settings, "creator_editorial_taste_user_ids", [str(owner.id)])
+    ids = await projects(owner)
+    earlier = "Earlier exact feedback: this felt too generic. " * 8
+    accepted = (
+        "Full editorial proposal: Would post. Opening: a clear observation about this outing. "
+        "Caption: explain what actually happened. Footage: the walking and wide views. "
+        "Reasoning: give the viewer one concrete useful detail. This is a taste judgment, "
+        "not factual certification or render approval. "
+    ) * 2
+    note = (earlier + accepted).strip()
+    assert 500 < len(note) <= 1500
+    body = {**profile_body(ids), "project_notes": {ids[0]: note}}
+    saved = await client.put("/me/editorial-taste", json=body)
+    assert saved.status_code == 200, saved.text
+    assert (
+        next(e for e in saved.json()["examples"] if e["project_id"] == ids[0])[
+            "creator_editorial_note"
+        ]
+        == note
+    )
+    async with AsyncSessionLocal() as db:
+        context = await generation_context(db, owner.id, "My race day")
+    payload = json.loads(context.split("\n", 1)[1])
+    assert (
+        next(e for e in payload["examples"] if e["id"] == ids[0])["contextual_creator_note"] == note
+    )
+    assert len(context) <= 8000
+    oversized = {
+        **body,
+        "expected_revision": 1,
+        "idempotency_key": "oversized-note",
+        "project_notes": {ids[0]: "x" * 1501},
+    }
+    assert (await client.put("/me/editorial-taste", json=oversized)).status_code == 422
+    forgotten = await client.request(
+        "DELETE",
+        "/me/editorial-taste",
+        json={"expected_revision": 1, "idempotency_key": "erase-full-note"},
+    )
+    assert forgotten.status_code == 200
+    async with AsyncSessionLocal() as db:
+        assert await generation_context(db, owner.id, "My race day") == ""
+
+
 async def test_confirmed_profile_reaches_proposals_and_forget_fences_retries(
     collection_world, monkeypatch
 ):  # noqa: F811

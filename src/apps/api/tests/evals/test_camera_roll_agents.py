@@ -430,3 +430,62 @@ def test_historical_copy_review_does_not_rejudge_visual_sequence():
         json.dumps(dict(approved=True, copy_supported=True, reason="Supported")), value
     )
     assert result.approved
+
+
+def test_source_verdict_comes_from_complete_checks_instead_of_contradictory_summary():
+    from app.services.story_idea_research import StorySourceReviewAgent
+
+    value = _paired_review_fixture()
+    value.proposed.stories[0].content_plan.beat_reasons = ["Background over a modern building"]
+    result = StorySourceReviewAgent(None).parse(
+        json.dumps(
+            dict(
+                approved=False,
+                reason="One or more beats unsupported",
+                copy_supported=True,
+                beat_checks=[
+                    dict(
+                        story_index=0,
+                        beat_index=0,
+                        supported=True,
+                        source_quote="modern building",
+                        identity_terms=[],
+                        reason="The description directly supports the reason",
+                    )
+                ],
+            )
+        ),
+        value,
+    )
+    assert result.approved is True
+
+
+def test_source_review_accepts_generic_structure_for_a_house():
+    from app.services.story_idea_research import StorySourceReviewAgent
+
+    value = _paired_review_fixture()
+    value.request.candidates[0].text = "establishing shot of stone house"
+    value.proposed.stories[0].content_plan.beat_reasons = [
+        "Presents a stone house, representing a structure"
+    ]
+    result = StorySourceReviewAgent(None).parse(
+        json.dumps(
+            dict(
+                approved=True,
+                copy_supported=True,
+                reason="Supported",
+                beat_checks=[
+                    dict(
+                        story_index=0,
+                        beat_index=0,
+                        supported=True,
+                        source_quote="stone house",
+                        identity_terms=["stone house", "structure"],
+                        reason="House is the source-described structure",
+                    )
+                ],
+            )
+        ),
+        value,
+    )
+    assert result.approved is True

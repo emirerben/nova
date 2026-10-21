@@ -36,7 +36,7 @@ class TasteWrite(BaseModel):
         self.project_notes = {
             key: normalize_private_text(value).strip() for key, value in self.project_notes.items()
         }
-        if any(len(value) > 500 for value in self.project_notes.values()):
+        if any(len(value) > 1500 for value in self.project_notes.values()):
             raise ValueError("Keep each project note short")
         return self
 

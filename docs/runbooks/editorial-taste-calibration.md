@@ -95,7 +95,9 @@ A judgment does not build a project or authorize rendering. Project notes remain
 contextual; they never silently become standing rules.
 
 PUT requires `expected_revision`, a stable `idempotency_key`, owned `project_ids`,
-`rules`, optional `project_notes`, `confirmed: true` and `enabled`. Revision changes
+`rules`, optional `project_notes` (at most 1,500 characters per project),
+`confirmed: true` and `enabled`. Project notes preserve full contextual feedback;
+the complete generation context remains capped at 8,000 characters. Revision changes
 include feedback. Clients must reload after conflict rather than automatically
 confirming a newer profile. The service captures saved server metadata, not client
 supplied post words. This is not pixel inspection or evidence of publication.

@@ -4,6 +4,24 @@ Goal: propose ideas the creator would actually publish, using their approved
 videos and slide posts as evidence. Execution correctness and creative quality
 are separate outcomes. KRI-336 and KRI-731 are related; no Linear writes made.
 
+## Current checkpoint — 21 October 2026
+
+The creator approved twenty finished posts and six scoped preferences, rejected
+an advertising-like draft, preferred an explanatory opening, and separately marked
+the complete developer editorial baseline Would post. Four real calibration
+judgments are preserved privately. The complete positive proposal now reaches the
+isolated account generator alongside earlier notes; no proposed rule or render
+approval is inferred. Project notes allow 1,500 characters while generation remains
+bounded to 8,000. The HTTP journey proves preservation and Forget erasure.
+
+The creator declined more collections. Finish with this development material;
+no unseen-footage quality result or fine-tuning-readiness claim follows. App
+personalization is implemented behind its existing flag/allowlist, with no
+production enrollment. Research still has factual-review and conservative source
+refusal limitations; [current research evidence](../camera-roll-recommendations/idea-research.md)
+is authoritative for current versions, live cost and quality limits. The sections
+below retain earlier implementation milestones, not current pending questions.
+
 ## First calibration
 
 The creator selected their last ten videos/slide posts and explicitly confirmed
