@@ -245,3 +245,55 @@ def test_calibration_keeps_ties_reasons_and_source_identity(tmp_path):
     calibration["source_project_id"] = str(uuid.uuid4())
     path.write_text(json.dumps(calibration))
     run(store, "calibration", "--input", path, "--expected-revision", 3, ok=False)
+
+
+def test_one_rejected_proposal_enters_context_without_an_invented_alternative(tmp_path):
+    # Failure catalogue: a single real response must be reviewable without making
+    # up a competing idea, turning rejection into a winner or changing rules.
+    store, owner, project, _, _ = seed(tmp_path)
+    case_id = str(uuid.uuid4())
+    proposal = {
+        "id": case_id,
+        "owner_id": owner,
+        "source_project_id": project,
+        "provenance": "synthetic_recorded_provider_response",
+        "options": [
+            {
+                "id": "one",
+                "idea": "Discover amazing sights. Plan your visit!",
+                "needs_creator_input": False,
+            }
+        ],
+    }
+    path = tmp_path / "one-proposal.json"
+    path.write_text(json.dumps(proposal))
+    created = run(store, "calibration", "--input", path, "--expected-revision", 1)
+    assert created["revision"] == 2
+    before = json.loads(run(store, "context", "--owner", owner)["context"].split("\n", 1)[1])
+    assert before["calibrations"] == []
+    reason = "Not for me: it is generic advertising copy."
+    response = tmp_path / "rejection.json"
+    response.write_text(
+        json.dumps(
+            {
+                "selected": [],
+                "reason": reason,
+                "reviewer": "Synthetic creator",
+                "creator_statement": reason,
+            }
+        )
+    )
+    judged = run(store, "judge", "--id", case_id, "--input", response, "--expected-revision", 2)
+    assert judged["reviewed_calibrations"] == 1
+    payload = json.loads(run(store, "context", "--owner", owner)["context"].split("\n", 1)[1])
+    assert payload["confirmed_rules"] == []
+    assert len(payload["calibrations"]) == 1
+    assert payload["calibrations"][0]["options"] == proposal["options"]
+    assert payload["calibrations"][0]["selected"] == []
+    assert payload["calibrations"][0]["reason"] == reason
+    # The existing source and revision fences still apply to the single case.
+    run(store, "judge", "--id", case_id, "--input", response, "--expected-revision", 3, ok=False)
+    proposal["id"] = str(uuid.uuid4())
+    proposal["options"] = []
+    path.write_text(json.dumps(proposal))
+    run(store, "calibration", "--input", path, "--expected-revision", 3, ok=False)

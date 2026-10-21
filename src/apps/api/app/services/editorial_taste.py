@@ -284,7 +284,7 @@ class TasteStore:
             return self.report(value)
 
     def add_calibration(self, proposed, expected_revision):
-        """Store choices over one pinned development example; no provider is implied."""
+        """Store a proposal or choices over one pinned development example."""
         with self.locked():
             value = self.require_revision(expected_revision)
             if identifier(proposed["owner_id"]) != value["owner_id"]:
@@ -294,8 +294,8 @@ class TasteStore:
             if source is None or project in value["holdout_project_ids"]:
                 raise ValueError("Choose an existing development example")
             options = proposed["options"]
-            if not isinstance(options, list) or not 2 <= len(options) <= 4:
-                raise ValueError("Compare between two and four ideas")
+            if not isinstance(options, list) or not 1 <= len(options) <= 4:
+                raise ValueError("Review one idea or compare up to four ideas")
             cleaned = []
             for option in options:
                 if type(option["needs_creator_input"]) is not bool:

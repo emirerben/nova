@@ -265,3 +265,44 @@ pass (`.dev/editorial-taste-final-merged-native.xcresult`, Xcode 26.6). Generate
 runtime/mobile/OpenAPI contracts match and the mapped pre-PR gates pass. Remote
 CI confirmation remains separate; the original corrected-export refusal remains
 an explicitly unresolved historical failure rather than a claimed fixture fix.
+
+## Second consented development preview
+
+The creator explicitly approved one additional request on the same frozen private
+input, capped at $0.05 with a private diagnostic response capture. Prompt version
+`2026-10-21.2` returned one structurally valid 16.58s proposal in one attempt, settling
+$0.002911. Both taste-preview attempts total $0.006544. No video upload, extra call,
+project build, render, production activation or training occurred.
+
+The short references resolved to known unique source moments with complete beat
+reasons. This demonstrates the reference boundary on one development sample only.
+The assistant assessment still finds generic tourism wording, little day-trip
+utility and an unsupported inference identifying a modern building as a museum.
+Those are assistant observations, not creator feedback or independently verified
+factuality labels. The creator's Would publish / Needs work / Not for me verdict is
+pending. No quality improvement or fine-tuning-readiness claim is made.
+
+Remote iPhone validation and iOS contracts pass on `a9c2178c9`. API shard0 passes;
+shard1 still reports partial evidence for the two tail cases and a silent-source
+case despite their local reproduction passing. Existing failure assertions now
+show only status and nonpassing checks, so CI's compact diagnostics retain the
+missing-evidence reason instead of truncating it behind full recipe identities.
+This is diagnostics only; no verdict, retry policy or threshold changes.
+
+The creator subsequently rejected that exact second preview as too generic and
+advertising-like. The exact reply is pinned privately to the immutable input and
+output hashes, without treating the assistant's earlier critique as human labels.
+A private CLI journey first reproduced the inability to review a single proposal
+without inventing another option. Development calibration now accepts one to four
+ideas; an empty selection rejects the single idea or chooses neither in a
+comparison. The independent two-arm evaluation workflow is unchanged. All nine
+private CLI/comparison journeys pass.
+
+The actual reply is now a source-pinned reviewed development calibration. Private
+corpus revision 10 retains 20 positive examples and the original four confirmed
+rules, with two actual reviewed calibrations. The local account API separately
+records the reply as contextual Troya feedback in the existing project note; its
+actual generation context includes the exact rejection and preserves all 20
+examples and four rules. These are private/local replays, not production activation
+or weight training. No additional provider call or spend occurred. A useful
+firsthand observation for the guide is the next creator input.

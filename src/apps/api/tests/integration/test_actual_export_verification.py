@@ -304,7 +304,10 @@ def test_title_ending_at_edit_boundary_cannot_leak_into_the_brand_tail(
     video = next(s for s in measured._probe(file)["streams"] if s["codec_type"] == "video")
     assert float(video["duration"]) == pytest.approx(4.6, abs=1 / 30)
     report = verify_actual_export(file, status(recipe), sources, brand_tail="standard")
-    assert report["status"] == expected, report
+    assert report["status"] == expected, {
+        "status": report["status"],
+        "incomplete_checks": [c for c in report["checks"] if c["status"] != "passed"],
+    }
     assert any(
         c["kind"] == "text" and c.get("expected_visible") is False for c in report["checks"]
     ), report
@@ -606,7 +609,10 @@ def test_silent_sources_accept_silent_export_and_reject_unrequested_audio(export
         ffmpeg("-i", source, "-c:v", "copy", "-an", path)
         silent_sources[key] = path
     report = verify_actual_export(silent, status(recipe), silent_sources)
-    assert report["status"] == "checked", report
+    assert report["status"] == "checked", {
+        "status": report["status"],
+        "incomplete_checks": [c for c in report["checks"] if c["status"] != "passed"],
+    }
     wrong = verify_actual_export(audible, status(recipe), silent_sources)
     assert wrong["status"] == "rejected", wrong
     assert any(

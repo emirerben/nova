@@ -40,7 +40,7 @@ def main():
     )
     held.add_argument("--project", required=True)
     calibration = commands.add_parser(
-        "calibration", help="Record a development comparison"
+        "calibration", help="Record a development proposal or comparison"
     )
     calibration.add_argument("--input", required=True, type=Path)
     calibration.add_argument("--expected-revision", required=True, type=int)

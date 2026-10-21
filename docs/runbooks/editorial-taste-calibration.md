@@ -44,13 +44,13 @@ storage. `/private/tmp` is temporary. Erase copies when the creator revokes use.
 
 Record a development calibration with `calibration --input <json>
 --expected-revision <n>`. Fields: `id`, `owner_id`, `source_project_id`, `provenance`
-(e.g. `assistant_authored_calibration`, not a fabricated provider run) and two to
+(e.g. `assistant_authored_calibration`, not a fabricated provider run) and one to
 four `options`, each with `id`, `idea` and `needs_creator_input`. The source must be
 an existing development example; the store pins its source hash.
 
 After the creator answers, use `judge --id <uuid> --input <json>
 --expected-revision <n>`. The judgment contains `selected` (one id, several tied ids,
-or `[]` for neither), `reason`, `reviewer` and the exact `creator_statement`.
+or `[]` to reject the single proposal or choose neither in a comparison), `reason`, `reviewer` and the exact `creator_statement`.
 Unreviewed comparisons do not enter context. Reviewed choices remain contextual
 examples, not automatically approved universal rules or render approval.
 
