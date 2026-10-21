@@ -1267,6 +1267,7 @@
       ],
       "regression_tests": [
         "tests/tasks/test_kri808_clip_speech_language.py",
+        "tests/tasks/test_kri808_clip_speech_language_postgres.py",
         "tests/tasks/test_kria_speech_segments.py",
         "tests/services/test_transcript_quality.py"
       ],

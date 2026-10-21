@@ -641,7 +641,9 @@ writes the timed `segments` and `language` afterwards
 
 Guards: `tests/tasks/test_kri808_clip_speech_language.py` replays the nine M1 clip
 records (`tests/fixtures/kri808_don_julio_clip_speech.json`: prod's records plus free
-whisper.cpp medium re-runs per language), `tests/services/test_transcript_quality.py`.
+whisper.cpp medium re-runs per language); `test_kri808_clip_speech_language_postgres.py` runs
+the background task on scratch Postgres with a real thread language row;
+`tests/services/test_transcript_quality.py`.
 Gaps: `ground_excerpt` folds tokens to ASCII, so a quote in a non-Latin script still can't
 ground; whisper's per-segment `no_speech_prob`/`avg_logprob` are not used because the
 transcript cache does not keep them.
