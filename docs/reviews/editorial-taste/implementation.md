@@ -246,3 +246,13 @@ simulator UI journeys pass locally on Xcode 26.6
 The corrected-export rejection in the earlier backend CI shard is still under
 investigation; the Mac and CI-font reproductions pass and no verifier threshold
 has been relaxed.
+
+A separate Linux reproduction found deterministic missing tail pictures in the
+synthetic fixture: its container/audio lasted 4.6s but its video lasted 3s (90 frames).
+Explicit `fps=30` before `tpad` produces 4.6s/138 frames. The fixture now checks actual
+video-stream duration before using its tail as an oracle. All 51 actual-export and
+publication checks pass both locally and in the same Linux two-worker/two-CPU
+reproduction (49 passed/two partial failures before, 51 passed after). Both correctly
+ending text and text leaking into the real tail retain their original verdicts.
+No product verifier or threshold changed. The earlier CI corrected-export refusal
+was not reproduced by this separate fixture finding and is not claimed fixed by it.

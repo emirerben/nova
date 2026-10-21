@@ -204,7 +204,8 @@ def encode(
     picture, audio = "v", "a"
     if tail:
         graph += (
-            f";[v]tpad=stop_mode=clone:stop_duration={tail}[tail];[a]apad=pad_dur={tail}[padded]"
+            f";[v]fps=30,tpad=stop_mode=clone:stop_duration={tail}[tail];"
+            f"[a]apad=pad_dur={tail}[padded]"
         )
         picture, audio = "tail", "padded"
     if title:
@@ -299,6 +300,9 @@ def test_title_ending_at_edit_boundary_cannot_leak_into_the_brand_tail(
     recipe = copy.deepcopy(recipe)
     recipe.text_layers[0].end = 3
     file = encode(root, sources, tail=1.6, title_window=(0, title_end))
+    # A long audio stream alone does not prove the fixture contains tail frames.
+    video = next(s for s in measured._probe(file)["streams"] if s["codec_type"] == "video")
+    assert float(video["duration"]) == pytest.approx(4.6, abs=1 / 30)
     report = verify_actual_export(file, status(recipe), sources, brand_tail="standard")
     assert report["status"] == expected, report
     assert any(
