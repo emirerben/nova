@@ -37,6 +37,8 @@ _OTHER_MODULES = (
     "schemas/edit_proposal.py",
     "services/choice_questions.py",
     "services/clip_intent_resolution.py",
+    # KRI-796: reads where a creator seated a Visual among named moments, by folded words.
+    "services/clip_order_sequence.py",
     "services/clip_selection.py",
     "services/creative_copy_decisions.py",
     "services/creator_direction.py",

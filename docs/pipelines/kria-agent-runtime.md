@@ -417,6 +417,18 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   photos") is honoured. `_run_phone_guided_job` binds them like any approved
   guided story's Visuals (`bind_phone_visuals`, `stillImages`/`visualVideos`). A
   kind the phone cannot draw fails the job (`UnsupportedPhonePlan`), never drops.
+- *A Visual between the moments of one take (KRI-796)*: "six moments from it, in
+  this order: A, B, ... put the photo right after B". When every order intent is a
+  `then` row naming either the one take or only Visuals, and the moments they name
+  (one row listing them comma by comma, or one row per moment) are exactly the take's
+  approved length-plan windows, `clip_order_sequence.moment_seats` reads the i-th
+  moment as the i-th window. A Visual's row plays it right after the moment its own
+  words anchor ("after" / "before" + the moment's folded words, either way contained),
+  or, with one row per moment, where it is listed; `_seat_among_moments` moves only
+  that cut. `_moment_outcomes` judges those rows off the finished cuts (`moment` on
+  the outcome row). An anchor naming no moment or two, a count that is not the window
+  count, a Visual before the first moment, more than one take, or no approved
+  windows: no seat, the KRI-217 scatter and `visual` outcome stand (an honest partial).
 
 **Dispatch (KRI-217).** Every runtime-v2 approval dispatches with
 `bypass_guided_edit_gate=True`, and the bypass used to refuse any item with a pool
