@@ -355,6 +355,7 @@
         "src/apps/api/app/kria/brief.py",
         "src/apps/api/app/kria/brief_checks.py",
         "src/apps/api/app/kria/brief_route.py",
+        "src/apps/api/app/kria/creator_cues.py",
         "src/apps/api/app/kria/duplicate_uploads.py",
         "src/apps/api/app/kria/language.py",
         "src/apps/api/app/kria/plan_blocks.py",
