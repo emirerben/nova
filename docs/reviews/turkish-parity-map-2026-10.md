@@ -233,6 +233,17 @@ Checked every `.ttf` in `src/apps/api/assets/fonts/` (52 font files) with fontTo
 | O39 | PermanentMarker-Regular.ttf | ğ Ğ ş Ş İ | yes |
 | O40 | Satisfy-Regular.ttf | ğ Ğ ş Ş İ | yes |
 | O41 | Rascal-Regular.ttf | all 12 (ğĞşŞıİçÇöÖüÜ) | no; registry only (font-registry.json:410), and named in creator_agent.py:1395 |
+| O41z | ZTBrosOskon90s (KRI-785) | ı is mapped but drawn WITH a dot ("ışığı" reads "işiği") | no |
+| O41b | BigCurls-Regular.ttf (KRI-785) | ç Ç ö Ö ü Ü â î û (and é è ...) are mapped to EMPTY glyphs: a cmap check passes, nothing is drawn | yes |
+| O41c | 19 faces incl. Playfair Display (style default), Instrument Serif, Bebas Neue (KRI-785) | ₺ U+20BA | some |
+| O41d | 11 faces incl. Poppins Bold/Regular/Black, Satisfy, Patrick Hand (KRI-785) | U+0307, which locale-free lower/title case of İ emits (see O28) | some |
+
+KRI-785 fix: `pipeline/font_coverage.py` switches the WHOLE run to one covering registry face
+(`assets/fonts/glyph-fallbacks.json` partner, else same category, else the display default),
+with one face per requested family across a burn (no line-by-line flip). Skia, Pillow/libass,
+the phone styling/montage pickers and the iOS compiler (`NativeGlyphFallback.swift`) share
+the rule; `overlay_verify` FAILs a resolved face that still lacks a needed glyph. Parity rows
+O37-O41g.
 
 What happens at render: Skia draws a tofu box for a missing glyph
 (`pipeline/text_overlay_skia.py:891`). A per-letter system-font fallback exists only on the

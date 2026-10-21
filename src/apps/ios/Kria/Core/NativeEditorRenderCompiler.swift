@@ -497,6 +497,15 @@ enum NativeEditorRenderError: Error, Equatable {
         let renderedTextElements = Self.projectSentenceCaptions(
             timedTextElements, captionMeta: captionMeta
         )
+        // KRI-785: one glyph-safe face per requested family across the video (the
+        // union of its texts), like the cloud's `glyph_safe_overlays`, so a Turkish
+        // lyric track never flips fonts line by line.
+        var familyTexts: [String: [String]] = [:]
+        for rawElement in renderedTextElements where rawElement.raw["enabled"] != .bool(false) && rawElement.raw["removed"] != .bool(true) {
+            let element = rawElement.isCaption ? Self.applyingCaptionMeta(captionMeta, to: rawElement) : rawElement
+            familyTexts[element.fontFamily, default: []].append(Self.displayText(element))
+        }
+        let glyphSafeFamilies = familyTexts.mapValues { $0.joined(separator: " ") }
         for rawElement in renderedTextElements where rawElement.raw["enabled"] != .bool(false) && rawElement.raw["removed"] != .bool(true) {
             if rawElement.isCaption {
                 if captionsGloballyDisabled { continue }
@@ -548,10 +557,10 @@ enum NativeEditorRenderError: Error, Equatable {
             // Placement and the default face match the server burn (cloud and
             // phone recipes alike); see `EditorTextElement.anchor(of:)`.
             let raw = element.raw
-            let displayText = KriaTextCase.apply(element.text, raw["text_case"]?.stringValue)
-            // KRI-785: a face missing a letter of this text sets the whole run in
-            // its glyph-fallbacks.json partner, like the cloud renderer.
-            let family = glyphFallback.family(element.fontFamily, for: displayText)
+            let displayText = Self.displayText(element)
+            // KRI-785: a face missing a letter of this family's texts sets the whole
+            // run in its glyph-fallbacks.json partner, like the cloud renderer.
+            let family = glyphFallback.family(element.fontFamily, for: glyphSafeFamilies[element.fontFamily] ?? displayText)
             let font = try resolveFont(family)
             let fontID = try registerFont(font)
             let legacy = raw["effect"]?.stringValue ?? "none"
@@ -911,6 +920,10 @@ enum NativeEditorRenderError: Error, Equatable {
         choice("direction", "direction", effect == "slide-down" ? "down" : (smooth || effect == "slide-up" ? "up" : "none"), ["none", "up", "down", "left", "right"])
         choice("cursor_style", "cursorStyle", effect == "stream-in" ? "bar" : "none", ["none", "bar", "block", "underscore"])
         return try JSONDecoder().decode(TextMotionParameters.self, from: JSONEncoder().encode(normalized))
+    }
+
+    private static func displayText(_ element: EditorTextElement) -> String {
+        KriaTextCase.apply(element.text, element.raw["text_case"]?.stringValue)
     }
 
     private static func projectSentenceCaptions(

@@ -403,14 +403,35 @@ def missing_rendered_glyphs(overlay: dict) -> list[str]:
     if resolution.source == "authored_centerline":
         return []
     text = tos._overlay_text(overlay)
+    typeface = resolution.typeface
     # Skia's cmap catches unmapped codepoints; `missing_glyphs` also catches a
-    # mapped-but-wrong glyph (a dotless ı drawn with a dot).
-    wrong = set(missing_glyphs(resolution.name, text))
-    return [
-        ch
-        for ch in needed_chars(text)
-        if resolution.typeface.unicharToGlyph(ord(ch)) == 0 or ch in wrong
-    ]
+    # mapped-but-wrong glyph (a dotless ı drawn with a dot, a blank outline).
+    flagged = set(missing_glyphs(resolution.name, text))
+    shaped = _uses_shaped_paragraph(overlay)
+    mgr = tos.skia.FontMgr.RefDefault() if shaped else None
+    missing = []
+    for ch in needed_chars(text):
+        if typeface.unicharToGlyph(ord(ch)) != 0:
+            if ch in flagged:  # mapped, but the glyph is wrong or blank
+                missing.append(ch)
+            continue
+        # The shaped path (`_shaped_paragraph`) fills each unmapped codepoint
+        # from the system font manager (prod ships DejaVu: Arabic, Hebrew), so
+        # there only a codepoint no system face can draw is tofu.
+        if mgr is not None and (
+            mgr.matchFamilyStyleCharacter(
+                typeface.getFamilyName(), typeface.fontStyle(), ["und"], ord(ch)
+            )
+            is not None
+        ):
+            continue
+        missing.append(ch)
+    return missing
+
+
+def _uses_shaped_paragraph(overlay: dict) -> bool:
+    """Mirror of the renderer's shaped-text switch (`_draw_frame`)."""
+    return overlay.get("effect") == "smooth-type" or bool(overlay.get("shape_text"))
 
 
 def verify_overlay(
@@ -502,7 +523,7 @@ def verify_overlay(
     elif res.resolved_typeface.get("glyph_fallback"):
         res.reasons.append(
             f"glyph fallback {res.resolved_typeface.get('requested_font_family')!r} -> "
-            f"{res.resolved_typeface.get('name')!r} (font lacks letters of this text)"
+            f"{res.resolved_typeface.get('name')!r} (font lacks characters of this text)"
         )
 
     font_fallback = bool(res.resolved_typeface.get("fallback"))

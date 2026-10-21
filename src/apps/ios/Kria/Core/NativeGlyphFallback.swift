@@ -9,8 +9,8 @@ import Foundation
 /// ZT Bros Oskon 90s draws its dotless ı with a dot. CoreText would patch each
 /// missing letter from a system font, so "Güneş" in Satisfy rendered with a
 /// lone San Francisco "ş"; the cloud burned tofu. Both now apply one rule:
-/// when the chosen face can't draw a letter, digit or punctuation mark of the
-/// text, the WHOLE run uses its `glyph-fallbacks.json` partner (when that
+/// when the chosen face can't draw a needed character of the text (blank
+/// outlines count as missing: Big Curls' ç ö ü), the WHOLE run uses its `glyph-fallbacks.json` partner (when that
 /// partner covers the text). Otherwise the chosen face is kept unchanged.
 ///
 /// The cloud also walks same-category registry faces for fonts the JSON does
@@ -46,6 +46,8 @@ final class NativeGlyphFallback: @unchecked Sendable {
             let units = Array(String(scalar).utf16)
             var glyphs = [CGGlyph](repeating: 0, count: units.count)
             if !CTFontGetGlyphsForCharacters(font, units, &glyphs, units.count) || glyphs.contains(0) { return false }
+            // Big Curls maps ç ö ü to EMPTY glyphs; a blank outline is missing too.
+            if glyphs.contains(where: { Self.isBlank(font, $0) }) { return false }
         }
         return true
     }
@@ -60,20 +62,32 @@ final class NativeGlyphFallback: @unchecked Sendable {
         return font
     }
 
-    /// Letters, digits and punctuation, like `font_coverage.needed_chars`.
+    /// Like `font_coverage.needed_chars`: NFC, then letters, digits, punctuation,
+    /// currency and math symbols (₺ ° ×), non-emoji other symbols and leftover
+    /// combining marks (the U+0307 of a lower-cased İ). Variation selectors and
+    /// emoji are not font glyphs.
     static func neededScalars(_ text: String) -> [Unicode.Scalar] {
         var seen = Set<UInt32>()
-        return text.unicodeScalars.filter { scalar in
+        return text.precomposedStringWithCanonicalMapping.unicodeScalars.filter { scalar in
+            if (0xFE00...0xFE0F).contains(scalar.value) { return false }
             switch scalar.properties.generalCategory {
             case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter, .otherLetter,
                  .decimalNumber, .letterNumber, .otherNumber,
                  .connectorPunctuation, .dashPunctuation, .openPunctuation, .closePunctuation,
-                 .initialPunctuation, .finalPunctuation, .otherPunctuation:
+                 .initialPunctuation, .finalPunctuation, .otherPunctuation,
+                 .currencySymbol, .mathSymbol, .nonspacingMark:
                 return seen.insert(scalar.value).inserted
+            case .otherSymbol:
+                return !scalar.properties.isEmoji && seen.insert(scalar.value).inserted
             default:
                 return false
             }
         }
+    }
+
+    private static func isBlank(_ font: CTFont, _ glyph: CGGlyph) -> Bool {
+        guard let path = CTFontCreatePathForGlyph(font, glyph, nil) else { return true }
+        return path.isEmpty || path.boundingBoxOfPath.isNull
     }
 
     /// A dotless ı drawn with as many contours as a dotted i still has its dot.

@@ -26,7 +26,7 @@ import structlog
 
 from app.pipeline.ass_utils import format_ass_time, sanitize_ass_text
 from app.pipeline.font_aliases import registry_font_name
-from app.pipeline.font_coverage import glyph_safe_family, glyph_safe_overlay
+from app.pipeline.font_coverage import glyph_safe_family, glyph_safe_overlay, glyph_safe_overlays
 from app.pipeline.generative_overlays import resolve_line_spacing, resolve_max_width_frac
 from app.pipeline.text_animation_math import (
     HANDWRITING_NOMINAL_SETTLE_S as _HANDWRITING_NOMINAL_SETTLE_S,
@@ -476,6 +476,7 @@ def generate_text_overlay_png(
     """
     results: list[dict] = []
 
+    overlays = glyph_safe_overlays(overlays)  # KRI-785: one face per family
     for i, overlay in enumerate(overlays):
         overlay = glyph_safe_overlay(overlay)  # KRI-785: same rule as the Skia path
         effect = overlay.get("effect", "none")
@@ -664,6 +665,7 @@ def generate_animated_overlay_ass(
     """
     ass_paths: list[str] = []
 
+    overlays = glyph_safe_overlays(overlays)  # KRI-785: one face per family
     for i, overlay in enumerate(overlays):
         overlay = glyph_safe_overlay(overlay)  # KRI-785: same rule as the Skia path
         effect = overlay.get("effect", "none")
@@ -789,6 +791,7 @@ def render_overlays_at_time(
         return
 
     with tempfile.TemporaryDirectory(prefix="overlay_preview_") as tmp_dir:
+        overlays = glyph_safe_overlays(overlays)  # KRI-785: one face per family
         for i, overlay in enumerate(overlays):
             try:
                 layer_path = _render_single_overlay_at_time(
@@ -2456,7 +2459,8 @@ def measure_text_width(
     if font is None:
         size = text_size_px or _FONT_SIZE_MAP.get(text_size, 72)
         if font_family:
-            font = _resolve_font_family(font_family, size)
+            # KRI-785: measure the glyph-safe face the renderer draws.
+            font = _resolve_font_family(glyph_safe_family(font_family, text) or font_family, size)
         if font is None:
             font = _load_styled_font(font_style, text_size, text_size_px=text_size_px)
     if font is None:
@@ -2498,7 +2502,8 @@ def wrap_and_measure(
     size = text_size_px or _FONT_SIZE_MAP.get(text_size, 72)
     font = None
     if font_family:
-        font = _resolve_font_family(font_family, size)
+        # KRI-785: measure the glyph-safe face the renderer draws.
+        font = _resolve_font_family(glyph_safe_family(font_family, text) or font_family, size)
     if font is None:
         font = _load_styled_font(font_style, text_size, text_size_px=size)
     if font is None:
@@ -2639,7 +2644,8 @@ def _draw_text_png(
     if font is None:
         size = text_size_px or _FONT_SIZE_MAP.get(text_size, 72)
         if font_family:
-            font = _resolve_font_family(font_family, size)
+            # KRI-785: whole-run glyph-safe face (same rule as Skia).
+            font = _resolve_font_family(glyph_safe_family(font_family, text) or font_family, size)
         if font is None:
             font = _load_styled_font(font_style, text_size, text_size_px=text_size_px)
     else:

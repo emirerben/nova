@@ -675,6 +675,45 @@
       "text_anchor": "center",
       "start_s": 0.0,
       "end_s": 2.0
+    },
+    {
+      "text": "Çok güzel, gözlük",
+      "effect": "static",
+      "font_family": "Big Curls",
+      "text_size_px": 72,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.45,
+      "max_width_frac": 0.86,
+      "text_color": "#FFFFFF",
+      "text_anchor": "center",
+      "start_s": 0.0,
+      "end_s": 2.0
+    },
+    {
+      "text": "Sadece 99₺ indirim",
+      "effect": "static",
+      "font_family": "Playfair Display",
+      "text_size_px": 72,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.45,
+      "max_width_frac": 0.86,
+      "text_color": "#FFFFFF",
+      "text_anchor": "center",
+      "start_s": 0.0,
+      "end_s": 2.0
+    },
+    {
+      "text": "bi̇r gün i̇stanbul",
+      "effect": "static",
+      "font_family": "Poppins Bold",
+      "text_size_px": 72,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.45,
+      "max_width_frac": 0.86,
+      "text_color": "#FFFFFF",
+      "text_anchor": "center",
+      "start_s": 0.0,
+      "end_s": 2.0
     }
   ]
 }
