@@ -7193,9 +7193,10 @@ def _run_phone_subtitled_job(
                 )
             # KRI-628: "start the video at '...'" cuts the speech before that line out of
             # the cleanup plan (the plan's keep segments are the only trim this render has).
+            # KRI-790: "...and end right after '...'" cuts everything after that line too.
             # KRI-704: the cut never depends on cleanup consent. With cleanup off, the
-            # checked preflight words (when the job carries them) ground the quote and the
-            # plan is a single keep segment [line, end); nothing else is cut.
+            # checked preflight words (when the job carries them) ground the quotes and the
+            # plan is a single keep segment [start line, end line]; nothing else is cut.
             opening_cut_snapshot = (
                 None
                 if cleanup_required or multi_clip
@@ -7204,14 +7205,14 @@ def _run_phone_subtitled_job(
                 )
             )
             cleanup_cut_plan = cut_plan
-            cut_plan, opening_cut_receipt = _phone_opening_cut(
+            cut_plan, take_window_receipts = _phone_opening_cut(
                 snapshot,
                 cut_plan,
                 speech_cleanup_snapshot.source_words() if speech_cleanup_snapshot else (),
                 duration_s=float(probe.duration_s),
                 off_words=opening_cut_snapshot.source_words() if opening_cut_snapshot else None,
             )
-            # True when the plan is the opening cut alone (cleanup off): captions remap
+            # True when the plan is the start/end cut alone (cleanup off): captions remap
             # through it, but it is never reported as a speech-cleanup outcome.
             opening_cut_only = cleanup_cut_plan is None and cut_plan is not None
 
@@ -8304,10 +8305,11 @@ def _run_phone_subtitled_job(
             new_entry["phone_lane_receipt"] = lane_receipt
         if sfx_duck is not None:
             new_entry[SFX_DUCK_RECEIPT_FIELD] = sfx_duck
-        if opening_cut_receipt is not None:
-            # KRI-628: whether the video starts at the line the creator quoted; the
-            # brief receipt's evidence at render-ready.
-            new_entry["opening_cut"] = opening_cut_receipt
+        if take_window_receipts:
+            # KRI-628 / KRI-790: whether the video starts (`opening_cut`) and ends
+            # (`end_cut`) at the lines the creator quoted; the brief receipt's evidence at
+            # render-ready.
+            new_entry.update(take_window_receipts)
         if speaker_framing is not None:
             # KRI-547: how the speaker was framed and why -- the brief receipt's
             # evidence at render-ready, and what an editor Save keeps or resets.
@@ -8380,7 +8382,9 @@ def _run_phone_subtitled_job(
             new_entry["silence_cut"] = plan_summary(
                 cut_plan, original_duration_s=float(probe.duration_s)
             )
-            new_entry["silence_cut_outcome"] = "applied" if cut_plan.removed else "no_change"
+            # A start/end cut is not speech cleanup: only cleanup's own removals count.
+            cleanup_removed = cleanup_cut_plan is not None and bool(cleanup_cut_plan.removed)
+            new_entry["silence_cut_outcome"] = "applied" if cleanup_removed else "no_change"
             new_entry["_speech_cleanup_outcome_context"] = speech_cleanup_outcome_context
         if existing_index is not None:
             variants[existing_index] = new_entry
@@ -8441,21 +8445,22 @@ def _phone_opening_cut(
     *,
     duration_s: float,
     off_words: Any = None,
-) -> tuple[CutPlan | None, dict[str, Any] | None]:
-    """KRI-628: cut the phone Talking take down to start at a line the creator quoted.
+) -> tuple[CutPlan | None, dict[str, dict[str, Any]] | None]:
+    """KRI-628 / KRI-790: cut the phone Talking take to the lines the creator quoted.
 
-    The ask is read deterministically off the approved brief pinned on the job
+    The asks are read deterministically off the approved brief pinned on the job
     (``creator_brief_binding``), never a prompt field. ``(cut_plan, None)`` without such
     an ask (or a readable binding), so the render runs exactly as before. Otherwise the
-    plan with everything before the line cut (when the take says it, and the speech
-    cleanup plan exists to carry the cut) and a receipt that never raises.
+    plan keeping only ``[start line, end of end line]`` (whichever the take says) and the
+    receipts, keyed by the variant field each is stored under (``opening_cut`` for the
+    start line, ``end_cut`` for the end line). Never raises.
 
     KRI-704: with cleanup off (``cut_plan is None``) the cut does not wait for consent --
-    ``off_words`` (the checked preflight words, when the job carries them) ground the quote
-    and the result is an opening-cut-only plan. No words: ``cleanup_off``, as before."""
+    ``off_words`` (the checked preflight words, when the job carries them) ground the
+    quotes and the result is a start/end-cut-only plan. No words: ``cleanup_off``."""
     from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
-    from app.kria.opening_cut_ask import brief_opening_cut  # noqa: PLC0415
-    from app.pipeline.phone_opening_cut import apply_opening_cut  # noqa: PLC0415
+    from app.kria.opening_cut_ask import brief_take_window  # noqa: PLC0415
+    from app.pipeline.phone_opening_cut import apply_take_window  # noqa: PLC0415
     from app.pipeline.silence_cut import no_op_plan  # noqa: PLC0415
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -8463,65 +8468,61 @@ def _phone_opening_cut(
     if not raw_binding:
         return cut_plan, None
     try:
-        ask = brief_opening_cut(BriefBinding.model_validate(raw_binding).resolve())
+        ask = brief_take_window(BriefBinding.model_validate(raw_binding).resolve())
     except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
         log.warning("phone_opening_cut.binding_unreadable", error=str(exc)[:200])
         return cut_plan, None
     if ask is None:
         return cut_plan, None
-    receipt: dict[str, Any]
-    if cut_plan is None and off_words is not None:
-        try:
-            plan, receipt = apply_opening_cut(
-                no_op_plan(duration_s),
-                list(off_words),
-                ask.quote,
-                duration_s=duration_s,
-                requirement_ids=ask.requirement_ids,
-            )
-            # A take that already opens on the line needs no plan at all.
-            cut_plan = plan if plan.removed else None
-        except Exception as exc:  # noqa: BLE001 - a missed cut is reported, never fatal
-            log.warning("phone_opening_cut.failed", error=str(exc)[:200])
-            receipt = {
+
+    def _missed(reason: str) -> dict[str, dict[str, Any]]:
+        lines = (
+            ("opening_cut", ask.start_quote, ask.start_ids),
+            ("end_cut", ask.end_quote, ask.end_ids),
+        )
+        return {
+            field: {
                 "version": 1,
-                "quote": ask.quote,
-                "requirement_ids": list(ask.requirement_ids),
+                "quote": quote,
+                "requirement_ids": list(ids),
                 "status": "not_applied",
-                "reason": "not_found",
+                "reason": reason,
             }
-    elif cut_plan is None:
-        # Cleanup was declined and the job carries no word timings to ground the line in.
-        receipt = {
-            "version": 1,
-            "quote": ask.quote,
-            "requirement_ids": list(ask.requirement_ids),
-            "status": "not_applied",
-            "reason": "cleanup_off",
+            for field, quote, ids in lines
+            if quote
         }
+
+    source_words = words if cut_plan is not None else off_words
+    if source_words is None:
+        # Cleanup was declined and the job carries no word timings to ground the lines in.
+        receipts = _missed("cleanup_off")
     else:
         try:
-            cut_plan, receipt = apply_opening_cut(
-                cut_plan,
-                list(words),
-                ask.quote,
+            plan, start_receipt, end_receipt = apply_take_window(
+                cut_plan if cut_plan is not None else no_op_plan(duration_s),
+                list(source_words),
+                start_quote=ask.start_quote,
+                end_quote=ask.end_quote,
                 duration_s=duration_s,
-                requirement_ids=ask.requirement_ids,
+                start_ids=ask.start_ids,
+                end_ids=ask.end_ids,
             )
+            # Cleanup off and nothing to cut (the take already is the window): no plan.
+            cut_plan = plan if cut_plan is not None or plan.removed else None
+            receipts = {
+                field: receipt
+                for field, receipt in (("opening_cut", start_receipt), ("end_cut", end_receipt))
+                if receipt is not None
+            }
         except Exception as exc:  # noqa: BLE001 - a missed cut is reported, never fatal
             log.warning("phone_opening_cut.failed", error=str(exc)[:200])
-            receipt = {
-                "version": 1,
-                "quote": ask.quote,
-                "requirement_ids": list(ask.requirement_ids),
-                "status": "not_applied",
-                "reason": "not_found",
-            }
-    try:
-        record_pipeline_event("phone", "opening_cut", receipt)
-    except Exception:  # noqa: BLE001 - observability only
-        pass
-    return cut_plan, receipt
+            receipts = _missed("not_found")
+    for field, receipt in receipts.items():
+        try:
+            record_pipeline_event("phone", field, receipt)
+        except Exception:  # noqa: BLE001 - observability only
+            pass
+    return cut_plan, receipts
 
 
 def _phone_speaker_framing(

@@ -1714,6 +1714,60 @@
         "KRI-725"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-790-take-window",
+      "tickets": [
+        "KRI-790",
+        "KRI-628",
+        "KRI-704"
+      ],
+      "symptom": "Merope T1 (2026-10-21): 'Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\"' in a 68.37 s Talking take: no end cut existed, the start line (brief facts on an order row, misheard 'Carolina' without the second I'm) never reached the phone plan, every draft said 'keeps your whole take ... 68.4s', and no draft or approval card named either line.",
+      "boundary": "compiler",
+      "status": "open_pr",
+      "owner": "KRI-790",
+      "journey": "kri-628-opening-cut",
+      "paths": [
+        "src/apps/api/app/kria/opening_cut_ask.py",
+        "src/apps/api/app/pipeline/phone_opening_cut.py",
+        "src/apps/api/app/services/speech_segments.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/tasks/kria_runtime.py"
+      ],
+      "regression_tests": [
+        "tests/pipeline/test_phone_take_window.py",
+        "tests/pipeline/test_phone_opening_cut.py",
+        "tests/tasks/test_phone_opening_cut_cleanup_off.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "T1's stored brief rows (v1 + v2) and the take's real timings (prod transcript words + local whisper.cpp words, prod segments) through the ask, the cut (cleanup on and off), the phone compiler, the caption remap, the worker's _phone_opening_cut and the draft/render receipts; each part of the fix switched off alone fails the guard. The KRI-787 runtime replay (PR #1723, run locally) flips exactly its KRI-790 xfails and pins; its kept window is [12.27, 50.38].",
+        "live_model": "n/a; no model call is involved and no paid run was made",
+        "native_output": "unknown; needs a phone re-send of T1 after deploy (also needs KRI-788 for the render to reach the phone)",
+        "production": "not deployed"
+      },
+      "neighbours_covered": [
+        "start + end, start only, end only",
+        "legacy order facts, KRI-789 timing start_line/end_line, KRI-628 description cue",
+        "misheard name and dropped short word; short quotes stay exact",
+        "end line said before the start line",
+        "cleanup on (window intersects cleanup cuts) and off (checked preflight words)",
+        "draft length line from timed segments; unplaced line falls back to the take length",
+        "rendered review: both sides cut, one side missed, older render without an end receipt",
+        "Turkish twins"
+      ],
+      "neighbours_gap": [
+        "cleanup off with no checked preflight snapshot still reports cleanup_off (no second transcription for the cut)",
+        "cloud (non-phone) Talking renders do not cut to the lines",
+        "the render still refuses T1 until KRI-788 restores the order answer (or KRI-789's one-clip rule lands)"
+      ],
+      "follow_ups": [
+        "KRI-788",
+        "KRI-789"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

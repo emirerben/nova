@@ -1122,16 +1122,27 @@ def _complete_draft_turn(
                     )
                     # KRI-705: a phone Talking draft answers every ask plainly, so the
                     # approval text cannot promise a cut or a mix change no receipt backs.
+                    phone_talking = defers_caption_words_to_phone_render(
+                        creator_id=thread.creator_id,
+                        edit_format=document.strategy.get("edit_format") or item.edit_format,
+                        audio_strategy=document.strategy.get("audio_strategy"),
+                        clip_paths=item.clip_gcs_paths or (),
+                    ) and (document.strategy.get("edit_format") or item.edit_format) in {
+                        "subtitled",
+                        "talking_head",
+                    }
                     facts = replace(
                         facts,
-                        phone_talking=defers_caption_words_to_phone_render(
-                            creator_id=thread.creator_id,
-                            edit_format=document.strategy.get("edit_format") or item.edit_format,
-                            audio_strategy=document.strategy.get("audio_strategy"),
-                            clip_paths=item.clip_gcs_paths or (),
-                        )
-                        and (document.strategy.get("edit_format") or item.edit_format)
-                        in {"subtitled", "talking_head"},
+                        phone_talking=phone_talking,
+                        # KRI-790: where the quoted start / end lines land in the take, so the
+                        # length line and the approval card follow the part they keep.
+                        take_window=(
+                            _draft_take_window(
+                                brief, document.strategy, planned.media_snapshot, item
+                            )
+                            if phone_talking
+                            else None
+                        ),
                     )
                     checked = brief.live()
                     # KRI-190: the unified montage planner writes the per-clip text,
@@ -2464,6 +2475,25 @@ class _DraftItemView:
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._item, name)
+
+
+def _draft_take_window(
+    brief: Any, strategy: Mapping[str, Any] | None, media_snapshot: Any, item: Any
+) -> Any:
+    """KRI-790: the take window a phone Talking draft's quoted lines keep (None = no ask, or
+    an estimate that failed: the receipts then say nothing about where the lines land)."""
+    from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+    from app.kria.opening_cut_ask import estimate_take_window  # noqa: PLC0415
+
+    try:
+        return estimate_take_window(
+            brief.live(),
+            media_snapshot if media_snapshot is not None else snapshot_media(item),
+            strategy=strategy,
+        )
+    except Exception as exc:  # noqa: BLE001 - an estimate never fails a turn
+        log.warning("kria_draft_take_window_failed", error=str(exc)[:200])
+        return None
 
 
 def _speech_cleanup_offered(item: Any, strategy: Mapping[str, Any] | None) -> bool | None:
