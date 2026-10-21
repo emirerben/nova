@@ -123,7 +123,13 @@
       "KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss",
       "KriaUITests/SavedUploadsUITests/testReuseAcrossTwoPostsWithoutAnotherUpload",
       "KriaUITests/SavedUploadsUITests/testSearchPaginationAndRetry",
-      "KriaUITests/SavedUploadsUITests/testPhotoReuseAcrossPosts"
+      "KriaUITests/SavedUploadsUITests/testPhotoReuseAcrossPosts",
+      "KriaUITests/CameraRollBenchmarkUITests/testMetadataBenchmarkStartsWithNoAuthorizedAssets",
+      "KriaUITests/CameraRollCollectionUITests/testReviewCorrectionRemovalAndResumeDoNotUpload",
+      "KriaUITests/CameraRollStoriesUITests/testReviewReplaceAndRejectWithoutRendering",
+      "KriaUITests/CameraRollStoriesUITests/testConfirmExamplesRateIdeaAndForget",
+      "KriaUITests/CameraRollStoriesUITests/testResearchFactsAndSourcesStayBehindTheIdea",
+      "KriaUITests/CameraRollCollectionUITests/testPartiallyIndexedCollectionStillOffersStories"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -340,8 +346,22 @@
     "src/apps/ios/Kria/Features/SavedUploadsView.swift": "creation",
     "src/apps/ios/Kria/Features/SavedUploadsUITestFixture.swift": "creation",
     "src/apps/ios/Tests/KriaUITests/SavedUploadsUITests.swift": "creation",
+    "src/apps/ios/Kria/Core/CameraRollCollection.swift": "creation",
+    "src/apps/ios/Kria/Core/CameraRollCollectionAPI.swift": "creation",
+    "src/apps/ios/Kria/Core/CameraRollStories.swift": "creation",
+    "src/apps/ios/Kria/Features/CameraRollBenchmarkView.swift": "creation",
+    "src/apps/ios/Kria/Features/CameraRollCollectionView.swift": "creation",
+    "src/apps/ios/Kria/Features/CameraRollSavedPicker.swift": "creation",
+    "src/apps/ios/Kria/Features/CameraRollStoriesView.swift": "creation",
+    "src/apps/ios/Kria/Features/CameraRollStoriesUITestFixture.swift": "creation",
+    "src/apps/ios/Kria/Features/CameraRollExportProofView.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/CameraRollBenchmarkUITests.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/CameraRollCollectionUITests.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/CameraRollStoriesUITests.swift": "creation",
     "src/apps/ios/Tests/KriaUITests/ResearchSourcesUITests.swift": "editor",
     "src/apps/ios/Kria/Core/ResearchCitation.swift": "editor",
-    "src/apps/ios/Kria/Features/NativeResearchSourcesView.swift": "editor"
+    "src/apps/ios/Kria/Features/NativeResearchSourcesView.swift": "editor",
+    "src/apps/ios/Kria/Core/EditorialTaste.swift": "creation",
+    "src/apps/ios/Kria/Features/EditorialTasteView.swift": "creation"
   }
 }

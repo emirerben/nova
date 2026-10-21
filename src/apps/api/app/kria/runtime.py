@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 import structlog
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -572,6 +573,7 @@ async def submit_turn(
     body: SubmitTurnBody,
     locale: str | None = None,
     _expected_revision_override: int | None = None,
+    _camera_roll_story: dict | None = None,
 ) -> tuple[TurnAccepted, bool]:
     """Commit a user event and pending turn together, before broker I/O.
 
@@ -913,6 +915,7 @@ async def submit_turn(
             "turn_id": str(turn_id),
             "turn_status": turn_status,
             # Flag off: dropped silently, nothing stored (byte-identical to old clients).
+            **({"camera_roll_story": _camera_roll_story} if _camera_roll_story else {}),
             **(
                 {"clip_selection": body.clip_selection.model_dump(mode="json")}
                 if body.clip_selection is not None
@@ -2352,6 +2355,35 @@ async def decide_approval(
 
         copy_document = _parse_draft_document(draft.snapshot_json)
         copy_item = plan_item or await db.get(PlanItem, session.plan_item_id)
+        if copy_document is not None and copy_document.prepared_collection_story is not None:
+            from app.services.media_collection_preparation import (
+                validate_prepared_story_for_approval,
+            )
+
+            try:
+                await validate_prepared_story_for_approval(
+                    db,
+                    owner=creator_id,
+                    item=copy_item,
+                    raw=copy_document.prepared_collection_story,
+                )
+            except (HTTPException, ValueError) as exc:
+                # A storage outage remains retryable and never invalidates consent.
+                if getattr(exc, "status_code", 0) >= 500:
+                    raise
+                await _cancel_pending_approval(
+                    db,
+                    thread=thread,
+                    session=session,
+                    turn=turn,
+                    approval=approval,
+                    execution=execution,
+                    plan_item=plan_item,
+                    code="camera_roll_story_stale",
+                    message=(
+                        "The chosen collection or story changed. Review it again before rendering."
+                    ),
+                )
         saved_readiness = (
             (copy_document.brief_coverage or {}).get("approval_readiness")
             if copy_document is not None

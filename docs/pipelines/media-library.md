@@ -134,6 +134,39 @@ the existing cost ledger with duration pricing and no hidden SDK retries. Cache
 hits make no provider call. A live lease remains processing; failed analysis is
 retryable. Creative interpretation, corrections and take alignment stay per post.
 
+## Camera-roll collections (KRI-729–732)
+
+The native collection flow reuses catalogue/source identities and local-original bindings.
+`PUT/GET /me/media-collections/{id}` saves at most 50 added assets; every member is eligible
+without a second selection. Index passes contain at most 32 sources. Photos identifiers
+and raw capture metadata remain on device, with correctable event groups and saved progress.
+Explicit import uses the existing catalogue ingest contract. No whole-library upload occurs.
+
+`GET /{id}/moments` and transcript-range reads use complete source-timed cached facts.
+`POST /{id}/semantic-search`, `/inspect` and `/stories` use bounded shared agents/fact leases.
+Candidate selection considers all collection sources, round-robin by each source's relevance;
+100 intervals enter a model call. Exact interval selection/approval is checked independently
+of that candidate projection. Availability requests run in batches of ten, up to 50 sources.
+Partial coverage and uncertainty remain explicit. Still images have no invented video timing.
+
+Stories support review, exact-interval replacement/order/removal, original/muted audio,
+rejection and selection. Selection prepares the common revisioned draft, with a server-owned
+story/collection/compiler binding. Separate expiring approval freezes the existing guided
+execution plan. Only the verified original-bound, rate-1, hard-cut video adapter is offered;
+no new renderer, captions, music or cloud/slides promotion. Initial output must pass actual
+picture/timing/audio checks; retries and last-good artifacts use the shared guards.
+
+Admission requires `MEDIA_LIBRARY_ENABLED`, `MEDIA_COLLECTION_PROPOSALS_ENABLED`, native
+authentication and explicit membership in `MEDIA_COLLECTION_PROPOSAL_USER_IDS`. Empty means
+nobody. Turning the switch off hides discovery and refuses new collection requests without
+modifying historical posts. `MEDIA_COLLECTION_CACHE_ONLY=true` is the default: cache misses
+cannot acquire model work, even if a client requests it. The current authorized pilot is one
+creator account, with up to $2 total model spend authorized only for the real test. No cohort or production flags were changed.
+
+Collection membership/facts do not pin cloud copies or alter retention. Device diagnostics,
+repeatable export proof, offline evaluation contracts and remaining human evidence are in
+[implementation status](../reviews/camera-roll-recommendations/status.md).
+
 ## Retention and erasure
 
 Archive hides future selection and preserves editable consumers. Catalogue

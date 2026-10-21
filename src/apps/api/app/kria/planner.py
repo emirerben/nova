@@ -624,6 +624,7 @@ class PlannedKriaTurn:
     # flight). The runtime re-runs the same turn instead of asking the creator to say
     # "go ahead". Server-only: never reaches `KriaTurnPlan`, which forbids extra fields.
     continuable: bool = False
+    prepared_collection_story: dict | None = None
 
 
 def adapt_creator_action(

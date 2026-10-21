@@ -51,7 +51,7 @@ struct NativeResearchSourcesView: View {
 }
 
 /// Provider-required attribution is isolated from app credentials and JavaScript.
-private struct ResearchSearchAttribution: UIViewRepresentable {
+struct ResearchSearchAttribution: UIViewRepresentable {
     let html: String
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> WKWebView {

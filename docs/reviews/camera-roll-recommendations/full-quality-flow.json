@@ -1,0 +1,110 @@
+{
+  "date": "2026-10-19",
+  "environment": "isolated development copy of owner account; genuine HTTP/authentication and native renderer",
+  "production_writes": 0,
+  "device": {
+    "model": "iPhone 13 Pro",
+    "os": "27.0.1",
+    "app_bundle": "com.kria.app.camerarollqa",
+    "native_source_head": "d607c21014176d2f7c6645ca3e2805ccaf47e9cc"
+  },
+  "server_source_head": "21a6ff24229878d2cdf25e8d976fb9df0952aab3",
+  "verifier_source_sha256": "9b25026e0db9112111657330207253d9e003549569be3a0541e41a99557cf334",
+  "ui_test_source_sha256": "99d5e640c1250fdd53171d9a8e6f324926ffa6b630da3b675ad49e2bdb29470b",
+  "runner": "Official Xcode UI-only runner; exact tracked test class, explicit QA bundle initializer",
+  "project": {
+    "title": "Ancient Structures: Ruins, Museum, or Replica?",
+    "thread_id": "fdc87cd3-5b7f-4029-9bc5-1786870bbe86",
+    "plan_item_id": "799de8f5-a1e8-439e-b900-2317d516e737",
+    "job_id": "dfcbf468-b65f-4a0e-a26f-37d0c888b5ee",
+    "creative_plan": {
+      "angle": "Contrast ways to experience ancient history: a real ruin, a museum piece, or a large replica.",
+      "format": "text_story",
+      "caption": "Exploring different ways to see the past: vast ruins, protected museum artifacts, or engaging replicas. What's your ideal stop?",
+      "version": 1,
+      "audience": "Travelers comparing historical sites.",
+      "beat_reasons": [
+        "Establishes a grand, ancient outdoor site.",
+        "Shows a preserved artifact indoors.",
+        "Reveals an impressive, interactive replica."
+      ],
+      "closing_text": "Which would you pick?",
+      "opening_text": "Would you spend an afternoon here?",
+      "why_it_works": "The opening poses a direct choice, and the sequence visually contrasts three distinct options, resolving the comparison by asking viewer preference."
+    }
+  },
+  "originals": {
+    "linked_count": 12,
+    "linked_bytes": 356970620,
+    "selected_photos_scope_count": 50,
+    "used_count": 3,
+    "used_resolution": "3840x2160",
+    "binding": "exact SHA-256 and byte count",
+    "originals_uploaded": false
+  },
+  "export": {
+    "phase": "published",
+    "verifier_version": "phone-simple-cut-v2",
+    "checks": {
+      "duration": 1,
+      "picture": 3,
+      "audio": 9,
+      "text": 9
+    },
+    "all_checks_passed": true,
+    "recipe_digest": "ae4d889cfa73af87479d9b97f84f1374990a8335c1aa808cc586e0b2cc5954a2",
+    "source_receipts_digest": "0f6e67ae74de25ac3b92ee9498632183143f88ce517fe188d5272eda879ad3f1",
+    "sha256": "952c388643f0e35a5061b111b662611103a678c0a0e6f9de1c88b4d2052205ef",
+    "bytes": 8197255,
+    "duration_s": 9.6,
+    "content_duration_s": 8.0,
+    "brand_tail_duration_s": 1.6,
+    "video": "H.264 1080x1920",
+    "audio": "AAC 48000Hz",
+    "artifact": "11-verified-original-quality-iphone.mp4"
+  },
+  "physical_evidence": {
+    "selection_to_publication": {
+      "result_bundle": ".dev/camera-roll-live-hardware-v15.xcresult",
+      "outcome": "Normal approval/export/upload/verification/publication passed; test later failed its editor assertion while the local guided editor was disabled."
+    },
+    "published_project_reopen": {
+      "result_bundle": ".dev/camera-roll-published-reopen-v17.xcresult",
+      "outcome": "passed",
+      "duration_s": 20.119,
+      "exact_project_title_checked": true,
+      "source_clip_control_enabled": true,
+      "reviewed_wording_field_enabled": true,
+      "reviewed_wording_preserved": true,
+      "live_clock_advanced": true,
+      "finished_video_fallback_absent": true,
+      "unsaved_edits_created": false
+    },
+    "single_uninterrupted_full_test_pass_claimed": false
+  },
+  "local_editor_requirement": {
+    "GUIDED_STORY_EDITOR_V2_ENABLED": true,
+    "api_and_worker_match": true,
+    "production_changed": false,
+    "supported_clip_operations": [
+      "trim",
+      "split",
+      "reorder",
+      "remove",
+      "original audio"
+    ],
+    "added_media_or_effects_promoted": false
+  },
+  "validation": {
+    "actual_export_completion_publication_controls_passed": 51,
+    "mapped_preship_checks_passed": 1043,
+    "human_quality_evaluation": "pending; single-owner evidence cannot qualify broader rollout"
+  },
+  "model_cost": {
+    "total_usd": "0.031284",
+    "approved_total_ceiling_usd": "2.00",
+    "includes_failed_responses_and_prior_examples": true,
+    "reopen_check_provider_calls": 0
+  },
+  "rollout": "hold; PR remains draft; no production enrollment or deployment"
+}
