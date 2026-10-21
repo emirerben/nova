@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.5.0] - 2026-10-21
+
+### Changed
+- fix(turkish-parity): Turkish parity B — One Turkish-aware text fold + correct İ/ı casing (KRI-781) (#1720) <!-- release-pr: 1720 -->
+
 ## [0.81.4.0] - 2026-10-21
 
 ### Changed
