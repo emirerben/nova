@@ -74,7 +74,7 @@ BASELINE: dict[str, int] = {
     "kria/voiceover_clips.py": 12,
     "routes/_copilot.py": 8,
     "routes/creator_agent.py": 39,
-    "schemas/edit_proposal.py": 63,
+    "schemas/edit_proposal.py": 62,
     "services/choice_questions.py": 2,
     "services/clip_intent_resolution.py": 2,
     "services/clip_selection.py": 1,

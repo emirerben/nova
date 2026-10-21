@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_redo_scratch",
+  "lang": "tr",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "baştan başla, videoyu sıfırdan yeniden yap",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "baştan başla, videoyu sıfırdan yeniden yap"
+  },
+  "prompt_sha256": "2b5c262569e4acce7fc148e8f73b49aab255bc73e0337ef268e01cf63ce1c716",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:12:50.339087+00:00",
+  "raw_text": "{\n  \"brief_updates\": [],\n  \"request_scope\": \"rebuild\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [],\n  \"request_scope\": \"rebuild\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3232,
+    "out": 22,
+    "thoughts": 313
+  },
+  "computed_cost_usd": 0.00368
+}

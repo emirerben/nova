@@ -1,0 +1,29 @@
+{
+  "pair_id": "cip_use_all_clips",
+  "lang": "tr",
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-18.1",
+  "message": "tüm kliplerimi kullanarak 8 saniyelik hızlı bir montaj yap",
+  "input": {
+    "candidate_intents": null,
+    "clip_facts": true,
+    "clip_exclusions": true,
+    "creator_request": "tüm kliplerimi kullanarak 8 saniyelik hızlı bir montaj yap",
+    "latest_user_message": "tüm kliplerimi kullanarak 8 saniyelik hızlı bir montaj yap",
+    "reply_language": "tr"
+  },
+  "prompt_sha256": "9a279b7f4027303e3858eabe629f3fa1f248a90f467f49273e854caa2095af13",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:10:15.011523+00:00",
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"include_all_clips\",\n      \"op\": \"include\",\n      \"attribute\": \"all my clips\",\n      \"label_source\": null,\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"tüm kliplerimi kullanarak\"\n    }\n  ],\n  \"question\": null\n}",
+  "raw_texts": [
+    "{\n  \"intents\": [\n    {\n      \"intent_id\": \"include_all_clips\",\n      \"op\": \"include\",\n      \"attribute\": \"all my clips\",\n      \"label_source\": null,\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"tüm kliplerimi kullanarak\"\n    }\n  ],\n  \"question\": null\n}"
+  ],
+  "model_used": "gemini-2.5-flash",
+  "tokens": {
+    "in": 3593,
+    "out": 131,
+    "thoughts": 373
+  },
+  "computed_cost_usd": 0.002338
+}

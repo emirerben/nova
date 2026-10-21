@@ -1047,6 +1047,318 @@
         "title": "CoarseLocation",
         "type": "object"
       },
+      "CollectionIndexBody": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "limit": {
+            "default": 32,
+            "maximum": 32.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "maximum": 50.0,
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "CollectionIndexBody",
+        "type": "object"
+      },
+      "CollectionIndexOut": {
+        "properties": {
+          "indexed_sources": {
+            "title": "Indexed Sources",
+            "type": "integer"
+          },
+          "missing_analysis_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Missing Analysis Asset Ids",
+            "type": "array"
+          },
+          "next_offset": {
+            "nullable": true,
+            "title": "Next Offset",
+            "type": "integer"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "truncated_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Truncated Asset Ids",
+            "type": "array"
+          },
+          "unavailable_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Unavailable Asset Ids",
+            "type": "array"
+          },
+          "untimed_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Untimed Asset Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "revision",
+          "next_offset",
+          "indexed_sources",
+          "missing_analysis_asset_ids",
+          "unavailable_asset_ids",
+          "truncated_asset_ids"
+        ],
+        "title": "CollectionIndexOut",
+        "type": "object"
+      },
+      "CollectionMember": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_id": {
+            "format": "uuid",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "group": {
+            "maxLength": 80,
+            "minLength": 1,
+            "nullable": true,
+            "title": "Group",
+            "type": "string"
+          },
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_id",
+          "source_id"
+        ],
+        "title": "CollectionMember",
+        "type": "object"
+      },
+      "CollectionOut": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionMember"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "unavailable_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Unavailable Asset Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "revision",
+          "members"
+        ],
+        "title": "CollectionOut",
+        "type": "object"
+      },
+      "CollectionStoriesOut": {
+        "properties": {
+          "coverage": {
+            "$ref": "#/components/schemas/MomentSearchOut"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "stories": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionStoryOut"
+            },
+            "title": "Stories",
+            "type": "array"
+          }
+        },
+        "required": [
+          "revision",
+          "stories",
+          "coverage"
+        ],
+        "title": "CollectionStoriesOut",
+        "type": "object"
+      },
+      "CollectionStoryOut": {
+        "properties": {
+          "audio_policy": {
+            "default": "preserve_source_audio",
+            "enum": [
+              "preserve_source_audio",
+              "muted"
+            ],
+            "title": "Audio Policy",
+            "type": "string"
+          },
+          "collection_id": {
+            "format": "uuid",
+            "title": "Collection Id",
+            "type": "string"
+          },
+          "collection_revision": {
+            "title": "Collection Revision",
+            "type": "integer"
+          },
+          "content_plan": {
+            "$ref": "#/components/schemas/StoryContentPlan",
+            "nullable": true
+          },
+          "duration_s": {
+            "title": "Duration S",
+            "type": "number"
+          },
+          "hook": {
+            "title": "Hook",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "moments": {
+            "items": {
+              "$ref": "#/components/schemas/MediaMomentOut"
+            },
+            "title": "Moments",
+            "type": "array"
+          },
+          "on_screen_copy": {
+            "items": {
+              "type": "string"
+            },
+            "title": "On Screen Copy",
+            "type": "array"
+          },
+          "payoff": {
+            "title": "Payoff",
+            "type": "string"
+          },
+          "rationale": {
+            "title": "Rationale",
+            "type": "string"
+          },
+          "rejected": {
+            "default": false,
+            "title": "Rejected",
+            "type": "boolean"
+          },
+          "requires_render_approval": {
+            "default": true,
+            "enum": [
+              true
+            ],
+            "title": "Requires Render Approval",
+            "type": "boolean"
+          },
+          "research": {
+            "$ref": "#/components/schemas/StoryResearch",
+            "nullable": true
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "collection_id",
+          "collection_revision",
+          "revision",
+          "title",
+          "hook",
+          "payoff",
+          "rationale",
+          "duration_s",
+          "moments"
+        ],
+        "title": "CollectionStoryOut",
+        "type": "object"
+      },
+      "CollectionWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionMember"
+            },
+            "maxItems": 50,
+            "title": "Members",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "expected_revision",
+          "members"
+        ],
+        "title": "CollectionWrite",
+        "type": "object"
+      },
       "CreateBody": {
         "additionalProperties": false,
         "properties": {
@@ -1127,6 +1439,16 @@
           },
           "media": {
             "$ref": "#/components/schemas/CreationMediaCapabilitiesOut"
+          },
+          "media_collection_cache_only": {
+            "default": true,
+            "title": "Media Collection Cache Only",
+            "type": "boolean"
+          },
+          "media_collections": {
+            "default": false,
+            "title": "Media Collections",
+            "type": "boolean"
           },
           "media_library": {
             "default": false,
@@ -5900,6 +6222,72 @@
         "title": "MediaInput",
         "type": "object"
       },
+      "MediaMomentOut": {
+        "properties": {
+          "asset_id": {
+            "format": "uuid",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "end_s": {
+            "title": "End S",
+            "type": "number"
+          },
+          "evidence": {
+            "additionalProperties": true,
+            "title": "Evidence",
+            "type": "object"
+          },
+          "generation": {
+            "title": "Generation",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "visual",
+              "speech"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "start_s": {
+            "title": "Start S",
+            "type": "number"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "uncertain": {
+            "title": "Uncertain",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "asset_id",
+          "source_id",
+          "generation",
+          "start_s",
+          "end_s",
+          "kind",
+          "text",
+          "uncertain",
+          "evidence"
+        ],
+        "title": "MediaMomentOut",
+        "type": "object"
+      },
       "MediaSize": {
         "additionalProperties": false,
         "properties": {
@@ -6178,6 +6566,181 @@
           "onboarding_status"
         ],
         "title": "MobileUserOut",
+        "type": "object"
+      },
+      "MomentInspectionBody": {
+        "additionalProperties": false,
+        "properties": {
+          "cache_only": {
+            "default": false,
+            "title": "Cache Only",
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "moment_id": {
+            "format": "uuid",
+            "title": "Moment Id",
+            "type": "string"
+          },
+          "question": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "moment_id",
+          "question"
+        ],
+        "title": "MomentInspectionBody",
+        "type": "object"
+      },
+      "MomentInspectionOut": {
+        "properties": {
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "confidence": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "end_s": {
+            "title": "End S",
+            "type": "number"
+          },
+          "evidence": {
+            "title": "Evidence",
+            "type": "string"
+          },
+          "generation": {
+            "title": "Generation",
+            "type": "string"
+          },
+          "moment_id": {
+            "format": "uuid",
+            "title": "Moment Id",
+            "type": "string"
+          },
+          "sample_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sample Sha256",
+            "type": "string"
+          },
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "start_s": {
+            "title": "Start S",
+            "type": "number"
+          },
+          "uncertain": {
+            "default": true,
+            "enum": [
+              true
+            ],
+            "title": "Uncertain",
+            "type": "boolean"
+          },
+          "verification": {
+            "enum": [
+              "targeted_model_inspection"
+            ],
+            "title": "Verification",
+            "type": "string"
+          }
+        },
+        "required": [
+          "moment_id",
+          "source_id",
+          "generation",
+          "start_s",
+          "end_s",
+          "verification",
+          "answer",
+          "confidence",
+          "evidence",
+          "sample_sha256"
+        ],
+        "title": "MomentInspectionOut",
+        "type": "object"
+      },
+      "MomentSearchOut": {
+        "properties": {
+          "candidate_limit_reached": {
+            "default": false,
+            "title": "Candidate Limit Reached",
+            "type": "boolean"
+          },
+          "incomplete_speech_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Incomplete Speech Asset Ids",
+            "type": "array"
+          },
+          "method": {
+            "default": "text-evidence-v1",
+            "enum": [
+              "text-evidence-v1",
+              "semantic-rerank-v1"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "moments": {
+            "items": {
+              "$ref": "#/components/schemas/MediaMomentOut"
+            },
+            "title": "Moments",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "truncated_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Truncated Asset Ids",
+            "type": "array"
+          },
+          "unavailable_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Unavailable Asset Ids",
+            "type": "array"
+          },
+          "unindexed_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Unindexed Asset Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "revision",
+          "moments",
+          "unavailable_asset_ids"
+        ],
+        "title": "MomentSearchOut",
         "type": "object"
       },
       "MontageBlock": {
@@ -8086,6 +8649,85 @@
         "title": "RequirementReceipt",
         "type": "object"
       },
+      "ResearchEvidence": {
+        "properties": {
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchFact"
+            },
+            "maxItems": 30,
+            "minItems": 1,
+            "title": "Facts",
+            "type": "array"
+          },
+          "retrieved_at": {
+            "title": "Retrieved At",
+            "type": "string"
+          },
+          "search_entry_html": {
+            "maxLength": 100000,
+            "title": "Search Entry Html",
+            "type": "string"
+          }
+        },
+        "required": [
+          "facts",
+          "retrieved_at",
+          "search_entry_html"
+        ],
+        "title": "ResearchEvidence",
+        "type": "object"
+      },
+      "ResearchFact": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchSource"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Sources",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 3000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "sources"
+        ],
+        "title": "ResearchFact",
+        "type": "object"
+      },
+      "ResearchSource": {
+        "properties": {
+          "title": {
+            "maxLength": 300,
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "maxLength": 2048,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "url"
+        ],
+        "title": "ResearchSource",
+        "type": "object"
+      },
       "ResolvedTextMotion": {
         "additionalProperties": false,
         "properties": {
@@ -8206,6 +8848,33 @@
           "reveal_ramp_ms"
         ],
         "title": "ResolvedTextMotion",
+        "type": "object"
+      },
+      "SemanticSearchBody": {
+        "additionalProperties": false,
+        "properties": {
+          "cache_only": {
+            "default": false,
+            "title": "Cache Only",
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "query": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "query"
+        ],
+        "title": "SemanticSearchBody",
         "type": "object"
       },
       "SlideDrawing": {
@@ -9539,6 +10208,288 @@
           "pivot_y"
         ],
         "title": "StaggeredGlyph",
+        "type": "object"
+      },
+      "StoryContentPlan": {
+        "additionalProperties": false,
+        "description": "Suggested creative wording, kept distinct from source-analysis descriptions.",
+        "properties": {
+          "angle": {
+            "maxLength": 280,
+            "minLength": 1,
+            "title": "Angle",
+            "type": "string"
+          },
+          "audience": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Audience",
+            "type": "string"
+          },
+          "beat_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Beat Reasons",
+            "type": "array"
+          },
+          "caption": {
+            "default": "",
+            "maxLength": 300,
+            "title": "Caption",
+            "type": "string"
+          },
+          "closing_text": {
+            "maxLength": 100,
+            "minLength": 1,
+            "nullable": true,
+            "title": "Closing Text",
+            "type": "string"
+          },
+          "format": {
+            "default": "text_story",
+            "enum": [
+              "text_story"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "opening_text": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Opening Text",
+            "type": "string"
+          },
+          "version": {
+            "default": 1,
+            "enum": [
+              1
+            ],
+            "title": "Version",
+            "type": "integer"
+          },
+          "why_it_works": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Why It Works",
+            "type": "string"
+          }
+        },
+        "required": [
+          "audience",
+          "angle",
+          "why_it_works",
+          "opening_text",
+          "beat_reasons"
+        ],
+        "title": "StoryContentPlan",
+        "type": "object"
+      },
+      "StoryCorrectionBody": {
+        "additionalProperties": false,
+        "properties": {
+          "audio_policy": {
+            "enum": [
+              "preserve_source_audio",
+              "muted"
+            ],
+            "nullable": true,
+            "title": "Audio Policy",
+            "type": "string"
+          },
+          "client_event_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Client Event Id",
+            "type": "string"
+          },
+          "content_plan": {
+            "$ref": "#/components/schemas/StoryContentPlan",
+            "nullable": true
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "expected_story_revision": {
+            "minimum": 1.0,
+            "title": "Expected Story Revision",
+            "type": "integer"
+          },
+          "moment_id": {
+            "format": "uuid",
+            "nullable": true,
+            "title": "Moment Id",
+            "type": "string"
+          },
+          "moment_order": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "nullable": true,
+            "title": "Moment Order",
+            "type": "array"
+          },
+          "replace_index": {
+            "maximum": 7.0,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Replace Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "expected_story_revision",
+          "client_event_id"
+        ],
+        "title": "StoryCorrectionBody",
+        "type": "object"
+      },
+      "StoryGenerationBody": {
+        "additionalProperties": false,
+        "properties": {
+          "cache_only": {
+            "default": false,
+            "title": "Cache Only",
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "query": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "research_topic": {
+            "maxLength": 200,
+            "minLength": 4,
+            "nullable": true,
+            "title": "Research Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "query"
+        ],
+        "title": "StoryGenerationBody",
+        "type": "object"
+      },
+      "StoryResearch": {
+        "properties": {
+          "basis": {
+            "default": "background_context",
+            "enum": [
+              "background_context"
+            ],
+            "title": "Basis",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/ResearchEvidence"
+          },
+          "review_current": {
+            "default": true,
+            "title": "Review Current",
+            "type": "boolean"
+          },
+          "reviewed_content_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Reviewed Content Sha256",
+            "type": "string"
+          },
+          "topic": {
+            "maxLength": 200,
+            "minLength": 3,
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "evidence",
+          "reviewed_content_sha256"
+        ],
+        "title": "StoryResearch",
+        "type": "object"
+      },
+      "StoryReviewBody": {
+        "additionalProperties": false,
+        "properties": {
+          "client_event_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Client Event Id",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "expected_story_revision": {
+            "minimum": 1.0,
+            "title": "Expected Story Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "expected_story_revision",
+          "client_event_id"
+        ],
+        "title": "StoryReviewBody",
+        "type": "object"
+      },
+      "StorySelectionBody": {
+        "additionalProperties": false,
+        "properties": {
+          "client_event_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Client Event Id",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "expected_story_revision": {
+            "minimum": 1.0,
+            "title": "Expected Story Revision",
+            "type": "integer"
+          },
+          "expected_thread_revision": {
+            "minimum": 0.0,
+            "title": "Expected Thread Revision",
+            "type": "integer"
+          },
+          "thread_id": {
+            "format": "uuid",
+            "title": "Thread Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "expected_story_revision",
+          "client_event_id",
+          "thread_id",
+          "expected_thread_revision"
+        ],
+        "title": "StorySelectionBody",
         "type": "object"
       },
       "SubmitTurnBody": {
@@ -14328,6 +15279,784 @@
           }
         ],
         "summary": "Access Url",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-collections/{identifier}": {
+      "get": {
+        "operationId": "read_me_media_collections__identifier__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Read",
+        "tags": [
+          "media-library"
+        ]
+      },
+      "put": {
+        "operationId": "write_me_media_collections__identifier__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectionWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Write",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-collections/{identifier}/index": {
+      "post": {
+        "operationId": "index_me_media_collections__identifier__index_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectionIndexBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionIndexOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Index",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-collections/{identifier}/inspect": {
+      "post": {
+        "operationId": "inspect_me_media_collections__identifier__inspect_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MomentInspectionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MomentInspectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Inspect",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-collections/{identifier}/moments": {
+      "get": {
+        "operationId": "search_me_media_collections__identifier__moments_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "title": "Expected Revision",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query",
+            "required": true,
+            "schema": {
+              "maxLength": 500,
+              "minLength": 1,
+              "title": "Query",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 10,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MomentSearchOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Search",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-collections/{identifier}/semantic-search": {
+      "post": {
+        "operationId": "semantic_search_me_media_collections__identifier__semantic_search_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SemanticSearchBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MomentSearchOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Semantic Search",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-collections/{identifier}/sources/{source_id}/transcript": {
+      "get": {
+        "operationId": "transcript_range_me_media_collections__identifier__sources__source_id__transcript_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Revision",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start_s",
+            "required": true,
+            "schema": {
+              "maximum": 1800,
+              "minimum": 0,
+              "title": "Start S",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end_s",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": true,
+              "maximum": 1800,
+              "minimum": 0,
+              "title": "End S",
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MomentSearchOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Transcript Range",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-collections/{identifier}/stories": {
+      "post": {
+        "operationId": "stories_me_media_collections__identifier__stories_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoryGenerationBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionStoriesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Stories",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-collections/{identifier}/stories/{story_id}": {
+      "patch": {
+        "operationId": "correct_story_me_media_collections__identifier__stories__story_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "story_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Story Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoryCorrectionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionStoryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Correct Story",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-collections/{identifier}/stories/{story_id}/expose": {
+      "post": {
+        "operationId": "expose_story_me_media_collections__identifier__stories__story_id__expose_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "story_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Story Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoryReviewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionStoryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Expose Story",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-collections/{identifier}/stories/{story_id}/reject": {
+      "post": {
+        "operationId": "reject_story_me_media_collections__identifier__stories__story_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "story_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Story Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoryReviewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionStoryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Reject Story",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-collections/{identifier}/stories/{story_id}/select": {
+      "post": {
+        "operationId": "select_story_me_media_collections__identifier__stories__story_id__select_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "story_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Story Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorySelectionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Select Story",
         "tags": [
           "media-library"
         ]

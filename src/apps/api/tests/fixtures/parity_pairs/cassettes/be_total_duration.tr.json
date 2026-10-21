@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_total_duration",
+  "lang": "tr",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "videonun tamamı 30 saniye olsun",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "videonun tamamı 30 saniye olsun"
+  },
+  "prompt_sha256": "a882d2041fb97796bc09b9a1b8a04450b5fae90a20ee9dbdd8c6cc00efa0c0fb",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:05:43.151150+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"timing\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"videonun tamamı 30 saniye olsun\",\n      \"facts\": {\n        \"duration_s\": 30\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"timing\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"videonun tamamı 30 saniye olsun\",\n      \"facts\": {\n        \"duration_s\": 30\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3229,
+    "out": 98,
+    "thoughts": 367
+  },
+  "computed_cost_usd": 0.004166
+}

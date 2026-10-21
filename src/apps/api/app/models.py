@@ -2860,6 +2860,8 @@ class MediaCollection(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    selection_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
@@ -2867,7 +2869,112 @@ class MediaCollection(Base):
 
     __table_args__ = (
         UniqueConstraint("id", "user_id", name="uq_media_collections_id_user"),
+        CheckConstraint("revision >= 0", name="ck_media_collections_revision"),
         Index("idx_media_collections_user_updated", "user_id", "updated_at"),
+    )
+
+
+class MediaCollectionStory(Base):
+    """Reviewable recommendation history; selection is never render approval."""
+
+    __tablename__ = "media_collection_stories"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    collection_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    collection_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    story_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    moments_json: Mapped[list] = mapped_column(JSONB, nullable=False)
+    events_json: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    __table_args__ = (
+        UniqueConstraint("id", "user_id", name="uq_collection_story_owner"),
+        ForeignKeyConstraint(
+            ["collection_id", "user_id"],
+            ["media_collections.id", "media_collections.user_id"],
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "revision >= 1 AND collection_revision >= 1", name="ck_collection_story_revision"
+        ),
+        Index("idx_collection_stories_owner", "user_id", "collection_id", "created_at"),
+    )
+
+
+class CreatorEditorialTasteExample(Base):
+    """Creator-endorsed editorial source; project/account erasure removes its words."""
+
+    __tablename__ = "creator_editorial_taste_examples"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+    source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    content: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "plan_item_id", "source_sha256", name="uq_editorial_example_source"
+        ),
+        Index("idx_editorial_example_project", "plan_item_id"),
+    )
+
+
+class CreatorEditorialTasteRevision(Base):
+    """Versioned rules and exemplar references; erasure scrubs payloads, retaining retry fences."""
+
+    __tablename__ = "creator_editorial_taste_revisions"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    __table_args__ = (
+        UniqueConstraint("user_id", "revision", name="uq_editorial_taste_revision"),
+        UniqueConstraint("user_id", "idempotency_key", name="uq_editorial_taste_request"),
+        CheckConstraint("revision >= 1", name="ck_editorial_taste_revision"),
+        CheckConstraint("octet_length(payload::text) <= 16000", name="ck_editorial_taste_size"),
+    )
+
+
+class CreatorIdeaFeedback(Base):
+    """Explicit creative judgment over an exact offered story, never render approval."""
+
+    __tablename__ = "creator_idea_feedback"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    story_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    story_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    client_event_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    verdict: Mapped[str] = mapped_column(Text, nullable=False)
+    reasons: Mapped[list] = mapped_column(JSONB, nullable=False)
+    note: Mapped[str] = mapped_column(Text, nullable=False)
+    rewrite: Mapped[str] = mapped_column(Text, nullable=False)
+    proposal: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["story_id", "user_id"],
+            ["media_collection_stories.id", "media_collection_stories.user_id"],
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("user_id", "client_event_id", name="uq_idea_feedback_request"),
+        CheckConstraint("story_revision >= 1", name="ck_idea_feedback_revision"),
+        CheckConstraint(
+            "verdict IN ('would_post','needs_work','not_for_me')", name="ck_idea_feedback_verdict"
+        ),
+        Index("idx_idea_feedback_owner_created", "user_id", "created_at"),
     )
 
 
@@ -2894,6 +3001,42 @@ class MediaCollectionMember(Base):
             name="fk_media_collection_members_asset_owner",
             ondelete="CASCADE",
         ),
+    )
+
+
+class MediaSourceMoment(Base):
+    """Derived search index, never an independent library or source authority."""
+
+    __tablename__ = "media_source_moments"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    fact_version: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    start_s: Mapped[float] = mapped_column(Float, nullable=False)
+    end_s: Mapped[float] = mapped_column(Float, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    uncertain: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["source_id", "user_id", "asset_id"],
+            [
+                "media_asset_sources.id",
+                "media_asset_sources.user_id",
+                "media_asset_sources.asset_id",
+            ],
+            ondelete="CASCADE",
+            name="fk_media_source_moments_owned_source",
+        ),
+        CheckConstraint(
+            "start_s >= 0 AND end_s > start_s", name="ck_media_source_moments_interval"
+        ),
+        CheckConstraint("kind IN ('visual','speech')", name="ck_media_source_moments_kind"),
+        Index("idx_media_source_moments_source_version", "user_id", "source_id", "fact_version"),
     )
 
 

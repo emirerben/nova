@@ -222,6 +222,7 @@ class _ApprovalDispatchClaim:
     # What the plan item pointed at BEFORE a strategy dispatch mints its new Job, so a
     # failure after the pointer moves can put it back (never leave an orphan target).
     prior_item_status: str | None = None
+    creator_guided_attempt_id: str | None = None
 
 
 def _snapshot(thread: CreationThread) -> dict[str, Any]:
@@ -815,6 +816,7 @@ def _complete_draft_turn(
             edit_format=arguments.strategy.edit_format,
             strategy=arguments.strategy.model_dump(mode="json", exclude_none=True),
             changes=changes,
+            prepared_collection_story=getattr(planned, "prepared_collection_story", None),
         )
         snapshot, snapshot_hash = canonical_snapshot(document)
 
@@ -1243,6 +1245,15 @@ def _complete_draft_turn(
 
             if brief is None:
                 brief = load_latest_brief_sync(db, thread.id)
+            # KRI-774: the same text the approval binding pins, so a later recheck agrees.
+            _readiness_source = db.get(CreationThreadEvent, turn.source_event_id)
+            _readiness_request = (
+                _full_creator_request_sync(
+                    db, thread_id=thread.id, through_sequence=int(_readiness_source.sequence)
+                )
+                if _readiness_source is not None
+                else None
+            )
             readiness_report = assess_readiness(
                 brief,
                 document.strategy or {},
@@ -1252,6 +1263,7 @@ def _complete_draft_turn(
                 manifest=planned.readiness_manifest,
                 editor_payload=document.editor_payload,
                 editor_text_diff=document.editor_text_diff,
+                creator_request=_readiness_request,
             )
             if not readiness_report["ready"]:
                 reply_text = readiness_reply(brief, readiness_report)
@@ -1314,6 +1326,7 @@ def _complete_draft_turn(
                     if planned.media_snapshot is not None
                     else _readiness_media(item),
                     manifest=planned.readiness_manifest,
+                    creator_request=_readiness_request,
                 )
             log.info(
                 "kria_simpler_version_drafted",
@@ -1927,6 +1940,16 @@ async def _plan_with_live_agent(
                     scope=scoped["scope"],
                     manual_edit_count=len(scoped["manual_edits"]),
                 )
+            if snapshot.get("camera_roll_story"):
+                from app.services.media_collection_preparation import plan_selected_story
+
+                return await plan_selected_story(
+                    db,
+                    reference=snapshot["camera_roll_story"],
+                    thread_id=uuid.UUID(str(snapshot["thread_id"])),
+                    item_id=uuid.UUID(str(snapshot["item_id"])),
+                    creator_id=uuid.UUID(str(snapshot["creator_id"])),
+                )
             with bind_thought_publisher(thought_publisher):
                 planned = await plan_live_turn(
                     db,
@@ -2167,6 +2190,9 @@ def _claim(
         if thread is None or source is None:
             return None
         claimed_snapshot = {**_snapshot(thread), "client_request_id": turn.client_event_id}
+        source_payload = getattr(source, "payload", None)
+        if isinstance(source_payload, dict) and source_payload.get("camera_roll_story"):
+            claimed_snapshot["camera_roll_story"] = source_payload["camera_roll_story"]
         live_scope = _scoped_turn_fields(source)
         if live_scope is not None:
             # KRI-441: rides the snapshot dict so the claim tuple keeps its shape.
@@ -2586,7 +2612,9 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
         else None
     )
     try:
-        if settings.main_creator_agent_enabled and snapshot.get("item_id"):
+        if (
+            settings.main_creator_agent_enabled or snapshot.get("camera_roll_story")
+        ) and snapshot.get("item_id"):
             planned = asyncio.run(
                 _plan_with_live_agent(
                     snapshot,
@@ -3192,6 +3220,24 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                     and approval.target_generation_id == execution.target_generation_id
                 )
 
+        if (
+            target_valid
+            and document is not None
+            and getattr(document, "prepared_collection_story", None) is not None
+        ):
+            from app.services.media_collection_preparation import install_approved_story
+
+            try:
+                install_approved_story(
+                    db,
+                    item=item,
+                    owner=thread.creator_id,
+                    raw=document.prepared_collection_story,
+                    strategy=document.strategy,
+                    dry_run=True,
+                )
+            except ValueError:
+                target_valid = False
         now = datetime.now(UTC)
         if not target_valid:
             approval.status = "cancelled"
@@ -3232,6 +3278,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             db.commit()
             return None
 
+        creator_guided_attempt_id = None
         strategy_payload: dict[str, Any] | None = None
         editor_prep: dict[str, Any] | None = None
         preflight_analysis_id: uuid.UUID | None = None
@@ -3315,6 +3362,16 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             elif strategy.caption_style == "none":
                 item.voiceover_caption_style = None
             item.user_edited = True
+            if getattr(document, "prepared_collection_story", None) is not None:
+                from app.services.media_collection_preparation import install_approved_story
+
+                creator_guided_attempt_id = install_approved_story(
+                    db,
+                    item=item,
+                    owner=thread.creator_id,
+                    raw=document.prepared_collection_story,
+                    strategy=strategy_payload,
+                )
             # KRI-205: `decide_approval` stashed the speech-cleanup decision it
             # (or its legacy default) already validated at approval time --
             # read it back rather than asking the creator again here. Absent
@@ -3496,6 +3553,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             item_id=item.id,
             ownership_epoch=int(session.ownership_epoch),
             draft_kind=document.kind,
+            creator_guided_attempt_id=creator_guided_attempt_id,
             strategy=strategy_payload,
             editor_prep=editor_prep,
             target_job_id=current_job.id if current_job is not None else None,
@@ -4775,7 +4833,12 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
         result = dispatch_item_render_for(
             str(claim.item_id),
             claim.ownership_epoch,
-            bypass_guided_edit_gate=True,
+            bypass_guided_edit_gate=not bool(getattr(claim, "creator_guided_attempt_id", None)),
+            **(
+                {"creator_guided_attempt_id": claim.creator_guided_attempt_id}
+                if getattr(claim, "creator_guided_attempt_id", None)
+                else {}
+            ),
             # KRI-187: a phone account has no approved guided proposal on this
             # path; the flag inside dispatch decides whether it may proceed to
             # the device montage compiler. Non-phone accounts ignore it.

@@ -150,7 +150,7 @@ struct LibraryGalleryGrid: View {
 
 /// One thumbnail: opportunistic request (fast low-res first), network access on so iCloud-only assets still
 /// show a poster. Cancelled when the tile scrolls away.
-private struct GalleryThumbnail: View {
+struct GalleryThumbnail: View {
     let asset: PHAsset
     let loader: GalleryThumbnailLoader
     @State private var image: UIImage?

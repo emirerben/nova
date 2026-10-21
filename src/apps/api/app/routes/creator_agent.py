@@ -77,7 +77,22 @@ from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
 from app.db_locks import CONTENT_PLAN_LOCK, acquire_locked_rows
+from app.kria.brief_route import fold_text
 from app.kria.clip_scope import apply_clip_exclusions
+from app.kria.creator_cues import (
+    CLOSING_CUE_PATTERN_TR,
+    SFX_GENERIC_WORDS_TR,
+    SFX_NOUN_PATTERN_TR,
+    TITLE_NOUN_PATTERN_TR,
+    TR_SECONDS_UNIT_PATTERN,
+    UNNAMED_SFX_PHRASE_TR,
+    tr_seconds_spellings,
+    turkish_clause_refused,
+    turkish_closing_cue,
+    turkish_keeps_clip_order,
+    turkish_pacing,
+    turkish_sfx_phrases,
+)
 from app.limiter import limiter
 from app.models import (
     AgentRun,
@@ -114,6 +129,7 @@ from app.schemas.edit_proposal import (
     recognize_round_robin_cadence,
     recognize_total_duration_s,
     rejects_round_robin_cadence,
+    turkish_media_scope,
 )
 from app.services.ai_usage_headers import paid_call_headers
 from app.services.clip_intent_answers import (
@@ -748,7 +764,8 @@ def _explicit_media_scope(request: str, manifest: Any | None = None) -> Literal[
         normalized,
     ):
         return "selected"
-    return "selected"
+    # KRI-782: the same Turkish reader main_creator uses ("tüm videoları kullan").
+    return turkish_media_scope(request) or "selected"
 
 
 def _has_explicit_media_scope(request: str, manifest: Any | None = None) -> bool:
@@ -766,7 +783,9 @@ def _has_explicit_media_scope(request: str, manifest: Any | None = None) -> bool
         normalized,
     ):
         return True
-    return explicit_scope_from_stated_media_count(request, manifest)
+    if explicit_scope_from_stated_media_count(request, manifest):
+        return True
+    return turkish_media_scope(request) is not None
 
 
 def _explicit_guided_voiceover_request(request: str, manifest: Any) -> bool:
@@ -789,10 +808,13 @@ _SFX_QUOTED_NAME = rf"{_OPEN_QUOTE}([^\"'”’]{{1,160}}){_CLOSE_QUOTE}"
 
 # Phrases made only of these words ask for effects in general ("add a sound
 # effect", "use a different sound effect"); they never name one.
-_SFX_GENERIC_WORDS = frozenset(
-    "a an the any some one another other same more extra this that these those my your"
-    " our their each every different new random funny fun cool good nice subtle little"
-    " single just only".split()
+_SFX_GENERIC_WORDS = (
+    frozenset(
+        "a an the any some one another other same more extra this that these those my your"
+        " our their each every different new random funny fun cool good nice subtle little"
+        " single just only".split()
+    )
+    | SFX_GENERIC_WORDS_TR
 )
 _SFX_VERB = r"(?:add|use|choose|pick|place|include)"
 
@@ -826,7 +848,7 @@ def _sfx_verb_refused(request: str, verb_start: int, phrase_end: int) -> bool:
     return not _SFX_MODERATION_AFTER.match(request, phrase_end)
 
 
-def _sfx_verb_matches(request: str) -> list[tuple[str, bool]]:
+def _sfx_verb_matches(request: str, manifest: Any | None = None) -> list[tuple[str, bool]]:
     """Every "add <phrase> sound effect" phrase, one per verb, in order.
 
     Overlapping candidates let "Add a sound effect. Use the Fah sound effect"
@@ -844,11 +866,16 @@ def _sfx_verb_matches(request: str) -> list[tuple[str, bool]]:
         phrase = match.group(1)
         if not re.search(rf"\b(?:and|but|then|so)\s+{_SFX_VERB}\b", phrase, re.IGNORECASE):
             phrases.append((phrase, _sfx_verb_refused(request, match.start(), match.end(1))))
-    return phrases
+    # KRI-782: Turkish puts the verb last ("whoosh ses efektini ekle"); the catalog
+    # lets a lowercase two-word label ("vine boom") resolve whole.
+    resolves = None
+    if manifest is not None:
+        resolves = lambda name: resolve_creator_sfx_catalog_ref(manifest, name) is not None  # noqa: E731
+    return phrases + turkish_sfx_phrases(request, resolves=resolves)
 
 
-def _sfx_verb_phrases(request: str) -> list[str]:
-    return [phrase for phrase, negated in _sfx_verb_matches(request) if not negated]
+def _sfx_verb_phrases(request: str, manifest: Any | None = None) -> list[str]:
+    return [phrase for phrase, negated in _sfx_verb_matches(request, manifest) if not negated]
 
 
 def _sfx_name_from_phrase(phrase: str, manifest: Any | None) -> str | None:
@@ -882,9 +909,10 @@ def _explicit_sfx_lookup_names(creator_request: str, *, manifest: Any) -> list[s
 
     request = " ".join(str(creator_request or "").split())
     names = [_explicit_sfx_name(creator_request, manifest=manifest)]
-    for phrase in _sfx_verb_phrases(request)[:3]:
+    for phrase in _sfx_verb_phrases(request, manifest)[:3]:
         literal = re.sub(r"^the\s+(?=\S)", "", phrase, flags=re.IGNORECASE)
-        if literal.casefold() not in {"a", "an", "the", "no", "not", "any", "some"}:
+        unnamed = {"a", "an", "the", "no", "not", "any", "some", UNNAMED_SFX_PHRASE_TR}
+        if literal.casefold() not in unnamed:
             names.append(literal)
     return list(dict.fromkeys(name for name in names if name))
 
@@ -896,7 +924,7 @@ def _explicit_sfx_name(creator_request: str, *, manifest: Any | None = None) -> 
     quoted_patterns = (
         rf"\b(?:sound\s+effect|sfx)\s+(?:named|called|titled)\s+{_SFX_QUOTED_NAME}",
         rf"\b(?:sound\s+effect|sfx)\s*[=:]\s*{_SFX_QUOTED_NAME}",
-        rf"{_SFX_QUOTED_NAME}\s+(?:sound\s+effect|sfx)\b",
+        rf"{_SFX_QUOTED_NAME}\s+(?:sound\s+effect|sfx|{SFX_NOUN_PATTERN_TR})\b",
     )
     for pattern in quoted_patterns:
         match = re.search(pattern, request, re.IGNORECASE)
@@ -904,7 +932,7 @@ def _explicit_sfx_name(creator_request: str, *, manifest: Any | None = None) -> 
             return match.group(1).strip()
     unnamed_phrase: str | None = None
     declined = False
-    for phrase, negated in _sfx_verb_matches(request):
+    for phrase, negated in _sfx_verb_matches(request, manifest):
         if negated:
             declined = True
             continue
@@ -1155,9 +1183,21 @@ def _excerpt_states_seconds(excerpt: str, seconds: float) -> bool:
     for match in re.finditer(rf"(?<![\w.])(\d+(?:[.,]\d+)?)\s*-?\s*{_SECONDS_UNIT}", text):
         if abs(float(match.group(1).replace(",", ".")) - float(seconds)) < 1e-6:
             return True
-    return any(
-        abs(number - float(seconds)) < 1e-6 and re.search(rf"\b{word}\s*-?\s*{_SECONDS_UNIT}", text)
+    # KRI-782: Turkish number words pair only with the Turkish unit ("iki saniye"),
+    # read from the Turkish-aware fold so "İKİ SANİYE" counts too.
+    # Digits before "sn" / "saniyelik" ("2 sn", "1,5 saniye") and "bir buçuk" too.
+    words = [
+        (r"(?<!\w)", word, _SECONDS_UNIT, text)
         for word, number in _SECONDS_WORDS.items()
+        if abs(number - float(seconds)) < 1e-6
+    ]
+    folded = fold_text(excerpt)
+    words += [
+        (lead, word, TR_SECONDS_UNIT_PATTERN, folded)
+        for lead, word in tr_seconds_spellings(float(seconds))
+    ]
+    return any(
+        re.search(rf"{lead}{word}\s*-?\s*{unit}", source) for lead, word, unit, source in words
     )
 
 
@@ -1285,7 +1325,9 @@ def _apply_explicit_render_intent(
     # before, falling through only when a tier produces no usable match at
     # all -- once a tier classifies anything, later (more permissive) tiers
     # are never consulted, exactly like the old single-match fallback chain.
-    closing_cue = "closing|ending|end|outro"
+    # KRI-782: Turkish cues and title nouns ("kapanış başlığı", "Başlık '...' olsun").
+    closing_cue = f"closing|ending|end|outro|{CLOSING_CUE_PATTERN_TR}"
+    title_noun = f"title|intro|hook|text|{TITLE_NOUN_PATTERN_TR}"
     # Turn boundaries stay so unquoted copy never runs into the next chat turn.
     title_request = _chat_turn_text(creator_request)
 
@@ -1306,10 +1348,20 @@ def _apply_explicit_render_intent(
             clause_prefix = request[clause_start + 1 : match.start()]
             if re.search(r"\b(?:do\s+not|don't|dont|without|no)\b", clause_prefix, re.IGNORECASE):
                 continue
+            # Turkish negates with the verb that closes the clause, after the copy
+            # ("'Emir' başlığını koyma", "başlık 'Emir' olmasın").
+            ends = (request.find(d, match.end()) for d in (".", "!", "?", ";", ","))
+            clause_end = min((end for end in ends if end >= 0), default=len(request))
+            if turkish_clause_refused(request, request[match.end() : clause_end]):
+                continue
             # The cue precedes the title noun ("closing title ...") or, for
             # "outro text: ...", opens the match itself.
-            if re.search(rf"\b(?:{closing_cue})\s*$", clause_prefix, re.IGNORECASE) or re.match(
-                rf"(?:{closing_cue})\b", match.group(0), re.IGNORECASE
+            if (
+                re.search(rf"\b(?:{closing_cue})\s*$", clause_prefix, re.IGNORECASE)
+                or re.match(rf"(?:{closing_cue})\b", match.group(0), re.IGNORECASE)
+                # "'Görüşürüz' kapanış başlığı", "sona 'Görüşürüz' yazısı ekle".
+                or match.groupdict().get("tr_closing")
+                or turkish_closing_cue(request, clause_prefix)
             ):
                 if closing_text is None:
                     closing_text = text
@@ -1319,11 +1371,12 @@ def _apply_explicit_render_intent(
 
     _title_patterns = (
         re.compile(
-            rf"{_OPEN_QUOTE}(.{{1,280}}?){_CLOSE_QUOTE}\s+(?:opening\s+)?(?:title|intro|hook|text)\b",
+            rf"{_OPEN_QUOTE}(.{{1,280}}?){_CLOSE_QUOTE}\s+"
+            rf"(?:opening\s+|(?P<tr_closing>{CLOSING_CUE_PATTERN_TR})\s+)?(?:{title_noun})\b",
             re.IGNORECASE,
         ),
         re.compile(
-            r"\b(?:opening\s+)?(?:title|intro|hook|text)(?!\s+(?:texts|copies)\b)"
+            rf"\b(?:opening\s+)?(?:{title_noun})(?!\s+(?:texts|copies)\b)"
             r"\s*(?:text|copy)?\b\s*"
             r"(?:is|to|should\s+say|saying|that\s+says|which\s+says|as|:)?\s*"
             rf"{_OPEN_QUOTE}(.{{1,280}}?){_CLOSE_QUOTE}",
@@ -1446,7 +1499,8 @@ def _apply_explicit_render_intent(
         photo_subsecond = bool(
             re.search(
                 r"\b(?:photos?|images?|stills?|pictures?)\b.{0,80}"
-                r"\b0?\.[0-9]+\s*(?:s|sec(?:ond)?s?)\b",
+                # "0,3 s": a decimal comma, as Turkish and most of Europe type it.
+                r"(?:\b0?\.[0-9]+|(?<![\d.,])0,[0-9]+)\s*(?:s|sec(?:ond)?s?)\b",
                 normalized,
             )
             or re.search(
@@ -1466,13 +1520,13 @@ def _apply_explicit_render_intent(
         if photo_subsecond and has_video_context and not timing_negated:
             numeric_match = re.search(
                 r"\b(?:photos?|images?|stills?|pictures?)\b.{0,80}?"
-                r"\b(0?\.[0-9]+|[1-9][0-9]{0,2})\s*"
+                r"(\b0?\.[0-9]+|(?<![\d.,])0,[0-9]+|\b[1-9][0-9]{0,2})\s*"
                 r"(?:s|sec(?:ond)?s?|ms|milliseconds?)\b",
                 normalized,
             )
             image_hold_s = None
             if numeric_match:
-                image_hold_s = float(numeric_match.group(1))
+                image_hold_s = float(numeric_match.group(1).replace(",", "."))
                 if "ms" in numeric_match.group(0) or "millisecond" in numeric_match.group(0):
                     image_hold_s /= 1000
                 if not 0.1 <= image_hold_s <= 0.8:
@@ -1505,6 +1559,8 @@ def _apply_explicit_render_intent(
         updates["pacing"] = "relaxed"
     elif re.search(r"\bbalanced\s+(?:pace|pacing)\b", request, re.IGNORECASE):
         updates["pacing"] = "balanced"
+    elif turkish_pace := turkish_pacing(request):
+        updates["pacing"] = turkish_pace
 
     # The aggregate request is useful for recovering a scheduling target, but
     # only the current creator message can prove a duration requirement.  In
@@ -1548,6 +1604,7 @@ def _requests_preserved_clip_order(creator_request: str) -> bool:
             normalized,
         )
         or re.search(r"\b(?:same|unchanged)\s+(?:clip\s+)?(?:order|sequence)\b", normalized)
+        or turkish_keeps_clip_order(creator_request)
     )
 
 

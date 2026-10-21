@@ -486,7 +486,38 @@ def test_unsaved_restored_clip_reorder_remains_saveable(monkeypatch) -> None:
     assert saved[0]["slot_id"] not in {"s1", "s2"}
 
 
-@pytest.mark.parametrize("slot_id", ["unknown-slot", "cs-cs-1-1"])
+def test_a_legacy_minted_chat_id_is_a_new_placement_at_save(monkeypatch) -> None:
+    """KRI-773: `cs-<state>-<n>` ids (minted by chat before #1698, still inside stored drafts) are
+    never real slots. Save reads them as new placements instead of refusing 409 forever."""
+    from app.routes.generative_jobs import resolve_timeline_slots_for_edit
+    from tests.routes.test_generative_timeline import _arm, _timeline_job
+
+    _arm(monkeypatch)
+    job = _timeline_job(beat_grid=[])
+    variant = job.assembly_plan["variants"][0]
+    variant["render_generation_id"] = "G2"
+    base = resolve_editor_base(
+        job,
+        variant,
+        None,
+        _state(
+            {
+                "timeline_slots": [
+                    {"slot_id": "cs-cs-1-1", "clip_index": 1, "in_s": 0.0, "duration_s": 3.0}
+                ]
+            }
+        ),
+    )
+    compiled = compile_editor_ops(
+        job,
+        base.projected,
+        [{"op": "set_clip_duration", "slot_index": 0, "duration_s": 2.5}],
+    )
+    saved = resolve_timeline_slots_for_edit(job, variant, compiled.payload.timeline_slots)
+    assert saved[0]["slot_id"] and not saved[0]["slot_id"].startswith("cs-")
+
+
+@pytest.mark.parametrize("slot_id", ["unknown-slot", "unified-cut-99", "cs-", "cs-abc"])
 def test_chat_does_not_relabel_unknown_existing_slot_as_new(monkeypatch, slot_id) -> None:
     from fastapi import HTTPException
 

@@ -1,0 +1,106 @@
+{
+  "pair_id": "mc_music_off",
+  "lang": "en",
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-10-19-v64",
+  "message": "No music please, just keep the original sound of my clips.",
+  "input": {
+    "user_message": "No music please, just keep the original sound of my clips.",
+    "creator_context": "Travel creator; warm and direct.",
+    "item_context": "A day exploring Lisbon.",
+    "media_context": [
+      {
+        "media_id": "clip-1",
+        "kind": "video",
+        "creator_note": "arrival"
+      },
+      {
+        "media_id": "clip-2",
+        "kind": "video",
+        "creator_note": "sunset"
+      },
+      {
+        "media_id": "photo-1",
+        "kind": "image",
+        "creator_note": "city detail"
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-1",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "has_voiceover": false,
+      "media": [
+        {
+          "media_id": "clip-1",
+          "kind": "video",
+          "label": "arrival"
+        },
+        {
+          "media_id": "clip-2",
+          "kind": "video",
+          "label": "sunset"
+        },
+        {
+          "media_id": "photo-1",
+          "kind": "image",
+          "label": "city detail"
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Warm travel beat"
+        }
+      ],
+      "capabilities": {
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "media_overlays": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "transitions": {
+          "available": true
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "prompt_sha256": "091d6dbb259dc5aae3fb2fdd1724fa5e55c5c1fe85bc22f90991be10c6d636e0",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:07:16.034098+00:00",
+  "raw_text": "{\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"guided_story\",\n      \"edit_format\": \"montage\",\n      \"archetype\": \"day_vlog\",\n      \"audio_strategy\": \"original_audio\",\n      \"media_scope\": \"all\",\n      \"montage_audio\": {\n        \"preserve_source_audio\": true\n      },\n      \"story_structure\": [\n        \"Arrival in the city\",\n        \"Exploring city details\",\n        \"Ending with the sunset\"\n      ],\n      \"caption_style\": \"none\",\n      \"pacing\": \"balanced\",\n      \"target_duration_s\": 12,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"optional_treatments\": [\n        \"transitions\"\n      ],\n      \"rationale\": \"Leaving out licensed music and preserving your original clip audio creates a beautifully authentic, raw travel feel. A 12-second target duration allows enough time for the natural ambient sounds to shine through while transitioning cleanly from your arrival to the evening sunset.\"\n    },\n    \"summary\": \"I'll cut this as a day vlog in chronological order, from your arrival to sunset. As requested, I'll keep the original audio from your clips without adding any background music.\",\n    \"render_intent_evidence\": {}\n  }\n}",
+  "raw_texts": [
+    "{\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"guided_story\",\n      \"edit_format\": \"montage\",\n      \"archetype\": \"day_vlog\",\n      \"audio_strategy\": \"original_audio\",\n      \"media_scope\": \"all\",\n      \"montage_audio\": {\n        \"preserve_source_audio\": true\n      },\n      \"story_structure\": [\n        \"Arrival in the city\",\n        \"Exploring city details\",\n        \"Ending with the sunset\"\n      ],\n      \"caption_style\": \"none\",\n      \"pacing\": \"balanced\",\n      \"target_duration_s\": 12,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"optional_treatments\": [\n        \"transitions\"\n      ],\n      \"rationale\": \"Leaving out licensed music and preserving your original clip audio creates a beautifully authentic, raw travel feel. A 12-second target duration allows enough time for the natural ambient sounds to shine through while transitioning cleanly from your arrival to the evening sunset.\"\n    },\n    \"summary\": \"I'll cut this as a day vlog in chronological order, from your arrival to sunset. As requested, I'll keep the original audio from your clips without adding any background music.\",\n    \"render_intent_evidence\": {}\n  }\n}"
+  ],
+  "model_used": "gemini-3.1-pro-preview",
+  "tokens": {
+    "in": 9009,
+    "out": 322,
+    "thoughts": 1244
+  },
+  "computed_cost_usd": 0.03681
+}

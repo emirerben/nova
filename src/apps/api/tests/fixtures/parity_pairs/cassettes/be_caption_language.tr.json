@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_caption_language",
+  "lang": "tr",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "ingilizce altyazı koy",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "ingilizce altyazı koy"
+  },
+  "prompt_sha256": "c676fa6e46a22809311155506e5fc1e5531e4c5f0a78c5df7f16ee267c5339f1",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:10:54.473065+00:00",
+  "raw_text": "{\"brief_updates\": [{\"operation\": \"add\", \"kind\": \"text\", \"scope\": \"global\", \"literal\": null, \"description\": \"ingilizce altyazı koy\", \"facts\": {\"captions\": \"on\", \"caption_language\": \"en\"}}], \"request_scope\": \"edit\"}",
+  "raw_texts": [
+    "{\"brief_updates\": [{\"operation\": \"add\", \"kind\": \"text\", \"scope\": \"global\", \"literal\": null, \"description\": \"ingilizce altyazı koy\", \"facts\": {\"captions\": \"on\", \"caption_language\": \"en\"}}], \"request_scope\": \"edit\"}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3225,
+    "out": 67,
+    "thoughts": 473
+  },
+  "computed_cost_usd": 0.004444
+}

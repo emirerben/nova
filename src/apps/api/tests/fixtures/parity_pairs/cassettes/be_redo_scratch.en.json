@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_redo_scratch",
+  "lang": "en",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "Start over and make the whole video again from scratch.",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "Start over and make the whole video again from scratch."
+  },
+  "prompt_sha256": "5528a125a279054df1d6afeb98bf743e50e1edd5ea029d55cfa6d947f961dba1",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:12:48.152938+00:00",
+  "raw_text": "{\n  \"brief_updates\": [],\n  \"request_scope\": \"rebuild\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [],\n  \"request_scope\": \"rebuild\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3229,
+    "out": 22,
+    "thoughts": 194
+  },
+  "computed_cost_usd": 0.003232
+}

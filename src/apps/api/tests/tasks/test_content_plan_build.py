@@ -4825,6 +4825,13 @@ def test_dispatch_stamps_the_chats_reply_language_beside_the_binding(monkeypatch
     job = run.session.add.call_args.args[0]
     assert job.assembly_plan["creator_reply_language"] == "tr"
     assert "creator_brief_binding" in job.assembly_plan
+    # KRI-780: the chat's language is also the render's language, so the hook is Turkish.
+    from app.agents.intro_writer import _language_instruction
+
+    assert job.all_candidates["language"] == "tr"
+    assert _language_instruction(job.all_candidates["language"]).startswith(
+        "Write the hook in TURKISH"
+    )
 
 
 @pytest.mark.parametrize("state", [None, {}, {"reply_language": "fr"}])
@@ -4834,6 +4841,27 @@ def test_dispatch_stamps_no_language_when_the_chat_has_none(monkeypatch, state):
     )
     job = run.session.add.call_args.args[0]
     assert "creator_reply_language" not in job.assembly_plan
+    # KRI-780: an English / undetected chat keeps the English render (byte-identical).
+    assert job.all_candidates["language"] == "en"
+
+
+def test_an_english_chat_renders_in_english(monkeypatch):  # noqa: ANN001
+    run = _dispatch_with_binding(
+        monkeypatch, enabled=True, factory_stamped=False, thread_state={"reply_language": "en"}
+    )
+    job = run.session.add.call_args.args[0]
+    assert job.all_candidates["language"] == "en"
+
+
+def test_reply_language_kill_switch_keeps_the_render_english(monkeypatch):  # noqa: ANN001
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "kria_reply_language_enabled", False)
+    run = _dispatch_with_binding(
+        monkeypatch, enabled=True, factory_stamped=False, thread_state={"reply_language": "tr"}
+    )
+    job = run.session.add.call_args.args[0]
+    assert job.all_candidates["language"] == "en"
 
 
 def test_dispatch_flag_off_does_not_stamp(monkeypatch):  # noqa: ANN001

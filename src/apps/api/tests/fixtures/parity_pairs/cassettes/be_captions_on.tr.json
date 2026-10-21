@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_captions_on",
+  "lang": "tr",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "altyazı ekle",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "altyazı ekle"
+  },
+  "prompt_sha256": "2597329f05eb647e4e26cd5f28fb048f8dbf2dbdb95fda67572c271dde184ce0",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:05:50.514309+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"altyazı ekle\",\n      \"facts\": {\n        \"captions\": \"on\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"altyazı ekle\",\n      \"facts\": {\n        \"captions\": \"on\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3223,
+    "out": 91,
+    "thoughts": 474
+  },
+  "computed_cost_usd": 0.004536
+}
