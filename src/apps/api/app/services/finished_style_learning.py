@@ -35,6 +35,7 @@ from app.services.creator_direction import (
     LimitReached,
     request_fingerprint,
 )
+from app.text_fold import has_marker
 
 service = CreatorDirectionService()
 PROPERTIES = ("font_family", "position", "color", "stroke_width", "shadow_enabled")
@@ -52,6 +53,11 @@ TEMPORARY_MARKERS = (
     "sadece bu videoda",
     "sadece bu sefer",
     "bu videoya özel",
+    "bu seferlik",
+    "bir seferlik",
+    "yalnızca bu video",
+    "yalnızca bu sefer",
+    "sadece burada",
     "geçici",
 )
 
@@ -67,9 +73,9 @@ def learning_available(user_id: uuid.UUID) -> bool:
 
 
 def explicitly_temporary(message: str | None) -> bool:
-    return isinstance(message, str) and any(
-        marker in message.casefold() for marker in TEMPORARY_MARKERS
-    )
+    # KRI-781: word-start markers over the shared Turkish-aware fold ("GEÇİCİ",
+    # ASCII "gecici", "bu videoya ozel" all count).
+    return isinstance(message, str) and has_marker(message, TEMPORARY_MARKERS)
 
 
 def _position(row: dict) -> str | None:
@@ -536,6 +542,7 @@ async def _suggest(db: AsyncSession, user: User) -> None:
         if item.state == "suggested" and signature not in candidates:
             item.state = "superseded"
             user.creator_memory_revision += 1
+    language: Any = _UNSET
     for signature, (role, prop, value, support) in candidates.items():
         matched = [i for i in existing if (i.evidence or {}).get("signature") == signature]
         if any(i.state in ("dismissed", "active") for i in matched):
@@ -569,13 +576,19 @@ async def _suggest(db: AsyncSession, user: User) -> None:
                 isinstance(value, list) and set(value).issubset(current_value or [])
             ):
                 continue
-        instruction = _instruction(role, prop, value)
-        if (
-            prop == "excluded_fonts"
-            and active
-            and (active.structured_value or {}).get(key, {}).get("font_family") in value
-        ):
-            instruction = f"Use automatic {role} fonts and exclude {value[0]} from selection."
+        if language is _UNSET:
+            language = await _creator_language(db, user)
+        instruction = _instruction(
+            role,
+            prop,
+            value,
+            language=language,
+            automatic_font=(
+                prop == "excluded_fonts"
+                and bool(active)
+                and (active.structured_value or {}).get(key, {}).get("font_family") in value
+            ),
+        )
         window_digest = hashlib.sha256(
             json.dumps(
                 [(str(p.plan_item_id), p.published_recipe_digest) for p in projects]
@@ -603,8 +616,56 @@ async def _suggest(db: AsyncSession, user: User) -> None:
     await db.flush()
 
 
-def _instruction(role: str, prop: str, value: Any) -> str:
+_UNSET = object()
+# KRI-784: the memory screen shows this text, so it is written in the creator's language.
+_ROLE_TR = {
+    "all_text": "tüm yazılar",
+    "title": "başlık",
+    "label": "etiket",
+    "pinned": "sabit yazı",
+    "caption": "altyazı",
+    "lyric": "şarkı sözü",
+}
+_POSITION_TR = {
+    "top_left": "sol üst",
+    "top": "üst",
+    "top_right": "sağ üst",
+    "middle": "orta",
+    "bottom_left": "sol alt",
+    "bottom": "alt",
+    "bottom_right": "sağ alt",
+}
+
+
+async def _creator_language(db: AsyncSession, user: User) -> str | None:
+    """The language of the creator's latest chat; None (English) when none has told."""
+    from app.kria.reply_language import thread_reply_language  # noqa: PLC0415
+
+    try:
+        thread = await db.scalar(
+            select(CreationThread)
+            .where(CreationThread.creator_id == user.id)
+            .order_by(CreationThread.updated_at.desc())
+            .limit(1)
+        )
+    except Exception:  # noqa: BLE001 - the text falls back to English, never fails learning
+        return None
+    return thread_reply_language(thread) if thread is not None else None
+
+
+def _instruction(
+    role: str,
+    prop: str,
+    value: Any,
+    *,
+    language: str | None = None,
+    automatic_font: bool = False,
+) -> str:
+    if language == "tr":
+        return _instruction_tr(role, prop, value, automatic_font=automatic_font)
     label = role.capitalize()
+    if automatic_font:
+        return f"Use automatic {role} fonts and exclude {value[0]} from selection."
     if prop == "favorite_fonts":
         return f"Favor {value[0]} when automatically choosing {role} fonts."
     if prop == "excluded_fonts":
@@ -616,6 +677,26 @@ def _instruction(role: str, prop: str, value: Any) -> str:
     if prop == "stroke_width":
         return f"{label} outlines {'off' if value == 0 else f'{value:g}px'} in future videos."
     return f"{label} shadows {'on' if value else 'off'} in future videos."
+
+
+def _instruction_tr(role: str, prop: str, value: Any, *, automatic_font: bool) -> str:
+    phrase = _ROLE_TR.get(role, role)
+    head = phrase[:1].upper() + phrase[1:]
+    if automatic_font:
+        return f"{head} için yazı tipi otomatik seçilsin, {value[0]} seçimden çıkarılsın."
+    if prop == "favorite_fonts":
+        return f"{head} için yazı tipi otomatik seçilirken {value[0]} tercih edilsin."
+    if prop == "excluded_fonts":
+        return f"{head} için otomatik yazı tipi seçiminde {value[0]} kullanılmasın."
+    if prop == "position":
+        where = _POSITION_TR.get(value, value.replace("_", " "))
+        return f"Gelecek videolarda {phrase} {where} kısımda dursun."
+    if prop == "color":
+        return f"Gelecek videolarda {phrase} için {value} rengi kullanılsın."
+    if prop == "stroke_width":
+        outline = "kapalı" if value == 0 else f"{value:g}px"
+        return f"Gelecek videolarda {phrase} için kenar çizgisi {outline} olsun."
+    return f"Gelecek videolarda {phrase} için gölge {'açık' if value else 'kapalı'} olsun."
 
 
 async def _clear_history(db: AsyncSession, user: User) -> None:

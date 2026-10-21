@@ -120,6 +120,7 @@ class KriaDraftDocument(BaseModel):
     client_state_id: str | None = Field(default=None, max_length=64)
     brief_binding: BriefBinding | None = None
     brief_coverage: dict[str, Any] | None = None
+    prepared_collection_story: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def _shape_matches_kind(self) -> KriaDraftDocument:
@@ -152,7 +153,7 @@ def canonical_snapshot(document: KriaDraftDocument) -> tuple[dict[str, Any], str
         snapshot.pop("editor_text_diff", None)
     if snapshot.get("client_state_id") is None:
         snapshot.pop("client_state_id", None)
-    for field in ("brief_binding", "brief_coverage"):
+    for field in ("brief_binding", "brief_coverage", "prepared_collection_story"):
         if snapshot.get(field) is None:
             snapshot.pop(field, None)
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -539,7 +540,7 @@ async def write_draft(
             current_revision=int(target.thread.revision),
         )
     snapshot = dict(snapshot)
-    for field in ("brief_binding", "brief_coverage"):
+    for field in ("brief_binding", "brief_coverage", "prepared_collection_story"):
         authoritative = (head.snapshot_json or {}).get(field)
         if field in snapshot and snapshot[field] != authoritative:
             raise RuntimeFailure(

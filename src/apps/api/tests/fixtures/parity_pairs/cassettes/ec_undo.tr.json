@@ -1,0 +1,105 @@
+{
+  "pair_id": "ec_undo",
+  "lang": "tr",
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-10-19-v85",
+  "message": "bunu geri al, önceki hali daha iyiydi",
+  "input": {
+    "utterance": "bunu geri al, önceki hali daha iyiydi",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "clip",
+        "text",
+        "transition",
+        "history"
+      ],
+      "editor_ops_version": 2,
+      "slots": [
+        {
+          "key": "s1",
+          "slot_id": "s1",
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 0.0,
+          "output_end_s": 3.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        },
+        {
+          "key": "s2",
+          "slot_id": "s2",
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 3.0,
+          "output_end_s": 6.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        },
+        {
+          "key": "s3",
+          "slot_id": "s3",
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 6.0,
+          "output_end_s": 9.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        },
+        {
+          "key": "s4",
+          "slot_id": "s4",
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 9.0,
+          "output_end_s": 12.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        }
+      ],
+      "text_bars": [],
+      "total_duration_s": 12,
+      "max_duration_s": 120,
+      "remaining_duration_s": 108,
+      "history_state": {
+        "can_undo_last_turn": true,
+        "last_turn_summary": "Sped up clip 2 to 2x"
+      }
+    },
+    "reply_language": "tr"
+  },
+  "prompt_sha256": "fa11c980b6d1ae5ac42f8f172e88b2b675e5b400b0e1a44a8601cafe554fe8d5",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:09:49.751405+00:00",
+  "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"undo_last_edit\"\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Son değişikliği geri aldım, klip önceki hızına geri döndü.\",\n  \"suggestions\": [\n    \"Videoyu kısalt\",\n    \"Metin ekle\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [],\n  \"claimed_ops\": [\n    \"undo_last_edit\"\n  ]\n}",
+  "raw_texts": [
+    "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"undo_last_edit\"\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Son değişikliği geri aldım, klip önceki hızına geri döndü.\",\n  \"suggestions\": [\n    \"Videoyu kısalt\",\n    \"Metin ekle\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [],\n  \"claimed_ops\": [\n    \"undo_last_edit\"\n  ]\n}"
+  ],
+  "model_used": "gemini-3.1-pro-preview",
+  "tokens": {
+    "in": 24066,
+    "out": 152,
+    "thoughts": 688
+  },
+  "computed_cost_usd": 0.058212
+}

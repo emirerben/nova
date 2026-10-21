@@ -314,6 +314,7 @@ class FirstSlot:
     duration_s: float | None = None
     overshoot: float = 0.0
     rate: float | None = None
+    slot_id: str | None = None  # the id the phone sends for this slot (None = keep the saved one)
 
 
 @dataclass(frozen=True)
@@ -418,6 +419,8 @@ def _first_slot_trim(row: dict, spec: FirstSlot) -> gj.TimelineSlotEdit:
     }
     if spec.rate is not None:
         change["playback_rate"] = spec.rate
+    if spec.slot_id is not None:
+        change["slot_id"] = spec.slot_id
     return _slot(row, **change)
 
 

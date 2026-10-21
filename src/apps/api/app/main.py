@@ -46,12 +46,14 @@ from app.routes import (
     device_render,
     dictation,
     editor_sources,
+    editorial_taste,
     generative_jobs,
     kria_runtime,
     landing,
     manual_drafts,
     me,
     media_assets,
+    media_collections,
     memory,
     music,
     music_jobs,
@@ -434,6 +436,8 @@ app.include_router(creator_workspace.router, prefix="/content-plans", tags=["cre
 app.include_router(manual_drafts.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(me.router, prefix="/me", tags=["me"])
 app.include_router(media_assets.router)
+app.include_router(media_collections.router)
+app.include_router(editorial_taste.router)
 app.include_router(device_render.router, prefix="/me", tags=["phone-rendering"])
 app.include_router(memory.router, prefix="/me", tags=["memory"])
 app.include_router(memory.direction_router, tags=["direction-overrides"])

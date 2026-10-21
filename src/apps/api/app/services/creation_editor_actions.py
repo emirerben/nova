@@ -3,15 +3,25 @@
 from __future__ import annotations
 
 import copy
+import functools
 import hashlib
 import re
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
 
 import structlog
 from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.config import settings
+from app.kria.reply_language import (
+    current_reply_language,
+    detect_chat_language,
+    reply_language_for,
+    resolve_reply_language,
+    say,
+    thread_reply_language,
+)
 from app.models import CreationThreadEvent, Job, PlanItem, PlanItemAsset
 from app.routes._copilot import CopilotTurnBody, run_copilot_turn
 from app.routes.generative_jobs import (
@@ -27,6 +37,32 @@ from app.services.kria_editor_ops import (
 )
 
 log = structlog.get_logger()
+
+_T = TypeVar("_T")
+
+
+def _in_chat_language(
+    func: Callable[..., Awaitable[_T]],
+) -> Callable[..., Awaitable[_T]]:
+    """Bind the chat's reply language for one v1 editor turn (KRI-784).
+
+    The creator's message decides it when it clearly reads as one language; else the
+    language already stored on the thread. Unknown means English, byte-identical.
+    """
+
+    @functools.wraps(func)
+    async def wrapper(db: Any, thread: Any, *args: Any, **kwargs: Any) -> _T:
+        body = args[0] if args and hasattr(args[0], "message") else None
+        message = getattr(body, "message", None)
+        language = resolve_reply_language(
+            message if isinstance(message, str) else None,
+            previous=thread_reply_language(thread),
+        )
+        with reply_language_for(language):
+            return await func(db, thread, *args, **kwargs)
+
+    return wrapper
+
 
 # Job.status values a generative render lands on once its variants exist and
 # are addressable by chat.  Kept in sync with the literal set the messages
@@ -55,6 +91,7 @@ def selected_variant(thread: Any, job: Any) -> dict | None:
     return variants[0] if len(variants) == 1 else None
 
 
+@_in_chat_language
 async def execute_visual_removal(db: Any, thread: Any, body: Any, user: Any) -> Any:
     """Resolve outside locks, then persist user event, mutation and receipt together."""
     # Lazy import avoids the route/service module cycle.
@@ -64,11 +101,22 @@ async def execute_visual_removal(db: Any, thread: Any, body: Any, user: Any) -> 
     variant = selected_variant(thread, job) if job is not None else None
     if variant is None or len(body.message) > 2000:
         reply = (
-            "Please shorten this Visuals request to 2,000 characters so I can apply it safely."
+            say(
+                en="Please shorten this Visuals request to 2,000 characters so I can apply it "
+                "safely.",
+                tr="Bu görsel isteğini güvenle uygulayabilmem için 2.000 karakterin altına "
+                "kısaltır mısın?",
+            )
             if len(body.message) > 2000
-            else (
-                "Open the video version you want to edit, "
-                "then ask me to remove its uploaded Visuals."
+            else say(
+                en=(
+                    "Open the video version you want to edit, "
+                    "then ask me to remove its uploaded Visuals."
+                ),
+                tr=(
+                    "Düzenlemek istediğin video sürümünü aç, sonra yüklediğin görselleri "
+                    "kaldırmamı iste."
+                ),
             )
         )
         await routes._append(
@@ -138,7 +186,13 @@ async def execute_visual_removal(db: Any, thread: Any, body: Any, user: Any) -> 
         raise HTTPException(status_code=409, detail="Editor target changed")
     job = await db.get(Job, job_id, populate_existing=True, with_for_update=True)
     if job.status == "cancelled":
-        raise HTTPException(status_code=409, detail="Cancelled videos cannot be edited.")
+        raise HTTPException(
+            status_code=409,
+            detail=say(
+                en="Cancelled videos cannot be edited.",
+                tr="İptal edilen videolar düzenlenemez.",
+            ),
+        )
     variant = selected_variant(thread, job)
     if (
         variant is None
@@ -214,9 +268,15 @@ async def execute_visual_removal(db: Any, thread: Any, body: Any, user: Any) -> 
             receipt.update(
                 outcome="saved", generation=prep["generation"], sections=prep["sections"]
             )
-            reply = (
-                "Removed the requested uploaded Visuals from the saved edit. "
-                "Text, captions, footage and audio are unchanged."
+            reply = say(
+                en=(
+                    "Removed the requested uploaded Visuals from the saved edit. "
+                    "Text, captions, footage and audio are unchanged."
+                ),
+                tr=(
+                    "İstediğin yüklenmiş görselleri kayıtlı kurgudan kaldırdım. Yazılar, "
+                    "altyazılar, görüntüler ve ses aynı kaldı."
+                ),
             )
         except (ValueError, HTTPException) as exc:
             # Validation stages no writes on failure. Do not convert a moved
@@ -226,19 +286,37 @@ async def execute_visual_removal(db: Any, thread: Any, body: Any, user: Any) -> 
             job.assembly_plan = original_plan
             prep = None
             receipt["outcome"] = "unsupported"
-            reply = "I couldn’t safely save that Visuals removal. The edit is unchanged."
+            reply = say(
+                en="I couldn’t safely save that Visuals removal. The edit is unchanged.",
+                tr="Görselleri kaldırma işlemini güvenle kaydedemedim. Kurgu aynı kaldı.",
+            )
     else:
         # Model prose is not evidence of persistence, even for clarification
         # or no_effect (a negated unrelated clause can mask a success claim).
         receipt["outcome"] = response.outcome if not response.ops else "unsupported"
         reply = (
-            "Which uploaded image or video Visuals should I remove? "
-            "Please identify them or say all uploaded Visuals. Nothing was changed."
+            say(
+                en=(
+                    "Which uploaded image or video Visuals should I remove? "
+                    "Please identify them or say all uploaded Visuals. Nothing was changed."
+                ),
+                tr=(
+                    "Yüklediğin görsellerden hangilerini kaldırayım? Hangileri olduğunu söyle "
+                    "ya da hepsini kaldırmamı iste. Hiçbir şey değişmedi."
+                ),
+            )
             if response.outcome == "clarification" and not response.ops
-            else (
-                "I couldn’t apply that uploaded Visuals removal. Nothing was changed. "
-                "I can remove supported uploaded image and video Visuals; "
-                "please identify the ones you want removed."
+            else say(
+                en=(
+                    "I couldn’t apply that uploaded Visuals removal. Nothing was changed. "
+                    "I can remove supported uploaded image and video Visuals; "
+                    "please identify the ones you want removed."
+                ),
+                tr=(
+                    "Görselleri kaldırma isteğini uygulayamadım. Hiçbir şey değişmedi. "
+                    "Yüklediğin fotoğraf ve videoları kaldırabilirim; hangilerini "
+                    "kaldırmamı istediğini söyle."
+                ),
             )
         )
     await routes._append(
@@ -290,9 +368,15 @@ async def execute_visual_removal(db: Any, thread: Any, body: Any, user: Any) -> 
                     thread,
                     event_type="assistant_render_failed",
                     role="assistant",
-                    content=(
-                        "Your Visuals change was saved, but rendering could not start. "
-                        "Retry the render to update the exported video."
+                    content=say(
+                        en=(
+                            "Your Visuals change was saved, but rendering could not start. "
+                            "Retry the render to update the exported video."
+                        ),
+                        tr=(
+                            "Görsel değişikliğin kaydedildi ama video hazırlanmaya "
+                            "başlayamadı. Dışa aktarılan videoyu güncellemek için yeniden dene."
+                        ),
                     ),
                     payload={**receipt, "outcome": "render_enqueue_failed"},
                 )
@@ -300,7 +384,11 @@ async def execute_visual_removal(db: Any, thread: Any, body: Any, user: Any) -> 
     return thread
 
 
-_GENERIC_REJECTION_REPLY = "I couldn't safely apply that change. Nothing was changed."
+def _generic_rejection_reply() -> str:
+    return say(
+        en="I couldn't safely apply that change. Nothing was changed.",
+        tr="Bu değişikliği güvenle uygulayamadım. Hiçbir şey değişmedi.",
+    )
 
 
 def _rejection_detail(exc: Exception) -> str:
@@ -321,17 +409,28 @@ def _rejection_reply(exc: Exception) -> str:
     """
     if isinstance(exc, HTTPException) and isinstance(exc.detail, dict):
         message = str(exc.detail.get("message") or "").strip()
-        if message:
-            return f"{message} Nothing was changed."
-    return _GENERIC_REJECTION_REPLY
+        if message and not _mixes_languages(message):
+            return f"{message} " + say(en="Nothing was changed.", tr="Hiçbir şey değişmedi.")
+    return _generic_rejection_reply()
+
+
+def _mixes_languages(*texts: str) -> bool:
+    """True when English server text would land inside a Turkish reply (KRI-784).
+
+    Validator messages and op change summaries are still English; a Turkish chat
+    gets the generic Turkish sentence rather than a half-English one.
+    """
+    if current_reply_language() != "tr":
+        return False
+    return any(detect_chat_language(text) != "tr" for text in texts)
 
 
 def _applied_summary(changes: list[str]) -> str:
-    if not changes:
-        return "Applied your edit"
+    if not changes or _mixes_languages(*changes):
+        return say(en="Applied your edit", tr="Düzenlemeni uyguladım")
     if len(changes) == 1:
         return changes[0]
-    return f"{', '.join(changes[:-1])} and {changes[-1]}"
+    return f"{', '.join(changes[:-1])}" + say(en=" and ", tr=" ve ") + changes[-1]
 
 
 # KRI-186: rejection code -> plain phrase shown to the creator.  Codes come from
@@ -345,6 +444,15 @@ _REJECTION_PHRASES = {
     "invalid_value": "the value wasn't one I can apply",
 }
 _GENERIC_REJECTION_PHRASE = "I couldn't apply it"
+# KRI-784: the same phrases for a Turkish chat (same keys as `_REJECTION_PHRASES`).
+_REJECTION_PHRASES_TR = {
+    "capability_unavailable": "bu düzenlemede bunu henüz değiştiremiyorum",
+    "unknown_operation": "bunu burada yapmanın bir yolu yok",
+    "stale_target": "ben bakarken düzenleme değişti, bu yüzden atladım",
+    "missing_required": "bunu yapmak için bir bilgiye daha ihtiyacım vardı",
+    "invalid_value": "bu değeri uygulayamıyorum",
+}
+_GENERIC_REJECTION_PHRASE_TR = "uygulayamadım"
 _PRIOR_TURN_LIMIT = 6
 _PRIOR_TURN_EVENT_TYPES = ("user_message", "assistant_response")
 
@@ -360,10 +468,28 @@ _OP_PHRASES = {
     "set_clip_label": "label the clips",
     "apply_custom_effect": "add that effect",
 }
+_OP_PHRASES_TR = {
+    "set_edit_direction": "kurgunun yönünü değiştirmek",
+    "set_clip_label": "kliplere etiket vermek",
+    "apply_custom_effect": "o efekti eklemek",
+}
 
 
 def _op_label(op: object) -> str:
-    return _OP_PHRASES.get(str(op or "").strip().lower(), "")
+    key = str(op or "").strip().lower()
+    return say(en=_OP_PHRASES.get(key, ""), tr=_OP_PHRASES_TR.get(key, ""))
+
+
+def _rejection_phrase(reason: object) -> str:
+    key = str(reason or "")
+    return say(
+        en=_REJECTION_PHRASES.get(key, _GENERIC_REJECTION_PHRASE),
+        tr=_REJECTION_PHRASES_TR.get(key, _GENERIC_REJECTION_PHRASE_TR),
+    )
+
+
+def _not_done(text: str) -> str:
+    return say(en=f"Not done: {text}.", tr=f"Yapılmadı: {text}.")
 
 
 def _sentence(text: str) -> str:
@@ -378,9 +504,9 @@ def _not_done_lines(rejections: list[dict], unmet: list[dict]) -> list[str]:
     for item in rejections or []:
         if not isinstance(item, dict):
             continue
-        phrase = _REJECTION_PHRASES.get(str(item.get("reason") or ""), _GENERIC_REJECTION_PHRASE)
+        phrase = _rejection_phrase(item.get("reason"))
         label = _op_label(item.get("op"))
-        line = f"Not done: {label} ({phrase})." if label else f"Not done: {phrase}."
+        line = _not_done(f"{label} ({phrase})" if label else phrase)
         if line not in seen:
             seen.add(line)
             lines.append(line)
@@ -391,7 +517,7 @@ def _not_done_lines(rejections: list[dict], unmet: list[dict]) -> list[str]:
         if not request:
             continue
         reason = " ".join(str(item.get("reason") or "").split()).strip().rstrip(".")
-        line = f"Not done: {request} ({reason})." if reason else f"Not done: {request}."
+        line = _not_done(f"{request} ({reason})" if reason else request)
         if line not in seen:
             seen.add(line)
             lines.append(line)
@@ -414,12 +540,12 @@ def build_honest_reply(
     not_done = _not_done_lines(rejections, unmet)
     parts: list[str] = []
     if nothing_applied:
-        parts.append("Nothing was changed.")
+        parts.append(say(en="Nothing was changed.", tr="Hiçbir şey değişmedi."))
     else:
         parts.append(_sentence(_applied_summary(applied)))
     parts.extend(not_done)
     if not nothing_applied and not not_done:
-        parts.append("Everything else is unchanged.")
+        parts.append(say(en="Everything else is unchanged.", tr="Geri kalan her şey aynı."))
     return " ".join(parts)
 
 
@@ -491,6 +617,7 @@ async def _load_thread_memory(db: Any, thread: Any, message: str) -> tuple[list[
     return turns, (original[:2000] or None)
 
 
+@_in_chat_language
 async def execute_copilot_edit(
     db: Any, thread: Any, body: Any, user: Any, *, job: Any
 ) -> dict[str, Any] | None:
@@ -543,7 +670,10 @@ async def execute_copilot_edit(
             thread,
             event_type="assistant_response",
             role="assistant",
-            content="Please shorten this request to 2,000 characters so I can apply it safely.",
+            content=say(
+                en="Please shorten this request to 2,000 characters so I can apply it safely.",
+                tr="Bu isteği güvenle uygulayabilmem için 2.000 karakterin altına kısaltır mısın?",
+            ),
         )
         return {"thread": thread}
 
@@ -554,7 +684,10 @@ async def execute_copilot_edit(
             thread,
             event_type="assistant_response",
             role="assistant",
-            content="Open the specific video version you want to edit, then ask me again.",
+            content=say(
+                en="Open the specific video version you want to edit, then ask me again.",
+                tr="Düzenlemek istediğin video sürümünü aç, sonra bana tekrar sor.",
+            ),
         )
         return {"thread": thread}
 
@@ -606,7 +739,10 @@ async def execute_copilot_edit(
             else:
                 reply = build_honest_reply([], rejections, unmet, nothing_applied=True)
                 if response.outcome == "stale":
-                    reply += " Refresh the editor and try again."
+                    reply += say(
+                        en=" Refresh the editor and try again.",
+                        tr=" Düzenleyiciyi yenileyip tekrar dene.",
+                    )
         await routes._append(
             db,
             thread,
@@ -697,7 +833,9 @@ async def execute_copilot_edit(
             receipt["applied"] = list(compiled.changes)[:6]
             reply = build_honest_reply(list(compiled.changes), rejections, unmet)
         else:
-            reply = f"{_applied_summary(compiled.changes)}. Everything else is unchanged."
+            reply = f"{_applied_summary(compiled.changes)}. " + say(
+                en="Everything else is unchanged.", tr="Geri kalan her şey aynı."
+            )
     except (ValueError, HTTPException) as exc:
         # Validation stages no writes on failure. Do not convert a moved
         # baseline into a misleading assistant response.
@@ -730,6 +868,7 @@ async def execute_copilot_edit(
     return {"thread": thread, "job_id": job_id, "variant_id": variant_id, "prep": prep}
 
 
+@_in_chat_language
 async def finalize_copilot_edit_render(
     db: Any, thread: Any, user: Any, result: dict[str, Any]
 ) -> None:
@@ -774,9 +913,15 @@ async def finalize_copilot_edit_render(
                 thread,
                 event_type="assistant_render_failed",
                 role="assistant",
-                content=(
-                    "Your change was saved, but rendering could not start. "
-                    "Retry the render to update the exported video."
+                content=say(
+                    en=(
+                        "Your change was saved, but rendering could not start. "
+                        "Retry the render to update the exported video."
+                    ),
+                    tr=(
+                        "Değişikliğin kaydedildi ama video hazırlanmaya başlayamadı. "
+                        "Dışa aktarılan videoyu güncellemek için yeniden dene."
+                    ),
                 ),
                 payload={**receipt, "outcome": "render_enqueue_failed"},
             )

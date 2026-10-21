@@ -1480,6 +1480,23 @@ def _base_text_elements(
     compiler_version: Literal[1, 2, 3, 4, 5, 6, 7, 8],
     pin_windows: list[PinWindow] | None = None,
 ) -> list[dict]:
+    if snapshot.text_policy == "none":
+        if any(
+            (
+                snapshot.opening_title,
+                snapshot.shot_labels,
+                snapshot.closing_title,
+                snapshot.pinned_texts,
+                snapshot.clip_labels,
+                snapshot.montage_text_bindings,
+                snapshot.narration,
+                snapshot.text_composition,
+            )
+        ):
+            raise GuidedStoryError(
+                "guided_story_snapshot_invalid", "No-copy plans cannot contain text obligations"
+            )
+        return []
     total_s = _snapshot_total_s(snapshot)
     pin_windows = pin_windows or []
     title_end = min(

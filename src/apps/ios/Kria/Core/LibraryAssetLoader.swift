@@ -38,6 +38,8 @@ enum LibraryAssetExportError: Error, Equatable {
     case assetNotFound
     case noResource
     case writeFailed
+    case byteLimitExceeded
+    case timedOut
 }
 
 /// Which `PHAssetResource` carries the file we upload. Pure so every media kind is unit-testable.
@@ -56,6 +58,7 @@ enum LibraryResourcePicker {
 }
 
 struct PhotosLibraryAssetExporter: LibraryAssetExporting {
+    var maximumBytes: Int64? = nil
     func exportFile(localIdentifier: String) async throws -> URL {
         let fetched = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
         guard let asset = fetched.firstObject else { throw LibraryAssetExportError.assetNotFound }
@@ -71,7 +74,7 @@ struct PhotosLibraryAssetExporter: LibraryAssetExporting {
         let box = RequestBox()
         do {
             try await withTaskCancellationHandler {
-                try await Self.stream(resource, to: destination, box: box)
+                try await Self.stream(resource, to: destination, box: box, maximumBytes: maximumBytes)
             } onCancel: {
                 box.cancel()
             }
@@ -89,20 +92,37 @@ struct PhotosLibraryAssetExporter: LibraryAssetExporting {
 
     /// Streams the resource to disk chunk by chunk (never the whole video in memory), allowing the iCloud
     /// download. Cancelling the task cancels the Photos request.
-    private static func stream(_ resource: PHAssetResource, to destination: URL, box: RequestBox) async throws {
+    private static func stream(_ resource: PHAssetResource, to destination: URL, box: RequestBox, maximumBytes: Int64?) async throws {
         let handle = try FileHandle(forWritingTo: destination)
         defer { try? handle.close() }
         let options = PHAssetResourceRequestOptions()
         options.isNetworkAccessAllowed = true
         let failure = FailureBox()
+        let budget = ReadBudget(maximumBytes)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let id = PHAssetResourceManager.default().requestData(for: resource, options: options, dataReceivedHandler: { chunk in
+                guard failure.value == nil else { return }
+                guard budget.consume(chunk.count) else {
+                    failure.set(LibraryAssetExportError.byteLimitExceeded); box.cancel(); return
+                }
                 do { try handle.write(contentsOf: chunk) } catch { failure.set(error) }
             }, completionHandler: { error in
                 if let error = failure.value ?? error { continuation.resume(throwing: error) }
                 else { continuation.resume() }
             })
             box.set(id)
+        }
+    }
+
+    private final class ReadBudget: @unchecked Sendable {
+        private let lock = NSLock()
+        private let limit: Int64?
+        private var count: Int64 = 0
+        init(_ limit: Int64?) { self.limit = limit }
+        func consume(_ bytes: Int) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            count += Int64(bytes)
+            return limit.map { count <= $0 } ?? true
         }
     }
 

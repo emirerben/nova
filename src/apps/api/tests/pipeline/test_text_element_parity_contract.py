@@ -114,6 +114,8 @@ def _text_case_cases() -> list[dict]:
 def test_text_case_burn_dict_matches_fixture(case: dict) -> None:
     """The compiled burn dict carries the transformed text — the same string
     the TS layout produces for the CSS preview."""
+    if "language" in case:
+        pytest.skip("helper-only case: a stored element carries no language")
     overlay = _compile_one(case["element"])
     assert overlay["text"] == case["expected"]["text"]
 
@@ -122,7 +124,8 @@ def test_text_case_burn_dict_matches_fixture(case: dict) -> None:
 def test_text_case_helper_matches_fixture(case: dict) -> None:
     """apply_text_case in isolation (mirrors applyTextCase in overlay-layout.ts)."""
     el = case["element"]
-    assert apply_text_case(el["text"], el.get("text_case")) == case["expected"]["text"]
+    got = apply_text_case(el["text"], el.get("text_case"), case.get("language"))
+    assert got == case["expected"]["text"]
 
 
 def test_text_case_does_not_mutate_stored_element() -> None:

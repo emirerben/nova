@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_opening_title",
+  "lang": "en",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "Add a title at the start that says \"Lisbon Diaries\".",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "Add a title at the start that says \"Lisbon Diaries\"."
+  },
+  "prompt_sha256": "57a479c850d100bd74b2371944c1b54a85fb79a334e64d652070f768f5366e11",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:10:57.622339+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"title\",\n      \"literal\": \"Lisbon Diaries\",\n      \"description\": null,\n      \"facts\": {}\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"title\",\n      \"literal\": \"Lisbon Diaries\",\n      \"description\": null,\n      \"facts\": {}\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3231,
+    "out": 77,
+    "thoughts": 471
+  },
+  "computed_cost_usd": 0.004478
+}

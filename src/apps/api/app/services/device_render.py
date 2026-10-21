@@ -293,7 +293,9 @@ def checked_export_report(record: dict, status: DeviceRenderStatus, attempt_id: 
     """No ready-state fast path may revive missing, stale or rejected evidence."""
     if "actual_export_policy" not in record:
         return True  # historical/unpromoted adapter; not a verified-output claim
-    from app.services.actual_export_verification import VERIFIER_VERSION  # noqa: PLC0415
+    from app.services.actual_export_verification import (
+        HISTORICAL_VERIFIER_VERSIONS,  # noqa: PLC0415
+    )
 
     policy = record.get("actual_export_policy")
     attempt = (record.get("attempts") or {}).get(attempt_id) or {}
@@ -301,8 +303,14 @@ def checked_export_report(record: dict, status: DeviceRenderStatus, attempt_id: 
     return bool(
         isinstance(policy, dict)
         and policy.get("version") == 1
+        and policy.get("verifier_version", "phone-simple-cut-v1") in HISTORICAL_VERIFIER_VERSIONS
         and report.get("status") == "checked"
-        and report.get("verifier_version") == VERIFIER_VERSION
+        and report.get("verifier_version")
+        in (
+            {policy["verifier_version"]}
+            if policy.get("verifier_version")
+            else HISTORICAL_VERIFIER_VERSIONS
+        )
         and report.get("identity") == status.request.identity.model_dump(mode="json")
         and report.get("sha256") == attempt.get("sha256")
         and report.get("file_size_bytes") == attempt.get("size")
@@ -465,20 +473,32 @@ def pin_device_request(
 
     # Record-only envelope: strict recipe/status schemas stay readable by old workers.
     # Existing requests are not silently enrolled during a rolling deployment.
-    if (
+    prepared_initial = bool(
+        isinstance((job.assembly_plan or {}).get("prepared_collection_story"), dict)
+        and base_generation == (job.assembly_plan or {}).get("creator_generation_id")
+    )
+    if prepared_initial and contract_receipt is None:
+        raise CreatorRenderContractError("Prepared stories require verified render obligations")
+    if prepared_initial or (
         settings.phone_actual_export_verification_enabled
         and contract_receipt is not None
         and getattr(job, "user_id", None) in settings.phone_actual_export_verification_user_ids
     ):
         from app.services.actual_export_verification import (  # noqa: PLC0415
             POLICY_FIELD,
+            VERIFIER_VERSION,
             unsupported_reasons,
         )
 
         reasons = unsupported_reasons(request.recipe)
+        if prepared_initial and reasons:
+            raise CreatorRenderContractError(
+                "This prepared story exceeds actual-output verification coverage"
+            )
         if not reasons:
             record[POLICY_FIELD] = {
                 "version": 1,
+                "verifier_version": VERIFIER_VERSION,
                 "source_receipts_digest": export_source_digest(
                     approved_export_sources(job, request)
                 ),

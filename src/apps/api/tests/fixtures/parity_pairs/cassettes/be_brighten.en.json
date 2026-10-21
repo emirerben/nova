@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_brighten",
+  "lang": "en",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "The clips look too dark, brighten them up.",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "The clips look too dark, brighten them up."
+  },
+  "prompt_sha256": "c7a0afbd77b093b906f4dba6c935790a17d1d5137f82b9b8b474321b472afa25",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:11:59.648896+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"brighten up the dark clips\",\n      \"facts\": {\n        \"footage_light\": \"brighter\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"brighten up the dark clips\",\n      \"facts\": {\n        \"footage_light\": \"brighter\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3228,
+    "out": 94,
+    "thoughts": 565
+  },
+  "computed_cost_usd": 0.004892
+}

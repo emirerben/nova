@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import re
 import statistics
-import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -46,6 +45,9 @@ import structlog
 from app.config import settings
 from app.services.lrclib_client import SyncedLine
 from app.services.whisper_lyrics import WhisperWord
+from app.text_fold import loose_text, uses_turkish_case
+from app.text_fold import lower as text_lower
+from app.text_fold import upper as text_upper
 
 log = structlog.get_logger()
 
@@ -229,10 +231,9 @@ def _normalize(token: str) -> str:
     Returned string is for SIMILARITY scoring, not display. Display strings
     come from the canonical lyric source unless a guarded Whisper repair wins.
     """
-    # NFKD splits "ü" → "u" + combining mark; we discard the marks.
-    decomposed = unicodedata.normalize("NFKD", token)
-    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return re.sub(r"[^a-z0-9]", "", stripped.lower())
+    # KRI-781: the shared Turkish-aware fold ("ü" -> "u", and "ı"/"I"/"İ" -> "i"
+    # instead of being deleted, so "kız", "KIZ" and "kiz" key alike).
+    return re.sub(r"[^a-z0-9]", "", loose_text(token))
 
 
 def _similarity(a: str, b: str) -> float:
@@ -390,12 +391,14 @@ def _case_like(source: str, replacement: str) -> str:
     """Apply source token casing to a Whisper replacement token."""
     if not replacement:
         return replacement
+    # KRI-781: Turkish i rules when either token is Turkish ("ışık" under "IŞIK").
+    lang = "tr" if uses_turkish_case(source + replacement) else None
     if source.isupper():
-        return replacement.upper()
+        return text_upper(replacement, lang)
     if source[:1].isupper():
-        return replacement[:1].upper() + replacement[1:].lower()
+        return text_upper(replacement[:1], lang) + text_lower(replacement[1:], lang)
     if source.islower():
-        return replacement.lower()
+        return text_lower(replacement, lang)
     return replacement
 
 

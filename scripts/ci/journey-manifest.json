@@ -52,7 +52,7 @@
     {
       "id": "kri-492-length-ownership",
       "needs_native": true,
-      "api_tests": "tests/services/test_length_policy_state.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_brief_binding.py tests/kria/test_request_binding_journey.py tests/kria/test_render_retry_postgres.py tests/agents/test_main_creator_voice_mode.py tests/kria/test_voice_flag_gating.py tests/services/test_phone_speech_montage_job.py tests/services/test_render_route.py tests/services/test_render_route_invariance.py tests/tasks/test_route_shadow_dispatch.py tests/tasks/test_unified_montage_dispatch.py tests/tasks/test_voice_behind_footage_dispatch.py tests/integration/test_actual_export_verification.py tests/integration/test_actual_export_completion.py tests/routes/test_actual_export_publication.py",
+      "api_tests": "tests/services/test_length_policy_state.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_brief_binding.py tests/kria/test_request_binding_journey.py tests/kria/test_render_retry_postgres.py tests/agents/test_main_creator_voice_mode.py tests/kria/test_voice_flag_gating.py tests/services/test_phone_speech_montage_job.py tests/services/test_render_route.py tests/services/test_render_route_invariance.py tests/tasks/test_route_shadow_dispatch.py tests/tasks/test_unified_montage_dispatch.py tests/tasks/test_voice_behind_footage_dispatch.py tests/integration/test_actual_export_verification.py tests/integration/test_actual_export_completion.py tests/routes/test_actual_export_publication.py tests/integration/test_media_collections.py tests/integration/test_camera_roll_execution.py",
       "paths": [
         "src/apps/api/app/services/length_policy.py",
         "src/apps/api/app/services/length_policy_state.py",
@@ -355,6 +355,7 @@
         "src/apps/api/app/kria/brief.py",
         "src/apps/api/app/kria/brief_checks.py",
         "src/apps/api/app/kria/brief_route.py",
+        "src/apps/api/app/kria/creator_cues.py",
         "src/apps/api/app/kria/duplicate_uploads.py",
         "src/apps/api/app/kria/language.py",
         "src/apps/api/app/kria/plan_blocks.py",
@@ -554,6 +555,15 @@
       "api_tests": "tests/kria/test_kri667_structured_ask_facts.py tests/kria/test_turkish_chat_guard.py tests/test_kri667_copilot_claims.py tests/kria/test_kri667_clip_exclusions.py tests/kria/test_kri667_no_new_intent_regexes.py",
       "paths": [
         "src/apps/api/prompts/edit_copilot.txt"
+      ]
+    },
+    {
+      "id": "kri-781-turkish-fold",
+      "needs_native": false,
+      "api_tests": "tests/parity/test_decision_parity.py tests/pipeline/test_lyrics_alignment.py tests/pipeline/test_text_element_parity_contract.py",
+      "paths": [
+        "src/apps/api/app/text_fold.py",
+        "src/apps/api/app/pipeline/lyrics_alignment.py"
       ]
     },
     {
@@ -1027,6 +1037,86 @@
         "src/apps/ios/Kria/Core/CreationFlow.swift",
         "src/apps/ios/Kria/Core/SuggestionChips.swift",
         "src/apps/ios/Tests/KriaTests/SuggestionChipsTests.swift"
+      ]
+    },
+    {
+      "id": "kri-729-camera-roll-recommendations",
+      "needs_native": true,
+      "api_tests": "tests/integration/test_media_collections.py tests/integration/test_camera_roll_execution.py tests/integration/test_camera_roll_pilot_cli.py tests/integration/test_camera_roll_retrieval_eval_cli.py tests/integration/test_actual_export_verification.py tests/integration/test_actual_export_completion.py tests/routes/test_actual_export_publication.py tests/integration/test_editorial_taste.py tests/journeys/test_editorial_taste_cli.py tests/evals/test_camera_roll_agents.py tests/journeys/test_editorial_taste_evaluation_cli.py",
+      "xctests": [
+        "KriaTests/CameraRollCollectionTests/testAllAddedAssetsSurviveResumeWithoutASecondSelection",
+        "KriaTests/CameraRollCollectionTests/testSelectionResumeCorrectionsAndRemoval",
+        "KriaTests/CameraRollCollectionTests/testMissingMetadataRevocationAndPrivacySwitch",
+        "KriaTests/CameraRollCollectionTests/testBoundedSelectionAndUnselectedMetadata",
+        "KriaTests/CameraRollCollectionTests/testTimeGroupsAndExplicitCorrectionSurviveMetadataRefresh"
+      ],
+      "paths": [
+        "src/apps/api/app/agents/camera_roll_stories.py",
+        "src/apps/api/app/agents/media_moment_relevance.py",
+        "src/apps/api/app/cli/camera_roll_pilot.py",
+        "src/apps/api/app/cli/camera_roll_retrieval_eval.py",
+        "src/apps/api/app/migrations/versions/0123_media_collection_stories.py",
+        "src/apps/api/app/routes/media_collections.py",
+        "src/apps/api/app/schemas/media_collections.py",
+        "src/apps/api/app/schemas/research.py",
+        "src/apps/api/app/services/media_collection_analysis.py",
+        "src/apps/api/app/services/media_collection_preparation.py",
+        "src/apps/api/app/services/media_collection_stories.py",
+        "src/apps/api/app/services/story_idea_research.py",
+        "src/apps/api/app/services/media_moment_inspection.py",
+        "src/apps/api/app/services/media_moment_retrieval.py",
+        "src/apps/api/app/services/media_moments.py",
+        "src/apps/ios/Kria/Core/CameraRollCollection.swift",
+        "src/apps/ios/Kria/Core/CameraRollCollectionAPI.swift",
+        "src/apps/ios/Kria/Core/CameraRollStories.swift",
+        "src/apps/ios/Kria/Features/CameraRollCollectionView.swift",
+        "src/apps/ios/Kria/Features/CameraRollExportProofView.swift",
+        "src/apps/ios/Kria/Features/CameraRollSavedPicker.swift",
+        "src/apps/ios/Kria/Features/CameraRollStoriesUITestFixture.swift",
+        "src/apps/ios/Kria/Features/CameraRollStoriesView.swift",
+        "src/apps/api/tests/integration/test_media_collections.py",
+        "src/apps/api/tests/integration/test_camera_roll_execution.py",
+        "src/apps/api/tests/integration/test_camera_roll_pilot_cli.py",
+        "src/apps/api/tests/integration/test_camera_roll_retrieval_eval_cli.py",
+        "src/apps/api/app/services/creator_editorial_taste.py",
+        "src/apps/api/app/services/editorial_taste.py",
+        "src/apps/api/app/routes/editorial_taste.py",
+        "src/apps/api/app/schemas/editorial_taste.py",
+        "src/apps/api/app/migrations/versions/0124_creator_editorial_taste.py",
+        "src/apps/api/tests/integration/test_editorial_taste.py",
+        "src/apps/ios/Kria/Core/EditorialTaste.swift",
+        "src/apps/ios/Kria/Features/EditorialTasteView.swift",
+        "src/apps/api/app/services/editorial_taste_evaluation.py",
+        "scripts/editorial-taste-eval.py",
+        "src/apps/api/tests/journeys/test_editorial_taste_evaluation_cli.py"
+      ]
+    },
+    {
+      "id": "kri-773-turkish-parity",
+      "needs_native": false,
+      "api_tests": "tests/parity tests/evals/parity",
+      "paths": [
+        "src/apps/api/tests/parity/",
+        "src/apps/api/tests/evals/parity/",
+        "src/apps/api/tests/fixtures/parity_pairs/",
+        "docs/reviews/turkish-parity-map-2026-10.md"
+      ]
+    },
+    {
+      "id": "kri-783-turkish-edit-speech",
+      "needs_native": false,
+      "api_tests": "tests/parity tests/pipeline/test_narration_labels.py tests/pipeline/test_score.py",
+      "paths": [
+        "src/apps/api/app/pipeline/narration_labels.py",
+        "src/apps/api/app/pipeline/score.py"
+      ]
+    },
+    {
+      "id": "kri-784-creator-language-prompts",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_turkish_chat_guard.py tests/evals/test_semantic_edit_proposal_evals.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/agent_evals/semantic_edit_proposal/golden/"
       ]
     }
   ]

@@ -1,0 +1,30 @@
+{
+  "app_version": "1",
+  "batch_elapsed_ms": [
+    14.784916,
+    4.207625
+  ],
+  "batch_size": 32,
+  "capture_context_enabled": true,
+  "captured_at": "2026-10-19T07:00:00Z",
+  "elapsed_ms": 33.721541,
+  "media_bytes_read": 0,
+  "media_bytes_uploaded": 0,
+  "missing_dates_count": 0,
+  "original_availability": "not_requested",
+  "os_version": "Version 27.0.1 (Build 24A446)",
+  "permission": 3,
+  "photo_count": 24,
+  "process_peak_resident_bytes": 75563008,
+  "provider_calls": 0,
+  "resolved_metadata_count": 53,
+  "schema_version": 1,
+  "selected_count": 53,
+  "unresolved_count": 0,
+  "video_count": 29,
+  "device_model": "iPhone 13 Pro (iPhone14,2)",
+  "source_files_sha256": {
+    "src/apps/ios/Kria/Features/CameraRollBenchmarkView.swift": "8bc5b4af40e41aa3fd1dad6b180c7294beb6f93d058917ac2f30fa9b8ecdcb65",
+    "src/apps/ios/Kria/KriaApp.swift": "4fb97d6384447d544969c7f8c7006a04a797410cdb84aace9a5d5446bde09530"
+  }
+}

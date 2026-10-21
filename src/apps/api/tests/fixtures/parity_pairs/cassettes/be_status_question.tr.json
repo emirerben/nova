@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_status_question",
+  "lang": "tr",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "videom hazır mı",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "videom hazır mı"
+  },
+  "prompt_sha256": "763d6dce4f336e47166c089e9bcbc9d867adeb767a23ebaa00c402a76b7421b5",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:12:43.749290+00:00",
+  "raw_text": "{\"brief_updates\": [], \"request_scope\": \"edit\"}",
+  "raw_texts": [
+    "{\"brief_updates\": [], \"request_scope\": \"edit\"}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3222,
+    "out": 14,
+    "thoughts": 617
+  },
+  "computed_cost_usd": 0.004783
+}

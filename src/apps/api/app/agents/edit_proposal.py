@@ -22,6 +22,7 @@ from app.agents.spoken_script import (
     transcript_speaks,
     word_keys,
 )
+from app.kria.reply_language import agent_reply_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.clip_intents import ResolvedClipIntent
 from app.schemas.edit_frame_schedule import EditFrameSchedule
@@ -70,6 +71,19 @@ _UNSUPPORTED_ACTION_LEAD = re.compile(
     r"visiting|tasting|trying)\b",
     re.IGNORECASE,
 )
+# Turkish twin of the three claim checks above, matched on ``loose_text`` (folded,
+# diacritics stripped). Turkish drops the subject and marks the person on the verb, so
+# the claim lives in the ending ("denedim", "gittik") or a copula suffix ("lezzetliydi").
+# Every form here is Turkish-only; "ben"/"biz"/"beni" collide with English ("Ben",
+# "show biz") and are read only on copy that reads as Turkish.
+_TR_UNSUPPORTED_CLAIM = re.compile(
+    r"\b(?:benim|bizim|bana|bize|bence|bizce|benden|bizden|bizi|"
+    r"lezzetli\w*|nefis\w*|enfes\w*|bayil\w*|ferahlatici\w*|"
+    r"favori(?:m|miz|si|mi|ler\w*)?|en\s+sevdig\w*|"
+    r"(?:dene|tat|git|gid|sev|kesfet|bayil)\w*?"
+    r"(?:dim|dik|tim|tik|dum|duk|iyorum|iyoruz|uyorum|uyoruz))\b"
+)
+_TR_UNSUPPORTED_PRONOUN = frozenset({"ben", "biz", "beni"})
 _FAST_CUT_TOTAL_TOLERANCE_S = 0.15
 _FAST_DURATION_EPSILON_S = 0.001
 EDIT_PROPOSAL_AGENT_MEDIA_LIMIT = 32
@@ -233,10 +247,22 @@ def _neutralize_sensory_modifier(text: str) -> str:
 def ai_draft_thought_has_unsupported_claim(text: str) -> bool:
     """Return whether model-authored copy asserts an unverified experience."""
 
-    return bool(
+    if (
         _PERSONAL_PRONOUN.search(text)
         or _UNSUPPORTED_ACTION_LEAD.search(text)
         or _SENSORY_CLAIM.search(text)
+    ):
+        return True
+    # KRI-783: the same claims in Turkish copy, on the shared Turkish-folded form.
+    from app.kria.brief_route import loose_text
+    from app.kria.reply_language import detect_chat_language
+
+    folded = loose_text(text)
+    if _TR_UNSUPPORTED_CLAIM.search(folded):
+        return True
+    tokens = "".join(ch if ch.isalnum() else " " for ch in folded).split()
+    return bool(_TR_UNSUPPORTED_PRONOUN.intersection(tokens)) and (
+        detect_chat_language(text) == "tr"
     )
 
 
@@ -930,6 +956,9 @@ class EditProposalAgentInput(BaseModel):
     # KRI-189: CLIP_FACTS is on for this creator, so media rows may carry `facts` and
     # capture-time ordering records its basis (`EditProposalAgentOutput.ordering`).
     clip_facts: bool = Field(default=False, exclude_if=lambda value: not value)
+    # KRI-784: the creator's language ("tr"/"en"), from the chat or the caller. None:
+    # read from the creator's own words below; English/unknown renders byte-identical.
+    reply_language: str | None = Field(default=None, exclude_if=lambda value: value is None)
     media: list[EditProposalMedia] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
 
     @model_validator(mode="before")
@@ -1615,7 +1644,13 @@ def _spoken_script_keys(input: EditProposalAgentInput, spoken: list[str]) -> set
 # declaring that quote (or set of quotes) an exhaustive caption list, rather
 # than one caption among others the specialist/planner may still add.
 _EXCLUSIVE_QUOTE_WINDOW_CHARS = 40
-_EXCLUSIVE_QUOTE_RE = re.compile(r"\b(?:only|just)\b", re.IGNORECASE)
+# KRI-783: Turkish "sadece"/"yalnızca" (any spelling or case) mean the same as only/just.
+# Also "yalnız", "bir tek" and a "no other text" clause ("başka yazı olmasın").
+_EXCLUSIVE_QUOTE_RE = re.compile(
+    r"\b(?:only|just|sadece|yaln[ıiIİ]z(?:ca)?|bir\s+tek|"
+    r"ba[sş]ka\s+(?:yaz[ıiIİ]|metin)\w*\s+(?:olmas[ıiIİ]n|koyma|yok))\b",
+    re.IGNORECASE,
+)
 
 
 def _creator_quoted_captions_are_exhaustive(request: str) -> bool:
@@ -2322,7 +2357,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.18.0",
+        prompt_version="1.19.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -2628,7 +2663,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 "simple edit would use."
             )
         clip_facts_note = _CLIP_FACTS_PROMPT_NOTE if input.clip_facts else ""
-        return load_prompt(
+        prompt = load_prompt(
             "edit_proposal",
             clip_facts_note=clip_facts_note,
             idea=input.idea[:500],
@@ -2657,6 +2692,12 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             ),
             source_floor_note=source_floor_note,
             beat_count_note=beat_count_note,
+        )
+        return with_prompt_language(
+            prompt,
+            agent_reply_language(
+                input.reply_language, input.creator_request, input.idea, input.theme
+            ),
         )
 
     def parse(

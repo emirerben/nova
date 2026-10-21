@@ -1,0 +1,31 @@
+{
+  "pair_id": "be_caption_language",
+  "lang": "en",
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-10-19-v12",
+  "message": "Put English captions on it.",
+  "input": {
+    "creator_request": "",
+    "conversation": [],
+    "current_brief": {
+      "version": 0,
+      "requirements": []
+    },
+    "require_request_scope": true,
+    "user_message": "Put English captions on it."
+  },
+  "prompt_sha256": "4868618be2e07a2bd877395e8dc0a9e0a44ef958bcdd26b55712586a712bd7ea",
+  "test_run_id": "kri773-model-parity-20261021",
+  "recorded_at": "2026-10-21T13:10:51.148401+00:00",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"Put English captions on it.\",\n      \"facts\": {\n        \"captions\": \"on\",\n        \"caption_language\": \"en\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}",
+  "raw_texts": [
+    "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"Put English captions on it.\",\n      \"facts\": {\n        \"captions\": \"on\",\n        \"caption_language\": \"en\"\n      }\n    }\n  ],\n  \"request_scope\": \"edit\"\n}"
+  ],
+  "model_used": "gemini-3.6-flash",
+  "tokens": {
+    "in": 3224,
+    "out": 101,
+    "thoughts": 427
+  },
+  "computed_cost_usd": 0.004398
+}
