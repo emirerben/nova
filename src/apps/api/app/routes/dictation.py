@@ -54,8 +54,14 @@ _MAX_TEXT_CHARS = 4000
 _MAX_CONTEXT_TERMS = 40
 _MAX_TERM_CHARS = 60
 _MAX_PROMPT_CHARS = 700
-# Words Kria creators actually say; Whisper's prompt biases spelling toward them.
+# Words Kria creators actually say; Whisper's prompt biases spelling toward them. The
+# product words are said as-is in every language ("music olmasın"); a language's own words
+# join them only when the creator's locale names it. KRI-780: the prompt is a bare word
+# list, never an English sentence, so it does not pull Turkish speech toward English.
 _FIXED_TERMS = ("montage", "lip-sync", "captions", "voiceover", "b-roll", "transition")
+_LOCALE_TERMS: dict[str, tuple[str, ...]] = {
+    "tr": ("altyazı", "seslendirme", "geçiş", "kurgu", "müzik", "şarkı"),
+}
 # Whisper hallucinates on silence/noise, more so with a vocabulary prompt. A transcript whose
 # every segment is this likely non-speech is dropped (KRI-653: a dead mic invented words).
 _NO_SPEECH_PROB = 0.6
@@ -101,11 +107,27 @@ def _parse_terms(raw: str) -> list[str]:
     return terms
 
 
-def build_vocabulary_prompt(terms: list[str]) -> str:
-    """Whisper ``prompt``: the creator's own names first, then Kria's fixed vocabulary."""
+def whisper_language(locale_hint: str) -> str | None:
+    """The language Whisper is told to transcribe, from the app's ``locale_hint``.
 
-    words = [*terms, *_FIXED_TERMS]
-    prompt = "Video edit request. " + ", ".join(words) + "."
+    ``"tr-TR"`` → ``"tr"``. English and anything unreadable stay ``None`` (auto-detect, as
+    before): forcing English on a Turkish speaker whose phone is set to English makes
+    Whisper translate instead of transcribe, while auto-detect already reads English well.
+    """
+    lang = (locale_hint or "").strip().lower().replace("_", "-").split("-", 1)[0]
+    if not _LANG_RE.match(lang) or lang == "en":
+        return None
+    return lang
+
+
+def build_vocabulary_prompt(terms: list[str], language: str | None = None) -> str:
+    """Whisper ``prompt``: the creator's own names first, then Kria's fixed vocabulary.
+
+    A plain word list with no sentence around it, so it biases spelling, not language.
+    """
+
+    words = [*terms, *_FIXED_TERMS, *_LOCALE_TERMS.get(language or "", ())]
+    prompt = ", ".join(words) + "."
     return prompt[:_MAX_PROMPT_CHARS]
 
 
@@ -183,15 +205,15 @@ async def transcribe_dictation(
                 detail="Recording is too long — keep it under two minutes",
             )
 
-        prompt = build_vocabulary_prompt(_parse_terms(context_terms))
-        lang = locale_hint.strip().lower()[:2]
+        lang = whisper_language(locale_hint)
+        prompt = build_vocabulary_prompt(_parse_terms(context_terms), lang)
         from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
 
         transcript = await asyncio.wait_for(
             run_in_threadpool(
                 transcribe_whisper,
                 local_path,
-                language=lang if _LANG_RE.match(lang) else None,
+                language=lang,
                 verbatim_prompt=prompt,
             ),
             timeout=_TRANSCRIPTION_TIMEOUT_S,

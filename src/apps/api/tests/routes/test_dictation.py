@@ -115,7 +115,7 @@ def test_empty_transcript_is_no_speech(monkeypatch) -> None:
 
 
 def test_whisper_echoing_the_vocabulary_prompt_is_no_speech(monkeypatch) -> None:
-    _stub_whisper(monkeypatch, _transcript("Video edit request", no_speech=None))
+    _stub_whisper(monkeypatch, _transcript("Deniz, montage, lip-sync", no_speech=None))
     res = client.post(
         "/dictation/transcribe",
         files=_audio(),
@@ -143,7 +143,9 @@ def test_context_terms_reach_whisper_and_bad_terms_are_ignored(monkeypatch) -> N
     )
     assert res.status_code == 200
     prompt = calls[0]["verbatim_prompt"]
-    assert prompt.startswith("Video edit request. Bodrum sunset, montage")
+    # KRI-780: a bare word list (no English sentence); a Turkish locale adds Turkish words.
+    assert prompt.startswith("Bodrum sunset, montage")
+    assert "altyazı" in prompt
     assert prompt.count("Bodrum sunset") == 1
     assert calls[0]["language"] == "tr"
 
@@ -153,8 +155,19 @@ def test_context_terms_reach_whisper_and_bad_terms_are_ignored(monkeypatch) -> N
         files=_audio(),
         data={"context_terms": "not json", "locale_hint": "turkish!!"},
     )
-    assert calls[0]["verbatim_prompt"].startswith("Video edit request. montage")
-    assert calls[0]["language"] is None or len(calls[0]["language"]) == 2
+    assert calls[0]["verbatim_prompt"].startswith("montage")
+    assert calls[0]["language"] is None
+
+    # An English locale keeps Whisper's auto-detect: forcing "en" would translate a
+    # Turkish speaker on an English-language phone.
+    calls.clear()
+    client.post(
+        "/dictation/transcribe",
+        files=_audio(),
+        data={"context_terms": "[]", "locale_hint": "en-US"},
+    )
+    assert calls[0]["language"] is None
+    assert "altyazı" not in calls[0]["verbatim_prompt"]
 
 
 def test_long_utterance_is_not_truncated_to_400_chars(monkeypatch) -> None:

@@ -1260,9 +1260,21 @@ struct KriaAPI: KriaAPIClient {
         body.append(audio)
         append("\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"context_terms\"\r\n\r\n")
         append(String(data: (try? JSONEncoder().encode(contextTerms)) ?? Data("[]".utf8), encoding: .utf8) ?? "[]")
+        // KRI-780: the language the creator speaks (the same device language the live Apple
+        // recognizer uses), so Whisper transcribes a short Turkish take as Turkish.
+        if let localeHint = Self.dictationLocaleHint() {
+            append("\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"locale_hint\"\r\n\r\n")
+            append(localeHint)
+        }
         append("\r\n--\(boundary)--\r\n")
         return try await request(path: "dictation/transcribe", method: "POST", headers: ["Content-Type": "multipart/form-data; boundary=\(boundary)"], bodyData: body, decode: DictationTranscriptResponse.self, timeoutInterval: 30)
     }
+    /// Dictation `locale_hint`: the device's most preferred language tag ("tr-TR"); nil when none.
+    static func dictationLocaleHint(preferred: [String] = Locale.preferredLanguages) -> String? {
+        guard let tag = preferred.first?.trimmingCharacters(in: .whitespaces), !tag.isEmpty else { return nil }
+        return tag
+    }
+
     func songAudio(threadID: UUID, generation: Int?) async throws -> SongAudioLink {
         try await request(path: "creation-threads/\(threadID.uuidString)/song-audio", method: "GET",
                           query: generation.map { [URLQueryItem(name: "generation", value: String($0))] } ?? [],
