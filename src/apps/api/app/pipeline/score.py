@@ -29,9 +29,10 @@ FILLER_WORDS = {"um", "uh", "like", "you know", "so", "basically", "literally"}
 # KRI-783: Turkish discourse openers that play the role of "so"/"like"/"I mean", matched
 # as the whole first word on the Turkish-folded form ("YANİ" == "yani"). Hesitation
 # sounds ("ııı", "eee") come from silence_cut's shared bilingual filler lexicon.
-_TR_FILLER_OPENERS = frozenset({"yani", "hani", "sey", "valla"})
-# Exclamations in that lexicon open strong hooks ("Oh no!"); they are not penalized.
-_HOOK_EXCLAMATIONS = frozenset({"oh", "ah", "eh", "oo"})
+_TR_FILLER_OPENERS = frozenset({"yani", "hani", "sey", "valla", "ee"})
+# Exclamations open strong hooks ("Oh no!", Turkish surprise "Aaa!", "Ay!"); never
+# penalized.
+_HOOK_EXCLAMATIONS = frozenset({"oh", "ah", "eh", "oo", "aa", "aaa", "ay"})
 
 # Target clip duration from plan
 CLIP_DURATION_S = 50.0  # midpoint of 45-59s range
@@ -239,14 +240,30 @@ def _adjust_hook_score(
     if any(abs(start_s - t) <= SCENE_CUT_PROXIMITY_S for t in cut_timestamps):
         score += 1.0
     # -1 if starts with filler word
-    lower = hook_text.lower().strip()
-    if any(lower.startswith(fw) for fw in FILLER_WORDS) or _opens_with_filler(hook_text):
+    if _opens_with_english_filler(hook_text) or _opens_with_filler(hook_text):
         score -= 1.0
     return max(0.0, min(10.0, score))
 
 
+def _opens_with_english_filler(hook_text: str) -> bool:
+    """English filler opener. Legacy prefix match, except on a Turkish hook, where "so"
+    and "um" are the start of real words ("Sonunda", "Umarım") and only a whole first
+    word (or "you know") counts."""
+    from app.kria.reply_language import detect_chat_language
+
+    lower = hook_text.lower().strip()
+    if detect_chat_language(hook_text) != "tr":
+        return any(lower.startswith(fw) for fw in FILLER_WORDS)
+    first_words = " ".join("".join(ch if ch.isalpha() else " " for ch in lower).split()[:2])
+    return any(first_words == fw or first_words.startswith(f"{fw} ") for fw in FILLER_WORDS)
+
+
 def _opens_with_filler(hook_text: str) -> bool:
-    """First word is a hesitation sound (any language) or a Turkish discourse opener."""
+    """First word is a Turkish hesitation sound ("ııı", "eee", "ıh") or discourse opener.
+
+    The English hesitations in silence_cut's lexicon ("hmm", "er", "mm") keep their
+    legacy score: only the English FILLER_WORDS prefixes penalize English hooks.
+    """
     from app.kria.brief_route import loose_text
     from app.pipeline.silence_cut import is_filler_token
 
@@ -257,7 +274,14 @@ def _opens_with_filler(hook_text: str) -> bool:
     word = "".join(ch for ch in loose_text(first) if ch.isalpha())
     if word in _HOOK_EXCLAMATIONS:
         return False
-    return is_filler_token(first) or word in _TR_FILLER_OPENERS
+    if word in _TR_FILLER_OPENERS:
+        return True
+    turkish_cased = "".join(
+        ch for ch in first.replace("İ", "i").replace("I", "ı").lower() if ch.isalpha()
+    )
+    if len(turkish_cased) >= 2 and set(turkish_cased) == {"e"}:
+        return True  # "ee", "eee", "eeee"
+    return is_filler_token(first) and turkish_cased.startswith("ı")
 
 
 def _compute_engagement_scores(

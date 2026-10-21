@@ -1055,22 +1055,36 @@ def media_context_group(*values: object) -> MediaContextGroup:
 
 # Turkish photo nouns (folded): fotoğraf, resim, görsel, foto, kare ("frame/still").
 _TR_IMAGE_NOUN = r"\b(?:fotograf|foto|resim|gorsel)\w*"
-_TR_NOT_NEGATED = r"(?!\s+(?:olmasin|yapma)\b)"
+# Turkish negates after "tam ekran": "olmasın", "olmasını istemiyorum", "olmayacak",
+# "koyma", "gösterme", "istemiyorum", "değil" (an inflected "tam ekranda gösterme" too).
+_TR_NEGATION = (
+    r"(?:olmasin|olmasini\s+istemiyorum|olmayacak|olmamali|yapma|koyma|gosterme|"
+    r"istemiyorum|istemem|degil)\b"
+)
+_TR_NOT_NEGATED = r"(?!\w*\s+" + _TR_NEGATION + r")"
+# "kırpma" is also the noun "cropping": "kırpma olsun / uygula" asks FOR a crop.
+_TR_CROP_ASKED = r"\s+(?:olsun|uygula\w*|yap\w*|ekle\w*)\b"
 _TR_IMAGE_CONTAIN_PATTERNS = (
-    # "Fotoğrafları kırpma" / "kırpmadan" / "kırpılmasın" / "kesme"
-    _TR_IMAGE_NOUN + r".{0,24}\b(?:kirpma|kirpmadan|kirpilmasin|kirpilmadan|kesme|kesmeden)\b",
-    r"\b(?:kirpma|kirpmadan)\b.{0,16}" + _TR_IMAGE_NOUN,
-    # "fotoğraflar ekranı doldurmasın" / "tamamı görünsün" / "tam sığsın"
+    # "Fotoğrafları kırpma" / "kırpmadan" / "kırpılmasın" / "kesme" / "kesilmesin"
+    _TR_IMAGE_NOUN
+    + r".{0,24}\b(?:kirpma(?!"
+    + _TR_CROP_ASKED
+    + r")|kirpmadan|kirpilmasin|kirpilmadan|kesme|kesmeden|kesilmesin)\b",
+    r"\b(?:kirpma(?!" + _TR_CROP_ASKED + r")|kirpmadan)\b.{0,16}" + _TR_IMAGE_NOUN,
+    # "fotoğraflar ekranı doldurmasın" / "tamamı görünsün" / "tam sığsın" / "kart olarak"
     _TR_IMAGE_NOUN + r".{0,32}\b(?:ekrani\s+doldurmasin|tamami\s+gorunsun|tam\s+sigsin|"
-    r"sigdir|kirpilmamis)\b",
-    # "fotoğraflar tam ekran olmasın" / "tam ekran yapma"
-    _TR_IMAGE_NOUN + r".{0,24}\btam\s*ekran\w*\s+(?:olmasin|yapma)\b",
+    r"sigdir|kirpilmamis|kart\s+olarak|kart\w*\s+(?:olsun|yap\w*))\b",
+    # "fotoğraflar tam ekran olmasın" / "tam ekranda gösterme" / "tam ekran istemiyorum"
+    _TR_IMAGE_NOUN + r".{0,24}\btam\s*ekran\w*\s+(?:\w+\s+)?" + _TR_NEGATION,
 )
 _TR_IMAGE_COVER_PATTERNS = (
     # "Fotoğraflar tam ekran olsun" / "tam ekran fotoğraflar" / "ekranı doldursun"
-    _TR_IMAGE_NOUN + r".{0,24}\btam\s*ekran\w*" + _TR_NOT_NEGATED,
+    _TR_IMAGE_NOUN + r".{0,24}\btam\s*ekran" + _TR_NOT_NEGATED,
     r"\btam\s*ekran\w*\s+" + _TR_IMAGE_NOUN,
     _TR_IMAGE_NOUN + r".{0,32}\bekrani\s+doldursun\b",
+    # "Fotoğraflara kırpma uygula" / "fotoğrafları kırp"
+    _TR_IMAGE_NOUN + r".{0,24}\bkirpma" + _TR_CROP_ASKED,
+    _TR_IMAGE_NOUN + r".{0,24}\bkirp(?:in|alim)?\b",
 )
 
 

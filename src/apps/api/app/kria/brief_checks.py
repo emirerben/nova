@@ -3385,11 +3385,16 @@ _SPEECH_OVER_RE = re.compile(
 )
 _SPEAKER_RE = re.compile(
     r"\b(?:cut to me|show me|back to me|cut to the speaker|me talking|on camera|me saying|"
-    r"bana\s+(?:kes|gec|don)\w*|beni\s+goster\w*|konusurken\s+beni|kameraya\s+konus\w*)\b"
+    r"bana\s+(?:kes|gec|don|geri)\w*|beni\s+(?:de\s+)?goster\w*|konusurken\s+beni|"
+    r"kameraya\s+konus\w*|(?:yuzumu|kendimi)\s+(?:de\s+)?goster\w*)\b"
 )
+# Turkish also puts the back-word after the noun ("montaja geri dön") and says "between
+# my lines" with a postposition ("cümlelerimin arasına hızlı kesimler koy").
 _BACK_TO_MONTAGE_RE = re.compile(
     r"\b(?:back to|return to|then|sonra|tekrar|geri)\b.{0,30}"
     r"\b(?:montage|cuts|clips|montaj\w*|kesim\w*|klip\w*)\b"
+    r"|\b(?:montaj|kesim|klip)\w*\s+(?:geri|tekrar)\s+(?:don|gec)\w*"
+    r"|\baras(?:ina|inda)\b.{0,30}\b(?:kesim|montaj)\w*"
 )
 
 

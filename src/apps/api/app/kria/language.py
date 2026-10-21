@@ -31,18 +31,40 @@ _RESTATEMENT_SENTENCE_ENDINGS = frozenset(
     {"istiyorsun", "istiyorsunuz", "istedin", "istediniz", "diyorsun", "diyorsunuz"}
 )
 
+_RESTATEMENT_REASON_WORDS = frozenset({"cunku", "diye", "icin", "ki"})
+# Turkish-folded first-person past endings ("aldım" -> "aldim", "geçtik" -> "gectik").
+_FIRST_PERSON_PAST_ENDINGS = ("dim", "dum", "tim", "tum", "dik", "duk", "tik", "tuk")
+
 # KRI-783: Turkish model refusals/meta replies ("Daha fazla bilgiye ihtiyacım var"), in
 # ``_normalized`` form, matched as whole-word phrases. The writers' English refusal
 # patterns stay in their modules; this is the Turkish half they share.
 _TURKISH_REFUSAL_PHRASES = (
-    "daha fazla bilgi",
-    "daha fazla bilgiye",
+    # Asking for input needs the need verb: bare "daha fazla bilgi için ..." is an
+    # everyday call to action ("for more info, follow").
+    "daha fazla bilgiye ihtiyacim var",
+    "daha fazla bilgiye ihtiyac var",
+    "daha fazla bilgi gerekiyor",
+    "daha fazla bilgi lazim",
+    "daha fazla bilgi vermelisin",
+    "daha fazla bilgi verir misin",
+    "daha fazla bilgi verebilir misin",
+    # Self-identification as an AI, not any mention of one ("bir yapay zeka uygulaması").
     "yapay zeka olarak",
-    "bir yapay zeka",
-    "yazamam",
-    "olusturamam",
+    "bir yapay zekayim",
+    "bir yapay zeka modeliyim",
+    "bir dil modeli olarak",
+    "bir dil modeliyim",
+    # "I can't write this": the object or the -amıyorum form, never a bare "yazamam"
+    # ("kimse yazamam sanıyordu").
+    "bunu yazamam",
+    "bunu yazamiyorum",
+    "bunu olusturamam",
+    "bunu olusturamiyorum",
+    "olusturamiyorum",
     "yardimci olamam",
-    "bu istegi yerine getiremem",
+    "yardimci olamiyorum",
+    "yerine getiremem",
+    "yerine getiremiyorum",
 )
 
 _STATUS_QUESTIONS = {
@@ -147,8 +169,16 @@ def _first_sentence_restates(message: str) -> bool:
     end = next((i for i, ch in enumerate(stripped) if ch in ".!?\n"), len(stripped))
     if stripped[end : end + 1] == "?":
         return False
-    tokens = _normalized(stripped[:end]).split()
-    return bool(tokens) and tokens[-1] in _RESTATEMENT_SENTENCE_ENDINGS
+    sentence = stripped[:end]
+    tokens = _normalized(sentence).split()
+    if not tokens or tokens[-1] not in _RESTATEMENT_SENTENCE_ENDINGS:
+        return False
+    # "Kahve kliplerini başa aldım, sakin bir açılış istedin." reports work and gives the
+    # reason at the end. Only a sentence that is nothing but the restatement counts: no
+    # comma, no reason word, no first-person past verb ("aldım", "kullandım").
+    if "," in sentence or _RESTATEMENT_REASON_WORDS.intersection(tokens):
+        return False
+    return not any(token.endswith(_FIRST_PERSON_PAST_ENDINGS) for token in tokens[:-1])
 
 
 def is_turkish_refusal(text: str) -> bool:

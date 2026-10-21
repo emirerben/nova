@@ -75,6 +75,39 @@ _DURABLE_MARKERS = (
     "butun videolarimda",
 )
 
+# Negation, as whole words of the same folded text: English, then Turkish ("asla" never,
+# "değil" not, "istemiyorum"/"istemem" I don't want, "olmasın" let it not be).
+_FONT_NEGATIONS = frozenset(
+    {
+        "never",
+        "avoid",
+        "no",
+        "not",
+        "dont",
+        "stop",
+        "without",
+        "except",
+        "asla",
+        "degil",
+        "istemiyorum",
+        "istemem",
+        "olmasin",
+        "olmasini",
+    }
+)
+# Turkish negative verb forms: "kullanma", "kullanmayın", "kullanılmasın", "koymayın".
+_FONT_NEGATED_VERB_STEMS = ("kullanma", "kullanilma", "koyma", "secme", "istemi")
+
+
+def _is_negated_verb(token: str) -> bool:
+    """A Turkish negative verb form. "kullanmak" (to use) and "kullanmanı istiyorum" (I
+    want you to use) share the stem but are positive, so only an ending that keeps the
+    negation counts (none, -y-, -sın, -dan, -z)."""
+    for stem in _FONT_NEGATED_VERB_STEMS:
+        if token.startswith(stem) and token[len(stem) : len(stem) + 1] in ("", "y", "s", "d", "z"):
+            return True
+    return False
+
 
 class DirectionError(ValueError):
     code = "invalid_direction"
@@ -241,6 +274,14 @@ def _durable_font_from_words(instruction: str) -> str | None:
     folded = words(instruction)
     padded = f" {folded} "
     if not any(f" {marker} " in padded for marker in _DURABLE_MARKERS):
+        return None
+    tokens = folded.split()
+    # A durable rule that forbids the font ("Always avoid the Inter font", "Artık Inter
+    # fontunu kullanma") must never be saved as "always use it"; the English
+    # ``explicit_text_rule`` path owns "never use X font" as an exclusion.
+    if _FONT_NEGATIONS.intersection(tokens) or " don t " in padded:
+        return None
+    if any(_is_negated_verb(token) for token in tokens):
         return None
     return font_from_words(folded)
 

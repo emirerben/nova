@@ -25121,8 +25121,37 @@ def _narrated_clip_alignment_steps(
 # KRI-783: Turkish negates AFTER the noun ("başlık olmasın", "isim koyma"); these words
 # (Turkish-folded) in the rest of the clause withdraw the treatment.
 _TR_TREATMENT_NEGATIONS = frozenset(
-    {"olmasin", "koyma", "yazma", "ekleme", "gosterme", "yok", "istemiyorum", "istemem"}
+    {"olmasin", "olmayacak", "olmayan", "yok", "istemiyorum", "istemem", "degil", "asla"}
 )
+# Negative verb stems ("koyma", "koymayın", "eklemeyelim", "göstermesin"). The positive
+# forms that share them ("eklemeni istiyorum", "koymak", "eklemeli") continue with n/k/l.
+_TR_TREATMENT_NEGATED_VERB_STEMS = (
+    "koyma",
+    "yazma",
+    "ekleme",
+    "gosterme",
+    "kullanma",
+    "istemi",
+    "yapma",
+    "olma",
+)
+
+
+def _tr_treatment_negated(rest: str, matched: str) -> bool:
+    """The Turkish clause after a treatment noun withdraws it, or the noun says "without"."""
+    from app.kria.brief_route import loose_text  # noqa: PLC0415
+
+    noun = loose_text(matched)
+    if len(noun) > 4 and noun.endswith(("siz", "suz")):
+        return True  # "başlıksız", "skorsuz": without a title / score
+    rest_words = "".join(ch if ch.isalnum() else " " for ch in loose_text(rest)).split()
+    if _TR_TREATMENT_NEGATIONS.intersection(rest_words):
+        return True
+    return any(
+        word.startswith(stem) and word[len(stem) : len(stem) + 1] in ("", "y", "s", "d", "z")
+        for word in rest_words
+        for stem in _TR_TREATMENT_NEGATED_VERB_STEMS
+    )
 
 
 def _creator_requests_narrated_treatment(request: str, pattern: str) -> bool:
@@ -25150,8 +25179,7 @@ def _creator_requests_narrated_treatment(request: str, pattern: str) -> bool:
                 (i for i in (rest.find(d) for d in (".", "!", "?", ";", ",")) if i >= 0),
                 default=len(rest),
             )
-            rest_words = "".join(ch if ch.isalnum() else " " for ch in rest[:clause_end]).split()
-            if _TR_TREATMENT_NEGATIONS.intersection(rest_words):
+            if _tr_treatment_negated(rest[:clause_end], match.group(0)):
                 continue
             return True
     return False
@@ -25270,7 +25298,9 @@ def _narrated_storyboard_text_elements(
     # the deterministic parser canonicalizes them to the smallest score phrase
     # and also handles missing or narrow anchors.
     request_wants_scores = _creator_requests_narrated_treatment(
-        request, r"\b(?:score|scores|scoreboard|result|results|skor\w*|sonuc\w*)\b"
+        request,
+        r"\b(?:score|scores|scoreboard|result|results|skor\w*|"
+        r"sonuc(?:u|unu|lar|lari|larini))\b",
     )
     number_words = {
         "zero",
@@ -25301,22 +25331,6 @@ def _narrated_storyboard_text_elements(
         "seventy",
         "eighty",
         "ninety",
-        # KRI-783: Turkish, folded ("üç" -> "uc"). "on" (ten) is left out: it is also
-        # the English word "on".
-        "sifir",
-        "bir",
-        "iki",
-        "uc",
-        "dort",
-        "bes",
-        "alti",
-        "yedi",
-        "sekiz",
-        "dokuz",
-        "yirmi",
-        "otuz",
-        "kirk",
-        "elli",
     }
     # Score copy is always derived from the canonical transcript.  The
     # storyboard agent is allowed to omit score text (and may omit anchors),
@@ -25325,17 +25339,55 @@ def _narrated_storyboard_text_elements(
     score_value_words = number_words | {"nil", "all"}
     score_context_re = re.compile(
         r"\b(?:score|scores|scoreboard|result|results|final|won|wins|winner|beat|beats|"
-        r"defeated|level|levels|tied|tie|game|games|match|matches|takes|took|"
-        r"skor\w*|sonuc\w*|kazan\w*|yendi\w*|yenildi\w*|berabere\w*|mac(?:ta|i|in|tan)?|"
-        r"oyun(?:u|da|un)?)\b"
+        r"defeated|level|levels|tied|tie|game|games|match|matches|takes|took)\b"
     )
+    # KRI-783: Turkish numbers and score context read only a transcript that reads as
+    # Turkish, so English "Kirk", "UC" or "Mac" never become score words.
     from app.kria.brief_route import loose_text  # noqa: PLC0415
+    from app.kria.reply_language import detect_chat_language  # noqa: PLC0415
+    from app.pipeline.narration_labels import turkish_score_number  # noqa: PLC0415
+
+    transcript_language = str(
+        (transcript.get("language") if isinstance(transcript, Mapping) else None)
+        or getattr(transcript, "language", None)
+        or ""
+    ).casefold()
+    transcript_is_turkish = transcript_language.startswith("tr") or (
+        not transcript_language
+        and detect_chat_language(" ".join(str(word["text"]) for word in words)) == "tr"
+    )
+    tr_score_context_re = re.compile(
+        r"\b(?:skor\w*|sonuc(?:u|unu|lar|lari|larini)?|kazan\w*|yendi\w*|yenildi\w*|"
+        r"berabere\w*|mac(?:ta|i|in|tan)?|oyun(?:u|da|un)?|set\w*|gol\w*)\b"
+    )
 
     def _score_value(text: Any) -> str | None:
-        token = re.sub(r"^[^a-z0-9]+|[^a-z0-9]+$", "", loose_text(str(text)))
+        token = re.sub(r"^[^a-z0-9]+|[^a-z0-9]+$", "", str(text).casefold())
         if token.isdigit() or token in score_value_words:
             return token
+        if transcript_is_turkish and turkish_score_number(text) is not None:
+            return str(text)
         return None
+
+    def _turkish_pair_is_idiom(left_text: Any, right_text: Any, *, anchored: bool) -> bool:
+        """A Turkish number pair that is not a score.
+
+        "bir iki" (a couple), "iki üç" / "üç beş" (a few) are ascending approximations,
+        and "bir" alone is also the article "a". A dative left number ("üçe bir",
+        "ikiye sıfır") is the spoken score form and always counts; a bare pair counts
+        only inside an agent score anchor, never ascending and never "bir" first.
+        """
+        left = turkish_score_number(left_text)
+        right = turkish_score_number(right_text)
+        if left is None and right is None:
+            return False
+        if left is not None and left[1]:
+            return False
+        if not anchored:
+            return True
+        if left is None or right is None:
+            return False
+        return left[0] == 1 or right[0] > left[0]
 
     hybrid_score_re = re.compile(
         r"(?P<left>[0-9]{1,3}|[a-z]+)(?P<separator>[-–:])"
@@ -25360,10 +25412,12 @@ def _narrated_storyboard_text_elements(
 
     def _score_has_context(start_index: int, end_index: int) -> bool:
         context = " ".join(
-            loose_text(str(words[index]["text"]))
+            str(words[index]["text"]).casefold()
             for index in range(max(0, start_index - 5), min(len(words), end_index + 6))
         )
-        return bool(score_context_re.search(context))
+        if score_context_re.search(context):
+            return True
+        return transcript_is_turkish and bool(tr_score_context_re.search(loose_text(context)))
 
     score_spans: list[tuple[int, int]] = []
 
@@ -25387,12 +25441,21 @@ def _narrated_storyboard_text_elements(
             ]
             score_spans.append((start_index, end_index))
 
-    def _add_spoken_score_spans(start_index: int, end_index: int) -> None:
+    def _add_spoken_score_spans(start_index: int, end_index: int, *, anchored: bool) -> None:
         for index in range(start_index, end_index + 1):
             if _is_hybrid_score_token(words[index]["text"]):
                 _add_score_span(index, index)
         for index in range(start_index, end_index):
-            if _score_value(words[index]["text"]) and _score_value(words[index + 1]["text"]):
+            if (
+                _score_value(words[index]["text"])
+                and _score_value(words[index + 1]["text"])
+                and not (
+                    transcript_is_turkish
+                    and _turkish_pair_is_idiom(
+                        words[index]["text"], words[index + 1]["text"], anchored=anchored
+                    )
+                )
+            ):
                 _add_score_span(index, index + 1)
         for index in range(start_index, end_index - 1):
             if (
@@ -25413,7 +25476,7 @@ def _narrated_storyboard_text_elements(
         end_index = index_by_id[end_id]
         if end_index < start_index or end_index - start_index > 8:
             continue
-        _add_spoken_score_spans(start_index, end_index)
+        _add_spoken_score_spans(start_index, end_index, anchored=True)
 
     transcript_text = " ".join(str(word["text"]) for word in words)
     score_re = re.compile(r"\b\d{1,3}\s*[-–:]\s*\d{1,3}\b")
@@ -25434,7 +25497,7 @@ def _narrated_storyboard_text_elements(
 
     # Consecutive spoken numbers and “six to four” / “6 to 4” are common
     # speech-recognition shapes.
-    _add_spoken_score_spans(0, len(words) - 1)
+    _add_spoken_score_spans(0, len(words) - 1, anchored=False)
 
     for start_index, end_index in sorted(score_spans):
         start_s = float(words[start_index]["start_s"])

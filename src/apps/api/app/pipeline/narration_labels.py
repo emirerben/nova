@@ -69,29 +69,59 @@ _NUMBER_WORDS: dict[str, int] = {
     "ninety": 90,
 }
 _SCORE_WORDS = frozenset(_NUMBER_WORDS) | {"all", "a-piece", "apiece"}
-# KRI-783: Turkish spoken numbers, keyed on the Turkish-folded form ("ÜÇ" == "üç" == "uc").
-# "on" (ten) is left out: it is also the English word "on", and a transcript of either
-# language is read by the same table.
+# KRI-783: Turkish spoken numbers, keyed on the Turkish-cased form with its letters
+# kept ("ÜÇ" == "üç", "KIRK" == "kırk"). Left out: "on" (ten; the English word "on") and
+# "elli" (fifty; the name Elli). A transcript typed without Turkish letters reads through
+# the ASCII fold too ("uc" == "üç"), except "kirk": the name Kirk.
 _TR_NUMBER_WORDS: dict[str, int] = {
-    "sifir": 0,
+    "sıfır": 0,
     "bir": 1,
     "iki": 2,
-    "uc": 3,
-    "dort": 4,
-    "bes": 5,
-    "alti": 6,
+    "üç": 3,
+    "dört": 4,
+    "beş": 5,
+    "altı": 6,
     "yedi": 7,
     "sekiz": 8,
     "dokuz": 9,
     "yirmi": 20,
     "otuz": 30,
-    "kirk": 40,
-    "elli": 50,
-    "altmis": 60,
-    "yetmis": 70,
-    "seksen": 80,
-    "doksan": 90,
+    "kırk": 40,
 }
+# The dative stem of a number whose last consonant softens ("dörde" -> "dört").
+_TR_DATIVE_STEMS = {"dörd": "dört", "dord": "dort"}
+_TR_ASCII_NUMBER_WORDS: dict[str, int] = {
+    "sifir": 0,
+    "uc": 3,
+    "dort": 4,
+    "bes": 5,
+    "alti": 6,
+}
+
+
+def turkish_score_number(text: Any) -> tuple[int, bool] | None:
+    """(value, dative) for one spoken Turkish number token, else None.
+
+    Turkish says a score with a dative on the first number ("üçe bir", "ikiye sıfır",
+    "bire bir"), so "üçe" reads as (3, True).
+    """
+    from app.kria.brief_route import loose_text  # noqa: PLC0415 - app.kria imports pipeline
+
+    cased = str(text).replace("İ", "i").replace("I", "ı").lower()
+    token = "".join(ch for ch in cased if ch.isalpha())
+    ascii_token = "".join(ch for ch in loose_text(str(text)) if ch.isalpha())
+    for candidate, table in ((token, _TR_NUMBER_WORDS), (ascii_token, _TR_ASCII_NUMBER_WORDS)):
+        if candidate in table:
+            return table[candidate], False
+        for suffix in ("ye", "ya", "e", "a"):
+            if candidate.endswith(suffix) and len(candidate) > len(suffix) + 1:
+                stem = candidate[: -len(suffix)]
+                stem = _TR_DATIVE_STEMS.get(stem, stem)
+                if stem in table:
+                    return table[stem], True
+    return None
+
+
 _HYBRID_SCORE_RE = re.compile(
     r"^(?P<left>\d{1,3}|[a-z]+)[-–:]\s*"
     r"(?P<right>\d{1,3}|[a-z]+)[.!?,;:!?]*$",
@@ -771,9 +801,8 @@ def _score_value(text: Any) -> int | None:
         return int(token)
     if token in _SCORE_WORDS:
         return _NUMBER_WORDS.get(token, 0)
-    from app.kria.brief_route import loose_text
-
-    return _TR_NUMBER_WORDS.get(_PUNCTUATION_RE.sub("", loose_text(str(text))).strip())
+    turkish = turkish_score_number(text)
+    return turkish[0] if turkish else None
 
 
 def _normalize_words(transcript: Any) -> list[_Word]:

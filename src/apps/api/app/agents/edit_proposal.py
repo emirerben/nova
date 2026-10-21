@@ -71,11 +71,18 @@ _UNSUPPORTED_ACTION_LEAD = re.compile(
     re.IGNORECASE,
 )
 # Turkish twin of the three claim checks above, matched on ``loose_text`` (folded,
-# diacritics stripped): first-person pronouns, and taste/favorite claims.
+# diacritics stripped). Turkish drops the subject and marks the person on the verb, so
+# the claim lives in the ending ("denedim", "gittik") or a copula suffix ("lezzetliydi").
+# Every form here is Turkish-only; "ben"/"biz"/"beni" collide with English ("Ben",
+# "show biz") and are read only on copy that reads as Turkish.
 _TR_UNSUPPORTED_CLAIM = re.compile(
-    r"\b(?:ben|biz|benim|bizim|bana|bize|lezzetli|nefis|enfes|ferahlatici|favori\w*|"
-    r"en\s+sevdig\w*)\b"
+    r"\b(?:benim|bizim|bana|bize|bence|bizce|benden|bizden|bizi|"
+    r"lezzetli\w*|nefis\w*|enfes\w*|bayil\w*|ferahlatici\w*|"
+    r"favori(?:m|miz|si|mi|ler\w*)?|en\s+sevdig\w*|"
+    r"(?:dene|tat|git|gid|sev|kesfet|bayil)\w*?"
+    r"(?:dim|dik|tim|tik|dum|duk|iyorum|iyoruz|uyorum|uyoruz))\b"
 )
+_TR_UNSUPPORTED_PRONOUN = frozenset({"ben", "biz", "beni"})
 _FAST_CUT_TOTAL_TOLERANCE_S = 0.15
 _FAST_DURATION_EPSILON_S = 0.001
 EDIT_PROPOSAL_AGENT_MEDIA_LIMIT = 32
@@ -247,8 +254,15 @@ def ai_draft_thought_has_unsupported_claim(text: str) -> bool:
         return True
     # KRI-783: the same claims in Turkish copy, on the shared Turkish-folded form.
     from app.kria.brief_route import loose_text
+    from app.kria.reply_language import detect_chat_language
 
-    return bool(_TR_UNSUPPORTED_CLAIM.search(loose_text(text)))
+    folded = loose_text(text)
+    if _TR_UNSUPPORTED_CLAIM.search(folded):
+        return True
+    tokens = "".join(ch if ch.isalnum() else " " for ch in folded).split()
+    return bool(_TR_UNSUPPORTED_PRONOUN.intersection(tokens)) and (
+        detect_chat_language(text) == "tr"
+    )
 
 
 def creator_title_hold_s(input: EditProposalAgentInput) -> float:  # noqa: A002
@@ -1627,7 +1641,12 @@ def _spoken_script_keys(input: EditProposalAgentInput, spoken: list[str]) -> set
 # than one caption among others the specialist/planner may still add.
 _EXCLUSIVE_QUOTE_WINDOW_CHARS = 40
 # KRI-783: Turkish "sadece"/"yalnızca" (any spelling or case) mean the same as only/just.
-_EXCLUSIVE_QUOTE_RE = re.compile(r"\b(?:only|just|sadece|yaln[ıiIİ]zca)\b", re.IGNORECASE)
+# Also "yalnız", "bir tek" and a "no other text" clause ("başka yazı olmasın").
+_EXCLUSIVE_QUOTE_RE = re.compile(
+    r"\b(?:only|just|sadece|yaln[ıiIİ]z(?:ca)?|bir\s+tek|"
+    r"ba[sş]ka\s+(?:yaz[ıiIİ]|metin)\w*\s+(?:olmas[ıiIİ]n|koyma|yok))\b",
+    re.IGNORECASE,
+)
 
 
 def _creator_quoted_captions_are_exhaustive(request: str) -> bool:

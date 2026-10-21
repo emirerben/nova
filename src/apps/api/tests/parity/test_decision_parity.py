@@ -301,6 +301,32 @@ def _receipt_timing_cue(text: str) -> bool:
     return "timing" in _named_cues(req, words(text))
 
 
+def _narrated_score_overlay(text: str) -> bool:
+    """A creator brief turns the narrated "3-1" into a score overlay (or withdraws it)."""
+    from types import SimpleNamespace
+
+    from app.pipeline.transcribe import Transcript, Word
+    from app.tasks.generative_build import _narrated_storyboard_text_elements
+
+    spoken = ["Final", "score", "3-1"]
+    transcript = Transcript(
+        words=[Word(word, i * 0.2, (i + 1) * 0.2, 1.0) for i, word in enumerate(spoken)],
+        language="en",
+    )
+    elements = _narrated_storyboard_text_elements(
+        transcript=transcript,
+        step_timings=[SimpleNamespace(step_id="step_0", start_s=0.0, end_s=2.0)],
+        clip_assignments=[],
+        clip_id_by_path={},
+        creator_request=text,
+        explicit_opening_title=None,
+        storyboard={"overlays": []},
+    )
+    return any(
+        "score:" in str(item["source_params"].get("narrated_storyboard", "")) for item in elements
+    )
+
+
 def _hook_refusal(text: str) -> bool:
     from app.agents.intro_writer import _is_refusal_text
 
@@ -1323,6 +1349,170 @@ CASES: tuple[Case, ...] = (
             "tr_ascii": "yazi daha gec ciksin",
             "tr_upper": "YAZI DAHA GEÇ ÇIKSIN",
         },
+    ),
+    # C2-06: a durable rule that FORBIDS a font is never saved as "always use it".
+    Case(
+        "C2-06",
+        "style_memory",
+        "services.creator_direction.infer_typed_direction",
+        "negated durable font rule",
+        _durable_font,
+        "Always avoid the Inter font",
+        (None, None),
+        {
+            "tr": "Artık Inter fontunu kullanma",
+            "tr_ascii": "artik inter fontunu kullanma",
+            "tr_upper": "ARTIK INTER FONTUNU KULLANMA",
+            "tr_alt": "Bundan sonra Inter font istemiyorum",
+        },
+    ),
+    # C2-07: a first-person experience on the verb ("denedim") is an ungrounded claim.
+    Case(
+        "C2-07",
+        "brief_parsing",
+        "agents.edit_proposal.ai_draft_thought_has_unsupported_claim",
+        "first-person experience claim",
+        _unsupported_claim,
+        "I tried this coffee and loved it",
+        True,
+        {
+            "tr": "Bu kahveyi denedim ve bayıldım",
+            "tr_ascii": "bu kahveyi denedim ve bayildim",
+            "tr_upper": "BU KAHVEYİ DENEDİM VE BAYILDIM",
+        },
+    ),
+    # C2-08: a third-person action line (or a name like "Ben") is not a claim.
+    Case(
+        "C2-08",
+        "brief_parsing",
+        "agents.edit_proposal.ai_draft_thought_has_unsupported_claim",
+        "third-person line is not a claim",
+        _unsupported_claim,
+        "Ben lands the kickflip",
+        False,
+        {
+            "tr": "Kaan kickflipi yapıyor",
+            "tr_ascii": "kaan kickflipi yapiyor",
+            "tr_upper": "KAAN KİCKFLİPİ YAPIYOR",
+        },
+    ),
+    # C2-09: an everyday "for more info" call to action is not a model refusal.
+    Case(
+        "C2-09",
+        "captions_transcript",
+        "agents.intro_writer._is_refusal_text",
+        "call to action is not a refusal",
+        _hook_refusal,
+        "For more information, follow along",
+        False,
+        {
+            "tr": "Daha fazla bilgi için takip et",
+            "tr_ascii": "daha fazla bilgi icin takip et",
+            "tr_upper": "DAHA FAZLA BİLGİ İÇİN TAKİP ET",
+        },
+    ),
+    # C2-10: a negated score ask ("no scores") never burns a score overlay.
+    Case(
+        "C2-10",
+        "captions_transcript",
+        "tasks.generative_build._narrated_storyboard_text_elements",
+        "negated score treatment",
+        _narrated_score_overlay,
+        "No scores please",
+        False,
+        {
+            "tr": "Skor olmasın",
+            "tr_ascii": "skor olmasin",
+            "tr_upper": "SKORLARI GÖSTERME",
+            "tr_alt": "Sonuçta güzel bir gün oldu",
+        },
+    ),
+    # C2-11: a positive score ask does burn it.
+    Case(
+        "C2-11",
+        "captions_transcript",
+        "tasks.generative_build._narrated_storyboard_text_elements",
+        "score treatment requested",
+        _narrated_score_overlay,
+        "show the scores",
+        True,
+        {
+            "tr": "Skorları göster",
+            "tr_ascii": "skorlari goster",
+            "tr_upper": "SKORLARI GÖSTER",
+            "tr_mixed": "Başlıksız olsun, score göster",
+        },
+    ),
+    # C2-12: a reply that reports work and gives the reason last is not a paraphrase.
+    Case(
+        "C2-12",
+        "chat_routing",
+        "kria.language.is_paraphrase_only",
+        "work report with a reason is not a paraphrase",
+        _paraphrase_only,
+        "I moved the coffee clips first because you wanted a calm opening.",
+        False,
+        {
+            "tr": "Kahve kliplerini başa aldım, sakin bir açılış istedin.",
+            "tr_ascii": "kahve kliplerini basa aldim, sakin bir acilis istedin.",
+            "tr_upper": "KAHVE KLİPLERİNİ BAŞA ALDIM, SAKİN BİR AÇILIŞ İSTEDİN.",
+        },
+    ),
+    # C2-13: a voiceover line the creator asks to put on screen stays on-screen copy.
+    Case(
+        "C2-13",
+        "brief_parsing",
+        "agents.spoken_script.is_spoken_script_quote",
+        "voiceover quote with a display ask is copy",
+        _voiceover_script,
+        'VO: "today I show you my favorite cafe", put it on screen',
+        False,
+        {
+            "tr": (
+                'Seslendirmedeki "bugün sana en sevdiğim kafeyi gösteriyorum" cümlesini ekrana yaz'
+            ),
+            "tr_ascii": (
+                'seslendirmedeki "bugun sana en sevdigim kafeyi gosteriyorum" cumlesini ekrana yaz'
+            ),
+            "tr_alt": '"bugün sana en sevdiğim kafeyi gösteriyorum" diyorum, bunu ekrana da yaz',
+        },
+    ),
+    # C2-14: a surprise exclamation opening a hook is not a filler.
+    Case(
+        "C2-14",
+        "captions_transcript",
+        "pipeline.score._adjust_hook_score",
+        "exclamation opener not penalized",
+        _hook_filler_penalty,
+        "Oh no, look at this",
+        False,
+        {"tr": "Aaa, şuna bak", "tr_ascii": "aaa, suna bak", "tr_upper": "AAA, ŞUNA BAK"},
+    ),
+    # C2-15: "only" this quote, in Turkish's other ways to say it.
+    Case(
+        "C2-15",
+        "brief_parsing",
+        "agents.edit_proposal._creator_quoted_captions_are_exhaustive",
+        "exclusive quote (yalnız / bir tek / no other text)",
+        _exclusive_quotes,
+        'Only "Paris 2024" on screen',
+        True,
+        {
+            "tr": 'Yalnız "Paris 2024" yazsın',
+            "tr_alt": 'Bir tek "Paris 2024" yazsın',
+            "tr_mixed": '"Paris 2024" yazısı olsun, başka yazı olmasın',
+        },
+    ),
+    # C2-16: the spoken Turkish score form puts a dative on the first number.
+    Case(
+        "C2-16",
+        "captions_transcript",
+        "pipeline.narration_labels._score_value",
+        "dative score words",
+        _spoken_score,
+        "three one",
+        (3, 1),
+        {"tr": "üçe bir", "tr_ascii": "uce bir", "tr_upper": "ÜÇE BİR"},
     ),
     # ---------------------------------------------------------------- normalization
     # N01: shared Turkish-aware fold: every spelling of "kırmızı" folds alike.

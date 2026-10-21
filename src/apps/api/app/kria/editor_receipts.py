@@ -120,7 +120,8 @@ _REGEX_CUES: dict[str, re.Pattern[str]] = {
     "timing": re.compile(
         r"\b(delay\w*|earlier|later|appear\w* at|disappear\w*"
         r"|gecik\w*|daha (?:gec|erken)|gec (?:cik|gel|basla|gir)\w*|erken (?:cik|gel|basla|gir)\w*"
-        r"|kaybol\w*)\b"
+        r"|kaybol\w*|\d+ saniye (?:sonra|once)|saniyede|belir(?:sin|sinler|ecek|di)"
+        r"|(?:ekranda|daha uzun|daha kisa) (?:\w+ ){0,2}kal(?:sin|sinlar|acak|ir))\b"
     ),
 }
 _CLIP_NOUN = re.compile(r"\b(clips?|shots?|videos?|footage|klip\w*|cekim\w*)\b")
@@ -140,8 +141,8 @@ _SPEED = re.compile(
 # KRI-783: Turkish puts the verb after the noun ("yazı tipini değiştir", "fontu değiştir").
 _FONT_VERB = re.compile(
     r"\b(change|switch|swap|replace|use|set|pick|choose)\b[a-z ]{0,25}\b(fonts?|typefaces?)\b"
-    r"|\b(fontu\w*|fontlar\w*|yazi tipi\w*)\b[a-z ]{0,25}"
-    r"\b(degis\w*|kullan\w*|sec\w*|yap\w*)"
+    r"|\b(font|fontu\w*|fontlar\w*|yazi tip\w*)\b[a-z ]{0,25}"
+    r"\b(degis\w*|kullan\w*|sec|secin|secil\w*|yap\w*)\b"
 )
 _FONT_NOUN_ONLY = re.compile(
     r"\bfonts? (size|colou?r|weight|bigger|smaller|larger|bold)\b"
@@ -150,7 +151,8 @@ _FONT_NOUN_ONLY = re.compile(
 )
 _SAME_FONT = re.compile(
     r"\b(same|different|new|another|other|matching) (fonts?|typefaces?)\b"
-    r"|\b(ayni|farkli|yeni|baska|diger) (font|yazi tipi)\w*"
+    r"|\b(ayni|farkli|yeni|baska|diger) (bir )?(font|yazi tipi)\w*"
+    r"|\b(font|yazi tip)\w* (ayni|farkli|baska|degis)\w*"
 )
 _STOP = frozenset(
     "the and for with from that this these those them they their all both each every same "

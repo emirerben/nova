@@ -110,11 +110,13 @@ _TR_ATTRIBUTION_VERBS = frozenset(
         "sordu",
         "bagirdi",
         "yanitladi",
-        "yazdi",
     }
 )
-_TR_DISPLAY_CUE_STEMS = ("ekran", "altyazi", "baslik", "etiket")
-_TR_SPOKEN_SCRIPT_CUE_STEMS = ("seslendirme", "anlatim", "anlatici", "senaryo")
+# "yazı"/"kapak" too: '"..." dedi, bunu yazı olarak koy' wants the quote on screen.
+_TR_DISPLAY_CUE_STEMS = ("ekran", "altyazi", "baslik", "etiket", "yazi", "kapak")
+# Bare marker words only: "seslendirmedeki" / "senaryodaki" (the one IN the voiceover)
+# refer to a line, they do not tag the quote as voiceover.
+_TR_SPOKEN_SCRIPT_CUE_WORDS = frozenset({"seslendirme", "anlatim", "anlatici", "senaryo"})
 _TR_SPOKEN_SCRIPT_VERBS = frozenset(
     {
         "diyorum",
@@ -275,21 +277,33 @@ def is_spoken_script_quote(request: str, match: re.Match[str], spoken: list[str]
         request[tail.end() :]
     ):
         return False
+    if _tr_display_instruction(request, prefix, tail):
+        return False
     return not _quote_has_display_instruction(request, tail, prefix)
 
 
 def _has_spoken_script_cue(request: str, prefix: str, tail: re.Match[str]) -> bool:
-    """English cue before the quote, or the Turkish cue before ("Seslendirme:", "Dış ses:")
-    or after it ('"..." diyorum')."""
+    """English cue before the quote, or the Turkish cue before ("Seslendirme:", "Dış ses:",
+    "şunu diyorum:", "diyorum ki") or after it ('"..." diyorum')."""
     if _SPOKEN_SCRIPT_CUE_RE.search(prefix):
         return True
     before = _tr_words(prefix)
+    if before and before[-1] == "ki":
+        before = before[:-1]
     if before and (
-        before[-1].startswith(_TR_SPOKEN_SCRIPT_CUE_STEMS)
-        or (before[-2:-1] == ["dis"] and before[-1].startswith("ses"))
+        before[-1] in _TR_SPOKEN_SCRIPT_CUE_WORDS
+        or before[-1] in _TR_SPOKEN_SCRIPT_VERBS
+        or before[-2:] == ["dis", "ses"]
     ):
         return True
     return _tr_leading_verb(request[tail.end() :], _TR_SPOKEN_SCRIPT_VERBS)
+
+
+def _tr_display_instruction(request: str, prefix: str, tail: re.Match[str]) -> bool:
+    """A Turkish display stem ("ekrana", "altyazı", "başlık", "yazı") before the quote or
+    in the clause after it: the creator wants the quoted line shown, voiceover or not."""
+    clause = _tr_words(f"{prefix} {_first_sentence(request[tail.end() :])}")
+    return any(token.startswith(_TR_DISPLAY_CUE_STEMS) for token in clause)
 
 
 def quote_text(match: re.Match[str]) -> str:
