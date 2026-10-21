@@ -147,6 +147,31 @@ Flow (flag on):
    changed the middle of a stated sequence. Clips attached before this change
    carry no name, so a creator testing it needs a new chat. Journey test:
    `tests/kria/test_kri614_file_name_clips.py`.
+   **File names beat attachment numbers (KRI-763).** A name with a trailing
+   `_footage` ("M1_08_footage") is also named without it ("M1_08"); typed names may
+   carry the iOS upload prefix; `exclude` intents that are only file names ("M1_05
+   klibini") are settled here too (`_nameable`). `superseded_pin_ids`: a first/last
+   `order` pin settled by file name from the LATEST message replaces earlier
+   first/last pins from other messages (the whole chat is re-planned every turn, so
+   both used to come back and stack, or re-ask the picker). In the resolver an
+   assignment whose evidence cites its own alias ("creator explicitly selected
+   m008") is ignored unless that alias is in the request the resolver read
+   (`_invented_selection`, a plain handle comparison, no regex): aliases are
+   internal, and "M1_08" is not `m008`. Journey test: `tests/kria/test_kri763_file_name_pins.py`.
+   **A dictated shot label stays bound (KRI-766).** The planner re-reads the whole
+   thread every turn and may not repeat a label an earlier message asked for ("first =
+   the tray clip" says nothing about "Oblea de la casa"), while the brief still holds
+   it as a live shot text and the render contract refuses a text nobody placed (the old
+   dead end: "I couldn't tell which clip ... goes on", no picker). Two steps in
+   `plan_and_resolve_clip_intents`, both fed by `_plan_creator_action`: `with_brief_labels`
+   adds every brief shot text that neither a planner intent nor a positional
+   `shot_labels` row carries, so it is resolved or asked with the normal picker;
+   `apply_kept_labels` keeps a label the head draft already placed
+   (`_load_kept_labels`) on the same clips, ahead of the resolver, unless the latest
+   message touches the label (its words, any longer word of them, or "label" /
+   "etiket" / "yazı") or a bound clip left the project. Dictated words a label can
+   never print, and texts timed to a spoken word, are not added. A tapped picker
+   answer still wins. Journey test: `tests/kria/test_kri766_label_stays_bound.py`.
 2. **Resolve, inside the chat turn** (`app/services/clip_intent_resolution.py`,
    DB-free, the session row lock is released around it): `ClipRequestResolverAgent`
    (text-only, media aliases, id set-membership) matches intents to the shared

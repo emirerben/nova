@@ -62,3 +62,26 @@ def test_turkish_no_title_receipt_still_gets_the_tappable_question() -> None:
         receipts = [{**_receipts()[0], "reason": _loc(NO_TITLE_REASON)}]
     assert receipts[0]["reason"] != NO_TITLE_REASON
     assert _blocked_title_question(receipts) is not None
+
+
+def test_a_recovery_the_worker_already_wrote_in_turkish_is_shown_as_stored() -> None:
+    """KRI-765: the worker now binds the chat language; the chat must not rebuild that text.
+
+    A reason with clip names in it has no static twin, so rebuilding it through `_loc` is
+    exactly what used to leave an English fragment inside a Turkish card.
+    """
+    reason = "Klipler çekim sırasında, ama bunlar istediğin yerde değil: M1_03 (last)."
+    receipts = [
+        {
+            "requirement_id": "r4",
+            "status": "not_possible",
+            "verification": "checked",
+            "reason": reason,
+        }
+    ]
+    with reply_language_for("tr"):
+        stored = render_block_recovery(receipts).message
+        shown = _localized_block_recovery(stored, receipts)
+    assert shown == stored
+    assert shown.startswith(reason)
+    assert "filming order" not in shown and "Your draft" not in shown

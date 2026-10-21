@@ -107,15 +107,15 @@ from app.services.choice_questions import (
     CONFLICT_WHICH_VOICE,
     KEEP_OPEN_REASON,
     MAX_ASKS_PER_QUESTION,
+    SIMPLER_VERSION_REASON,
     ChoiceCapability,
-    ConflictCandidate,
-    ConflictOption,
     answered_brief,
     build_choice_question,
     choice_question_text,
     count_asks,
     match_open_choice,
     open_conflicts,
+    simpler_version_question,
     tag_event,
 )
 from app.services.creation_thread_titles import conversation_revision_matches_sync
@@ -701,37 +701,6 @@ def _creative_copy_problem_sync(db, thread_id, media, *, strategy=None, resoluti
     )
 
 
-_SIMPLER_VERSION_REASON = "simplification_requires_choice"
-
-
-def _simpler_version_question() -> dict[str, Any]:
-    """Use the existing exact option matcher; an arbitrary next reply is not consent."""
-    return build_choice_question(
-        ConflictCandidate(
-            conflict_id=_SIMPLER_VERSION_REASON,
-            intro="",
-            reason="",
-            options=(
-                ConflictOption(
-                    "different_approach",
-                    label=say(en="Try a different approach", tr="Farklı bir yol dene"),
-                ),
-                ConflictOption(
-                    "simpler_version",
-                    label=say(en="Make this simpler version", tr="Daha basit sürümü hazırla"),
-                    aliases=(
-                        "simpler version",
-                        "make it more basic",
-                        "skip, decide for me",
-                        "Make this simpler version",
-                        "Daha basit sürümü hazırla",
-                    ),
-                ),
-            ),
-        )
-    )
-
-
 def _simpler_version_already_offered(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     thread_id: uuid.UUID,
@@ -763,7 +732,7 @@ def _simpler_version_already_offered(
         payload = payload if isinstance(payload, Mapping) else {}
         coverage = payload.get("brief_coverage")
         if not isinstance(coverage, Mapping) or coverage.get("reason") not in {
-            _SIMPLER_VERSION_REASON,
+            SIMPLER_VERSION_REASON,
             "approval_requirements_not_ready",
         }:
             continue
@@ -792,7 +761,7 @@ def _simpler_version_already_offered(
             brief.version
         }:
             return False
-        question = payload.get("choice_question") or _simpler_version_question()
+        question = payload.get("choice_question") or simpler_version_question()
         selection = (source_event.payload or {}).get("choice_selection")
         if isinstance(selection, Mapping):
             return (
@@ -1406,7 +1375,7 @@ def _complete_draft_turn(
             recovery = KriaTurnPlan(
                 mode="respond",
                 turn_value="question",
-                choice_question=_simpler_version_question() if can_offer_simpler else None,
+                choice_question=simpler_version_question() if can_offer_simpler else None,
                 response=(
                     f"{reply_text}\n{draft_state} "
                     + (
@@ -1444,7 +1413,7 @@ def _complete_draft_turn(
                     "stage": "draft",
                     "reason": "approval_requirements_not_ready"
                     if readiness_required
-                    else _SIMPLER_VERSION_REASON,
+                    else SIMPLER_VERSION_REASON,
                     **({"approval_readiness": readiness_report} if readiness_required else {}),
                 },
                 brief_expected_version=planned.brief_expected_version,
@@ -5612,6 +5581,13 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             JOB_FAILURE_MESSAGES,
         )
 
+        # KRI-673/KRI-765: every code with a sentence of its own says why the render stopped.
+        cause_codes = {
+            "phone_capability_unavailable",
+            "creation_text_failed",
+            *CREATOR_FACING_DETAIL_CODES,
+            *JOB_FAILURE_MESSAGES,
+        }
         recovery_receipts: list[dict[str, Any]] = []
         recovery_message: str | None = None
         raw_recovery = (job.assembly_plan or {}).get("request_recovery")
@@ -5712,6 +5688,16 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 tr="iPhone'un bu dışa aktarımı durdurdu. Onayladığın düzenleme kayıtlı. "
                 "Yeniden denemeden önce cihazdaki hatayı kontrol et.",
             )
+        elif native_without_program and failure_code in cause_codes:
+            # No exact retry exists for this render, but the cause is known: name it, then
+            # the real way forward (KRI-765: "creation_text_failed" read as a generic stop).
+            failure_content = (
+                f"{_job_failure_copy(failure_code, getattr(job, 'error_detail', None))} "
+                + say(
+                    en="To try again, ask for a new version and review its approval.",
+                    tr="Tekrar denemek için yeni bir sürüm isteyip onayını gözden geçir.",
+                )
+            )
         elif native_without_program:
             failure_content = say(
                 en=(
@@ -5742,12 +5728,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             # KRI-701: the plan lacked something the creator confirmed; the iPhone can render
             # it, so the "can't render yet" table line would blame the wrong thing.
             failure_content = _phone_evidence_refusal_copy(typed_decline)
-        elif deterministic or failure_code in {
-            "phone_capability_unavailable",
-            "creation_text_failed",
-            *CREATOR_FACING_DETAIL_CODES,
-            *JOB_FAILURE_MESSAGES,
-        }:
+        elif deterministic or failure_code in cause_codes:
             # Retryable, but the generic "didn't finish" copy would hide WHY (KRI-286).
             # Creator-facing codes (KRI-466) show the job's own actionable detail.
             # KRI-673: every code with a table sentence says why; the generic line is

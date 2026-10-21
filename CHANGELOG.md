@@ -2,6 +2,51 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.68.0] - 2026-10-20
+
+### Changed
+- KRI-766: a dictated shot label stays bound across turns and asks with the clip picker (#1697) <!-- release-pr: 1697 -->
+
+## [0.80.67.0] - 2026-10-20
+
+### Changed
+- KRI-761: a look-alike or clashing exclude asks which clip to leave out (#1696) <!-- release-pr: 1696 -->
+
+## [0.80.66.0] - 2026-10-20
+
+### Changed
+- KRI-762: first/last clip pins are not an order-basis question (#1694) <!-- release-pr: 1694 -->
+
+## [0.80.65.0] - 2026-10-20
+
+### Changed
+- KRI-759: a "simpler version?" refusal names what it dropped, has buttons, and "yes" drafts it (#1695) <!-- release-pr: 1695 -->
+
+## [0.80.64.0] - 2026-10-20
+
+### Changed
+- KRI-763: a file name in a first/last pin is never read as an attachment number (#1693) <!-- release-pr: 1693 -->
+
+## [0.80.63.0] - 2026-10-20
+
+### Fixed
+- KRI-760: a quoted line to hear in full keeps its clip window, never a pop-in (#1692) <!-- release-pr: 1692 -->
+
+## [0.80.62.0] - 2026-10-20
+
+### Changed
+- KRI-765: failure cards read in the chat's language, name the cause, and never replay an old failure (#1691) <!-- release-pr: 1691 -->
+
+## [0.80.61.0] - 2026-10-20
+
+### Fixed
+- KRI-767 fix(text): a label the composer moves to another clip is not a copy change (#1690) <!-- release-pr: 1690 -->
+
+## [0.80.60.0] - 2026-10-20
+
+### Changed
+- KRI-758: one described clip ("…bıraktığı kısa klibi kullanma") is no longer read as "skip the short clips" (#1689) <!-- release-pr: 1689 -->
+
 ## [0.80.59.0] - 2026-10-19
 
 ### Changed

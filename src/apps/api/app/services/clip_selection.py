@@ -39,7 +39,7 @@ _KEY_MAX = 120
 _FALLBACK_MIN_SIMILARITY = 0.5
 # Ops whose picker answers may stand in for each other. KRI-667: never `exclude`, so the
 # clips a creator tapped for "include: laundry" can never become the clips an
-# "exclude: laundry" leaves out (an exclude is never a picker category of its own).
+# "exclude: laundry" leaves out (an exclude is its own picker category, KRI-761).
 _MEMBERSHIP_OPS = frozenset({"group", "include"})
 # KRI-697: an `intent_id` binds an answer only with a 4+ letter word outside these generic
 # words AND not as one word plus digits ("clip_1", "media2"): a re-plan may reuse those

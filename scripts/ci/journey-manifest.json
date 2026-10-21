@@ -502,6 +502,23 @@
       ]
     },
     {
+      "id": "kri-766-label-bound",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri766_label_stays_bound.py tests/evals/test_clip_request_resolver_evals.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri766_label_echo_vs_described_action.json",
+        "src/apps/api/tests/kria/test_kri766_label_stays_bound.py"
+      ]
+    },
+    {
+      "id": "kri-761-look-alike-exclusions",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri761_look_alike_exclusions.py",
+      "paths": [
+        "src/apps/api/app/kria/clip_exclusions.py"
+      ]
+    },
+    {
       "id": "kri-585-spoken-order",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri585_spoken_order_montage.py tests/pipeline/test_unified_montage_spoken_order.py tests/services/test_spoken_roles.py",
@@ -618,6 +635,15 @@
         "src/apps/api/app/services/length_planning.py",
         "src/apps/api/app/services/spoken_quotes.py",
         "src/apps/api/tests/fixtures/kri681_tigre_night_m1_clips.json"
+      ]
+    },
+    {
+      "id": "kri-760-whole-line-ask",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_whole_line_routing.py tests/tasks/test_whole_line_ask_montage.py",
+      "paths": [
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/pipeline/unified_montage.py"
       ]
     },
     {
