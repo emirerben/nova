@@ -37,6 +37,7 @@ from app.kria.brief_route import (
     wants_hour_only_text,
 )
 from app.kria.contracts import InferredLabel, RequirementReceipt
+from app.kria.freeze_ask import asks_freeze_frame, times_one_moment
 from app.kria.reply_language import current_reply_language, say
 from app.kria.speed_ask import asks_clip_speed
 from app.kria.spoken_text_ask import SPOKEN_TEXT_CUE_KEYS
@@ -889,6 +890,42 @@ def _source_durations(raw: object) -> tuple[tuple[str, float], ...] | None:
         if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) and seconds > 0
     )
     return pairs or None
+
+
+def with_planned_cuts(facts: PlanFacts, media_snapshot: Mapping[str, Any] | None) -> PlanFacts:
+    """``facts`` with the cuts the approved length plan will make (KRI-776).
+
+    A strategy draft has no cuts of its own, so "six moments, about 2 seconds each" was never
+    judged before approval and "I will cut the 6 exact moments" reached the card over a
+    one-cut plan. The length plan's source windows are what the render plays (the phone plan
+    reads them back as its approved windows), so a moment ask is checked against them. A plan
+    that is not window-eligible, still has conflicts or holds no valid window leaves ``facts``
+    unchanged.
+    """
+    envelope = media_snapshot.get("length_plan") if isinstance(media_snapshot, Mapping) else None
+    if (
+        not isinstance(envelope, Mapping)
+        or envelope.get("window_eligible") is not True
+        or envelope.get("conflicts")
+    ):
+        return facts
+    windows = envelope.get("windows")
+    lengths = _window_lengths(windows)
+    if lengths is None:
+        return facts
+    sources = envelope.get("sources")
+    return dataclasses.replace(
+        facts,
+        cut_lengths_s=lengths,
+        cut_clip_ids=_window_media_ids(windows),
+        source_durations_s=_source_durations(
+            {
+                row.get("media_id"): row.get("duration_s")
+                for row in (sources if isinstance(sources, list) else [])
+                if isinstance(row, Mapping) and isinstance(row.get("media_id"), str)
+            }
+        ),
+    )
 
 
 def _montage_caption_facts(raw: object) -> dict[str, str]:
@@ -1986,6 +2023,9 @@ _ARRIVAL_BASES = frozenset({"attachment", "creator_order"})
 _ORDER_NOT_APPLIED = (
     "I couldn't match your description to the clips, so they stay in the order you attached them."
 )
+# KRI-778: an order the creator listed in their own words that the plan only partly placed,
+# said in their terms (what they listed), never the planner's "groups".
+_ORDER_LIST_NOT_PLACED = "I couldn't place everything you listed in the order you gave."
 # KRI-470 PR-G: what a required order says when it was not met.
 _ORDER_NOT_RECORDED = "I couldn't confirm the order your edit used."
 _ORDER_RULE_NOT_APPLIED = (
@@ -2017,6 +2057,30 @@ def _unplaced_order_anchor(req: BriefRequirement, facts: PlanFacts) -> str | Non
     if not said:
         return None
     return f"You asked me to {' and '.join(said)}, but I can't confirm that clip is placed there."
+
+
+def _listed_order_miss(facts: PlanFacts) -> str:
+    """KRI-778: an order described in the creator's words that the plan only partly placed.
+
+    Whole sentences naming what missed, as the creator said it, so the blocked render's
+    message reads "... Caro's bye-bye wave (last) isn't where you asked." instead of the old
+    lowercase fragment about "groups".
+    """
+    said = [say(en=_ORDER_LIST_NOT_PLACED, tr=_REASON_TR[_ORDER_LIST_NOT_PLACED])]
+    if facts.sequence_unmet:
+        missed = _and_names(facts.sequence_unmet)
+        verb = "isn't" if len(dict.fromkeys(facts.sequence_unmet)) == 1 else "aren't"
+        said.append(
+            say(en=f"{missed} {verb} where you asked.", tr=f"{missed} istediğin yerde değil.")
+        )
+    if facts.sequence_absent:
+        said.append(
+            say(
+                en=f"I found no clips for {_and_names(facts.sequence_absent)}.",
+                tr=f"{_and_names(facts.sequence_absent)} için klip bulamadım.",
+            )
+        )
+    return " ".join(said)
 
 
 def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -2077,10 +2141,7 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
             return _receipt(
                 req,
                 "partial" if landed or not required else "not_possible",
-                say(
-                    en="some of the groups you named are not where you said",
-                    tr="söylediğin gruplardan bazıları dediğin yerde değil",
-                ),
+                _listed_order_miss(facts),
             )
     elif basis in _ARRIVAL_BASES and key != basis:
         # An order only the creator's words describe, and nothing in the plan applied
@@ -2811,6 +2872,9 @@ _CLEANUP_NOT_RUN = "Speech cleanup didn't run on this video, so the long pauses 
 _LIGHT_UNAVAILABLE = (
     "I can't change how bright or dark clips look in this edit yet, so they keep their own light"
 )
+# KRI-777: no edit can hold a frame (see `kria.freeze_ask`). Said on the draft, before the
+# approval card, and again on the finished video's receipt.
+_NO_FREEZE_FRAME = "I can't freeze a frame in this edit yet, so that moment plays normally"
 
 # KRI-705: what a phone Talking edit says, before approval and after render, about an ask
 # outside what it can draw. Static strings: `is_judged` / `is_format_limit` read them by prefix.
@@ -2843,6 +2907,7 @@ _REASON_TR: dict[str, str] = {
     _ORDER_NOT_APPLIED: (
         "Anlattığını kliplerle eşleştiremedim, o yüzden klipler eklediğin sırada kaldı."
     ),
+    _ORDER_LIST_NOT_PLACED: "Saydığın her şeyi verdiğin sıraya yerleştiremedim.",
     _ORDER_NOT_RECORDED: "Düzenlemenin kullandığı sırayı doğrulayamadım.",
     _ORDER_RULE_NOT_APPLIED: (
         "Bu sıralama kuralını doğrulayamıyorum ve klipler kurala uyduğunu gösterebileceğim "
@@ -2869,6 +2934,9 @@ _REASON_TR: dict[str, str] = {
     _CANT_CHECK_MIX: "Bu taslakta ses karışımını henüz kontrol edemiyorum.",
     _NO_CLIP_SPEED: (
         "iPhone'unda klip hızını henüz değiştiremiyorum, o yüzden klipler normal hızda oynuyor"
+    ),
+    _NO_FREEZE_FRAME: (
+        "Bu düzenlemede henüz bir kareyi donduramıyorum, o yüzden o an normal akıyor"
     ),
     _BED_STILL_PLAYS: "Çekim sesi hâlâ çalıyor",
     _CLEANUP_PLANNED: "Konuşma temizliği uzun duraklamaları keser",
@@ -2959,6 +3027,7 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _CLEANUP_NOT_RUN,
     _BED_STILL_PLAYS,
     _NO_CLIP_SPEED,
+    _NO_FREEZE_FRAME,
     _LIGHT_UNAVAILABLE,
     *_TALKING_HONEST_EN,
 )
@@ -3634,7 +3703,7 @@ def _merge_cleanup_timing(
     req: BriefRequirement, facts: PlanFacts, cleanup: RequirementReceipt
 ) -> RequirementReceipt:
     """Retain cleanup facts while an explicit creator target judges actual duration."""
-    if not _has_duration_target(req):
+    if not _has_duration_target(req) or times_one_moment(req):
         return cleanup
     timing = _check_timing(req, facts)
     if timing.status == "met":
@@ -4439,10 +4508,12 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
         if facts.narrated_steps is not None:
             return _check_narrated_timing(req, facts)
         return _receipt(req, "partial", _CANT_CHECK_TIMING)
-    if req.scope != "global":
+    if req.scope != "global" or times_one_moment(req):
         # The total edit length cannot establish a clip or text duration. Until
         # that requirement has resolved target windows, report missing evidence
         # instead of rejecting a valid edit (or falsely passing an equal total).
+        # KRI-777: nor a moment's or an effect's seconds filed as global ("freeze the frame
+        # for one second on Atakan's bite" is not a one-second video).
         return _receipt(req, "partial", _CANT_CHECK_TIMING)
     strategy = {
         "edit_format": facts.edit_format or "montage",
@@ -5295,6 +5366,50 @@ def narrated_alignment_recovery() -> str:
     )
 
 
+# KRI-778: `_check_timing`'s sentence for a total length the draft missed. Every global
+# length ask is judged against the same draft, so a brief with two of them (café M2: a freeze
+# the brief scoped as a length, and "about 14 seconds") states the draft's length twice.
+_DRAFT_LENGTH_RE = re.compile(  # kri667: our own length sentence, never creator words
+    r"^(?:This draft is about \S+s\b.*; you asked for \S+s\."
+    r"|Bu taslak yaklaşık \S+ saniye\b.*; sen \S+ saniye istedin\.)$"
+)
+# A sentence already ends: its stop, then any closing quotes or brackets.
+_SENTENCE_END_RE = re.compile(  # kri667: punctuation only, reads no meaning
+    r"[.!?…][\"'”’»)\]]*$"
+)
+
+
+def _as_sentence(reason: str) -> str:
+    """A receipt reason as one sentence of the block message: capitalised, with its stop.
+
+    A draft summary lists reasons one per line, where a fragment reads fine; run together in
+    one message, a fragment runs into the next sentence (KRI-778). "iPhone" stays as is.
+    """
+    text = reason.strip().rstrip(",;:").rstrip()
+    if not text:
+        return text
+    first = text[0]
+    if first.islower() and not (len(text) > 1 and text[1].isupper()):
+        dotted = first == "i" and current_reply_language() == "tr"
+        text = ("İ" if dotted else first.upper()) + text[1:]
+    if not _SENTENCE_END_RE.search(text):
+        text += "."
+    return text
+
+
+def _block_sentences(reasons: Sequence[str]) -> list[str]:
+    """The blocking reasons as sentences, each said once, and the draft's length said once:
+    with the last length ask, the latest the creator stated (a brief keeps asks in the order
+    they were said)."""
+    lengths = [reason for reason in reasons if _DRAFT_LENGTH_RE.match(reason.strip())]
+    kept = [
+        reason
+        for reason in reasons
+        if reason in lengths[-1:] or not _DRAFT_LENGTH_RE.match(reason.strip())
+    ]
+    return [text for text in dict.fromkeys(_as_sentence(reason) for reason in kept) if text]
+
+
 @dataclass(frozen=True)
 class RenderBlockRecovery:
     """What the creator is told when checked receipts block a render, and the typed decline."""
@@ -5333,7 +5448,9 @@ def render_block_recovery(failures: Sequence[Mapping[str, Any]]) -> RenderBlockR
             field_path="opening_title",
             alternative=alternative,
         )
-    shown = " ".join(dict.fromkeys(blocked if is_no_title_reason(r) else _loc(r) for r in reasons))
+    shown = " ".join(
+        _block_sentences([blocked if is_no_title_reason(r) else _loc(r) for r in reasons])
+    )
     suffix = say(
         en=_RENDER_BLOCK_SUFFIX,
         tr="Taslağın kaydedildi. Tekrar mı deneyeyim, yoksa isteği sadeleştireyim mi?",
@@ -5847,11 +5964,12 @@ def _check_moments(req: BriefRequirement, facts: PlanFacts) -> RequirementReceip
         return _receipt(req, "partial", _NO_CHECKER)
     longest = max(lengths)
     if ask.count is not None and len(lengths) != ask.count:
+        moments = "moment" if len(lengths) == 1 else "moments"
         return _receipt(
             req,
             "partial",
             say(
-                en=f"The video has {len(lengths)} moments, not {ask.count}",
+                en=f"The video has {len(lengths)} {moments}, not {ask.count}",
                 tr=f"Videoda {ask.count} değil {len(lengths)} an var",
             ),
         )
@@ -5961,7 +6079,7 @@ def _check_source_sound(req: BriefRequirement, facts: PlanFacts) -> RequirementR
 
 def _has_checker(req: BriefRequirement) -> bool:
     """True when ``check_requirement`` can actually verify this requirement."""
-    if _wants_speaker_framing(req) or wants_light_change(req):
+    if _wants_speaker_framing(req) or wants_light_change(req) or asks_freeze_frame(req):
         return True
     if asks_clip_speed(req):
         # KRI-689: judged wherever the plan knows it cannot retime (the phone montage); a plan
@@ -6020,6 +6138,12 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_speech_cleanup(req, facts)
     if _wants_speaker_framing(req):
         return _check_speaker_framing(req, facts)
+    if asks_freeze_frame(req) and (facts.rendered_variant or not facts.editor):
+        # KRI-777: a draft or a finished render never holds a frame, so the draft's reply and
+        # approval card say "Couldn't" instead of the model's summary promising it (KRI-700's
+        # rule), and its seconds are never judged as the video's length. An editor turn keeps
+        # its own receipts (the before/after diff names what its ops changed).
+        return _receipt(req, "not_possible", _NO_FREEZE_FRAME)
     if facts.speed_unsupported and asks_clip_speed(req):
         # KRI-689: the creator is told before approving (`clip_speed_notice`); the finished
         # video's receipt then says "Couldn't", never "have a look" at a speed that is not there.
@@ -6217,7 +6341,8 @@ def requirements_to_check_at_draft(
     premature failure notice; the render's own receipts (met / partial / not possible,
     plus guessed names) follow. A phone Voiceover draft likewise leaves its first/last
     order, clip-timing and caption-language asks to the render's record (KRI-533), and a
-    phone Talking draft its caption-language / name-spelling asks (KRI-549).
+    phone Talking draft its caption-language / name-spelling asks (KRI-549). A freeze-frame
+    ask stays: no plan can carry it, so its "Couldn't" belongs before approval (KRI-777).
     Otherwise this is the unchanged, full list.
     """
     strategy = strategy or {}
@@ -6244,7 +6369,7 @@ def requirements_to_check_at_draft(
     return [
         req
         for req in requirements
-        if not (defers and req.kind in UNIFIED_SETTLED_KINDS)
+        if not (defers and req.kind in UNIFIED_SETTLED_KINDS and not asks_freeze_frame(req))
         and not (narrated and _settled_by_narrated_render(req, strategy))
         and not (phone_captions and _wants_captions(req) and _caption_words_ask(req))
     ]
@@ -6353,7 +6478,11 @@ def _talking_honest_receipt(
     bed_ask = _wants_bed_under_voice(req) or _wants_bed_muted(req)  # footage sound level
     if req.kind not in {"audio", "timing", "select"} and not bed_ask:
         return receipt
-    if _has_checker(req) and not bed_ask:
+    # A speech-excerpt reading ("sesim öne çıksın", "so my voice comes through") only has a
+    # checker on a plan with speech sections; a Talking plan has none, so that reading must
+    # not keep an engine-noise ask silent.
+    speech_unjudgeable = _wants_speech(req) and facts.speech_sections is None
+    if _has_checker(req) and not bed_ask and not speech_unjudgeable:
         return receipt
     return _receipt(req, "not_possible", _TALKING_NO_SUCH_EDIT)
 

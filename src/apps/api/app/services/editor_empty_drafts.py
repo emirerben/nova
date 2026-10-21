@@ -93,7 +93,9 @@ def _variant(job: Any, variant_id: str) -> dict[str, Any]:
 
 def _reference(variant: dict[str, Any]) -> uuid.UUID | None:
     reference = variant.get("editor_draft")
-    if not is_empty_editor_variant(variant) or not isinstance(reference, dict):
+    if not (
+        is_empty_editor_variant(variant) or variant.get("editor_state_version") == 2
+    ) or not isinstance(reference, dict):
         return None
     try:
         return uuid.UUID(str(reference.get("draft_id")))
@@ -184,7 +186,7 @@ def stage_saved_draft_baseline(job: Job, variant_id: str, body: Any) -> _StagedJ
     from app.routes.generative_jobs import variant_render_baseline  # noqa: PLC0415
 
     variant = _variant(job, variant_id)
-    if body.editor_state_version != 1:
+    if body.editor_state_version not in (1, 2):
         raise HTTPException(409, detail="editor_draft_requires_supported_client")
     if body.base_generation != variant_render_baseline(variant):
         raise HTTPException(409, detail="baseline_conflict")
@@ -438,3 +440,143 @@ async def stage_empty_editor_commit(
         "has_render_section": False,
         "editor_state": "empty",
     }, draft
+
+
+async def stage_prepared_editor_draft(
+    db: AsyncSession,
+    *,
+    item: PlanItem,
+    job: Job,
+    variant_id: str,
+    creator_id: uuid.UUID,
+    body: Any,
+) -> DraftSnapshotOut:
+    """Pin exact authored lanes after admission/section validation succeeds.
+
+    This runs in the Save transaction, before render dispatch. The generation
+    is the one already assigned by preparation, so a later render cannot
+    advance or replace the draft snapshot.
+    """
+    sections = editor_sections(job, variant_id)
+    if body.timeline_slots is not None:
+        # Resolved rows carry server-owned source identities. Replace only
+        # authored fields, retaining that admission metadata in the snapshot.
+        resolved_rows = sections.get("timeline_slots") or []
+        resolved = {row.get("slot_id"): row for row in resolved_rows}
+        active = iter(row for row in resolved_rows if not row.get("removed"))
+        exact_rows = []
+        for row in body.timeline_slots:
+            admitted = resolved.get(row.slot_id, {}) if row.removed else next(active)
+            exact = {**admitted, **row.model_dump(mode="json", exclude_unset=True)}
+            if not row.removed:
+                exact["slot_id"] = admitted["slot_id"]
+            if admitted.get("source_start_locked"):
+                exact["source_start_locked"] = True
+            exact_rows.append(exact)
+        sections["timeline_slots"] = exact_rows
+    if body.text_elements is not None:
+        sections["text_elements"] = copy.deepcopy(body.text_elements)
+    target = await editor_variant_target(
+        db, item=item, job=job, creator_id=creator_id, variant_key=variant_id
+    )
+    draft = await stage_editor_variant_draft(
+        db,
+        target=target,
+        document=KriaDraftDocument(
+            kind="editor",
+            edit_format=item.edit_format or "montage",
+            editor_payload={
+                "base_generation": target.generation_id,
+                "sections": sections,
+                "editor_state_version": 2,
+            },
+            changes=["Saved editor changes"],
+        ),
+    )
+    assembly = copy.deepcopy(job.assembly_plan)
+    variant = next(row for row in assembly["variants"] if row.get("variant_id") == variant_id)
+    variant["editor_draft"] = {"draft_id": draft.draft_id}
+    variant["editor_state_version"] = 2
+    job.assembly_plan = assembly
+    return draft
+
+
+def prepare_saved_render_windows(job: Job, variant_id: str, prep: dict[str, Any]) -> None:
+    """Assess geometry only AFTER complete section/source admission validation.
+
+    No HTTP or schema exception is converted into Save success. Only an
+    admitted source's inability to supply a finite requested window is a
+    durable render-recovery state.
+    """
+    from app.pipeline.editor_render_window import RenderWindowUnavailable, effective_source_start
+
+    variant = _variant(job, variant_id)
+    if variant.get("editor_timeline_mode") != "authored":
+        return
+    rows = (variant.get("user_timeline") or {}).get("slots") or []
+    mappings = []
+    recovery = prep.get("render_recovery")
+    for row in rows:
+        if row.get("removed"):
+            continue
+        if row.get("source_unavailable"):
+            recovery = "Source footage is unavailable; reconnect the original clip."
+            continue
+        if row.get("source_kind") == "image":
+            continue
+        try:
+            requested = float(row["in_s"])
+            effective = effective_source_start(
+                requested,
+                float(row["duration_s"]),
+                float(row.get("playback_rate") or 1),
+                row.get("source_duration_s"),
+                start_locked=bool(row.get("source_start_locked")),
+            )
+            if effective != requested:
+                mappings.append(
+                    {
+                        "slot_id": row["slot_id"],
+                        "requested_in_s": requested,
+                        "effective_in_s": effective,
+                        "duration_s": row["duration_s"],
+                    }
+                )
+        except RenderWindowUnavailable as exc:
+            recovery = str(exc)
+    assembly = copy.deepcopy(job.assembly_plan)
+    updated = next(v for v in assembly["variants"] if v.get("variant_id") == variant_id)
+    updated["render_window_mappings"] = mappings
+    if recovery:
+        updated["render_status"] = "failed"
+        updated["error"] = recovery
+        updated["error_class"] = "editor_render_recovery"
+        for key in ("render_task_id", "editor_render_attempt", "render_started_at"):
+            updated.pop(key, None)
+        prep["render_recovery"] = recovery
+        statuses = [v.get("render_status") for v in assembly["variants"]]
+        if all(value in {"ready", "draft", "failed"} for value in statuses):
+            job.status = (
+                "variants_failed"
+                if all(value == "failed" for value in statuses)
+                else "variants_ready_partial"
+            )
+    job.assembly_plan = assembly
+
+
+def public_saved_editor_variant(job: Job, variant: dict[str, Any]) -> dict[str, Any]:
+    """Expose authored lanes even when a render has not caught up to Save."""
+    if variant.get("editor_state_version") != 2 or is_empty_editor_variant(variant):
+        return variant
+    draft = getattr(job, "_saved_editor_drafts", {}).get(str(variant.get("variant_id")))
+    if draft is None:
+        return variant
+    sections = (draft.snapshot.get("editor_payload") or {}).get("sections") or {}
+    result = dict(variant)
+    result["editor_draft"] = draft.model_dump(mode="json")
+    for key in _DIRECT_SECTIONS:
+        if key in sections:
+            result[key] = copy.deepcopy(sections[key])
+    if "timeline_slots" in sections:
+        result["user_timeline"] = {"slots": copy.deepcopy(sections["timeline_slots"])}
+    return result

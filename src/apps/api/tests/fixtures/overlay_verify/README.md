@@ -40,3 +40,16 @@ still accepts ("Inter-Bold" guided narration captions + v<3 titles,
 "Inter-Regular"/"PlayfairDisplay-Regular" web presets, "PlayfairDisplay-Bold"
 visual-block cards). Each must resolve to its registry face, not fall back to
 the `display` default — a fallback is a FAIL here.
+
+`turkish_glyphs.json` (KRI-785) burns Turkish text (`ğĞşŞıİçÇöÖüÜ` + punctuation) in
+every registry font. Faces that lack a letter (Alte Haas Grotesk, Permanent Marker,
+Satisfy, Big Curls, Rascal, and ZT Bros Oskon 90s, whose dotless ı still has its dot)
+must switch the whole run to their `assets/fonts/glyph-fallbacks.json` partner. The
+verifier FAILs any overlay whose resolved face still lacks a glyph.
+The last three lines cover the review gaps: Big Curls with only `ç ö ü` (its mapped
+glyphs there are blank outlines, so no `ş` is needed to trigger the fallback), a `₺`
+price in the display default, and a locale-free lower-cased `İ` (`i` + U+0307).
+
+`shaped_rtl_fallback.json` (KRI-785) is Arabic smooth-type in Inter. No registry face
+draws Arabic, but the shaped path fills each codepoint from the system font manager, so
+the glyph check must not FAIL it (it only FAILs codepoints no system face can draw).

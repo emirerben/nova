@@ -2318,6 +2318,18 @@
               "default": null,
               "title": "Source Duration S"
             },
+            "source_start_locked": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source Start Locked"
+            },
             "transition_after": {
               "default": "cut",
               "enum": [

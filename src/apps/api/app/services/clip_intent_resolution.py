@@ -64,6 +64,7 @@ from app.schemas.clip_intents import (
     EXCLUDE_MIN_CONFIDENCE,
     LABEL_MIN_CONFIDENCE,
     MEMBERSHIP_MIN_CONFIDENCE,
+    ONLY_VIDEO_EVIDENCE,
     ClipAssignment,
     ClipIntent,
     GroundedLabel,
@@ -368,6 +369,9 @@ class _IntentWork:
     # "no" to. See `_settle_named_label_guesses`.
     named_guesses: dict[str, float] = field(default_factory=dict)
     vision_no_media_ids: set[str] = field(default_factory=set)
+    # KRI-779: every clip the resolver put forward for this intent (an assignment at any
+    # confidence, or a vision check), whatever the check said after.
+    considered_media_ids: set[str] = field(default_factory=set)
 
 
 def _cached_answer(clip: IntentClip, question_norm: str) -> dict[str, Any] | None:
@@ -817,10 +821,106 @@ def picker_eligible(intent: ClipIntent) -> bool:
     return False
 
 
+def _only_video(clips: list[IntentClip]) -> IntentClip | None:
+    """The project's one video, or None when there are none or several."""
+    videos = [c for c in clips if c.kind == "video"]
+    return videos[0] if len(videos) == 1 else None
+
+
+def _live_photo_ids(
+    work: _IntentWork, clips: list[IntentClip], records_by_id: Mapping[str, ClipUnderstanding]
+) -> set[str]:
+    """KRI-779: the photos that could still answer this intent.
+
+    A still's record describes all of it, so a photo the resolver and the vision check left
+    unflagged does not show the moment. One they flagged, or one we know nothing about (an
+    empty record), still might. A take's record cannot list every moment of a long take, so
+    a video is never ruled out this way.
+    """
+    return {
+        c.media_id
+        for c in clips
+        if c.kind == "image"
+        and (c.media_id in work.failed_media_ids or _record_is_empty(records_by_id[c.media_id]))
+    }
+
+
+def _settle_on_only_video(
+    work: _IntentWork,
+    take: IntentClip,
+    clips: list[IntentClip],
+    *,
+    records_by_id: dict[str, ClipUnderstanding],
+    creator_request: str,
+) -> bool:
+    """KRI-779: settle a tappable intent nothing matched on the project's only video.
+
+    When the resolver put the take forward (its record could not rule the moment out), a
+    picker's only real answer is that take: what is left open is WHERE in the take the moment
+    is, which tapping a clip cannot say (the moment-window step owns that). The whole-take
+    check is no evidence the moment is absent: on Merope M2 it answered "no" at confidence
+    1.0 for a thumbs-up that is at 1:01.5. A take the resolver ruled out from its record
+    still asks, in plain words (``clip_question_text``), and so does a live photo (a real
+    second answer). The text on a label/caption is the creator's and is grounded exactly as
+    a tap would ground it.
+    """
+    intent = work.intent
+    if (
+        work.kept
+        or intent.op == "exclude"
+        or not picker_eligible(intent)
+        or take.media_id not in work.considered_media_ids
+        or _live_photo_ids(work, clips, records_by_id)
+    ):
+        return False
+    value = grounding = None
+    if intent.op == "label":
+        label = (
+            ground_placeholder_label(media_id=take.media_id, intent_id=intent.intent_id)
+            if intent.placeholder
+            else ground_label(
+                media_id=take.media_id,
+                value=intent.creator_text,
+                confidence=1.0,
+                creator_request=creator_request,
+                record=records_by_id[take.media_id],
+                intent_id=intent.intent_id,
+            )
+        )
+        if label is None:
+            return False
+        value, grounding = label.text, label.grounding
+    elif intent.op == "caption":
+        caption = ground_caption(
+            value=intent.creator_text,
+            confidence=1.0,
+            creator_request=creator_request,
+            records=[records_by_id[take.media_id]],
+            intent_id=intent.intent_id,
+            creator_copy=True,
+        )
+        if caption is None:
+            return False
+        work.caption_text, work.caption_grounding = caption.text, caption.grounding
+    work.kept.append(
+        ClipAssignment(
+            media_id=take.media_id,
+            value=value,
+            evidence=ONLY_VIDEO_EVIDENCE,
+            confidence=1.0,
+            grounding=grounding,
+        )
+    )
+    work.failed_media_ids.clear()
+    work.intent_question = None
+    return True
+
+
 def _build_clip_question(
     creator_work: list[_IntentWork],
     clips: list[IntentClip],
     creator_words: Mapping[str, str] | None = None,
+    records_by_id: Mapping[str, ClipUnderstanding] | None = None,
 ) -> dict[str, Any] | None:
     """One picker category per TAPPABLE unresolved intent, or None when none can be tapped.
 
@@ -831,15 +931,24 @@ def _build_clip_question(
     Candidates are every clip not already confirmed for the intent (the creator may know
     a clip the analysis never named, so we do not narrow to what the model considered);
     low-confidence matches the resolver could not settle are pre-ticked as suggestions.
+    KRI-779: in a project with one video, a photo is offered only while it could still
+    answer the intent (``_live_photo_ids``); with several videos nothing is narrowed.
     """
     creator_work = [w for w in creator_work if picker_eligible(w.intent)]
     if not creator_work:
         return None
     order = {c.media_id: i for i, c in enumerate(clips)}
+    narrow_photos = records_by_id is not None and _only_video(clips) is not None
     categories: list[dict[str, Any]] = []
     for work in creator_work:
         confirmed = {a.media_id for a in work.kept}
-        candidates = [c.media_id for c in clips if c.media_id not in confirmed]
+        live = _live_photo_ids(work, clips, records_by_id) if narrow_photos else set()
+        candidates = [
+            c.media_id
+            for c in clips
+            if c.media_id not in confirmed
+            and (not narrow_photos or c.kind != "image" or c.media_id in live)
+        ]
         categories.append(
             {
                 "key": intent_key(work.intent),
@@ -1267,6 +1376,7 @@ async def resolve_clip_intents_for_turn(
             media_id = alias_to_media.get(alias)
             if media_id is None:
                 continue
+            work.considered_media_ids.add(media_id)
             assignment = assignment_by_media.get(alias)
             forced_question = vision_media.get(alias)
 
@@ -1930,6 +2040,8 @@ async def resolve_clip_intents_for_turn(
     resolved_intents: list[ResolvedClipIntent] = []
     unresolved_work: list[_IntentWork] = []
     creator_work: list[_IntentWork] = []
+    only_video = _only_video(clips)
+    single_take_settled = 0
     for intent in intents:
         work = work_by_id[intent.intent_id]
         # KRI-667: an exclude is settled by whatever the resolver confidently matched,
@@ -1944,6 +2056,19 @@ async def resolve_clip_intents_for_turn(
             or work.budget_exhausted_media_ids
             or work.media_unavailable_media_ids
         )
+        # KRI-779: one video is the only answer a clip picker could get; never ask it.
+        if (
+            only_video is not None
+            and not has_non_creator_failure
+            and _settle_on_only_video(
+                work,
+                only_video,
+                clips,
+                records_by_id=records_by_id,
+                creator_request=creator_request,
+            )
+        ):
+            single_take_settled += 1
         # Technical/provider/media failures must not be turned into a creator
         # question. The caller can retry the preparation/resolution attempt;
         # only settled ambiguity or a genuinely empty result belongs in
@@ -2004,6 +2129,7 @@ async def resolve_clip_intents_for_turn(
         "vision_deadline_cut": vision_stats["deadline_cut"],
         "vision_multi_question_clips": sum(1 for q in questions_by_clip.values() if len(q) > 1),
         "named_guesses_settled": named_guesses_settled,
+        "single_take_settled": single_take_settled,
     }
 
     if not unresolved_work:
@@ -2058,9 +2184,17 @@ async def resolve_clip_intents_for_turn(
         and creator_work
         and settings.kria_clip_selection_questions_enabled
     ):
-        clip_question = _build_clip_question(creator_work, clips, creator_words)
+        clip_question = _build_clip_question(
+            creator_work, clips, creator_words, records_by_id=records_by_id
+        )
         if clip_question is not None:
-            turn_question = clip_question_text(clip_question["categories"])
+            # KRI-779: a picker whose only candidate is the one video asks whether the
+            # moment is in it at all, in plain words, never "which of your clips".
+            in_the_video = only_video is not None and all(
+                c["candidate_media_ids"] == [only_video.media_id]
+                for c in clip_question["categories"]
+            )
+            turn_question = clip_question_text(clip_question["categories"], only_video=in_the_video)
             leftover = [w for w in creator_work if not picker_eligible(w.intent)]
             if leftover:
                 # Mixed case: picker for the tappable intents, text for the rest.

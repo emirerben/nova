@@ -95,6 +95,10 @@ EXCLUDE_MIN_CONFIDENCE = LABEL_MIN_CONFIDENCE
 CREATOR_SELECTED_EVIDENCE = "creator selected"
 FILE_NAME_EVIDENCE = "file name"
 CREATOR_EVIDENCE = frozenset({CREATOR_SELECTED_EVIDENCE, FILE_NAME_EVIDENCE})
+# KRI-779: the evidence on an assignment settled because the project's only video is the
+# only place the described moment can be. Nobody located the moment INSIDE that take, so
+# this is not the creator's word (never in CREATOR_EVIDENCE).
+ONLY_VIDEO_EVIDENCE = "the only video"
 
 # A caption is a phrase, not a tag: longer than a label, but still short
 # on-screen text for one chapter (never a full sentence). These shape bounds

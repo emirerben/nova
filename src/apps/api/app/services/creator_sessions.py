@@ -945,8 +945,9 @@ def compile_active_plan(
     return receipt
 
 
-# The runtime-v2 observer posts a failed render's real reason within ~30 s of the failure. The
-# generic failure line is held back only that long: past it (observer never posts: v2 turned
+# The runtime-v2 observer posts a failed render's real reason within seconds of the failure (the
+# render's end nudges it; the minute sweep is the fallback, so at worst ~60 s). The
+# generic failure line is held back only this window: past it (observer never posts: v2 turned
 # off after dispatch, a stuck turn, the sweep's 50-row cap) the line is posted so a failure
 # is never lost (this branch has already moved the session to `failed`).
 OBSERVER_FAILURE_WINDOW = timedelta(minutes=5)

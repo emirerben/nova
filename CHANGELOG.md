@@ -2,6 +2,56 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.18.0] - 2026-10-21
+
+### Changed
+- fix(fonts): Turkish parity E — Fonts without Turkish glyphs fall back per word + verify-overlays catches tofu (KRI-785) (#1721) <!-- release-pr: 1721 -->
+
+## [0.81.17.0] - 2026-10-21
+
+### Changed
+- fix(editor): save exact drafts independently of render windows (#1725) <!-- release-pr: 1725 -->
+
+## [0.81.16.0] - 2026-10-21
+
+### Changed
+- fix(kria): a freeze-frame ask is a plain "Couldn't", and its seconds are never the video's length (KRI-777) (#1710) <!-- release-pr: 1710 -->
+
+## [0.81.15.0] - 2026-10-21
+
+### Changed
+- fix(kria): post a render's chat card within seconds, not on the minute sweep (#1722) <!-- release-pr: 1722 -->
+
+## [0.81.14.0] - 2026-10-21
+
+### Changed
+- fix(kria): a photo placed between the moments of one take plays there (KRI-796) (#1716) <!-- release-pr: 1716 -->
+
+## [0.81.13.0] - 2026-10-21
+
+### Fixed
+- KRI-775: a phone montage draft the planner will refuse never reaches the approval card (#1713) <!-- release-pr: 1713 -->
+
+## [0.81.12.0] - 2026-10-21
+
+### Changed
+- KRI-776: "six moments, about 2 seconds each" reaches the brief and the plan (#1711) <!-- release-pr: 1711 -->
+
+## [0.81.11.0] - 2026-10-21
+
+### Fixed
+- fix(clips): one video never gets a "which of your clips" picker (KRI-779) (#1709) <!-- release-pr: 1709 -->
+
+## [0.81.10.0] - 2026-10-21
+
+### Changed
+- fix(kria): a blocked render's message reads as whole sentences (KRI-778) (#1708) <!-- release-pr: 1708 -->
+
+## [0.81.9.0] - 2026-10-21
+
+### Changed
+- fix(ci): turn main green after the Turkish parity merges (#1734) <!-- release-pr: 1734 -->
+
 ## [0.81.8.0] - 2026-10-21
 
 ### Changed

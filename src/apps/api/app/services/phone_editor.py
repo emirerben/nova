@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from app.config import settings
 from app.kria.device_render import make_device_request
 from app.kria.recipes_v2 import EditRecipeV2
+from app.pipeline.editor_render_window import RenderWindowUnavailable
 from app.pipeline.guided_story import (
     USER_SONG_LIPSYNC_LOCKED,
     USER_SONG_WINDOW_OUT_OF_RANGE,
@@ -772,6 +773,16 @@ def prepare_phone_editor_commit(
                 )
         if relaxed:
             prep["requirements_relaxed"] = relaxed
+    except RenderWindowUnavailable as exc:
+        if not prep.get("preserve_editor_intent"):
+            raise _unsupported_phone_edit(job, variant_id, exc) from exc
+        # Section/source validation has finished. Roll back any partial
+        # compilation only, retaining the validated authored revision and its
+        # new generation for the route's durable snapshot transaction.
+        staged.assembly_plan = staged_before_compile
+        job.assembly_plan = staged.assembly_plan
+        job.status = staged.status
+        return {**prep, "render_destination": "device", "render_recovery": str(exc)}
     except LipsyncSyncError as exc:
         # The message is written for the creator (it says what to undo).
         log.warning(

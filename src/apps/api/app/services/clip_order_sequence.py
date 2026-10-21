@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import unicodedata
 from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any, TypeVar
+
+from app.kria.brief_route import loose_text
 
 # (position, name, member ids, status): the order intents, listed order.
 SequenceRow = tuple[str | None, str, list[str], str]
@@ -164,3 +167,123 @@ def apply_sequence(
         return list(ordered)
     rest = [item for item in ordered if ident(item) not in claimed]
     return [*buckets["first"], *buckets["mid"], *rest, *buckets["last"]]
+
+
+# ── moments of one take (KRI-796) ─────────────────────────────────────────────
+# "Six moments from it, in this order: A, B, C ... put the photo right after B": one take
+# cut into windows (KRI-596 / KRI-776), and a Visual the creator seats among them. Group
+# seating above cannot say it: every moment is the same clip, and Visuals are no clip.
+
+# Words that say where a Visual goes relative to the moment named after them.
+_AFTER, _BEFORE = "after", "before"
+# Words that never tell two moments apart: "right after HER hello wave" is the hello wave.
+_FILLER = frozenset(
+    {"a", "an", "the", "her", "his", "their", "its", "my", "our", "your", "s"}
+    | {"right", "just", "straight", "immediately", "directly", "then", "and"}
+)
+
+
+@dataclass(frozen=True)
+class MomentSeats:
+    """Where the creator put things among the moment windows of ONE take.
+
+    The approved length plan cut ``take`` into ``moments`` windows in take order; the
+    creator named that many moments, so the i-th named moment is the i-th window. Which
+    window shows which moment is the length plan's choice, not this rule's.
+
+    ``after``: Visual id -> the moment (1-based) it plays right after. ``named``: sequence
+    row index -> the moment that row names (one row per moment). ``placed``: sequence row
+    index -> (moment, its Visual ids) for each row that seated a Visual.
+    """
+
+    take: str
+    moments: int
+    after: dict[str, int] = field(default_factory=dict)
+    named: dict[int, int] = field(default_factory=dict)
+    placed: dict[int, tuple[int, tuple[str, ...]]] = field(default_factory=dict)
+
+
+def _words(text: object) -> list[str]:
+    """Folded words (Turkish case + diacritics), split at anything not a letter or digit."""
+    folded = loose_text(str(text or ""))
+    return "".join(ch if ch.isalnum() else " " for ch in folded).split()
+
+
+def _content(words: Sequence[str]) -> frozenset[str]:
+    return frozenset(word for word in words if word not in _FILLER)
+
+
+def _listed_moments(name: str) -> list[frozenset[str]]:
+    """The moments one row lists, comma by comma ("A, B, and C" is three)."""
+    items = [_content(_words(part)) for part in name.replace(";", ",").split(",")]
+    return [item for item in items if item]
+
+
+def _anchored_seat(name: str, moments: Sequence[frozenset[str]]) -> tuple[bool, int | None]:
+    """(names an anchor, the moment it plays right after) for "the photo right after B".
+
+    The anchor is the words after the one "after" / "before" in ``name``; it names the
+    moment whose words hold it (or that it holds, so "after the hello wave for 1 second"
+    still finds the hello wave). No moment, or two of them, is no seat: never a guess.
+    """
+    words = _words(name)
+    cues = [i for i, word in enumerate(words) if word in (_AFTER, _BEFORE)]
+    if len(cues) != 1:
+        return bool(cues), None
+    anchor = _content(words[cues[0] + 1 :])
+    if not anchor:
+        return True, None
+    hits = [i for i, item in enumerate(moments) if anchor <= item or item <= anchor]
+    if len(hits) != 1:
+        return True, None
+    return True, hits[0] + 1 if words[cues[0]] == _AFTER else hits[0]
+
+
+def moment_seats(
+    rows: Sequence[SequenceRow], *, windows: Mapping[str, int], visuals: Collection[str]
+) -> MomentSeats | None:
+    """The creator's sequence read as moments of ONE take, else None (group seating stands).
+
+    ``windows``: clip id -> how many approved windows the length plan cut it into.
+    ``visuals``: the ids of the Visuals in this edit. It applies only when every row is a
+    resolved ``then`` row naming either that one take or only Visuals, and the moments the
+    rows name are exactly the take's windows: one row listing them ("A, B, C"), or one row
+    per moment. A Visual's row seats it after the moment its own words anchor ("the photo
+    right after B"); with one row per moment, a row with no anchor seats it where it is
+    listed. A Visual before the first moment would open the video: it is not seated.
+    """
+    if not rows or any(pos is not None or status != "resolved" for pos, _n, _m, status in rows):
+        return None
+    footage = {m for _p, _n, members, _s in rows for m in members if m not in visuals}
+    if len(footage) != 1:
+        return None
+    take = next(iter(footage))
+    count = windows.get(take, 0)
+    take_rows = [i for i, (_p, _n, members, _s) in enumerate(rows) if set(members) == {take}]
+    visual_rows = [
+        i
+        for i, (_p, _n, members, _s) in enumerate(rows)
+        if members and set(members) <= set(visuals)
+    ]
+    if count < 2 or len(take_rows) + len(visual_rows) != len(rows):
+        return None
+    if len(take_rows) == 1:
+        moments = _listed_moments(rows[take_rows[0]][1])
+        named: dict[int, int] = {}
+    else:
+        moments = [_content(_words(rows[i][1])) for i in take_rows]
+        named = {row: moment for moment, row in enumerate(take_rows, start=1)}
+    if len(moments) != count:
+        return None
+    seats = MomentSeats(take=take, moments=count, named=named)
+    for index in visual_rows:
+        anchored, seat = _anchored_seat(rows[index][1], moments)
+        if not anchored and named:
+            seat = sum(1 for row in take_rows if row < index)
+        if seat is None or not 1 <= seat <= count:
+            continue
+        members = tuple(rows[index][2])
+        seats.placed[index] = (seat, members)
+        for member in members:
+            seats.after.setdefault(member, seat)
+    return seats if seats.after or seats.named else None

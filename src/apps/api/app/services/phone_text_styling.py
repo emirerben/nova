@@ -289,7 +289,7 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
     from dataclasses import replace
 
     from app.pipeline.phone_captions import PhoneCaptionLook
-    from app.pipeline.phone_text_style import _covers
+    from app.pipeline.phone_text_style import drawable_family
 
     policy = _POLICY.get()
     if not policy:
@@ -345,11 +345,12 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
             )
         )
     )
+    excluded = rule.get("excluded_fonts", [])
     font = next(
         (
-            f
+            d
             for f in candidates
-            if f and f not in rule.get("excluded_fonts", []) and all(_covers(f, t) for t in texts)
+            if f and f not in excluded and (d := drawable_family(f, texts, excluded)) is not None
         ),
         None,
     )

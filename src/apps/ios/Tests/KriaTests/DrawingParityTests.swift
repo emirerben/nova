@@ -118,7 +118,12 @@ import KriaMediaEngine
         let line = (0...200).map { [Double($0) / 200, 0.5 + 0.0004 * sin(Double($0))] }
         let simple = DrawingStrokeTools.simplify(line)
         XCTAssertEqual(simple.count, 2, "a near-straight line collapses to its endpoints")
-        let curve = (0...200).map { [Double($0) / 200, 0.5 + 0.2 * sin(Double($0) / 200 * .pi * 2)] }
+        let curve: [[Double]] = (0...200).map { index -> [Double] in
+            let x: Double = Double(index) / 200
+            let angle: Double = x * .pi * 2
+            let y: Double = 0.5 + 0.2 * sin(angle)
+            return [x, y]
+        }
         let reduced = DrawingStrokeTools.simplify(curve)
         XCTAssertLessThan(reduced.count, curve.count / 3)
         XCTAssertEqual(reduced.first, curve.first); XCTAssertEqual(reduced.last, curve.last)

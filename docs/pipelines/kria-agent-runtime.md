@@ -207,6 +207,22 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   `tests/kria/test_kri689_clip_speed_ask.py`, `tests/kria/test_kri689_speed_notice_postgres.py`,
   `tests/tasks/test_kri689_speed_review.py`, the KRI-689 cases in
   `tests/tasks/test_unified_montage_dispatch.py`.
+- **Freeze frame (KRI-777).** No edit can hold a frame (no strategy field; neither the
+  phone recipe nor the cloud renderer freezes a creator-chosen frame). Café M2 filed
+  "freeze the frame for one second on Atakan's bite" as `timing/global {"duration_s": 1,
+  "freeze_frame": true}`: the draft and approval card promised the freeze, and the phone
+  receipt read "This draft is about 4.7s; you asked for 1s." Now a freeze ask is an honest
+  `not_possible` format limit on every draft and finished render (KRI-700's rule, not the
+  KRI-689 notice: the receipt replaces the model's summary, so neither the reply, the change
+  list nor the card can promise it). The phone montage draft checks it although it defers
+  every other `timing` ask to the render. `kria/freeze_ask.py` reads `facts.freeze_frame`
+  (or `freeze`) first, else a narrow EN/TR wording fallback (no `re.*`). Its
+  `times_one_moment` (a freeze, a clip-speed ask, "N seconds on <a moment>") keeps those
+  seconds out of everything that treats a timing ask as the video's length: the global
+  timing receipt, `length_policy.creator_duration_s`, the duration-conflict questions, the
+  render contract and the phone planner's target (`unified_montage.brief_view`). Pins:
+  `tests/kria/test_kri777_freeze_frame_ask.py`, `tests/kria/test_kri777_freeze_frame_postgres.py`,
+  `tests/tasks/test_kri777_freeze_render.py`.
 - **Cost.** With a render present the flag adds one Main Creator call to
   editor-op turns (the planner extracts requirements before the router runs).
   If that call fails, a plain edit falls back to the legacy copilot-first path
@@ -317,6 +333,19 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   moment path spreads windows over the take (`moment_fill`); the plain one-window
   selector falls back to the take's first seconds (`analysis_fallback`). Incident:
   boat kit M2, thread 1390E686. Guard: `tests/tasks/test_moment_ask_wording.py`.
+  KRI-776: the creator's own numbers reach the brief deterministically. The planner runs
+  `style_asks.carry_moment_ask` on every turn's brief updates (Main Creator batch,
+  pre-extracted batch, `extract_deferred_brief`): it reads the creator's message (quoted
+  phrases and the brief's exact on-screen text left out) and, when the brief would not
+  already carry that count / length, writes `moment_count` / `moment_length_s` facts onto
+  this turn's `select` moment update, the live `select` moment requirement (a `change`), or
+  a new `select` requirement worded as the creator's sentence. One word may sit between
+  the count and the noun ("six separate moments", "altı ayrı an"), never a count changer
+  or a unit ("2 more moments", "5 minute shots"). With no creator total the moments are
+  `each_s` long (`build_length_plan(moment_each_s=...)`), and the draft check judges the
+  moment ask against the approved length plan's windows (`brief_checks.with_planned_cuts`),
+  so a plan short of the count is held back before approval instead of promised. Incident:
+  café kit M2, thread EE7B4DCA. Guard: `tests/kria/test_kri776_moment_ask_in_brief.py`.
 - *Clips ruled out by length (KRI-623)*: "from the long takes", "skip the short
   clips", "uzun çekimlerden", "kısa klipleri kullanma" leave clips out whatever the
   Main Creator picked. `app/kria/clip_scope.py` reads the live brief's `select` asks
@@ -417,6 +446,18 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   photos") is honoured. `_run_phone_guided_job` binds them like any approved
   guided story's Visuals (`bind_phone_visuals`, `stillImages`/`visualVideos`). A
   kind the phone cannot draw fails the job (`UnsupportedPhonePlan`), never drops.
+- *A Visual between the moments of one take (KRI-796)*: "six moments from it, in
+  this order: A, B, ... put the photo right after B". When every order intent is a
+  `then` row naming either the one take or only Visuals, and the moments they name
+  (one row listing them comma by comma, or one row per moment) are exactly the take's
+  approved length-plan windows, `clip_order_sequence.moment_seats` reads the i-th
+  moment as the i-th window. A Visual's row plays it right after the moment its own
+  words anchor ("after" / "before" + the moment's folded words, either way contained),
+  or, with one row per moment, where it is listed; `_seat_among_moments` moves only
+  that cut. `_moment_outcomes` judges those rows off the finished cuts (`moment` on
+  the outcome row). An anchor naming no moment or two, a count that is not the window
+  count, a Visual before the first moment, more than one take, or no approved
+  windows: no seat, the KRI-217 scatter and `visual` outcome stand (an honest partial).
 
 **Dispatch (KRI-217).** Every runtime-v2 approval dispatches with
 `bypass_guided_edit_gate=True`, and the bypass used to refuse any item with a pool
