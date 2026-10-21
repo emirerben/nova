@@ -100,3 +100,41 @@ def test_candidate_budget_cannot_grow_with_collection_size():
     value = evidence()
     with pytest.raises(ValidationError):
         MomentRelevanceInput(query=value.query, candidates=value.candidates * 101)
+
+
+# Failure catalogue: long moment/source UUIDs are easy to confuse; a model must
+# select only this request's short references. Unknown references, repeats and
+# aliases colliding with an exact legacy ID must fail without another paid call.
+def test_story_replay_resolves_request_local_references_to_exact_sources():
+    value = evidence()
+    story = {
+        "title": "Evening crossing",
+        "moment_ids": ["m1"],
+        "content_plan": {
+            "audience": "Evening walkers",
+            "angle": "An illuminated house seen from the ferry",
+            "why_it_works": "The actual final view supplies the atmosphere.",
+            "opening_text": "An evening crossing",
+            "caption": "The last view from the ferry.",
+            "beat_reasons": ["End on the illuminated house"],
+        },
+    }
+    client = CassetteModelClient(json.dumps({"stories": [story]}))
+    agent = CameraRollStoriesAgent(client)
+    prompt = agent.render_prompt(value)
+    assert value.candidates[0].id not in prompt
+    assert value.candidates[0].source not in prompt
+    assert '"id": "m1"' in prompt
+    output = agent.run(
+        value.model_dump(), ctx=build_eval_run_context("camera-roll/local-refs", is_live=False)
+    )
+    assert output.stories[0].moment_ids == [value.candidates[0].id]
+    assert client.invocations == 1
+    for bad in (["m2"], ["s1"], ["m1", "m1"], ["m1", value.candidates[0].id]):
+        rejected = dict(
+            story,
+            moment_ids=bad,
+            content_plan=dict(story["content_plan"], beat_reasons=["A beat"] * len(bad)),
+        )
+        with pytest.raises(SchemaError):
+            agent.parse(json.dumps({"stories": [rejected]}), value)
