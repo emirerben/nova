@@ -50,6 +50,7 @@ from app.kria.brief_checks import (
     reply_from_receipts,
     requirements_to_check_at_draft,
     speech_cleanup_review_note,
+    with_planned_cuts,
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
@@ -1135,6 +1136,9 @@ def _complete_draft_turn(
                         and (document.strategy.get("edit_format") or item.edit_format)
                         in {"subtitled", "talking_head"},
                     )
+                    # KRI-776: a moment ask is judged against the windows the approved length
+                    # plan will cut, so the card never promises moments the plan doesn't hold.
+                    facts = with_planned_cuts(facts, planned.media_snapshot)
                     checked = brief.live()
                     # KRI-190: the unified montage planner writes the per-clip text,
                     # order and title at render time and reports on them then. Judging

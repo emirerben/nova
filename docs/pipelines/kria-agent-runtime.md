@@ -317,6 +317,19 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   moment path spreads windows over the take (`moment_fill`); the plain one-window
   selector falls back to the take's first seconds (`analysis_fallback`). Incident:
   boat kit M2, thread 1390E686. Guard: `tests/tasks/test_moment_ask_wording.py`.
+  KRI-776: the creator's own numbers reach the brief deterministically. The planner runs
+  `style_asks.carry_moment_ask` on every turn's brief updates (Main Creator batch,
+  pre-extracted batch, `extract_deferred_brief`): it reads the creator's message (quoted
+  phrases and the brief's exact on-screen text left out) and, when the brief would not
+  already carry that count / length, writes `moment_count` / `moment_length_s` facts onto
+  this turn's `select` moment update, the live `select` moment requirement (a `change`), or
+  a new `select` requirement worded as the creator's sentence. One word may sit between
+  the count and the noun ("six separate moments", "altı ayrı an"), never a count changer
+  or a unit ("2 more moments", "5 minute shots"). With no creator total the moments are
+  `each_s` long (`build_length_plan(moment_each_s=...)`), and the draft check judges the
+  moment ask against the approved length plan's windows (`brief_checks.with_planned_cuts`),
+  so a plan short of the count is held back before approval instead of promised. Incident:
+  café kit M2, thread EE7B4DCA. Guard: `tests/kria/test_kri776_moment_ask_in_brief.py`.
 - *Clips ruled out by length (KRI-623)*: "from the long takes", "skip the short
   clips", "uzun çekimlerden", "kısa klipleri kullanma" leave clips out whatever the
   Main Creator picked. `app/kria/clip_scope.py` reads the live brief's `select` asks

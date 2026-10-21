@@ -891,6 +891,42 @@ def _source_durations(raw: object) -> tuple[tuple[str, float], ...] | None:
     return pairs or None
 
 
+def with_planned_cuts(facts: PlanFacts, media_snapshot: Mapping[str, Any] | None) -> PlanFacts:
+    """``facts`` with the cuts the approved length plan will make (KRI-776).
+
+    A strategy draft has no cuts of its own, so "six moments, about 2 seconds each" was never
+    judged before approval and "I will cut the 6 exact moments" reached the card over a
+    one-cut plan. The length plan's source windows are what the render plays (the phone plan
+    reads them back as its approved windows), so a moment ask is checked against them. A plan
+    that is not window-eligible, still has conflicts or holds no valid window leaves ``facts``
+    unchanged.
+    """
+    envelope = media_snapshot.get("length_plan") if isinstance(media_snapshot, Mapping) else None
+    if (
+        not isinstance(envelope, Mapping)
+        or envelope.get("window_eligible") is not True
+        or envelope.get("conflicts")
+    ):
+        return facts
+    windows = envelope.get("windows")
+    lengths = _window_lengths(windows)
+    if lengths is None:
+        return facts
+    sources = envelope.get("sources")
+    return dataclasses.replace(
+        facts,
+        cut_lengths_s=lengths,
+        cut_clip_ids=_window_media_ids(windows),
+        source_durations_s=_source_durations(
+            {
+                row.get("media_id"): row.get("duration_s")
+                for row in (sources if isinstance(sources, list) else [])
+                if isinstance(row, Mapping) and isinstance(row.get("media_id"), str)
+            }
+        ),
+    )
+
+
 def _montage_caption_facts(raw: object) -> dict[str, str]:
     """The ``captions`` entry of a unified montage record (KRI-569), or nothing."""
     if not isinstance(raw, Mapping) or raw.get("status") != "placed":
@@ -5918,11 +5954,12 @@ def _check_moments(req: BriefRequirement, facts: PlanFacts) -> RequirementReceip
         return _receipt(req, "partial", _NO_CHECKER)
     longest = max(lengths)
     if ask.count is not None and len(lengths) != ask.count:
+        moments = "moment" if len(lengths) == 1 else "moments"
         return _receipt(
             req,
             "partial",
             say(
-                en=f"The video has {len(lengths)} moments, not {ask.count}",
+                en=f"The video has {len(lengths)} {moments}, not {ask.count}",
                 tr=f"Videoda {ask.count} değil {len(lengths)} an var",
             ),
         )
