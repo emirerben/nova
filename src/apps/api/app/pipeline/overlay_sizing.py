@@ -109,7 +109,9 @@ def compute_overlay_size(
         fit_text_size_px,
     )
 
-    overlay_hint = {"font_family": font_family} if font_family else {}
+    # The text rides along so the fit measures the glyph-safe face the burn
+    # draws (KRI-785: Turkish in Satisfy burns Pacifico).
+    overlay_hint = {"font_family": font_family, "text": clean} if font_family else {}
     typeface = _typeface_for_overlay(overlay_hint)
     return fit_text_size_px(
         clean, typeface, box_w_px, box_h_px, max_px=effective_max, min_px=min_px

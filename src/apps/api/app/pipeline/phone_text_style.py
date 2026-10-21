@@ -65,6 +65,37 @@ def _covers(family: str, text: str) -> bool:
     )
 
 
+def drawable_family(family: str | None, texts, excluded=()) -> str | None:
+    """`family` when it draws every text, else its glyph-safe partner (KRI-785).
+
+    A face missing LETTERS of the text (Turkish ğ ş İ ı in Satisfy, Big Curls,
+    Alte Haas Grotesk, Permanent Marker) sets the whole run in the same
+    `font_coverage.glyph_safe_family` partner the cloud renderer and the iOS
+    compiler use, stamped into the row so every client draws that face.
+    Symbol-only gaps (an arrow) keep the existing pick-another-font path.
+    None when neither draws the text.
+    """
+    if not family:
+        return None
+    texts = list(texts)
+    if all(_covers(family, text) for text in texts):
+        return family
+    from app.pipeline.font_coverage import glyph_safe_family, missing_glyphs
+
+    joined = " ".join(texts)
+    if not any(ch.isalpha() for ch in missing_glyphs(family, joined)):
+        return None
+    safe = glyph_safe_family(family, joined)
+    if (
+        safe
+        and safe != family
+        and safe not in excluded
+        and all(_covers(safe, text) for text in texts)
+    ):
+        return safe
+    return None
+
+
 def displayed_text(row: dict) -> str:
     from app.agents._schemas.text_element import apply_text_case
 
@@ -104,7 +135,10 @@ def _glyph_overhang(family: str, size: int, text: str) -> float:
 
     from app.pipeline.text_overlay_skia import _resolve_typeface_for_overlay
 
-    font = skia.Font(_resolve_typeface_for_overlay({"font_family": family}).typeface, size)
+    # The text rides along so the overhang is measured on the glyph-safe face
+    # the box draws (KRI-785).
+    face = _resolve_typeface_for_overlay({"font_family": family, "text": text}).typeface
+    font = skia.Font(face, size)
     glyphs = font.textToGlyphs("".join(character for character in text if not character.isspace()))
     return max(
         (
@@ -535,7 +569,8 @@ def resolve_phone_text_style(
             )
         )
         family = next(
-            (f for f in candidates if f and all(_covers(f, text) for text in texts)), None
+            (d for f in candidates if (d := drawable_family(f, texts, excluded)) is not None),
+            None,
         )
         if family is None:
             raise _style_decline(
@@ -575,7 +610,12 @@ def resolve_phone_text_style(
             if "font_family" in source_fields and not _covers(
                 row["font_family"], coverage_text(row)
             ):
-                raise _style_decline("This font cannot draw all of your text. Choose another font.")
+                drawable = drawable_family(row["font_family"], [coverage_text(row)])
+                if drawable is None:
+                    raise _style_decline(
+                        "This font cannot draw all of your text. Choose another font."
+                    )
+                row["font_family"] = drawable
     # The watermark is measured in the reference frame; keep its padding too.
     from app.pipeline.phone_captions import watermark_keepout_rect
 
