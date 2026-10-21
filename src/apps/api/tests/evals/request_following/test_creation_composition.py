@@ -698,7 +698,7 @@ def test_song_caption_lane_is_summarised_for_the_model_and_survives_composition(
     assert not any(bar["id"].startswith("song-caption-") for bar in snapshot["text_bars"])
     prompt = CreationTextComposer.__new__(CreationTextComposer).render_prompt(input)
     assert "CAPTION LANE" in prompt
-    assert CreationTextComposer.spec.prompt_version == "v11-source-backed-research"
+    assert CreationTextComposer.spec.prompt_version == "v13-word-sequence-operation-order"
     # The pinned program replays against the FULL lane: the caption rows are all still there.
     after = compile_proposal_execution_plan(composed)["text_elements"]
     assert [row for row in after if row["id"].startswith("song-caption-")] == before
@@ -799,3 +799,107 @@ def test_lyric_samples_in_the_composer_prompt_are_sanitised_and_bounded():
         assert "\n" not in line and "{" not in line and "$" not in line
         assert len(line) <= 120
     assert not any(line.lower().lstrip().startswith("system:") for line in samples)
+
+
+def test_animated_title_brief_does_not_skip_requested_word_sequence(monkeypatch):
+    """An entrance match is not proof that the creator's segmentation was fulfilled."""
+    from app.kria.brief import BriefRequirement
+    from app.services.creation_text_composition import (
+        CreationTextComposer,
+        compose_creation_text,
+        snapshot_copy_constraints,
+    )
+
+    plan = base_plan()
+    plan.snapshot = plan.snapshot.model_copy(update={"title_animation": "typewriter"})
+    before = compile_proposal_execution_plan(plan.snapshot)
+    response = sequence_response()
+    response["ops"][1]["patch"]["animation_phases"]["entrance"] = "typewriter"
+    calls = []
+
+    def run(self, input, *, ctx=None):
+        calls.append(input)
+        return self.parse(json.dumps(response), input)
+
+    monkeypatch.setattr(CreationTextComposer, "run", run)
+    snapshot = compose_creation_text(
+        plan.snapshot,
+        creator_request="Animate the title word by word, one showing after the other.",
+        copy_constraints=snapshot_copy_constraints(plan.snapshot),
+        text_requirements=[
+            BriefRequirement(
+                id="r1",
+                kind="text",
+                scope="title",
+                literal=TITLE,
+                description="A typewriter hook, each word showing after the previous one.",
+                facts={"animation": "typewriter"},
+            )
+        ],
+    )
+    restored = EditProposalSnapshot.model_validate_json(snapshot.model_dump_json())
+    result = compile_proposal_execution_plan(restored)
+    assert len(calls) == 1
+    words = [r for r in result["text_elements"] if "::sequence-" in r["id"]]
+    assert [r["text"] for r in words] == TITLE.split()
+    assert result["story_timeline"] == before["story_timeline"]
+    assert [r for r in result["text_elements"] if r["id"].startswith("clip-label-")] == [
+        r for r in before["text_elements"] if r["id"].startswith("clip-label-")
+    ]
+
+
+def test_bound_placeholder_copy_remains_protected_during_composition(monkeypatch):
+    from app.kria.brief import BriefRequirement
+    from app.services.creation_text_composition import (
+        CreationTextComposer,
+        compose_creation_text,
+        snapshot_copy_constraints,
+    )
+
+    plan = base_plan()
+    response = sequence_response()
+    response["ops"].append(
+        {"op": "rewrite_text", "selector": {"group": "labels"}, "text": "Location"}
+    )
+    monkeypatch.setattr(
+        CreationTextComposer,
+        "run",
+        lambda self, input, ctx=None: self.parse(json.dumps(response), input),
+    )
+    with pytest.raises(ValueError, match="changed confirmed copy"):
+        compose_creation_text(
+            plan.snapshot,
+            creator_request="Animate the hook word by word and keep location placeholders.",
+            copy_constraints=snapshot_copy_constraints(plan.snapshot),
+            text_requirements=[
+                BriefRequirement(
+                    id="r1",
+                    kind="text",
+                    scope="per_clip",
+                    description="Keep placeholders.",
+                    facts={"placeholder": True},
+                )
+            ],
+        )
+
+
+def test_style_all_before_sequence_preserves_selector_fences(monkeypatch):
+    """Style selectors bind the original title; a split must come after its styles."""
+    response = sequence_response()
+    style = {
+        "op": "patch_text",
+        "selector": {"group": "all"},
+        "patch": {"font_family": "Inter", "color": "#FFFFFF"},
+    }
+    response["ops"].append(style)
+    with pytest.raises(ValueError, match="Text changed"):
+        compose(monkeypatch, base_plan(), response)
+    response["ops"].remove(style)
+    response["ops"].insert(0, style)
+    snapshot = compose(monkeypatch, base_plan(), response)
+    restored = EditProposalSnapshot.model_validate_json(snapshot.model_dump_json())
+    plan = compile_proposal_execution_plan(restored)
+    assert all(
+        t["font_family"] == "Inter" and t["color"] == "#FFFFFF" for t in plan["text_elements"]
+    )
+    assert [t["text"] for t in plan["text_elements"] if "::sequence-" in t["id"]] == TITLE.split()

@@ -190,6 +190,11 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
     private static func acceptsStorageURL(_ url: URL) -> Bool {
         if url.scheme == "https" { return true }
         #if DEBUG
+        if let base = CameraRollLiveQA.configuration()?.baseURL,
+           url.scheme == base.scheme, url.host == base.host, url.port == base.port,
+           url.path.hasPrefix("/qa-owned-exports/"), url.user == nil, url.password == nil {
+            return true
+        }
         // Explicit scratch-API hardware journey only. Release storage stays HTTPS.
         guard ProcessInfo.processInfo.arguments.contains("-ui-testing-retry-api"),
               let address = ProcessInfo.processInfo.environment["KRIA_RETRY_TEST_API_URL"],

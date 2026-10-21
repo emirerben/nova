@@ -9965,6 +9965,9 @@ def _guided_execution_plan(
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
         existing = copy.deepcopy((job.assembly_plan or {}).get("guided_story_execution_plan"))
+        prepared_collection_story = copy.deepcopy(
+            (job.assembly_plan or {}).get("prepared_collection_story")
+        )
         raw_strategy = copy.deepcopy(
             (getattr(job, "all_candidates", None) or {}).get("creator_strategy")
         )
@@ -9993,6 +9996,22 @@ def _guided_execution_plan(
         raise SpeechCleanupFailure(
             "snapshot_mismatch", "cleaned narration is outside the Job's derivative prefix"
         )
+
+    if prepared_collection_story is not None:
+        from app.services.media_collection_preparation import (
+            PreparedCollectionStory,
+            execution_digest,
+        )
+
+        prepared = PreparedCollectionStory.model_validate(prepared_collection_story)
+        frozen = validate_execution_plan(existing, guided_snapshot)
+        if execution_digest({**frozen, "proposal_version": 1}) != prepared.compiled_digest:
+            raise ValueError("Prepared story execution changed after approval")
+        # This exact plan was frozen before approval and rechecked at dispatch.
+        # Do not materialize labels, SFX or music from later planning inputs.
+        if emit_decided:
+            _emit_plan_blocks(job_id, _blocks_from_guided_plan(frozen))
+        return frozen, None
 
     def guided_resolved_clip_intents() -> list[Any]:
         """Return persisted resolved intents, failing closed on malformed JSONB."""

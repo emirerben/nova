@@ -77,6 +77,7 @@ def test_actual_bytes_are_checked_before_publication_and_retry(
     record = device_record(fixture.job, "first")
     assert record["actual_export_policy"] == {
         "version": 1,
+        "verifier_version": "phone-simple-cut-v2",
         "source_receipts_digest": export_source_digest(bindings),
     }
     save_device_record(fixture.job, "first", record)
@@ -145,8 +146,53 @@ def test_actual_bytes_are_checked_before_publication_and_retry(
         assert fixture.request.identity.recipe_digest == recipe_digest
         assert "actual_export_policy" in device_record(fixture.job, "first")
         response, report = complete(encode(root, sources))
-    assert response.status_code == 200, response.text
+    assert response.status_code == 200, (response.text, report)
     assert report["status"] == "checked"
     assert device_status(fixture.job, "first").phase == "published"
     assert fixture.job.assembly_plan["variants"][0]["actual_export_verification"] == report
     assert fixture.job.assembly_plan["variants"][0]["poster_path"] == "new-poster.jpg"
+
+
+def test_prepared_story_cannot_drop_actual_output_checks_when_enrollment_is_withdrawn(
+    fixture, exports, monkeypatch
+):
+    _root, sources, recipe = exports
+    fixture.request = make_device_request(
+        job_id=fixture.job.id, variant_id="first", revision=2, recipe=recipe
+    )
+    fixture.job.assembly_plan.update(
+        {
+            "creator_generation_id": "approved",
+            "prepared_collection_story": {"story_id": "server-owned"},
+        }
+    )
+    fixture.job.assembly_plan["_phone_sources_v1"] = [
+        {
+            "media_id": key,
+            "proxy_path": f"analysis-proxy-{key}.mp4",
+            "generation": f"source-{key}",
+            "original": {
+                "sha256": key * 64,
+                "byte_count": 1,
+                "duration_s": 4,
+                "width": 640,
+                "height": 360,
+                "orientation_degrees": 0,
+                "has_audio": True,
+            },
+        }
+        for key in sources
+    ]
+    fixture.job.assembly_plan[CONTRACT_FIELD] = (
+        CreatorRenderContract(generation_id="approved")
+        .rebind(original_audio="require", audio_source_ids=("a", "b"))
+        .model_dump(mode="json")
+    )
+    monkeypatch.setattr(settings, "phone_actual_export_verification_enabled", False)
+    monkeypatch.setattr(settings, "phone_actual_export_verification_user_ids", [])
+    pin_device_request(fixture.job, fixture.request, base_generation="approved")
+    policy = device_record(fixture.job, "first")["actual_export_policy"]
+    assert policy["verifier_version"] == "phone-simple-cut-v2"
+    assert policy["source_receipts_digest"] == export_source_digest(
+        approved_export_sources(fixture.job, fixture.request)
+    )

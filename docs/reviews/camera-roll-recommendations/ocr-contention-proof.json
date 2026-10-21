@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "evidence": "controlled_synthetic_ocr_and_real_mp4_verification",
+  "baseline_revision": "fb516fb267dad28da4f1b7915254d8f2960104c4",
+  "branch_before_revision": "7b1ba93cdaabdbe0f6d8c339990eeb55d5874f99",
+  "linux": {
+    "image_reference": "nova-kri37-ci-tools:local",
+    "image_id_at_setup": "8ecc6324900f",
+    "cpus": 2,
+    "memory_gib": 3,
+    "read_only_root": true,
+    "temporary_runtime": "RAM tmpfs",
+    "platform": "Debian 13 ARM64, Python 3.11"
+  },
+  "source_sha256": {
+    "main": "92cfcffec10b07d60184fc456bbd3707d12dd2e26636db7f263e221b77bdced9",
+    "branch_before": "9b25026e0db9112111657330207253d9e003549569be3a0541e41a99557cf334",
+    "branch_fixed": "5688599fb2920ace75cef9b22eed46c2d4989557b1f9ece8eebb198a57e79c5c"
+  },
+  "forced_probe": {
+    "workers": 32,
+    "reads_per_run": 32,
+    "parent_omp_num_threads": 64,
+    "parent_omp_thread_limit": 64,
+    "summaries": {
+      "main": {
+        "summary": true,
+        "arm": "main",
+        "failed_runs": 0,
+        "runs": 10,
+        "max_seconds": 16.619
+      },
+      "branch_before": {
+        "summary": true,
+        "arm": "branch_before",
+        "failed_runs": 10,
+        "runs": 10,
+        "max_seconds": 6.417
+      },
+      "branch_fixed": {
+        "summary": true,
+        "arm": "branch_fixed",
+        "failed_runs": 0,
+        "runs": 10,
+        "max_seconds": 2.159
+      }
+    },
+    "deadline_s": {
+      "main": 20,
+      "branch_before": 5,
+      "branch_fixed": 5
+    }
+  },
+  "actual_checks": {
+    "linux_export_completion_publication_passed": 52,
+    "macos_export_completion_publication_passed": 52,
+    "regression_failed_before": true,
+    "exact_copy_confidence_and_time_checks_unchanged": true
+  },
+  "production_deployed": false
+}

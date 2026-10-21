@@ -1,0 +1,23 @@
+{
+  "analysed_candidate_count": 0,
+  "capture_context_enabled": true,
+  "captured_at": "2026-10-19T08:59:41Z",
+  "corrected_group_count": 0,
+  "group_count": 1,
+  "media_bytes_read": 0,
+  "media_bytes_uploaded": 0,
+  "metadata_count": 50,
+  "metadata_elapsed_ms": 634.208667,
+  "original_availability": "not_requested",
+  "os_version": "Version 27.0.1 (Build 24A446)",
+  "permission": 3,
+  "photo_count": 22,
+  "process_peak_resident_bytes": 67764224,
+  "provider_calls": 0,
+  "resumed_collection": true,
+  "schema_version": 1,
+  "selected_count": 50,
+  "video_count": 28,
+  "evidence_level": "physical_metadata_collection_resume",
+  "selection_controls": "all_added_members_eligible"
+}

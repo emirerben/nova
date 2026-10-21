@@ -995,7 +995,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         # 2026-10-13.1 prompt byte-for-byte).
         # KRI-552: "cut my long pauses" / "cut the part where I restart" are speech cleanup,
         # never a caption (or any other) intent.
-        prompt_version="2026-10-18.1",
+        prompt_version="2026-10-21.1",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,

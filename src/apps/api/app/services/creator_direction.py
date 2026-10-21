@@ -845,6 +845,12 @@ class CreatorDirectionService:
         )
         db.add(operation)
         await db.flush()
+        # Full account Forget also erases editorial examples and judgments,
+        # independently of their rollout flag. Existing operation retries return
+        # above, so they cannot erase preferences added after this clear.
+        from app.services.creator_editorial_taste import erase_profile
+
+        await erase_profile(db, user_id, key=f"memory-clear:{operation.id}")
         return operation
 
     async def set_item_state(
