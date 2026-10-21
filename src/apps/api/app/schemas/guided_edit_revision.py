@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.pipeline.look_presets import normalize_look_adjustments, normalize_look_preset
 from app.schemas.edit_proposal import MAX_EDIT_PROPOSAL_MEDIA, MAX_PROPOSAL_DURATION_S
+from app.schemas.editor_window import EDITOR_MIN_CLIP_S, below_editor_minimum
 from app.services.editor_limits import EDITOR_MAX_TIMELINE_SLOTS, MOTION_FPS
 
 MAX_GUIDED_EDITOR_SEGMENTS = EDITOR_MAX_TIMELINE_SLOTS
@@ -26,7 +27,7 @@ MAX_GUIDED_EDITOR_DURATION_S = float(MAX_PROPOSAL_DURATION_S)
 # represent those already-rendered stories. Include the planner's 2,000-word
 # stream plus grounded labels, story titles, and authored text in a bounded lane.
 MAX_GUIDED_EDITOR_TEXT_ELEMENTS = 5000
-MIN_GUIDED_EDITOR_SEGMENT_S = 0.1
+MIN_GUIDED_EDITOR_SEGMENT_S = EDITOR_MIN_CLIP_S
 GUIDED_EDITOR_FPS = MOTION_FPS
 GUIDED_EDITOR_FRAME_S = 1.0 / GUIDED_EDITOR_FPS
 GUIDED_EDITOR_SCHEMA_VERSION = 1
@@ -119,7 +120,7 @@ class GuidedEditorSegment(BaseModel):
     def validate_segment(self) -> GuidedEditorSegment:
         if self.output_end_s is not None and self.output_end_s <= self.output_start_s:
             raise ValueError("segment output window must be ordered")
-        if self.duration_s < MIN_GUIDED_EDITOR_SEGMENT_S:
+        if below_editor_minimum(self.duration_s, MIN_GUIDED_EDITOR_SEGMENT_S):
             raise ValueError("segment duration is below the 0.1s editor floor")
         if self.transition_duration_s < 0.1:
             object.__setattr__(self, "transition_after", "cut")
@@ -458,7 +459,7 @@ def normalize_guided_editor_revision(
         ):
             requested_end = min(requested_end, float(source["duration_s"]))
             available_output_s = (requested_end - float(segment["source_start_s"])) / rate
-            if available_output_s < MIN_GUIDED_EDITOR_SEGMENT_S - 1e-6:
+            if below_editor_minimum(available_output_s, MIN_GUIDED_EDITOR_SEGMENT_S):
                 raise ValueError("guided editor source window is too short for the editor floor")
             segment["duration_s"] = max(MIN_GUIDED_EDITOR_SEGMENT_S, frame(available_output_s))
             requested_end = float(segment["source_start_s"]) + float(segment["duration_s"]) * rate

@@ -16,6 +16,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from app.agents._schemas.text_element import CAPTION_CUE_SOURCE
+from app.schemas.editor_window import below_editor_minimum, snap_to_editor_minimum
 from app.schemas.guided_edit_revision import MAX_GUIDED_EDITOR_TOMBSTONES
 
 GUIDED_FPS = 30.0
@@ -110,8 +111,9 @@ def build_guided_segments(
             if not parent_matches:
                 raise GuidedTimelineError("TIMELINE_INVALID_PARENT")
         duration = float(slot.duration_s or 0.0)
-        if duration < 0.1:
+        if below_editor_minimum(duration):
             raise GuidedTimelineError("TIMELINE_INVALID_DURATION")
+        duration = snap_to_editor_minimum(duration)
         source_duration = source.get("duration_s")
         segment_id = slot.slot_id or uuid.uuid4().hex
         inherited_segment = current_segment_by_id.get(segment_id)

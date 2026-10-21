@@ -402,6 +402,72 @@ def _overshoot_row(overshoot: float) -> Row:
     )
 
 
+def _prepare_raises_run(exc: BaseException) -> Callable[[pytest.MonkeyPatch], Outcome]:
+    """A Save whose staged prepare raises a non-HTTP error (a state the catalog cannot read)."""
+
+    def run(monkeypatch) -> Outcome:
+        job, variant, revision = order_required_job(monkeypatch)
+
+        def boom(*_args, **_kwargs):
+            raise exc
+
+        monkeypatch.setattr(gj, "_prepare_editor_commit", boom)
+        body = gj.EditorCommitRequest(
+            base_generation=gj.variant_render_baseline(variant),
+            editor_state_version=1,
+            guided_revision_number=revision["revision_number"],
+            text_elements=variant["text_elements"],
+        )
+        outcome = Outcome(job=job)
+        try:
+            outcome.prep = gj.prepare_editor_commit(job, VARIANT, body)
+        except Exception as raised:  # noqa: BLE001
+            outcome.error = raised
+        return outcome
+
+    return run
+
+
+def _capabilities_run(monkeypatch) -> Outcome:
+    job, variant, _ = order_required_job(monkeypatch)
+    return Outcome(job=job, value=gj._compute_base_editor_capabilities(job, variant))
+
+
+def _speed_not_advertised_on_device(outcome: Outcome) -> None:
+    speed = outcome.value["clips"]["playback_rate"]
+    assert speed["editable"] is False
+    assert speed["reason"] == "phone_playback_rate_unsupported"
+    # The other clip operations stay open: only the unsupported lane closes.
+    assert outcome.value["clips"]["trim"]["editable"] is True
+
+
+def _trim_min_trailing_row(in_s: float, flow: str = "authored") -> Row:
+    """The phone's trailing-edge drag to the 0.1 s minimum encodes ``(in_s + 0.1) - in_s``."""
+    duration = (in_s + 0.1) - in_s
+    if flow == "authored":
+        return Row(
+            f"trim-min-trailing[in_s={in_s}]",
+            "guided_authored",
+            Expect(ok=True, check=_kept_window(in_s)),
+            Edit(first_slot=FirstSlot(in_s=in_s, duration_s=duration)),
+        )
+    return Row(
+        f"direct-trim-min-trailing[in_s={in_s}]",
+        "guided_direct",
+        Expect(ok=True),
+        Edit(flow="direct", first_slot=FirstSlot(in_s=in_s, duration_s=duration)),
+    )
+
+
+def _kept_window(in_s: float) -> Callable[[Outcome], None]:
+    def check(outcome: Outcome) -> None:
+        saved = _first_kept_slot(outcome)
+        assert saved["in_s"] == pytest.approx(in_s, abs=1e-6)
+        assert saved["duration_s"] == pytest.approx(0.1, abs=1e-6)
+
+    return check
+
+
 def _null_field_row(name: str) -> Row:
     return Row(
         f"null-defaulted-field-{name}",
@@ -541,6 +607,77 @@ ROWS: list[Row] = [
         # 40 ms of footage left: the shortened slot would be under the 0.1 s minimum.
         Expect(ok=False, status=422, code=OUT_OF_BOUNDS),
         Edit(first_slot=FirstSlot(in_s=SOURCE_S - 0.04, duration_s=0.5)),
+    ),
+    # 4b. trim windows the phone can produce (KRI-770) -------------------------------------------
+    *[_trim_min_trailing_row(i) for i in (0.4, 0.5, 0.9, 5.0, 7.0)],
+    Row(
+        "trim-min-exact",
+        "guided_authored",
+        Expect(ok=True, check=_kept_window(0.9)),
+        Edit(first_slot=FirstSlot(in_s=0.9, duration_s=0.1)),
+    ),
+    Row(
+        "trim-below-min-real",
+        "guided_authored",
+        # A real 90 ms window is still refused: the float tolerance must not swallow it.
+        Expect(ok=False, status=422, code="TIMELINE_INVALID_WINDOW"),
+        Edit(first_slot=FirstSlot(in_s=0.9, duration_s=0.09)),
+    ),
+    *[_trim_min_trailing_row(i, "direct") for i in (0.4, 0.9, 5.0)],
+    Row(
+        "direct-trim-shortens-clip",
+        "guided_direct",
+        Expect(ok=True, texts_fit_recipe=True),
+        Edit(flow="direct", first_slot=FirstSlot(in_s=1.0, duration_s=3.0)),
+    ),
+    # The phone's story compiler has no retime, so speed is not an advertised lane there: the
+    # capability map (which the chat copilot and the app read) must say so instead of offering
+    # a change every Save refuses.
+    Row(
+        "device-guided-story-does-not-advertise-speed",
+        "unit",
+        Expect(check=_speed_not_advertised_on_device),
+        run=_capabilities_run,
+    ),
+    # A trimmed total under the planner's 3 s floor is the creator's call: the floor guards AI
+    # proposals (EditProposalSnapshot), never a manual Save. Troya's sibling job failed at
+    # generation from a 2.987 s plan, not from a Save.
+    Row(
+        "authored-total-under-planner-floor",
+        "guided_authored",
+        Expect(ok=True, texts_fit_recipe=True),
+        Edit(clip_s=0.5, texts=phone_retimed_lane),
+    ),
+    Row(
+        "direct-total-under-planner-floor",
+        "guided_direct",
+        Expect(ok=True),
+        Edit(flow="direct", first_slot=FirstSlot(in_s=1.0, duration_s=0.5)),
+    ),
+    # 9. a Save never answers 500 for a state it can name (KRI-770) -------------------------------
+    Row(
+        "unreadable-source-catalog-is-409",
+        "unit",
+        Expect(ok=False, status=409, code="editor_source_catalog_invalid"),
+        run=_prepare_raises_run(ValueError("editor_source_catalog_invalid")),
+    ),
+    Row(
+        "source-identity-conflict-is-409",
+        "unit",
+        Expect(ok=False, status=409, code="editor_source_catalog_invalid"),
+        run=_prepare_raises_run(ValueError("editor_source_identity_conflict")),
+    ),
+    Row(
+        "index-error-in-prepare-is-422",
+        "unit",
+        Expect(ok=False, status=422, code="unsupported_phone_edit"),
+        run=_prepare_raises_run(IndexError("list index out of range")),
+    ),
+    Row(
+        "key-error-in-prepare-is-422",
+        "unit",
+        Expect(ok=False, status=422, code="unsupported_phone_edit"),
+        run=_prepare_raises_run(KeyError("sources")),
     ),
     # 5. the creator's manual edits win over approved text-role rules ---------------------------
     Row(
