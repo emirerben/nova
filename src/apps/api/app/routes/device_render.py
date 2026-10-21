@@ -193,6 +193,14 @@ async def _refuse_publication(
     except (KeyError, ValueError):
         pass  # already terminal (published / needs_attention): the decline is enough
     await db.commit()
+    await asyncio.to_thread(_nudge_kria_observer, job.id)
+
+
+def _nudge_kria_observer(job_id: uuid.UUID) -> None:
+    """The phone's report just settled this render: post Kria's chat card now."""
+    from app.tasks.kria_runtime import nudge_kria_observer  # noqa: PLC0415
+
+    nudge_kria_observer(job_id)
 
 
 def _record(job: Job, identity: DeviceRenderIdentity) -> tuple[dict, DeviceRenderStatus]:
@@ -825,6 +833,7 @@ async def report_device_failure(
         job, body.identity.variant_id, reason_code=body.reason_code, detail=body.detail
     )
     await db.commit()
+    await asyncio.to_thread(_nudge_kria_observer, job_id)
     return DeviceRenderFailureOut(
         identity=body.identity, phase="needs_attention", reason_code=body.reason_code
     )
@@ -1321,4 +1330,5 @@ async def _complete_device_export(
 
     await record_finished_style_edit(db, user_id, job, body.identity.variant_id, status)
     await db.commit()
+    await asyncio.to_thread(_nudge_kria_observer, job_id)
     return DeviceExportCompleteOut(identity=body.identity)
