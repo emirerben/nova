@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.10.0] - 2026-10-21
+
+### Changed
+- fix(kria): a blocked render's message reads as whole sentences (KRI-778) (#1708) <!-- release-pr: 1708 -->
+
 ## [0.81.9.0] - 2026-10-21
 
 ### Changed
