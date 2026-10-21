@@ -1438,6 +1438,60 @@
       "journey": "kri-492-length-ownership"
     },
     {
+      "id": "kri-794-reanswer-closed-choice",
+      "tickets": [
+        "KRI-794"
+      ],
+      "symptom": "After the order question was answered 'Use the order you added the clips' and the render was refused ('I can't verify this ordering rule from the approved media.'), the creator typed the other option's exact label, 'Continue without a fixed order'. No question was open, so it was read as a new edit: the draft kept the old answer, said 'I'm using the order you added the clips', and the session's last render was refused again (Merope T1).",
+      "boundary": "reply",
+      "status": "open_pr",
+      "owner": "KRI-794",
+      "fix_prs": [],
+      "paths": [
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/services/cloud_render_contract.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri794_reanswer_choice_postgres.py"
+      ],
+      "harness": "real_with_db",
+      "evidence": {
+        "offline_replay": "Postgres-backed submit_turn + run_kria_turn journey (only the Main Creator model call mocked): order question -> tapped answer -> the real dispatch contract refusal (check_phone_dispatch_contract over the approved binding with the answer lost, as in KRI-788) -> the real render observer card -> typed label / 'try again'. 11 of the first 20 cases fail with the four app files reverted to main; the 4 review cases (stale refusal, delegation, language hint, recommended fallback) fail with only the review fixes reverted. The incident's own events.json #0-#15 replayed through match_answered_choice returns (cc8e5377, unordered). On a scratch merge with the KRI-787 replay (#1723), its two KRI-794 strict xfails pass.",
+        "live_model": "n/a (no prompt or model change; no paid calls)",
+        "native_output": "unknown (the iOS client shows the typed text as a plain bubble and an answered card by any later message; no client change)",
+        "production": "not deployed"
+      },
+      "neighbours_covered": [
+        "exact label, punctuation/case, English alias, Turkish alias",
+        "the incident order: answer, refusal, typed other label",
+        "'try again' after an order refusal re-asks the picker once, 'no fixed order' recommended instead of the refused option",
+        "'you choose' on that re-ask never picks the refused option",
+        "a render approved before a typed re-answer and refused after it is not blamed on the new answer",
+        "the kept note's quoted reply still re-answers after the chat switched to Turkish",
+        "retyping the refused option after the refusal confirms it",
+        "second refusal after the re-ask keeps the answer, no third ask",
+        "a refusal about something else does not reopen the order",
+        "no card: '2', the internal key, 'you choose', 'fark etmez', a negated sentence, the standing answer",
+        "client-sent selection for the closed question stays choice_selection_stale",
+        "a closed simpler-version question is never re-answered",
+        "kept answers on later turns say 'As agreed earlier' and how to change them"
+      ],
+      "neighbours_gap": [
+        "only the order basis tags its refusal (field_path ordering_choice); other gate conflicts re-answer by label but are not re-asked after a refusal",
+        "non-order kinds re-answer by exact label only (their aliases read as edits without the card)",
+        "a phone re-send of the T1 kit (needs KRI-788 deployed too)",
+        "an order answer given on the question's second ask is not re-asked after a refusal (ask limit); the kept note names the typed way out",
+        "draft-time unresolved refusals (_unresolved_choice_plan) carry no field_path and do not trigger the re-ask"
+      ],
+      "follow_ups": [
+        "KRI-788",
+        "KRI-795"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-674-whole-job-retry-consent",
       "tickets": [
         "KRI-674"
@@ -1803,60 +1857,6 @@
         "signed-in physical end-to-end pilot",
         "limited/revoked permission device matrix",
         "cloud/slides/effects adapters"
-      ],
-      "red_control": "not_applicable"
-    },
-    {
-      "id": "kri-794-reanswer-closed-choice",
-      "tickets": [
-        "KRI-794"
-      ],
-      "symptom": "After the order question was answered 'Use the order you added the clips' and the render was refused ('I can't verify this ordering rule from the approved media.'), the creator typed the other option's exact label, 'Continue without a fixed order'. No question was open, so it was read as a new edit: the draft kept the old answer, said 'I'm using the order you added the clips', and the session's last render was refused again (Merope T1).",
-      "boundary": "reply",
-      "status": "open_pr",
-      "owner": "KRI-794",
-      "fix_prs": [],
-      "paths": [
-        "src/apps/api/app/kria/runtime.py",
-        "src/apps/api/app/services/choice_questions.py",
-        "src/apps/api/app/services/creator_render_contract.py",
-        "src/apps/api/app/services/cloud_render_contract.py"
-      ],
-      "regression_tests": [
-        "tests/kria/test_kri794_reanswer_choice_postgres.py"
-      ],
-      "harness": "real_with_db",
-      "evidence": {
-        "offline_replay": "Postgres-backed submit_turn + run_kria_turn journey (only the Main Creator model call mocked): order question -> tapped answer -> the real dispatch contract refusal (check_phone_dispatch_contract over the approved binding with the answer lost, as in KRI-788) -> the real render observer card -> typed label / 'try again'. 11 of the first 20 cases fail with the four app files reverted to main; the 4 review cases (stale refusal, delegation, language hint, recommended fallback) fail with only the review fixes reverted. The incident's own events.json #0-#15 replayed through match_answered_choice returns (cc8e5377, unordered). On a scratch merge with the KRI-787 replay (#1723), its two KRI-794 strict xfails pass.",
-        "live_model": "n/a (no prompt or model change; no paid calls)",
-        "native_output": "unknown (the iOS client shows the typed text as a plain bubble and an answered card by any later message; no client change)",
-        "production": "not deployed"
-      },
-      "neighbours_covered": [
-        "exact label, punctuation/case, English alias, Turkish alias",
-        "the incident order: answer, refusal, typed other label",
-        "'try again' after an order refusal re-asks the picker once, 'no fixed order' recommended instead of the refused option",
-        "'you choose' on that re-ask never picks the refused option",
-        "a render approved before a typed re-answer and refused after it is not blamed on the new answer",
-        "the kept note's quoted reply still re-answers after the chat switched to Turkish",
-        "retyping the refused option after the refusal confirms it",
-        "second refusal after the re-ask keeps the answer, no third ask",
-        "a refusal about something else does not reopen the order",
-        "no card: '2', the internal key, 'you choose', 'fark etmez', a negated sentence, the standing answer",
-        "client-sent selection for the closed question stays choice_selection_stale",
-        "a closed simpler-version question is never re-answered",
-        "kept answers on later turns say 'As agreed earlier' and how to change them"
-      ],
-      "neighbours_gap": [
-        "only the order basis tags its refusal (field_path ordering_choice); other gate conflicts re-answer by label but are not re-asked after a refusal",
-        "non-order kinds re-answer by exact label only (their aliases read as edits without the card)",
-        "a phone re-send of the T1 kit (needs KRI-788 deployed too)",
-        "an order answer given on the question's second ask is not re-asked after a refusal (ask limit); the kept note names the typed way out",
-        "draft-time unresolved refusals (_unresolved_choice_plan) carry no field_path and do not trigger the re-ask"
-      ],
-      "follow_ups": [
-        "KRI-788",
-        "KRI-795"
       ],
       "red_control": "not_applicable"
     }
