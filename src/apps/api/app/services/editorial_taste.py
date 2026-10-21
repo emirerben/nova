@@ -386,7 +386,9 @@ class TasteStore:
         ]
 
         def relevance(e):
-            words = " ".join([e["title"], *e["words"], *e["source_descriptions"]]).casefold()
+            words = " ".join(
+                [e["title"], e.get("post_form", ""), *e["words"], *e["source_descriptions"]]
+            ).casefold()
             return len(tokens & set(re.findall(r"\w{3,}", words))) + 2 * (e["kind"] == kind)
 
         examples.sort(key=lambda e: (-relevance(e), e["project_id"]))
@@ -418,6 +420,8 @@ class TasteStore:
                 "creator_request_excerpt": e["creator_requests"][:1],
                 "contextual_creator_note": e.get("creator_editorial_note", ""),
             }
+            if e.get("post_form"):
+                item["post_form"] = e["post_form"]
             trial = {**data, "examples": [*output_examples, item]}
             if len(intro + json.dumps(trial, ensure_ascii=False)) > MAX_CONTEXT_CHARS:
                 continue  # Never truncate JSON or silently chop a review rule.

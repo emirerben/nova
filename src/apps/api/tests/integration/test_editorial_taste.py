@@ -356,3 +356,114 @@ async def test_account_clear_erases_taste_with_rollout_off_and_retry_preserves_n
     ).status_code == 200
     assert (await client.post("/me/memory/clear", json=clear)).status_code == 200
     assert len((await client.get(route)).json()["examples"]) == 2
+
+
+async def test_text_free_finished_post_is_valid_and_unselected_words_are_not_examples(
+    collection_world, monkeypatch
+):
+    from app.models import CreationThread
+    from app.routes import editorial_taste
+    from app.services.creator_editorial_taste import generation_context
+
+    client, _, _, owner, app = collection_world
+    app.include_router(editorial_taste.router)
+    monkeypatch.setattr(settings, "creator_editorial_taste_enabled", True)
+    monkeypatch.setattr(settings, "creator_editorial_taste_user_ids", [str(owner.id)])
+    project_id = uuid.UUID((await projects(owner))[0])
+    async with AsyncSessionLocal() as db:
+        item = await db.get(PlanItem, project_id)
+        item.idea = "Untitled video"
+        job = await db.get(Job, item.current_job_id)
+        job.assembly_plan = {
+            "variants": [{"variant_id": "song", "render_status": "ready", "text_elements": []}],
+            "guided_story_execution_plan": {"user_song": {"mode": "lipsync"}},
+        }
+        thread = CreationThread(
+            creator_id=owner.id,
+            title="A simple lip-sync",
+            active_plan_item_id=item.id,
+            active_job_id=job.id,
+            state={"selected_variant_id": "song"},
+        )
+        db.add(thread)
+        await db.commit()
+        job_id, thread_id = job.id, thread.id
+    body = {**profile_body([str(project_id)]), "project_notes": {}}
+    response = await client.put("/me/editorial-taste", json=body)
+    assert response.status_code == 200, response.text
+    example = response.json()["examples"][0]
+    assert example["words"] == [] and example["post_form"] == "lipsync"
+    assert example["title"] == "A simple lip-sync"
+    source_hash = example["source_sha256"]
+    async with AsyncSessionLocal() as db:
+        job = await db.get(Job, job_id)
+        job.assembly_plan = {
+            **job.assembly_plan,
+            "variants": [
+                *job.assembly_plan["variants"],
+                {
+                    "variant_id": "failed",
+                    "render_status": "failed",
+                    "text_elements": [{"text": "Failed experiment"}],
+                },
+                {
+                    "variant_id": "other",
+                    "render_status": "ready",
+                    "text_elements": [{"text": "Unselected alternative"}],
+                },
+            ],
+        }
+        await db.commit()
+    response = await client.put(
+        "/me/editorial-taste", json={**body, "expected_revision": 1, "idempotency_key": "second"}
+    )
+    assert response.status_code == 200, response.text
+    example = response.json()["examples"][0]
+    assert example["words"] == [] and example["source_sha256"] == source_hash
+    async with AsyncSessionLocal() as db:
+        context = await generation_context(db, owner.id, "a lip-sync")
+        assert '"post_form": "lipsync"' in context
+        assert "Unselected alternative" not in context and "Failed experiment" not in context
+        thread = await db.get(CreationThread, thread_id)
+        thread.state = {}
+        await db.commit()
+    ambiguous = await client.put(
+        "/me/editorial-taste", json={**body, "expected_revision": 2, "idempotency_key": "ambiguous"}
+    )
+    assert ambiguous.status_code == 409  # Never silently endorse both ready alternatives.
+    async with AsyncSessionLocal() as db:
+        thread = await db.get(CreationThread, thread_id)
+        thread.state = {"selected_variant_id": "failed"}
+        await db.commit()
+    stale = await client.put(
+        "/me/editorial-taste",
+        json={**body, "expected_revision": 2, "idempotency_key": "failed-choice"},
+    )
+    assert stale.status_code == 422
+
+
+async def test_named_unfinished_video_is_not_a_finished_positive(collection_world, monkeypatch):
+    from app.routes import editorial_taste
+
+    client, _, _, owner, app = collection_world
+    app.include_router(editorial_taste.router)
+    monkeypatch.setattr(settings, "creator_editorial_taste_enabled", True)
+    monkeypatch.setattr(settings, "creator_editorial_taste_user_ids", [str(owner.id)])
+    ids = await projects(owner)
+    async with AsyncSessionLocal() as db:
+        item = await db.get(PlanItem, uuid.UUID(ids[0]))
+        job = await db.get(Job, item.current_job_id)
+        job.assembly_plan = {
+            "variants": [
+                {
+                    "variant_id": "draft",
+                    "render_status": "failed",
+                    "text_elements": [{"text": "Never finished this"}],
+                }
+            ]
+        }
+        await db.commit()
+    response = await client.put("/me/editorial-taste", json=profile_body([ids[0]]))
+    assert response.status_code == 422
+    profile = (await client.get("/me/editorial-taste")).json()
+    assert profile["revision"] == 0 and profile["examples"] == []

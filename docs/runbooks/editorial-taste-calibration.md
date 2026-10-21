@@ -120,3 +120,64 @@ Local checks use synthetic HTTP/PostgreSQL journeys and the native simulator.
 A private replay of the ten approved account captures checks the real API/context
 builder at zero model cost. That replay is development evidence, not production
 activation or a claim that new ideas match the creator's taste.
+
+## Frozen comparison workflow
+
+`scripts/editorial-taste-eval.py` is provider-free. It freezes a baseline and
+personalized arm, future source inputs, source-group exclusions, A/B assignments,
+outputs/failure slots and genuine creator judgments. It does not generate ideas,
+inspect media, contact a provider, authenticate an operator or start training.
+
+First reserve every unseen project with the corpus CLI's `holdout` command.
+Prepare a private preregistration JSON containing: evaluation/owner UUIDs; purpose
+(`synthetic_workflow_check`, `development_comparison` or
+`independent_quality_evaluation`); the exact corpus HEAD SHA; baseline/personalized
+model and prompt SHA descriptors; a source registry covering every learning
+example with its pinned source SHA, complete original-content fingerprints and
+outing-group IDs; and future cases containing reserved project/case UUIDs,
+fingerprints/groups, a query and the exact supported `MomentCandidate` intervals.
+Fingerprint/group sets must be disjoint across training and test outings and across
+cases. Missing coverage, seen projects, duplicate IDs and non-finite/unsupported
+intervals reject registration. Group coverage needs an owner-scoped source audit;
+claiming `complete` in a hand-authored JSON file is not independent evidence.
+
+Freeze `criteria` as `{"primary":"creator_preference","secondary":["would_post",
+"unsupported_claims","footage_mismatch"]}`. Independent evaluation also needs an
+approved profile and preregistered acceptance bars: minimum cases, minimum lower
+bound of the 95% Wilson interval for personalized preference, minimum willingness
+to post, and maximum problem rate. No bar can be chosen after seeing the results.
+The Wilson interval describes the observed non-tied preferences; it does not repair
+unrepresentative sampling or correlated outings. Small samples remain uncertain.
+
+```bash
+src/apps/api/.venv/bin/python scripts/editorial-taste-eval.py --store /private/path/comparison \
+  preregister --input /private/path/pack.json --corpus /private/path/corpus
+src/apps/api/.venv/bin/python scripts/editorial-taste-eval.py --store /private/path/comparison \
+  output --case <uuid> --arm baseline --input /private/path/baseline.json
+src/apps/api/.venv/bin/python scripts/editorial-taste-eval.py --store /private/path/comparison \
+  output --case <uuid> --arm personalized --input /private/path/personalized.json
+src/apps/api/.venv/bin/python scripts/editorial-taste-eval.py --store /private/path/comparison \
+  cards --case <uuid>
+src/apps/api/.venv/bin/python scripts/editorial-taste-eval.py --store /private/path/comparison \
+  judge --case <uuid> --input /private/path/actual-creator-reply.json
+src/apps/api/.venv/bin/python scripts/editorial-taste-eval.py --store /private/path/comparison \
+  report --corpus /private/path/corpus
+```
+
+Each output is `{"status":"ready","output":<CameraRollStoriesOutput>}` or
+`{"status":"failed","error_class":"ProviderTimeout"}`. Unknown/repeated source
+IDs, more than 60 seconds or missing beat reasons reject it. An identical retry
+adds no outcome; changed outcomes cannot replace a failure or a reviewed proposal.
+Cards omit arm/model metadata and pin a checksum. Preserve the exact creator reply
+with that checksum, selected labels (`[]` = neither, `["A","B"]` = tie), separate
+A/B `would_post` booleans and `problems` lists, reason and reviewer attribution.
+Empty/failed proposals cannot be selected or marked publishable. Never invent a
+reply. The report counts every case, missing outputs, failures, pending judgments,
+ties, neither and factuality separately; changing the corpus invalidates the frozen
+comparison. Export fidelity and audience performance need their own evidence.
+
+Fine-tuning readiness stays false: reviewed residual failures, an adequate dataset,
+a human training decision and an approved priced plan remain necessary. No numeric
+sample threshold automatically sends data or starts training. Four real CLI
+journeys exercise this workflow with synthetic responses and synthetic judgments;
+they prove the mechanics and make no creative-quality claim.

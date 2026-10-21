@@ -162,3 +162,57 @@ gates pass 1,044 checks. The live development preview is paused: automatic appro
 review rejected transmitting private account examples/scene metadata to Gemini with
 paid usage. A specific payload/provider/$0.05 approval is pending; no provider call
 was made and no workaround was attempted.
+
+## Frozen evaluation failure catalogue (before implementation)
+
+The evaluation boundary must support real future footage and human judgments;
+recorded/synthetic responses verify its mechanics only. No provider, upload or
+training call is part of this boundary.
+
+- A seen project, overlapping source fingerprint/group, changed corpus or partial
+  source registry is presented as verified held-out evaluation.
+- Model/arm labels influence the creator's choice, or a different shuffle changes
+  the meaning of a recorded A/B vote. Freeze assignments and output hashes.
+- Unknown/repeated source IDs, invalid durations or malformed output enter review.
+- Failed model calls disappear from the denominator or silently get rerun until a
+  desirable answer appears. Preserve failure slots and count pending/neither/ties.
+- A changed output, stale review, another owner or repeated vote replaces the exact
+  proposal that the creator graded. Immutable writes; identical retries add no vote.
+- Preference is mistaken for factuality, willingness to publish, or execution
+  correctness. Record these separately; do not declare quality from parse checks.
+- Tiny, correlated development samples become a claimed generalization or
+  fine-tuning-readiness result. Report scope and uncertainty, and never auto-start
+  paid training from a count threshold.
+
+Gate: real private CLI preregistration -> frozen two-arm outputs (or explicit
+failure) -> blinded cards -> actual human judgment -> aggregate report, including
+contamination, owner, tamper, stale-output and duplicate controls. Test content is
+synthetic; account data remains outside Git.
+
+
+## Final-source and comparison continuation
+
+The account importer now captures only the creator-selected ready variant (or the
+single unambiguous ready variant), rejecting unfinished/ambiguous examples. A
+finished lip-sync or atmosphere post needs no saved generated text. Its saved form
+is retained in retrieval context without claiming that the source footage contains
+no visible text. Two HTTP journeys were added first and reproduced the old text-free
+rejection and unfinished-positive acceptance; all six account journeys now pass.
+The private replay now uses the exact saved job/slide records and original Untitled
+item names: all twenty pass, including four lip-sync posts, twelve montages, three
+slide posts and one subtitled post. Zero provider calls or production writes.
+
+The provider-free frozen comparison CLI now implements preregistration, complete
+source-registry checks, footage/outing-group separation, stable blinded A/B cards,
+immutable output/failure slots and exact creator judgments. Reports retain pending,
+failed, tied and neither outcomes and separate preference, willingness and factuality.
+Changed corpora invalidate the frozen comparison. Independent evaluation requires
+an approved profile and preregistered bars; operator-supplied source coverage still
+requires an actual account/source audit. No synthetic judgment can qualify as a
+real quality win. Four real CLI journeys pass after the missing-command red run.
+Combined account/CLI/free replay regression: 2,082 passed, 15 skips, seven expected
+failures. The narrower selection differs from the earlier 2,139-check execution run.
+
+The exact pushed-head iOS-contracts CI check passed on 025c7a90b. No production
+activation or paid preview has occurred; the specific Gemini payload approval
+remains pending.

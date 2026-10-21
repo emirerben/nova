@@ -25,6 +25,7 @@ from app.models import (
     User,
 )
 from app.services.editorial_taste import MAX_CONTEXT_CHARS, TasteStore, digest
+from app.services.library_variant_selection import selected_variant_id
 from app.services.private_text import normalize_private_text
 
 
@@ -126,6 +127,34 @@ async def capture_project(db, owner, project):
     if row is None or (row[1] and row[1].user_id != owner):
         raise HTTPException(404, "Project not found")
     item, job = row
+    thread = await db.scalar(
+        select(CreationThread)
+        .where(CreationThread.creator_id == owner, CreationThread.active_plan_item_id == project)
+        .order_by(CreationThread.updated_at.desc(), CreationThread.id.desc())
+        .limit(1)
+    )
+    assembly = (job.assembly_plan or {}) if job else {}
+    slide_post = item.slide_post if isinstance(item.slide_post, dict) else {}
+    is_slides = item.edit_format == "slides" and bool(slide_post.get("slides"))
+    variants = []
+    if not is_slides:
+        ready = [
+            v
+            for v in assembly.get("variants", [])
+            if isinstance(v, dict) and v.get("render_status") == "ready"
+        ]
+        selected = selected_variant_id(thread.state) if thread else None
+        if thread and thread.active_job_id and (job is None or thread.active_job_id != job.id):
+            raise HTTPException(409, "The project changed; open its current finished version first")
+        if selected:
+            ready = [v for v in ready if v.get("variant_id") == selected]
+        if not ready:
+            raise HTTPException(422, "Choose a project with a finished video or saved slides")
+        if len(ready) > 1:
+            raise HTTPException(
+                409, "Open the version you like before using this project as an example"
+            )
+        variants = ready
     words = []
 
     def collect(value):
@@ -140,16 +169,14 @@ async def capture_project(db, owner, project):
             for field in value:
                 collect(field)
 
-    assembly = job.assembly_plan or {} if job else {}
-    variants = [v for v in assembly.get("variants", []) if isinstance(v, dict)]
     for variant in variants:
         collect(variant.get("text_elements") or [])
         if intro := short(variant.get("intro_text"), 800):
             if intro not in words and len(words) < 60:
                 words.append(intro)
-    slide_post = item.slide_post or {}
-    collect(slide_post)
-    if caption := short(slide_post.get("caption"), 800):
+    if is_slides:
+        collect(slide_post)
+    if is_slides and (caption := short(slide_post.get("caption"), 800)):
         if caption not in words and len(words) < 60:
             words.append(caption)
     transcript = short(
@@ -161,11 +188,7 @@ async def capture_project(db, owner, project):
         ),
         20_000,
     )
-    title = await db.scalar(
-        select(CreationThread.title)
-        .where(CreationThread.creator_id == owner, CreationThread.active_plan_item_id == project)
-        .limit(1)
-    )
+    title = thread.title if thread else None
     assets = list(
         (
             await db.scalars(
@@ -181,13 +204,23 @@ async def capture_project(db, owner, project):
         analysis = asset.analysis if isinstance(asset.analysis, dict) else {}
         if description := short(analysis.get("description") or analysis.get("summary"), 800):
             descriptions.append(description)
-    if not words and not transcript and not descriptions and item.idea == "Untitled video":
-        raise HTTPException(422, "Choose a project with saved content")
+    execution = assembly.get("guided_story_execution_plan") or {}
+    song = execution.get("user_song") if isinstance(execution, dict) else None
+    post_form = (
+        "slides"
+        if is_slides
+        else "lipsync"
+        if isinstance(song, dict) and song.get("mode") == "lipsync"
+        else item.edit_format
+        if item.edit_format in {"subtitled", "narrated"}
+        else "montage"
+    )
     return {
         "project_id": str(project),
         "owner_id": str(owner),
         "title": short(title or item.idea, 200),
-        "kind": "slides" if item.edit_format == "slides" else "video",
+        "kind": "slides" if is_slides else "video",
+        "post_form": post_form,
         "words": words,
         "transcript": transcript,
         "creator_requests": [],
@@ -198,6 +231,7 @@ async def capture_project(db, owner, project):
                 {
                     "job_id": str(job.id) if job else None,
                     "generations": [v.get("render_generation_id") for v in variants],
+                    "variant_ids": [v.get("variant_id") for v in variants],
                     "slide_version": slide_post.get("version"),
                 }
             ),
