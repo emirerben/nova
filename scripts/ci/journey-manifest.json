@@ -1088,6 +1088,15 @@
         "src/apps/api/tests/fixtures/parity_pairs/",
         "docs/reviews/turkish-parity-map-2026-10.md"
       ]
+    },
+    {
+      "id": "kri-783-turkish-edit-speech",
+      "needs_native": false,
+      "api_tests": "tests/parity tests/pipeline/test_narration_labels.py tests/pipeline/test_score.py",
+      "paths": [
+        "src/apps/api/app/pipeline/narration_labels.py",
+        "src/apps/api/app/pipeline/score.py"
+      ]
     }
   ]
 }
