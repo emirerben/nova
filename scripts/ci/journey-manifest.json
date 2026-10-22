@@ -1226,6 +1226,26 @@
         "src/apps/api/tests/kria/test_kri793_caption_spellings.py",
         "src/apps/api/tests/tasks/test_kri793_talking_caption_spellings.py"
       ]
+    },
+    {
+      "id": "market-research-reference-banks",
+      "needs_native": false,
+      "api_tests": "tests/agents/test_market_research_banks.py tests/agents/test_overlay_examples_slop_guard.py tests/agents/test_persona_generator.py tests/agents/test_content_plan_generator.py tests/agents/test_intro_writer.py tests/agents/test_overlay_format_matcher.py tests/evals/test_persona_generator_evals.py tests/evals/test_content_plan_generator_evals.py tests/evals/test_intro_writer_evals.py tests/evals/test_overlay_format_matcher_evals.py",
+      "paths": [
+        "src/apps/api/prompts/persona_archetypes.json",
+        "src/apps/api/prompts/content_ideas.json",
+        "src/apps/api/prompts/tiktok_success_factors.json",
+        "src/apps/api/prompts/overlay_examples.json",
+        "src/apps/api/app/agents/_schemas/market_research.py",
+        "src/apps/api/app/agents/_schemas/persona.py",
+        "src/apps/api/app/agents/_schemas/content_plan.py",
+        "src/apps/api/app/agents/intro_writer.py",
+        "src/apps/api/app/agents/overlay_format_matcher.py",
+        "src/apps/api/app/agents/persona_examples.py",
+        "src/apps/api/app/agents/overlay_examples.py",
+        "src/apps/api/tests/agents/test_market_research_banks.py",
+        "src/apps/api/tests/agents/test_overlay_examples_slop_guard.py"
+      ]
     }
   ]
 }
