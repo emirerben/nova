@@ -705,6 +705,15 @@
       ]
     },
     {
+      "id": "kri-792-named-phrase-cuts",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri792_named_phrase_cuts.py",
+      "paths": [
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/tests/fixtures/kri792_t1_phrase_cuts.json"
+      ]
+    },
+    {
       "id": "kri-760-whole-line-ask",
       "needs_native": false,
       "api_tests": "tests/kria/test_whole_line_routing.py tests/tasks/test_whole_line_ask_montage.py",
