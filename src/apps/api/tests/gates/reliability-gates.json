@@ -814,7 +814,7 @@
       "tickets": [
         "KRI-542"
       ],
-      "symptom": "Main Creator at thinking=high exhausted the shared 8k output budget after a clip answer and the turn dead-ended ('plana dönüştüremedim').",
+      "symptom": "Main Creator at thinking=high exhausted the shared 8k output budget after a clip answer and the turn dead-ended ('plana d\u00f6n\u00fc\u015ft\u00fcremedim').",
       "boundary": "model_budget",
       "fix_prs": [
         1493
@@ -910,7 +910,7 @@
         "KRI-651",
         "KRI-674"
       ],
-      "symptom": "Phone Montage render-ready reply said 'Doğrulayamadım' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
+      "symptom": "Phone Montage render-ready reply said 'Do\u011frulayamad\u0131m' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
       "boundary": "publication",
       "fix_prs": [
         1503,
@@ -949,7 +949,7 @@
       "kill_switch": null,
       "evidence": {
         "offline_replay": "prod thread 7d7c5e25 shape: generation vs attempt id; KRI-651: pre-fix 6636cae71 fails the approved Unicode hook; fixed tree passes composition/reload/retry plus real-Postgres EN/TR publication receipt; fresh-edit title race: real-Postgres red control 97d44d932 repeats the provider call; first-step recovery fixes title-only completion for response/draft/read; KRI-674 follow-up timeout: stalled Pro transport causes both EN/TR healthy rendered follow-ups to fail before the fix (2 failed, 2 passed); Flash-first preserves successful clarification and single-call unknown recovery (4 passed).",
-        "live_model": "2026-10-17 final narrow configuration: Flash/medium/4096, prompt v11. Synthetic EN/TR title edits, ambiguous retry and 12k-contract/40-message compound rebuild: four one-call passes, 3.17–14.60s, $0.031400 settled. Earlier low-budget candidates omitted constraints or truncated and are not counted as passes. Production-account follow-up/retry re-send pending.",
+        "live_model": "2026-10-17 final narrow configuration: Flash/medium/4096, prompt v11. Synthetic EN/TR title edits, ambiguous retry and 12k-contract/40-message compound rebuild: four one-call passes, 3.17\u201314.60s, $0.031400 settled. Earlier low-budget candidates omitted constraints or truncated and are not counted as passes. Production-account follow-up/retry re-send pending.",
         "native_output": "Berlin re-run job a7d69a5b (2026-10-08) was the incident; post-fix phone re-send pending; KRI-651: native simulator export and pixel checks passed 2026-10-13 (exact hook, color emoji, no context caption)",
         "production": "merged 2026-10-08"
       },
@@ -1348,7 +1348,7 @@
         "KRI-808",
         "KRI-802"
       ],
-      "symptom": "Don Julio M1 (2026-10-21, plan item 7a4ce1d5): the clip records Main Creator read had whisper TRANSLATIONS as timed segments (a Turkish speaker's \"What's your name?\" as \"Ne isminiz?\", \"Gracias\" as \"Спасибо.\"), a 24-word Gemini sentence on a 1.1 s clip and a \"Video. Video...\" loop, so the quoted line \"What's your name?\" had no timed words.",
+      "symptom": "Don Julio M1 (2026-10-21, plan item 7a4ce1d5): the clip records Main Creator read had whisper TRANSLATIONS as timed segments (a Turkish speaker's \"What's your name?\" as \"Ne isminiz?\", \"Gracias\" as \"\u0421\u043f\u0430\u0441\u0438\u0431\u043e.\"), a 24-word Gemini sentence on a 1.1 s clip and a \"Video. Video...\" loop, so the quoted line \"What's your name?\" had no timed words.",
       "boundary": "persistence",
       "status": "open_pr",
       "owner": "KRI-808",
@@ -1586,6 +1586,60 @@
       ],
       "red_control": "not_applicable",
       "journey": "kri-492-length-ownership"
+    },
+    {
+      "id": "kri-794-reanswer-closed-choice",
+      "tickets": [
+        "KRI-794"
+      ],
+      "symptom": "After the order question was answered 'Use the order you added the clips' and the render was refused ('I can't verify this ordering rule from the approved media.'), the creator typed the other option's exact label, 'Continue without a fixed order'. No question was open, so it was read as a new edit: the draft kept the old answer, said 'I'm using the order you added the clips', and the session's last render was refused again (Merope T1).",
+      "boundary": "reply",
+      "status": "open_pr",
+      "owner": "KRI-794",
+      "fix_prs": [],
+      "paths": [
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/services/cloud_render_contract.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri794_reanswer_choice_postgres.py"
+      ],
+      "harness": "real_with_db",
+      "evidence": {
+        "offline_replay": "Postgres-backed submit_turn + run_kria_turn journey (only the Main Creator model call mocked): order question -> tapped answer -> the real dispatch contract refusal (check_phone_dispatch_contract over the approved binding with the answer lost, as in KRI-788) -> the real render observer card -> typed label / 'try again'. 11 of the first 20 cases fail with the four app files reverted to main; the 4 review cases (stale refusal, delegation, language hint, recommended fallback) fail with only the review fixes reverted. The incident's own events.json #0-#15 replayed through match_answered_choice returns (cc8e5377, unordered). On a scratch merge with the KRI-787 replay (#1723), its two KRI-794 strict xfails pass.",
+        "live_model": "n/a (no prompt or model change; no paid calls)",
+        "native_output": "unknown (the iOS client shows the typed text as a plain bubble and an answered card by any later message; no client change)",
+        "production": "not deployed"
+      },
+      "neighbours_covered": [
+        "exact label, punctuation/case, English alias, Turkish alias",
+        "the incident order: answer, refusal, typed other label",
+        "'try again' after an order refusal re-asks the picker once, 'no fixed order' recommended instead of the refused option",
+        "'you choose' on that re-ask never picks the refused option",
+        "a render approved before a typed re-answer and refused after it is not blamed on the new answer",
+        "the kept note's quoted reply still re-answers after the chat switched to Turkish",
+        "retyping the refused option after the refusal confirms it",
+        "second refusal after the re-ask keeps the answer, no third ask",
+        "a refusal about something else does not reopen the order",
+        "no card: '2', the internal key, 'you choose', 'fark etmez', a negated sentence, the standing answer",
+        "client-sent selection for the closed question stays choice_selection_stale",
+        "a closed simpler-version question is never re-answered",
+        "kept answers on later turns say 'As agreed earlier' and how to change them"
+      ],
+      "neighbours_gap": [
+        "only the order basis tags its refusal (field_path ordering_choice); other gate conflicts re-answer by label but are not re-asked after a refusal",
+        "non-order kinds re-answer by exact label only (their aliases read as edits without the card)",
+        "a phone re-send of the T1 kit (needs KRI-788 deployed too)",
+        "an order answer given on the question's second ask is not re-asked after a refusal (ask limit); the kept note names the typed way out",
+        "draft-time unresolved refusals (_unresolved_choice_plan) carry no field_path and do not trigger the re-ask"
+      ],
+      "follow_ups": [
+        "KRI-788",
+        "KRI-795"
+      ],
+      "red_control": "not_applicable"
     },
     {
       "id": "kri-674-whole-job-retry-consent",
@@ -2155,6 +2209,71 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-804-label-text-reply",
+      "tickets": [
+        "KRI-804",
+        "KRI-802"
+      ],
+      "symptom": "A creator label that can't print dead-ended the chat: \"chimichurri + salsa criolla\" was asked about only for its \"+\" with nothing to tap, the creator's \"&\" fix was refused again (27 > 24 characters), and when the planner left the text out the backstop answered 'I couldn't tell which clip ... goes on' as a recovery with no options (Don Julio M1, thread 3E27DEF8 turn 87ecce2f).",
+      "boundary": "contract",
+      "status": "open_pr",
+      "owner": "KRI-804",
+      "fix_prs": [],
+      "paths": [
+        "src/apps/api/app/schemas/clip_intents.py",
+        "src/apps/api/app/services/creator_label_reply.py",
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/services/cloud_render_contract.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri804_label_text_reply.py",
+        "tests/services/test_kri678_long_creator_labels.py",
+        "tests/kria/test_kri766_label_stays_bound.py",
+        "tests/pipeline/test_overlay_verify.py::test_fixtures_render_unclipped"
+      ],
+      "harness": "real_contract",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Chat 1 + chat 3 through the real inventory parser, resolver parser, render contract and draft backstop (planner/resolver run() replay fixed output). On origin/main 3519e7cf0 all three end in the recovery 'I couldn't tell which clip ... goes on' with no options; with the fix the '+' label is one question with every reason and two tappable answers, and the '&' text (27 chars) is placed on the sauce-bowl clip with no question.",
+        "live_model": "Not run; no paid calls. No prompt changed.",
+        "native_output": "Label width measured on the renderers: the montage bar (Fraunces 58px, 885.6px box) draws 27 characters on one line at 805.5px on cloud Skia and in the phone layout; overlay-verify fixture kri804_montage_clip_label_width PASSes (host run with the repo's TTFs; Docker not available locally). Chips on a question turn are already in the iOS build (KRI-738).",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "label with a '+' (characters only)",
+        "both reasons at once ('+' and too long)",
+        "Turkish chat",
+        "keep-as-written answer, and on a later turn about something else",
+        "keep-as-written converts only the label it names",
+        "dictated text the planner left out: printable (label) and unprintable (shot caption)",
+        "caption groups retain every source ID; phone/cloud reject wrong source, missing member, unrelated gaps and extension outside the group",
+        "a resolver-written caption is never the creator's placement",
+        "printable text nobody placed still asks which clip",
+        "placeholder and model-written labels are never asked about",
+        "model and vision copy keep the 24-character bound",
+        "a server-made caption only when it turns off no other text (positional shot labels, every-clip time/place)",
+        "no 'keep' answer where nothing acts on it (draft backstop, Talking formats)",
+        "typographic apostrophe (iOS smart punctuation)",
+        "many long labels stay inside the 1200-character reply",
+        "text longer than the montage's 120-character creator bound is never kept as written"
+      ],
+      "neighbours_gap": [
+        "The planner and resolver run() replay fixed output through the real parsers; the live model's label-vs-caption choice for this ask is not exercised (no paid calls).",
+        "Choosing the shorter suggestion relies on the Main Creator superseding the brief literal from the tapped message (KRI-805 owns brief update failures).",
+        "Prod's own clip-intent planner output for turn 87ecce2f is not recorded (the agent_run row fails to persist, KRI-809), so which of the two covered paths chat 3 took is inferred.",
+        "A typed 'keep it as written' (not the tapped answer) is left to the planner model; only the exact answer is matched.",
+        "A converted caption is re-matched to clips on every later turn (KRI-766's kept-label binding reads label rows only).",
+        "Cloud context lane: four 28-character creator labels on one clip exceed its 120-character combined limit (five 24-character ones already did)."
+      ],
+      "follow_ups": [
+        "Phone re-send of Don Julio M1 after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-806-editorial-plan-pairing",
       "tickets": [
         "KRI-806",
@@ -2196,60 +2315,6 @@
       ],
       "follow_ups": [
         "Don Julio M1 re-send after deploy (needs KRI-803/KRI-805 for a video)"
-      ],
-      "red_control": "not_applicable"
-    },
-    {
-      "id": "kri-794-reanswer-closed-choice",
-      "tickets": [
-        "KRI-794"
-      ],
-      "symptom": "After the order question was answered 'Use the order you added the clips' and the render was refused ('I can't verify this ordering rule from the approved media.'), the creator typed the other option's exact label, 'Continue without a fixed order'. No question was open, so it was read as a new edit: the draft kept the old answer, said 'I'm using the order you added the clips', and the session's last render was refused again (Merope T1).",
-      "boundary": "reply",
-      "status": "open_pr",
-      "owner": "KRI-794",
-      "fix_prs": [],
-      "paths": [
-        "src/apps/api/app/kria/runtime.py",
-        "src/apps/api/app/services/choice_questions.py",
-        "src/apps/api/app/services/creator_render_contract.py",
-        "src/apps/api/app/services/cloud_render_contract.py"
-      ],
-      "regression_tests": [
-        "tests/kria/test_kri794_reanswer_choice_postgres.py"
-      ],
-      "harness": "real_with_db",
-      "evidence": {
-        "offline_replay": "Postgres-backed submit_turn + run_kria_turn journey (only the Main Creator model call mocked): order question -> tapped answer -> the real dispatch contract refusal (check_phone_dispatch_contract over the approved binding with the answer lost, as in KRI-788) -> the real render observer card -> typed label / 'try again'. 11 of the first 20 cases fail with the four app files reverted to main; the 4 review cases (stale refusal, delegation, language hint, recommended fallback) fail with only the review fixes reverted. The incident's own events.json #0-#15 replayed through match_answered_choice returns (cc8e5377, unordered). On a scratch merge with the KRI-787 replay (#1723), its two KRI-794 strict xfails pass.",
-        "live_model": "n/a (no prompt or model change; no paid calls)",
-        "native_output": "unknown (the iOS client shows the typed text as a plain bubble and an answered card by any later message; no client change)",
-        "production": "not deployed"
-      },
-      "neighbours_covered": [
-        "exact label, punctuation/case, English alias, Turkish alias",
-        "the incident order: answer, refusal, typed other label",
-        "'try again' after an order refusal re-asks the picker once, 'no fixed order' recommended instead of the refused option",
-        "'you choose' on that re-ask never picks the refused option",
-        "a render approved before a typed re-answer and refused after it is not blamed on the new answer",
-        "the kept note's quoted reply still re-answers after the chat switched to Turkish",
-        "retyping the refused option after the refusal confirms it",
-        "second refusal after the re-ask keeps the answer, no third ask",
-        "a refusal about something else does not reopen the order",
-        "no card: '2', the internal key, 'you choose', 'fark etmez', a negated sentence, the standing answer",
-        "client-sent selection for the closed question stays choice_selection_stale",
-        "a closed simpler-version question is never re-answered",
-        "kept answers on later turns say 'As agreed earlier' and how to change them"
-      ],
-      "neighbours_gap": [
-        "only the order basis tags its refusal (field_path ordering_choice); other gate conflicts re-answer by label but are not re-asked after a refusal",
-        "non-order kinds re-answer by exact label only (their aliases read as edits without the card)",
-        "a phone re-send of the T1 kit (needs KRI-788 deployed too)",
-        "an order answer given on the question's second ask is not re-asked after a refusal (ask limit); the kept note names the typed way out",
-        "draft-time unresolved refusals (_unresolved_choice_plan) carry no field_path and do not trigger the re-ask"
-      ],
-      "follow_ups": [
-        "KRI-788",
-        "KRI-795"
       ],
       "red_control": "not_applicable"
     },

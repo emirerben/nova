@@ -58,10 +58,19 @@ jobs:
           make verify-overlays \
             LOCAL_RENDER_COMPOSE="docker compose -f docker-compose.local-render.yml"
 
+      - name: Require both overlay evidence files
+        if: always() && steps.render.outputs.needed == 'true'
+        run: |
+          test -s .overlay-verify/report.json
+          test -s .overlay-verify/montage.png
+
       - name: Upload montage + report
         if: always() && steps.render.outputs.needed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: overlay-verify
-          path: .overlay-verify/
-          if-no-files-found: warn
+          path: |
+            .overlay-verify/report.json
+            .overlay-verify/montage.png
+          include-hidden-files: true
+          if-no-files-found: error
