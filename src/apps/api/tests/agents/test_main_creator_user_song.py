@@ -36,13 +36,14 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v62 grounds a phone montage story in owned clip IDs and explanatory text goals.
 # v64 adds typed unchanged-source audio intent; only the two brief-on renders change.
 # v65 (KRI-793) adds the `spellings` caption fact: only the two brief-on renders change.
-# v66 combines it with KRI-791 spoken-text `triggers` + `speaker`; legacy brief-off
-# renders remain unchanged. Re-pin brief-on hashes only after reviewing both additions.
+# v67 retains KRI-791 triggers/speaker and adds KRI-806 editorial audio pairing.
+# All renders intentionally change; brief-off hashes match authored KRI-806, and
+# brief-on hashes additionally retain both caption and timed-text instructions.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, False): "4684c634fa88dcfec7865a41330b8a781bb706837861c6e7d63c796b8c2d0a2a",
-    (True, True): "943a70c2748575c88f78c6c3f1cf484bb9812c739666cdf28b31069dbb769642",
-    (False, False): "9ae7a03343fc258ce0fec6bc86976e6f24b1576bc4ad92920eb5e5b28f1e330d",
-    (False, True): "b25c6b84633e5195091cde5d931bea8bcc6c0570407c3a588ada3d444334bffc",
+    (True, False): "ba2f0743754b875c49e3a94f5112cbb9595e786d9328f557fb0e30777b89e725",
+    (True, True): "72edfb3e8af74ca8f8ab1aa9aa7ed5f84ca37de610ce11469f1a81881f301d48",
+    (False, False): "b49f8c15b28a37d5ef66dbc9e1d1c3a8c724482d91f2e609aad4f6abd0b6d13a",
+    (False, True): "7d063efa0ff2f627a69c8eecde2203aee3189c99fc3ea47e3a361b65cf266bee",
 }
 
 
@@ -112,7 +113,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-22-v66"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-22-v67"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 
