@@ -313,17 +313,6 @@ async def test_prod_turn_1_asks_the_clip_order_question(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
-async def test_prod_merope_holds_the_first_draft_back(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Retired by KRI-791."""
-    chat = await _chat_until_approval(monkeypatch)
-    held = next(r for r in chat.replies if "r7" in _receipts(r))
-    assert _verdicts(_receipts(held), ("r7",)) == _verdicts(_prod_receipts(8), ("r7",))
-    assert held.content.endswith(EVENTS[8]["content"].rsplit("\n", 1)[-1])
-    assert held.payload["choice_question"]["conflict"] == "simplification_requires_choice"
-    assert "- Left out as agreed: Show MEROPE in big letters" in chat.approval.consequence_summary
-
-
-@pytest.mark.asyncio
 async def test_prod_the_length_line_judges_the_whole_take(monkeypatch: pytest.MonkeyPatch) -> None:
     """Retired by KRI-790."""
     chat = await _chat_until_approval(monkeypatch)
@@ -416,11 +405,6 @@ async def test_the_approval_card_names_the_start_and_end_lines(
     assert "here all week" in summary
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-791: MEROPE on her first Merope is held back as an exact-text miss",
-)
 @pytest.mark.asyncio
 async def test_merope_is_placed_on_her_word_or_honestly_explained(
     monkeypatch: pytest.MonkeyPatch,
