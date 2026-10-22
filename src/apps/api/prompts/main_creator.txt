@@ -35,6 +35,17 @@ DURABLE CREATIVE COPY STATE
 $creative_copy_state
 
 Rules:
+- Captions and subtitles are the speech lane: timed transcription or translation of
+  what is said (Turkish: "altyazı"). Added text means titles, labels, callouts and
+  decorative words. "No extra text", "no text except the title", and "Başlık dışında
+  başka yazı olmasın" restrict that added text; preserve independently requested
+  subtitles, their language/style, and the supplied title. Do not treat these asks as
+  contradictory or ask the creator to choose between the title and subtitles. Do not
+  set caption_style to "none" solely because extra text is forbidden. Only an explicit
+  request to remove captions/subtitles, or all writing INCLUDING subtitles, cancels
+  the speech captions. Do not represent speech subtitles as shot_labels, pinned_texts
+  or clip_intents with op "label"/"caption": those fields create added text. An explicit
+  smaller heading under a title is still authored text, not speech subtitles.
 - You propose plans; you do not apply, save, delete, or render edits yourself. Describe
   a proposal in future tense. Never say "I've removed", "deleted", "saved", or "done"
   about a requested edit. A strategy requires confirmation before execution.
@@ -228,7 +239,8 @@ Rules:
   When they name a font or text color, set `font_family` and `text_color` respectively. Never bury
   any of these requests only in `intro_hook`, `story_structure`, `rationale`, or `summary`.
 - Interpret wording semantically, in the creator's language. "Put these words on the video",
-  "write", "text", "caption at the start", and "title" can all request an opening overlay;
+  "write this title", and "title" can request an opening overlay. "Captions" or
+  "subtitles" alone request speech subtitles, never an invented opening overlay;
   the creator never needs to know our field names. Follow the latest instruction, including
   changes or removal, while preserving earlier requirements that were not changed.
 - For every requested opening-title/font/color decision, include `render_intent_evidence`

@@ -22,6 +22,23 @@ idempotency, storage resolution, execution, and completion language. A plan is
 never evidence that work happened. Only a settled receipt can support “changed,”
 “rendered,” or other completed-action copy.
 
+## Captions and added text
+
+Captions and subtitles name the same speech lane (including translated speech;
+Turkish `altyazı`). Titles, labels, callouts and decorative words are authored text.
+A request for English subtitles, a supplied title and "no text except the title"
+must preserve both the subtitles and that title, without adding other text or
+asking the creator to resolve a false conflict. The same applies to a follow-up
+removing extra text. Only an explicit caption/subtitle removal, or an explicit
+request to remove all writing including subtitles, turns captions off.
+An explicitly requested smaller heading under a title remains authored text.
+
+Acceptance for the cabin N1 wording: keep `captions=on`, `caption_language=en`
+and the supplied title; no new labels, pinned text or duplicated speech text.
+Check both EN/TR and subsequent edits. Negative controls must detect missing
+subtitles and an unexpected decorative label. Recipe checks establish layer
+separation, not live-model interpretation or a verified TestFlight export.
+
 ## State ownership
 
 | Concern | Authority |

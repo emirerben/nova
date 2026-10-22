@@ -39,11 +39,12 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v66 combines it with KRI-791 spoken-text `triggers` + `speaker`; legacy brief-off
 # renders remain unchanged. Re-pin brief-on hashes only after reviewing both additions.
 # v67 preserves those instructions and adds quoted start_line/end_line trim facts.
+# v68 defines captions/subtitles as the speech lane even when the brief is off.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, False): "4684c634fa88dcfec7865a41330b8a781bb706837861c6e7d63c796b8c2d0a2a",
-    (True, True): "fb05af8014844ae3e8d326b9727ac9c92df0f5c68f816bddf3ab41f37483cd3e",
-    (False, False): "9ae7a03343fc258ce0fec6bc86976e6f24b1576bc4ad92920eb5e5b28f1e330d",
-    (False, True): "1c19f9064ae20bc1467aaee0752d0777e2a6d8ee2b00bb07d8ce59afb8250c24",
+    (True, False): "9da3e024bb9cc0114c9525abb7ca291771d39b0f066c6cebdbdf62ed268654b1",
+    (True, True): "9e69e52ae5ae543b7029321e23a6e9bf2d325024d42a1803688b4ea06e36d939",
+    (False, False): "6155186d12aae3035f5848cca1b999e9f1878b2520043d17ca534f2a15d951bd",
+    (False, True): "f38c88f9f8d999680968cb4b8666f7a1f720ee6a4e87dedd7c3ae307c6cd2237",
 }
 
 
@@ -113,7 +114,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-22-v67"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-22-v68"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 
