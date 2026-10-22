@@ -15,3 +15,11 @@ Only two brief-on hash assertions changed, after the original hash tests produce
 196 focused named-cut, structured facts, Main Creator/song, brief extractor and landed caption-spelling checks passed. Mandatory free offline evals:2121passed,15explicit skips,7retained expected failures. No live provider/judge call or paid evaluation was run. Source and assertion changes outside deliberate version/hash updates were not needed.
 
 Full original T1 request replay, actual physical output and export remain pending under KRI-787; #1723 is the final compound replay after siblings land. A partial receipt is the correct result until actual phrase removal can be independently established. Preship and exact-head hosted CI are required before merge.
+
+## Cumulative prompt reconciliation with current trim producer
+
+Consumed the exclusive trim owner's published cdb8d5f6 producer, including actual main after #1724/#1743/#1739. All five version/hash conflicts preserve the reviewed full instruction union: caption spellings, spoken-text triggers/speaker, quoted start_line/end_line timing, and named cut_lines. The old named-cut parenthetical incorrectly called spoken start/end bounds clip order; it now agrees with the trim rule, while route/clip sequencing keeps order start/end. Named phrase cuts remain honestly partial editor work.
+
+Candidate Main Creatorv68 / Brief Extractorv16 advance beyond the producer's67/15. Only the two brief-on prompt hashes change; brief-off hashes remain4684c634/9ae7a033. Consuming the refreshed producer changes only a version-history comment in Main Creator relative to the already tested private c733 union; its actual prompt bytes remain pinned. All383 combined original trim/named-cut/parser/caption/spoken-trigger/dispatch/security controls passed. Free recorded evals:2122 passed,15 skipped,7 known expected failures; no live model or judge.
+
+The original source and both owners' history are preserved by normal merges. This PR must merge after actual #1731, then the editorial union deliberately advances to69/16. Current-source CI is required; the old7017 head's successful checks are historical proof only.

@@ -1,0 +1,51 @@
+# KRI-803 audible-line integration
+
+Fresh base: `36031e054c1ffd2d6a3fdf3f5e492a4979154124`.
+Original source: `78af74462123026d30b1827e62af343e4b0626bd` (#1741).
+Dependency: #1738 `c8769456593718de722b461d2a9555dba6c1d166`, which includes
+#1727 → #1733 → #1724 and #1739. Merge those before this PR.
+Original code and semantic test assertions are unchanged. The only source merge
+conflict was append-only gate JSON; all existing IDs remain and KRI-803 is appended.
+
+The requested quoted source sound routes through named-line grounding rather
+than word-triggered pop-ins. Exact short lines are considered before stem matches.
+Only one unambiguous transcript can trigger the bounded fallback word pass;
+a failed/missing/ambiguous line remains uncertain. All named lines in one clip
+must fit the source window, independent of their order in the request. Existing
+whole-line and closing-line paths and truthful final-receipt controls remain.
+
+## Executed checks
+
+`bash scripts/check-api.sh test tests/tasks/test_keep_line_audible_montage.py tests/kria/test_whole_line_routing.py tests/tasks/test_whole_line_ask_montage.py tests/tasks/test_named_line_windows_montage.py tests/tasks/test_long_take_moments_montage.py tests/services/test_length_planning.py -q --tb=short`: **140 passed**, isolated migrated
+Postgres `nova_pr_1741_integration_test`. These preserve source-interval,
+wrong-cut, missing-word, ambiguous-word and partial-receipt controls.
+
+`python3 scripts/ci/test_select_tests.py`: **41 passed**.
+`CI=1 E2E_FIXTURES=true make verify-editor-timeline` with the isolated DB:
+**14 frontend suites / 209 tests; 28 desktop browser cases; 42 mobile viewport
+cases; 583 backend parity tests**, all passed. Deterministic localhost4310 fixtures;
+no reused server and no physical phone. The report/trace output is local to this
+worktree's Playwright directories. This verifies existing editor boundaries, not
+the actual Don Julio phone video.
+
+Mandatory committed preship and exact-head hosted CI remain required before merge.
+The inherited finite-frame Gameday helper still requires actual native verification.
+Recorded fixture speech timings come from the author's local kit inspection, not
+a new audio inspection or live provider call performed here. The original
+production request and full rendered output remain KRI-802. No paid call,
+physical-phone operation, rollout setting or manual release was performed.
+
+## Timing decisions
+
+# Audible quote timeline contract
+
+1. Duration owner: `build_length_plan` freezes ordered source windows; the approved length plan feeds `plan_unified_montage` and the phone recipe compiler. No UI independently recalculates its duration.
+2. Ripple: named speech expands a source window before the length plan is approved, within its duration/reuse constraints. No persisted text, SFX, overlay or music-bed lane is shifted; this introduces no editor insertion behavior.
+3. Scrub: existing canonical projected editor duration and native timelineScrubDuration remain authoritative. Pointer, keyboard, playback, ruler and inverse mapping logic are unchanged by this server grounding repair.
+4. Resize: generated source windows cover all named lines within each clip; neighboring duration and frame constraints remain in the existing length planner/compiler. No new resize handles, rounding or stretch semantics are introduced.
+5. Undo: grounding belongs to the initial generated/approved draft snapshot. It adds no pointer operation, repeated timestamp mutation or undo snapshot.
+6. Preview/render parity: original KRI-803 tests carry independently measured quoted-audio spans through grounding, length plan, unified compiler, phone recipe verification and final receipt. Wrong spans/missing/ambiguous words remain negative controls. Run the required verify-editor-timeline gate and preserve its current native dependency limits.
+
+## Post-picker actual parent reconciliation
+
+Merged #1738 source7f8ac50c2 normally, including actualmain1bf6d14a6 and refreshed parser source33115. No source or assertion conflicts/edits occurred. Existing native files are unchanged from old45fe, whose CI39732108721 completedSUCCESS. Current exact-parent backend checks:159passed, covering all original audible-line/source-window/length negatives plus the newly landed unmatched-exclusion picker. The earlier required timeline result remains scoped to identical timeline/renderer input code; no new timing implementation was added by this reconciliation. New exact-head selected CI and normal preship remain required; merge after actual #1738.

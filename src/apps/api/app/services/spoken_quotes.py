@@ -27,6 +27,17 @@ segment ran 3.8-13.6 s, so the closing cut played 0-2.2 s and the line was never
   pass, else its place in the segment's text).
 * ``described_line_moments`` -- "the clip where the boat won't start: keep its sound"
   seats that clip's window on the sentence that says it ("tekne çalışmıyor").
+
+KRI-803 (Don Julio M1, thread F4083F1D): "keep his name exchange audible ("What's your
+name?" "Lucas.")" and "keep that "Cheers!" audible" named lines no word-stem match could
+find (no word of five letters or more), and the name clip's timed sentences came back in
+Turkish while its untimed transcript has the English line:
+
+* ``named_line_records`` -- a line the creator wants heard whole is found word for word in
+  the timed sentences first (one-word lines count), word stems only for a paraphrase.
+* ``ground_named_lines`` -- a line only the untimed transcript has gets the word-timed
+  whisper pass on that one clip; ``described_lines`` seats one window per clip holding
+  every named line it says.
 """
 
 from __future__ import annotations
@@ -384,20 +395,28 @@ def _timed_rows(segments: Sequence[Mapping[str, Any]]) -> list[tuple[float, floa
     )
 
 
-def locate_in_segments(
-    quote: str, segments: Sequence[Mapping[str, Any]], duration_s: float
-) -> tuple[float, float] | None:
-    """The shortest run of timed sentences that says ``quote``, padded, else None."""
+def _segment_run(quote: str, segments: Sequence[Mapping[str, Any]]) -> tuple[float, float] | None:
+    """(start, end) of the shortest run of timed sentences that says ``quote``, else None."""
     target = fold_tokens(quote)
     rows = _timed_rows(segments)
     for run in range(1, _MAX_SEGMENT_RUN + 1):
         for first in range(0, len(rows) - run + 1):
             window = rows[first : first + run]
             if _says(fold_tokens(" ".join(text for _s, _e, text in window)), target):
-                start = max(0.0, window[0][0] - SEGMENT_LEAD_S)
-                end = min(duration_s, window[-1][1] + SEGMENT_TAIL_S)
-                return round(start, 3), round(end, 3)
+                return window[0][0], window[-1][1]
     return None
+
+
+def locate_in_segments(
+    quote: str, segments: Sequence[Mapping[str, Any]], duration_s: float
+) -> tuple[float, float] | None:
+    """The shortest run of timed sentences that says ``quote``, padded, else None."""
+    run = _segment_run(quote, segments)
+    if run is None:
+        return None
+    start = max(0.0, run[0] - SEGMENT_LEAD_S)
+    end = min(duration_s, run[1] + SEGMENT_TAIL_S)
+    return round(start, 3), round(end, 3)
 
 
 def _token_offsets(text: str) -> list[tuple[str, int, int]]:
@@ -495,6 +514,30 @@ def transcribe_stored_quote(
     return words, str(getattr(transcript, "language", "") or "")
 
 
+async def _transcribed_words(
+    transcribe: Transcribe | None,
+    row: Mapping[str, Any],
+    quote: str,
+    timeout_s: float,
+    *,
+    language: str | None,
+    event: str,
+) -> list[dict[str, Any]]:
+    """A word-timed whisper pass of the stored proxy, biased toward ``quote``; [] on failure."""
+    gcs_path = row.get("gcs_path") or row.get("proxy_path")
+    if transcribe is None or not isinstance(gcs_path, str) or not gcs_path:
+        return []
+    try:
+        words, _language = await asyncio.wait_for(
+            asyncio.to_thread(transcribe, gcs_path, language=language, prompt=quote),
+            timeout=timeout_s,
+        )
+    except Exception as exc:  # noqa: BLE001 - a missed line is reported, never fatal
+        log.warning(event, media_id=row.get("media_id"), error=type(exc).__name__)
+        return []
+    return list(words)
+
+
 async def _word_span(
     transcribe: Transcribe | None,
     row: Mapping[str, Any],
@@ -503,27 +546,15 @@ async def _word_span(
     timeout_s: float,
 ) -> tuple[float, float] | None:
     """The line's window from a word-timed whisper pass of the stored proxy, else None."""
-    gcs_path = row.get("gcs_path") or row.get("proxy_path")
-    if transcribe is None or not isinstance(gcs_path, str) or not gcs_path:
-        return None
     language = str(_speech(_row_analysis(row)).get("language") or "").strip().lower()
-    try:
-        words, _language = await asyncio.wait_for(
-            asyncio.to_thread(
-                transcribe,
-                gcs_path,
-                language=language if re.fullmatch(r"[a-z]{2}", language) else None,
-                prompt=quote,
-            ),
-            timeout=timeout_s,
-        )
-    except Exception as exc:  # noqa: BLE001 - a missed line is reported, never fatal
-        log.warning(
-            "closing_quote_transcribe_failed",
-            media_id=row.get("media_id"),
-            error=type(exc).__name__,
-        )
-        words = []
+    words = await _transcribed_words(
+        transcribe,
+        row,
+        quote,
+        timeout_s,
+        language=language if re.fullmatch(r"[a-z]{2}", language) else None,
+        event="closing_quote_transcribe_failed",
+    )
     return locate_in_words(quote, words, duration_s)
 
 
@@ -619,10 +650,10 @@ def _match_sentence(
     return "found", min(best, key=lambda hit: hit[3])
 
 
-def _sentences(
+def _video_rows(
     media_snapshot: Mapping[str, Any] | None, skip_ids: Sequence[str]
-) -> list[tuple[str, float, float, float, set[str]]]:
-    rows = [
+) -> list[Mapping[str, Any]]:
+    return [
         row
         for row in (media_snapshot or {}).get("clip_assignments") or []
         if isinstance(row, Mapping)
@@ -631,9 +662,14 @@ def _sentences(
         and row.get("kind", "video") == "video"
         and _number(row.get("duration_s"))
     ]
+
+
+def _sentences(
+    media_snapshot: Mapping[str, Any] | None, skip_ids: Sequence[str]
+) -> list[tuple[str, float, float, float, set[str]]]:
     return [
         (row["media_id"], float(row["duration_s"]), start, end, _stems(text))
-        for row in rows
+        for row in _video_rows(media_snapshot, skip_ids)
         for start, end, text in _timed_rows(_segments(_row_analysis(row)))
     ]
 
@@ -658,7 +694,7 @@ def described_lines(
     media_snapshot: Mapping[str, Any] | None,
     *,
     skip_ids: Sequence[str] = (),
-    lines: Sequence[str] = (),
+    named: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, DescribedLine]:
     """The spoken sentence each ask describes a clip by, as that clip's source window.
 
@@ -668,13 +704,32 @@ def described_lines(
     every timed sentence; the clip with the one best match (two shared stems or more) gets
     that sentence, padded to at least ``DESCRIBED_MOMENT_MIN_S``. A tie between clips moves
     nothing; the first ask to seat a clip wins; ``skip_ids`` (a held closing line) are never
-    touched. ``lines`` (KRI-760) are lines the creator wants heard whole, each matched as
-    one clause whatever commas it has, and seated before the clauses of ``texts``.
+    touched. ``named`` (KRI-760) are the found ``named_line_records`` rows, lines the
+    creator wants heard whole; they are seated first, one window per clip from its first
+    named line's start to its last one's end (KRI-803: "What's your name?" "Lucas.").
     """
-    sentences = _sentences(media_snapshot, skip_ids)
+    durations = {
+        str(row["media_id"]): float(row["duration_s"])
+        for row in _video_rows(media_snapshot, skip_ids)
+    }
+    spans: dict[str, tuple[float, float]] = {}
+    for row in named:
+        media_id = str(row.get("media_id") or "")
+        start, end = _number(row.get("start_s")), _number(row.get("end_s"))
+        if row.get("status") != "found" or media_id not in durations:
+            continue
+        if start is None or end is None or end <= start:
+            continue
+        low, high = spans.get(media_id, (start, end))
+        spans[media_id] = (min(low, start), max(high, end))
     out: dict[str, DescribedLine] = {}
-    for clauses in ([line] for line in lines), (_clauses(str(text or "")) for text in texts):
-        for clause in (clause for group in clauses for clause in group):
+    for media_id, (start, end) in spans.items():
+        window = _padded_window(durations[media_id], start, end)
+        out[media_id] = DescribedLine(window=window, line=(start, end))
+        log.info("named_line_seated", media_id=media_id, start_s=window[0], end_s=window[1])
+    sentences = _sentences(media_snapshot, skip_ids)
+    for text in texts:
+        for clause in _clauses(str(text or "")):
             status, hit = _match_sentence(clause, sentences)
             if status != "found" or hit is None:
                 continue
@@ -698,6 +753,57 @@ def described_line_moments(
     return {media_id: described.window for media_id, described in found.items()}
 
 
+def _said_in_clip(quote: str, row: Mapping[str, Any]) -> tuple[float, float] | None:
+    """The source seconds where ``row``'s timed sentences say ``quote`` word for word.
+
+    A line inside a long sentence is narrowed to its place in that sentence's text, as the
+    closing line is (KRI-681).
+    """
+    segments = _segments(_row_analysis(row))
+    run = _segment_run(quote, segments)
+    if run is None:
+        return None
+    if run[1] - run[0] > LONG_LINE_S:
+        narrowed = estimate_in_segments(quote, segments, float(row["duration_s"]))
+        if narrowed is not None and narrowed[1] - narrowed[0] < run[1] - run[0]:
+            return narrowed
+    return round(run[0], 3), round(run[1], 3)
+
+
+def _named_line(
+    quote: str,
+    rows: Sequence[Mapping[str, Any]],
+    sentences: Sequence[tuple[str, float, float, float, set[str]]],
+) -> dict[str, Any]:
+    said = [(row, span) for row in rows if (span := _said_in_clip(quote, row)) is not None]
+    if len(said) == 1:
+        row, (start, end) = said[0]
+        return {
+            "quote": quote,
+            "status": "found",
+            "source": "segments",
+            "media_id": str(row["media_id"]),
+            "start_s": start,
+            "end_s": end,
+        }
+    if len(said) > 1:
+        log.info("named_line_ambiguous", media_ids=sorted(str(r["media_id"]) for r, _s in said))
+        return {"quote": quote, "status": "ambiguous"}
+    # No clip says it word for word: a line quoted from memory may still share its stems.
+    status, hit = _match_sentence(quote, sentences)
+    if status == "found" and hit is not None:
+        _shared, media_id, _duration, start, end = hit
+        return {
+            "quote": quote,
+            "status": "found",
+            "source": "stems",
+            "media_id": media_id,
+            "start_s": round(start, 3),
+            "end_s": round(end, 3),
+        }
+    return {"quote": quote, "status": "ambiguous" if status == "ambiguous" else "not_found"}
+
+
 def named_line_records(
     quotes: Sequence[str],
     media_snapshot: Mapping[str, Any] | None,
@@ -706,31 +812,82 @@ def named_line_records(
 ) -> list[dict[str, Any]]:
     """Where each line the creator wants heard whole is said (KRI-760), for the receipt.
 
-    One record per quote: ``status`` "found" with the clip and the sentence's source
-    seconds, "ambiguous" when two clips say it equally, "not_found" when no clip does.
-    A line said on a ``skip_ids`` clip (a held closing line) is left out: that clip's
-    window already belongs to the ending.
+    One record per quote: ``status`` "found" with the clip and the line's source seconds,
+    "ambiguous" when two clips say it equally, "not_found" when no clip does. The timed
+    sentences are read word for word first, so a one-word line ("Cheers!") or one of short
+    words ("What's your name?") is found (KRI-803); word stems only place a line no clip says
+    word for word. A line said on a ``skip_ids`` clip (a held closing line) is left out:
+    that clip's window already belongs to the ending.
     """
+    rows = _video_rows(media_snapshot, ())
     everywhere = _sentences(media_snapshot, ())
     out: list[dict[str, Any]] = []
     for quote in quotes:
-        status, hit = _match_sentence(quote, everywhere)
-        if status == "found" and hit is not None:
-            _shared, media_id, _duration, start, end = hit
-            if media_id in skip_ids:
-                continue
-            out.append(
-                {
-                    "quote": quote,
-                    "status": "found",
-                    "media_id": media_id,
-                    "start_s": round(start, 3),
-                    "end_s": round(end, 3),
-                }
-            )
-        else:
-            missing = "ambiguous" if status == "ambiguous" else "not_found"
-            out.append({"quote": quote, "status": missing})
+        record = _named_line(quote, rows, everywhere)
+        if record.get("media_id") in skip_ids:
+            continue
+        out.append(record)
+    return out
+
+
+async def ground_named_lines(
+    quotes: Sequence[str],
+    media_snapshot: Mapping[str, Any] | None,
+    *,
+    skip_ids: Sequence[str] = (),
+    transcribe: Transcribe | None = transcribe_stored_quote,
+    timeout_s: float = WHISPER_TIMEOUT_S,
+) -> list[dict[str, Any]]:
+    """``named_line_records``, plus word timings for a line only a transcript has (KRI-803).
+
+    A line no timed sentence has, said in exactly one clip's untimed transcript, gets one
+    word-timed whisper pass of that clip ("What's your name?" in a clip whose sentences came
+    back in Turkish). The pass detects the language itself: the stored sentences already
+    missed the line, so their language is no guide. A pass that fails or misses the line
+    leaves it "not_found"; nothing is guessed.
+    """
+    from app.services.speech_segments import ground_excerpt  # noqa: PLC0415
+
+    records = named_line_records(quotes, media_snapshot, skip_ids=skip_ids)
+    rows = _video_rows(media_snapshot, ())
+    out: list[dict[str, Any]] = []
+    for record in records:
+        quote = str(record["quote"])
+        heard = (
+            [row for row in rows if transcript_says(_row_analysis(row), quote)]
+            if record["status"] == "not_found"
+            else []
+        )
+        if len(heard) != 1:
+            out.append(record)
+            continue
+        row = heard[0]
+        if row["media_id"] in skip_ids:
+            continue
+        words = await _transcribed_words(
+            transcribe, row, quote, timeout_s, language=None, event="named_line_transcribe_failed"
+        )
+        grounded = ground_excerpt(words, quote, duration_s=float(row["duration_s"]))
+        if grounded is None:
+            log.info("named_line_not_found", media_id=row["media_id"])
+            out.append(record)
+            continue
+        log.info(
+            "named_line_found",
+            media_id=row["media_id"],
+            start_s=grounded.word_start_s,
+            end_s=grounded.word_end_s,
+        )
+        out.append(
+            {
+                "quote": quote,
+                "status": "found",
+                "source": "words",
+                "media_id": str(row["media_id"]),
+                "start_s": round(grounded.word_start_s, 3),
+                "end_s": round(grounded.word_end_s, 3),
+            }
+        )
     return out
 
 
@@ -768,6 +925,7 @@ __all__ = [
     "described_lines",
     "estimate_in_segments",
     "ground_closing_quote",
+    "ground_named_lines",
     "is_outro_hallucination",
     "locate_in_segments",
     "locate_in_words",

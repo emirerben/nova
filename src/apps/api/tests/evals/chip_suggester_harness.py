@@ -240,7 +240,13 @@ def expectation_failures(cassette: dict[str, Any], rep: AgentReplay) -> list[str
             problems.append(f"{kind}: label {getattr(chip, 'label', None)!r} != {label!r}")
     for kind, present in (expect.get("why") or {}).items():
         chip = by_kind.get(kind)
-        has = chip is not None and chip.why is not None
+        # `why` here means an AGENT-written subtitle; the deterministic evidence line (KRI-769)
+        # is on every chip regardless and is covered by the hygiene gate.
+        has = (
+            chip is not None
+            and chip.why is not None
+            and chip.why != h.expected_evidence(rep.case, chip, out.state)
+        )
         if has != present:
             problems.append(f"{kind}: why present={has}, expected {present}")
     run = rep.agent_run

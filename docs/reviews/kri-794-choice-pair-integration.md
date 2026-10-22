@@ -23,3 +23,17 @@ Current-main658fa0eab (landed #1742 picker) merged normally without conflicts. T
 ## Actual parent merge and final source reconciliation
 
 After #1729 actually landed as 8568cace1, its squash ancestry overlapped five task hunks. All five retain the already reviewed source-event boundary, scoped answer fallback and shared ask cap from this PR. The task module remains byte-identical to reviewed d44beaf; no app behavior or assertions were changed by this reconciliation. Actual #1724 spoken triggers and #1743 speech validation are included. The combined persisted reanswer/refusal, consent, stale-render, picker, contract and spoken-trigger controls pass (213 cases). The initial preship correctly rejected the old head receipt; it is regenerated for this new source head below.
+
+## Deterministic CI fixture isolation repair
+
+Fresh exact-head CI39746694489/API1 failed the existing KRI-795 refusal acceptance: the observer returned `ignored`, before any card assertion. Another xdist worker ran the global reconcile sweep during the fixture's committed-dispatched-to-observe gap. The workers share scratch Postgres. A new real-sweep control reproduces the cause deterministically: settlement runs first and consumes the fixture (one failure before repair).
+
+Only the fixture handoff changes. It persists the execution as accepted, then marks it dispatched and runs the real observer in one owned real-Postgres transaction; the observer performs its usual failed-card commit. An unrelated sweep cannot consume the fixture first. The original `observed == failed` and every text, option, consent and stale-render assertion remain unchanged. The new control also requires that its sweep actually ran and that exactly one failed event exists.
+
+The focused three-module parallel suite passed45 cases. The full choice/refusal/copy/contract/picker/spoken-trigger plus expiry-sweep suite passed225 cases with four workers on actual main8eef after #1739. No production code, timeout, retry, skip or CI setting changed. Fresh exact-head CI is still required; this is not a waiver of the red shard.
+
+## Direct concurrency proof instead of a scheduling stopwatch
+
+Fresh8c CI39749479102/API1 passed the refusal fixture but failed unchanged template test_probe_and_upload_concurrent_actually_overlaps:1.188s versus its0.35s stopwatch threshold. Its stated purpose is parallelism, not a production latency SLA; both the helper and prior test match actual main. The test now requires its two external-I/O stubs to rendezvous before either returns, and preserves the identity of both returned results. Serialized execution cannot reach the second party. A5s barrier timeout bounds a deadlock; it does not raise a performance target.
+
+All23 existing pipeline-helper checks pass. An independent in-memory serialized implementation fails the unchanged new assertion with BrokenBarrierError, proving the concurrency requirement is retained. No production code, skip, retry or status waiver. Broader four-worker validation passed269 cases;11 reanswer cases hit explicit local Postgres/filesystem disk-full errors. After removing only this task's two completed disposable Next.js caches, all23 unchanged reanswer cases passed. Shared caches, volumes, source and evidence were untouched. The separate real-sweep/refusal225-case proof remains valid. Fresh exact-head CI is still required before merge.

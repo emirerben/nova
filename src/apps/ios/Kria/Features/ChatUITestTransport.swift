@@ -125,6 +125,8 @@ final class CreationChatFixture: @unchecked Sendable {
     private var planTicks: [String: Int] = [:]
     private var planTurnIDs: [String: String] = [:]
     private var editorTurnIDs: [String: String] = [:]
+    /// KRIA_CHAT_QUESTION_BATCH: turns that carried an answer, so a test can pin "both answers, one turn".
+    private var batchAnswerTurns = 0
     /// Live plan & review (`KRIA_CHAT_PLAN_REVIEW=1`): the contract-v2 server model (`GET /plan`, scoped turns, undo).
     private let review = ReviewPlanFixture()
     private var reviewEnabled: Bool { ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_REVIEW"] == "1" }
@@ -268,6 +270,11 @@ final class CreationChatFixture: @unchecked Sendable {
             // KRIA_CHAT_CHOICE_QUESTION: "1" = server advertises choice_questions; "legacy" = it still sends the
             // choice_question payload but does not advertise the capability (old-server text fallback).
             if ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] == "1" { capabilities["choice_questions"] = true }
+            // KRIA_CHAT_QUESTION_BATCH (KRI-802): the first reply asks the title wording AND the clip picker.
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_QUESTION_BATCH"] == "1" {
+                capabilities["choice_questions"] = true
+                capabilities["clip_selection_questions"] = true
+            }
             if DeviceRenderUITestFixture.scenario != nil || ProcessInfo.processInfo.environment["KRIA_TELEPROMPTER_REVIEW_FIXTURE"] == "1" {
                 capabilities["phone_rendering"] = ["enabled": true, "recipe_versions": [1, 2], "verified_features": MediaCapability.allCases.map(\.rawValue)]
             }
@@ -643,6 +650,36 @@ final class CreationChatFixture: @unchecked Sendable {
                     append("assistant_question", text: "I couldn't place a few of your clips against the song. Check the order.", payload: [
                         "turn_id": turnID, "turn_value": "question",
                         "song_order_question": SongTimelineFixture.question(id: "song-q-\(events.count)", timeline: timeline),
+                    ])
+                }
+            } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_QUESTION_BATCH"] != nil {
+                let choice = body["choice_selection"] as? [String: Any]
+                let clips = body["clip_selection"] as? [String: Any]
+                if choice != nil || clips != nil {
+                    // Echo what the server received, and on which answer turn, so the UI test can pin one turn.
+                    batchAnswerTurns += 1
+                    let answers = (clips?["answers"] as? [[String: Any]] ?? []).map { "\($0["key"] ?? "")=" + ((($0["media_ids"] as? [String]) ?? []).joined(separator: "+")) }
+                    append("assistant_response", text: "Got it. turns[\(batchAnswerTurns)] choice[\(choice?["option_key"] ?? "")] answers[\(answers.joined(separator: ";"))]")
+                } else {
+                    append("assistant_response", text: "I\u{2019}d try \u{201C}Lunch at Don Julio\u{201D}. Does this wording work?\nUse this wording \u{00B7} Revise it \u{00B7} Skip it\n\nI couldn't tell which of your clips show \"my friend in the red cap\". Tap the clips that do, or tell me there aren't any.\n\nAnswer both and I'll plan your edit.", payload: [
+                        "turn_id": turnID, "turn_value": "question",
+                        "choice_question": [
+                            "version": 1, "question_id": "wording-q-\(events.count)", "conflict": "creative_copy",
+                            "kind": "creative_copy_wording", "creative_target": "opening_title", "candidate": "Lunch at Don Julio",
+                            "allow_free_text": true,
+                            "options": [
+                                ["key": "approve", "label": "Use this wording", "recommended": false],
+                                ["key": "revise", "label": "Revise it", "recommended": false],
+                                ["key": "cancel", "label": "Skip it", "recommended": false],
+                            ],
+                        ] as [String: Any],
+                        "clip_question": [
+                            "version": 1, "question_id": "clips-q-\(events.count)", "allow_none": true,
+                            "categories": [
+                                ["key": "red_cap", "label": "My friend in the red cap", "op": "order",
+                                 "candidate_media_ids": ["fixture-clip", "fixture-clip-2", "fixture-clip-3"], "suggested_media_ids": []],
+                            ],
+                        ] as [String: Any],
                     ])
                 }
             } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] != nil {

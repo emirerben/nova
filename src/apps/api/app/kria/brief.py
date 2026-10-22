@@ -184,7 +184,13 @@ class _BriefModel(BaseModel):
 
 
 class BriefUpdate(_BriefModel):
-    """One requirement as proposed by the planner model. Ids/status are server-owned."""
+    """One requirement as proposed by the planner model. Ids/status are server-owned.
+
+    A change/remove may arrive without `expected_version`: the version is the server's
+    (`bind_updates` stamps the brief the prompt showed) and `apply_updates` refuses an unbound
+    one. A change without `kind` or `scope` is partial: the fields it leaves out keep its
+    target's values (KRI-805).
+    """
 
     operation: Literal["add", "change", "remove"] = "add"
     target_requirement_id: str | None = Field(default=None, min_length=1, max_length=24)
@@ -197,8 +203,10 @@ class BriefUpdate(_BriefModel):
 
     @field_validator("scope", mode="before")
     @classmethod
-    def _scope(cls, value: object) -> str:
-        scope = _nfc(str(value or "")).replace(" ", "")
+    def _scope(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        scope = _nfc(str(value)).replace(" ", "")
         if not _SCOPE_RE.match(scope):
             raise ValueError("scope must be title | per_clip | clip:<id> | global")
         return scope
@@ -230,28 +238,26 @@ class BriefUpdate(_BriefModel):
 
     @model_validator(mode="after")
     def _needs_content(self) -> BriefUpdate:
+        content = (self.kind, self.scope, self.literal, self.description)
         if self.operation == "remove":
-            if (
-                self.target_requirement_id is None
-                or self.expected_version is None
-                or self.literal is not None
-                or self.description is not None
-                or self.kind is not None
-                or self.scope is not None
-                or self.facts
-            ):
-                raise ValueError("remove needs only target_requirement_id and expected_version")
+            if self.target_requirement_id is None:
+                raise ValueError("remove needs target_requirement_id")
+            if any(value is not None for value in content) or self.facts:
+                raise ValueError(
+                    "remove carries only operation, target_requirement_id and expected_version"
+                )
             return self
-        if self.kind is None or self.scope is None:
-            raise ValueError("add/change need kind and scope")
-        if self.operation == "change" and self.target_requirement_id is None:
+        if self.operation == "add":
+            if self.target_requirement_id is not None or self.expected_version is not None:
+                raise ValueError("add cannot name a target_requirement_id or expected_version")
+            if self.kind is None or self.scope is None:
+                raise ValueError("add needs kind and scope")
+        elif self.target_requirement_id is None:
             raise ValueError("change needs target_requirement_id")
-        if self.operation in {"change", "remove"} and self.expected_version is None:
-            raise ValueError("change/remove need expected_version")
-        if self.operation == "add" and (
-            self.target_requirement_id is not None or self.expected_version is not None
-        ):
-            raise ValueError("add cannot target a requirement or version")
+        elif self.kind is None or self.scope is None:
+            if all(value is None for value in content) and not self.facts:
+                raise ValueError("change needs at least one replacement field")
+            return self
         if not self.literal and not self.description:
             raise ValueError("a requirement needs a literal or a description")
         return self
@@ -322,8 +328,80 @@ class BriefUpdateBatchError(ValueError):
     """The model proposed a malformed or unsafe update batch."""
 
 
+# KRI-805: spellings a planner model writes for one unambiguous change/remove. The contract
+# renders ids as "[r2]"; "update" is the list's own name. A synonym counts only beside a target.
+_OPERATION_SYNONYMS = {
+    "update": "change",
+    "replace": "change",
+    "edit": "change",
+    "modify": "change",
+    "delete": "remove",
+}
+_RENDERED_ID_RE = re.compile(r"\[?\s*[rR](\d{1,6})\s*\]?")  # kri667: server-owned ids, no words
+_CONTENT_FIELDS = frozenset({"kind", "scope", "literal", "description", "facts"})
+_FIELD_NAME_RE = re.compile(r"[a-z_]{1,32}")  # kri667: error-location key names, no words
+
+
+def _model_version(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _repair_entry(item: object) -> object:
+    """Rewrite only the spellings of one update whose meaning is unambiguous (KRI-805).
+
+    The rendered id becomes the id, an operation synonym naming a target becomes
+    change/remove, a change/remove version that is not a number becomes unbound (the caller
+    binds the version its prompt showed), and null/empty padding is dropped. Anything else
+    reaches validation exactly as the model wrote it.
+    """
+    if not isinstance(item, dict):
+        return item
+    entry = dict(item)
+    target = entry.get("target_requirement_id")
+    if isinstance(target, str) and (match := _RENDERED_ID_RE.fullmatch(target.strip())):
+        entry["target_requirement_id"] = f"r{int(match.group(1))}"
+    operation = entry.get("operation")
+    if isinstance(operation, str) and entry.get("target_requirement_id") is not None:
+        entry["operation"] = _OPERATION_SYNONYMS.get(operation.strip().lower(), operation)
+    if entry.get("operation") in {"change", "remove"} and "expected_version" in entry:
+        entry["expected_version"] = _model_version(entry["expected_version"])
+    if "facts" in entry and entry["facts"] is None:
+        del entry["facts"]
+    if entry.get("operation") == "remove":
+        entry = {
+            key: value
+            for key, value in entry.items()
+            if key not in _CONTENT_FIELDS or value not in (None, "", {})
+        }
+    return entry
+
+
+def _entry_problem(exc: ValidationError) -> str:
+    """The broken rule, value-free: field names and fixed rule text, never the model's values."""
+    problems = []
+    for error in exc.errors(include_input=False, include_context=False, include_url=False)[:3]:
+        loc = error["loc"][0] if error["loc"] else None
+        rule = str(error["msg"]).removeprefix("Value error, ")
+        if loc is None:
+            problems.append(rule)
+        else:
+            field = loc if isinstance(loc, str) and _FIELD_NAME_RE.fullmatch(loc) else "a field"
+            problems.append(f"{field}: {rule}")
+    return "; ".join(problems)
+
+
 def parse_brief_updates(raw: object) -> list[BriefUpdate]:
-    """Strictly parse a complete update batch without silently dropping entries."""
+    """Strictly parse a complete update batch without silently dropping entries.
+
+    One entry the parser cannot read still refuses the whole batch, and the error names that
+    entry and the rule it broke so the model's retry can fix it (KRI-805).
+    """
     if not isinstance(raw, list):
         if raw in (None, []):
             return []
@@ -331,15 +409,57 @@ def parse_brief_updates(raw: object) -> list[BriefUpdate]:
     if len(raw) > MAX_UPDATES_PER_TURN:
         raise BriefUpdateBatchError(f"brief_updates exceeds {MAX_UPDATES_PER_TURN} entries")
     out: list[BriefUpdate] = []
-    for item in raw:
+    for index, item in enumerate(raw):
         try:
-            out.append(BriefUpdate.model_validate(item))
-        except (ValidationError, ValueError, TypeError):
-            raise BriefUpdateBatchError("brief_updates contains an invalid entry") from None
+            out.append(BriefUpdate.model_validate(_repair_entry(item)))
+        except ValidationError as exc:
+            raise BriefUpdateBatchError(
+                f"brief_updates[{index}] is invalid: {_entry_problem(exc)}"
+            ) from None
+        except (ValueError, TypeError):
+            raise BriefUpdateBatchError(f"brief_updates[{index}] is invalid") from None
     targets = [update.target_requirement_id for update in out if update.operation != "add"]
     if len(targets) != len(set(targets)):
-        raise BriefUpdateBatchError("brief_updates contains duplicate targets")
+        raise BriefUpdateBatchError("brief_updates changes or removes one requirement twice")
     return out
+
+
+def _complete_change(target: BriefRequirement, update: BriefUpdate) -> BriefUpdate:
+    """KRI-805: a partial change keeps every field it leaves out; a complete one replaces."""
+    if update.operation != "change" or (update.kind is not None and update.scope is not None):
+        return update
+    return update.model_copy(
+        update={
+            "kind": update.kind or target.kind,
+            "scope": update.scope or target.scope,
+            "literal": target.literal if update.literal is None else update.literal,
+            "description": target.description if update.description is None else update.description,
+            "facts": {**target.facts, **update.facts},
+        }
+    )
+
+
+def bind_updates(
+    prior: CreativeBrief | None, updates: Iterable[BriefUpdate]
+) -> tuple[BriefUpdate, ...]:
+    """Bind model-written updates to the brief the model's prompt showed (KRI-611, KRI-805).
+
+    The model owns which requirement a change/remove targets and what it says; the server
+    owns the concurrency token. Every change/remove gets the shown brief's version and a
+    partial change is completed from its live target. This never re-reads a newer ledger:
+    apply_updates and the persist fence still refuse a missing target or stale work.
+    """
+    shown = prior or CreativeBrief()
+    live_by_id = {req.id: req for req in shown.live()}
+    bound: list[BriefUpdate] = []
+    for update in updates:
+        if update.operation == "add":
+            bound.append(update)
+            continue
+        versioned = update.model_copy(update={"expected_version": shown.version})
+        target = live_by_id.get(update.target_requirement_id or "")
+        bound.append(versioned if target is None else _complete_change(target, versioned))
+    return tuple(bound)
 
 
 def _next_id_number(requirements: Iterable[BriefRequirement]) -> int:
@@ -410,6 +530,11 @@ def apply_updates(
             continue
         if update.operation == "change":
             target = live_by_id[update.target_requirement_id or ""]
+            update = _complete_change(target, update)  # noqa: PLW2901 - same update, completed
+            if not update.literal and not update.description:
+                raise BriefUpdateBatchError(
+                    "a changed requirement needs a literal or a description"
+                )
             changed[target.id] = target.model_copy(
                 update={
                     "kind": update.kind,
@@ -1391,6 +1516,7 @@ __all__ = [
     "apply_updates",
     "applicable_requirements",
     "batch_brief_requests",
+    "bind_updates",
     "brief_context",
     "load_latest_brief",
     "load_latest_brief_sync",

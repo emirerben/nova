@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.32.0] - 2026-10-22
+
+### Fixed
+- fix(kria): a creator's answer to Kria's own brief question records on the first attempt (KRI-805) (#1739) <!-- release-pr: 1739 -->
+
 ## [0.81.31.0] - 2026-10-22
 
 ### Fixed
