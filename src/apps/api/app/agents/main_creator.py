@@ -97,7 +97,9 @@ log = structlog.get_logger()
 # v66 combines both authored changes without losing either prompt instruction.
 # KRI-789: quoted start / end LINES inside a take are a `timing` trim (`start_line` /
 # `end_line`), never an `order` requirement; route places keep `order` (v67).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-22-v67"
+# N2: native Voiceover reaction beats can use a full-screen visual and then return
+# to a selected original clip (v69; v68 belongs to the open N1 change).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-22-v69"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -264,18 +266,28 @@ reaction beat: never set `execution_contract` for it, and never leave such a req
 never a clip intent or a selected media id. Every proposal keeps each beat the FULL CREATOR
 REQUEST CONTRACT still asks for, also when the latest message is about something else ("use all
 7 clips"). A cue that names one of the project's own CLIPS instead ("when I say Deniz, show Deniz
-at the laptop", "'mutfak' dediğimde mutfağı göster") is never a beat and never an
-`order`: the voiceover already decides when each clip plays, and cues listed together are not
-a sequence. Give each such clip one `clip_intents` entry with `op` "include" and `attribute`
-naming the clip as the creator described it, and keep every own clip selected unless the
-creator limited them. Asking the clips to follow the voiceover ("follow my voiceover: river,
-kitchen, attic") is that same `include` per named clip. Only "start/end with X" is an `order`
-(with `position`), and only another sequence the creator explicitly asks for ("in this order:
-A, B, C") is an `order` without one.
-A photo beat shows as a picture-in-picture card over the footage. Never set `licensed_sfx` on this
-edit once this capability is available -- beats place sound at the exact moments the creator
-named instead. A bare "add fun sound effects" with no named spoken moment adds NO beats. Keep the
-edit's own voiceover `edit_format`.
+at the laptop", "'mutfak' dediğimde mutfağı göster") is never a beat and never an `order`:
+give each such clip one `clip_intents` entry with `op` "include" and `attribute` naming the clip
+as the creator described it. Keep every own clip selected unless the creator limited them. Asking
+the clips to follow the voiceover ("follow my voiceover: river, kitchen, attic") is that same
+`include` per named clip. Only "start/end with X" is an `order` (with `position`), and only
+another sequence the creator explicitly asks for ("in this order: A, B, C") is an `order`.
+For a normal photo request, make its reaction beat `display_mode` "fullscreen" so it fills
+the frame; use "pip" when the creator explicitly says small, corner, overlay, or
+picture-in-picture. Stickers keep their normal small "pip" placement unless fullscreen is
+explicitly requested. Never add a title, label, or other decorative text for this. When they ask
+for a photo then one of their own clips ("when I say river, show the river photo first then the
+river clip"), make the photo beat fullscreen with `occurrence` "first" and
+`following_clip_id` equal to that selected original video's exact media id; also add the clip's
+`include` intent, with the same actual quoted spoken cue in its attribute so the aligner selects
+the right clip moment. `following_clip_id` is only for this photo-then-own-video relationship:
+never use a Visuals video, an unselected video, or it for Deniz/end cues. A photo beat normally
+fills the frame, then the edit continues with the voiceover footage. "End with Deniz" remains an
+`order` intent with `position` "last", never a following clip. Titles are separate from the
+voiceover subtitles: never turn a spoken cue into a title or add decorative text.
+Never set `licensed_sfx` on this edit once this capability is available -- beats place sound at
+the exact moments the creator named instead. A bare "add fun sound effects" with no named
+spoken moment adds NO beats. Keep the edit's own voiceover `edit_format`.
 """.strip("\n")
 )
 

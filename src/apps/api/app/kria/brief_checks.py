@@ -109,6 +109,11 @@ class BeatFact:
     # Seconds into the render where the pop-in shows (a rendered variant's receipt);
     # None for a draft, which has not been laid out yet.
     at_s: float | None = None
+    display_mode: str = "pip"
+    following_clip_id: str | None = None
+    # None is an approved request, not execution evidence. Only the compiled
+    # sequence receipt can prove that the original video actually follows.
+    sequence_realized: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -492,7 +497,14 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
     return {
         "reaction_beats_available": available,
         "reaction_beats": tuple(
-            BeatFact(trigger=b.trigger, visual_id=b.visual_id, sound=b.sound) for b in kept
+            BeatFact(
+                trigger=b.trigger,
+                visual_id=b.visual_id,
+                sound=b.sound,
+                display_mode=b.display_mode,
+                following_clip_id=b.following_clip_id,
+            )
+            for b in kept
         ),
         "dropped_beat_triggers": tuple(
             dict.fromkeys(
@@ -1393,6 +1405,16 @@ def _phone_receipt_facts(receipt: object, *, timed: bool) -> dict[str, Any]:
                 visual_id=str(entry.get("visual_label") or "") or None,
                 sound=str(entry.get("sound_label") or "") or None,
                 at_s=at_s,
+                display_mode=str(entry.get("display_mode") or "pip"),
+                following_clip_id=entry.get("following_clip_id"),
+                sequence_realized=(
+                    entry.get("sequence_realized") is True
+                    and entry.get("display_mode") == "fullscreen"
+                    and _finite_number(entry.get("following_at_s")) is not None
+                    and entry.get("following_at_s") == entry.get("end_s")
+                    if entry.get("following_clip_id")
+                    else None
+                ),
             )
         )
     unheard: list[str] = []
@@ -3496,6 +3518,13 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
             problems.extend(_capped_beat_problems(req, facts, names))
             text = _req_text(req)
             if placements:
+                if any(b.following_clip_id and b.sequence_realized is False for b in placements):
+                    problems.append(
+                        say(
+                            en="The full-screen photo followed by its video has not been verified",
+                            tr="Tam ekran fotoğrafın ardından videonun geldiği doğrulanmadı",
+                        )
+                    )
                 if _SOUND_RE.search(text) and not any(b.sound for b in placements):
                     problems.append(
                         say(
