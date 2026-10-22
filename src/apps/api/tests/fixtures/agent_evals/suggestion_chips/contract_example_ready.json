@@ -27,7 +27,7 @@
         "moment": null,
         "text_bar_index": null
       },
-      "why": null,
+      "why": "There is no title yet",
       "label_source": "template",
       "requires_protocol": null
     },
@@ -45,7 +45,7 @@
         "moment": null,
         "text_bar_index": null
       },
-      "why": null,
+      "why": "3 clips have no speech",
       "label_source": "template",
       "requires_protocol": null
     },
@@ -63,7 +63,7 @@
         "moment": null,
         "text_bar_index": null
       },
-      "why": null,
+      "why": "3 clips joined by hard cuts",
       "label_source": "template",
       "requires_protocol": null
     }

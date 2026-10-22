@@ -26,8 +26,10 @@ G10 (property/fuzz over the wording agent's output) is ``test_chip_suggester_eva
 
 from __future__ import annotations
 
+import copy
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -834,3 +836,58 @@ def test_rubric_file_covers_the_deterministic_stoplist():
     ):
         assert dimension in rubric
     assert "Pass threshold: avg >= 4.0" in rubric
+
+
+@pytest.mark.parametrize(
+    ("case_name", "all_speech", "expected"),
+    [
+        ("fp_speech_and_broll", False, "Speech in 1 of 3 clips"),
+        ("fp_speech_and_broll", True, "Speech in every clip"),
+        ("fp_turkish_speech", False, "1/3 klipte konuşma var"),
+        ("fp_turkish_speech", True, "Her klipte konuşma var"),
+    ],
+)
+def test_background_speech_evidence_does_not_identify_the_creator(
+    case_name: str, all_speech: bool, expected: str
+) -> None:
+    """KRI-769: speech presence supplies no evidence of the speaker's identity.
+
+    Replay the real suggestion builder with third-party speech, no on-camera
+    creator and no wording-agent subtitle. Counts may be shown; "you speak"
+    must not be inferred from those counts. Expectations are static and do not
+    call the engine's evidence builder or its duplicated hygiene oracle.
+    """
+    case = CASES_BY_NAME[case_name]
+    context = copy.deepcopy(case.context_dict)
+    for index, clip in enumerate(context["clips"]):
+        clip["subject"] = "a waiter explains the menu to diners"
+        clip["to_camera"] = False
+        clip["has_speech"] = all_speech or index == 0
+    output = h.run_case(replace(case, raw={**case.raw, "context": context}))
+    captions = next(chip for chip in output.chips if chip.kind == "captions")
+    assert captions.why == expected
+
+
+@pytest.mark.parametrize(
+    ("case_name", "language", "kind", "expected"),
+    [
+        ("fp_cloud_all_on", "en", "default_edit", "Kria picks the cuts and pace"),
+        ("fp_cloud_all_on", "tr", "default_edit", "Kesimi ve temposunu Kria seçer"),
+        ("fp_cloud_all_on", "en", "transition", "3 clips ready to combine"),
+        ("fp_cloud_all_on", "tr", "transition", "Birleştirilecek 3 klip var"),
+        ("rd_music_with_voice_to_camera", "en", "music", "Speech clips and a music track"),
+        ("rd_turkish_music_voice", "tr", "music", "Konuşmalı klipler ve müzik var"),
+    ],
+)
+def test_evidence_stays_with_available_state(
+    case_name: str, language: str, kind: str, expected: str
+) -> None:
+    """No output exists at first prompt; speech flags do not prove audio masking.
+
+    A default render can choose pacing without promising a music addition. These
+    static product expectations must not be derived from the evidence formatter.
+    """
+    case = CASES_BY_NAME[case_name]
+    context = {**case.context_dict, "language": language}
+    output = h.run_case(replace(case, raw={**case.raw, "context": context}))
+    assert next(chip for chip in output.chips if chip.kind == kind).why == expected
