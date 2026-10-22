@@ -399,13 +399,46 @@ def test_a_client_written_answer_with_no_binding_answer_is_not_honored(monkeypat
     """The dispatched strategy claims an answer approval never froze: still refused."""
 
     item = _item()
-    forged = {**T1_STRATEGY, "choice_answers": [_answer("attachment_order")]}
+    # KRI-789: a single clip has no unresolved order. Exercise this trust-boundary
+    # refusal with two distinct selected montage clips (Talking supports one clip),
+    # preserving every refusal assertion.
+    second = copy.deepcopy(item.clip_assignments[0])
+    second_id = f"{MEDIA_ID}-second"
+    second.update(
+        media_id=second_id,
+        manifest_identity=second_id,
+        gcs_path="users/u/plan/i/analysis-proxy-second.mp4",
+    )
+    second["upload_contract"]["proxy"]["original"]["sha256"] = "d" * 64
+    item.edit_format = "montage"
+    item.clip_assignments.append(second)
+    item.clip_gcs_paths.append(second["gcs_path"])
+    forged = {
+        **T1_STRATEGY,
+        "edit_format": "montage",
+        "selected_media_ids": [MEDIA_ID, second_id],
+        "choice_answers": [_answer("attachment_order")],
+    }
     job = _dispatch(monkeypatch, item, forged, _approve(item, None))
 
     assert "choice_answers" not in job.all_candidates["creator_strategy"]
     assert read_render_contract(job.assembly_plan).unresolved == (REFUSAL,)
     with pytest.raises(CreatorRenderContractError, match="ordering rule"):
         _phone_gate(job)
+
+
+
+def test_a_single_clip_discards_a_forged_answer_without_an_order_blocker(monkeypatch) -> None:
+    """KRI-788 still strips the forgery; KRI-789 does not invent a one-clip order."""
+    item = _item()
+    forged = {**T1_STRATEGY, "choice_answers": [_answer("attachment_order")]}
+    job = _dispatch(monkeypatch, item, forged, _approve(item, None))
+
+    assert "choice_answers" not in job.all_candidates["creator_strategy"]
+    contract = read_render_contract(job.assembly_plan)
+    assert contract.unresolved == ()
+    assert contract.order_required is False
+    _phone_gate(job)
 
 
 def test_the_binding_answer_wins_over_a_different_strategy_answer(monkeypatch) -> None:
