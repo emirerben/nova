@@ -7257,6 +7257,25 @@ def reply_from_receipts(
             text += "\n" + " ".join(notices)
     else:
         text = "\n".join(part for part in ((summary or "").strip(), body) if part)
+    if len(text) > MAX_REPLY_CHARS and judged and not (outcomes or guesses or unchecked):
+        # Keep every requested action/status visible when its labels fit. A long
+        # explanation must not consume the final action's display budget. Stored
+        # receipt reasons remain complete; ellipses mark shortened display only.
+        labels = [f"{_label(r.status)}: {by_id[r.requirement_id].text()}" for r in judged]
+        prefix, suffix = text.rsplit(body, 1)
+        label_body = "\n".join(f"- {line}" for line in labels)
+        available = MAX_REPLY_CHARS - len(prefix + label_body + suffix + "\n…")
+        if available >= 0:
+            reason_limit = max(0, available // len(judged) - 3)
+            compact = []
+            for label, receipt in zip(labels, judged, strict=True):
+                reason = _loc(receipt.reason).rstrip(".") if receipt.reason else ""
+                if reason and reason_limit >= 2:
+                    if len(reason) > reason_limit:
+                        reason = reason[: reason_limit - 1].rstrip() + "…"
+                    label += f" ({reason})"
+                compact.append(f"- {label}")
+            text = prefix + "\n".join(compact) + suffix + "\n…"
     if len(text) > MAX_REPLY_CHARS:
         text = text[: MAX_REPLY_CHARS - 1].rstrip() + "…"
     return text
