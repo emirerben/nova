@@ -410,7 +410,8 @@ filler sounds or retakes from the speech => {"speech_cleanup": true}, keep them 
 {"speech_cleanup": false}; cut out particular spoken words (a slip, a half question, a line, "the
 part where I say ...") => {"speech_cleanup": true, "cut_lines": ["with bread, no,"]}, one item per
 stretch in the creator's exact words, quoted or described, never translated (where the video
-starts or ends is the order requirement's "start"/"end", never a cut line); captions => {"captions": "on"}, {"captions": "off"} or {"captions":
+starts or ends is the order requirement's "start"/"end", never a cut line); captions =>
+{"captions": "on"}, {"captions": "off"} or {"captions":
 "word_by_word"} (karaoke, one word at a time), plus {"caption_language": "en"} (a two-letter
 code) when they name the captions' language ("Türkçe altyazı" => "tr"), plus {"spellings":
 ["Oblea de la Casa", "Merope"]} when they list words or names to spell a certain way in the
