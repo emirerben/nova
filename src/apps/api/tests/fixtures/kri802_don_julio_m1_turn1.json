@@ -1,0 +1,1128 @@
+{
+ "_source": "Prod thread F4083F1D-A56A-42DC-92C5-487B076FE9B4 (Don Julio M1, 2026-10-21), turn 260ac754: the first creator turn, which asked only the title wording at 19:24 although the red-cap clip picker (turn bce4a799, 19:26) was already knowable. `main_creator_input` is the recorded input of Main Creator run 05de835e (prompt 2026-10-19-v64; its redacted, empty `creator_direction` restored as \"\"). The model output is redacted in the trace, so `model_strategy` is rebuilt from what the turn shows: the server-rewritten title (Slack turned the flag into :flag-ar:, the model wrote the flag emoji, so the title is not the creator's typed words) and the clip asks. `clip_intent_rows` are the clip-intent planner rows of the next turn (its intent_stats: waiter first n=1, sauce caption n=2, red cap last n=0); the menus/cheers order row and the blurry-table exclusion (KRI-807) are left out. `resolver_matches` are those stats as resolver assignments (m00N = the Nth attached clip).",
+ "clip_subjects": {
+  "analysis-proxy-ios-7D28DB8F-1FE2-47CE-ADAF-6F3180D43B8A.mp4": "waiter carrying a tray",
+  "analysis-proxy-ios-58172AFF-3DAF-4272-949D-DD19B515C277.mp4": "waiter presenting sauces",
+  "analysis-proxy-ios-A13F5BC3-DFD1-4B04-A248-5212F73E247F.mp4": "group of men at a restaurant table",
+  "analysis-proxy-ios-628DBF54-A63F-4FD6-8A7A-809266D5D77B.mp4": "Diner at a restaurant table with food",
+  "analysis-proxy-ios-D0BD8AF7-0904-4AE2-B585-5BE68623369E.mp4": "waiter at restaurant",
+  "analysis-proxy-ios-B71B8367-5C8F-4B93-90B4-73F77B695CE8.mp4": "restaurant table setting",
+  "analysis-proxy-ios-2306BCCD-ED46-4925-B766-1229D6A961EA.mp4": "waiter serving condiments",
+  "analysis-proxy-ios-38A1FAF8-FA26-4257-B8CA-4D488D26A94C.mp4": "two men sitting at a table",
+  "analysis-proxy-ios-C42C7783-1F0B-40FD-A266-9CC911F44B35.mp4": "man toasting at restaurant"
+ },
+ "clip_files": {
+  "analysis-proxy-ios-7D28DB8F-1FE2-47CE-ADAF-6F3180D43B8A.mp4": "M1_09",
+  "analysis-proxy-ios-58172AFF-3DAF-4272-949D-DD19B515C277.mp4": "M1_08",
+  "analysis-proxy-ios-A13F5BC3-DFD1-4B04-A248-5212F73E247F.mp4": "M1_07",
+  "analysis-proxy-ios-628DBF54-A63F-4FD6-8A7A-809266D5D77B.mp4": "M1_06",
+  "analysis-proxy-ios-D0BD8AF7-0904-4AE2-B585-5BE68623369E.mp4": "M1_05",
+  "analysis-proxy-ios-B71B8367-5C8F-4B93-90B4-73F77B695CE8.mp4": "M1_04",
+  "analysis-proxy-ios-2306BCCD-ED46-4925-B766-1229D6A961EA.mp4": "M1_03",
+  "analysis-proxy-ios-38A1FAF8-FA26-4257-B8CA-4D488D26A94C.mp4": "M1_02",
+  "analysis-proxy-ios-C42C7783-1F0B-40FD-A266-9CC911F44B35.mp4": "M1_01"
+ },
+ "main_creator_input": {
+  "conversation": [
+   {
+    "role": "assistant",
+    "content": "Ne yapıyoruz? Bir format seç, birlikte şekillendirelim."
+   },
+   {
+    "role": "user",
+    "content": "Montage of our lunch at Don Julio in Buenos Aires. Open on the waiter smiling at the camera and keep his name exchange audible (\"What's your name?\" \"Lucas.\"). Then the sauce bowls, the big wooden menus, and the cheers under the Don Julio sign; keep that \"Cheers!\" audible too. End on my friend in the red cap smiling at the camera. Skip the blurry shot of the empty table. Put \"chimichurri + salsa criolla\" on the sauce bowls. Title: \"Lunch at Don Julio :flag-ar:\". Suggest an upbeat tango song for it. Make it 15 seconds."
+   }
+  ],
+  "item_context": "{'idea': 'Untitled video', 'theme': '', 'creator_notes': '', 'filming_guide': [], 'current_edit_format': 'montage', 'current_audio_mode': 'kria', 'has_recorded_voiceover': False}",
+  "user_message": "Montage of our lunch at Don Julio in Buenos Aires. Open on the waiter smiling at the camera and keep his name exchange audible (\"What's your name?\" \"Lucas.\"). Then the sauce bowls, the big wooden menus, and the cheers under the Don Julio sign; keep that \"Cheers!\" audible too. End on my friend in the red cap smiling at the camera. Skip the blurry shot of the empty table. Put \"chimichurri + salsa criolla\" on the sauce bowls. Title: \"Lunch at Don Julio :flag-ar:\". Suggest an upbeat tango song for it. Make it 15 seconds.",
+  "brief_enabled": true,
+  "media_context": [
+   {
+    "kind": "video",
+    "facts": [
+     {
+      "kind": "capture_time",
+      "value": "2026-10-21T19:03:06Z",
+      "provenance": "exif"
+     }
+    ],
+    "filename": "M1_09_footage",
+    "media_id": "analysis-proxy-ios-7D28DB8F-1FE2-47CE-ADAF-6F3180D43B8A.mp4",
+    "duration_s": 2.5,
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "people": {
+      "note": "a waiter and three diners",
+      "count": 4,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "segments": [
+       {
+        "e": 0.8,
+        "s": 0.0,
+        "text": "Спасибо."
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Gracias."
+     },
+     "setting": "outdoor restaurant patio during the day",
+     "subject": "waiter carrying a tray",
+     "summary": "A waiter at an outdoor restaurant carries a rectangular tray past a dining table.",
+     "activity": "waiter carrying a tray",
+     "audio_type": "dialogue",
+     "content_type": "broll",
+     "notable_moments": [
+      {
+       "end_s": 1.5,
+       "start_s": 0.0,
+       "description": "waiter holding tray"
+      },
+      {
+       "end_s": 3.0,
+       "start_s": 2.0,
+       "description": "waiter lowers tray"
+      }
+     ]
+    }
+   },
+   {
+    "kind": "video",
+    "facts": [
+     {
+      "kind": "capture_time",
+      "value": "2026-10-21T19:03:03Z",
+      "provenance": "exif"
+     }
+    ],
+    "filename": "M1_08_footage",
+    "media_id": "analysis-proxy-ios-58172AFF-3DAF-4272-949D-DD19B515C277.mp4",
+    "duration_s": 2.7,
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "people": {
+      "note": "waiter and two restaurant patrons",
+      "count": 3,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "segments": [
+       {
+        "e": 2.1,
+        "s": 0.0,
+        "text": "Acá tenemos salsas tradicionales argentinas."
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Acá tenemos salsas tradicionales argentinas."
+     },
+     "setting": "outdoor restaurant dining area",
+     "subject": "waiter presenting sauces",
+     "summary": "A waiter at a restaurant presents three traditional Argentine sauces to a diner. The sauces are in small wooden bowls on a white tablecloth, alongside bread rolls.",
+     "activity": "waiter presenting condiments to a customer",
+     "audio_type": "dialogue",
+     "content_type": "broll",
+     "notable_moments": [
+      {
+       "end_s": 1.7,
+       "start_s": 0.0,
+       "description": "waiter presenting sauces"
+      }
+     ]
+    }
+   },
+   {
+    "kind": "video",
+    "facts": [
+     {
+      "kind": "capture_time",
+      "value": "2026-10-21T19:03:15Z",
+      "provenance": "exif"
+     }
+    ],
+    "filename": "M1_07_footage",
+    "media_id": "analysis-proxy-ios-A13F5BC3-DFD1-4B04-A248-5212F73E247F.mp4",
+    "duration_s": 1.8,
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "people": {
+      "note": "three men at a table",
+      "count": 3,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "segments": [
+       {
+        "e": 0.8,
+        "s": 0.0,
+        "text": "isteyebilirim."
+       },
+       {
+        "e": 1.2,
+        "s": 1.0,
+        "text": "Evet."
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Kim diyebilirim, evet."
+     },
+     "setting": "outdoor restaurant",
+     "subject": "group of men at a restaurant table",
+     "summary": "A group of men are seated around a table at what appears to be an outdoor restaurant, engaged in conversation. One man speaks and gestures while holding a phone, and another man also speaks and gestur",
+     "activity": "dining and conversing",
+     "audio_type": "dialogue",
+     "content_type": "broll",
+     "notable_moments": [
+      {
+       "end_s": 3.7,
+       "start_s": 2.6,
+       "description": "man in black jacket gesturing while speaking"
+      }
+     ]
+    }
+   },
+   {
+    "kind": "video",
+    "facts": [
+     {
+      "kind": "capture_time",
+      "value": "2026-10-21T19:03:10Z",
+      "provenance": "exif"
+     }
+    ],
+    "filename": "M1_06_footage",
+    "media_id": "analysis-proxy-ios-628DBF54-A63F-4FD6-8A7A-809266D5D77B.mp4",
+    "duration_s": 2.0,
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "people": {
+      "note": "A person in a patterned shirt",
+      "count": 1,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "segments": [
+       {
+        "e": 1.4,
+        "s": 0.0,
+        "text": "Biliyorum ya."
+       },
+       {
+        "e": 2.0,
+        "s": 1.4,
+        "text": "Yandık ya."
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Video, yeah. Video. Video. Video. Video video. Video video. Video. Video. Video."
+     },
+     "setting": "Restaurant interior during the day",
+     "subject": "Diner at a restaurant table with food",
+     "summary": "A person is seated at a restaurant table, holding a menu, with various dishes and drinks spread out. The table is set with a white tablecloth, bread, dips, and a glass of water.",
+     "activity": "Dining at a restaurant",
+     "audio_type": "dialogue",
+     "content_type": "broll",
+     "notable_moments": [
+      {
+       "end_s": 3.0,
+       "start_s": 0.0,
+       "description": "Diner holding a menu at table"
+      }
+     ]
+    }
+   },
+   {
+    "kind": "video",
+    "facts": [
+     {
+      "kind": "capture_time",
+      "value": "2026-10-21T19:03:01Z",
+      "provenance": "exif"
+     }
+    ],
+    "filename": "M1_05_footage",
+    "media_id": "analysis-proxy-ios-D0BD8AF7-0904-4AE2-B585-5BE68623369E.mp4",
+    "duration_s": 4.0,
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "people": {
+      "note": "a waiter and a customer, with another customer in the background",
+      "count": 3,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "segments": [
+       {
+        "e": 0.8,
+        "s": 0.0,
+        "text": "Ne isminiz?"
+       },
+       {
+        "e": 2.5,
+        "s": 1.9,
+        "text": "Lucas"
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Español, yeah. What's your name? Hey Lucas. Lucas. Yeah."
+     },
+     "setting": "outdoor restaurant patio",
+     "subject": "waiter at restaurant",
+     "summary": "A person asks a waiter, Lucas, if he speaks Spanish and then asks his name.",
+     "activity": "speaking with a waiter",
+     "audio_type": "dialogue",
+     "content_type": "broll",
+     "notable_moments": [
+      {
+       "end_s": 1.43,
+       "start_s": 0.0,
+       "description": "customer asks about language"
+      },
+      {
+       "end_s": 4.16,
+       "start_s": 3.09,
+       "description": "waiter introduces self"
+      }
+     ]
+    }
+   },
+   {
+    "kind": "video",
+    "facts": [
+     {
+      "kind": "capture_time",
+      "value": "2026-10-21T19:03:12Z",
+      "provenance": "exif"
+     }
+    ],
+    "filename": "M1_04_footage",
+    "media_id": "analysis-proxy-ios-B71B8367-5C8F-4B93-90B4-73F77B695CE8.mp4",
+    "duration_s": 2.6,
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "people": {
+      "note": "people's hands and torsos are visible around the table",
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "segments": [
+       {
+        "e": 0.2,
+        "s": 0.0,
+        "text": "Ne?"
+       },
+       {
+        "e": 1.0,
+        "s": 0.4,
+        "text": "Hiçbir şey bilmiyorum."
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Ne, hiçbir şey bilmedi. Bütün şeyler, var mı?"
+     },
+     "setting": "restaurant interior",
+     "subject": "restaurant table setting",
+     "summary": "The camera pans across a restaurant table set with plates, cutlery, and glasses of water, showing people's hands and torsos but no faces.",
+     "activity": "dining at a table",
+     "audio_type": "dialogue",
+     "content_type": "broll",
+     "notable_moments": [
+      {
+       "end_s": 4.5,
+       "start_s": 3.0,
+       "description": "overhead pan of table"
+      }
+     ]
+    }
+   },
+   {
+    "kind": "video",
+    "facts": [
+     {
+      "kind": "capture_time",
+      "value": "2026-10-21T19:03:05Z",
+      "provenance": "exif"
+     }
+    ],
+    "filename": "M1_03_footage",
+    "media_id": "analysis-proxy-ios-2306BCCD-ED46-4925-B766-1229D6A961EA.mp4",
+    "duration_s": 3.5,
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "people": {
+      "note": "a male waiter and a partially visible customer",
+      "count": 2,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "segments": [
+       {
+        "e": 2.7,
+        "s": 0.0,
+        "text": "salsa criolla, chivichurri con salma y limón."
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Salsa criolla, chimichurri con sal marina."
+     },
+     "setting": "restaurant outdoor patio",
+     "subject": "waiter serving condiments",
+     "summary": "A waiter at a restaurant presents small bowls of salsa criolla, chimichurri, and sea salt to a customer at a table.",
+     "activity": "waiter presenting condiments",
+     "audio_type": "dialogue",
+     "content_type": "broll",
+     "notable_moments": [
+      {
+       "end_s": 1.4,
+       "start_s": 0.0,
+       "description": "waiter gesturing at condiments"
+      }
+     ]
+    }
+   },
+   {
+    "kind": "video",
+    "facts": [
+     {
+      "kind": "capture_time",
+      "value": "2026-10-21T19:03:16Z",
+      "provenance": "exif"
+     }
+    ],
+    "filename": "M1_02_footage",
+    "media_id": "analysis-proxy-ios-38A1FAF8-FA26-4257-B8CA-4D488D26A94C.mp4",
+    "duration_s": 1.133333,
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "people": {
+      "note": "two young men in casual clothes",
+      "count": 2,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Right. Mhm. So I'm gonna ask you right now, you can leave. I'm going to start asking questions. You can leave. Okay. Mhm. Mhm. Yes."
+     },
+     "setting": "outdoor cafe patio",
+     "subject": "two men sitting at a table",
+     "summary": "Two men are sitting at an outdoor restaurant. One man speaks, telling another that he will start asking questions and the other can leave if they wish, while the second man nods and smiles.",
+     "activity": "conversation at a restaurant table",
+     "audio_type": "dialogue",
+     "content_type": "broll"
+    }
+   },
+   {
+    "kind": "video",
+    "facts": [
+     {
+      "kind": "capture_time",
+      "value": "2026-10-21T19:03:09Z",
+      "provenance": "exif"
+     }
+    ],
+    "filename": "M1_01_footage",
+    "media_id": "analysis-proxy-ios-C42C7783-1F0B-40FD-A266-9CC911F44B35.mp4",
+    "duration_s": 3.4,
+    "creator_note": null,
+    "analysis_only_not_copy": {
+     "people": {
+      "note": "a man dining and a waiter",
+      "count": 2,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "segments": [
+       {
+        "e": 0.5,
+        "s": 0.0,
+        "text": "şu an."
+       },
+       {
+        "e": 1.6,
+        "s": 0.9,
+        "text": "Biliyor mu?"
+       },
+       {
+        "e": 1.9,
+        "s": 1.7,
+        "text": "Cheers."
+       },
+       {
+        "e": 2.7,
+        "s": 1.9,
+        "text": "Biliyor mu?"
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Cheers. Cheers."
+     },
+     "setting": "outdoor restaurant patio",
+     "subject": "man toasting at restaurant",
+     "summary": "A man is seated at an outdoor restaurant table, smiling and raising a glass of water as if toasting, while a waiter stands behind him.",
+     "activity": "toasting with a glass of water at a restaurant",
+     "audio_type": "dialogue",
+     "content_type": "broll"
+    }
+   }
+  ],
+  "reply_language": "en",
+  "creator_context": "{'summary': 'A creator making clear, engaging short-form videos.', 'tone': 'natural and direct', 'audience': 'people who enjoy relatable short videos', 'content_pillars': ['real-life moments'], 'style': {}}",
+  "creator_request": "",
+  "creator_direction": "",
+  "capability_manifest": {
+   "media": [
+    {
+     "kind": "video",
+     "label": null,
+     "media_id": "analysis-proxy-ios-7D28DB8F-1FE2-47CE-ADAF-6F3180D43B8A.mp4",
+     "duration_s": 2.5
+    },
+    {
+     "kind": "video",
+     "label": null,
+     "media_id": "analysis-proxy-ios-58172AFF-3DAF-4272-949D-DD19B515C277.mp4",
+     "duration_s": 2.7
+    },
+    {
+     "kind": "video",
+     "label": null,
+     "media_id": "analysis-proxy-ios-A13F5BC3-DFD1-4B04-A248-5212F73E247F.mp4",
+     "duration_s": 1.8
+    },
+    {
+     "kind": "video",
+     "label": null,
+     "media_id": "analysis-proxy-ios-628DBF54-A63F-4FD6-8A7A-809266D5D77B.mp4",
+     "duration_s": 2.0
+    },
+    {
+     "kind": "video",
+     "label": null,
+     "media_id": "analysis-proxy-ios-D0BD8AF7-0904-4AE2-B585-5BE68623369E.mp4",
+     "duration_s": 4.0
+    },
+    {
+     "kind": "video",
+     "label": null,
+     "media_id": "analysis-proxy-ios-B71B8367-5C8F-4B93-90B4-73F77B695CE8.mp4",
+     "duration_s": 2.6
+    },
+    {
+     "kind": "video",
+     "label": null,
+     "media_id": "analysis-proxy-ios-2306BCCD-ED46-4925-B766-1229D6A961EA.mp4",
+     "duration_s": 3.5
+    },
+    {
+     "kind": "video",
+     "label": null,
+     "media_id": "analysis-proxy-ios-38A1FAF8-FA26-4257-B8CA-4D488D26A94C.mp4",
+     "duration_s": 1.133333
+    },
+    {
+     "kind": "video",
+     "label": null,
+     "media_id": "analysis-proxy-ios-C42C7783-1F0B-40FD-A266-9CC911F44B35.mp4",
+     "duration_s": 3.4
+    }
+   ],
+   "limits": {
+    "max_commands": 4,
+    "max_media_refs": 50,
+    "max_catalog_refs": 50,
+    "max_output_duration_s": 120.0
+   },
+   "catalog": [
+    {
+     "kind": "music",
+     "label": "PALMITO - La Cuarta Estrella [Versión Hinchada] (Vídeo Oficial) — PALMITO",
+     "catalog_id": "music-efa00333-4f19-4531-8366-681adf6736be"
+    },
+    {
+     "kind": "music",
+     "label": "Maquina Do Tempo",
+     "catalog_id": "music-cfa8b844-0c8d-420a-bc8e-d23e44442af5"
+    },
+    {
+     "kind": "music",
+     "label": "Coldplay - Clocks (Official Video) — Coldplay",
+     "catalog_id": "music-f1a1774a-2c94-416e-809d-fe10687f8801"
+    },
+    {
+     "kind": "music",
+     "label": "Sidewalks and Skeletons - GOTH — Sidewalks and Skeletons",
+     "catalog_id": "music-e54b041d-2d12-4a07-92a1-4712848a6504"
+    },
+    {
+     "kind": "music",
+     "label": "Malcolm Todd - I Saw Your Face (Official Video) — Malcolm Todd",
+     "catalog_id": "music-e0e0fa00-b72f-4b7e-b29c-b6406b63a621"
+    },
+    {
+     "kind": "music",
+     "label": "Yo Voy (feat. Daddy Yankee) — Zion & Lennox",
+     "catalog_id": "music-dfd8dc9e-ca7d-4ac6-8580-cf99f4fb565e"
+    },
+    {
+     "kind": "music",
+     "label": "SOL VIBRA (Slowed) — DJ Zarek - Topic",
+     "catalog_id": "music-de2d7404-2663-49a8-9ac7-e442fbd7c984"
+    },
+    {
+     "kind": "music",
+     "label": "B Dok - All By Myself (Official Audio) — Dok",
+     "catalog_id": "music-dcbf964f-7570-49c4-9c16-f1f5a73651c8"
+    },
+    {
+     "kind": "music",
+     "label": "Beat It — Michael Jackson",
+     "catalog_id": "music-d5f8a12b-a8fc-4866-9834-06232fed862a"
+    },
+    {
+     "kind": "music",
+     "label": "VOLKSWAGEN FUNK (super slowed) — BeatOrbitX",
+     "catalog_id": "music-d4c03fb3-3f20-4621-aa21-300df1d9f04c"
+    },
+    {
+     "kind": "music",
+     "label": "Favorite Color - Michael Sanzone — Michael Sanzone",
+     "catalog_id": "music-cf87efb8-5f3b-4e0f-9494-48570713b855"
+    },
+    {
+     "kind": "music",
+     "label": "Down By The River — Milky Chance",
+     "catalog_id": "music-cb217fc4-0c0e-48bc-be8d-6bdc79a8a873"
+    },
+    {
+     "kind": "music",
+     "label": "Bee Gees - Stayin' Alive (Official Music Video) — beegees",
+     "catalog_id": "music-b92bc20a-cd80-4af6-934d-dc819d8f48c2"
+    },
+    {
+     "kind": "music",
+     "label": "50 Cent - Baby By Me (Official Music Video) ft. Ne-Yo — 50 Cent",
+     "catalog_id": "music-c1fb7bf9-5e89-434b-8357-89607d8da597"
+    },
+    {
+     "kind": "music",
+     "label": "Tame Impala - Let It Happen (Official Video) — Tame Impala",
+     "catalog_id": "music-be0fc3b2-87df-455c-86ff-f5a296423d98"
+    },
+    {
+     "kind": "music",
+     "label": "HAUSER - Sway — HAUSER",
+     "catalog_id": "music-b37e1b94-14b2-4a6f-813f-cd1f51e041a7"
+    },
+    {
+     "kind": "music",
+     "label": "Travis Scott - HIGHEST IN THE ROOM (Official Music Video) — Travis Scott",
+     "catalog_id": "music-b3521339-2759-4163-be66-d862f7b88af2"
+    },
+    {
+     "kind": "music",
+     "label": "Chosen Jigg - Holy Thuggin (Official Music Video) — Chosen Jigg",
+     "catalog_id": "music-abb287a1-5106-4b0a-95de-e3b92dbc480c"
+    },
+    {
+     "kind": "music",
+     "label": "Hawái (Remix - Official Video) — Maluma, The Weeknd",
+     "catalog_id": "music-a6d262df-0190-422c-9277-a5a39f2034ba"
+    },
+    {
+     "kind": "music",
+     "label": "The Rain That Never Came — Apache Sun - Topic",
+     "catalog_id": "music-9dbde32c-125b-4d8a-8a25-9ecbc31e196f"
+    },
+    {
+     "kind": "music",
+     "label": "Igloo — Karen O",
+     "catalog_id": "music-9ca2598e-ddbc-4579-9ed9-9c52d07cfc6f"
+    },
+    {
+     "kind": "music",
+     "label": "BAD BUNNY - BAILE INoLVIDABLE (Video Oficial) | DeBÍ TiRAR MáS FOToS — Bad Bunny",
+     "catalog_id": "music-9bfb9781-7e3f-42f6-985c-c434e9cd58b4"
+    },
+    {
+     "kind": "music",
+     "label": "FloyyMenor, Cris MJ - Gata Only — FloyyMenor",
+     "catalog_id": "music-9b0882d6-7215-47cb-adf8-52ef7f9997f8"
+    },
+    {
+     "kind": "music",
+     "label": "up and down — Peete Baker - Topic",
+     "catalog_id": "music-901bddba-741e-4733-a212-eb60d8aac762"
+    },
+    {
+     "kind": "music",
+     "label": "$werve - SUCCESS — swerve",
+     "catalog_id": "music-82313f41-cf4f-40d4-b8ac-4fc7b9953d76"
+    },
+    {
+     "kind": "music",
+     "label": "Beauty And A Beat (Official Music Video) ft. Nicki Minaj — Justin Bieber",
+     "catalog_id": "music-81fb93b2-6c7b-412b-8634-ef44103e4339"
+    },
+    {
+     "kind": "music",
+     "label": "MONTAGEM PEGADORA (Hyper Slowed) — Rubikdice",
+     "catalog_id": "music-80ee126e-054a-4ae4-91b6-893dfda7dd26"
+    },
+    {
+     "kind": "music",
+     "label": "Brazilian Soul (Live on KEXP) — SOFI TUKKER",
+     "catalog_id": "music-b8e5463c-9616-4f65-99e8-4e5d1c6fee52"
+    },
+    {
+     "kind": "music",
+     "label": "I Can't Save You (Interlude) — Metro Boomin",
+     "catalog_id": "music-7830bcab-4cbf-4644-8877-355ee62ef424"
+    },
+    {
+     "kind": "music",
+     "label": "La Rvfleuze - Argent Sale | A COLORS SHOW — COLORS and La Rvfleuze",
+     "catalog_id": "music-740774e0-d5aa-4d52-abdd-64d28647a2b0"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Wrong buzzer",
+     "catalog_id": "76516ffbeb9d45a9b00c4102f4e5ea7c"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Correct ding",
+     "catalog_id": "f8524cb1d3df4cb08628282692d82769"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Drum roll",
+     "catalog_id": "11366c7ecd6648e7a4b9639e3fb29c00"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Whoosh fast",
+     "catalog_id": "52be96878b6645c283ee154cbc554343"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Punch hit",
+     "catalog_id": "58304fa37a5443ee91323d189dee9a1d"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Boing",
+     "catalog_id": "04e5c183896c4b7e8133fc635450f6e5"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Soft pop",
+     "catalog_id": "657a4e2f14d14d8296008757856c3fbe"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Referee whistle",
+     "catalog_id": "e7a496f10e4b4dfdb1c1f9972f1869ce"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Cash register",
+     "catalog_id": "7babcff3236a47e387cc1d4094798260"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Smart soft pop",
+     "catalog_id": "smart-visual-enter-soft-v1"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Error beep",
+     "catalog_id": "2b03b5eace844c7d9c0e1b96b72e87ee"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Double ding",
+     "catalog_id": "62ab70e2a7614d3bbf0e537c83568ea3"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Heartbeat",
+     "catalog_id": "aaf609c594fe4ca8868515384ba9dddc"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Whoosh slow",
+     "catalog_id": "6a2a3d87c7c840d2a1fcffffd7302073"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Bass boom",
+     "catalog_id": "d052bcd58e6e410c8ab419fed06cc73e"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Slide whistle up",
+     "catalog_id": "7c850e1c937b4608a424d89118808df9"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Accent pop",
+     "catalog_id": "4d509b13dd03457ab513b5ecc139da86"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Stadium roar",
+     "catalog_id": "461ad079fbf34d97bcd9f160a6e4a246"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Coins",
+     "catalog_id": "fe805e5d033043d89f3e01a44e82daf6"
+    },
+    {
+     "kind": "sound_effect",
+     "label": "Smart CTA click",
+     "catalog_id": "smart-cta-click-v1"
+    }
+   ],
+   "item_id": "7a4ce1d5-fe4c-44b4-9ddd-e64ee2e4c01c",
+   "narration": null,
+   "edit_format": "montage",
+   "capabilities": {
+    "review": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "execution": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "wide_looks": {
+     "reason": "wide_looks cannot render on the iPhone yet",
+     "available": false,
+     "reason_code": "unsupported_on_phone"
+    },
+    "transitions": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "guided_story": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "automatic_cut": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "caption_style": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "motion_scenes": {
+     "reason": "motion_scenes cannot render on the iPhone yet",
+     "available": false,
+     "reason_code": "unsupported_on_phone"
+    },
+    "native_render": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "sound_effects": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "visual_blocks": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "auto_iteration": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "media_overlays": {
+     "reason": "media_overlays cannot render on the iPhone yet",
+     "available": false,
+     "reason_code": "unsupported_on_phone"
+    },
+    "reaction_beats": {
+     "reason": "reaction beats are only available on an iPhone talking-to-camera edit",
+     "available": false,
+     "reason_code": "phone_talking_only"
+    },
+    "dispatch_render": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "set_item_intent": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "guided_voiceover": {
+     "reason": "guided voiceover requires a recorded voiceover",
+     "available": false,
+     "reason_code": "requires_voiceover"
+    },
+    "edit_format:slides": {
+     "reason": "slides is disabled or has no production renderer for this media snapshot",
+     "available": false,
+     "reason_code": "format_unavailable"
+    },
+    "guided_auto_design": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "main_creator_agent": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_source_audio": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_still_images": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "edit_format:montage": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "guided_conversation": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format:slides": {
+     "reason": "slides does not render on this iPhone yet",
+     "available": false,
+     "reason_code": "phone_format_unavailable"
+    },
+    "phone_visual_videos": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "edit_format:day_vlog": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "edit_format:narrated": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format:montage": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "select_ready_variant": {
+     "reason": "a ready variant is required before selection",
+     "available": false,
+     "reason_code": "no_ready_variant"
+    },
+    "draft_guided_proposal": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "edit_format:subtitled": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format:day_vlog": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format:narrated": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format:subtitled": {
+     "reason": "talking-to-camera rendering on this iPhone requires exactly one clip and no recorded voiceover",
+     "available": false,
+     "reason_code": "phone_format_unavailable"
+    },
+    "edit_format:single_hero": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "edit_format:talking_head": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format:single_hero": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format:talking_head": {
+     "reason": "talking_head does not render on this iPhone yet",
+     "available": false,
+     "reason_code": "phone_format_unavailable"
+    },
+    "edit_format:narrated_ready": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format:narrated_ready": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "edit_format:narrated_planned": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "guided_direction_confirmation": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format:narrated_planned": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format_pending_voiceover:narrated": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format_pending_voiceover:narrated_ready": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    },
+    "phone_format_pending_voiceover:narrated_planned": {
+     "reason": null,
+     "available": true,
+     "reason_code": null
+    }
+   },
+   "context_hash": "f2935f949e7e01a52b2623058f209af19a637b5dfff7a233e90cd4ae887d8cc5",
+   "current_edit": null,
+   "has_voiceover": false,
+   "manifest_hash": "230685c3d8870ebe3358c7d14c274548dce460459100c175579b39c1c63a64e6",
+   "render_program": "guided",
+   "schema_version": 1
+  },
+  "creative_copy_state": []
+ },
+ "model_summary": "A fast 15-second montage of your lunch at Don Julio, opening on Lucas and ending on your friend in the red cap.",
+ "model_strategy": {
+  "pacing": "fast",
+  "direction": "fast_montage",
+  "edit_format": "montage",
+  "rationale": "A fast 15-second lunch montage in the order the creator described.",
+  "clip_intents": [
+   {
+    "intent_id": "order_waiter_first",
+    "op": "order",
+    "position": "first",
+    "attribute": "the waiter smiling at the camera"
+   },
+   {
+    "intent_id": "caption_sauce_bowls",
+    "op": "caption",
+    "attribute": "the sauce bowls",
+    "creator_text": "chimichurri + salsa criolla"
+   },
+   {
+    "intent_id": "order_friend_last",
+    "op": "order",
+    "position": "last",
+    "attribute": "my friend in the red cap smiling at the camera"
+   }
+  ],
+  "caption_style": "auto",
+  "opening_title": "Lunch at Don Julio 🇦🇷",
+  "audio_strategy": "original_audio",
+  "montage_audio": {
+   "source_media_ids": [],
+   "preview_source_beds": false,
+   "preserve_source_audio": true
+  },
+  "story_structure": [
+   "Waiter says his name",
+   "Sauce bowls",
+   "Menus",
+   "Cheers",
+   "Red cap friend"
+  ],
+  "target_duration_s": 15.0,
+  "creator_duration_s": 15.0,
+  "target_duration_requested": true,
+  "selected_media_ids": [],
+  "video_reuse_policy": "once",
+  "optional_treatments": []
+ },
+ "clip_intent_rows": [
+  {
+   "intent_id": "order_waiter_first",
+   "op": "order",
+   "position": "first",
+   "attribute": "the waiter smiling at the camera",
+   "source_quote": "Open on the waiter smiling at the camera"
+  },
+  {
+   "intent_id": "caption_sauce_bowls",
+   "op": "caption",
+   "attribute": "the sauce bowls",
+   "creator_text": "chimichurri + salsa criolla",
+   "source_quote": "Put \"chimichurri + salsa criolla\" on the sauce bowls"
+  },
+  {
+   "intent_id": "order_friend_last",
+   "op": "order",
+   "position": "last",
+   "attribute": "my friend in the red cap smiling at the camera",
+   "source_quote": "End on my friend in the red cap smiling at the camera"
+  }
+ ],
+ "resolver_matches": {
+  "order_waiter_first": [
+   "m005"
+  ],
+  "caption_sauce_bowls": [
+   "m002",
+   "m007"
+  ],
+  "order_friend_last": []
+ },
+ "red_cap_media_id": "analysis-proxy-ios-38A1FAF8-FA26-4257-B8CA-4D488D26A94C.mp4"
+}
