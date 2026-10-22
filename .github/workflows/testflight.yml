@@ -42,6 +42,10 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin main --unshallow 2>/dev/null || git fetch origin main
+          if [ "$(git rev-parse HEAD)" != "$HEAD_SHA" ]; then
+            echo "::error::checkout does not match requested source"
+            exit 1
+          fi
           # Releasing the exact tested SHA is monotonic even when main has since
           # moved on.  Refuse a SHA that is no longer on main (force-push), and
           # skip one that an earlier upload already contains (out-of-order or
@@ -50,29 +54,16 @@ jobs:
             echo "::error::stale head_sha $HEAD_SHA is not an ancestor of origin/main"
             exit 1
           fi
-          # Compare against the last commit that actually uploaded, so an iOS change in
-          # a commit whose own iOS run was cancelled or red still ships with the next
-          # green commit.  Falls back to the parent commit when none is found.
-          base=""
-          superseded=false
-          for run_id in $(gh run list --workflow TestFlight --branch main --status success --limit 30 --json databaseId,headSha --jq '.[] | "\(.databaseId):\(.headSha)"'); do
-            id="${run_id%%:*}"; sha="${run_id##*:}"
-            uploaded="$(gh run view "$id" --json jobs --jq '[.jobs[].steps[] | select(.name == "Upload and distribute to external TestFlight" and .conclusion == "success")] | length')"
-            if [ "$uploaded" != "0" ] && git cat-file -e "$sha^{commit}" 2>/dev/null; then
-              if git merge-base --is-ancestor "$HEAD_SHA" "$sha"; then
-                superseded=true; break
-              elif git merge-base --is-ancestor "$sha" "$HEAD_SHA"; then
-                base="$sha"; break
-              fi
-            fi
-          done
+          # Resolve actual checkout + transfer evidence, including legacy runs.
+          # Unknown history blocks release; workflow headSha is not binary provenance.
+          provenance="$(python3 scripts/ios/upload_provenance.py)"
+          read -r base superseded <<< "$provenance"
           if [ "$superseded" = "true" ]; then
             echo "eligible=false" >> "$GITHUB_OUTPUT"
             echo "requires_api_deploy=false" >> "$GITHUB_OUTPUT"
             echo "Skipping: a newer or identical commit was already uploaded."
             exit 0
           fi
-          [ -n "$base" ] || base="$HEAD_SHA^"
           echo "Comparing release inputs since ${base}"
           if git diff --quiet "$base" "$HEAD_SHA" -- \
             src/apps/ios \

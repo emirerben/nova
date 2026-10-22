@@ -218,8 +218,15 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
     def test_testflight_skips_a_commit_an_earlier_upload_already_contains(self):
         testflight = TESTFLIGHT_WORKFLOW.read_text()
         # An out-of-order or duplicate dispatch must not downgrade the upload.
-        self.assertIn('git merge-base --is-ancestor "$HEAD_SHA" "$sha"', testflight)
-        self.assertIn("superseded", testflight)
+        # The executable ancestry cases live in test_upload_provenance.py;
+        # keep this workflow contract tied to that resolver and its decision.
+        self.assertIn(
+            'provenance="$(python3 scripts/ios/upload_provenance.py)"', testflight
+        )
+        self.assertIn('read -r base superseded <<< "$provenance"', testflight)
+        self.assertIn('if [ "$superseded" = "true" ]; then', testflight)
+        self.assertNotIn("--json databaseId,headSha", testflight)
+        self.assertNotIn('base="$HEAD_SHA^"', testflight)
 
 
 if __name__ == "__main__":
