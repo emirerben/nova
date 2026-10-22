@@ -1712,6 +1712,18 @@ class Settings(BaseSettings):
         "missed wake — Fly's start-a-started-machine call is a no-op.",
     )
 
+    RENDER_START_WAIT_S: int = Field(
+        default=300,
+        ge=0,
+        le=600,
+        description="Retry-window seconds for a render worker caught in Fly state stopping.",
+    )
+
+    RENDER_AUTOSTOP_ACTIVITY_GUARD_ENABLED: bool = Field(
+        default=True,
+        description="Defer idle autostop for recent render dispatches or active creator work.",
+    )
+
     FLY_API_TOKEN: str = Field(
         default="",
         description="Fly.io API token used by app/services/fly_machines.py to "

@@ -1242,6 +1242,21 @@
         "src/apps/api/tests/agents/test_market_research_banks.py",
         "src/apps/api/tests/agents/test_overlay_examples_slop_guard.py"
       ]
+    },
+    {
+      "id": "kri-798-render-worker-restart",
+      "needs_native": false,
+      "api_tests": "tests/services/test_fly_machines.py tests/tasks/test_render_worker_lifecycle.py tests/tasks/test_render_worker_activity_sql.py tests/test_render_worker_wake.py",
+      "paths": [
+        "src/apps/api/app/config.py",
+        "src/apps/api/app/services/fly_machines.py",
+        "src/apps/api/app/tasks/maintenance.py",
+        "src/apps/api/app/worker.py",
+        "src/apps/api/tests/services/test_fly_machines.py",
+        "src/apps/api/tests/tasks/test_render_worker_lifecycle.py",
+        "src/apps/api/tests/tasks/test_render_worker_activity_sql.py",
+        "src/apps/api/tests/test_render_worker_wake.py"
+      ]
     }
   ]
 }

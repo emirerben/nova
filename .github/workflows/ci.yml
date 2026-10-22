@@ -519,6 +519,20 @@ jobs:
     if: needs.changes.outputs.journey == 'true' && needs.journey-mapping.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: nova_journey_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - name: Prepare journey result directory
@@ -601,6 +615,23 @@ jobs:
           set -o pipefail
           python3 scripts/reliability-gates.py run --all --python python3 \
             --log test-results/kri-559/reliability-gates.log
+      - name: Verify KRI-798 render-worker restart guard
+        if: contains(needs.changes.outputs.journey_ids, 'kri-798-render-worker-restart')
+        working-directory: src/apps/api
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_journey_test
+          STORAGE_BUCKET: nova-test
+          STORAGE_PROVIDER: gcs
+          INTERNAL_API_KEY: test
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY_TEST }}
+        run: |
+          set -o pipefail
+          python -m alembic upgrade head
+          python -m pytest tests/services/test_fly_machines.py \
+            tests/tasks/test_render_worker_lifecycle.py \
+            tests/tasks/test_render_worker_activity_sql.py \
+            tests/test_render_worker_wake.py -q \
+            | tee ../../../test-results/kri-559/kri-798-render-worker-restart.log
       - name: Verify watermark-aware caption compile and its device fixture
         if: contains(needs.changes.outputs.journey_ids, 'kri-548-caption-watermark')
         working-directory: src/apps/api
