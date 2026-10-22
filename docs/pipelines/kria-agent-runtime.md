@@ -120,6 +120,27 @@ server fingerprint, revisions, expiry, and consequence copy before deciding.
 Framework validation, authentication, rate-limit, and unexpected failures on
 these routes use the same `KriaProblem` envelope as runtime failures.
 
+### Two questions in one reply (KRI-802)
+
+Every answer re-plans the whole request (Main Creator included, 1-2 min), so
+questions asked one per turn cost the creator one wait each. For an app at
+`X-Kria-Client-Protocol` >= `kria_question_batch_min_client_protocol` (14), the
+submit route stamps `answers_batched_questions` on the user message and the turn
+plans with `batch_questions`: a title-wording question (`_plan_creator_action`,
+KRI-506) no longer ends the turn before the clip checks. When those end on a plain
+clip picker, `_with_wording_question` sends ONE reply with both the
+`choice_question` and the `clip_question`; the app holds the first answer and sends
+both on one turn (`choice_selection` + `clip_selection`, already accepted together).
+Any other ending (a draft, a text question, another choice card, a refusal, a
+"still checking" reply, a picker about the title's own words, a reply over 1200
+characters) keeps the wording question alone, as before, so nothing is drafted with
+unapproved words. Not batched, by design: the label-text question (a typed answer
+cannot ride a tap), the held-draft "simpler version?" choice (it reads the compiled
+draft) and order/length choice cards (they need resolved clips; one choice slot per
+reply). Older builds and the web keep one question per turn. Kill switch:
+`fly secrets set KRIA_QUESTION_BATCH_MIN_CLIENT_PROTOCOL=999` (api + worker) +
+restart. Tests: `tests/kria/test_kri802_question_batch.py` (+ `_postgres`).
+
 ## Creative Brief, router and receipts (KRI-188)
 
 Behind `KRIA_CREATIVE_BRIEF_ENABLED` (or a `KRIA_CREATIVE_BRIEF_USER_IDS`

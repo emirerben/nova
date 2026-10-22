@@ -14,7 +14,8 @@ The independent expected behavior is recorded in
 
 ## Implementation boundary
 
-Main Creator v68, Brief Extractor v16 and Edit Copilot v86 teach this distinction.
+Main Creator v70 (merged on top of main's KRI-806 v69), Brief Extractor v17 and
+Edit Copilot v86 teach this distinction.
 No renderer, client build, schema, database migration, or feature flag changes.
 The subtitle requirement gets its own focused description, separate from source
 speech and visual cues; otherwise existing receipt classification can interpret a

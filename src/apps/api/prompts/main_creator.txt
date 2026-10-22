@@ -172,8 +172,11 @@ Rules:
   Keep story_structure and summary consistent with these executable beats. Do not promise
   a specific duration in summary: the server calculates it from the actual source windows.
   Omit editorial_plan for cloud rendering, images, speech, voiceover, user-song sync or
-  prescribed montage cadence. When the creative brief is enabled, also capture explanatory
-  text purposes as live text requirements; do not leave them only in editorial_plan.
+  prescribed montage cadence. It pairs only with `audio_strategy: licensed_music` and no
+  `montage_audio`: when the creator keeps any clip sound audible (a spoken line, a name, a
+  cheer, the original audio), omit editorial_plan even if they also ask you to suggest a song,
+  and let story_structure describe the story. When the creative brief is enabled, also capture
+  explanatory text purposes as live text requirements; do not leave them only in editorial_plan.
 - Always return `target_duration_s`; never rely on an example or schema default. If the creator
   gave an exact duration, preserve it. Otherwise choose the duration from the footage summaries:
   allow longer holds for speech, actions, reveals, and emotional payoffs; use shorter holds for

@@ -19,6 +19,7 @@ from app.agents._schemas.creator_agent import (
     CREATOR_AGENT_OUTPUT_ADAPTER,
     CREATOR_REQUEST_MAX_CHARS,
     STORY_LINE_MAX_CHARS,
+    CreativeStrategy,
     CreatorAgentOutput,
     ProposeStrategy,
     ResolvedCreatorManifest,
@@ -94,13 +95,17 @@ log = structlog.get_logger()
 # KRI-791: an on-screen text timed to a spoken word carries `triggers` too (it was taught only
 # for photos, videos, stickers and sounds, so "Show MEROPE ... the first time she says Merope"
 # arrived with no trigger), plus `speaker` when someone other than the creator says it.
+# KRI-806: optional editorial plans pair only with licensed music and no kept clip sound.
+# v67 retains caption spellings, spoken triggers/speaker and the editorial audio pairing rule.
 # v66 combines both authored changes without losing either prompt instruction.
 # v66 (KRI-792): named spoken cuts carry cut_lines; caption spellings remain intact.
 # KRI-789: quoted start / end LINES inside a take are a `timing` trim (`start_line` /
 # `end_line`), never an `order` requirement; route places keep `order` (v67).
-# v68 preserves caption spelling, spoken-text triggers/speaker, quoted trims and named cuts.
-# v69: keep speech captions/subtitles independent of restrictions on authored text.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-22-v69"
+# v68 combines caption spelling, spoken-text triggers/speaker, quoted trims and named cuts.
+# v69 retains all shared brief instructions plus editorial audio pairing.
+# v70 keeps v69 and makes captions/subtitles the speech lane, independent of restrictions
+# on authored text.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v70"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -825,41 +830,28 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         reaction_beats=len(strategy.reaction_beats or ()),
                     )
                     strategy = strategy.model_copy(update={"execution_contract": None})
-                if strategy.editorial_plan is not None:
-                    from app.services.editorial_plan import editorial_order
-
-                    if (
-                        strategy.edit_format != "montage"
-                        or not input.capability_manifest.capabilities.get("phone_format:montage")
-                        or not input.capability_manifest.capabilities[
-                            "phone_format:montage"
-                        ].available
-                        or input.capability_manifest.has_voiceover
-                        or any(media.kind != "video" for media in input.capability_manifest.media)
-                        or strategy.audio_strategy != "licensed_music"
-                        or strategy.montage_cadence is not None
-                        or strategy.montage_audio is not None
-                    ):
-                        raise ValueError(
-                            "editorial_plan requires a music-led phone montage of video clips"
-                        )
-                    editorial_order(
-                        strategy.editorial_plan,
-                        [
-                            media.media_id
-                            for media in input.capability_manifest.media
-                            if media.kind in {"video", "image"}
-                        ],
-                    )
-                action = action.model_copy(
-                    update={
-                        "strategy": normalize_creator_strategy_media(
-                            input.capability_manifest,
-                            strategy,
-                            repair_model_output=True,
-                        )
-                    }
+                strategy = normalize_creator_strategy_media(
+                    input.capability_manifest,
+                    strategy,
+                    repair_model_output=True,
                 )
+                if strategy.editorial_plan is not None:
+                    misfit = _editorial_plan_misfit(input.capability_manifest, strategy)
+                    if misfit:
+                        # KRI-806: the story plan is optional and only runs on a music-led
+                        # phone montage of the selected clips. Repair, like KRI-598, instead
+                        # of refusing: each refusal spends one of three attempts (Don Julio M1
+                        # lost its last one here). Counts only: beats carry creator wording.
+                        log.info(
+                            "main_creator_editorial_plan_dropped",
+                            reasons=misfit,
+                            beats=len(strategy.editorial_plan.beats),
+                            text_goals=sum(
+                                1 for beat in strategy.editorial_plan.beats if beat.text_goal
+                            ),
+                        )
+                        strategy = strategy.model_copy(update={"editorial_plan": None})
+                action = action.model_copy(update={"strategy": strategy})
             return MainCreatorOutput(
                 action=action,
                 creative_decision=(
@@ -940,6 +932,45 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             + (f"\nCorrect these schema errors: {feedback}." if feedback else "")
             + " Use only documented fields, exact enum values, and #RRGGBB colors."
         )
+
+
+def _editorial_plan_misfit(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> list[str]:
+    """KRI-806: why `strategy.editorial_plan` cannot run (empty = it can).
+
+    Only a music-led phone montage of video clips orders footage by the plan, and the
+    plan must bind exactly the clips the edit uses: the creator's selection (after media
+    normalisation), else every clip -- the set the worker checks it against again.
+    """
+
+    from app.services.editorial_plan import editorial_order
+
+    montage = manifest.capabilities.get("phone_format:montage")
+    reasons = [
+        reason
+        for reason, misfit in (
+            ("edit_format", strategy.edit_format != "montage"),
+            ("phone_montage_unavailable", montage is None or not montage.available),
+            ("voiceover", manifest.has_voiceover),
+            ("non_video_media", any(media.kind != "video" for media in manifest.media)),
+            ("audio_strategy", strategy.audio_strategy != "licensed_music"),
+            ("montage_cadence", strategy.montage_cadence is not None),
+            ("montage_audio", strategy.montage_audio is not None),
+        )
+        if misfit
+    ]
+    if reasons:
+        return reasons
+    try:
+        editorial_order(
+            strategy.editorial_plan,
+            strategy.selected_media_ids
+            or [media.media_id for media in manifest.media if media.kind in {"video", "image"}],
+        )
+    except ValueError:
+        return ["coverage"]
+    return []
 
 
 def _story_shapes_available(manifest: ResolvedCreatorManifest) -> bool:

@@ -39,13 +39,15 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v66 combines it with KRI-791 spoken-text `triggers` + `speaker`; legacy brief-off
 # renders remain unchanged. Re-pin brief-on hashes only after reviewing both additions.
 # v67 preserves those instructions and adds quoted start_line/end_line trim facts.
-# v68 preserves caption spelling, spoken-text triggers/speaker, quoted trims and named cuts.
-# v69 defines captions/subtitles as the speech lane even when the brief is off.
+# v68 combines caption spellings, spoken triggers/speaker, quoted trims and named cuts.
+# v69 retains editorial pairing with caption/spoken-text/quoted-trim/named-cut facts.
+# v70 keeps v69 and defines captions/subtitles as the speech lane even when the brief
+# is off, so all four renders change.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, False): "9da3e024bb9cc0114c9525abb7ca291771d39b0f066c6cebdbdf62ed268654b1",
-    (True, True): "dded89b51aa674769e4c5572eff40ac89164ff579dd6084d635931a0ac613723",
-    (False, False): "6155186d12aae3035f5848cca1b999e9f1878b2520043d17ca534f2a15d951bd",
-    (False, True): "5cc5c15ddb45ddf84eee3eab97303a8d737ec52ff8fa24c26b56edcbfeb58bf3",
+    (True, False): "e33c7b44e601b95b61036b2806cc2111d8aa20204994881bf8fe128534b5cf3c",
+    (True, True): "330f31e0d1141f12a38a96add9e3150c548500324ee9181a7c80d6bd267f39ff",
+    (False, False): "6e32911313c9667767209df7d6d929db36873990e5dceb2d27549ba179569c1d",
+    (False, True): "1763cac2c77bc0611be8bfa3580da2189ed28ec9df1239578173e6dcece54fbc",
 }
 
 
@@ -115,7 +117,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-22-v69"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-23-v70"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

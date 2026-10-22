@@ -17,6 +17,58 @@
   ],
   "gates": [
     {
+      "id": "kri-802-question-batch",
+      "tickets": [
+        "KRI-802"
+      ],
+      "symptom": "Don Julio M1 chat 1 asked its blocking questions one per turn: the title wording (19:24), then the red-cap clip picker a full re-plan later (19:26), although the first turn's clip checks would have found it; the title-wording gate returned before them, and every answer re-runs the Main Creator (1-2 min).",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-802",
+      "paths": [
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/fixtures/kri802_don_julio_m1_turn1.json",
+        "src/apps/ios/Kria/Core/QuestionBatch.swift",
+        "src/apps/ios/Kria/Features/ChatWorkspaceView.swift"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri802_question_batch.py",
+        "tests/kria/test_kri802_question_batch_postgres.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Chat 1's first turn: the recorded Main Creator input (run 05de835e), its strategy rebuilt from the turn (output redacted), the next turn's clip asks and resolver stats; real Main Creator parse, real planner, real clip-intent planner and resolver behind a provider-transport fake. Red before the fix: the reply asked only the title (byte-identical to prod) and never reached the resolver; green: one reply carries the title card and the red-cap picker. Submit/claim/fold over scratch Postgres: one turn with both answers is accepted, both fold, the worker plans with batch_questions.",
+        "live_model": "Not run; no paid calls. The change makes no new model call (the clip checks the first turn now runs are the ones the next turn ran anyway).",
+        "native_output": "XCUITest KriaUITests/CreationUITests/testTitleCardAndClipPickerInOneReplyGoOutOnOneTurn and testClipsFirstThenTheTitleTapSendsBothOnOneTurn (simulator, fixture server): the first answer is held, the second sends both on one turn. Physical iPhone re-send of M1 pending a TestFlight build at protocol 14.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "older app builds and the web (no stamp): one question per turn, byte-identical first reply, no resolver call",
+        "nothing else to ask: the title question alone, nothing drafted with unapproved words",
+        "a text-only clip question (the '+' label): the title question alone",
+        "a second choice card, reply chips, a 'still checking' reply, a recovery, a draft: the title question alone",
+        "a picker about the title's own words: the title question alone",
+        "a joined reply over the 1200-character limit: the title question alone",
+        "both titles model-written: one wording question (opening first)",
+        "kill switch KRIA_QUESTION_BATCH_MIN_CLIENT_PROTOCOL=999",
+        "answers in either order on the phone (title first, clips first)"
+      ],
+      "neighbours_gap": [
+        "The '+' label question (free-text answer) is not batched: a typed answer cannot ride a tap, and KRI-804 is reshaping that question.",
+        "The held-draft 'simpler version?' choice stays last: it reads the compiled draft.",
+        "Order/length choice cards are not batched: they need resolved clips and there is one choice slot per reply.",
+        "Vision calls are not replayed: the recorded resolver answer for the red cap is empty, as prod's was after its one vision check."
+      ],
+      "follow_ups": [
+        "KRI-804",
+        "KRI-807"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-422-long-intent-id",
       "tickets": [
         "KRI-422"
@@ -814,7 +866,7 @@
       "tickets": [
         "KRI-542"
       ],
-      "symptom": "Main Creator at thinking=high exhausted the shared 8k output budget after a clip answer and the turn dead-ended ('plana dönüştüremedim').",
+      "symptom": "Main Creator at thinking=high exhausted the shared 8k output budget after a clip answer and the turn dead-ended ('plana d\u00f6n\u00fc\u015ft\u00fcremedim').",
       "boundary": "model_budget",
       "fix_prs": [
         1493
@@ -964,7 +1016,7 @@
         "KRI-651",
         "KRI-674"
       ],
-      "symptom": "Phone Montage render-ready reply said 'Doğrulayamadım' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
+      "symptom": "Phone Montage render-ready reply said 'Do\u011frulayamad\u0131m' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
       "boundary": "publication",
       "fix_prs": [
         1503,
@@ -1003,7 +1055,7 @@
       "kill_switch": null,
       "evidence": {
         "offline_replay": "prod thread 7d7c5e25 shape: generation vs attempt id; KRI-651: pre-fix 6636cae71 fails the approved Unicode hook; fixed tree passes composition/reload/retry plus real-Postgres EN/TR publication receipt; fresh-edit title race: real-Postgres red control 97d44d932 repeats the provider call; first-step recovery fixes title-only completion for response/draft/read; KRI-674 follow-up timeout: stalled Pro transport causes both EN/TR healthy rendered follow-ups to fail before the fix (2 failed, 2 passed); Flash-first preserves successful clarification and single-call unknown recovery (4 passed).",
-        "live_model": "2026-10-17 final narrow configuration: Flash/medium/4096, prompt v11. Synthetic EN/TR title edits, ambiguous retry and 12k-contract/40-message compound rebuild: four one-call passes, 3.17–14.60s, $0.031400 settled. Earlier low-budget candidates omitted constraints or truncated and are not counted as passes. Production-account follow-up/retry re-send pending.",
+        "live_model": "2026-10-17 final narrow configuration: Flash/medium/4096, prompt v11. Synthetic EN/TR title edits, ambiguous retry and 12k-contract/40-message compound rebuild: four one-call passes, 3.17\u201314.60s, $0.031400 settled. Earlier low-budget candidates omitted constraints or truncated and are not counted as passes. Production-account follow-up/retry re-send pending.",
         "native_output": "Berlin re-run job a7d69a5b (2026-10-08) was the incident; post-fix phone re-send pending; KRI-651: native simulator export and pixel checks passed 2026-10-13 (exact hook, color emoji, no context caption)",
         "production": "merged 2026-10-08"
       },
@@ -1402,7 +1454,7 @@
         "KRI-808",
         "KRI-802"
       ],
-      "symptom": "Don Julio M1 (2026-10-21, plan item 7a4ce1d5): the clip records Main Creator read had whisper TRANSLATIONS as timed segments (a Turkish speaker's \"What's your name?\" as \"Ne isminiz?\", \"Gracias\" as \"Спасибо.\"), a 24-word Gemini sentence on a 1.1 s clip and a \"Video. Video...\" loop, so the quoted line \"What's your name?\" had no timed words.",
+      "symptom": "Don Julio M1 (2026-10-21, plan item 7a4ce1d5): the clip records Main Creator read had whisper TRANSLATIONS as timed segments (a Turkish speaker's \"What's your name?\" as \"Ne isminiz?\", \"Gracias\" as \"\u0421\u043f\u0430\u0441\u0438\u0431\u043e.\"), a 24-word Gemini sentence on a 1.1 s clip and a \"Video. Video...\" loop, so the quoted line \"What's your name?\" had no timed words.",
       "boundary": "persistence",
       "status": "open_pr",
       "owner": "KRI-808",
@@ -2308,6 +2360,51 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-806-editorial-plan-pairing",
+      "tickets": [
+        "KRI-806",
+        "KRI-802"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-806",
+      "symptom": "Don Julio M1: the brief kept two spoken lines audible and only suggested a song; Main Creator paired an editorial_plan with kept clip sound and the parser refused the whole reply on attempt 3 of 3 ('editorial_plan requires a music-led phone montage of video clips'), so the chat said 'I couldn't turn that into a plan this time'.",
+      "boundary": "parser",
+      "paths": [
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/services/editorial_plan.py",
+        "src/apps/api/prompts/main_creator.txt",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri806_don_julio_kept_lines.json"
+      ],
+      "regression_tests": [
+        "tests/agents/test_main_creator_editorial_plan.py",
+        "tests/evals/test_main_creator_evals.py",
+        "tests/evals/request_following/test_troya_context_journey.py"
+      ],
+      "harness": "real_parser",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Prod Main Creator input of turn 3424b400 (agent_run 41b8346b, v64) through the real MainCreatorAgent.parse with no model call. Before the fix: kept clip sound, original_audio and a creator selection of 8 of 9 clips each raised; 9 of 10 new cases failed. After: the plan is dropped with a counts-only log line, the kept lines, selection, title and 15 s survive, and a valid music-led plan (all clips or the creator's selection) is kept unchanged.",
+        "live_model": "Not run; no paid calls. The prompt rule (v66) is unverified against the live model: a live Main Creator replay of the M1 turn would show whether the model stops emitting the plan (about $0.2 per turn at v64 token counts).",
+        "native_output": "unknown; the repair runs before approval, no render runs in these checks.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "kept clip sound (montage_audio), original_audio (normalisation then adds montage_audio), day_vlog format, recorded voiceover, photo in the manifest, a server two-clip cadence",
+        "a music-led plan over all clips and over the creator's selection is kept exactly",
+        "a plan that binds a skipped clip, leaves a selected clip out or invents a clip is dropped, not refused",
+        "the log line carries reasons and counts, never beat wording, viewer goal or media ids"
+      ],
+      "neighbours_gap": [
+        "Phone clips with no phone montage at all stay the montage's own refusal (normalisation raises first), unchanged.",
+        "A clip bound twice is still an EditorialPlan schema error the retry is told about.",
+        "Not checked: a clip removed after approval by a resolved skip intent while the approved plan still binds it (the render contract re-checks coverage and would refuse)."
+      ],
+      "follow_ups": [
+        "Don Julio M1 re-send after deploy (needs KRI-803/KRI-805 for a video)"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-804-label-text-reply",
       "tickets": [
         "KRI-804",
@@ -2369,6 +2466,57 @@
       ],
       "follow_ups": [
         "Phone re-send of Don Julio M1 after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-803-keep-line-audible",
+      "tickets": [
+        "KRI-803",
+        "KRI-802",
+        "KRI-760"
+      ],
+      "symptom": "Phone montage refused \"keep his name exchange audible ('What's your name?' 'Lucas.')\" and \"keep that 'Cheers!' audible\" as pop-ins ('Photo and sound pop-ins timed to your words aren't available'): the brief filed them as audio_intent source_unchanged + triggers, which KRI-760's keep_whole_take route never read; and the line finder (two shared 5-letter stems) could not find one-word or short-word lines.",
+      "boundary": "brief",
+      "status": "open_pr",
+      "owner": "KRI-803",
+      "journey": "kri-760-whole-line-ask",
+      "paths": [
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/services/spoken_quotes.py",
+        "src/apps/api/tests/fixtures/kri803_don_julio_m1_clips.json"
+      ],
+      "regression_tests": [
+        "tests/tasks/test_keep_line_audible_montage.py",
+        "tests/kria/test_whole_line_routing.py",
+        "tests/tasks/test_whole_line_ask_montage.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Prod thread F4083F1D's r6/r7 and clip records (Main Creator input 19:38:04) through _ground_spoken_lines -> length plan -> plan_unified_montage -> phone recipe verify -> finished timeline -> receipts: m1_05 cut 0.0-2.83 s holds 'What's your name?' (0.14-1.64) + 'Lucas.' (1.9-2.5) and ends before the next words (2.9 s); m1_01 cut 0.87-3.4 s holds both 'Cheers' bursts (0.9-1.9 s); 15.0 s; both receipts met. Red on main: routing cases fail with the incident's exact pop-in refusal; reverting the routing (7 of 9 fail), the word-for-word match (3 fail) or the per-clip line union (1 fails) turns the replay red. Ground truth from the kit audio with local whisper.cpp + loudness (no paid calls); a preview MP4 cut from the kit files by the plan transcribes 'What's your name? / Lucas / ... / Cheers'.",
+        "live_model": "Not run; no paid calls. No prompt change: the route reads facts the model already records.",
+        "native_output": "unknown; preview cut with FFmpeg from the planned windows, not a phone export.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "prod shape (audio + source_unchanged + triggers), the KRI-760 keep_whole_take shape, Turkish wording",
+        "a sound or photo on a word and a 'when I say' cue stay pop-ins with source_unchanged recorded",
+        "quoted words the model did not record as spoken (a clip name) never become a line; keep_whole_take false still says no",
+        "plain 'keep the original audio' (no named line) keeps its own path and windows",
+        "two lines of one ask in one clip, in either order, seat one window",
+        "a one-word line two clips say is ambiguous, never guessed",
+        "word pass fails or misses the line: planning goes on, the line is named in a partial receipt",
+        "a finished cut that drops one of the lines is never met"
+      ],
+      "neighbours_gap": [
+        "The word pass is a real whisper call in prod (one ~4 s clip, only when the timed sentences miss a line one transcript has); offline it is a fixture.",
+        "The unquoted tail of an exchange ('Lucas, yeah.' 2.9-3.6 s) is not kept: only the creator's quoted lines are held.",
+        "Clip order for the rest of M1 (sauces -> menus -> cheers) and the other M1 issues are KRI-804..809."
+      ],
+      "follow_ups": [
+        "M1 phone re-send after deploy"
       ],
       "red_control": "not_applicable"
     }
