@@ -19,3 +19,7 @@ Tests now target the NEW open failure-card question for typed/tapped/delegated a
 No paid model call, phone access or manual deployment. Full original T1/native/export acceptance remains open under KRI-787. Exact-head hosted CI and normal preship are still required before merge.
 
 Current-main658fa0eab (landed #1742 picker) merged normally without conflicts. The complete choice-pair suite plus the real unmatched-exclusion picker path passed160 controls on that union. No additional semantic changes or assertion updates were needed.
+
+## Actual parent merge and final source reconciliation
+
+After #1729 actually landed as 8568cace1, its squash ancestry overlapped five task hunks. All five retain the already reviewed source-event boundary, scoped answer fallback and shared ask cap from this PR. The task module remains byte-identical to reviewed d44beaf; no app behavior or assertions were changed by this reconciliation. Actual #1724 spoken triggers and #1743 speech validation are included. The combined persisted reanswer/refusal, consent, stale-render, picker, contract and spoken-trigger controls pass (213 cases). The initial preship correctly rejected the old head receipt; it is regenerated for this new source head below.
