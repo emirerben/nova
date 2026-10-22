@@ -1,0 +1,18 @@
+{
+  "audit_date": "2026-10-19",
+  "scope": "Retrospective source labeling; inference bytes and financial records unchanged",
+  "older_initial_main_contexts_not_exact": 1,
+  "legacy_frozen_packet_versions_affected": 9,
+  "affected_versions_with_live_journals": 5,
+  "confirmed_normalized_field": "creative_copy_state",
+  "raw_record_matching": "Eight legacy versions matched the retained raw invocation; one could not be fully matched. None remains eligible for exact-input submission.",
+  "correct_interpretation": "Normalized real-request context, a reconstruction rather than exact historical invocation input",
+  "candidate_main_imports_audited": 24,
+  "unselected_imports_rejected_from_exact_use": 2,
+  "current_selected_main_exact_inputs_reimported": 10,
+  "current_prepared_exact_inputs_affected": 0,
+  "current_seven_request_comparison_affected": 0,
+  "historical_journals_rewritten": false,
+  "new_paid_calls": 0,
+  "future_freeze_policy": "Reject an exact input when its recorded-origin hash differs; source import also binds agent, item, complete input and timezone-aware creator turn"
+}

@@ -1,0 +1,258 @@
+"""Import authorized private source records without pretending to review them.
+
+Recorded inputs and reconstructed context are distinct. The only reversible
+redaction is a proven empty string; nonempty redactions make a source incomplete.
+"""
+
+from __future__ import annotations
+
+import copy
+import hashlib
+from datetime import UTC, datetime, timedelta
+
+from app.services.creator_comparison_capture import sanitize_input
+from app.services.request_following_cases import digest
+
+
+def _require_unredacted(value):
+    if isinstance(value, dict):
+        if value.get("redacted"):
+            raise ValueError("redacted recorded input is incomplete")
+        for child in value.values():
+            _require_unredacted(child)
+    elif isinstance(value, list):
+        for child in value:
+            _require_unredacted(child)
+
+
+def _bound_case(export, *, input, agent, identity, captured_at, source_kind):
+    receipt = export["eligibility"]
+    review = export["candidate"]["intent_review"]
+    if (
+        review.get("decision") != "approved"
+        or not review.get("reviewer")
+        or not review.get("expectations")
+    ):
+        raise ValueError("source human review required")
+    safe, complete = sanitize_input(input)
+    if not complete:
+        raise ValueError("required input contains removed capabilities")
+    captured = datetime.fromisoformat(captured_at)
+    expiry = min(datetime.fromisoformat(receipt["expires_at"]), captured + timedelta(days=30))
+    if expiry <= datetime.now(UTC):
+        raise ValueError("source expired")
+    return {
+        **{k: receipt[k] for k in ("creator_id", "thread_id", "eligibility_key", "source_sha256")},
+        "id": digest([agent, identity, safe]),
+        "agent": agent,
+        "input": safe,
+        "input_sha256": digest(safe),
+        "split": "development",
+        "source_kind": source_kind,
+        "complete": True,
+        "captured_at": captured.isoformat(),
+        "expires_at": expiry.isoformat(),
+        "review_queue_case_id": export["candidate"]["id"].removeprefix("queue-"),
+        "event_group_ids": [receipt["thread_id"]],
+        "intent_review": {
+            "decision": "source_reviewed",
+            "reviewed_by": review["reviewer"],
+            "source_sha256": receipt["source_sha256"],
+            "source_review_version": review["version"],
+            "expectations": review["expectations"],
+            "input_sha256": digest(safe),
+        },
+        "quality_verdict": "unassessed",
+        "original_prompt_available": False,
+        "evaluation_prompt": "current pinned source prompt",
+    }
+
+
+def from_recorded_main(export, recorded):
+    from app.agents.main_creator import MainCreatorAgent
+
+    if recorded.get("agent_name") != "nova.creator.main":
+        raise ValueError("recorded Main invocation required")
+    input = copy.deepcopy(recorded["input_json"])
+    recovered = []
+    for key, value in input.items():
+        if isinstance(value, dict) and value.get("redacted"):
+            if value.get("chars") != 0 or value.get("sha256") != hashlib.sha256(b"").hexdigest():
+                raise ValueError("nonempty redaction cannot be recovered")
+            input[key] = ""
+            recovered.append(key)
+    _require_unredacted(input)
+    sections = export["capture"]["sections"]
+    item_id = (sections.get("plan_item") or {}).get("id")
+    if not item_id or (input.get("capability_manifest") or {}).get("item_id") != item_id:
+        raise ValueError("recorded Main item differs from owned source")
+
+    def timestamp(value):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("complete source timestamp required") from exc
+        if parsed.tzinfo is None:
+            raise ValueError("source timestamps must have time zones")
+        return parsed
+
+    invoked = timestamp(recorded.get("created_at"))
+    users = [
+        (i, e)
+        for i, e in enumerate(sections["events"])
+        if e.get("kind") == "user_message" and e.get("actor") == "user"
+    ]
+    matches = []
+    for offset, (index, event) in enumerate(users):
+        if event.get("content") != input["user_message"]:
+            continue
+        end = timestamp(users[offset + 1][1].get("created_at")) if offset + 1 < len(users) else None
+        if timestamp(event.get("created_at")) <= invoked and (end is None or invoked < end):
+            matches.append(index)
+    if len(matches) != 1:
+        raise ValueError("one matching creator turn required")
+    validated = MainCreatorAgent.Input.model_validate(input)
+    if digest(validated.model_dump(mode="json")) != digest(input):
+        raise ValueError("recorded Main input changed during validation; not exact")
+    result = _bound_case(
+        export,
+        input=validated.model_dump(mode="json"),
+        agent="main_creator",
+        identity=recorded["id"],
+        captured_at=recorded["created_at"],
+        source_kind="exact_invocation",
+    )
+    result.update(
+        origin_agent_run_id=recorded["id"],
+        origin_prompt_version=recorded["prompt_version"],
+        origin_input_sha256=digest(input),
+        recovered_empty_fields=recovered,
+        source_pointer=f"/sections/events/{matches[0]}/content",
+    )
+    return result
+
+
+def from_editor_snapshot(export, job, *, request_event_index):
+    from app.agents.edit_copilot import EditCopilotInput
+    from app.services.kria_editor_ops import build_editor_snapshot
+
+    events = export["capture"]["sections"]["events"]
+    event = events[request_event_index]
+    if event.get("kind") != "user_message" or event.get("actor") != "user":
+        raise ValueError("creator-authored source request required")
+    if str(job.user_id) != export["eligibility"]["creator_id"]:
+        raise ValueError("editor source owner mismatch")
+    # Pin a persisted prior variant, not a manufactured editor/media example.
+    variants = job.assembly_plan.get("variants", [])
+    if not variants:
+        raise ValueError("persisted editor variant required")
+    snapshot = build_editor_snapshot(job, copy.deepcopy(variants[0]))
+    prior = [
+        {"role": e["actor"], "content": e["content"]}
+        for e in events[:request_event_index]
+        if e.get("actor") in ("user", "assistant") and e.get("content")
+    ][-12:]
+    original = next(
+        e["content"] for e in events if e.get("kind") == "user_message" and e.get("actor") == "user"
+    )
+    input = EditCopilotInput(
+        utterance=event["content"],
+        original_request=original,
+        prior_turns=prior,
+        variant_snapshot=snapshot,
+    )
+    result = _bound_case(
+        export,
+        input=input.model_dump(mode="json"),
+        agent="edit_copilot",
+        identity=[str(job.id), request_event_index],
+        captured_at=datetime.now(UTC).isoformat(),
+        source_kind="reconstructed_real",
+    )
+    result.update(
+        source_pointer=f"/sections/events/{request_event_index}/content",
+        source_job_id=str(job.id),
+        snapshot_sha256=digest(snapshot),
+        reconstruction_notes=[
+            "Snapshot assembled with current server builder from persisted prior job.",
+            "Original Copilot invocation was not recorded; this is not exact historical replay.",
+        ],
+    )
+    return result
+
+
+def from_recorded_copilot(export, debug, *, run_id, request_event_index):
+    """Import a trusted owned job-debug export, never its latest editor state.
+
+    The AgentRun must belong to the exact creator turn. The exported source's
+    existing human review remains a source review, not a new turn/output verdict.
+    """
+    from app.agents.edit_copilot import EditCopilotInput
+
+    job = debug.get("job") or {}
+    job_id = str(job.get("id") or "")
+    sections = export["capture"]["sections"]
+    captured_job = sections.get("job-" + job_id) or {}
+    if (
+        not job_id
+        or str(job.get("user_id")) != export["eligibility"]["creator_id"]
+        or str(captured_job.get("id")) != job_id
+    ):
+        raise ValueError("recorded editor source owner/job mismatch")
+    matches = [r for r in debug.get("agent_runs", []) if r.get("id") == run_id]
+    if len(matches) != 1 or matches[0].get("agent_name") != "nova.edit.copilot":
+        raise ValueError("one recorded Copilot invocation required")
+    recorded = matches[0]
+    raw = copy.deepcopy(recorded.get("input_json"))
+
+    _require_unredacted(raw)
+    validated = EditCopilotInput.model_validate(raw).model_dump(mode="json")
+    if digest(validated) != digest(raw) or not validated["variant_snapshot"]:
+        raise ValueError("complete unchanged recorded editor input required")
+    events = sections["events"]
+    if not 0 <= request_event_index < len(events):
+        raise ValueError("creator event index outside source")
+    event = events[request_event_index]
+    if (
+        event.get("kind") != "user_message"
+        or event.get("actor") != "user"
+        or event.get("content") != raw["utterance"]
+    ):
+        raise ValueError("recorded request does not match creator event")
+
+    def timestamp(value):
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            raise ValueError("source timestamps must have time zones")
+        return parsed
+
+    invoked = timestamp(recorded["created_at"])
+    following = next(
+        (
+            e
+            for e in events[request_event_index + 1 :]
+            if e.get("kind") == "user_message" and e.get("actor") == "user"
+        ),
+        None,
+    )
+    if invoked < timestamp(event["created_at"]) or (
+        following and invoked >= timestamp(following["created_at"])
+    ):
+        raise ValueError("recorded invocation is outside creator turn")
+    result = _bound_case(
+        export,
+        input=raw,
+        agent="edit_copilot",
+        identity=run_id,
+        captured_at=recorded["created_at"],
+        source_kind="exact_invocation",
+    )
+    result.update(
+        origin_agent_run_id=run_id,
+        origin_prompt_version=recorded["prompt_version"],
+        origin_input_sha256=digest(raw),
+        source_job_id=job_id,
+        source_pointer=f"/sections/events/{request_event_index}/content",
+        snapshot_sha256=digest(raw["variant_snapshot"]),
+    )
+    return result

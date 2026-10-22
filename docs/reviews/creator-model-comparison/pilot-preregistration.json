@@ -1,0 +1,240 @@
+{
+  "approved_total_usd": 5.66,
+  "estimated_max_usd": 5.260004,
+  "paid_calls_so_far": 0,
+  "batch_count": 5,
+  "cases": 3,
+  "exact_recorded_inputs": 2,
+  "reconstructed_inputs": 1,
+  "distinct_creators": 1,
+  "split": "development",
+  "holdout_quality_claim": false,
+  "profiles": [
+    "production-observed Gemini + runtime retry control",
+    "Sonnet native typed-presence-v1/high",
+    "Sol native typed-presence-v1/medium"
+  ],
+  "inference_only": true,
+  "model_vs_schema_effects": "confounded in this small package pilot",
+  "selection_rule": "no promotion from three tasks; preserve first-attempt and failure denominators",
+  "comparisons": [
+    {
+      "mode": "offline_preflight",
+      "packet_sha256": "0d383990b6850ccb55081e6d43ea73d389cd289c5b0072cc69a80c491d5e7376",
+      "calls": 1,
+      "max_provider_submissions": 6,
+      "rows": [
+        {
+          "case": "6e57328dab703908b056ba978fdec61075999825e23815b616ff9f216d576e25",
+          "agent": "main_creator",
+          "arm": "G0",
+          "source_kind": "exact_invocation",
+          "split": "development",
+          "input_sha256": "83d4cba01d31cc2180b3f9bdde24f101ccb9ccd2bbda377bcf5896517fa8c0ef",
+          "prompt_sha256": "c99fb072c061b1dbef5483f10046547985aea63083ff0357f60cecdbdbd0f3f5",
+          "prompt_version": "2026-10-19-v63",
+          "spec_sha256": "1b4ac48867a3d4db862656aa23429c178129066e607cc05c795446b3839fd7e5",
+          "runtime_sha256": "8ce5884893f8cfb4cf381ff52f881e7fdffe3ddab3963d83efba501e1475dda1",
+          "price_version": "multi-provider-2026-10-19.v5",
+          "output_mode": "json_mime",
+          "max_attempts": 3,
+          "fallback_models": [
+            "gemini-3.6-flash"
+          ],
+          "estimated_max_usd": 1.718484
+        }
+      ],
+      "estimated_max_usd": 1.718484,
+      "quality_verdict": "unassessed",
+      "actual_export": "unassessed",
+      "live_eligibility": "not_checked_offline"
+    },
+    {
+      "mode": "offline_preflight",
+      "packet_sha256": "4474723620903bcffae633c78267cdf82a0838991768968d5893aca36d5a7cba",
+      "calls": 2,
+      "max_provider_submissions": 2,
+      "rows": [
+        {
+          "case": "6e57328dab703908b056ba978fdec61075999825e23815b616ff9f216d576e25",
+          "agent": "main_creator",
+          "arm": "S",
+          "source_kind": "exact_invocation",
+          "split": "development",
+          "input_sha256": "83d4cba01d31cc2180b3f9bdde24f101ccb9ccd2bbda377bcf5896517fa8c0ef",
+          "prompt_sha256": "49fc26ad6c27dbebe21c7237e7327d5f170e856ea0b589dcd77ed29c853dcf39",
+          "prompt_version": "2026-10-19-v63+typed-presence-v1",
+          "spec_sha256": "72092d15b4b6f933afe2cc9482c3c6a2b5906fc6398d943980ed431cf905d7f8",
+          "runtime_sha256": "8ce5884893f8cfb4cf381ff52f881e7fdffe3ddab3963d83efba501e1475dda1",
+          "price_version": "multi-provider-2026-10-19.v5",
+          "output_mode": "native",
+          "max_attempts": 1,
+          "fallback_models": [],
+          "estimated_max_usd": 0.22134
+        },
+        {
+          "case": "6e57328dab703908b056ba978fdec61075999825e23815b616ff9f216d576e25",
+          "agent": "main_creator",
+          "arm": "O",
+          "source_kind": "exact_invocation",
+          "split": "development",
+          "input_sha256": "83d4cba01d31cc2180b3f9bdde24f101ccb9ccd2bbda377bcf5896517fa8c0ef",
+          "prompt_sha256": "49fc26ad6c27dbebe21c7237e7327d5f170e856ea0b589dcd77ed29c853dcf39",
+          "prompt_version": "2026-10-19-v63+typed-presence-v1",
+          "spec_sha256": "f55e20e6aee2d29a84397b61f09b3082328479a6f1ab893032648471c3420d9e",
+          "runtime_sha256": "8ce5884893f8cfb4cf381ff52f881e7fdffe3ddab3963d83efba501e1475dda1",
+          "price_version": "multi-provider-2026-10-19.v5",
+          "output_mode": "native",
+          "max_attempts": 1,
+          "fallback_models": [],
+          "estimated_max_usd": 0.223352
+        }
+      ],
+      "estimated_max_usd": 0.444692,
+      "quality_verdict": "unassessed",
+      "actual_export": "unassessed",
+      "live_eligibility": "not_checked_offline"
+    },
+    {
+      "mode": "offline_preflight",
+      "packet_sha256": "4443481f9c2a7619cf34b179063ee632c88401baac3ade504f617b8a28f7113a",
+      "calls": 1,
+      "max_provider_submissions": 6,
+      "rows": [
+        {
+          "case": "da8f8b5062752eeefa4aeae6d26d60092c5b7cce759e47891e9487fbf8bdaa3d",
+          "agent": "main_creator",
+          "arm": "G0",
+          "source_kind": "exact_invocation",
+          "split": "development",
+          "input_sha256": "0ae62fe5952f8fb2e630904b0b276140dd3f16def156fb341a2de59f62ce0556",
+          "prompt_sha256": "f8c55ea58904989269882e7a797fc59b26d17a051fda4fb3fd2e919df3d5777d",
+          "prompt_version": "2026-10-19-v63",
+          "spec_sha256": "1b4ac48867a3d4db862656aa23429c178129066e607cc05c795446b3839fd7e5",
+          "runtime_sha256": "8ce5884893f8cfb4cf381ff52f881e7fdffe3ddab3963d83efba501e1475dda1",
+          "price_version": "multi-provider-2026-10-19.v5",
+          "output_mode": "json_mime",
+          "max_attempts": 3,
+          "fallback_models": [
+            "gemini-3.6-flash"
+          ],
+          "estimated_max_usd": 1.716306
+        }
+      ],
+      "estimated_max_usd": 1.716306,
+      "quality_verdict": "unassessed",
+      "actual_export": "unassessed",
+      "live_eligibility": "not_checked_offline"
+    },
+    {
+      "mode": "offline_preflight",
+      "packet_sha256": "45887a2502cb67111a2aca66b57eb8de24c9142c0d875a9d2d35d1bcc9a4c372",
+      "calls": 2,
+      "max_provider_submissions": 2,
+      "rows": [
+        {
+          "case": "da8f8b5062752eeefa4aeae6d26d60092c5b7cce759e47891e9487fbf8bdaa3d",
+          "agent": "main_creator",
+          "arm": "S",
+          "source_kind": "exact_invocation",
+          "split": "development",
+          "input_sha256": "0ae62fe5952f8fb2e630904b0b276140dd3f16def156fb341a2de59f62ce0556",
+          "prompt_sha256": "b52b04a5fd32d4bb80ff0416cf4900161466ffb6d7d50e90686ab1062cc6e04f",
+          "prompt_version": "2026-10-19-v63+typed-presence-v1",
+          "spec_sha256": "72092d15b4b6f933afe2cc9482c3c6a2b5906fc6398d943980ed431cf905d7f8",
+          "runtime_sha256": "8ce5884893f8cfb4cf381ff52f881e7fdffe3ddab3963d83efba501e1475dda1",
+          "price_version": "multi-provider-2026-10-19.v5",
+          "output_mode": "native",
+          "max_attempts": 1,
+          "fallback_models": [],
+          "estimated_max_usd": 0.220812
+        },
+        {
+          "case": "da8f8b5062752eeefa4aeae6d26d60092c5b7cce759e47891e9487fbf8bdaa3d",
+          "agent": "main_creator",
+          "arm": "O",
+          "source_kind": "exact_invocation",
+          "split": "development",
+          "input_sha256": "0ae62fe5952f8fb2e630904b0b276140dd3f16def156fb341a2de59f62ce0556",
+          "prompt_sha256": "b52b04a5fd32d4bb80ff0416cf4900161466ffb6d7d50e90686ab1062cc6e04f",
+          "prompt_version": "2026-10-19-v63+typed-presence-v1",
+          "spec_sha256": "f55e20e6aee2d29a84397b61f09b3082328479a6f1ab893032648471c3420d9e",
+          "runtime_sha256": "8ce5884893f8cfb4cf381ff52f881e7fdffe3ddab3963d83efba501e1475dda1",
+          "price_version": "multi-provider-2026-10-19.v5",
+          "output_mode": "native",
+          "max_attempts": 1,
+          "fallback_models": [],
+          "estimated_max_usd": 0.222824
+        }
+      ],
+      "estimated_max_usd": 0.443636,
+      "quality_verdict": "unassessed",
+      "actual_export": "unassessed",
+      "live_eligibility": "not_checked_offline"
+    },
+    {
+      "mode": "offline_preflight",
+      "packet_sha256": "1f9f35b999b2b24df79852d48715b41369ae386736048ab4dac131a4d5c2a164",
+      "calls": 3,
+      "max_provider_submissions": 4,
+      "rows": [
+        {
+          "case": "8e1765fac3c8c081950582127ca02d020f0dc3978b2ec6e7ea8ca6517bcedfa5",
+          "agent": "edit_copilot",
+          "arm": "G0",
+          "source_kind": "reconstructed_real",
+          "split": "development",
+          "input_sha256": "71bc0db75f43a959ee93c74c5b202fe91abf17acb4ebdcdb9d520114d7a427e0",
+          "prompt_sha256": "2005dd3f1e43ecfb4f8e30a7d1ae19a223f3267a7217210de56c10205217f085",
+          "prompt_version": "2026-10-19-v85",
+          "spec_sha256": "eadf5c1b0f3628d356db11e3a9cf6f0d18f9eadaae75b20fb81b529c56a53875",
+          "runtime_sha256": "8ce5884893f8cfb4cf381ff52f881e7fdffe3ddab3963d83efba501e1475dda1",
+          "price_version": "multi-provider-2026-10-19.v5",
+          "output_mode": "json_mime",
+          "max_attempts": 2,
+          "fallback_models": [],
+          "estimated_max_usd": 0.515824
+        },
+        {
+          "case": "8e1765fac3c8c081950582127ca02d020f0dc3978b2ec6e7ea8ca6517bcedfa5",
+          "agent": "edit_copilot",
+          "arm": "S",
+          "source_kind": "reconstructed_real",
+          "split": "development",
+          "input_sha256": "71bc0db75f43a959ee93c74c5b202fe91abf17acb4ebdcdb9d520114d7a427e0",
+          "prompt_sha256": "ce5d2c4630f9a697c70fdffcc0544830de688723959a829a7952fec33b268597",
+          "prompt_version": "2026-10-19-v85+typed-presence-v1",
+          "spec_sha256": "28f056e2a0b885960d192b04aaa31a65a7677106adcbe1ed5f6d5ee27ab29438",
+          "runtime_sha256": "8ce5884893f8cfb4cf381ff52f881e7fdffe3ddab3963d83efba501e1475dda1",
+          "price_version": "multi-provider-2026-10-19.v5",
+          "output_mode": "native",
+          "max_attempts": 1,
+          "fallback_models": [],
+          "estimated_max_usd": 0.208488
+        },
+        {
+          "case": "8e1765fac3c8c081950582127ca02d020f0dc3978b2ec6e7ea8ca6517bcedfa5",
+          "agent": "edit_copilot",
+          "arm": "O",
+          "source_kind": "reconstructed_real",
+          "split": "development",
+          "input_sha256": "71bc0db75f43a959ee93c74c5b202fe91abf17acb4ebdcdb9d520114d7a427e0",
+          "prompt_sha256": "ce5d2c4630f9a697c70fdffcc0544830de688723959a829a7952fec33b268597",
+          "prompt_version": "2026-10-19-v85+typed-presence-v1",
+          "spec_sha256": "9af027571b2704a58a562609a3ff1436e8f42a7ce1673676f8b2cfd4622237cc",
+          "runtime_sha256": "8ce5884893f8cfb4cf381ff52f881e7fdffe3ddab3963d83efba501e1475dda1",
+          "price_version": "multi-provider-2026-10-19.v5",
+          "output_mode": "native",
+          "max_attempts": 1,
+          "fallback_models": [],
+          "estimated_max_usd": 0.212574
+        }
+      ],
+      "estimated_max_usd": 0.936886,
+      "quality_verdict": "unassessed",
+      "actual_export": "unassessed",
+      "live_eligibility": "not_checked_offline"
+    }
+  ],
+  "budget_envelope_sha256": "d8e92c803261e7595195a7b8db80e6bfa1a80a6cfbef9ebeb84e3d15e7873eae"
+}

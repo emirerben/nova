@@ -1,0 +1,64 @@
+{
+  "mode": "pure_compiler_only",
+  "results": [
+    {
+      "case": 0,
+      "arm": "G0",
+      "status": "parsed",
+      "action_kind": "propose_strategy",
+      "compile": "accepted",
+      "commands": [
+        "set_item_intent",
+        "draft_guided_proposal",
+        "dispatch_render"
+      ],
+      "notices": 0
+    },
+    {
+      "case": 0,
+      "arm": "O",
+      "status": "parsed",
+      "action_kind": "propose_strategy",
+      "compile": "accepted",
+      "commands": [
+        "set_item_intent",
+        "draft_guided_proposal",
+        "dispatch_render"
+      ],
+      "notices": 0
+    },
+    {
+      "case": 0,
+      "arm": "S",
+      "status": "failed",
+      "compile": "unassessed"
+    },
+    {
+      "case": 1,
+      "arm": "G0",
+      "status": "unknown",
+      "compile": "unassessed"
+    },
+    {
+      "case": 1,
+      "arm": "O",
+      "status": "parsed",
+      "action_kind": "propose_strategy",
+      "compile": "accepted",
+      "commands": [
+        "set_item_intent",
+        "draft_guided_proposal",
+        "dispatch_render"
+      ],
+      "notices": 0
+    },
+    {
+      "case": 1,
+      "arm": "S",
+      "status": "blocked",
+      "compile": "unassessed"
+    }
+  ],
+  "persistence": "unassessed",
+  "actual_export": "unassessed"
+}
