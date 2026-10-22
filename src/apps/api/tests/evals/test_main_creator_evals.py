@@ -127,6 +127,24 @@ def test_main_creator_eval(
         ]
         assert sorted(strategy["selected_media_ids"]) == sorted(own)
 
+    dropped_plan = fixture.meta.get("editorial_plan_dropped")
+    if dropped_plan:
+        # KRI-806: an editorial_plan beside kept clip sound cannot run, so the parser drops
+        # it instead of refusing the reply (each refusal spends one of three attempts); the
+        # kept lines, the creator's selection, title and length are the rest of the answer.
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        strategy = action["strategy"]
+        assert strategy.get("editorial_plan") is None
+        assert strategy["montage_audio"]["preserve_source_audio"] is True
+        assert (
+            strategy["montage_audio"]["source_media_ids"]
+            == dropped_plan["montage_audio_source_media_ids"]
+        )
+        assert strategy["selected_media_ids"] == dropped_plan["selected_media_ids"]
+        assert strategy["opening_title"] and strategy["target_duration_s"] == 15
+
     expected = fixture.meta.get("text_intent")
     if expected:
         from app.agents._schemas.creator_agent import (
