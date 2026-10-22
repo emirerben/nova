@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.34.0] - 2026-10-22
+
+### Changed
+- feat(chips): evidence line per chip + after-render chips scroll into view (KRI-769) (#1736) <!-- release-pr: 1736 -->
+
 ## [0.81.33.0] - 2026-10-22
 
 ### Changed
