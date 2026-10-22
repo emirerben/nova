@@ -1952,66 +1952,52 @@
       "red_control": "not_applicable"
     },
     {
-      "id": "kri-804-label-text-reply",
+      "id": "kri-807-unmatched-skip-picker",
       "tickets": [
-        "KRI-804",
+        "KRI-807",
         "KRI-802"
       ],
-      "symptom": "A creator label that can't print dead-ended the chat: \"chimichurri + salsa criolla\" was asked about only for its \"+\" with nothing to tap, the creator's \"&\" fix was refused again (27 > 24 characters), and when the planner left the text out the backstop answered 'I couldn't tell which clip ... goes on' as a recovery with no options (Don Julio M1, thread 3E27DEF8 turn 87ecce2f).",
-      "boundary": "contract",
+      "symptom": "\"Skip the blurry shot of the empty table\" matched no clip (resolver n=0, one vision-check suspect thrown away), nothing was left out, and the held draft asked in free text \"Tell me which ones\" with no clip picker (Don Julio M1, turn bce4a799).",
+      "boundary": "planner",
       "status": "open_pr",
-      "owner": "KRI-804",
-      "fix_prs": [],
+      "owner": "KRI-807",
+      "journey": "kri-761-look-alike-exclusions",
       "paths": [
-        "src/apps/api/app/schemas/clip_intents.py",
-        "src/apps/api/app/services/creator_label_reply.py",
-        "src/apps/api/app/services/clip_intent_planning.py",
-        "src/apps/api/app/services/creator_render_contract.py",
-        "src/apps/api/app/tasks/kria_runtime.py",
-        "src/apps/api/app/kria/planner.py"
+        "src/apps/api/app/kria/clip_exclusions.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/services/clip_intent_resolution.py",
+        "src/apps/api/tests/fixtures/kri807_don_julio_m1_clips.json"
       ],
       "regression_tests": [
-        "tests/kria/test_kri804_label_text_reply.py",
-        "tests/services/test_kri678_long_creator_labels.py",
-        "tests/kria/test_kri766_label_stays_bound.py",
-        "tests/pipeline/test_overlay_verify.py::test_fixtures_render_unclipped"
+        "tests/kria/test_kri807_unmatched_exclusion_picker.py",
+        "tests/kria/test_kri761_look_alike_exclusions.py",
+        "tests/kria/test_kri667_clip_exclusions.py"
       ],
-      "harness": "real_contract",
-      "kill_switch": null,
+      "harness": "mocked_provider",
+      "kill_switch": "kria_clip_selection_questions_enabled",
       "evidence": {
-        "offline_replay": "Chat 1 + chat 3 through the real inventory parser, resolver parser, render contract and draft backstop (planner/resolver run() replay fixed output). On origin/main 3519e7cf0 all three end in the recovery 'I couldn't tell which clip ... goes on' with no options; with the fix the '+' label is one question with every reason and two tappable answers, and the '&' text (27 chars) is placed on the sauce-bowl clip with no question.",
-        "live_model": "Not run; no paid calls. No prompt changed.",
-        "native_output": "Label width measured on the renderers: the montage bar (Fraunces 58px, 885.6px box) draws 27 characters on one line at 805.5px on cloud Skia and in the phone layout; overlay-verify fixture kri804_montage_clip_label_width PASSes (host run with the repo's TTFs; Docker not available locally). Chips on a question turn are already in the iOS build (KRI-738).",
+        "offline_replay": "Prod clip records of the held-draft turn (F4083F1D, 9 clips, attachment order) and the resolver's bce4a799 answer shape (exclude n=0, nv=1 on M1_04) as raw provider text: the real clip-intent planner and resolver agents render, call and parse; the real runtime-v2 planner turn asks the exclude picker with M1_04 pre-ticked. Red with the planner/resolution wiring reverted (free-text notice), green after. Ask -> tap -> next turn drafts without M1_04 and calls no resolver; the red-cap picker carries the skip as a second row.",
+        "live_model": "Not run; no paid calls. The fix adds no model call (an exclude still never pays for a vision check).",
+        "native_output": "unknown; the picker card is the existing KRI-761 exclude category, not device-checked for this ask.",
         "production": "Not deployed."
       },
       "neighbours_covered": [
-        "label with a '+' (characters only)",
-        "both reasons at once ('+' and too long)",
-        "Turkish chat",
-        "keep-as-written answer, and on a later turn about something else",
-        "keep-as-written converts only the label it names",
-        "dictated text the planner left out: printable (label) and unprintable (shot caption)",
-        "caption on one clip pins it; on two clips needs the words on screen",
-        "a resolver-written caption is never the creator's placement",
-        "printable text nobody placed still asks which clip",
-        "placeholder and model-written labels are never asked about",
-        "model and vision copy keep the 24-character bound",
-        "a server-made caption only when it turns off no other text (positional shot labels, every-clip time/place)",
-        "no 'keep' answer where nothing acts on it (draft backstop, Talking formats)",
-        "typographic apostrophe (iOS smart punctuation)",
-        "many long labels stay inside the 1200-character reply",
-        "text longer than the montage's 120-character creator bound is never kept as written"
+        "resolver suspect from a vision-check request and from a below-bar match",
+        "no suspect: every unpinned clip offered, nothing ticked",
+        "pinned suspect never offered or ticked",
+        "tap, file name, confident match never asked",
+        "none of these drops the skip for good",
+        "unmatched + look-alike skip in one picker",
+        "skip rides in the resolver's own clip picker (red cap), one answer settles both",
+        "one-clip project keeps the notice",
+        "picker flag off keeps the KRI-680 notice; exclusions off asks nothing",
+        "Turkish copy"
       ],
       "neighbours_gap": [
-        "The planner and resolver run() replay fixed output through the real parsers; the live model's label-vs-caption choice for this ask is not exercised (no paid calls).",
-        "Choosing the shorter suggestion relies on the Main Creator superseding the brief literal from the tapped message (KRI-805 owns brief update failures).",
-        "Prod's own clip-intent planner output for turn 87ecce2f is not recorded (the agent_run row fails to persist, KRI-809), so which of the two covered paths chat 3 took is inferred.",
-        "A typed 'keep it as written' (not the tapped answer) is left to the planner model; only the exact answer is matched.",
-        "A converted caption is re-matched to clips on every later turn (KRI-766's kept-label binding reads label rows only).",
-        "Cloud context lane: four 28-character creator labels on one clip exceed its 120-character combined limit (five 24-character ones already did)."
-      ],
-      "follow_ups": [
-        "Phone re-send of Don Julio M1 after deploy"
+        "A skip the clip-intent planner drops (exclusion_dropped) has no intent for a picker answer to bind to: it keeps the free-text notice.",
+        "A resolver question that is text-only (no clip picker) does not carry the skip rows; they are asked on the next turn.",
+        "Thread events and the earlier-draft read are stubbed in the turn tests (the earlier-draft read has its own Postgres test in test_kri761_look_alike_exclusions.py).",
+        "Blur is still not in any clip record: a measured sharpness fact was calibrated on 170 kit clips and rejected (M1_04 ranks 8th; its sharp look-alike M1_06 is only 6% sharper)."
       ],
       "red_control": "not_applicable"
     },
@@ -2058,6 +2044,71 @@
         "An `add` of the new label beside a live r2 (no change) still keeps both labels; prod's successful attempt used change.",
         "Unknown extra keys (id, status) and a misspelled scope stay refused; the retry is now told the field.",
         "\"chimichurri & salsa criolla\" is 27 characters, over the 24-character label cap: KRI-804."
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-804-label-text-reply",
+      "tickets": [
+        "KRI-804",
+        "KRI-802"
+      ],
+      "symptom": "A creator label that can't print dead-ended the chat: \"chimichurri + salsa criolla\" was asked about only for its \"+\" with nothing to tap, the creator's \"&\" fix was refused again (27 > 24 characters), and when the planner left the text out the backstop answered 'I couldn't tell which clip ... goes on' as a recovery with no options (Don Julio M1, thread 3E27DEF8 turn 87ecce2f).",
+      "boundary": "contract",
+      "status": "open_pr",
+      "owner": "KRI-804",
+      "fix_prs": [],
+      "paths": [
+        "src/apps/api/app/schemas/clip_intents.py",
+        "src/apps/api/app/services/creator_label_reply.py",
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/services/cloud_render_contract.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri804_label_text_reply.py",
+        "tests/services/test_kri678_long_creator_labels.py",
+        "tests/kria/test_kri766_label_stays_bound.py",
+        "tests/pipeline/test_overlay_verify.py::test_fixtures_render_unclipped"
+      ],
+      "harness": "real_contract",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Chat 1 + chat 3 through the real inventory parser, resolver parser, render contract and draft backstop (planner/resolver run() replay fixed output). On origin/main 3519e7cf0 all three end in the recovery 'I couldn't tell which clip ... goes on' with no options; with the fix the '+' label is one question with every reason and two tappable answers, and the '&' text (27 chars) is placed on the sauce-bowl clip with no question.",
+        "live_model": "Not run; no paid calls. No prompt changed.",
+        "native_output": "Label width measured on the renderers: the montage bar (Fraunces 58px, 885.6px box) draws 27 characters on one line at 805.5px on cloud Skia and in the phone layout; overlay-verify fixture kri804_montage_clip_label_width PASSes (host run with the repo's TTFs; Docker not available locally). Chips on a question turn are already in the iOS build (KRI-738).",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "label with a '+' (characters only)",
+        "both reasons at once ('+' and too long)",
+        "Turkish chat",
+        "keep-as-written answer, and on a later turn about something else",
+        "keep-as-written converts only the label it names",
+        "dictated text the planner left out: printable (label) and unprintable (shot caption)",
+        "caption groups retain every source ID; phone/cloud reject wrong source, missing member, unrelated gaps and extension outside the group",
+        "a resolver-written caption is never the creator's placement",
+        "printable text nobody placed still asks which clip",
+        "placeholder and model-written labels are never asked about",
+        "model and vision copy keep the 24-character bound",
+        "a server-made caption only when it turns off no other text (positional shot labels, every-clip time/place)",
+        "no 'keep' answer where nothing acts on it (draft backstop, Talking formats)",
+        "typographic apostrophe (iOS smart punctuation)",
+        "many long labels stay inside the 1200-character reply",
+        "text longer than the montage's 120-character creator bound is never kept as written"
+      ],
+      "neighbours_gap": [
+        "The planner and resolver run() replay fixed output through the real parsers; the live model's label-vs-caption choice for this ask is not exercised (no paid calls).",
+        "Choosing the shorter suggestion relies on the Main Creator superseding the brief literal from the tapped message (KRI-805 owns brief update failures).",
+        "Prod's own clip-intent planner output for turn 87ecce2f is not recorded (the agent_run row fails to persist, KRI-809), so which of the two covered paths chat 3 took is inferred.",
+        "A typed 'keep it as written' (not the tapped answer) is left to the planner model; only the exact answer is matched.",
+        "A converted caption is re-matched to clips on every later turn (KRI-766's kept-label binding reads label rows only).",
+        "Cloud context lane: four 28-character creator labels on one clip exceed its 120-character combined limit (five 24-character ones already did)."
+      ],
+      "follow_ups": [
+        "Phone re-send of Don Julio M1 after deploy"
       ],
       "red_control": "not_applicable"
     }
