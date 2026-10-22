@@ -35,11 +35,15 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v63 adds source-backed explanations; no-song fixtures track the deliberate new baseline.
 # v62 grounds a phone montage story in owned clip IDs and explanatory text goals.
 # v64 adds typed unchanged-source audio intent; only the two brief-on renders change.
+# v65 (KRI-793) adds the `spellings` caption fact: only the two brief-on renders change.
+# v66 combines it with KRI-791 spoken-text `triggers` + `speaker`; legacy brief-off
+# renders remain unchanged. Re-pin brief-on hashes only after reviewing both additions.
+# v67 preserves those instructions and adds quoted start_line/end_line trim facts.
 PRE_CHANGE_PROMPT_SHA = {
     (True, False): "4684c634fa88dcfec7865a41330b8a781bb706837861c6e7d63c796b8c2d0a2a",
-    (True, True): "9a781353f4aea31a5c947760f6d0afd35adc862a2165d6c7134d39ff1fe638b3",
+    (True, True): "fb05af8014844ae3e8d326b9727ac9c92df0f5c68f816bddf3ab41f37483cd3e",
     (False, False): "9ae7a03343fc258ce0fec6bc86976e6f24b1576bc4ad92920eb5e5b28f1e330d",
-    (False, True): "4359258a49d91c04bd16d8d77dcd4101d989ff9859d13295f226b15e127f11e0",
+    (False, True): "1c19f9064ae20bc1467aaee0752d0777e2a6d8ee2b00bb07d8ce59afb8250c24",
 }
 
 
@@ -109,7 +113,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-19-v64"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-22-v67"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

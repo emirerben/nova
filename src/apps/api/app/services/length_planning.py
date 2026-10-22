@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
 from typing import Any
 
-from app.kria.media_sources import PROXY_ORIGINAL_DURATION_TOLERANCE_S
+from app.kria.media_sources import PROXY_ORIGINAL_DURATION_TOLERANCE_S, MediaUploadContract
 from app.pipeline.best_parts import (
     BestPart,
     BestPartsConflict,
@@ -16,6 +16,7 @@ from app.pipeline.best_parts import (
     select_moment_windows,
 )
 from app.schemas.edit_proposal import (
+    MIN_PROPOSAL_DURATION_S,
     MixedMediaTimingProfile,
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
@@ -81,6 +82,23 @@ def _sources(
         kind = row.get("kind")
         kind = kind if kind in {"image", "video"} else "video"
         duration_s = _number(row.get("duration_s"))
+        upload = row.get("upload_contract")
+        if (
+            kind == "video"
+            and isinstance(upload, Mapping)
+            and upload.get("purpose") == "analysis_proxy"
+        ):
+            contract = MediaUploadContract.model_validate(upload)
+            proxy = contract.proxy
+            if proxy is None or duration_s is None or not isinstance(row.get("has_audio"), bool):
+                raise ValueError("phone timing requires verified source metadata")
+            proxy.verify_registered(duration_s, row["has_audio"])
+            if proxy.original.kind != "video":
+                raise ValueError("video timing requires a video original")
+            # V1 proxy timestamps share the original clock, but a CFR preview
+            # may carry a partial extra frame. Plan against the bytes the phone
+            # actually renders, before the creator approves the source windows.
+            duration_s = proxy.original.duration_s
         analysis = row.get("analysis")
         analysis = dict(analysis) if isinstance(analysis, Mapping) else {}
         bounds = mixed_media_hold_bounds(kind, profile) if timing_bounds_apply else None
@@ -207,6 +225,7 @@ def build_length_plan(
     closing_quote: Mapping[str, Any] | None = None,
     moment_count: int | None = None,
     moment_max_s: float | None = None,
+    moment_each_s: float | None = None,
     spoken_moments: Mapping[str, tuple[float, float]] | None = None,
     quiet_moments: Mapping[str, tuple[float, float]] | None = None,
     spoken_order: Mapping[str, Any] | None = None,
@@ -219,7 +238,8 @@ def build_length_plan(
 
     A montage may take several moments from one take (KRI-596): ``moment_count``
     moments, or as many ``moment_max_s`` moments as the target needs, when that is
-    more than one per take. A found ``closing_quote`` (KRI-597,
+    more than one per take; with no creator total they are ``moment_each_s`` long, the
+    length the creator gave each one (KRI-776). A found ``closing_quote`` (KRI-597,
     ``spoken_quotes.ground_closing_quote``) pins its take's last window to the
     creator's quoted line; the record rides on the plan either way, so the
     receipt can say whether the line was found and held; a song-owned montage pins it
@@ -417,6 +437,7 @@ def build_length_plan(
             moment_count,
             moment_max_s,
             natural_duration_s,
+            moment_each_s,
         )
     ):
         result = moment_windows
@@ -471,6 +492,20 @@ def build_length_plan(
         if result is not None
         else []
     )
+    if (
+        (eligible or single_hero_eligible)
+        and result is not None
+        and result.duration_s < MIN_PROPOSAL_DURATION_S
+        and not conflicts
+    ):
+        conflicts.append(
+            {
+                "code": "snapshot_min_duration",
+                "requested_duration_s": MIN_PROPOSAL_DURATION_S,
+                "available_duration_s": result.duration_s,
+                "message": "The selected originals cannot supply the minimum montage duration.",
+            }
+        )
     # The selector deliberately omits unusable rows from its allocation.  The
     # plan cannot do that: every selected source is an approved input and a
     # missing/too-short metadata row must remain a visible constraint even when
@@ -579,12 +614,14 @@ def _moment_or_quote_windows(
     moment_count: int | None,
     moment_max_s: float | None,
     natural_duration_s: float | None = None,
+    moment_each_s: float | None = None,
 ) -> BestPartsResult | None:
     """Moments inside long takes, and/or a held closing line; None keeps the selector.
 
     Only a montage of videos qualifies: voiceover edits and photos keep one window per
-    source exactly as before. Moments (footage-owned only) share the creator's length,
-    or ``DEFAULT_MOMENT_S`` each when they gave none. A closing line is also held when a
+    source exactly as before. Moments (footage-owned only) share the creator's length; with
+    no length they are the creator's own length each ("about 2 seconds each", KRI-776), else
+    ``DEFAULT_MOMENT_S`` each. A closing line is also held when a
     song section owns the length (KRI-681: music on the other clips, the line in its own
     sound); the section's length is then the target the creator did not give.
     """
@@ -596,7 +633,7 @@ def _moment_or_quote_windows(
     ):
         return None
     if natural_owner == "song":
-        moment_count = moment_max_s = None
+        moment_count = moment_max_s = moment_each_s = None
         if creator_target_s is None:
             creator_target_s = natural_duration_s
     pinned: tuple[str, float, float] | None = None
@@ -617,7 +654,9 @@ def _moment_or_quote_windows(
         moments = select_moment_windows(
             sources,
             target_duration_s=(
-                creator_target_s if creator_target_s is not None else count * DEFAULT_MOMENT_S
+                creator_target_s
+                if creator_target_s is not None
+                else count * (moment_each_s or DEFAULT_MOMENT_S)
             ),
             moment_count=count,
             pinned_last=pinned,
@@ -653,6 +692,28 @@ def _moment_or_quote_windows(
         total,
         round(rest.capacity_s + line.duration_s, 3),
     )
+
+
+def _overlaps_other_approved_window(
+    windows: list, current: Mapping[str, Any], start: float, end: float
+) -> bool:
+    for other in windows:
+        if (
+            not isinstance(other, Mapping)
+            or other is current
+            or other.get("media_id") != current.get("media_id")
+        ):
+            continue
+        other_start = _number(other.get("source_start_s"))
+        other_end = _number(other.get("source_end_s"))
+        if (
+            other_start is not None
+            and other_end is not None
+            and start < other_end - 0.001
+            and end > other_start + 0.001
+        ):
+            return True
+    return False
 
 
 def read_length_plan(
@@ -740,7 +801,17 @@ def read_length_plan(
             # A window the proxy allowed may run a frame past the real clip.
             actual_end = _number(getattr(clip, "duration_s", None))
             if actual_end is not None and end > actual_end:
-                end = math.floor(actual_end * 1000) / 1000
+                approved_duration = end - start
+                end = math.floor(actual_end * 1000 + 1e-9) / 1000
+                # Legacy approved envelopes used the preview's rounded end.
+                # Keep their duration by moving only this bounded window back
+                # into unused original footage; never overlap another cut,
+                # repeat frames, change speed or relax source-identity checks.
+                shifted_start = round(end - approved_duration, 6)
+                if shifted_start >= 0 and not _overlaps_other_approved_window(
+                    windows, window, shifted_start, end
+                ):
+                    start = shifted_start
                 if end - start < 0.1 - 1e-9:
                     raise ValueError("length plan window exceeds source")
         if any(

@@ -71,10 +71,14 @@ def test_limited_font_fallback_preserves_turkish_and_exclusions():
 
 
 def test_required_font_with_missing_glyphs_requests_clarification():
+    # KRI-785: Turkish letters Big Curls lacks use its glyph-safe partner (the
+    # face the cloud and iOS swap to); only text NO bundled face draws declines.
+    rows = resolve_phone_text_style(
+        [title("İstanbul")], requested={"title": {"font_family": "Big Curls"}}
+    )
+    assert rows[0]["font_family"] == "Great Vibes"
     with pytest.raises(ValueError, match="draw"):
-        resolve_phone_text_style(
-            [title("İstanbul")], requested={"title": {"font_family": "Big Curls"}}
-        )
+        resolve_phone_text_style([title("東京")], requested={"title": {"font_family": "Big Curls"}})
 
 
 def test_off_effects_survive_styled_input_and_role_overrides():

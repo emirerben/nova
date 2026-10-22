@@ -387,14 +387,12 @@ def test_turkish_cluster_pairing_uses_cmap_safe_faces():
 
 
 def test_cluster_pairing_falls_back_when_selected_face_lacks_cmap_coverage(monkeypatch):
-    def fake_covers(font_file: str, text: str) -> bool:
-        if font_file == "GreatVibes-Regular.ttf":
-            return False
-        return True
+    def fake_covers(font_family: str, text: str) -> bool:
+        return font_family != "Great Vibes"
 
     import app.pipeline.intro_cluster as ic
 
-    monkeypatch.setattr(ic, "_font_cmap_covers_text", fake_covers)
+    monkeypatch.setattr(ic, "font_covers_text", fake_covers)
     blocks = _compute(_REFERENCE_TEXT, font_family="Playfair Display")
     connector = next(b for b in blocks if b["role"] == ROLE_CONNECTOR)
     assert connector["font_family"] == "Playfair Display Regular"

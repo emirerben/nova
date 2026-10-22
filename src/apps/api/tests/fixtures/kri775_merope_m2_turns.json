@@ -1,0 +1,1239 @@
+{
+ "about": "KRI-775 (Merope cafe M2, prod 6b689783a, 2026-10-21): thread EE7B4DCA-B2E9-44F9-A073-C7A6A2E60E62, plan item 9fecc54d. One 68.37 s DJI take + one Cotopaxi photo (a Visual). Both renders failed phone_plan_unsupported in _run_phone_unified_montage_job after the approval card was offered. Brief, approved media snapshot (clip record) and prod length plan are copied verbatim from each render.request's brief binding; job 417eecd4's strategy, receipts and message from its job row. The Visual row is rebuilt from the kit file (900x1600 JPEG) and the strategy's asset id; its analysis summary is the resolver's evidence.",
+ "creator_messages": [
+  "One 68-second take at Merope, a Colombian café: Caro brings us the house oblea and Atakan takes the first bite. Make a montage of six moments from it, about 2 seconds each, in this order: Caro arriving with the black tray, her hello wave, the plate pushed close to the camera, Atakan's first bite, his thumbs-up, Caro's bye-bye wave. Put the Cotopaxi photo right after the hello wave for 1 second with the text \"From Ecuador 🇪🇨\". Freeze the frame for one second on Atakan's bite. Keep the original sound, no music. Title: \"Colombian dessert, Ecuadorian hands\". About 14 seconds.",
+  "His thumbs-up: clip 1",
+  "Cut six seperate moments from the video, about 2 seconds each, in the order I gave. If you can’t freeze the frame, skip the freeze"
+ ],
+ "visual": {
+  "id": "6ae61e1a-96ff-4776-8f95-54ace669db23",
+  "kind": "image",
+  "aspect": 0.5625,
+  "source_filename": "M2_02_visual.jpg",
+  "analysis": {
+   "summary": "Snowy mountain at sunrise"
+  }
+ },
+ "renders": [
+  {
+   "job_id": "417eecd4-681b-4c7f-8075-4a1dddfe6e85",
+   "turn_id": "40b6ac79-aa43-462d-bf43-7d9a97d9f1ed",
+   "draft_reply": "I will cut the 6 exact moments in order, insert the photo with text, freeze the frame on the bite, and keep the original cafe sound.",
+   "brief": {
+    "version": 1,
+    "requirements": [
+     {
+      "id": "r1",
+      "kind": "order",
+      "facts": {},
+      "scope": "global",
+      "status": "open",
+      "literal": null,
+      "description": "Caro arriving with tray, her hello wave, Cotopaxi photo, plate pushed close, Atakan's bite, his thumbs-up, Caro's bye-bye wave",
+      "source_turn_id": "669a3087-48b7-4536-967f-966b3034a753"
+     },
+     {
+      "id": "r2",
+      "kind": "timing",
+      "facts": {
+       "duration_s": 1
+      },
+      "scope": "clip:asset-6ae61e1a-96ff-4776-8f95-54ace669db23",
+      "status": "open",
+      "literal": null,
+      "description": "1 second",
+      "source_turn_id": "669a3087-48b7-4536-967f-966b3034a753"
+     },
+     {
+      "id": "r3",
+      "kind": "timing",
+      "facts": {
+       "duration_s": 1,
+       "freeze_frame": true
+      },
+      "scope": "global",
+      "status": "open",
+      "literal": null,
+      "description": "Freeze the frame for one second on Atakan's bite",
+      "source_turn_id": "669a3087-48b7-4536-967f-966b3034a753"
+     },
+     {
+      "id": "r4",
+      "kind": "audio",
+      "facts": {
+       "audio_intent": "source_unchanged"
+      },
+      "scope": "global",
+      "status": "open",
+      "literal": null,
+      "description": "Keep the original sound, no music",
+      "source_turn_id": "669a3087-48b7-4536-967f-966b3034a753"
+     },
+     {
+      "id": "r5",
+      "kind": "text",
+      "facts": {},
+      "scope": "title",
+      "status": "open",
+      "literal": "Colombian dessert, Ecuadorian hands",
+      "description": null,
+      "source_turn_id": "669a3087-48b7-4536-967f-966b3034a753"
+     },
+     {
+      "id": "r6",
+      "kind": "text",
+      "facts": {},
+      "scope": "clip:asset-6ae61e1a-96ff-4776-8f95-54ace669db23",
+      "status": "open",
+      "literal": "From Ecuador 🇪🇨",
+      "description": null,
+      "source_turn_id": "669a3087-48b7-4536-967f-966b3034a753"
+     },
+     {
+      "id": "r7",
+      "kind": "timing",
+      "facts": {
+       "duration_s": 14
+      },
+      "scope": "global",
+      "status": "open",
+      "literal": null,
+      "description": "About 14 seconds",
+      "source_turn_id": "669a3087-48b7-4536-967f-966b3034a753"
+     }
+    ]
+   },
+   "media_snapshot": {
+    "song_path": null,
+    "voiceover": null,
+    "clip_paths": [
+     "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/ee7b4dca-b2e9-44f9-a073-c7a6a2e60e62/analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4"
+    ],
+    "song_analysis": null,
+    "song_alignment": null,
+    "voiceover_path": null,
+    "song_duration_s": null,
+    "song_generation": null,
+    "clip_assignments": [
+     {
+      "kind": "video",
+      "capture": {
+       "capture_time": "2026-10-16T15:24:17Z"
+      },
+      "shot_id": null,
+      "analysis": {
+       "width": 320,
+       "aspect": 0.5634,
+       "brands": [],
+       "height": 568,
+       "source": "clip_metadata",
+       "answers": {
+        "does this clip match this description: \"his thumbs-up\"? answer only \"yes\" or \"no\".": {
+         "answer": "no",
+         "evidence": "man points with index finger",
+         "confidence": 1.0,
+         "generation": "1792587128136153"
+        },
+        "does this clip match this description: \"her hello wave\"? answer only \"yes\" or \"no\".": {
+         "answer": "yes",
+         "evidence": "woman waves goodbye at 0:07",
+         "confidence": 0.8,
+         "generation": "1792587128136153"
+        },
+        "does this clip match this description: \"caro's bye-bye wave\"? answer only \"yes\" or \"no\".": {
+         "answer": "yes",
+         "evidence": "Caro waves at 0:49-0:50 and 1:07",
+         "confidence": 1.0,
+         "generation": "1792587128136153"
+        },
+        "does this clip match this description: \"caro arriving with the black tray\"? answer only \"yes\" or \"no\".": {
+         "answer": "yes",
+         "evidence": "Caro arrives holding a black tray",
+         "confidence": 1.0,
+         "generation": "1792587128136153"
+        },
+        "does this clip match this description: \"the plate pushed close to the camera\"? answer only \"yes\" or \"no\".": {
+         "answer": "yes",
+         "evidence": "woman moves plate closer to camera",
+         "confidence": 0.9,
+         "generation": "1792587128136153"
+        }
+       },
+       "pix_fmt": "yuv420p",
+       "subject": "waitress presenting a dessert",
+       "duration_s": 68.37,
+       "transcript": "Okay. Um, yes, we will show. Um, Merhaba arkadaşlar. Hello everyone. Uh, we are with Caro today. Caro, can you describe can you, um, just tell about yourself, two sentences, maybe who you are, where you're from? Hi, I'm Carolina from Ecuador. And this is the obleas de la casa. It's a traditional Colombian dessert. It's waffle cookie with uh, red, no, with blackberry jam, uh, cheese, dulce de leche, uh, leche condensada, and whipped cream. Nice, delicious. That's it. Yes. And, um, where we are right now, merope, how you gonna? Merope, uh, it's a Colombian coffee and restaurant, and Merope means, uh, god of honey. Yeah, we definitely recommend coming to Merope, right? Yeah, exactly. I'm gonna be here all week. Nice, nice. Cheers, thank you. There you go, you should. Taste this. The coffee is really good here as well. Yeah, it's Colombian. How is it? Thank you. Thank you, Karol. Yeah, thank you, Karol. Bye-bye. Bye.",
+       "description": "waitress introduces herself waitress describes dessert ingredients waitress explains restaurant name meaning waitress hands over dessert man takes first bite of dessert",
+       "video_codec": "h264",
+       "best_moments": [
+        {
+         "end_s": 15.34,
+         "energy": 6.0,
+         "start_s": 10.74,
+         "description": "waitress introduces herself"
+        },
+        {
+         "end_s": 22.84,
+         "energy": 7.0,
+         "start_s": 15.34,
+         "description": "waitress describes dessert ingredients"
+        },
+        {
+         "end_s": 45.74,
+         "energy": 6.0,
+         "start_s": 42.44,
+         "description": "waitress explains restaurant name meaning"
+        },
+        {
+         "end_s": 52.04,
+         "energy": 5.0,
+         "start_s": 50.04,
+         "description": "waitress hands over dessert"
+        },
+        {
+         "end_s": 59.84,
+         "energy": 8.0,
+         "start_s": 57.04,
+         "description": "man takes first bite of dessert"
+        }
+       ],
+       "display_width": 320,
+       "understanding": {
+        "kind": "video",
+        "brands": [
+         "MEROPE"
+        ],
+        "people": {
+         "note": "a young woman in a t-shirt and shorts, and a young man",
+         "count": 3,
+         "speaks_to_camera": true
+        },
+        "speech": {
+         "language": "en",
+         "segments": [
+          {
+           "text": "Yes we will show.",
+           "end_s": 1.46,
+           "start_s": 0.0
+          },
+          {
+           "text": "Merhaba arkadaşlar, hello everyone.",
+           "end_s": 4.44,
+           "start_s": 2.72
+          },
+          {
+           "text": "We are with Karo today.",
+           "end_s": 6.54,
+           "start_s": 4.86
+          },
+          {
+           "text": "Karo, can you describe, can you just tell about yourself, two sentences maybe, who you are, where you're from.",
+           "end_s": 11.78,
+           "start_s": 6.88
+          },
+          {
+           "text": "Hi, I'm Carolina, I'm from Ecuador.",
+           "end_s": 13.58,
+           "start_s": 12.04
+          },
+          {
+           "text": "This is the Oblea de la Casa.",
+           "end_s": 16.88,
+           "start_s": 14.54
+          },
+          {
+           "text": "It's a traditional Colombian dessert.",
+           "end_s": 20.62,
+           "start_s": 17.2
+          },
+          {
+           "text": "It's wafer cookie with red, no, with blackberry jam,",
+           "end_s": 26.66,
+           "start_s": 20.62
+          },
+          {
+           "text": "cheese, dulce de leche,",
+           "end_s": 29.12,
+           "start_s": 27.48
+          },
+          {
+           "text": "leche condensada and whipped cream.",
+           "end_s": 34.46,
+           "start_s": 30.18
+          },
+          {
+           "text": "Nice, delicious.",
+           "end_s": 35.54,
+           "start_s": 34.96
+          },
+          {
+           "text": "That's it.",
+           "end_s": 36.28,
+           "start_s": 35.74
+          },
+          {
+           "text": "And where we are right now is Merope, how are you going to...",
+           "end_s": 40.04,
+           "start_s": 36.9
+          },
+          {
+           "text": "Merope, it's a Colombian coffee and restaurant and Merope means god of honey.",
+           "end_s": 45.48,
+           "start_s": 40.04
+          },
+          {
+           "text": "Yeah, we definitely recommend coming to Merope, right?",
+           "end_s": 47.84,
+           "start_s": 45.62
+          },
+          {
+           "text": "Yeah, come back please, I'm gonna be here all week.",
+           "end_s": 50.3,
+           "start_s": 47.84
+          },
+          {
+           "text": "Nice, nice, cheers, thank you.",
+           "end_s": 51.94,
+           "start_s": 50.66
+          },
+          {
+           "text": "There you go, you should do this.",
+           "end_s": 53.1,
+           "start_s": 51.98
+          },
+          {
+           "text": "Take the first bite.",
+           "end_s": 54.42,
+           "start_s": 53.42
+          },
+          {
+           "text": "The coffee is really good here as well.",
+           "end_s": 58.36,
+           "start_s": 56.76
+          },
+          {
+           "text": "Yeah, it's Colombian.",
+           "end_s": 59.2,
+           "start_s": 58.56
+          },
+          {
+           "text": "Thank you, thank you Karo.",
+           "end_s": 65.56,
+           "start_s": 64.28
+          },
+          {
+           "text": "Thank you Karo, bye bye.",
+           "end_s": 67.36,
+           "start_s": 65.92
+          }
+         ],
+         "to_camera": true,
+         "has_speech": true,
+         "transcript": "Okay. Um, yes, we will show. Um, Merhaba arkadaşlar. Hello everyone. Uh, we are with Caro today. Caro, can you describe can you, um, just tell about yourself, two sentences, maybe who you are, where you're from? Hi, I'm Carolina from Ecuador. And this is the obleas de la casa. It's a traditional Colombian dessert. It's waffle cookie with uh, red, no, with blackberry jam, uh, cheese, dulce de leche, uh, leche condensada, and whipped cream. Nice, delicious. That's it. Yes. And, um, where we are right now, merope, how you gonna? Merope, uh, it's a Colombian coffee and restaurant, and Merope means, uh, god of honey. Yeah, we definitely recommend coming to Merope, right? Yeah, exactly. I'm gonna be here all week. Nice, nice. Cheers, thank you. There you go, you should. Taste this. The coffee is really good here as well. Yeah, it's Colombian. How is it? Thank you. Thank you, Karol. Yeah, thank you, Karol. Bye-bye. Bye."
+        },
+        "setting": "outdoor patio of a cafe/restaurant",
+        "subject": "waitress presenting a dessert",
+        "summary": "A waitress introduces herself as Carolina from Ecuador and presents a traditional Colombian dessert called \"obleas de la casa\" at a restaurant named Merope. Another person then takes a bite of the dessert.",
+        "activity": "presenting a dessert and explaining its ingredients",
+        "audio_type": "dialogue",
+        "content_type": "talking_head",
+        "on_screen_text": "",
+        "notable_moments": [
+         {
+          "end_s": 15.34,
+          "start_s": 10.74,
+          "description": "waitress introduces herself"
+         },
+         {
+          "end_s": 22.84,
+          "start_s": 15.34,
+          "description": "waitress describes dessert ingredients"
+         },
+         {
+          "end_s": 45.74,
+          "start_s": 42.44,
+          "description": "waitress explains restaurant name meaning"
+         },
+         {
+          "end_s": 52.04,
+          "start_s": 50.04,
+          "description": "waitress hands over dessert"
+         },
+         {
+          "end_s": 59.84,
+          "start_s": 57.04,
+          "description": "man takes first bite of dessert"
+         }
+        ]
+       },
+       "display_height": 568,
+       "on_screen_text": "Okay. Um, yes, we will show. Um, Merhaba arkadaşlar. Hello everyone. Uh, we are with Caro today. Caro, can you describe can you, um, just tell about yourself, two sentences, maybe who you are, where you're from? Hi, I'm Carolina from Ecuador. And this is the obleas de la casa. It's a traditional Colombian dessert. It's waffle cookie with uh, red, no, with blackberry jam, uh, cheese, dulce de leche",
+       "analysis_version": 8,
+       "rotation_degrees": 0
+      },
+      "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/ee7b4dca-b2e9-44f9-a073-c7a6a2e60e62/analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+      "media_id": "analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+      "has_audio": true,
+      "duration_s": 68.37,
+      "source_filename": "CF249AF1-D107-4E70-A5DD-F9F2CF942823-M2_01_footage.mp4",
+      "upload_contract": {
+       "proxy": {
+        "width": 320,
+        "height": 568,
+        "original": {
+         "kind": "video",
+         "width": 1080,
+         "height": 1920,
+         "sha256": "66b42816bfdab0cb46b935a14a7d08bddd5ef85b6b9b911328d6d3306af0ae99",
+         "has_audio": true,
+         "byte_count": 55291210,
+         "duration_s": 68.367,
+         "orientation_degrees": 0
+        },
+        "duration_s": 68.36666666666666,
+        "frame_rate": 30.0,
+        "timing_version": 1,
+        "orientation_degrees": 0
+       },
+       "purpose": "analysis_proxy"
+      },
+      "library_asset_id": "8bba370f-1af8-4224-a65e-52a94f92a6cb",
+      "library_source_id": "db0de6de-e51f-4347-bc35-b906c79ef208",
+      "manifest_identity": "analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+      "storage_generation": "1792587128136153"
+     }
+    ],
+    "voiceover_duration_s": null,
+    "voiceover_generation": null
+   },
+   "prod_length_plan": {
+    "owner": "footage",
+    "sources": [
+     {
+      "kind": "video",
+      "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/ee7b4dca-b2e9-44f9-a073-c7a6a2e60e62/analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+      "media_id": "analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+      "duration_s": 68.37,
+      "generation": null,
+      "storage_generation": "1792587128136153"
+     }
+    ],
+    "version": 1,
+    "windows": [
+     {
+      "score": 8.0,
+      "reason": "best_moment_extended_for_minimum",
+      "media_id": "analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+      "source_end_s": 59.94,
+      "source_start_s": 56.94
+     }
+    ],
+    "conflicts": [],
+    "capacity_s": 68.37,
+    "natural_owner": "footage",
+    "capacity_raw_s": 68.37,
+    "window_eligible": true,
+    "max_source_count": 80,
+    "target_duration_s": null,
+    "natural_duration_s": null
+   },
+   "strategy": {
+    "pacing": "balanced",
+    "direction": "guided_story",
+    "rationale": "I'll sequence the six exact moments you requested from the Merope video, inserting the Cotopaxi photo right after Caro's wave with the Ecuador text. The frame will freeze on Atakan's bite, and I'll keep the cafe's original audio throughout, hitting your 14-second target.",
+    "voice_mode": "per_clip",
+    "edit_format": "montage",
+    "media_scope": "all",
+    "clip_intents": [
+     {
+      "op": "order",
+      "attribute": "Caro arriving with the black tray, her hello wave, the plate pushed close to the camera, Atakan's first bite, his thumbs-up, Caro's bye-bye wave",
+      "intent_id": "order_sequence"
+     },
+     {
+      "op": "order",
+      "attribute": "the Cotopaxi photo right after the hello wave",
+      "intent_id": "order_cotopaxi"
+     },
+     {
+      "op": "caption",
+      "attribute": "the Cotopaxi photo",
+      "intent_id": "caption_cotopaxi",
+      "creator_text": "From Ecuador 🇪🇨"
+     }
+    ],
+    "caption_style": "auto",
+    "montage_audio": {
+     "source_media_ids": [],
+     "preview_source_beds": false,
+     "preserve_source_audio": true
+    },
+    "opening_title": "Colombian dessert, Ecuadorian hands",
+    "audio_strategy": "original_audio",
+    "render_program": "guided",
+    "story_structure": [
+     "Caro arrives with the tray and gives a hello wave",
+     "Cut to the Cotopaxi photo with text overlay",
+     "Plate pushed close to camera, followed by Atakan's first bite",
+     "Atakan gives a thumbs-up, ending on Caro's goodbye wave"
+    ],
+    "target_duration_s": 14,
+    "selected_media_ids": [],
+    "video_reuse_policy": "once",
+    "optional_treatments": [],
+    "resolved_clip_intents": [
+     {
+      "op": "order",
+      "status": "resolved",
+      "attribute": "Caro arriving with the black tray, her hello wave, the plate pushed close to the camera, Atakan's first bite, his thumbs-up, Caro's bye-bye wave",
+      "intent_id": "order_sequence",
+      "assignments": [
+       {
+        "evidence": "waitress presenting a dessert; waitress introduces herself; waitress hands over dessert; man takes first bite of dessert",
+        "media_id": "analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+        "confidence": 0.9
+       }
+      ]
+     },
+     {
+      "op": "order",
+      "status": "resolved",
+      "attribute": "the Cotopaxi photo right after the hello wave",
+      "intent_id": "order_cotopaxi",
+      "assignments": [
+       {
+        "evidence": "Snowy mountain at sunrise",
+        "media_id": "asset-6ae61e1a-96ff-4776-8f95-54ace669db23",
+        "confidence": 0.9
+       }
+      ]
+     },
+     {
+      "op": "caption",
+      "status": "resolved",
+      "attribute": "the Cotopaxi photo",
+      "intent_id": "caption_cotopaxi",
+      "assignments": [
+       {
+        "evidence": "Snowy mountain at sunrise",
+        "media_id": "asset-6ae61e1a-96ff-4776-8f95-54ace669db23",
+        "confidence": 0.9
+       }
+      ],
+      "caption_text": "From Ecuador 🇪🇨",
+      "creator_text": "From Ecuador 🇪🇨",
+      "caption_grounding": "creator_text"
+     }
+    ],
+    "selected_music_section": null
+   },
+   "prod_receipts": [
+    {
+     "stage": "checked",
+     "reason": "some of the groups you named are not where you said",
+     "status": "partial",
+     "inferred": [],
+     "verification": "checked",
+     "brief_version": 1,
+     "generation_id": "6aa3ce17830744d79fdcfaf4b4574b5e",
+     "requirement_id": "r1",
+     "inferred_labels": [],
+     "target_media_ids": []
+    },
+    {
+     "stage": "matched",
+     "reason": "I can't verify this timing automatically.",
+     "status": "partial",
+     "inferred": [],
+     "verification": "unchecked",
+     "brief_version": 1,
+     "generation_id": "6aa3ce17830744d79fdcfaf4b4574b5e",
+     "requirement_id": "r2",
+     "inferred_labels": [],
+     "target_media_ids": [
+      "asset-6ae61e1a-96ff-4776-8f95-54ace669db23"
+     ]
+    },
+    {
+     "stage": "checked",
+     "reason": "This draft is about 4.7s; you asked for 1s.",
+     "status": "partial",
+     "inferred": [],
+     "verification": "checked",
+     "brief_version": 1,
+     "generation_id": "6aa3ce17830744d79fdcfaf4b4574b5e",
+     "requirement_id": "r3",
+     "inferred_labels": [],
+     "target_media_ids": []
+    },
+    {
+     "stage": "understood",
+     "reason": "I can't check the sound mix on this draft yet.",
+     "status": "partial",
+     "inferred": [],
+     "verification": "unchecked",
+     "brief_version": 1,
+     "generation_id": "6aa3ce17830744d79fdcfaf4b4574b5e",
+     "requirement_id": "r4",
+     "inferred_labels": [],
+     "target_media_ids": []
+    },
+    {
+     "stage": "checked",
+     "reason": null,
+     "status": "met",
+     "inferred": [],
+     "verification": "checked",
+     "brief_version": 1,
+     "generation_id": "6aa3ce17830744d79fdcfaf4b4574b5e",
+     "requirement_id": "r5",
+     "inferred_labels": [],
+     "target_media_ids": []
+    },
+    {
+     "stage": "matched",
+     "reason": "I can't verify text for that target clip in this draft.",
+     "status": "partial",
+     "inferred": [],
+     "verification": "unchecked",
+     "brief_version": 1,
+     "generation_id": "6aa3ce17830744d79fdcfaf4b4574b5e",
+     "requirement_id": "r6",
+     "inferred_labels": [],
+     "target_media_ids": [
+      "asset-6ae61e1a-96ff-4776-8f95-54ace669db23"
+     ]
+    },
+    {
+     "stage": "checked",
+     "reason": "This draft is about 4.7s; you asked for 14s.",
+     "status": "partial",
+     "inferred": [],
+     "verification": "checked",
+     "brief_version": 1,
+     "generation_id": "6aa3ce17830744d79fdcfaf4b4574b5e",
+     "requirement_id": "r7",
+     "inferred_labels": [],
+     "target_media_ids": []
+    }
+   ],
+   "prod_message": "some of the groups you named are not where you said This draft is about 4.7s; you asked for 1s. This draft is about 4.7s; you asked for 14s. Your draft is saved. Should I try again or simplify this request?"
+  },
+  {
+   "job_id": "50f67a06-2c78-4691-831c-5754e3bf9f74",
+   "turn_id": "9c7b2b9a-f289-40ef-8edf-7f06a86f29a5",
+   "draft_reply": "I'll skip the freeze frame and cut the 6 specific moments in the exact order you requested, inserting the labeled photo and keeping the original sound.",
+   "brief": {
+    "version": 2,
+    "requirements": [
+     {
+      "id": "r1",
+      "kind": "order",
+      "facts": {},
+      "scope": "global",
+      "status": "open",
+      "literal": null,
+      "description": "Caro arriving with tray, her hello wave, Cotopaxi photo, plate pushed close, Atakan's bite, his thumbs-up, Caro's bye-bye wave",
+      "source_turn_id": "669a3087-48b7-4536-967f-966b3034a753"
+     },
+     {
+      "id": "r2",
+      "kind": "timing",
+      "facts": {
+       "duration_s": 1
+      },
+      "scope": "clip:asset-6ae61e1a-96ff-4776-8f95-54ace669db23",
+      "status": "open",
+      "literal": null,
+      "description": "1 second",
+      "source_turn_id": "669a3087-48b7-4536-967f-966b3034a753"
+     },
+     {
+      "id": "r3",
+      "kind": "timing",
+      "facts": {
+       "duration_s": 1,
+       "freeze_frame": true
+      },
+      "scope": "global",
+      "status": "superseded",
+      "literal": null,
+      "description": "Freeze the frame for one second on Atakan's bite",
+      "source_turn_id": "669a3087-48b7-4536-967f-966b3034a753"
+     },
+     {
+      "id": "r4",
+      "kind": "audio",
+      "facts": {
+       "audio_intent": "source_unchanged"
+      },
+      "scope": "global",
+      "status": "open",
+      "literal": null,
+      "description": "Keep the original sound, no music",
+      "source_turn_id": "669a3087-48b7-4536-967f-966b3034a753"
+     },
+     {
+      "id": "r5",
+      "kind": "text",
+      "facts": {},
+      "scope": "title",
+      "status": "open",
+      "literal": "Colombian dessert, Ecuadorian hands",
+      "description": null,
+      "source_turn_id": "669a3087-48b7-4536-967f-966b3034a753"
+     },
+     {
+      "id": "r6",
+      "kind": "text",
+      "facts": {},
+      "scope": "clip:asset-6ae61e1a-96ff-4776-8f95-54ace669db23",
+      "status": "open",
+      "literal": "From Ecuador 🇪🇨",
+      "description": null,
+      "source_turn_id": "669a3087-48b7-4536-967f-966b3034a753"
+     },
+     {
+      "id": "r7",
+      "kind": "timing",
+      "facts": {
+       "duration_s": 14
+      },
+      "scope": "global",
+      "status": "open",
+      "literal": null,
+      "description": "About 14 seconds",
+      "source_turn_id": "669a3087-48b7-4536-967f-966b3034a753"
+     }
+    ]
+   },
+   "media_snapshot": {
+    "song_path": null,
+    "voiceover": null,
+    "clip_paths": [
+     "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/ee7b4dca-b2e9-44f9-a073-c7a6a2e60e62/analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4"
+    ],
+    "song_analysis": null,
+    "song_alignment": null,
+    "voiceover_path": null,
+    "song_duration_s": null,
+    "song_generation": null,
+    "clip_assignments": [
+     {
+      "kind": "video",
+      "capture": {
+       "capture_time": "2026-10-16T15:24:17Z"
+      },
+      "shot_id": null,
+      "analysis": {
+       "width": 320,
+       "aspect": 0.5634,
+       "brands": [],
+       "height": 568,
+       "source": "clip_metadata",
+       "answers": {
+        "does this clip match this description: \"his thumbs-up\"? answer only \"yes\" or \"no\".": {
+         "answer": "no",
+         "evidence": "man points with index finger",
+         "confidence": 1.0,
+         "generation": "1792587128136153"
+        },
+        "does this clip match this description: \"her hello wave\"? answer only \"yes\" or \"no\".": {
+         "answer": "yes",
+         "evidence": "woman waves goodbye at 0:07",
+         "confidence": 0.8,
+         "generation": "1792587128136153"
+        },
+        "does this clip match this description: \"caro's bye-bye wave\"? answer only \"yes\" or \"no\".": {
+         "answer": "yes",
+         "evidence": "Caro waves at 0:49-0:50 and 1:07",
+         "confidence": 1.0,
+         "generation": "1792587128136153"
+        },
+        "does this clip match this description: \"caro arriving with the black tray\"? answer only \"yes\" or \"no\".": {
+         "answer": "yes",
+         "evidence": "Caro arrives holding a black tray",
+         "confidence": 1.0,
+         "generation": "1792587128136153"
+        },
+        "does this clip match this description: \"the plate pushed close to the camera\"? answer only \"yes\" or \"no\".": {
+         "answer": "yes",
+         "evidence": "woman moves plate closer to camera",
+         "confidence": 0.9,
+         "generation": "1792587128136153"
+        }
+       },
+       "pix_fmt": "yuv420p",
+       "subject": "waitress presenting a dessert",
+       "clip_facts": [
+        {
+         "kind": "capture_time",
+         "value": "2026-10-16T15:24:17Z",
+         "provenance": "exif"
+        }
+       ],
+       "duration_s": 68.37,
+       "transcript": "Okay. Um, yes, we will show. Um, Merhaba arkadaşlar. Hello everyone. Uh, we are with Caro today. Caro, can you describe can you, um, just tell about yourself, two sentences, maybe who you are, where you're from? Hi, I'm Carolina from Ecuador. And this is the obleas de la casa. It's a traditional Colombian dessert. It's waffle cookie with uh, red, no, with blackberry jam, uh, cheese, dulce de leche, uh, leche condensada, and whipped cream. Nice, delicious. That's it. Yes. And, um, where we are right now, merope, how you gonna? Merope, uh, it's a Colombian coffee and restaurant, and Merope means, uh, god of honey. Yeah, we definitely recommend coming to Merope, right? Yeah, exactly. I'm gonna be here all week. Nice, nice. Cheers, thank you. There you go, you should. Taste this. The coffee is really good here as well. Yeah, it's Colombian. How is it? Thank you. Thank you, Karol. Yeah, thank you, Karol. Bye-bye. Bye.",
+       "description": "waitress introduces herself waitress describes dessert ingredients waitress explains restaurant name meaning waitress hands over dessert man takes first bite of dessert",
+       "video_codec": "h264",
+       "best_moments": [
+        {
+         "end_s": 15.34,
+         "energy": 6.0,
+         "start_s": 10.74,
+         "description": "waitress introduces herself"
+        },
+        {
+         "end_s": 22.84,
+         "energy": 7.0,
+         "start_s": 15.34,
+         "description": "waitress describes dessert ingredients"
+        },
+        {
+         "end_s": 45.74,
+         "energy": 6.0,
+         "start_s": 42.44,
+         "description": "waitress explains restaurant name meaning"
+        },
+        {
+         "end_s": 52.04,
+         "energy": 5.0,
+         "start_s": 50.04,
+         "description": "waitress hands over dessert"
+        },
+        {
+         "end_s": 59.84,
+         "energy": 8.0,
+         "start_s": 57.04,
+         "description": "man takes first bite of dessert"
+        }
+       ],
+       "display_width": 320,
+       "understanding": {
+        "kind": "video",
+        "brands": [
+         "MEROPE"
+        ],
+        "people": {
+         "note": "a young woman in a t-shirt and shorts, and a young man",
+         "count": 3,
+         "speaks_to_camera": true
+        },
+        "speech": {
+         "language": "en",
+         "segments": [
+          {
+           "text": "Yes we will show.",
+           "end_s": 1.46,
+           "start_s": 0.0
+          },
+          {
+           "text": "Merhaba arkadaşlar, hello everyone.",
+           "end_s": 4.44,
+           "start_s": 2.72
+          },
+          {
+           "text": "We are with Karo today.",
+           "end_s": 6.54,
+           "start_s": 4.86
+          },
+          {
+           "text": "Karo, can you describe, can you just tell about yourself, two sentences maybe, who you are, where you're from.",
+           "end_s": 11.78,
+           "start_s": 6.88
+          },
+          {
+           "text": "Hi, I'm Carolina, I'm from Ecuador.",
+           "end_s": 13.58,
+           "start_s": 12.04
+          },
+          {
+           "text": "This is the Oblea de la Casa.",
+           "end_s": 16.88,
+           "start_s": 14.54
+          },
+          {
+           "text": "It's a traditional Colombian dessert.",
+           "end_s": 20.62,
+           "start_s": 17.2
+          },
+          {
+           "text": "It's wafer cookie with red, no, with blackberry jam,",
+           "end_s": 26.66,
+           "start_s": 20.62
+          },
+          {
+           "text": "cheese, dulce de leche,",
+           "end_s": 29.12,
+           "start_s": 27.48
+          },
+          {
+           "text": "leche condensada and whipped cream.",
+           "end_s": 34.46,
+           "start_s": 30.18
+          },
+          {
+           "text": "Nice, delicious.",
+           "end_s": 35.54,
+           "start_s": 34.96
+          },
+          {
+           "text": "That's it.",
+           "end_s": 36.28,
+           "start_s": 35.74
+          },
+          {
+           "text": "And where we are right now is Merope, how are you going to...",
+           "end_s": 40.04,
+           "start_s": 36.9
+          },
+          {
+           "text": "Merope, it's a Colombian coffee and restaurant and Merope means god of honey.",
+           "end_s": 45.48,
+           "start_s": 40.04
+          },
+          {
+           "text": "Yeah, we definitely recommend coming to Merope, right?",
+           "end_s": 47.84,
+           "start_s": 45.62
+          },
+          {
+           "text": "Yeah, come back please, I'm gonna be here all week.",
+           "end_s": 50.3,
+           "start_s": 47.84
+          },
+          {
+           "text": "Nice, nice, cheers, thank you.",
+           "end_s": 51.94,
+           "start_s": 50.66
+          },
+          {
+           "text": "There you go, you should do this.",
+           "end_s": 53.1,
+           "start_s": 51.98
+          },
+          {
+           "text": "Take the first bite.",
+           "end_s": 54.42,
+           "start_s": 53.42
+          },
+          {
+           "text": "The coffee is really good here as well.",
+           "end_s": 58.36,
+           "start_s": 56.76
+          },
+          {
+           "text": "Yeah, it's Colombian.",
+           "end_s": 59.2,
+           "start_s": 58.56
+          },
+          {
+           "text": "Thank you, thank you Karo.",
+           "end_s": 65.56,
+           "start_s": 64.28
+          },
+          {
+           "text": "Thank you Karo, bye bye.",
+           "end_s": 67.36,
+           "start_s": 65.92
+          }
+         ],
+         "to_camera": true,
+         "has_speech": true,
+         "transcript": "Okay. Um, yes, we will show. Um, Merhaba arkadaşlar. Hello everyone. Uh, we are with Caro today. Caro, can you describe can you, um, just tell about yourself, two sentences, maybe who you are, where you're from? Hi, I'm Carolina from Ecuador. And this is the obleas de la casa. It's a traditional Colombian dessert. It's waffle cookie with uh, red, no, with blackberry jam, uh, cheese, dulce de leche, uh, leche condensada, and whipped cream. Nice, delicious. That's it. Yes. And, um, where we are right now, merope, how you gonna? Merope, uh, it's a Colombian coffee and restaurant, and Merope means, uh, god of honey. Yeah, we definitely recommend coming to Merope, right? Yeah, exactly. I'm gonna be here all week. Nice, nice. Cheers, thank you. There you go, you should. Taste this. The coffee is really good here as well. Yeah, it's Colombian. How is it? Thank you. Thank you, Karol. Yeah, thank you, Karol. Bye-bye. Bye."
+        },
+        "setting": "outdoor patio of a cafe/restaurant",
+        "subject": "waitress presenting a dessert",
+        "summary": "A waitress introduces herself as Carolina from Ecuador and presents a traditional Colombian dessert called \"obleas de la casa\" at a restaurant named Merope. Another person then takes a bite of the dessert.",
+        "activity": "presenting a dessert and explaining its ingredients",
+        "audio_type": "dialogue",
+        "content_type": "talking_head",
+        "on_screen_text": "",
+        "notable_moments": [
+         {
+          "end_s": 15.34,
+          "start_s": 10.74,
+          "description": "waitress introduces herself"
+         },
+         {
+          "end_s": 22.84,
+          "start_s": 15.34,
+          "description": "waitress describes dessert ingredients"
+         },
+         {
+          "end_s": 45.74,
+          "start_s": 42.44,
+          "description": "waitress explains restaurant name meaning"
+         },
+         {
+          "end_s": 52.04,
+          "start_s": 50.04,
+          "description": "waitress hands over dessert"
+         },
+         {
+          "end_s": 59.84,
+          "start_s": 57.04,
+          "description": "man takes first bite of dessert"
+         }
+        ]
+       },
+       "display_height": 568,
+       "on_screen_text": "Okay. Um, yes, we will show. Um, Merhaba arkadaşlar. Hello everyone. Uh, we are with Caro today. Caro, can you describe can you, um, just tell about yourself, two sentences, maybe who you are, where you're from? Hi, I'm Carolina from Ecuador. And this is the obleas de la casa. It's a traditional Colombian dessert. It's waffle cookie with uh, red, no, with blackberry jam, uh, cheese, dulce de leche",
+       "analysis_version": 8,
+       "rotation_degrees": 0,
+       "clip_facts_landmark_generation": "1792587128136153|en"
+      },
+      "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/ee7b4dca-b2e9-44f9-a073-c7a6a2e60e62/analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+      "media_id": "analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+      "has_audio": true,
+      "duration_s": 68.37,
+      "source_filename": "CF249AF1-D107-4E70-A5DD-F9F2CF942823-M2_01_footage.mp4",
+      "upload_contract": {
+       "proxy": {
+        "width": 320,
+        "height": 568,
+        "original": {
+         "kind": "video",
+         "width": 1080,
+         "height": 1920,
+         "sha256": "66b42816bfdab0cb46b935a14a7d08bddd5ef85b6b9b911328d6d3306af0ae99",
+         "has_audio": true,
+         "byte_count": 55291210,
+         "duration_s": 68.367,
+         "orientation_degrees": 0
+        },
+        "duration_s": 68.36666666666666,
+        "frame_rate": 30.0,
+        "timing_version": 1,
+        "orientation_degrees": 0
+       },
+       "purpose": "analysis_proxy"
+      },
+      "library_asset_id": "8bba370f-1af8-4224-a65e-52a94f92a6cb",
+      "library_source_id": "db0de6de-e51f-4347-bc35-b906c79ef208",
+      "manifest_identity": "analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+      "storage_generation": "1792587128136153"
+     }
+    ],
+    "voiceover_duration_s": null,
+    "voiceover_generation": null
+   },
+   "prod_length_plan": {
+    "owner": "footage",
+    "sources": [
+     {
+      "kind": "video",
+      "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/ee7b4dca-b2e9-44f9-a073-c7a6a2e60e62/analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+      "media_id": "analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+      "duration_s": 68.37,
+      "generation": null,
+      "storage_generation": "1792587128136153"
+     }
+    ],
+    "version": 1,
+    "windows": [
+     {
+      "score": 8.0,
+      "reason": "best_moment_extended_for_minimum",
+      "media_id": "analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+      "source_end_s": 59.94,
+      "source_start_s": 56.94
+     }
+    ],
+    "conflicts": [],
+    "capacity_s": 68.37,
+    "spoken_order": {
+     "roles": {
+      "analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4": "opening"
+     }
+    },
+    "natural_owner": "footage",
+    "capacity_raw_s": 68.37,
+    "window_eligible": true,
+    "max_source_count": 80,
+    "target_duration_s": null,
+    "natural_duration_s": null
+   },
+   "strategy": {
+    "pacing": "balanced",
+    "direction": "guided_story",
+    "rationale": "I've dropped the freeze-frame requirement. The guided specialist will cut the exact six ~2-second sequential moments from your video clip, insert the photo with its label right after the hello wave, and preserve the natural café audio throughout the 13-second montage.",
+    "edit_format": "montage",
+    "media_scope": "all",
+    "clip_intents": [
+     {
+      "op": "order",
+      "attribute": "Caro arriving with the black tray",
+      "intent_id": "order_caro_arriving"
+     },
+     {
+      "op": "order",
+      "attribute": "her hello wave",
+      "intent_id": "order_hello_wave"
+     },
+     {
+      "op": "order",
+      "attribute": "the Cotopaxi photo",
+      "intent_id": "order_cotopaxi_photo"
+     },
+     {
+      "op": "caption",
+      "attribute": "the Cotopaxi photo",
+      "intent_id": "caption_cotopaxi_text",
+      "creator_text": "From Ecuador 🇪🇨"
+     },
+     {
+      "op": "order",
+      "attribute": "the plate pushed close to the camera",
+      "intent_id": "order_plate_pushed"
+     },
+     {
+      "op": "order",
+      "attribute": "Atakan's first bite",
+      "intent_id": "order_atakan_first_bite"
+     },
+     {
+      "op": "order",
+      "attribute": "his thumbs-up",
+      "intent_id": "order_thumbs_up"
+     },
+     {
+      "op": "order",
+      "attribute": "Caro's bye-bye wave",
+      "intent_id": "order_caro_bye_wave"
+     }
+    ],
+    "caption_style": "none",
+    "montage_audio": {
+     "source_media_ids": [],
+     "preview_source_beds": false,
+     "preserve_source_audio": true
+    },
+    "opening_title": "Colombian dessert, Ecuadorian hands",
+    "audio_strategy": "original_audio",
+    "render_program": "guided",
+    "story_structure": [
+     "Caro arriving with the tray and waving hello",
+     "Cut to the Cotopaxi photo",
+     "The dessert plate pushed close to the camera",
+     "Atakan's first bite and thumbs-up",
+     "Caro's bye-bye wave"
+    ],
+    "target_duration_s": 13,
+    "selected_media_ids": [],
+    "video_reuse_policy": "once",
+    "optional_treatments": [],
+    "resolved_clip_intents": [
+     {
+      "op": "order",
+      "status": "resolved",
+      "attribute": "Caro arriving with the black tray",
+      "intent_id": "order_caro_arriving",
+      "assignments": [
+       {
+        "evidence": "waitress presenting a dessert; waitress introduces herself; waitress hands over dessert",
+        "media_id": "analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+        "confidence": 0.8
+       }
+      ]
+     },
+     {
+      "op": "order",
+      "status": "resolved",
+      "attribute": "her hello wave",
+      "intent_id": "order_hello_wave",
+      "assignments": [
+       {
+        "evidence": "woman waves goodbye at 0:07",
+        "media_id": "analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+        "confidence": 0.8
+       }
+      ]
+     },
+     {
+      "op": "order",
+      "status": "resolved",
+      "attribute": "the Cotopaxi photo",
+      "intent_id": "order_cotopaxi_photo",
+      "assignments": [
+       {
+        "evidence": "Snowy mountain at sunrise",
+        "media_id": "asset-6ae61e1a-96ff-4776-8f95-54ace669db23",
+        "confidence": 0.8
+       }
+      ]
+     },
+     {
+      "op": "caption",
+      "status": "resolved",
+      "attribute": "the Cotopaxi photo",
+      "intent_id": "caption_cotopaxi_text",
+      "assignments": [
+       {
+        "evidence": "Snowy mountain at sunrise",
+        "media_id": "asset-6ae61e1a-96ff-4776-8f95-54ace669db23",
+        "confidence": 0.8
+       }
+      ],
+      "caption_text": "From Ecuador 🇪🇨",
+      "creator_text": "From Ecuador 🇪🇨",
+      "caption_grounding": "creator_text"
+     },
+     {
+      "op": "order",
+      "status": "resolved",
+      "attribute": "the plate pushed close to the camera",
+      "intent_id": "order_plate_pushed",
+      "assignments": [
+       {
+        "evidence": "woman moves plate closer to camera",
+        "media_id": "analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+        "confidence": 0.9
+       }
+      ]
+     },
+     {
+      "op": "order",
+      "status": "resolved",
+      "attribute": "Atakan's first bite",
+      "intent_id": "order_atakan_first_bite",
+      "assignments": [
+       {
+        "evidence": "man takes first bite of dessert",
+        "media_id": "analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+        "confidence": 1.0
+       }
+      ]
+     },
+     {
+      "op": "order",
+      "status": "resolved",
+      "attribute": "his thumbs-up",
+      "intent_id": "order_thumbs_up",
+      "assignments": [
+       {
+        "evidence": "creator selected",
+        "media_id": "analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+        "confidence": 1.0
+       }
+      ]
+     },
+     {
+      "op": "order",
+      "status": "resolved",
+      "attribute": "Caro's bye-bye wave",
+      "intent_id": "order_caro_bye_wave",
+      "assignments": [
+       {
+        "evidence": "Caro waves at 0:49-0:50 and 1:07",
+        "media_id": "analysis-proxy-ios-11CF148F-2374-4097-B299-FC3926E878BD.mp4",
+        "confidence": 1.0
+       }
+      ]
+     }
+    ]
+   },
+   "prod_message": "some of the groups you named are not where you said This draft is about 4.7s; you asked for 14s. Your draft is saved. Should I try again or simplify this request?"
+  }
+ ]
+}

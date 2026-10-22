@@ -2,6 +2,141 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.35.0] - 2026-10-22
+
+### Changed
+- fix(kria): a typed option of a closed choice replaces the answer; an order refusal re-asks it (KRI-794) (#1732) <!-- release-pr: 1732 -->
+
+## [0.81.34.0] - 2026-10-22
+
+### Changed
+- feat(chips): evidence line per chip + after-render chips scroll into view (KRI-769) (#1736) <!-- release-pr: 1736 -->
+
+## [0.81.33.0] - 2026-10-22
+
+### Changed
+- fix(kria): quoted start/end lines in one take are a trim, never a clip-order question (KRI-789) (#1731) <!-- release-pr: 1731 -->
+
+## [0.81.32.0] - 2026-10-22
+
+### Fixed
+- fix(kria): a creator's answer to Kria's own brief question records on the first attempt (KRI-805) (#1739) <!-- release-pr: 1739 -->
+
+## [0.81.31.0] - 2026-10-22
+
+### Fixed
+- fix(clip-speech): keep clip speech in the spoken language; drop invented transcripts (KRI-808) (#1743) <!-- release-pr: 1743 -->
+
+## [0.81.30.0] - 2026-10-22
+
+### Changed
+- fix(kria): a render refused for an unresolved choice names it and asks again (KRI-795) (#1729) <!-- release-pr: 1729 -->
+
+## [0.81.29.0] - 2026-10-22
+
+### Changed
+- fix(kria): show a creator's text on a spoken word even when the brief has no trigger (KRI-791) (#1724) <!-- release-pr: 1724 -->
+
+## [0.81.28.0] - 2026-10-22
+
+### Fixed
+- fix(kria): a skip that matched no clip asks with the clip picker, never free text (KRI-807) (#1742) <!-- release-pr: 1742 -->
+
+## [0.81.27.0] - 2026-10-22
+
+### Fixed
+- fix(kria): captions ask with a spelling list gets a line before approval and is spelled that way (KRI-793) (#1733) <!-- release-pr: 1733 -->
+
+## [0.81.26.0] - 2026-10-22
+
+### Fixed
+- fix(dispatch): the approved order answer reaches the render contract (KRI-788) (#1727) <!-- release-pr: 1727 -->
+
+## [0.81.25.0] - 2026-10-22
+
+### Fixed
+- fix(kria): record the chat song match against the plan item, not the thread (KRI-809) (#1737) <!-- release-pr: 1737 -->
+
+## [0.81.24.0] - 2026-10-22
+
+### Changed
+- fix(ios): verify actual TestFlight upload provenance (#1746) <!-- release-pr: 1746 -->
+
+## [0.81.23.0] - 2026-10-22
+
+### Changed
+- ci: enforce request-to-output evidence for new PRs (KRI-577/KRI-559) (#1726) <!-- release-pr: 1726 -->
+
+## [0.81.22.0] - 2026-10-22
+
+### Changed
+- fix: preserve approved phone duration against original footage (KRI-721) (#1700) <!-- release-pr: 1700 -->
+
+## [0.81.21.0] - 2026-10-22
+
+### Changed
+- test: align phone font journey with Turkish fallback (KRI-785) (#1740) <!-- release-pr: 1740 -->
+
+## [0.81.20.0] - 2026-10-22
+
+### Changed
+- test: reconcile Merope M2 receipts after sibling merges (KRI-775) (#1735) <!-- release-pr: 1735 -->
+
+## [0.81.19.0] - 2026-10-21
+
+### Changed
+- test(guards): Turkish parity G — Guards so new code stays bilingual (KRI-786) (#1714) <!-- release-pr: 1714 -->
+
+## [0.81.18.0] - 2026-10-21
+
+### Changed
+- fix(fonts): Turkish parity E — Fonts without Turkish glyphs fall back per word + verify-overlays catches tofu (KRI-785) (#1721) <!-- release-pr: 1721 -->
+
+## [0.81.17.0] - 2026-10-21
+
+### Changed
+- fix(editor): save exact drafts independently of render windows (#1725) <!-- release-pr: 1725 -->
+
+## [0.81.16.0] - 2026-10-21
+
+### Changed
+- fix(kria): a freeze-frame ask is a plain "Couldn't", and its seconds are never the video's length (KRI-777) (#1710) <!-- release-pr: 1710 -->
+
+## [0.81.15.0] - 2026-10-21
+
+### Changed
+- fix(kria): post a render's chat card within seconds, not on the minute sweep (#1722) <!-- release-pr: 1722 -->
+
+## [0.81.14.0] - 2026-10-21
+
+### Changed
+- fix(kria): a photo placed between the moments of one take plays there (KRI-796) (#1716) <!-- release-pr: 1716 -->
+
+## [0.81.13.0] - 2026-10-21
+
+### Fixed
+- KRI-775: a phone montage draft the planner will refuse never reaches the approval card (#1713) <!-- release-pr: 1713 -->
+
+## [0.81.12.0] - 2026-10-21
+
+### Changed
+- KRI-776: "six moments, about 2 seconds each" reaches the brief and the plan (#1711) <!-- release-pr: 1711 -->
+
+## [0.81.11.0] - 2026-10-21
+
+### Fixed
+- fix(clips): one video never gets a "which of your clips" picker (KRI-779) (#1709) <!-- release-pr: 1709 -->
+
+## [0.81.10.0] - 2026-10-21
+
+### Changed
+- fix(kria): a blocked render's message reads as whole sentences (KRI-778) (#1708) <!-- release-pr: 1708 -->
+
+## [0.81.9.0] - 2026-10-21
+
+### Changed
+- fix(ci): turn main green after the Turkish parity merges (#1734) <!-- release-pr: 1734 -->
+
 ## [0.81.8.0] - 2026-10-21
 
 ### Changed

@@ -19,7 +19,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.kria.brief import CreativeBrief
+from app.kria.brief_checks import is_spoken_text_cue
 from app.kria.brief_route import chapter_list
+from app.kria.freeze_ask import times_one_moment
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
 from app.kria.reply_language import say
@@ -38,6 +40,7 @@ from app.services.choice_questions import (
     OPT_SILENT_TAIL,
     OPT_UNORDERED,
     is_pin_only_order,
+    one_clip_edit,
     pin_anchors,
 )
 from app.services.clip_order_sequence import (
@@ -826,6 +829,17 @@ def _pin_not_found(words: str) -> str:
     )
 
 
+def text_clip_not_found(literal: str) -> str:
+    """Creator text whose clip the server could not tell, in the chat's language."""
+    return say(
+        en=f"I couldn't tell which clip \"{literal}\" goes on, so I can't confirm that text.",
+        tr=(
+            f'"{literal}" yazısının hangi klibe gideceğini anlayamadım, o yüzden bu yazıyı '
+            "doğrulayamıyorum."
+        ),
+    )
+
+
 def _clip_intents_on() -> bool:
     """The planner seats a described sequence only when clip intents are on; so does the
     contract, or the two would disagree after a flag flip."""
@@ -983,6 +997,25 @@ def composition_route(assembly: Mapping[str, Any], contract_digest: str) -> str 
     return None
 
 
+def _edit_rows(
+    media_snapshot: Mapping[str, Any] | None,
+    typed: CreativeStrategy | None,
+    hidden_ids: frozenset[str],
+) -> list[Any]:
+    """The approved clip rows the edit shows: the selected media, minus hidden clips."""
+    rows = (media_snapshot or {}).get("clip_assignments") or []
+    selected = set(typed.selected_media_ids or ()) - hidden_ids if typed else set()
+    if selected:
+        rows = [row for row in rows if isinstance(row, Mapping) and row.get("media_id") in selected]
+    if hidden_ids:
+        rows = [
+            row
+            for row in rows
+            if not (isinstance(row, Mapping) and str(row.get("media_id")) in hidden_ids)
+        ]
+    return list(rows)
+
+
 def build_render_contract(
     strategy: Mapping[str, Any] | None,
     *,
@@ -1113,9 +1146,16 @@ def build_render_contract(
         if position and status == "resolved" and clip_ids.intersection(members)
     }
     talking_edit = str(raw.get("edit_format") or "") in {"subtitled", "talking_head"}
+    edit_rows = _edit_rows(media_snapshot, typed, hidden_ids)
+    one_clip = one_clip_edit(edit_rows)
     if brief:
         for requirement in brief.live():
-            if requirement.kind == "timing" and requirement.facts.get("duration_s") is not None:
+            if (
+                requirement.kind == "timing"
+                and requirement.facts.get("duration_s") is not None
+                # KRI-777: a freeze's or a moment's seconds are not the video's length.
+                and not times_one_moment(requirement)
+            ):
                 if owner != "creator":
                     continue
                 answered = answers.get(CONFLICT_DURATION_VS_COUNT) or answers.get(
@@ -1127,10 +1167,14 @@ def build_render_contract(
                     continue
                 durations.append(float(requirement.facts["duration_s"]))
             if requirement.kind == "text" and requirement.literal:
-                if talking_edit and requirement_spoken_text(requirement) is not None:
+                if talking_edit and (
+                    requirement_spoken_text(requirement) is not None
+                    or is_spoken_text_cue(requirement)
+                ):
                     # KRI-707: a Talking edit shows text on a spoken word only where the
                     # take says it (`phone_spoken_text`). Its own receipt answers it ("not
                     # heard" / "can't"), so pinning it would refuse an honest render.
+                    # KRI-791: so does one whose word the ask doesn't name ("which word?").
                     continue
                 shot_index = None
                 if requirement.is_shot_text:
@@ -1169,19 +1213,7 @@ def build_render_contract(
                                 for media_id in placed_ids
                             )
                             continue
-                        unresolved.append(
-                            say(
-                                en=(
-                                    f'I couldn\'t tell which clip "{requirement.literal}" '
-                                    "goes on, so I can't confirm that text."
-                                ),
-                                tr=(
-                                    f'"{requirement.literal}" yazısının hangi klibe '
-                                    "gideceğini anlayamadım, o yüzden bu yazıyı "
-                                    "doğrulayamıyorum."
-                                ),
-                            )
-                        )
+                        unresolved.append(text_clip_not_found(requirement.literal))
                 role: Literal["opening", "closing", "any", "clip"] = (
                     "clip"
                     if requirement.scope.startswith("clip:") or requirement.scope == "per_clip"
@@ -1223,6 +1255,18 @@ def build_render_contract(
                     # landed (`brief_checks._check_order`), and a checked receipt that is
                     # not met blocks the unified montage before anything renders.
                     continue
+                if (
+                    one_clip
+                    and not answered
+                    and key not in CAPTURE_ORDER_KEYS
+                    and not is_pin_only_order(requirement)
+                ):
+                    # KRI-789: "start at '…' and end right after '…'" inside the one take.
+                    # A single clip is in any order, so there is nothing to pin or verify;
+                    # the question gate stays quiet about it for the same reason
+                    # (`choice_questions.one_clip_edit`). Filming order on one clip keeps its
+                    # KRI-661 path below; first / last pins keep KRI-762's.
+                    continue
                 order_required = True
                 if order_answer is not None and requirement.id in order_answer.requirement_ids:
                     continue  # the creator's answer decides how this order is met
@@ -1258,18 +1302,7 @@ def build_render_contract(
             attachment_order = True
     if order_required and attachment_order:
         # An explicit, verifiable basis: the order the clips were added to the project.
-        rows = (media_snapshot or {}).get("clip_assignments") or []
-        selected = set(typed.selected_media_ids or ()) - hidden_ids if typed else set()
-        if selected:
-            rows = [
-                row for row in rows if isinstance(row, Mapping) and row.get("media_id") in selected
-            ]
-        if hidden_ids:
-            rows = [
-                row
-                for row in rows
-                if not (isinstance(row, Mapping) and str(row.get("media_id")) in hidden_ids)
-            ]
+        rows = edit_rows
         ids = [
             str(row["media_id"]) for row in rows if isinstance(row, Mapping) and row.get("media_id")
         ]
@@ -1281,18 +1314,8 @@ def build_render_contract(
     elif order_required:
         from app.services.clip_facts import capture_from_assignment
 
-        rows = (media_snapshot or {}).get("clip_assignments") or []
+        rows = edit_rows
         selected = set(typed.selected_media_ids or ()) - hidden_ids if typed else set()
-        if selected:
-            rows = [
-                row for row in rows if isinstance(row, Mapping) and row.get("media_id") in selected
-            ]
-        if hidden_ids:
-            rows = [
-                row
-                for row in rows
-                if not (isinstance(row, Mapping) and str(row.get("media_id")) in hidden_ids)
-            ]
         dates = {}
         for row in rows:
             if not isinstance(row, Mapping) or not row.get("media_id"):
@@ -1304,7 +1327,7 @@ def build_render_contract(
             str(row["media_id"]) for row in rows if isinstance(row, Mapping) and row.get("media_id")
         ]
         # KRI-661: a single clip is trivially in order, dated or not.
-        single_clip = len(ids) == 1 and len(rows) == 1
+        single_clip = one_clip
         if (
             not ids
             or len(ids) != len(rows)
@@ -1495,12 +1518,35 @@ def _audio_decline(requirement: str, message: str) -> CreatorRenderContractError
     )
 
 
+# KRI-794: the unresolved lines an order-basis answer settles ("Use the order you added the
+# clips" / "Continue without a fixed order"). A refusal over one of these names the order
+# choice (``field_path``), so the next reply offers that choice again instead of drafting
+# the same refused edit. First / last clip and described-sequence lines are clip questions
+# (KRI-762), not this choice. Each line is written verbatim in ``build_render_contract``.
+ORDER_BASIS_UNRESOLVED = frozenset(
+    {
+        "I can't verify this ordering rule from the approved media.",
+        "I need to know which clips are in the edit to verify their order.",
+        "I need capture times for every selected clip to verify chronological order.",
+    }
+)
+
+
+def unresolved_field_path(message: str) -> str | None:
+    """The strategy field an unresolved line's refusal names, or ``None``."""
+
+    if message in ORDER_BASIS_UNRESOLVED:
+        return REQUIREMENT_FIELD_PATHS["order_required"]
+    return None
+
+
 def unresolved_decline(message: str) -> CreatorRenderContractError:
     """The typed refusal for an unresolved approved requirement (needs a choice)."""
 
     return CreatorRenderContractError(
         message,
         decline_reason=_UNRESOLVED_DECLINE.reason,
+        field_path=unresolved_field_path(message),
         alternative=_UNRESOLVED_DECLINE.alternative,
     )
 

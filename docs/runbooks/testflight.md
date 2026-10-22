@@ -9,6 +9,35 @@ build number that App Store Connect already has. A green iOS result is released
 even if `main` has since moved on: iOS and TestFlight runs are serialized, so
 releases stay in commit order.
 
+
+### Uploaded source provenance
+
+The duplicate gate reads checkout's full commit output and Fastlane's actual
+binary-transfer confirmation from retained release logs. GitHub workflow
+`headSha` identifies the workflow revision, which can differ from the dispatched
+`head_sha`; it is never used as binary provenance. The policy helper is loaded
+from the workflow revision so an older tested checkout need not contain it. A green workflow, skipped
+upload step, or Fastlane build-number skip does not establish a new upload.
+Failed distribution after a confirmed transfer still protects that source from
+being uploaded again. Every verified source must remain on current main.
+
+A cancelled job with no steps is excluded only when the raw Actions job record
+also explicitly reports zero runner and runner-group IDs and empty assignment
+names. Missing assignment fields stay unknown. This uses existing `actions: read`
+access; cancellation, elapsed time, or empty logs alone are insufficient.
+
+The gate checks the most recent 100 runs, including failed/cancelled runs and
+previous attempts of reruns (including its own), and
+compares all verified uploaded sources by Git ancestry, independent of dispatch
+or completion order. It blocks on missing/ambiguous evidence, unavailable logs,
+unknown commits, or no verified upload in that window. This is deliberately not
+a first-release bootstrap: reconcile retained GitHub logs and App Store Connect
+build evidence before changing that policy. Do not substitute workflow headSha,
+fall back to HEAD's parent, or infer delivery from a green skipped run.
+
+Offline regression check: `python3 -m unittest discover -s scripts/ios/tests -v`.
+No live archive, upload, or release is needed to run it.
+
 ## One-time account setup
 
 The Apple account holder must register `com.emirerben.kria`, create the Kria app

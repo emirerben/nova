@@ -24,6 +24,7 @@ enum NativeEditorRenderError: Error, Equatable {
     private let fontURLs: [String: URL]
     private let fontAliases: [String: String]
     private let fontInstances: [String: [String: Double]]
+    private let glyphFallback: NativeGlyphFallback
     private let handwritingLayout: AuthoredHandwritingLayout
     private var fontAssets: [String: MediaAsset] = [:]
 
@@ -47,9 +48,15 @@ enum NativeEditorRenderError: Error, Equatable {
         }
         fontAliases = registry.mapValues(\.file)
         fontInstances = try JSONDecoder().decode([String: [String: Double]].self, from: Data(contentsOf: fontDirectory.appendingPathComponent("native-font-instances.json")))
-        fontURLs = Dictionary(uniqueKeysWithValues: try FileManager.default.contentsOfDirectory(
+        let urls = Dictionary(uniqueKeysWithValues: try FileManager.default.contentsOfDirectory(
             at: fontDirectory, includingPropertiesForKeys: nil
         ).filter { ["ttf", "otf"].contains($0.pathExtension.lowercased()) }.map { ($0.lastPathComponent, $0) })
+        fontURLs = urls
+        let aliases = fontAliases
+        // Same lookup order as `resolveFont`.
+        glyphFallback = NativeGlyphFallback(fontDirectory: fontDirectory) { family in
+            [aliases[family], family + ".ttf", family + "-Regular.ttf", family + ".otf"].compactMap { $0 }.lazy.compactMap { urls[$0] }.first
+        }
     }
 
     /// `deviceCaptions`: the variant renders on the phone, whose caption
@@ -158,9 +165,30 @@ enum NativeEditorRenderError: Error, Equatable {
             // timeline duration remains authoritative. If the source ends,
             // retain its last decoded frame for the remaining clock time; this
             // keeps narration and other audio tracks on their original clock.
-            let sourceSpan = max(0, clip.trimOut - clip.trimIn)
+            var sourceStart = clip.trimIn
+            var sourceSpan = max(0, clip.trimOut - clip.trimIn)
             let authoredMovingDuration = max(0, authoredSlot?.durationS ?? outputDuration)
-            let requestedRate = explicitRate ?? sourceSpan / authoredMovingDuration
+            var requestedRate = explicitRate ?? sourceSpan / authoredMovingDuration
+            // Narration and legacy projections can intentionally carry a
+            // shorter moving span plus a hold. Only an unchanged authored
+            // source window uses the duration-preserving render projection.
+            let isAuthoredWindow = authoredSlot?.raw["native_source_span_s"] == nil
+                && abs(outputDuration - authoredMovingDuration) < 0.000_001
+                && abs(sourceStart - (authoredSlot?.inS ?? sourceStart)) < 0.000_001
+            if isAuthoredWindow, let authoredSlot,
+               let available = source.asset.duration ?? clip.sourceDuration {
+                let authoredRate = explicitRate ?? 1
+                let requestedSpan = authoredMovingDuration * authoredRate
+                guard available.isFinite, authoredSlot.inS.isFinite, authoredRate.isFinite,
+                      available > 0, authoredSlot.inS >= 0 else { throw RecipeError.invalidTimeline }
+                if authoredSlot.inS + requestedSpan > available {
+                    guard requestedSpan <= available,
+                          authoredSlot.raw["source_start_locked"] != .bool(true) else { throw RecipeError.invalidTimeline }
+                    requestedRate = authoredRate
+                    sourceSpan = requestedSpan
+                    sourceStart = available - requestedSpan
+                }
+            }
             guard requestedRate.isFinite, (0.25...4).contains(requestedRate),
                   outputDuration > 0, sourceSpan > 0 else { throw RecipeError.invalidTimeline }
             // The timeline owns output duration. At slow rates consume only
@@ -173,7 +201,7 @@ enum NativeEditorRenderError: Error, Equatable {
             let cameraLevel: Double = clip.muted || authoredSlot?.raw["muted"] == .bool(true) || audioSources["narration"] != nil ? 0 : sourceGain
             cameraLevelWithoutSong.append(cameraLevel)
             video.append(TimelineClip(id: clip.slotID ?? clip.id.uuidString, sourceAssetID: id,
-                sourceStart: clip.trimIn, sourceDuration: consumedSourceDuration, timelineStart: clip.start,
+                sourceStart: sourceStart, sourceDuration: consumedSourceDuration, timelineStart: clip.start,
                 rate: requestedRate, transition: transition,
                 volume: audioSources[Self.songSourceKey] != nil && !creatorHearsCameraWithSong ? 0 : cameraLevel, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
                 holdDuration: holdDuration > 0 ? holdDuration : nil,
@@ -469,6 +497,15 @@ enum NativeEditorRenderError: Error, Equatable {
         let renderedTextElements = Self.projectSentenceCaptions(
             timedTextElements, captionMeta: captionMeta
         )
+        // KRI-785: one glyph-safe face per requested family across the video (the
+        // union of its texts), like the cloud's `glyph_safe_overlays`, so a Turkish
+        // lyric track never flips fonts line by line.
+        var familyTexts: [String: [String]] = [:]
+        for rawElement in renderedTextElements where rawElement.raw["enabled"] != .bool(false) && rawElement.raw["removed"] != .bool(true) {
+            let element = rawElement.isCaption ? Self.applyingCaptionMeta(captionMeta, to: rawElement) : rawElement
+            familyTexts[element.fontFamily, default: []].append(Self.displayText(element))
+        }
+        let glyphSafeFamilies = familyTexts.mapValues { $0.joined(separator: " ") }
         for rawElement in renderedTextElements where rawElement.raw["enabled"] != .bool(false) && rawElement.raw["removed"] != .bool(true) {
             if rawElement.isCaption {
                 if captionsGloballyDisabled { continue }
@@ -519,10 +556,13 @@ enum NativeEditorRenderError: Error, Equatable {
             guard item.end > item.start else { throw RecipeError.invalidTimeline }
             // Placement and the default face match the server burn (cloud and
             // phone recipes alike); see `EditorTextElement.anchor(of:)`.
-            let family = element.fontFamily
+            let raw = element.raw
+            let displayText = Self.displayText(element)
+            // KRI-785: a face missing a letter of this family's texts sets the whole
+            // run in its glyph-fallbacks.json partner, like the cloud renderer.
+            let family = glyphFallback.family(element.fontFamily, for: glyphSafeFamilies[element.fontFamily] ?? displayText)
             let font = try resolveFont(family)
             let fontID = try registerFont(font)
-            let raw = element.raw
             let legacy = raw["effect"]?.stringValue ?? "none"
             if raw["behind_subject"] == .bool(true) || raw["theme_transition"]?.objectValue != nil {
                 throw NativeEditorRenderError.unsupportedLane("text subject or scene compositing")
@@ -560,7 +600,6 @@ enum NativeEditorRenderError: Error, Equatable {
                 background: try raw["background_color"]?.stringValue.map { try ink(.string($0), fallback: "#FFFFFF") },
                 fontVariations: fontInstances[family] ?? [:], letterSpacing: raw["letter_spacing"]?.numberValue ?? 0, lineSpacing: raw["line_spacing"]?.numberValue ?? 1.15, wrapsLines: raw["wrap_lines"] != .bool(false),
                 bend: raw["bend"]?.numberValue ?? 0)
-            let displayText = KriaTextCase.apply(element.text, raw["text_case"]?.stringValue)
             let explicitPhases = raw["animation_phases"]?.objectValue != nil
             if legacy == "handwriting" && !explicitPhases {
                 text.append(try handwritingLayout.compile(id: element.id, text: displayText, start: item.start, end: item.end,
@@ -881,6 +920,10 @@ enum NativeEditorRenderError: Error, Equatable {
         choice("direction", "direction", effect == "slide-down" ? "down" : (smooth || effect == "slide-up" ? "up" : "none"), ["none", "up", "down", "left", "right"])
         choice("cursor_style", "cursorStyle", effect == "stream-in" ? "bar" : "none", ["none", "bar", "block", "underscore"])
         return try JSONDecoder().decode(TextMotionParameters.self, from: JSONEncoder().encode(normalized))
+    }
+
+    private static func displayText(_ element: EditorTextElement) -> String {
+        KriaTextCase.apply(element.text, element.raw["text_case"]?.stringValue)
     }
 
     private static func projectSentenceCaptions(

@@ -2139,6 +2139,24 @@ montage reply with `python3 scripts/admin.py --prod GET
 An abandoned upload reservation (`preparing`, reaped after about 30 minutes) or a
 `failed` Visual never blocks a v2 montage and never reaches the plan.
 
+**The plan runs before the approval card (KRI-775).** The worker refuses a bound
+draft whose checked receipts fall short (`needs_creator_choice` → `phone_plan_unsupported`,
+Merope M2: "This draft is about 4.7s; you asked for 14s", ten seconds after approval).
+`app/services/phone_montage_preflight.py` runs the same deterministic plan
+(`_unified_montage_clips` + `_plan_phone_unified_montage` in `generative_build.py`) on the
+brief, strategy and media snapshot approval will pin, in `kria_runtime._complete_draft_turn`.
+Its failing `order` / `timing` receipts join the draft's receipts, so the draft is held
+back with the reason and the existing "different approach, or this simpler version?" choice.
+`text` asks stay with the render (its text lane and landmark names are model steps the check
+skips). It only runs where the job would be stamped `unified_montage` (phone clips, montage
+family, no song, no voiceover, brief binding on, no open length choice, not under approval
+readiness). No model, storage or write; any error fails open. Logs:
+`kria_phone_montage_preflight` (`blocked_requirement_ids`, `elapsed_ms`),
+`kria_phone_montage_preflight_failed`, `kria_phone_montage_preflight_planner_declined`.
+Kill switch: `fly secrets set KRIA_PHONE_MONTAGE_PREFLIGHT_ENABLED=false` + restart (api +
+worker): approval is offered exactly as before. Replay of the incident:
+`tests/kria/test_kri775_merope_m2_replay.py` (fixture `tests/fixtures/kri775_merope_m2_turns.json`).
+
 ## Crop, face-aware text, and SFX outside Talking (KRI-140)
 
 **Crop / re-frame.** `compile_phone_guided_plan` now carries a moment's
@@ -2601,6 +2619,33 @@ Kill switch: `fly secrets set PHONE_SUBTITLED_SPOKEN_TEXT_ENABLED=false --app
 nova-video` + restart (api + worker). The draft says "can't" again and no row is
 placed; rows already on a variant keep rendering and survive Saves.
 Tests: `tests/tasks/test_kri707_talking_spoken_text.py`.
+
+**No trigger in the brief (KRI-791).** Café T1 (thread 32A5B608, 2026-10-21): "Show
+MEROPE in big letters the first time she says Merope" arrived as `literal: "MEROPE"`
+with `facts: {}`, because the brief prompt taught `triggers` only for photos, videos,
+stickers and sounds; "the first time she says" wasn't a known spoken cue either, so the
+draft said "that exact text isn't in this draft" and the contract pinned the text.
+
+- **Prompt (Main Creator v65, extractor v13).** On-screen text timed to a spoken word
+  carries `triggers`, plus `speaker` when someone other than the creator says it.
+- **Fallback.** Without `facts.triggers`, `requirement_spoken_text` reads the ask's own
+  description (`brief_checks.worded_spoken_cue`): the words after the cue verb, cut to
+  the shown text when they start with it ("the first time she says **Merope** in big
+  letters"), else quoted words that aren't the text (“Atakan” dediğimde ...). Only the
+  trigger reader (`_CUE_TRIGGER_RE`) knows "the first time" and she/he/they + a say-verb,
+  and only whole-video text asks use it; the spoken-cue recogniser that pop-in,
+  whole-line and cut asks share is unchanged. A plain "Show SALE in big letters" or a
+  described word ("the café's name") gets no trigger.
+- **Speaker.** Words carry no speaker, so a named other speaker ("she", `facts.speaker`)
+  is placed on the first time anyone says the word. The draft says so ("I can't tell
+  who's speaking ...") and the finished video is `partial` with that reason; both are
+  format-limit reasons, so they never hold the draft or block the render.
+- **No readable word.** A spoken-cue text whose word can't be read says "I couldn't
+  tell which spoken word to wait for ..." (not "can't show text at a word") and the
+  Talking contract never pins it.
+
+Tests: `tests/tasks/test_kri791_spoken_text_trigger.py` (replays the T1 brief, strategy
+and speech segments).
 
 ## Your song montages (KRI-374)
 

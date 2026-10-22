@@ -183,6 +183,10 @@ _ASK_FACT_KEYS = (
     "speech_cleanup",
     "captions",
     "caption_language",
+    "spellings",  # KRI-793
+    # KRI-789: the quoted lines a take starts at / ends right after (a trim, not an order).
+    "start_line",
+    "end_line",
 )
 
 

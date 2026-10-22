@@ -49,6 +49,26 @@ class TestIsDegenerateTranscript:
     def test_short_repetition_is_below_the_bar(self) -> None:
         assert not is_degenerate_transcript("no no no no no")  # 5 tokens: could be a real shout
 
+    def test_short_clip_loop(self) -> None:
+        # KRI-808 (Don Julio M1_06): Gemini's loop over 2 s of quiet chatter, 12 tokens.
+        loop = "Video, yeah. Video. Video. Video. Video video. Video video. Video. Video. Video."
+        assert is_degenerate_transcript(loop)
+        assert not is_degenerate_transcript("Lucas. Lucas, yeah. What's your name? Cheers!")
+        assert not is_degenerate_transcript("Cheers! Cheers! Salud, salud, thank you so much.")
+
+    def test_more_words_than_the_clip_holds(self) -> None:
+        from app.services.transcript_quality import is_implausible_transcript
+
+        # KRI-808 (M1_02): 24 words for a 1.1 s clip.
+        invented = (
+            "Right. Mhm. So I'm gonna ask you right now, you can leave. I'm going to start "
+            "asking questions. You can leave. Okay. Mhm. Mhm. Yes."
+        )
+        assert is_implausible_transcript(invented, 1.133)
+        assert not is_implausible_transcript(invented, 12.0)
+        assert not is_implausible_transcript("Thank you so much", 0.6)
+        assert not is_implausible_transcript(invented, None)  # unknown length: never flagged
+
     def test_empty_and_non_strings(self) -> None:
         assert not is_degenerate_transcript("")
         assert not is_degenerate_transcript(None)

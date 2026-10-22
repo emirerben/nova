@@ -37,11 +37,14 @@ from app.schemas.text_style_intent import LabelPosition, TitleAnimation
 from app.schemas.user_song import SongCaptionTrack, UserSongPlan
 
 # Keep existing integer JSON stable for approval hashes while accepting fractions.
+MIN_PROPOSAL_DURATION_S = 3
 MAX_PROPOSAL_DURATION_S = 120
 ProposalDuration = Annotated[
     int | float,
-    Field(ge=3, le=MAX_PROPOSAL_DURATION_S),
-    WithJsonSchema({"type": "number", "minimum": 3, "maximum": MAX_PROPOSAL_DURATION_S}),
+    Field(ge=MIN_PROPOSAL_DURATION_S, le=MAX_PROPOSAL_DURATION_S),
+    WithJsonSchema(
+        {"type": "number", "minimum": MIN_PROPOSAL_DURATION_S, "maximum": MAX_PROPOSAL_DURATION_S}
+    ),
 ]
 
 ProposalStatus = Literal[

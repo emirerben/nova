@@ -19,13 +19,17 @@ of guessing:
 * ``carry_forward_exclusions``: an ask the resolver matched in the draft before and matches
   nothing in this turn keeps that earlier match (the resolver is not deterministic, and the
   whole request is re-planned every turn).
+* ``exclusions_to_ask`` (KRI-807): the contested excludes plus every exclude that left no
+  clip out ("skip the blurry shot of the empty table" matched nothing on Don Julio M1).
+  Those used to end in a free-text "Tell me which ones"; they ask with the same picker,
+  the resolver's below-bar or vision-check suspects pre-ticked, never left out unasked.
 
 Nothing here reads creator words: the matches are the resolver's, the answers the creator's.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -63,11 +67,18 @@ class ContestedExclusion:
     matched: tuple[str, ...]
     # Every clip another live ask pins or the strategy places (not only the matched ones).
     protected: frozenset[str]
+    # KRI-807: an exclude that matched nothing: the clips the resolver only suspected.
+    suspected: tuple[str, ...] = ()
 
     @property
     def blocked(self) -> tuple[str, ...]:
         """The matched clips that are pinned: they stay whatever the creator answers."""
         return tuple(media_id for media_id in self.matched if media_id in self.protected)
+
+    @property
+    def suggested(self) -> list[str]:
+        """The clips the picker pre-ticks: the matches, else the suspects, never a pin."""
+        return [m for m in self.matched or self.suspected if m not in self.protected]
 
 
 def pinned_clips(
@@ -91,25 +102,57 @@ def pinned_clips(
     return frozenset(pinned)
 
 
+def _contested(intent: ResolvedClipIntent, protected: frozenset[str]) -> ContestedExclusion | None:
+    if intent.op != "exclude" or intent.status != "resolved" or not intent.assignments:
+        return None
+    if any(a.evidence in CREATOR_EVIDENCE for a in intent.assignments):
+        return None  # a tap or a typed file name is the creator's own word
+    matched = tuple(dict.fromkeys(a.media_id for a in intent.assignments))
+    names_a_pin = any(media_id in protected for media_id in matched)
+    look_alikes = len(matched) >= 2 and (
+        min(a.confidence for a in intent.assignments) < BORDERLINE_BELOW
+    )
+    return ContestedExclusion(intent, matched, protected) if names_a_pin or look_alikes else None
+
+
 def contested_exclusions(
     intents: Sequence[ResolvedClipIntent], strategy: CreativeStrategy
 ) -> list[ContestedExclusion]:
     """The resolver-matched excludes the creator should settle, in the order written."""
     protected = pinned_clips(intents, strategy)
-    contested: list[ContestedExclusion] = []
+    return [c for intent in intents if (c := _contested(intent, protected)) is not None]
+
+
+def exclusions_to_ask(
+    intents: Sequence[ResolvedClipIntent],
+    strategy: CreativeStrategy,
+    *,
+    suspects: Mapping[str, Sequence[str]],
+    clip_count: int,
+) -> list[ContestedExclusion]:
+    """Every exclude the creator should settle, in the order written (KRI-807).
+
+    The contested ones, plus each exclude that leaves no clip out: the resolver matched
+    nothing confidently, so the skip would silently not happen. ``suspects`` (intent id ->
+    clips) are what the resolver put forward below the bar or for a vision check; the
+    picker pre-ticks them and only the creator's tap leaves them out. A project with one
+    clip is never asked which of its clips to leave out (that would leave nothing).
+    """
+    protected = pinned_clips(intents, strategy)
+    asked: list[ContestedExclusion] = []
     for intent in intents:
-        if intent.op != "exclude" or intent.status != "resolved" or not intent.assignments:
-            continue
-        if any(a.evidence in CREATOR_EVIDENCE for a in intent.assignments):
-            continue  # a tap or a typed file name is the creator's own word
-        matched = tuple(dict.fromkeys(a.media_id for a in intent.assignments))
-        names_a_pin = any(media_id in protected for media_id in matched)
-        look_alikes = len(matched) >= 2 and (
-            min(a.confidence for a in intent.assignments) < BORDERLINE_BELOW
-        )
-        if names_a_pin or look_alikes:
-            contested.append(ContestedExclusion(intent, matched, protected))
-    return contested
+        contested = _contested(intent, protected)
+        if contested is not None:
+            asked.append(contested)
+        elif (
+            intent.op == "exclude"
+            and intent.status == "resolved"
+            and not intent.assignments
+            and clip_count >= 2
+        ):
+            suspected = tuple(dict.fromkeys(suspects.get(intent.intent_id, ())))
+            asked.append(ContestedExclusion(intent, (), protected, suspected))
+    return asked
 
 
 def _question_text(labels: list[str]) -> str:
@@ -163,7 +206,7 @@ def exclusion_question(
             "intent_id": asked.intent.intent_id,
             "creator_text": None,
             "candidate_media_ids": candidates,
-            "suggested_media_ids": [m for m in asked.matched if m not in protected],
+            "suggested_media_ids": asked.suggested,
         }
         for asked in contested
     ]
@@ -171,6 +214,36 @@ def exclusion_question(
     if question is None:
         return None
     return _question_text([c["label"] for c in question["categories"]]), question
+
+
+def with_exclusion_categories(
+    text: str | None,
+    clip_question: dict[str, Any],
+    asked: Sequence[ContestedExclusion],
+    clips: Sequence[_Clip],
+) -> tuple[str | None, dict[str, Any]]:
+    """The resolver's clip picker with the excludes to ask added: one card, one turn.
+
+    KRI-807: on Don Julio M1 the resolver asked which clip shows the red-cap friend, and the
+    turn ended there; the skip would only have been asked a turn later. The picker keeps its
+    id (the creator's taps bind to it) and its own categories first; an exclude row the card
+    has no room for is asked on the next turn, as before.
+    """
+    extra = exclusion_question(asked, clips)
+    if extra is None:
+        return text, clip_question
+    merged = build_clip_question(
+        [*clip_question["categories"], *extra[1]["categories"]],
+        question_id=clip_question.get("question_id"),
+        media_kinds={c.media_id: c.kind for c in clips},
+    )
+    if merged is None:
+        return text, clip_question
+    kept = {c["key"] for c in merged["categories"]}
+    added = [c for c in extra[1]["categories"] if c["key"] in kept]
+    if not added:
+        return text, clip_question
+    return " ".join(p for p in (text, _question_text([c["label"] for c in added])) if p), merged
 
 
 def _key_words(intent: ResolvedClipIntent) -> set[str]:
@@ -247,5 +320,7 @@ __all__ = [
     "contested_exclusions",
     "earlier_exclusions",
     "exclusion_question",
+    "exclusions_to_ask",
     "pinned_clips",
+    "with_exclusion_categories",
 ]

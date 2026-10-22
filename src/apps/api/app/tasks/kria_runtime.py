@@ -50,6 +50,7 @@ from app.kria.brief_checks import (
     reply_from_receipts,
     requirements_to_check_at_draft,
     speech_cleanup_review_note,
+    with_planned_cuts,
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
@@ -1092,6 +1093,7 @@ def _complete_draft_turn(
         readiness_report = None
         brief = None
         speed_notice: str | None = None  # KRI-689
+        phone_blockers: list = []  # KRI-775
         if planned.brief_route is not None:
             # KRI-188: persist this turn's requirements (idempotent per turn),
             # then check each one deterministically against what was drafted.
@@ -1124,17 +1126,24 @@ def _complete_draft_turn(
                     )
                     # KRI-705: a phone Talking draft answers every ask plainly, so the
                     # approval text cannot promise a cut or a mix change no receipt backs.
+                    # KRI-793: its captions asks about language or spelling say what the
+                    # render will do (the words it spells) instead of nothing.
+                    talking_writer = defers_caption_words_to_phone_render(
+                        creator_id=thread.creator_id,
+                        edit_format=document.strategy.get("edit_format") or item.edit_format,
+                        audio_strategy=document.strategy.get("audio_strategy"),
+                        clip_paths=item.clip_gcs_paths or (),
+                    )
                     facts = replace(
                         facts,
-                        phone_talking=defers_caption_words_to_phone_render(
-                            creator_id=thread.creator_id,
-                            edit_format=document.strategy.get("edit_format") or item.edit_format,
-                            audio_strategy=document.strategy.get("audio_strategy"),
-                            clip_paths=item.clip_gcs_paths or (),
-                        )
+                        phone_talking=talking_writer
                         and (document.strategy.get("edit_format") or item.edit_format)
                         in {"subtitled", "talking_head"},
+                        caption_words_at_render=talking_writer,
                     )
+                    # KRI-776: a moment ask is judged against the windows the approved length
+                    # plan will cut, so the card never promises moments the plan doesn't hold.
+                    facts = with_planned_cuts(facts, planned.media_snapshot)
                     checked = brief.live()
                     # KRI-190: the unified montage planner writes the per-clip text,
                     # order and title at render time and reports on them then. Judging
@@ -1159,6 +1168,27 @@ def _complete_draft_turn(
                         item_edit_format=item.edit_format,
                         clip_paths=item.clip_gcs_paths or (),
                     )
+                    if not readiness_required:
+                        # KRI-775: the phone montage worker refuses a draft whose order or
+                        # length falls short. Plan it now (deterministic, fail-open) so its
+                        # receipts hold the draft back here instead of after approval.
+                        from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+                        from app.services.phone_montage_preflight import (  # noqa: PLC0415
+                            phone_montage_blockers,
+                            with_blocked_requirements,
+                        )
+
+                        phone_blockers = phone_montage_blockers(
+                            db,
+                            creator_id=thread.creator_id,
+                            item=item,
+                            brief=brief,
+                            strategy=document.strategy,
+                            media_snapshot=planned.media_snapshot
+                            if planned.media_snapshot is not None
+                            else snapshot_media(item),
+                        )
+                        checked = with_blocked_requirements(checked, brief, phone_blockers)
                 else:
                     # Editor operations verify only the requirements stated in
                     # this very turn, against what the ops changed (KRI-558).
@@ -1173,11 +1203,18 @@ def _complete_draft_turn(
                     receipts = build_receipts(
                         checked,
                         facts,
-                        include_unchecked=editor_turn or bound_writer,
+                        include_unchecked=editor_turn or bound_writer or facts.phone_talking,
                         # Listing unchecked asks must not switch on the strict order verdicts
                         # of a creator whose writer is not brief-bound.
                         strict_order=bound_writer,
                     )
+                    if phone_blockers:
+                        from app.services.phone_montage_preflight import (  # noqa: PLC0415
+                            with_blocker_receipts,
+                        )
+
+                        # KRI-775: a requirement the phone plan falls short on is judged by it.
+                        receipts = with_blocker_receipts(receipts, phone_blockers)
                     bound = False
                     if editor_turn and not compiled.diff.unavailable:
                         try:
@@ -1211,7 +1248,9 @@ def _complete_draft_turn(
                         # can show is said nothing about now (the render-ready review judges
                         # it), never "couldn't verify" (KRI-558). (An editor turn whose receipts
                         # could not be bound keeps its open items, listed calmly.)
-                        if not editor_turn and not readiness_required:
+                        # KRI-793: a phone Talking draft lists every ask (KRI-705); one no
+                        # checker can judge yet goes under "have a look", never silence.
+                        if not editor_turn and not readiness_required and not facts.phone_talking:
                             receipts = [r for r in receipts if r.verification != "unchecked"]
                         reply_text = reply_from_receipts(
                             CreativeBrief(version=brief.version, requirements=checked),
@@ -4003,12 +4042,15 @@ _REDO_FROM_APPROVED = (
 )
 
 
-def _device_refusal_copy(decline: dict[str, str], *, last_good: bool = True) -> str:
+def _device_refusal_copy(
+    decline: dict[str, str], *, last_good: bool = True, question: dict[str, Any] | None = None
+) -> str:
     """What the creator hears when the contract refused an edit of a phone render.
 
     Says what could not be confirmed, that the edit was NOT applied, that the last good
     version is kept, and a next step that exists. Never promises an automatic rebuild and
-    never asks the creator to restate a clear instruction.
+    never asks the creator to restate a clear instruction. ``question`` is the re-asked
+    choice a `needs_choice` refusal shows (KRI-795).
     """
     # The message and alternative come from the server's contract checks, in English;
     # a Turkish chat gets their Turkish twin or, when there is none, the line below.
@@ -4037,12 +4079,9 @@ def _device_refusal_copy(decline: dict[str, str], *, last_good: bool = True) -> 
     not_applied = say(en="That edit was not applied.", tr="Bu düzenleme uygulanmadı.")
     if reason == "capability_unavailable":
         return f"{_capability_refusal_copy(decline)} {not_applied} {kept}"
-    if reason in {"needs_choice", "requirement_conflict"}:
-        alternative = _worker_copy(decline.get("alternative")) or say(
-            en="Tell me which way you want to go.",
-            tr="Hangi yoldan gitmek istediğini söyle.",
-        )
-        return f"{message} {not_applied} {alternative} {kept}"
+    if reason in _CHOICE_DECLINES:
+        unresolved, way = _choice_refusal_parts(decline, question)
+        return " ".join(part for part in (unresolved, not_applied, kept, way) if part)
     redo = say(
         en=_REDO_FROM_APPROVED,
         tr="Baştan yapmamı söylersen onayladığın isteğe göre yeni bir sürüm hazırlarım.",
@@ -4086,6 +4125,221 @@ def _phone_evidence_refusal_copy(decline: dict[str, str]) -> str:
         en="Your video wasn't made: the edit didn't keep something you asked for.",
         tr="Videon oluşturulmadı: düzenleme istediğin bir şeyi korumadı.",
     )
+
+
+# KRI-795: a refusal that needs the creator's decision (`needs_choice`,
+# `requirement_conflict`). The phone never saw the edit, so it is never "something your iPhone
+# can't render". The contract's unresolved sentences, keyed by the exact English the render
+# worker stores: (plain English, Turkish, what to do next in English and Turkish, the thread
+# question that answers it). That question is asked again on the failure card, so a tap (or
+# its label typed) is the answer the next turn's gate replays. A test pins every key to
+# `creator_render_contract`.
+_CHOICE_DECLINES = frozenset({"needs_choice", "requirement_conflict"})
+_ORDER_NEXT_STEP = (
+    "Tell me how you want the clips ordered, and I'll make a new draft.",
+    "Klipleri hangi sırayla istediğini söyle, yeni bir taslak hazırlayayım.",
+)
+_UNRESOLVED_PLAIN: dict[str, tuple[str, str, tuple[str, str], str | None]] = {
+    "I can't verify this ordering rule from the approved media.": (
+        "I couldn't keep the clip order you asked for.",
+        "İstediğin klip sırasını koruyamadım.",
+        _ORDER_NEXT_STEP,
+        "order_basis",
+    ),
+    # Written only after the creator chose upload order and the clip rows did not add up,
+    # so the order question's recommended answer would hit the same refusal: no picker.
+    "I need to know which clips are in the edit to verify their order.": (
+        "I couldn't tell which clips are in this edit, so I couldn't keep their order.",
+        "Bu düzenlemede hangi kliplerin olduğunu anlayamadım, o yüzden sıralarını koruyamadım.",
+        _ORDER_NEXT_STEP,
+        None,
+    ),
+    "I need capture times for every selected clip to verify chronological order.": (
+        "Some of your clips have no filming time, so I couldn't put them in the order you "
+        "filmed them.",
+        "Bazı kliplerinde çekim saati yok, o yüzden onları çektiğin sıraya koyamadım.",
+        _ORDER_NEXT_STEP,
+        "order_basis",
+    ),
+    # KRI-762: named first / last clips are the clip resolver's, never the order question.
+    "I couldn't tell which clips you want first or last, so I can't confirm their order.": (
+        "I couldn't tell which clips you want first or last.",
+        "Hangi klipleri başa ya da sona istediğini anlayamadım.",
+        (
+            "Tell me which clip goes first or last, and I'll make a new draft.",
+            "Hangi klibin başta ya da sonda olacağını söyle, yeni bir taslak hazırlayayım.",
+        ),
+        None,
+    ),
+}
+_CLIP_NEXT_STEP = (
+    "Tell me which clip you mean, and I'll make a new draft.",
+    "Hangi klibi kastettiğini söyle, yeni bir taslak hazırlayayım.",
+)
+
+
+def _quoted_unresolved(stored: str) -> tuple[str, tuple[str, str]] | None:
+    """A contract sentence that quotes the creator's words, in the chat's language.
+
+    The worker wrote it with one of the contract's own sentence builders, in English or (a
+    dispatch bound to the chat's language, KRI-765) in Turkish; the builder that produced it
+    is found by its fixed words around the quote and called again with the same words under
+    the chat's language, so both languages stay the contract's.
+    """
+    from app.services.clip_order_sequence import unclear_sequence_words  # noqa: PLC0415
+    from app.services.creator_render_contract import (  # noqa: PLC0415
+        _pin_not_found,
+        text_clip_not_found,
+    )
+
+    for build, step in (
+        (_pin_not_found, _CLIP_NEXT_STEP),
+        (unclear_sequence_words, _CLIP_NEXT_STEP),
+        (
+            text_clip_not_found,
+            (
+                "Tell me which clip that text goes on, and I'll make a new draft.",
+                "O yazının hangi klibe gideceğini söyle, yeni bir taslak hazırlayayım.",
+            ),
+        ),
+    ):
+        for written_in in ("en", "tr"):
+            with reply_language_for(written_in):
+                head, _, tail = build("\x00").partition("\x00")
+            if (
+                len(stored) > len(head) + len(tail)
+                and stored.startswith(head)
+                and stored.endswith(tail)
+            ):
+                return build(stored[len(head) : len(stored) - len(tail)]), step
+    return None
+
+
+def _choice_refusal_parts(
+    decline: dict[str, str], question: dict[str, Any] | None
+) -> tuple[str, str | None]:
+    """``(what is unresolved, the way forward)`` for a refusal that needs a decision.
+
+    The way forward is the re-asked question with its options listed, else the worker's
+    own alternative, else what to tell me; never "which option" with no options shown.
+    ``None`` when the reason is itself the question.
+    """
+    from app.services.choice_questions import reasked_question_text  # noqa: PLC0415
+    from app.services.creator_render_contract import _ASK_FOR_CHOICE  # noqa: PLC0415
+
+    stored = " ".join(str(decline.get("message") or "").split())
+    plain = _UNRESOLVED_PLAIN.get(stored)
+    quoted = None if plain else _quoted_unresolved(stored)
+    if plain:
+        reason, step = say(en=plain[0], tr=plain[1]), plain[2]
+    elif quoted:
+        reason, step = quoted
+    else:
+        step = None
+        reason = _worker_copy(stored) or say(
+            en="I couldn't keep something you asked for in this edit.",
+            tr="İstediğin bir şeyi bu düzenlemede koruyamadım.",
+        )
+    if question is not None:
+        return reason, reasked_question_text(question)
+    alternative = " ".join(str(decline.get("alternative") or "").split())
+    if alternative and alternative != _ASK_FOR_CHOICE:
+        return reason, _worker_copy(alternative) or _try_different_approach()
+    if step is not None:
+        return reason, say(en=step[0], tr=step[1])
+    return reason, None if reason.endswith("?") else _try_different_approach()
+
+
+def _choice_refusal_copy(decline: dict[str, str], question: dict[str, Any] | None) -> str:
+    reason, way = _choice_refusal_parts(decline, question)
+    return f"{reason} {way}" if way else reason
+
+
+def _reasked_choice_question(
+    db,  # noqa: ANN001 - SQLAlchemy sync Session
+    thread_id: uuid.UUID,
+    decline: dict[str, str] | None,
+    job: Job,
+    *,
+    source_event_id: uuid.UUID | None = None,
+) -> dict[str, Any] | None:
+    """The thread's latest question for this refusal's choice, asked again (KRI-795).
+
+    Only a refusal the thread's own question answers (`_UNRESOLVED_PLAIN`), only a question
+    the gate really asked in this thread (its digest is what the next turn replays an answer
+    against), and only while choice questions are on. Anything else gets no picker: a tap
+    nothing replays is worse than plain words. The answer the refused render carried is not
+    recommended again.
+    """
+    from app.services.choice_questions import (  # noqa: PLC0415
+        fold_scoped_answers,
+        reask_choice_question,
+    )
+
+    if (
+        decline is None
+        or decline.get("decline_reason") != "needs_choice"
+        or not settings.kria_choice_questions_enabled
+    ):
+        return None
+    plain = _UNRESOLVED_PLAIN.get(" ".join(str(decline.get("message") or "").split()))
+    conflict = plain[3] if plain else None
+    if conflict is None:
+        return None
+    asked = db.execute(
+        select(CreationThreadEvent.payload)
+        .where(
+            CreationThreadEvent.thread_id == thread_id,
+            CreationThreadEvent.role == "assistant",
+            CreationThreadEvent.payload["choice_question"]["conflict"].astext == conflict,
+        )
+        .order_by(CreationThreadEvent.sequence.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    question = asked.get("choice_question") if isinstance(asked, dict) else None
+    if not isinstance(question, dict):
+        return None
+    rows = db.execute(
+        select(
+            CreationThreadEvent.role,
+            CreationThreadEvent.payload,
+            CreationThreadEvent.sequence,
+        )
+        .where(CreationThreadEvent.thread_id == thread_id)
+        .order_by(CreationThreadEvent.sequence)
+    ).all()
+    history = [(role, payload) for role, payload, _sequence in rows]
+    if count_asks(history, conflict, question.get("input_digest")) >= MAX_ASKS_PER_QUESTION:
+        return None
+    # An old render can finish after a new server-derived answer is queued. Its
+    # failure must not reopen a choice the creator has already changed/confirmed.
+    source = db.get(CreationThreadEvent, source_event_id) if source_event_id else None
+    refused = _pinned_answer(job, conflict)
+    if source is not None:
+        approved = fold_scoped_answers(
+            (role, payload) for role, payload, sequence in rows if sequence <= source.sequence
+        ).get(conflict)
+        current = fold_scoped_answers(history).get(conflict)
+        if current is not None and (approved is None or current.index > approved.index):
+            return None
+        if refused is None and approved is not None:
+            refused = approved.option_key
+    return reask_choice_question(question, refused=refused)
+
+
+def _pinned_answer(job: Job, conflict: str) -> str | None:
+    """The option this job's approval pinned for ``conflict``: on the brief binding, or on
+    the approved strategy (the job factory may have stripped it there, KRI-788)."""
+    plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
+    binding = plan.get("creator_brief_binding")
+    candidates = getattr(job, "all_candidates", None)
+    strategy = candidates.get("creator_strategy") if isinstance(candidates, dict) else None
+    for source in (binding, strategy):
+        rows = source.get("choice_answers") if isinstance(source, dict) else None
+        for row in rows if isinstance(rows, list) else []:
+            if isinstance(row, dict) and row.get("conflict") == conflict and row.get("option"):
+                return str(row["option"])
+    return None
 
 
 def _capability_refusal_copy(decline: dict[str, str]) -> str:
@@ -4729,6 +4983,10 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
             )
         else:
             raise
+    if status == "dispatched" and result_job_id is not None:
+        # The render may have finished before this receipt read `dispatched` (a fast phone-plan
+        # refusal); its own end-of-task nudge then found nothing to settle.
+        nudge_kria_observer(result_job_id)
     if successor_id is not None:
         run_kria_turn.apply_async(
             args=[successor_id],
@@ -5321,6 +5579,7 @@ def _localized_block_recovery(message: str, receipts: list[dict[str, Any]]) -> s
     from app.kria.brief_checks import (  # noqa: PLC0415
         NARRATED_ALIGNMENT_RECOVERY,
         narrated_alignment_recovery,
+        needs_creator_choice,
         render_block_recovery,
     )
 
@@ -5329,11 +5588,9 @@ def _localized_block_recovery(message: str, receipts: list[dict[str, Any]]) -> s
     if not receipts:
         return message
 
-    failures = [
-        row
-        for row in receipts
-        if row.get("verification") == "checked" and row.get("status") != "met"
-    ]
+    # The worker's own filter: a format limit (KRI-689) is never in the message, so keeping
+    # it here would rebuild a different English text and leave the card English (KRI-778).
+    failures = [row for row in receipts if needs_creator_choice(row)]
     if not failures:
         return message
     with reply_language_for("en"):
@@ -5705,6 +5962,10 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             ):
                 recovery_receipts = [receipt.model_dump(mode="json") for receipt in receipts]
                 recovery_message = raw_recovery["message"].strip()
+        # KRI-795: the question a refusal for an unresolved choice asks again, if any.
+        reasked: dict[str, Any] | None = None
+        # The refusal copy below already says the way forward (never added twice).
+        says_way_forward = False
         if device_decline is not None:
             from app.services.device_render import has_accepted_artifact  # noqa: PLC0415
 
@@ -5732,7 +5993,16 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                     )
                 )
             else:
-                failure_content = _device_refusal_copy(device_decline, last_good=last_good)
+                reasked = _reasked_choice_question(
+                    db,
+                    thread.id,
+                    device_decline,
+                    job,
+                    source_event_id=getattr(turn, "source_event_id", None),
+                )
+                failure_content = _device_refusal_copy(
+                    device_decline, last_good=last_good, question=reasked
+                )
         elif device_failed and exact_retry_available:
             failure_content = say(
                 en=(
@@ -5776,6 +6046,27 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             )
         elif recovery_message is not None:
             failure_content = _localized_block_recovery(recovery_message, recovery_receipts)
+        elif (
+            typed_decline is not None
+            and typed_decline["decline_reason"] in _CHOICE_DECLINES
+            and (
+                failure_code == "phone_plan_unsupported"
+                or _cloud_decline_needs_the_creator(failure_code, typed_decline["decline_reason"])
+            )
+        ):
+            # KRI-795: a decision only the creator can make. The phone never saw this edit,
+            # so the "can't render yet" table line blamed the wrong thing, and "tell me which
+            # option" pointed at options nobody showed: name what is unresolved and ask the
+            # thread's own question again when there is one.
+            reasked = _reasked_choice_question(
+                db,
+                thread.id,
+                typed_decline,
+                job,
+                source_event_id=getattr(turn, "source_event_id", None),
+            )
+            failure_content = _choice_refusal_copy(typed_decline, reasked)
+            says_way_forward = True
         elif typed_decline is not None and (
             typed_decline["decline_reason"] == "capability_unavailable"
             or _cloud_decline_needs_the_creator(failure_code, typed_decline["decline_reason"])
@@ -5818,12 +6109,13 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             and typed_decline["decline_reason"] != "capability_unavailable"
             and recovery_message is None
             and not device_failed
+            and not says_way_forward
             # A named missing text already asks its one question (KRI-701).
             and not _quoted_missing_text(typed_decline)
         ):
             # A deterministic phone decline keeps its copy and adds the way forward.
             failure_content = f"{failure_content} {worker_alternative}"
-        title_question = _blocked_title_question(recovery_receipts)
+        failure_question = _blocked_title_question(recovery_receipts) or reasked
         event = _append_sync_event(
             db,
             thread,
@@ -5838,7 +6130,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 "code": failure_code,
                 "recovery": recovery,
                 "title": _failure_title(failure_code, device_failed=device_failed),
-                **({"choice_question": title_question} if title_question else {}),
+                **({"choice_question": failure_question} if failure_question else {}),
                 "receipt_ids": [str(execution.id)],
                 **(
                     {
@@ -6131,9 +6423,17 @@ def _reconcile_kria_turns_body() -> dict[str, int]:
             task_id=f"kria-approval:{approval_id}",
             queue="agent-control",
         )
+    return {
+        "published": len(identifiers) + len(approval_identifiers),
+        "settled": _settle_dispatched_executions(dispatched_execution_ids),
+    }
+
+
+def _settle_dispatched_executions(execution_ids: list[uuid.UUID]) -> int:
+    """Observe each dispatched receipt; publish the queued turns the settled ones release."""
     settled = 0
     successors: list[str] = []
-    for execution_id in dispatched_execution_ids:
+    for execution_id in execution_ids:
         outcome, successor_id = _observe_dispatched_execution(execution_id)
         if outcome in {"completed", "failed"}:
             settled += 1
@@ -6145,10 +6445,62 @@ def _reconcile_kria_turns_body() -> dict[str, int]:
             task_id=successor_id,
             queue="agent-control",
         )
-    return {
-        "published": len(identifiers) + len(approval_identifiers),
-        "settled": settled,
-    }
+    return settled
+
+
+# A nudge still queued after this long is moot: the minute sweep has settled the Job by then.
+OBSERVE_NUDGE_TTL_S = 120
+
+
+@celery_app.task(
+    name="tasks.observe_kria_job",
+    soft_time_limit=30,
+    time_limit=45,
+    max_retries=0,
+)
+def observe_kria_job(job_id: str) -> dict[str, int]:
+    """Settle the chat receipts waiting on one Job, right after that Job changed.
+
+    The minute sweep used to be the only thing that posted a render's ready/failed card, so
+    the creator waited up to a minute for it (café M2 job 50f67a06 failed at 13:05:12; its
+    card came at 13:05:53). The render tasks, the phone's publish/failure reports and the
+    approval dispatch nudge this task instead. It runs the sweep's own observer, which
+    row-locks and re-checks each receipt, so a nudge racing the sweep posts one card; the
+    sweep stays the fallback for a nudge that never arrives.
+    """
+
+    if not settings.kria_runtime_v2_enabled:
+        return {"settled": 0}
+    with sync_session() as db:
+        execution_ids = list(
+            db.execute(
+                select(CreatorAgentExecution.id)
+                .where(
+                    CreatorAgentExecution.target_job_id == uuid.UUID(job_id),
+                    CreatorAgentExecution.status == "dispatched",
+                )
+                .order_by(CreatorAgentExecution.dispatched_at, CreatorAgentExecution.id)
+                .limit(50)
+            ).scalars()
+        )
+    return {"settled": _settle_dispatched_executions(execution_ids)}
+
+
+def nudge_kria_observer(job_id: object) -> None:
+    """Ask `observe_kria_job` to settle this Job's chat receipts now. Never raises.
+
+    Call it after the Job write commits. A lost nudge (broker down, worker killed) only
+    means the minute sweep posts the card instead.
+    """
+
+    try:
+        if not settings.kria_runtime_v2_enabled:
+            return
+        observe_kria_job.apply_async(
+            args=[str(job_id)], queue="agent-control", expires=OBSERVE_NUDGE_TTL_S
+        )
+    except Exception:  # noqa: BLE001 - the sweep settles whatever a lost nudge misses
+        log.warning("kria_observe_nudge_failed", job_id=str(job_id), exc_info=True)
 
 
 @celery_app.task(

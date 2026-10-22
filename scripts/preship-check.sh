@@ -10,13 +10,32 @@
 #   5. run the KRI-577 reliability gates mapped to the changed incident paths
 #   6. journey-mapping check: the same fail-closed mapping CI enforces, so an
 #      unmapped path is named here instead of discovered in CI (KRI-749)
-#   7. fix-chain warning: a 3rd fix PR on one KRI ticket needs a failure-mode
+#   7. request-to-output evidence: validate the same PR-body contract as CI,
+#      including staged, unstaged and untracked changes
+#   8. fix-chain warning: a 3rd fix PR on one KRI ticket needs a failure-mode
 #      list first (KRI-751; docs/runbooks/linear-workflow.md)
 #
-# Usage: bash scripts/preship-check.sh   (from the feature worktree, pre-PR)
+# Usage: bash scripts/preship-check.sh [--pr-body /path/to/pr-body.md]
+# Default body: PR_EVIDENCE_BODY or .dev/pr-body.md (from the feature worktree).
 # Exit 0 = ship; non-zero = fix the FAILs first.
 
 set -uo pipefail
+
+PR_BODY_FILE="${PR_EVIDENCE_BODY:-.dev/pr-body.md}"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --pr-body)
+      [ "$#" -ge 2 ] || { echo "--pr-body requires a file path" >&2; exit 2; }
+      PR_BODY_FILE="$2"
+      shift 2
+      ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+# Resolve caller-relative paths before changing to the repository root.
+if [[ "$PR_BODY_FILE" != /* ]]; then
+  PR_BODY_FILE="$PWD/$PR_BODY_FILE"
+fi
 
 REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "not a git repo" >&2; exit 2; }
 cd "$REPO"
@@ -36,7 +55,7 @@ CHANGED="$( { git diff --name-only "$MB" HEAD; git diff --name-only HEAD; git di
 echo "preship-check vs origin/main ($(git rev-parse --short origin/main)), branch point $(git rev-parse --short "$MB")"
 
 # ── 1. Scoped ruff on changed API .py files ───────────────────────────────────
-echo "[1/7] scoped ruff"
+echo "[1/8] scoped ruff"
 PY_CHANGED="$(echo "$CHANGED" | grep -E '^src/apps/api/.*\.py$' || true)"
 if [ -z "$PY_CHANGED" ]; then
   info "no API .py changes — skipped"
@@ -62,7 +81,7 @@ else
 fi
 
 # ── 2. Drift: my files that also changed on origin/main since branch point ───
-echo "[2/7] file drift vs origin/main"
+echo "[2/8] file drift vs origin/main"
 MAIN_CHANGED="$(git diff --name-only "$MB" origin/main | sort -u)"
 DRIFT="$(comm -12 <(echo "$CHANGED") <(echo "$MAIN_CHANGED") | grep -vE '^(VERSION|CHANGELOG\.md)$' || true)"
 if [ -n "$DRIFT" ]; then
@@ -73,7 +92,7 @@ else
 fi
 
 # ── 3. Release metadata ownership ─────────────────────────────────────────────
-echo "[3/7] release metadata ownership"
+echo "[3/8] release metadata ownership"
 if OUT="$(python3 scripts/release_metadata.py guard --base "$MB" --head HEAD 2>&1)" \
   && OUT_WORKING="$(python3 scripts/release_metadata.py guard --base HEAD --working 2>&1)"; then
   pass "feature PR leaves release metadata to post-merge automation"
@@ -82,7 +101,7 @@ else
 fi
 
 # ── 4. CI skip-markers relevant to this diff ──────────────────────────────────
-echo "[4/7] CI [skip-*] markers"
+echo "[4/8] CI [skip-*] markers"
 MARKERS="$(grep -rhoE '\[skip-[a-z0-9-]+\]' .github/workflows/ 2>/dev/null | sort -u)"
 if [ -n "$MARKERS" ]; then
   info "markers honored by CI (add to PR body ONLY with a reason):"
@@ -92,7 +111,7 @@ else
 fi
 
 # ── 5. Reliability gates for changed incident paths (KRI-577) ────────────────
-echo "[5/7] reliability gates"
+echo "[5/8] reliability gates"
 if [ -f "$REPO/.dev/test-db-url" ] && [ -z "${DATABASE_URL:-}" ]; then
   DATABASE_URL="$(cat "$REPO/.dev/test-db-url")"; export DATABASE_URL
 fi
@@ -114,7 +133,7 @@ fi
 # Runs the CI selector's journey logic locally. It diffs COMMITTED history from
 # the merge-base (exactly like CI), so commit before trusting this step. It
 # checks the mapping only; journey api tests / xctests still run in CI.
-echo "[6/7] journey mapping"
+echo "[6/8] journey mapping"
 SELECT="scripts/ci/select-tests.py"
 if [ ! -f "$SELECT" ]; then
   info "no $SELECT — skipped"
@@ -157,9 +176,21 @@ else
   fi
 fi
 
-# ── 7. Fix-chain warning (KRI-751) ───────────────────────────────────────────
+# ── 7. Request-to-output evidence (KRI-577 / KRI-559) ───────────────────────
+echo "[7/8] request-to-output evidence"
+if OUT="$(python3 scripts/ci/pr-evidence.py --repo "$REPO" --base "$MB" \
+  --head HEAD --working --body-file "$PR_BODY_FILE" 2>&1)"; then
+  pass "$OUT"
+else
+  fail "request-to-output evidence is missing or invalid:"
+  echo "$OUT" | sed 's/^/         /'
+  info "write the PR description to $PR_BODY_FILE or pass --pr-body /path/to/body.md"
+  info "contract: docs/runbooks/request-to-output-standard.md"
+fi
+
+# ── 8. Fix-chain warning (KRI-751) ───────────────────────────────────────────
 # Offline: counts fix-subject commits already on origin/main for this ticket.
-echo "[7/7] fix-chain check"
+echo "[8/8] fix-chain check"
 BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
 TICKET="$(echo "$BRANCH" | grep -oiE 'kri-[0-9]+' | head -1 | tr 'a-z' 'A-Z')"
 if [ -z "$TICKET" ]; then

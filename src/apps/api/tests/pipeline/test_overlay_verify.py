@@ -267,3 +267,18 @@ def test_iter_recipe_overlays_shapes():
     assert [(s, o) for s, o, _ in out] == [(0, 0), (0, 1), (1, 0)]
     with pytest.raises(ValueError):
         ov.iter_recipe_overlays({"nope": 1})
+
+
+def test_missing_glyph_with_no_covering_face_fails():
+    """KRI-785: tofu passed the bbox check. A letter no bundled face can draw
+    (no glyph fallback is possible) must FAIL, naming the missing codepoint."""
+    overlay = {
+        **_fixture_overlays("turkish_glyphs.json")[0],
+        "text": "Güneş 漢",
+        "font_family": "Satisfy",
+    }
+    report = ov.verify_recipe(
+        {"overlays": [overlay]}, render_mode=ov.RENDER_DRAW_FRAME, run_ocr=False
+    )
+    assert report.overlays[0].clipping == "FAIL"
+    assert any("missing glyph" in r and "U+6F22" in r for r in report.overlays[0].reasons)

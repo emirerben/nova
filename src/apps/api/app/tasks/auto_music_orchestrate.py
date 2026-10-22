@@ -88,7 +88,7 @@ import os
 import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from sqlalchemy import select
@@ -124,6 +124,9 @@ from app.tasks.template_orchestrate import (
     _upload_clips_parallel,
 )
 from app.worker import celery_app
+
+if TYPE_CHECKING:
+    from app.agents._runtime import RunContext
 
 try:
     from app.pipeline.agents.gemini_analyzer import (
@@ -660,12 +663,15 @@ def _run_music_matcher(
     clip_metas: list,
     candidate_tracks: list[MusicTrack],
     n_variants: int,
-    job_id: str,
+    job_id: str | None,
     music_ask: str = "",
+    run_context: RunContext | None = None,
 ) -> list[dict[str, Any]]:
     """Call the matcher exactly once. Returns the ranked list as plain dicts.
 
     ``music_ask`` is the creator's own words about the music (KRI-679), if any.
+    ``run_context`` owns a call made before any render Job exists (a chat turn records it
+    against its plan item, KRI-809); without it the run belongs to ``job_id``.
 
     Returns empty list on refusal / failure. The caller decides whether
     that's terminal.
@@ -681,6 +687,8 @@ def _run_music_matcher(
         TrackSummary,
     )
 
+    ctx = run_context or RunContext(job_id=job_id)
+    log_ids = {"job_id": ctx.job_id, "plan_item_id": ctx.plan_item_id}
     clip_summaries = [_clip_meta_to_summary(ClipSummary, m) for m in clip_metas]
     from app.pipeline.lyric_support import lyric_language  # noqa: PLC0415
 
@@ -708,7 +716,7 @@ def _run_music_matcher(
         )
 
     if not track_summaries:
-        log.warning("auto_music_matcher_no_valid_track_summaries", job_id=job_id)
+        log.warning("auto_music_matcher_no_valid_track_summaries", **log_ids)
         return []
 
     matcher_input = MusicMatcherInput(
@@ -719,20 +727,18 @@ def _run_music_matcher(
     )
 
     try:
-        result = MusicMatcherAgent(default_client()).run(
-            matcher_input, ctx=RunContext(job_id=job_id)
-        )
+        result = MusicMatcherAgent(default_client()).run(matcher_input, ctx=ctx)
     except AgentError as exc:
         log.warning(
             "auto_music_matcher_failed",
-            job_id=job_id,
+            **log_ids,
             error=str(exc),
         )
         return []
     except Exception as exc:
         log.warning(
             "auto_music_matcher_unexpected_failure",
-            job_id=job_id,
+            **log_ids,
             error=str(exc),
         )
         return []
@@ -748,7 +754,7 @@ def _run_music_matcher(
     ]
     log.info(
         "auto_music_matcher_done",
-        job_id=job_id,
+        **log_ids,
         n_ranked=len(ranked),
         top_track=ranked[0]["track_id"] if ranked else None,
     )

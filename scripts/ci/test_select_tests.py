@@ -629,8 +629,12 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates,kri-648-phone-text,kri-787-merope-t1-replay",
+                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates,kri-788-order-answer-dispatch,kri-648-phone-text,kri-787-merope-t1-replay",
                 ),
+            ),
+            (
+                "src/apps/api/tests/tasks/test_kri788_order_answer_dispatch.py",
+                (True, "covered", "kri-788-order-answer-dispatch"),
             ),
             (
                 "src/apps/api/app/kria/duplicate_uploads.py",
@@ -725,6 +729,14 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-653-silent-take"),
             ),
             (
+                "src/apps/api/app/services/clip_speech_check.py",
+                (True, "covered", "kri-808-clip-speech-language"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/kri808_don_julio_clip_speech.json",
+                (True, "covered", "kri-808-clip-speech-language"),
+            ),
+            (
                 "src/apps/api/app/kria/clip_scope.py",
                 (True, "covered", "kri-623-ruled-out-clips"),
             ),
@@ -774,7 +786,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/services/spoken_quotes.py",
-                (True, "covered", "kri-628-opening-cut,kri-681-named-line-windows"),
+                (
+                    True,
+                    "covered",
+                    "kri-628-opening-cut,kri-789-take-trim-not-order,kri-681-named-line-windows",
+                ),
             ),
             (
                 "src/apps/api/app/pipeline/caption_correct.py",

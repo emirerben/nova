@@ -410,3 +410,126 @@ def test_kri595_the_approved_proxy_plan_reaches_a_montage_snapshot() -> None:
     cuts = compiled.snapshot.fast_cuts
     assert [cut.media_id for cut in cuts] == ["a"]
     assert cuts[0].source_end_s <= ORIGINAL_S + 0.001
+
+
+def _kri721_proxy_assignment(original_s: float = 4.32, proxy_s: float = 4.333333) -> dict:
+    return {
+        "media_id": "a",
+        "gcs_path": "users/test/analysis-proxy-a.mp4",
+        "storage_generation": "1",
+        "manifest_identity": "a",
+        "kind": "video",
+        "duration_s": proxy_s,
+        "has_audio": True,
+        "analysis": {"best_moments": [{"start_s": 2.7, "end_s": proxy_s, "energy": 5}]},
+        "upload_contract": {
+            "purpose": "analysis_proxy",
+            "proxy": {
+                "duration_s": proxy_s,
+                "width": 568,
+                "height": 320,
+                "frame_rate": 30,
+                "original": {
+                    "sha256": "a" * 64,
+                    "byte_count": 1000,
+                    "duration_s": original_s,
+                    "width": 3840,
+                    "height": 2160,
+                    "has_audio": True,
+                },
+            },
+        },
+    }
+
+
+@pytest.mark.parametrize("origin", ["preapproval-original", "approved-proxy"])
+@pytest.mark.parametrize(
+    ("proxy_s", "original_s", "target_s"),
+    [(4.333333, 4.32, 3), (5, ORIGINAL_S, 3), (12, 11.968333, 10)],
+)
+def test_kri721_original_clock_reaches_phone_recipe(origin, proxy_s, original_s, target_s):
+    """Recorded incident -> immutable windows -> real montage and phone compilers."""
+    from app.pipeline.guided_story import GuidedStoryExecutionPlan, compile_execution_plan
+    from app.pipeline.phone_guided_plan import compile_phone_guided_plan
+    from app.pipeline.unified_montage import BriefView
+    from app.services.phone_sources import bind_phone_sources
+
+    row = _kri721_proxy_assignment(original_s, proxy_s)
+    strategy = {
+        "edit_format": "montage",
+        "opening_title": "A quick moment.",
+        "audio_strategy": "original_audio",
+        "voice_mode": "per_clip",
+        "montage_audio": {"preserve_source_audio": True},
+    }
+    if origin == "preapproval-original":
+        envelope = build_length_plan(
+            strategy, {"clip_assignments": [row]}, creator_target_s=target_s
+        )
+        assert envelope["sources"][0]["duration_s"] == original_s
+    else:
+        envelope = _proxy_envelope(window_end_s=round(proxy_s, 3), duration_s=proxy_s)
+        envelope["sources"][0]["gcs_path"] = row["gcs_path"]
+        envelope["windows"][0]["source_start_s"] = round(proxy_s, 3) - target_s
+        envelope.update(owner="creator", target_duration_s=target_s)
+    bindings = bind_phone_sources([row], [row["gcs_path"]])
+    clip = UnifiedClip(
+        media_id="a",
+        proxy_path=row["gcs_path"],
+        generation="1",
+        duration_s=original_s,
+        width=3840,
+        height=2160,
+    )
+    unified = plan_unified_montage(
+        [clip],
+        BriefView(target_duration_s=target_s),
+        strategy=strategy,
+        approved_length_plan=envelope,
+        creator_duration_proven=True,
+        output_orientation="landscape",
+    )
+    execution = GuidedStoryExecutionPlan.model_validate(
+        compile_execution_plan(unified.guided_edit(), track=None)
+    )
+    recipe = compile_phone_guided_plan(execution, bindings)
+    assert unified.snapshot.duration_s == target_s
+    assert recipe.duration == target_s
+    assert recipe.audio.original_volume == 1
+    assert any(
+        " ".join(run.text for run in layer.runs) == "A quick moment."
+        for layer in recipe.text_layers
+    )
+    cut = unified.snapshot.fast_cuts[0]
+    assert cut.source_start_s >= 0
+    assert cut.source_end_s <= original_s
+    assert cut.output_duration_s == target_s
+    assert recipe.tracks[0].clips[0].source_start == pytest.approx(cut.source_start_s)
+
+
+def test_kri721_short_original_blocks_before_approval():
+    row = _kri721_proxy_assignment(original_s=2.987, proxy_s=3)
+    plan = build_length_plan(
+        {"edit_format": "montage", "audio_strategy": "original_audio"},
+        {"clip_assignments": [row]},
+        creator_target_s=3,
+    )
+    assert "snapshot_min_duration" in [c["code"] for c in plan["conflicts"]]
+    assert plan["capacity_raw_s"] == 2.987
+
+
+def test_kri721_valid_approved_window_is_unchanged():
+    parts = read_length_plan(_proxy_envelope(window_end_s=3), [_clip("a", duration_s=ORIGINAL_S)])
+    assert [(p.source_start_s, p.source_end_s) for p in parts] == [(0, 3)]
+
+
+def test_kri721_tail_adjustment_never_overlaps_another_window():
+    envelope = _proxy_envelope(window_end_s=5)
+    envelope["windows"] = [
+        {"media_id": "a", "source_start_s": 1, "source_end_s": 2, "score": 5},
+        {"media_id": "a", "source_start_s": 2, "source_end_s": 5, "score": 5},
+    ]
+    parts = read_length_plan(envelope, [_clip("a", duration_s=ORIGINAL_S)])
+    assert parts[0].source_end_s <= parts[1].source_start_s
+    assert parts[0].source_start_s == 1
+    assert parts[-1].source_end_s <= ORIGINAL_S

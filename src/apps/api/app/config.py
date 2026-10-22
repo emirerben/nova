@@ -863,6 +863,12 @@ class Settings(BaseSettings):
     # Deploy readers everywhere before enabling snapshot writers.
     kria_brief_binding_enabled: bool = False
     kria_brief_binding_user_ids: Annotated[list[str], NoDecode] = []
+    # KRI-775: before the approval card, run the phone montage plan the worker will run
+    # (`app.services.phone_montage_preflight`) and hold back a draft it would refuse,
+    # with the reason and the "simpler version?" choice. Deterministic, fail-open.
+    # Default TRUE; kill switch = false + restart (api + worker): approval is offered
+    # exactly as before and the worker's own check is the only one.
+    kria_phone_montage_preflight_enabled: bool = True
     # KRI-721: enroll new approval writers only after API/worker readers deploy.
     # Existing stamped assessments remain mandatory when enrollment is disabled.
     kria_approval_readiness_enabled: bool = False
@@ -2124,6 +2130,13 @@ class Settings(BaseSettings):
     # stored nor shown to any prompt. Emergency rollback: `fly secrets set
     # SPEECH_EXCERPT_MONTAGE_ENABLED=false --app nova-video` + restart api+worker.
     speech_excerpt_montage_enabled: bool = True
+    # KRI-808: a clip's timed words are kept only when whisper's language agrees with the
+    # clip's Gemini transcript; a pass that disagrees (whisper TRANSLATED accented speech) is
+    # re-transcribed in the language Gemini or the chat heard, else stored as no words. Also
+    # drops whisper's silence-time placeholders, credits and loops. Cost: at most two extra
+    # whisper-1 calls on a disagreeing clip (~$0.0003 each on a 3 s clip). false = the
+    # pre-KRI-808 first pass, stored as is. Apply: fly secret + worker restart.
+    clip_speech_language_check_enabled: bool = True
     # Owner-safe "Nova steps" activity feed projected from pipeline_trace +
     # phase_log + AgentRun (app/services/nova_steps.py) onto the generative
     # job status response. Ships OFF -- `steps` stays None (byte-identical

@@ -59,6 +59,7 @@ from app.kria.brief import (
     CurrentPlanShape,
     Route,
     apply_updates,
+    bind_updates,
     brief_context,
     load_latest_brief,
     new_requirements,
@@ -72,9 +73,10 @@ from app.kria.brief_checks import spoken_text_literals, whole_line_quotes
 from app.kria.brief_route import loose_text
 from app.kria.clip_exclusions import (
     carry_forward_exclusions,
-    contested_exclusions,
     earlier_exclusions,
     exclusion_question,
+    exclusions_to_ask,
+    with_exclusion_categories,
 )
 from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope
 from app.kria.contracts import KriaTurnPlan
@@ -93,7 +95,7 @@ from app.kria.strategy_policy import (
     song_captions_refusal,
     transcript_labels_dropped_notice,
 )
-from app.kria.style_asks import brief_moment_ask
+from app.kria.style_asks import brief_moment_ask, carry_moment_ask, moment_ask_in_text
 from app.kria.voiceover_clips import keep_every_voiceover_clip
 from app.models import (
     ContentPlan,
@@ -276,6 +278,7 @@ def _enrich_best_parts_snapshot(
             closing_quote=closing_quote,
             moment_count=moments.count if moments is not None else None,
             moment_max_s=moments.max_s if moments is not None else None,
+            moment_each_s=moments.each_s if moments is not None else None,
             # The creator's own description of a clip outranks its welcome line.
             spoken_moments={**dict([opening] if opening else []), **described},
             quiet_moments=dict([quiet]) if quiet else None,
@@ -343,24 +346,37 @@ def _whole_line_quotes(brief: CreativeBrief | None) -> list[str]:
 
 
 def _moment_count_notice(
-    strategy: Mapping[str, Any], brief: CreativeBrief | None, length_plan: object
+    strategy: Mapping[str, Any],
+    brief: CreativeBrief | None,
+    length_plan: object,
+    *,
+    summary: str = "",
 ) -> str | None:
-    """KRI-596: the reply says so when the montage can't hold the moments asked for."""
-    ask = brief_moment_ask(brief)
+    """KRI-596: the reply says so when the montage can't hold the moments asked for.
+
+    KRI-776: also when the draft's own summary counts more moments than the plan holds ("I
+    will cut the 6 exact moments" over one cut of the take), whoever gave that number.
+    """
     if (
-        ask is None
-        or ask.count is None
-        or strategy.get("edit_format") != "montage"
+        strategy.get("edit_format") != "montage"
         or not isinstance(length_plan, Mapping)
         or length_plan.get("window_eligible") is not True
     ):
         return None
     planned = len(length_plan.get("windows") or [])
-    if planned == ask.count:
+    ask = brief_moment_ask(brief)
+    promised = moment_ask_in_text(summary) if summary else None
+    if ask is not None and ask.count is not None:
+        if planned == ask.count:
+            return None
+        count = ask.count
+    elif promised is not None and promised.count is not None and promised.count > planned:
+        count = promised.count
+    else:
         return None
     return say(
-        en=f"I could fit {planned} moments, not {ask.count}.",
-        tr=f"{ask.count} değil, {planned} an sığdırabildim.",
+        en=f"I could fit {planned} {'moment' if planned == 1 else 'moments'}, not {count}.",
+        tr=f"{count} değil, {planned} an sığdırabildim.",
     )
 
 
@@ -512,7 +528,7 @@ async def _freeze_licensed_music_section(
     strategy: Mapping[str, Any],
     snapshot: dict | None,
     *,
-    job_id: str,
+    run_context: RunContext,
     target_s: float | None = None,
     music_ask: str = "",
 ) -> dict[str, Any] | None:
@@ -520,6 +536,7 @@ async def _freeze_licensed_music_section(
 
     ``target_s`` is the creator's own length; the section follows it (KRI-679).
     ``music_ask`` is the creator's own words about the song; the matcher weighs it first.
+    ``run_context`` owns the matcher run: no render Job exists yet (KRI-809).
     """
     if not isinstance(db, AsyncSession) or not isinstance(snapshot, dict):
         return None
@@ -559,7 +576,9 @@ async def _freeze_licensed_music_section(
         for row in playable
         if row.get("media_id")
     ]
-    track = await asyncio.to_thread(_match_best_track, metas, job_id=job_id, music_ask=music_ask)
+    track = await asyncio.to_thread(
+        _match_best_track, metas, job_id=None, music_ask=music_ask, run_context=run_context
+    )
     if track is None:
         return {"status": "fallback_footage"}
     cfg = track_config_with_rank_one(track)
@@ -2890,34 +2909,6 @@ async def _plan_creator_action(
                     manifest_hash=manifest.manifest_hash,
                     context_hash=manifest.context_hash,
                 )
-        if (
-            planned.resolution.status != "resolved"
-            or planned.resolution.needs_creator
-            or planned.resolution.deferred_queries
-        ):
-            return PlannedKriaTurn(
-                plan=_clip_intent_resolution_plan(
-                    question=planned.resolution.question,
-                    status=(
-                        "needs_creator"
-                        if planned.resolution.needs_creator
-                        else planned.resolution.status
-                    ),
-                    diagnostics=_resolution_diagnostics(planned.resolution),
-                    clip_question=(
-                        planned.resolution.clip_question
-                        if planned.resolution.needs_creator
-                        else None
-                    ),
-                ),
-                manifest_hash=manifest.manifest_hash,
-                context_hash=manifest.context_hash,
-                # KRI-709: only a budget/deadline stop continues. A question for the
-                # creator or a provider failure needs their reply or a fresh attempt.
-                continuable=(
-                    planned.resolution.status == "pending" and not planned.resolution.needs_creator
-                ),
-            )
         if settings.clip_intent_exclude_enabled:
             # KRI-761: the resolver is not deterministic and the whole request is re-planned
             # every turn, so an ask it matched in the draft before keeps that match when it
@@ -2932,13 +2923,54 @@ async def _plan_creator_action(
                 planned = replace(
                     planned, resolution=replace(planned.resolution, intents=carried_intents)
                 )
-            # KRI-761: an exclude that names a clip another ask pins, or that look-alikes
-            # share, is the creator's to settle: the picker, never a guess.
-            contested = (
-                contested_exclusions(planned.resolution.intents, action.strategy)
-                if settings.kria_clip_selection_questions_enabled
-                else []
+        # KRI-761: an exclude that names a clip another ask pins, or that look-alikes share,
+        # is the creator's to settle: the picker, never a guess. KRI-807: so is one that
+        # matched no clip ("skip the blurry shot"), never a free-text ask.
+        contested = (
+            exclusions_to_ask(
+                planned.resolution.intents,
+                action.strategy,
+                suspects=planned.resolution.exclusion_suspects,
+                clip_count=len(intent_clips),
             )
+            if settings.clip_intent_exclude_enabled
+            and settings.kria_clip_selection_questions_enabled
+            else []
+        )
+        if (
+            planned.resolution.status != "resolved"
+            or planned.resolution.needs_creator
+            or planned.resolution.deferred_queries
+        ):
+            question = planned.resolution.question
+            clip_question = (
+                planned.resolution.clip_question if planned.resolution.needs_creator else None
+            )
+            if clip_question is not None and contested:
+                # KRI-807: the skips ride in the resolver's picker, one card and one turn.
+                question, clip_question = with_exclusion_categories(
+                    question, clip_question, contested, intent_clips
+                )
+            return PlannedKriaTurn(
+                plan=_clip_intent_resolution_plan(
+                    question=question,
+                    status=(
+                        "needs_creator"
+                        if planned.resolution.needs_creator
+                        else planned.resolution.status
+                    ),
+                    diagnostics=_resolution_diagnostics(planned.resolution),
+                    clip_question=clip_question,
+                ),
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
+                # KRI-709: only a budget/deadline stop continues. A question for the
+                # creator or a provider failure needs their reply or a fresh attempt.
+                continuable=(
+                    planned.resolution.status == "pending" and not planned.resolution.needs_creator
+                ),
+            )
+        if settings.clip_intent_exclude_enabled:
             asked = exclusion_question(contested, intent_clips)
             if asked is not None:
                 log.info(
@@ -2946,12 +2978,21 @@ async def _plan_creator_action(
                     thread_id=str(thread_id),
                     asks=len(contested),
                     pinned=sum(1 for c in contested if c.blocked),
+                    unmatched=sum(1 for c in contested if not c.matched),
+                    suspected=sum(1 for c in contested if not c.matched and c.suggested),
                 )
                 return PlannedKriaTurn(
                     plan=_clip_intent_resolution_plan(
                         question=asked[0],
                         status="needs_creator",
-                        diagnostics={"stage": "exclusion", "reason": "contested"},
+                        diagnostics={
+                            "stage": "exclusion",
+                            "reason": (
+                                "unmatched"
+                                if all(not c.matched for c in contested)
+                                else "contested"
+                            ),
+                        },
                         clip_question=asked[1],
                     ),
                     manifest_hash=manifest.manifest_hash,
@@ -3137,8 +3178,9 @@ def _unapplied_exclusions(planned: PlannedIntentResolution) -> int:
     """How many "leave these clips out" asks leave nothing out (KRI-680).
 
     The planner could not tie the ask to clips (`exclusion_dropped`), or the resolver
-    matched no clip confidently: an exclude never asks the creator, so without a notice
-    the ask vanishes and the clips play.
+    matched no clip confidently: without a notice the ask vanishes and the clips play.
+    KRI-807: an unmatched exclude asks with the clip picker first, so this is left for a
+    dropped ask, the picker flag off, a one-clip project or nothing left to tap.
     """
     unmatched = sum(
         1
@@ -3633,7 +3675,11 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
         )
     planned = replace(planned, media_snapshot=after)
     return await _gate_unresolved_choices(
-        db, planned, thread_id=kwargs["thread_id"], creator_id=kwargs["creator_id"]
+        db,
+        planned,
+        thread_id=kwargs["thread_id"],
+        creator_id=kwargs["creator_id"],
+        item_id=kwargs["item_id"],
     )
 
 
@@ -3643,6 +3689,7 @@ async def _gate_unresolved_choices(
     *,
     thread_id: uuid.UUID,
     creator_id: uuid.UUID,
+    item_id: uuid.UUID | None = None,
 ) -> PlannedKriaTurn:
     """KRI-476: an unresolved material choice never becomes an approvable draft.
 
@@ -3773,7 +3820,15 @@ async def _gate_unresolved_choices(
             db,
             strategy,
             planned.media_snapshot,
-            job_id=str(thread_id),
+            # KRI-809: the thread id is not a Job; binding it as ``job_id`` broke the
+            # agent_run FK and left the creator unattributed for paid-call cost control.
+            # Record the run like Main Creator does: creator + plan item, no job. No
+            # request_id either, so an identical re-match later in the same thread is a
+            # new paid call rather than a replay of the settled first one.
+            run_context=RunContext(
+                creator_id=str(creator_id),
+                plan_item_id=str(item_id) if item_id else None,
+            ),
             target_s=music_target_s,
             music_ask=music_ask,
         )
@@ -3856,7 +3911,9 @@ async def _gate_unresolved_choices(
             closing_quote_notice(
                 length_plan.get("closing_quote") if isinstance(length_plan, dict) else closing_quote
             ),
-            _moment_count_notice(strategy, brief, length_plan),
+            _moment_count_notice(
+                strategy, brief, length_plan, summary=str(arguments.get("summary") or "")
+            ),
         )
         if notice
     ]
@@ -4433,7 +4490,11 @@ async def _plan_live_turn(
                 for result in extraction_outputs
                 for update in result.brief_updates
             }
-            pre_extracted_updates = tuple(unique_extracted.values())
+            # KRI-776: the creator's own moment numbers ride on the brief, whatever the
+            # extractor's paraphrase kept.
+            pre_extracted_updates = carry_moment_ask(
+                prior_brief, tuple(unique_extracted.values()), user_message
+            )
             effective = apply_updates(prior_brief, pre_extracted_updates, source_turn_id=None)
             extraction_complete = True
             fresh = new_requirements(prior_brief, effective)
@@ -4670,22 +4731,20 @@ async def _plan_live_turn(
     # concurrency token. Bind its `expected_version` to the brief its prompt showed, as
     # the brief extractor does; apply_updates and the persist fence still refuse work
     # that is genuinely stale. A copied wrong number made "make it more basic" fail.
-    shown_version = prior_brief.version if prior_brief else 0
+    # KRI-805: a missing number, and a change naming only the field it changes, bind too.
     unique_updates = {
         json.dumps(update.model_dump(mode="json"), sort_keys=True): update
         for update in (
             pre_extracted_updates
             if extraction_complete
-            else tuple(
-                update
-                if update.operation == "add"
-                else update.model_copy(update={"expected_version": shown_version})
-                for result in outputs
-                for update in result.brief_updates
+            else bind_updates(
+                prior_brief, (update for result in outputs for update in result.brief_updates)
             )
         )
     }
-    updates = tuple(unique_updates.values())
+    # KRI-776: the creator's own moment numbers ride on the brief, whatever the Main
+    # Creator's paraphrase kept ("six moments, about 2 seconds each" became a bare order list).
+    updates = carry_moment_ask(prior_brief, tuple(unique_updates.values()), user_message)
     try:
         effective = apply_updates(prior_brief, updates, source_turn_id=None)
     except BriefUpdateBatchError as exc:
@@ -4899,7 +4958,11 @@ async def extract_deferred_brief(
     scope, _clarification = _extraction_request_scope(extraction_outputs)
     if scope == "clarify":
         return (), None
-    updates = tuple(update for output in extraction_outputs for update in output.brief_updates)
+    updates = carry_moment_ask(
+        prior_brief,
+        tuple(update for output in extraction_outputs for update in output.brief_updates),
+        user_message,
+    )
     effective = apply_updates(prior_brief, updates, source_turn_id=None)
     fresh = new_requirements(prior_brief, effective)
     item = await _refetch_item(db, item_id)

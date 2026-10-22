@@ -602,7 +602,8 @@ _UNEVIDENCED_STRATEGIES = {
         "montage_audio.source_media_ids[]",
     ),
     "original_audio": ({"audio_strategy": "original_audio"}, "montage_audio.preserve_source_audio"),
-    "order_required": ({"ordering_choice": "chronological"}, None),
+    # KRI-794: the unresolved order line names the order choice it needs.
+    "order_required": ({"ordering_choice": "chronological"}, "ordering_choice"),
 }
 
 
@@ -614,7 +615,7 @@ def test_preflight_declines_unevidenced_requirements_as_capability_unavailable(r
     if requirement == "order_required":
         # Chronology needs capture times; with none the contract is unresolved.
         assert contract.unresolved
-        expected = ("needs_choice", None)
+        expected = ("needs_choice", path)
     else:
         expected = ("capability_unavailable", path)
     with pytest.raises(CloudRenderContractError) as exc:

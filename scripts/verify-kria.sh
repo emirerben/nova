@@ -33,6 +33,7 @@ cd "$API_DIR"
 "$PYTHON_BIN" -m app.cli.kria_contracts --check
 "$PYTHON_BIN" -m pytest -q \
   tests/kria \
+  tests/parity \
   tests/services/test_kria_editor_ops.py \
   tests/evals/test_kria_format_matrix.py \
   tests/routes/test_admin_kria.py \

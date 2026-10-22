@@ -1,0 +1,9 @@
+{
+  "_doc": "KRI-785. Registry font -> stylistically close registry font used for the WHOLE text run when the chosen font lacks a letter, digit or punctuation mark the text needs (Turkish ğ ş İ ı, curly quotes). Read by app/pipeline/font_coverage.py (Skia, Pillow/libass, overlay_verify) and the iOS NativeEditorRenderCompiler. Fonts not listed fall back to the closest-weight covering font of the same registry category. Kept out of font-registry.json so registry-embeddings.npz stays valid.",
+  "Alte Haas Grotesk": "Inter",
+  "Permanent Marker": "Patrick Hand",
+  "Satisfy": "Pacifico",
+  "Big Curls": "Great Vibes",
+  "Rascal": "Patrick Hand",
+  "ZT Bros Oskon 90s": "Instrument Serif"
+}

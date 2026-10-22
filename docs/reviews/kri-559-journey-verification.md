@@ -2,7 +2,9 @@
 
 This is a redacted baseline for request-to-delivery journeys. It records what
 the cited changes establish and what they leave open. It does not turn a
-passing simulator or compiler check into proof of a live render.
+passing simulator or compiler check into proof of a live render. New work follows
+the [request-to-output standard](../runbooks/request-to-output-standard.md); this
+historical baseline is evidence, not a broader completion claim.
 
 ## Incident matrix
 
@@ -27,10 +29,14 @@ Use the strongest applicable label in every handoff:
 | Native output | A real phone or renderer output inspected for the requested text, order, timing and audio; a feed or plan is insufficient. |
 | Production | Deployed revision/process, UTC observation and relevant user or production capture. |
 
-Evidence is invalid after the relevant HEAD changes unless the same check is
-rerun against the new revision. A PR is blocked when a required render is
-missing. The live evaluation budget is capped at **$2** for this baseline;
-unknown provider, device and production values stay labeled **unknown**.
+Bind evidence to the tested revision. After relevant code or fixture changes,
+rerun the affected check on the final SHA and mark superseded evidence stale. A PR
+is blocked when its required render evidence is missing. A narrower local fix
+may proceed when its own acceptance checks pass, with honest limits and the parent
+journey remaining open; narrowing a claim does not waive a required gate. The
+live evaluation budget is capped at **$2** for this baseline; paid runs still
+require existing approval. Unknown provider, device and production values stay
+labeled **unknown**. This baseline does not require paid calls on every PR.
 
 Historical red control (2026-10-09): running the new KRI-524 fixture generator
 against the API code at `a6817e9e8` (immediately before #1511) fails at
@@ -46,15 +52,21 @@ the same fields: PR and HEAD, owner, enforcement point, evidence level, escaped
 regressions, follow-up PRs, user retest result, test time, and cost. Use
 `unknown` rather than estimating any value that was not measured.
 
-1. Reproduce the prior failure offline and add the regression to the focused
-   gate. Record escaped regressions after merge or deployment, if any.
-2. For relevant prompt, model or provider changes, run the required live model
-   check through the protected `Agent evals` workflow within its **$2** per-run
-   cap. Link its result separately from offline replay. Inspect native output
-   when the change affects rendering, save, order, timing or audio.
-3. Have the user retest the complete journey after deployment. Record elapsed
-   test time and settled live cost, the deployed revision, and any follow-up PR
-   needed to correct branch delivery or a failed gate.
+1. Define acceptance from the original request before implementation. Reproduce
+   the failure through the relevant real boundaries and add it to the focused
+   gate. Keep plan executability, recipe fidelity and request fulfillment separate.
+   For named actions, use independently reviewed source intervals and reject a
+   wrong-action control with the same count/duration. Record relevant compound,
+   recovery, EN/TR and neighboring cases and any exclusions.
+2. Label offline replay, live model, native output and production evidence
+   separately. Where an authorized live model run is relevant, use the protected
+   `Agent evals` workflow within its **$2** cap. Inspect native output for a
+   native-output claim; record unavailable evidence as pending, never as passed.
+3. After authorized deployment, retest the complete affected journey. Record the
+   final SHA, effective API/worker settings, relevant client build and account/cohort,
+   observed output/receipt, UTC time, elapsed test time and settled cost. Record
+   escaped regressions and follow-up PRs; keep the parent incident open while
+   original acceptance criteria remain unmet.
 
 The owner is accountable at the enforcement point: PR author for the repro and
 branch, reviewer for evidence and acceptance, CI for required gates, and the

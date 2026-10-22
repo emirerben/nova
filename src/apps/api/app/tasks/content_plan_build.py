@@ -2652,13 +2652,20 @@ def _dispatch_item_render(
                 strategy_payload = {
                     key: value
                     for key, value in strategy_payload.items()
-                    if key != "selected_music_section"
+                    if key not in {"selected_music_section", "choice_answers"}
                 }
                 approved_length_plan = binding.media_snapshot.get("length_plan")
                 if isinstance(approved_length_plan, dict):
                     strategy_payload["selected_music_section"] = approved_length_plan.get(
                         "licensed_music"
                     )
+                # KRI-788: the factory erased the strategy's client-writable answers. The
+                # creator's answers come back from the approved binding alone (the planner
+                # gate recorded them, the binding digest covers them), so the contract and
+                # the worker read the choices approval checked: "Use the order you added
+                # the clips" was refused as an unverifiable order rule without them.
+                if binding.choice_answers:
+                    strategy_payload["choice_answers"] = copy.deepcopy(binding.choice_answers)
                 job.all_candidates = {
                     **(job.all_candidates or {}),
                     "creator_strategy": strategy_payload,
