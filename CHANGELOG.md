@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.23.0] - 2026-10-22
+
+### Changed
+- ci: enforce request-to-output evidence for new PRs (KRI-577/KRI-559) (#1726) <!-- release-pr: 1726 -->
+
 ## [0.81.22.0] - 2026-10-22
 
 ### Changed
