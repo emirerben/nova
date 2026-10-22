@@ -227,6 +227,27 @@
       ]
     },
     {
+      "id": "kri-787-merope-t1-replay",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri787_merope_t1_replay.py tests/kria/test_kri787_merope_t1_runtime_postgres.py",
+      "paths": [
+        "src/apps/api/app/tasks/content_plan_build.py",
+        "src/apps/api/app/services/generative_jobs.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/kria/opening_cut_ask.py",
+        "src/apps/api/app/pipeline/phone_opening_cut.py",
+        "src/apps/api/tests/fixtures/kri787_merope_t1_turns.json",
+        "src/apps/api/tests/kria/test_kri787_merope_t1_replay.py",
+        "src/apps/api/tests/kria/test_kri787_merope_t1_runtime_postgres.py"
+      ]
+    },
+    {
       "id": "slide-post-binding-recovery",
       "needs_native": true,
       "api_tests": "tests/routes/test_slide_post_native_routes.py tests/routes/test_slide_post_binding_save_postgres.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/evals/test_edit_copilot_evals.py",

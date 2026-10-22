@@ -271,6 +271,76 @@
       "red_control": "pending"
     },
     {
+      "id": "kri-787-merope-t1-replay",
+      "tickets": [
+        "KRI-787",
+        "KRI-788",
+        "KRI-789",
+        "KRI-790",
+        "KRI-791",
+        "KRI-792",
+        "KRI-793",
+        "KRI-794",
+        "KRI-795"
+      ],
+      "symptom": "A one-take phone Talking edit with quoted start and end lines was approved twice and refused at dispatch both times (\"I can't verify this ordering rule from the approved media.\"): the creator's order answer was dropped between approval and dispatch, and the chat before it asked a pointless clip-order question, held MEROPE back, promised phrase cuts and said nothing about captions or the start/end lines (Merope T1).",
+      "boundary": "dispatch",
+      "status": "open_pr",
+      "owner": "KRI-787",
+      "journey": "kri-787-merope-t1-replay",
+      "paths": [
+        "src/apps/api/app/tasks/content_plan_build.py",
+        "src/apps/api/app/services/generative_jobs.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/kria/opening_cut_ask.py",
+        "src/apps/api/app/pipeline/phone_opening_cut.py",
+        "src/apps/api/tests/fixtures/kri787_merope_t1_turns.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri787_merope_t1_replay.py",
+        "tests/kria/test_kri787_merope_t1_runtime_postgres.py"
+      ],
+      "harness": "real_with_db",
+      "evidence": {
+        "offline_replay": "Original recorded production chat, drafts, brief binding and jobs remain unchanged in the fixture. Historical failure pins document the pre-fix behavior in Git history. Landed children and the privately integrated pending KRI-790/792 sources now pass all27 replay/runtime acceptance cases as ordinary hard tests. Three additional original incident functions removed by the concurrent author cleanup are retained with independent corrected expectations. The six previously reviewed retired bad-behavior pin functions remain covered by the documented acceptance replacements. KRI-790 is now landed; KRI-792 remains a privately integrated pending source, not claimed landed; exact original media/native output remain unverified.",
+        "live_model": "Not run; no paid calls.",
+        "native_output": "unknown; no render reaches the phone (the Talking compiler needs the source file).",
+        "production": "Not deployed (tests only)."
+      },
+      "neighbours_covered": [
+        "both renders (simpler-version path and the normal act path)",
+        "the approval backstop vs the dispatch contract (approval offered, dispatch refused)",
+        "the creator's tapped answers replayed through the real gate, whatever turn they come on",
+        "cleanup chosen vs not (prod's first and second drafts)",
+        "turn 4: a typed option label after the question closed, with the failure card the observer posts today",
+        "the kept window of the take (KRI-628 opening cut over the take's word timings)"
+      ],
+      "neighbours_gap": [
+        "The Main Creator's own turn-1/turn-2 strategies were recorded only as hashes; the approved draft's strategy stands in.",
+        "The phone Talking compiler (cuts, captions, MEROPE placement, 32-38 s length) needs the source file and prod's cleanup snapshot, so the checklist stops at the kept window and the receipts.",
+        "Turn 4 runs at gate level, not through the database runtime.",
+        "The render queue wait (2 min 23 s on render 1) is KRI-798, not replayed."
+      ],
+      "follow_ups": [
+        "KRI-788",
+        "KRI-789",
+        "KRI-790",
+        "KRI-791",
+        "KRI-792",
+        "KRI-793",
+        "KRI-794",
+        "KRI-795",
+        "KRI-798"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-454-named-place-labels",
       "tickets": [
         "KRI-454"
