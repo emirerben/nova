@@ -230,7 +230,9 @@ def test_g10_a_stored_wording_is_revalidated_at_serve_time():
     out = sc.assemble_set(ctx, plan, poisoned)
     assert not cs.check_agent_set(case, out, plan, ctx)
     by_kind = cs.chips_by_kind(out)
-    assert by_kind["hook"].label == "Add a hook to the opening" and by_kind["hook"].why is None
+    assert by_kind["hook"].label == "Add a hook to the opening"
+    # The agent's ungrounded why is dropped; only the deterministic evidence line remains.
+    assert by_kind["hook"].why == h.expected_evidence(case, by_kind["hook"], out.state)
     assert by_kind["default_edit"].label_source == "template"
     assert [c.kind for c in out.chips] == ["default_edit", "hook", "sfx"]
 

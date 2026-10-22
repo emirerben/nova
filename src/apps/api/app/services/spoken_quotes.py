@@ -141,6 +141,15 @@ def quoted_phrases(text: str | None) -> list[str]:
     return out
 
 
+def quoted_texts(text: str | None) -> list[str]:
+    """Every quoted run in ``text`` as written: no word-count floor and no word folding, so
+    it never imports the grounding stack (the Main Creator output parser uses it)."""
+    return [
+        next(group for group in match.groups() if group is not None).strip()
+        for match in _QUOTED_RE.finditer(str(text or ""))
+    ]
+
+
 def quoted_spans(text: str | None) -> list[tuple[int, int, str]]:
     """``quoted_phrases`` with each quote's (start, end) offsets in ``text``."""
     out: list[tuple[int, int, str]] = []
@@ -765,6 +774,7 @@ __all__ = [
     "named_line_records",
     "quoted_phrases",
     "quoted_spans",
+    "quoted_texts",
     "regound_quoted_intents",
     "said_line",
     "spoken_quote",
