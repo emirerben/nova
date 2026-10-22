@@ -1,0 +1,614 @@
+{
+ "_source": "Kria café kit T1 (Caro at Merope), prod 042c405c9, 2026-10-21, thread 32A5B608-6397-4608-889F-DFF5AD9BEC40, job f88555bc. `brief` = assembly_plan.creator_brief_binding.brief (v2) verbatim; `creator_request` = the creator's first message verbatim; `asr_words` = the nova.audio.transcript run's timed words (proposal trace; the stored output stops at 29.35 s); `segments` and `full_transcript` = the clip analysis speech (two other hearings of the same take).",
+ "creator_request": "Talking-to-camera edit of Caro at Merope. Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\". Cut her slip \"with bread, no,\" so it says \"waffle cookie with blackberry jam\". Also cut my half question \"how are you gonna\". Captions for both voices, and spell these right: Oblea de la Casa, dulce de leche, leche condensada, Merope. Title: \"Colombian dessert, Ecuadorian hands\". Show \"MEROPE\" in big letters the first time she says Merope. No text on her face or on the plate. About 35 seconds.",
+ "brief": {
+  "version": 2,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 35
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "About 35 seconds",
+    "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+   },
+   {
+    "id": "r2",
+    "kind": "order",
+    "facts": {
+     "end": "I'm gonna be here all week",
+     "key": "attachment",
+     "start": "Hi, I'm Karolina, I'm from Ecuador"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "in the order the clips were added",
+    "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+   },
+   {
+    "id": "r3",
+    "kind": "audio",
+    "facts": {
+     "speech_cleanup": true
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam'",
+    "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+   },
+   {
+    "id": "r4",
+    "kind": "audio",
+    "facts": {
+     "speech_cleanup": true
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Cut the half question 'how are you gonna'",
+    "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+   },
+   {
+    "id": "r5",
+    "kind": "style",
+    "facts": {
+     "captions": "on"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Captions for both voices, ensuring correct spellings: Oblea de la Casa, dulce de leche, leche condensada, Merope",
+    "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+   },
+   {
+    "id": "r6",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Colombian dessert, Ecuadorian hands",
+    "description": "Title on screen, placed so there is no text on her face or on the plate",
+    "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+   },
+   {
+    "id": "r7",
+    "kind": "text",
+    "facts": {},
+    "scope": "global",
+    "status": "superseded",
+    "literal": "MEROPE",
+    "description": "Show MEROPE in big letters the first time she says Merope, placed so there is no text on her face or on the plate",
+    "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+   }
+  ]
+ },
+ "asr_words": [
+  {
+   "text": "Um",
+   "end_s": 0.44,
+   "start_s": 0.05,
+   "confidence": 1.0
+  },
+  {
+   "text": "yes,",
+   "end_s": 1.12,
+   "start_s": 0.82,
+   "confidence": 1.0
+  },
+  {
+   "text": "we",
+   "end_s": 1.18,
+   "start_s": 1.12,
+   "confidence": 1.0
+  },
+  {
+   "text": "will",
+   "end_s": 1.4,
+   "start_s": 1.25,
+   "confidence": 1.0
+  },
+  {
+   "text": "sure.",
+   "end_s": 1.81,
+   "start_s": 1.4,
+   "confidence": 1.0
+  },
+  {
+   "text": "Um",
+   "end_s": 2.45,
+   "start_s": 2.21,
+   "confidence": 1.0
+  },
+  {
+   "text": "Merhaba",
+   "end_s": 3.48,
+   "start_s": 3.06,
+   "confidence": 1.0
+  },
+  {
+   "text": "arkadaşlar.",
+   "end_s": 4.14,
+   "start_s": 3.48,
+   "confidence": 1.0
+  },
+  {
+   "text": "Hello",
+   "end_s": 4.47,
+   "start_s": 4.14,
+   "confidence": 1.0
+  },
+  {
+   "text": "everyone.",
+   "end_s": 5.09,
+   "start_s": 4.47,
+   "confidence": 1.0
+  },
+  {
+   "text": "Uh",
+   "end_s": 5.58,
+   "start_s": 5.09,
+   "confidence": 1.0
+  },
+  {
+   "text": "we",
+   "end_s": 5.69,
+   "start_s": 5.61,
+   "confidence": 1.0
+  },
+  {
+   "text": "are",
+   "end_s": 5.9,
+   "start_s": 5.76,
+   "confidence": 1.0
+  },
+  {
+   "text": "with",
+   "end_s": 6.22,
+   "start_s": 6.01,
+   "confidence": 1.0
+  },
+  {
+   "text": "Caro",
+   "end_s": 6.55,
+   "start_s": 6.22,
+   "confidence": 1.0
+  },
+  {
+   "text": "today.",
+   "end_s": 6.94,
+   "start_s": 6.55,
+   "confidence": 1.0
+  },
+  {
+   "text": "Caro,",
+   "end_s": 7.37,
+   "start_s": 7.04,
+   "confidence": 1.0
+  },
+  {
+   "text": "can",
+   "end_s": 7.5,
+   "start_s": 7.37,
+   "confidence": 1.0
+  },
+  {
+   "text": "you",
+   "end_s": 7.63,
+   "start_s": 7.5,
+   "confidence": 1.0
+  },
+  {
+   "text": "describe",
+   "end_s": 8.16,
+   "start_s": 7.63,
+   "confidence": 1.0
+  },
+  {
+   "text": "can",
+   "end_s": 8.35,
+   "start_s": 8.16,
+   "confidence": 1.0
+  },
+  {
+   "text": "you",
+   "end_s": 8.8,
+   "start_s": 8.62,
+   "confidence": 1.0
+  },
+  {
+   "text": "um",
+   "end_s": 8.88,
+   "start_s": 8.8,
+   "confidence": 1.0
+  },
+  {
+   "text": "just",
+   "end_s": 9.24,
+   "start_s": 9.07,
+   "confidence": 1.0
+  },
+  {
+   "text": "tell",
+   "end_s": 9.39,
+   "start_s": 9.24,
+   "confidence": 1.0
+  },
+  {
+   "text": "about",
+   "end_s": 9.6,
+   "start_s": 9.39,
+   "confidence": 1.0
+  },
+  {
+   "text": "yourself",
+   "end_s": 10.02,
+   "start_s": 9.6,
+   "confidence": 1.0
+  },
+  {
+   "text": "two",
+   "end_s": 10.15,
+   "start_s": 10.02,
+   "confidence": 1.0
+  },
+  {
+   "text": "sentences",
+   "end_s": 10.59,
+   "start_s": 10.15,
+   "confidence": 1.0
+  },
+  {
+   "text": "maybe,",
+   "end_s": 10.96,
+   "start_s": 10.59,
+   "confidence": 1.0
+  },
+  {
+   "text": "who",
+   "end_s": 11.23,
+   "start_s": 11.02,
+   "confidence": 1.0
+  },
+  {
+   "text": "you",
+   "end_s": 11.41,
+   "start_s": 11.23,
+   "confidence": 1.0
+  },
+  {
+   "text": "are,",
+   "end_s": 11.64,
+   "start_s": 11.41,
+   "confidence": 1.0
+  },
+  {
+   "text": "where",
+   "end_s": 11.83,
+   "start_s": 11.64,
+   "confidence": 1.0
+  },
+  {
+   "text": "you're",
+   "end_s": 11.97,
+   "start_s": 11.83,
+   "confidence": 1.0
+  },
+  {
+   "text": "from?",
+   "end_s": 12.18,
+   "start_s": 11.97,
+   "confidence": 1.0
+  },
+  {
+   "text": "Hi,",
+   "end_s": 12.63,
+   "start_s": 12.35,
+   "confidence": 1.0
+  },
+  {
+   "text": "I'm",
+   "end_s": 12.75,
+   "start_s": 12.63,
+   "confidence": 1.0
+  },
+  {
+   "text": "Carolina",
+   "end_s": 13.25,
+   "start_s": 12.75,
+   "confidence": 1.0
+  },
+  {
+   "text": "from",
+   "end_s": 13.43,
+   "start_s": 13.25,
+   "confidence": 1.0
+  },
+  {
+   "text": "Ecuador.",
+   "end_s": 14.07,
+   "start_s": 13.43,
+   "confidence": 1.0
+  },
+  {
+   "text": "And",
+   "end_s": 15.01,
+   "start_s": 14.77,
+   "confidence": 1.0
+  },
+  {
+   "text": "this",
+   "end_s": 15.2,
+   "start_s": 15.01,
+   "confidence": 1.0
+  },
+  {
+   "text": "is",
+   "end_s": 15.35,
+   "start_s": 15.2,
+   "confidence": 1.0
+  },
+  {
+   "text": "the",
+   "end_s": 15.93,
+   "start_s": 15.65,
+   "confidence": 1.0
+  },
+  {
+   "text": "Ole",
+   "end_s": 16.48,
+   "start_s": 16.14,
+   "confidence": 1.0
+  },
+  {
+   "text": "de",
+   "end_s": 16.63,
+   "start_s": 16.48,
+   "confidence": 1.0
+  },
+  {
+   "text": "la",
+   "end_s": 16.79,
+   "start_s": 16.63,
+   "confidence": 1.0
+  },
+  {
+   "text": "Casa.",
+   "end_s": 17.2,
+   "start_s": 16.79,
+   "confidence": 1.0
+  },
+  {
+   "text": "It's",
+   "end_s": 17.52,
+   "start_s": 17.3,
+   "confidence": 1.0
+  },
+  {
+   "text": "a",
+   "end_s": 17.55,
+   "start_s": 17.52,
+   "confidence": 1.0
+  },
+  {
+   "text": "traditional",
+   "end_s": 19.06,
+   "start_s": 17.55,
+   "confidence": 1.0
+  },
+  {
+   "text": "Colombian",
+   "end_s": 20.46,
+   "start_s": 19.9,
+   "confidence": 1.0
+  },
+  {
+   "text": "dessert.",
+   "end_s": 21.01,
+   "start_s": 20.46,
+   "confidence": 1.0
+  },
+  {
+   "text": "It's",
+   "end_s": 21.36,
+   "start_s": 21.1,
+   "confidence": 1.0
+  },
+  {
+   "text": "wafer",
+   "end_s": 21.73,
+   "start_s": 21.36,
+   "confidence": 1.0
+  },
+  {
+   "text": "cookie",
+   "end_s": 22.18,
+   "start_s": 21.73,
+   "confidence": 1.0
+  },
+  {
+   "text": "with",
+   "end_s": 23.01,
+   "start_s": 22.8,
+   "confidence": 1.0
+  },
+  {
+   "text": "red",
+   "end_s": 24.97,
+   "start_s": 24.38,
+   "confidence": 1.0
+  },
+  {
+   "text": "no,",
+   "end_s": 25.5,
+   "start_s": 25.04,
+   "confidence": 1.0
+  },
+  {
+   "text": "with",
+   "end_s": 25.75,
+   "start_s": 25.5,
+   "confidence": 1.0
+  },
+  {
+   "text": "blackberry",
+   "end_s": 26.33,
+   "start_s": 25.75,
+   "confidence": 1.0
+  },
+  {
+   "text": "jam,",
+   "end_s": 26.97,
+   "start_s": 26.33,
+   "confidence": 1.0
+  },
+  {
+   "text": "cheese,",
+   "end_s": 28.16,
+   "start_s": 27.52,
+   "confidence": 1.0
+  },
+  {
+   "text": "dulce",
+   "end_s": 28.48,
+   "start_s": 28.16,
+   "confidence": 1.0
+  },
+  {
+   "text": "de",
+   "end_s": 28.61,
+   "start_s": 28.48,
+   "confidence": 1.0
+  },
+  {
+   "text": "leche,",
+   "end_s": 29.35,
+   "start_s": 28.61,
+   "confidence": 1.0
+  }
+ ],
+ "segments": [
+  {
+   "text": "Yes we will show.",
+   "end_s": 1.46,
+   "start_s": 0.0
+  },
+  {
+   "text": "Merhaba arkadaşlar, hello everyone.",
+   "end_s": 4.44,
+   "start_s": 2.72
+  },
+  {
+   "text": "We are with Karo today.",
+   "end_s": 6.54,
+   "start_s": 4.86
+  },
+  {
+   "text": "Karo, can you describe, can you just tell about yourself, two sentences maybe, who you are, where you're from.",
+   "end_s": 11.78,
+   "start_s": 6.88
+  },
+  {
+   "text": "Hi, I'm Carolina, I'm from Ecuador.",
+   "end_s": 13.58,
+   "start_s": 12.04
+  },
+  {
+   "text": "This is the Oblea de la Casa.",
+   "end_s": 16.88,
+   "start_s": 14.54
+  },
+  {
+   "text": "It's a traditional Colombian dessert.",
+   "end_s": 20.62,
+   "start_s": 17.2
+  },
+  {
+   "text": "It's wafer cookie with red, no, with blackberry jam,",
+   "end_s": 26.66,
+   "start_s": 20.62
+  },
+  {
+   "text": "cheese, dulce de leche,",
+   "end_s": 29.12,
+   "start_s": 27.48
+  },
+  {
+   "text": "leche condensada and whipped cream.",
+   "end_s": 34.46,
+   "start_s": 30.18
+  },
+  {
+   "text": "Nice, delicious.",
+   "end_s": 35.54,
+   "start_s": 34.96
+  },
+  {
+   "text": "That's it.",
+   "end_s": 36.28,
+   "start_s": 35.74
+  },
+  {
+   "text": "And where we are right now is Merope, how are you going to...",
+   "end_s": 40.04,
+   "start_s": 36.9
+  },
+  {
+   "text": "Merope, it's a Colombian coffee and restaurant and Merope means god of honey.",
+   "end_s": 45.48,
+   "start_s": 40.04
+  },
+  {
+   "text": "Yeah, we definitely recommend coming to Merope, right?",
+   "end_s": 47.84,
+   "start_s": 45.62
+  },
+  {
+   "text": "Yeah, come back please, I'm gonna be here all week.",
+   "end_s": 50.3,
+   "start_s": 47.84
+  },
+  {
+   "text": "Nice, nice, cheers, thank you.",
+   "end_s": 51.94,
+   "start_s": 50.66
+  },
+  {
+   "text": "There you go, you should do this.",
+   "end_s": 53.1,
+   "start_s": 51.98
+  },
+  {
+   "text": "Take the first bite.",
+   "end_s": 54.42,
+   "start_s": 53.42
+  },
+  {
+   "text": "The coffee is really good here as well.",
+   "end_s": 58.36,
+   "start_s": 56.76
+  },
+  {
+   "text": "Yeah, it's Colombian.",
+   "end_s": 59.2,
+   "start_s": 58.56
+  },
+  {
+   "text": "Thank you, thank you Karo.",
+   "end_s": 65.56,
+   "start_s": 64.28
+  },
+  {
+   "text": "Thank you Karo, bye bye.",
+   "end_s": 67.36,
+   "start_s": 65.92
+  }
+ ],
+ "full_transcript": "Um yes, we will show. Um. Merhaba arkadaşlar, hello everyone. Uh we are with Caro today. Caro, can you describe, can you uh just tell about yourself, two sentences maybe? Who you are, where you're from? Hi, I'm Carolina from Ecuador. And this is the Oblea de la Casa. It's a traditional uh Colombian dessert. It's waffle cookie with uh red, no with blackberry jam, uh cheese, dulce de leche, uh leche condensada and whipped cream. That's it. Delicious. Yes, and um where we are right now, Meropa, how you gonna? Merope uh it's a Colombian coffee and restaurant, and Merope means uh god of honey. Yeah, we definitely recommend coming to Merope, right? Yeah, exactly. I'm gonna be here all week. Nice, nice. Cheers, thank you. There you go, you should. Okay. A second, take the first bite. Taste this. The coffee is really good here as well. Yeah, it's Colombian. How is it? Thank you. Thank you. Thank you, Caro. Yeah, thank you, Caro. Bye bye.",
+ "take_duration_s": 68.37
+}

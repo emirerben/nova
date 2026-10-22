@@ -6827,10 +6827,7 @@ def _run_phone_subtitled_job(
         crosscheck_detected_language,
         resolve_spoken_caption_language,
     )
-    from app.pipeline.caption_spelling import (  # noqa: PLC0415
-        apply_spelling_to_cues,
-        extract_spelling_asks,
-    )
+    from app.pipeline.caption_spelling import extract_spelling_asks  # noqa: PLC0415
     from app.pipeline.captions import (  # noqa: PLC0415
         PHONE_CUE_BUDGET,
         build_plain_cues,
@@ -7599,8 +7596,14 @@ def _run_phone_subtitled_job(
             )
             cues = resplit_cues_into_sentences(cues)
             # KRI-631: the creator's quoted spelling asks ("write 'community' in English").
-            cues = apply_spelling_to_cues(
-                cues, extract_spelling_asks(_creator_request_text(all_candidates))
+            # KRI-793: plus every word the approved brief lists to spell in the captions
+            # ("correct spellings: Oblea de la Casa, dulce de leche, ..."), applied last
+            # so caption correction can never undo them.
+            cues = _apply_creator_spellings(
+                cues,
+                _phone_caption_spellings(
+                    snapshot, extract_spelling_asks(_creator_request_text(all_candidates))
+                ),
             )
 
             # The speaker's span exactly as the compiler plays it: the cleanup
@@ -8787,6 +8790,56 @@ def _phone_talking_closing_rows(
     except Exception:  # noqa: BLE001 - observability only
         pass
     return [placed], receipt
+
+
+def _phone_caption_spellings(snapshot: dict, quoted: tuple[str, ...]) -> tuple[str, ...]:
+    """KRI-793: the words the creator wants spelled their way in the captions -- the quoted
+    asks in their request (KRI-631) plus every word the approved brief pinned on the job
+    (``creator_brief_binding``) lists for its captions. An unreadable binding adds none,
+    so the render runs exactly as before."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.brief_checks import brief_caption_spellings  # noqa: PLC0415
+
+    listed: tuple[str, ...] = ()
+    raw_binding = snapshot.get("creator_brief_binding")
+    if raw_binding:
+        try:
+            listed = brief_caption_spellings(BriefBinding.model_validate(raw_binding).resolve())
+        except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+            log.warning("phone_caption_spellings.binding_unreadable", error=str(exc)[:200])
+    folded: set[str] = set()
+    targets: list[str] = []
+    for word in (*quoted, *listed):
+        if word.casefold() not in folded:
+            folded.add(word.casefold())
+            targets.append(word)
+    return tuple(targets)
+
+
+def _apply_creator_spellings(cues: list, targets: tuple[str, ...]) -> list:
+    """``cues`` with ``targets`` applied, and a `captions/creator_spellings` trace event
+    naming every caption line that changed (the evidence that the spellings arrived)."""
+    from app.pipeline.caption_spelling import apply_spelling_to_cues  # noqa: PLC0415
+
+    if not targets:
+        return cues
+    out = apply_spelling_to_cues(cues, targets)
+    changes = [
+        {"before": str(old.get("text") or "")[:200], "after": str(new.get("text") or "")[:200]}
+        for old, new in zip(cues, out, strict=True)
+        if old.get("text") != new.get("text")
+    ]
+    try:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event(
+            "captions",
+            "creator_spellings",
+            {"targets": list(targets), "changed": len(changes), "changes": changes[:20]},
+        )
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return out
 
 
 def _phone_spoken_text_asks(snapshot: dict) -> tuple:
