@@ -184,18 +184,47 @@ public struct PreviewComposition: @unchecked Sendable {
                     // track actually reports before inserting; track-reuse
                     // bookkeeping (`end`, above) staying at the untrimmed,
                     // more conservative value is harmless.
-                    let availableSourceDuration = try await max(0, source.load(.timeRange).duration.seconds - clip.sourceStart)
+                    //
+                    // The head is admitted the same way (KRI-811). A source whose
+                    // picture starts after its sound -- an edit-list/priming
+                    // empty edit, e.g. video at +21 ms while audio starts at 0 --
+                    // has no video samples in [0, firstSample). Copying that span
+                    // left an empty stretch at the head of the composition track,
+                    // the compositor found no frame at t = 0 and every export failed
+                    // with missingAsset("<composition track id>") for a file that is
+                    // present. Hold the first real frame over that sliver of the
+                    // slot instead: the picture stays on the source clock (no slide
+                    // against the speech), audio is inserted separately on its own
+                    // clock, and the clip's timeline slot is unchanged.
+                    let window = try await Self.videoSampleWindow(of: source)
+                    let fps = Double(try await source.load(.nominalFrameRate))
+                    let sourceFrame = 1 / max(1, fps.isFinite && fps > 0 ? fps : 30)
+                    let movingStart = max(clip.sourceStart, window.start)
+                    let headGap = min(clip.sourceDuration, movingStart - clip.sourceStart)
+                    let availableSourceDuration = max(0, window.end - movingStart)
                     let effectiveSourceDuration = availableSourceDuration > 0
-                        ? min(clip.sourceDuration, availableSourceDuration) : clip.sourceDuration
-                    let sourceRange = CMTimeRange(start: time(clip.sourceStart), duration: time(effectiveSourceDuration))
-                    try track.insertTimeRange(sourceRange, of: source, at: time(clip.timelineStart))
+                        ? min(clip.sourceDuration - headGap, availableSourceDuration) : clip.sourceDuration - headGap
+                    let headHold = headGap / clip.rate
+                    var movingAt = time(clip.timelineStart)
+                    if time(headHold) > .zero {
+                        let head = CMTimeRange(start: time(movingStart), duration: time(min(sourceFrame, effectiveSourceDuration > 0 ? effectiveSourceDuration : sourceFrame)))
+                        try track.insertTimeRange(head, of: source, at: movingAt)
+                        track.scaleTimeRange(CMTimeRange(start: movingAt, duration: head.duration), toDuration: time(headHold))
+                        // Anchor on what the track actually holds, like the tail below.
+                        movingAt = track.timeRange.end
+                    }
+                    let sourceRange = CMTimeRange(start: time(movingStart), duration: time(effectiveSourceDuration))
                     let movingDuration = effectiveSourceDuration / clip.rate
-                    track.scaleTimeRange(CMTimeRange(start: time(clip.timelineStart), duration: sourceRange.duration), toDuration: time(movingDuration))
+                    if sourceRange.duration > .zero {
+                        try track.insertTimeRange(sourceRange, of: source, at: movingAt)
+                        track.scaleTimeRange(CMTimeRange(start: movingAt, duration: sourceRange.duration), toDuration: time(movingDuration))
+                    }
                     // The layer's own end must match what was actually
                     // inserted, not the idealized `end` used for track-reuse
                     // bookkeeping above — otherwise a clamp here would just
                     // move the same "missing" failure to a different clip.
-                    var layerEnd = clip.timelineStart + movingDuration
+                    // With no head hold this is exactly timelineStart + movingDuration.
+                    var layerEnd = (movingAt == time(clip.timelineStart) ? clip.timelineStart : movingAt.seconds) + movingDuration
                     // A hold must survive quantization to the composition clock. The render
                     // compiler derives it as `outputDuration - movingDuration`, which is often
                     // pure floating-point residue (4.4e-16 s) rather than zero. Scaling the
@@ -208,11 +237,10 @@ public struct PreviewComposition: @unchecked Sendable {
                     // Left unfilled it is an empty stretch of the track, which renders as black
                     // frames at the cut in the editor and in the exported file, so it is held
                     // on the last real frame exactly like an authored hold.
-                    let hold = (clip.holdDuration ?? 0) + max(0, clip.sourceDuration - effectiveSourceDuration) / clip.rate
-                    if time(hold) > .zero {
-                        let fps = Double(try await source.load(.nominalFrameRate))
-                        let frameDuration = min(effectiveSourceDuration, 1 / max(1, fps.isFinite && fps > 0 ? fps : 30))
-                        let tail = CMTimeRange(start: time(clip.sourceStart + effectiveSourceDuration - frameDuration), duration: time(frameDuration))
+                    let hold = (clip.holdDuration ?? 0) + max(0, clip.sourceDuration - headGap - effectiveSourceDuration) / clip.rate
+                    if time(hold) > .zero, effectiveSourceDuration > 0 {
+                        let frameDuration = min(effectiveSourceDuration, sourceFrame)
+                        let tail = CMTimeRange(start: time(movingStart + effectiveSourceDuration - frameDuration), duration: time(frameDuration))
                         // Anchor the held tail to where the moving segment's
                         // scaled content actually ends, not to time(timelineStart
                         // + movingDuration) recomputed from Doubles. scaleTimeRange
@@ -459,6 +487,17 @@ public struct PreviewComposition: @unchecked Sendable {
             .filter { $0.overlayAboveText != true && $0.visualPlacement == nil }
         for (offset, clip) in unplaced.enumerated() { orders[clip.id] = 2000 + offset }
         return orders
+    }
+
+    /// The span of a source video track that actually holds samples, in source seconds (KRI-811).
+    /// `timeRange` starts at 0 even when the track opens with an empty edit (picture after sound),
+    /// so the start is the first non-empty segment's target time. Gaps inside the track are not
+    /// admitted here.
+    static func videoSampleWindow(of track: AVAssetTrack) async throws -> (start: Double, end: Double) {
+        let range = try await track.load(.timeRange)
+        let segments = try await track.load(.segments)
+        let start = segments.first(where: { !$0.isEmpty }).map { $0.timeMapping.target.start.seconds } ?? range.start.seconds
+        return (start.isFinite ? max(start, range.start.seconds) : range.start.seconds, range.end.seconds)
     }
 
     /// Track matrices use top-left coordinates; decoded CIImage pixels use
