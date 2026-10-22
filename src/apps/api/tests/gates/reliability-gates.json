@@ -1856,6 +1856,51 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-810-troya-export-verifier-false-reject",
+      "tickets": [
+        "KRI-810"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-810",
+      "symptom": "A correct Troya montage (initial, exact retry and later run) was rejected by phone-simple-cut-v2 every time: the last picture sample of a clip with off-grid sourceStart compared the neighbour of the displayed frame, and white titles over sky/lit windows were unreadable to the colour-threshold OCR view.",
+      "boundary": "publication",
+      "journey": "kri-492-length-ownership",
+      "paths": [
+        "src/apps/api/app/services/actual_export_verification.py",
+        "src/apps/api/app/services/device_render.py",
+        "src/apps/api/app/cli/verify_device_export.py"
+      ],
+      "regression_tests": [
+        "tests/integration/test_actual_export_verification.py",
+        "tests/routes/test_actual_export_publication.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": "phone_actual_export_verification_enabled",
+      "evidence": {
+        "offline_replay": "Exact retained Troya bytes (c2 sha 55ae38ab, c3 sha 0b657d66) with the retained recipe and analysis proxies: rejected on origin/main 8eefea56d, checked by phone-simple-cut-v3 via app.cli.verify_device_export --montage. Synthetic off-grid (1.508 s) and high-key white-title fixtures fail before the fix; one/two-frame shifts, missing/wrong/lower-case words and missing layer stay rejected.",
+        "live_model": "No model calls or paid evaluation.",
+        "native_output": "Not re-exported on a device in this lane; a physical-device/Photos check on a named TestFlight candidate is a required follow-up.",
+        "production": "Not deployed. Requests pinned to v2 accept a v3 report after deploy; the creator retries job 57602026."
+      },
+      "neighbours_covered": [
+        "off-grid source start at a clip's last sample",
+        "held-frame/VFR analysis proxy",
+        "one- and two-frame shifted window",
+        "white title over high-key/lit-window background",
+        "missing word, wrong word, wrong casing, missing layer",
+        "no decodable background cannot add acceptance",
+        "historical verifier pin accepts only itself or the current verifier"
+      ],
+      "neighbours_gap": [
+        "physical-device/Photos delivery of the accepted export",
+        "coloured fills over same-coloured backgrounds beyond the difference view"
+      ],
+      "follow_ups": [
+        "KRI-810 device/Photos check on a named TestFlight candidate after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-726-background-recovery",
       "tickets": [
         "KRI-734",
