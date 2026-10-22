@@ -32,6 +32,14 @@ F15 The re-derived snapshot comes only from server asset rows, never the client'
 F16 Generate dispatches the saved 4-slide revision.
 F17 choice_answers survive every chat-edit turn.
 F18 A legacy binding without media_snapshot.item_id -> 422.
+F19 A stale device resends an OLDER binding after a newer one was saved (409 rebase): the
+    delete saves and the stored, newer request/brief/answers survive (none dropped).
+F20 A divergent binding (request neither extends nor is extended by the stored one), a
+    different pinned brief, or fabricated choice_answers -> 422, stored draft unchanged.
+F21 Same asset ids but a re-uploaded source (new generation) -> 422: approved source
+    bytes changed, which is not a slide add/delete.
+F22 A post-render delete Save rebuilds the rendered slides variant from the saved 2-slide
+    draft; under the iPhone-only fence the draft saves and the old render is kept.
 
 Repeatable artifact: set ``KRI812_EVIDENCE_DIR`` to write ``report.json`` (requests,
 binding before/after, asset ids + generations, API revision, effective flags, the slides
@@ -60,7 +68,7 @@ from sqlalchemy.pool import NullPool
 from app import storage
 from app.agents._runtime import ModelClient
 from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
-from app.auth import get_current_user
+from app.auth import get_current_user, is_native_client
 from app.config import settings
 from app.database import get_db, sync_session
 from app.kria.brief import BriefRequirement, CreativeBrief
@@ -467,6 +475,61 @@ def test_delete_horse_then_reopen_ai_edit_and_export(
     assert exported == [str(s.asset_id) for s in stored.slides]
     assert horse not in exported
     EVIDENCE["export"] = {"job_id": str(job.id), "slides": exported}
+
+    # 9. F22: post-render. The job now has a rendered slides variant; a manual delete
+    # Save with the stored binding must rebuild it from the saved draft.
+    with sync_session() as db:
+        job = db.get(Job, item.current_job_id)
+        job.assembly_plan = {
+            **(job.assembly_plan or {}),
+            "variants": [
+                {"variant_id": "slides", "resolved_archetype": "slides", "status": "ready"}
+            ],
+        }
+        db.commit()
+    rebuilds: list[dict] = []
+
+    def _record_rebuild(job_id: str, **kw: Any) -> None:
+        rebuilds.append({"job_id": job_id, "draft": _stored(seeded)})
+
+    from app.tasks import generative_build  # noqa: PLC0415
+
+    monkeypatch.setattr(generative_build.rebuild_slide_post_variant, "delay", _record_rebuild)
+    stored = _stored(seeded)
+    post_render = _without(stored, 0, cover_index=0)
+    response = _put(
+        client,
+        seeded,
+        _save_body(post_render, expected_version=stored.version),
+        "post-render delete",
+    )
+    assert response.status_code == 200, response.text
+    assert len(rebuilds) == 1, rebuilds
+    rebuilt = rebuilds[0]["draft"]
+    assert len(rebuilt.slides) == 2
+    assert _snapshot_ids(rebuilt.brief_binding) == [str(s.asset_id) for s in rebuilt.slides]
+    assert rebuilt.brief_binding.creator_request == stored.brief_binding.creator_request
+    EVIDENCE["post_render_rebuild"] = {
+        "job_id": rebuilds[0]["job_id"],
+        "slides": [str(s.asset_id) for s in rebuilt.slides],
+    }
+
+    # ...and under the iPhone-only fence the draft saves, the cloud render is not replaced.
+    monkeypatch.setattr(settings, "ios_native_device_only_enabled", True)
+    app.dependency_overrides[is_native_client] = lambda: True
+    stored = _stored(seeded)
+    device_only = _without(stored, 0, cover_index=0)
+    response = _put(
+        client,
+        seeded,
+        _save_body(device_only, expected_version=stored.version),
+        "device-only delete",
+    )
+    assert response.status_code == 200, response.text
+    assert len(rebuilds) == 1
+    stored = _stored(seeded)
+    assert len(stored.slides) == 1
+    assert _snapshot_ids(stored.brief_binding) == [str(stored.slides[0].asset_id)]
     EVIDENCE["final_binding"] = stored.brief_binding.model_dump(mode="json")
     _write_evidence(seeded)
 
@@ -546,6 +609,80 @@ def test_client_snapshot_never_becomes_the_saved_snapshot(
     assert _snapshot_ids(saved) == [str(s.asset_id) for s in deleted.slides]
     assert str(seeded.foreign_id) not in _snapshot_ids(saved)
     assert all(r["gcs_generation"] != "client-forged" for r in saved.media_snapshot["assets"])
+
+
+def test_stale_device_binding_keeps_the_newer_stored_request(
+    client: TestClient, seeded: SimpleNamespace, agent: type[_ParsedOps]
+) -> None:
+    """F19: device B saves turn 2; device A deletes a slide with its older binding."""
+    device_a = _stored(seeded)
+    agent.ops = [{"op": "set_post_caption", "caption": "Keep the horse title"}]
+    chat = _chat(client, seeded, device_a, "Keep the horse title")
+    assert chat.status_code == 200, chat.text
+    proposal = SlidePostDraft.model_validate(chat.json()["draft"])
+    saved = _put(client, seeded, _save_body(proposal, expected_version=1), "device B turn 2")
+    assert saved.status_code == 200, saved.text
+    newer = _stored(seeded).brief_binding
+    assert "Keep the horse title" in newer.creator_request
+
+    # Device A: deletes a slide, gets 409, rebases by resending the same value (B1).
+    deleted = _without(device_a, HORSE, cover_index=COVER - 1)
+    stale = _put(client, seeded, _save_body(deleted, expected_version=1), "device A stale")
+    assert stale.status_code == 409
+    rebased = _put(client, seeded, _save_body(deleted, expected_version=2), "device A rebase")
+    assert rebased.status_code == 200, rebased.text
+    stored = _stored(seeded).brief_binding
+    assert stored.creator_request == newer.creator_request
+    assert stored.brief == newer.brief and stored.choice_answers == CHOICE_ANSWERS
+    assert _snapshot_ids(stored) == [str(s.asset_id) for s in deleted.slides]
+
+
+def test_unanchored_binding_cannot_replace_stored_authority(
+    client: TestClient, seeded: SimpleNamespace
+) -> None:
+    """F20: a divergent request, a different brief or fabricated answers -> 422."""
+    before = _stored(seeded)
+    deleted = _without(before, HORSE, cover_index=COVER - 1)
+    forged_brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(id="r1", kind="order", scope="global", description="horse first")
+        ],
+    )
+    cases = {
+        "F20 divergent request": _rebinding(seeded.binding, creator_request="Only horses"),
+        "F20 forged brief": _rebinding(seeded.binding, brief=forged_brief),
+        "F20 forged answers": _rebinding(
+            seeded.binding,
+            choice_answers=[{**CHOICE_ANSWERS[0], "option": "chronological"}],
+        ),
+    }
+    for step, binding in cases.items():
+        response = _put(
+            client, seeded, _save_body(deleted, expected_version=1, brief_binding=binding), step
+        )
+        assert response.status_code == 422, (step, response.text)
+        assert response.json()["detail"]["code"] == "slide_post_binding_invalid", step
+        _assert_unchanged(seeded, before)
+
+
+def test_replaced_source_bytes_are_not_a_slide_change(
+    client: TestClient, seeded: SimpleNamespace
+) -> None:
+    """F21: same asset ids, new generation -> 422 (no silent re-stamp of approval)."""
+    before = _stored(seeded)
+    with sync_session() as db:
+        row = db.get(PlanItemAsset, seeded.asset_ids[HORSE])
+        row.gcs_generation = "999999999999"
+        db.commit()
+    reordered = before.model_copy(
+        update={"slides": list(reversed(before.slides)), "cover_index": 0}
+    )
+    response = _put(
+        client, seeded, _save_body(reordered, expected_version=1), "F21 re-uploaded source"
+    )
+    assert response.status_code == 422, response.text
+    _assert_unchanged(seeded, before)
 
 
 def test_stale_version_and_bad_assets_change_nothing(

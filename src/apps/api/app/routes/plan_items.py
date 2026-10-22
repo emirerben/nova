@@ -4555,6 +4555,62 @@ def _binding_same_thread_and_item(
     )
 
 
+def _request_extends(longer: str, shorter: str) -> bool:
+    """True when ``longer`` is ``shorter`` plus zero or more appended chat turns."""
+    return not shorter or longer == shorter or longer.startswith(f"{shorter}\n\nLatest message: ")
+
+
+def _same_approval(a: BriefBinding, b: BriefBinding) -> bool:
+    """Brief and frozen conflict answers are server-owned: they must not move."""
+    brief_a = a.brief.model_dump(mode="json") if a.brief is not None else None
+    brief_b = b.brief.model_dump(mode="json") if b.brief is not None else None
+    return a.state == b.state and brief_a == brief_b and a.choice_answers == b.choice_answers
+
+
+def _slide_post_rebind_anchor(
+    binding: BriefBinding,
+    *,
+    stored: BriefBinding | None,
+    draft: SlidePostDraft,
+) -> BriefBinding | None:
+    """Pick the binding a manual Save may re-snapshot, or None to reject (KRI-812).
+
+    Only a change in the SET of asset ids is a slide add/delete.  Same ids with a
+    different generation or fingerprint means the approved source bytes changed,
+    which stays a rejection.  The surviving request/brief/answers must come from
+    the binding stored with this draft:
+
+    - the stored binding itself (digest equal);
+    - a chat-edit staged on top of it (same brief and answers, request extends
+      the stored one by appended turns);
+    - an older binding the stored one already extends (a stale device after a
+      409 rebase): the stored binding wins, so no later requirement is lost.
+
+    A divergent binding (neither extends the other, or a different brief or
+    answers) is rejected rather than allowed to overwrite stored authority.
+    """
+    snapshot_assets = binding.media_snapshot.get("assets")
+    if not isinstance(snapshot_assets, list):
+        return None
+    bound_ids = {str(row.get("asset_id")) for row in snapshot_assets if isinstance(row, dict)}
+    draft_ids = {str(slide.asset_id) for slide in draft.slides}
+    if bound_ids == draft_ids:
+        return None
+    if stored is None:
+        # No stored authority: accept only what chat-edit mints without one
+        # (no pinned brief, no frozen answers); the request is creator text.
+        return binding if binding.brief is None and not binding.choice_answers else None
+    if binding.digest == stored.digest:
+        return stored
+    if not _same_approval(binding, stored):
+        return None
+    if _request_extends(binding.creator_request, stored.creator_request):
+        return binding
+    if _request_extends(stored.creator_request, binding.creator_request):
+        return stored
+    return None
+
+
 def _rebind_slide_post(
     previous: BriefBinding | None,
     *,
@@ -4847,11 +4903,25 @@ async def put_slide_post_draft(
             binding, thread=thread, item=item, draft=new_draft, owned_assets=owned_assets
         ):
             # The creator removed or added a slide (by hand, or by applying an AI
-            # proposal whose binding was minted on the pre-edit draft).  Keep every
-            # request this binding carries and re-snapshot the saved assets from
-            # server rows, as the chat-edit route does (KRI-812).
+            # proposal whose binding was minted on the pre-edit draft).  Re-snapshot
+            # the saved assets from server rows, as the chat-edit route does, but
+            # only from a binding anchored on the one stored with this draft
+            # (KRI-812).  Anything else keeps the strict rejection.
+            anchor = _slide_post_rebind_anchor(
+                binding,
+                stored=current.brief_binding if current is not None else None,
+                draft=new_draft,
+            )
+            if anchor is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "code": "slide_post_binding_invalid",
+                        "message": "This staged edit no longer belongs to this slide post.",
+                    },
+                )
             binding = _rebind_slide_post(
-                binding, thread=thread, item=item, draft=new_draft, owned_assets=owned_assets
+                anchor, thread=thread, item=item, draft=new_draft, owned_assets=owned_assets
             )
         new_draft = new_draft.model_copy(update={"brief_binding": binding})
     item.slide_post = new_draft.model_dump(mode="json")
