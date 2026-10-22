@@ -67,6 +67,7 @@ from app.text_fold import lower as text_lower
 
 if TYPE_CHECKING:
     from app.agents._schemas.creator_agent import ResolvedCreatorManifest
+    from app.kria.opening_cut_ask import TakeWindowEstimate
 
 DURATION_TOLERANCE = 0.10
 MAX_REPLY_CHARS = 1200
@@ -394,6 +395,13 @@ class PlanFacts:
     opening_cut: str | None = None
     opening_cut_reason: str | None = None
     opening_cut_quote: str | None = None
+    # KRI-790: the same for the line the creator quoted to end on (`variant["end_cut"]`).
+    end_cut: str | None = None
+    end_cut_reason: str | None = None
+    end_cut_quote: str | None = None
+    # KRI-790: where a one-take phone Talking draft's quoted start / end lines land in the take
+    # (`opening_cut_ask.estimate_take_window`). None = no such ask, or not estimated.
+    take_window: TakeWindowEstimate | None = None
     # KRI-706: True when the rendered opening title still sits on the speaker's face
     # (`variant["opening_title_placement"]["face_collision"]`). None = no such receipt.
     title_face_collision: bool | None = None
@@ -2892,6 +2900,13 @@ _TALKING_NO_SPOKEN_TEXT = "A Talking video can't show text at a word you say yet
 _TALKING_OPENING_CUT_PLAN = (
     "I'll start the video at that line if I find it in your take; if not, it opens at the start"
 )
+# KRI-790: the same plan naming the creator's start and/or end line (and where each lands in
+# the take when the draft's timed speech holds it). A static prefix; the lines follow it.
+_TALKING_WINDOW_PLAN = "I'll keep your take "
+# KRI-790: a Talking edit with quoted start / end lines is as long as the part they keep.
+_TALKING_KEEPS_QUOTED_PART = (
+    "A Talking edit keeps only the part of your take you asked for, so its length follows that part"
+)
 # KRI-707: the phone Talking worker shows the text from the word (`phone_spoken_text`).
 _TALKING_SPOKEN_TEXT_PLAN = (
     "I'll show it the moment you say that word in your take; if I don't hear the word, it "
@@ -2905,6 +2920,7 @@ _TALKING_HONEST_EN: tuple[str, ...] = (
     _TALKING_NO_SUCH_EDIT,
     _TALKING_NO_SPOKEN_TEXT,
     _TALKING_OPENING_CUT_PLAN,
+    _TALKING_WINDOW_PLAN,
     _TALKING_SPOKEN_TEXT_PLAN,
     _TALKING_CAPTIONS_EVERY_VOICE,
 )
@@ -2938,6 +2954,10 @@ _REASON_TR: dict[str, str] = {
     _CANT_CONFIRM_LENGTH: "Bu taslağın uzunluğunu henüz doğrulayamıyorum.",
     _TALKING_KEEPS_WHOLE_TAKE: (
         "Konuşmalı düzenleme çekimini baştan sona korur, o yüzden uzunluğu klibini izler"
+    ),
+    _TALKING_KEEPS_QUOTED_PART: (
+        "Konuşmalı düzenleme çekiminin yalnızca istediğin kısmını korur, o yüzden uzunluğu o "
+        "kısmı izler"
     ),
     _VOICEOVER_SETS_LENGTH: "Seslendirmeli düzenleme seslendirmen kadar sürer",
     _CANT_CHECK_TIMING: "Bu süreyi otomatik olarak doğrulayamıyorum.",
@@ -2979,6 +2999,7 @@ _REASON_TR: dict[str, str] = {
     _TALKING_OPENING_CUT_PLAN: (
         "Videoyu o cümlenin başladığı yerden başlatırım; çekiminde bulamazsam baştan açılır"
     ),
+    _TALKING_WINDOW_PLAN: "Çekiminin ",
     _TALKING_SPOKEN_TEXT_PLAN: (
         "Çekiminde o kelimeyi söylediğin anda yazıyı gösteririm; kelimeyi duymazsam yazı çıkmaz"
     ),
@@ -3034,6 +3055,7 @@ _NEUTRAL_REASONS = _NEUTRAL_EN | frozenset(_REASON_TR[reason] for reason in _NEU
 # simpler plan to choose, and never blocks an approved render.
 _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _TALKING_KEEPS_WHOLE_TAKE,
+    _TALKING_KEEPS_QUOTED_PART,
     _VOICEOVER_SETS_LENGTH,
     _CLEANUP_PLANNED,
     _CLEANUP_AT_APPROVAL,
@@ -4322,25 +4344,80 @@ def _check_speaker_framing(req: BriefRequirement, facts: PlanFacts) -> Requireme
     )
 
 
-# KRI-628: "start the video at '...'" is cut by the phone Talking worker
-# (`app.pipeline.phone_opening_cut`), which records where the video starts on the variant.
+# KRI-628: "start the video at '...'" (and KRI-790: "...and end right after '...'") is cut by
+# the phone Talking worker (`app.pipeline.phone_opening_cut`), which records where the video
+# starts (`variant["opening_cut"]`) and ends (`variant["end_cut"]`).
 def _wants_opening_cut(req: BriefRequirement) -> bool:
-    from app.kria.opening_cut_ask import requirement_opening_quote  # noqa: PLC0415
+    from app.kria.opening_cut_ask import wants_take_window  # noqa: PLC0415
 
-    return requirement_opening_quote(req) is not None
+    return wants_take_window(req)
+
+
+def _take_window_lines(req: BriefRequirement) -> tuple[str | None, str | None]:
+    from app.kria.opening_cut_ask import (  # noqa: PLC0415
+        requirement_end_quote,
+        requirement_opening_quote,
+    )
+
+    return requirement_opening_quote(req), requirement_end_quote(req)
 
 
 def _opening_cut_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
-    receipt = variant.get("opening_cut")
-    if not isinstance(receipt, Mapping) or receipt.get("status") not in {"applied", "not_applied"}:
-        return {}
-    reason = receipt.get("reason")
-    quote = receipt.get("quote")
-    return {
-        "opening_cut": str(receipt["status"]),
-        "opening_cut_reason": str(reason) if isinstance(reason, str) and reason else None,
-        "opening_cut_quote": str(quote) if isinstance(quote, str) and quote else None,
-    }
+    out: dict[str, Any] = {}
+    for key in ("opening_cut", "end_cut"):
+        receipt = variant.get(key)
+        if not isinstance(receipt, Mapping) or receipt.get("status") not in {
+            "applied",
+            "not_applied",
+        }:
+            continue
+        reason = receipt.get("reason")
+        quote = receipt.get("quote")
+        out[key] = str(receipt["status"])
+        out[f"{key}_reason"] = str(reason) if isinstance(reason, str) and reason else None
+        out[f"{key}_quote"] = str(quote) if isinstance(quote, str) and quote else None
+    return out
+
+
+def _clock(seconds: float) -> str:
+    whole = int(round(float(seconds)))
+    return f"{whole // 60}:{whole % 60:02d}"
+
+
+def _take_window_plan(req: BriefRequirement, estimate: TakeWindowEstimate | None) -> str:
+    """KRI-790: what a phone Talking draft will do with this ask's quoted start / end lines,
+    naming each (and where it lands in the take when the draft's timed speech holds it)."""
+    start, end = _take_window_lines(req)
+
+    def _at(line: str | None, side: str) -> str:
+        quoted = f"\u201c{line}\u201d"
+        if estimate is None:
+            return quoted
+        seconds = estimate.start_s if side == "start" else estimate.end_s
+        same = (estimate.start_quote if side == "start" else estimate.end_quote) == line
+        return f"{quoted} ({_clock(seconds)})" if same and seconds is not None else quoted
+
+    if start and end:
+        return say(
+            en=f"{_TALKING_WINDOW_PLAN}from {_at(start, 'start')} to right after "
+            f"{_at(end, 'end')}, if I find those lines",
+            tr=f"{_REASON_TR[_TALKING_WINDOW_PLAN]}{_at(start, 'start')} cümlesinden "
+            f"{_at(end, 'end')} cümlesinin hemen sonrasına kadar olan kısmını korurum, bu "
+            "cümleleri bulursam",
+        )
+    if start:
+        return say(
+            en=f"{_TALKING_WINDOW_PLAN}from {_at(start, 'start')} on, if I find that line; if "
+            "not, it opens at the start",
+            tr=f"{_REASON_TR[_TALKING_WINDOW_PLAN]}{_at(start, 'start')} cümlesinden sonrasını "
+            "korurum, o cümleyi bulursam; bulamazsam video baştan açılır",
+        )
+    return say(
+        en=f"{_TALKING_WINDOW_PLAN}up to right after {_at(end, 'end')}, if I find that line; if "
+        "not, it runs to the end",
+        tr=f"{_REASON_TR[_TALKING_WINDOW_PLAN]}{_at(end, 'end')} cümlesinin hemen sonrasına "
+        "kadar olan kısmını korurum, o cümleyi bulursam; bulamazsam video sonuna kadar sürer",
+    )
 
 
 def _spoken_text_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
@@ -4458,31 +4535,83 @@ def _opening_cut_miss(reason: str | None, quote: str | None) -> str:
     )
 
 
+def _end_cut_miss(reason: str | None, quote: str | None) -> str:
+    line = f"\u201c{quote}\u201d" if quote else "that line"
+    if reason == "cleanup_off":
+        return say(
+            en="Speech cleanup was off, so I couldn't cut the end and the video runs to the end "
+            "of your take",
+            tr="Konuşma temizliği kapalıydı, o yüzden sonu kesemedim ve video çekimin sonuna "
+            "kadar sürüyor",
+        )
+    if reason == "too_short":
+        return say(
+            en=f"I found {line} but ending there would leave too little video, so the video "
+            "runs to the end of your take",
+            tr=f"{line} cümlesini buldum ama orada bitirmek çok az video bırakırdı, bu yüzden "
+            "video çekimin sonuna kadar sürüyor",
+        )
+    if reason == "before_start":
+        return say(
+            en=f"You say {line} only before your start line, so the video runs to the end of "
+            "your take",
+            tr=f"{line} cümlesini yalnızca başlangıç cümlenden önce söylüyorsun, bu yüzden video "
+            "çekimin sonuna kadar sürüyor",
+        )
+    return say(
+        en=f"I couldn't find {line} in your take, so the video runs to the end",
+        tr=f"{line} cümlesini çekiminde bulamadım, bu yüzden video sonuna kadar sürüyor",
+    )
+
+
 def _check_opening_cut(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    start_line, end_line = _take_window_lines(req)
     if not facts.rendered_variant:
         return _receipt(
             req,
             "partial",
             say(
+                en="I'll check where the video starts and ends on the finished video.",
+                tr="Videonun nerede başlayıp bittiğini video hazır olunca kontrol edeceğim.",
+            )
+            if end_line
+            else say(
                 en="I'll check where the video starts on the finished video.",
                 tr="Videonun nereden başladığını video hazır olunca kontrol edeceğim.",
             ),
             verification="unchecked",
         )
-    if facts.opening_cut is None:
+    sides = [
+        (facts.opening_cut, facts.opening_cut_reason, facts.opening_cut_quote, _opening_cut_miss)
+        if start_line
+        else None,
+        (facts.end_cut, facts.end_cut_reason, facts.end_cut_quote, _end_cut_miss)
+        if end_line
+        else None,
+    ]
+    asked = [side for side in sides if side is not None]
+    if any(status is None for status, *_rest in asked):
         return _receipt(
             req,
             "partial",
             say(
                 en="This video didn't record where it starts, so I can't check it.",
                 tr="Bu video nereden başladığını kaydetmedi, o yüzden kontrol edemiyorum.",
+            )
+            if not end_line
+            else say(
+                en="This video didn't record where it starts and ends, so I can't check it.",
+                tr="Bu video nerede başlayıp bittiğini kaydetmedi, o yüzden kontrol edemiyorum.",
             ),
             verification="unchecked",
         )
-    if facts.opening_cut != "applied":
-        return _receipt(
-            req, "partial", _opening_cut_miss(facts.opening_cut_reason, facts.opening_cut_quote)
+    misses = list(
+        dict.fromkeys(
+            miss(reason, quote) for status, reason, quote, miss in asked if status != "applied"
         )
+    )
+    if misses:
+        return _receipt(req, "partial", "; ".join(misses))
     if _cleanup_wording(req) and facts.speech_cleanup_outcome not in {"applied", "no_change"}:
         # "...and cut the long pauses" in the same sentence is judged by the cleanup too.
         return _receipt(req, "partial", _CLEANUP_NOT_RUN)
@@ -6632,27 +6761,34 @@ def _talking_honest_receipt(
         return receipt
     if _wants_opening_cut(req):
         if facts.rendered_variant:
-            return receipt  # the render's own `opening_cut` receipt judges it
-        return _receipt(req, "partial", _TALKING_OPENING_CUT_PLAN)
+            return receipt  # the render's own `opening_cut` / `end_cut` receipts judge it
+        return _receipt(req, "partial", _take_window_plan(req, facts.take_window))
     if is_judged(req, receipt):
         return receipt
     if _has_duration_target(req):
         target = float(req.facts["duration_s"])
         take = facts.take_duration_s
-        if take is None or take <= target + 0.5:
-            return receipt
+        # KRI-790: with quoted start / end lines the part they keep sets the length, not the
+        # whole take; a line the draft cannot place leaves only the take's length to say.
+        window = facts.take_window
+        kept = window.kept_s if window is not None else None
+        prefix = _TALKING_KEEPS_QUOTED_PART if window is not None else _TALKING_KEEPS_WHOLE_TAKE
+        if kept is not None:
+            if kept <= target + 0.5:
+                return receipt
+            en_tail = f"that part is about {_round_s(kept)}s"
+            tr_tail = f"o kısım yaklaşık {_round_s(kept)} saniye"
+        else:
+            if take is None or take <= target + 0.5:
+                return receipt
+            en_tail = f"your take is {_round_s(take)}s"
+            tr_tail = f"çekimin {_round_s(take)} saniye"
         return _receipt(
             req,
             "partial",
             say(
-                en=(
-                    f"{_TALKING_KEEPS_WHOLE_TAKE}; your take is {_round_s(take)}s and you "
-                    f"asked for {_round_s(target)}s"
-                ),
-                tr=(
-                    f"{_REASON_TR[_TALKING_KEEPS_WHOLE_TAKE]}; çekimin {_round_s(take)} "
-                    f"saniye, sen {_round_s(target)} saniye istedin"
-                ),
+                en=f"{prefix}; {en_tail} and you asked for {_round_s(target)}s",
+                tr=f"{_REASON_TR[prefix]}; {tr_tail}, sen {_round_s(target)} saniye istedin",
             ),
         )
     bed_ask = _wants_bed_under_voice(req) or _wants_bed_muted(req)  # footage sound level

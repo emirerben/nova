@@ -2589,6 +2589,40 @@ Tests: `tests/tasks/test_phone_subtitled_closing_title_worker.py`,
 `tests/kria/test_strategy_policy.py::test_closing_text_*`,
 `tests/services/test_phone_reaction_grounding.py::test_closing_card_*`.
 
+### Start and end lines on phone Talking edits (KRI-628, KRI-704, KRI-790)
+
+"Start at "Hi, I'm Karolina, I'm from Ecuador" and end right after "I'm gonna be
+here all week"" (café kit T1, thread 32A5B608, 2026-10-21) keeps one window of a
+raw take: from the start line's first word to right after the end line's last
+word. No model or prompt is involved:
+
+- **Ask.** `app.kria.opening_cut_ask.take_window_ask` reads `facts.start_line` /
+  `facts.end_line` (KRI-789's `timing` shape), the legacy `facts.start` /
+  `facts.end` on an `order` row (briefs stored before KRI-789), and the KRI-628
+  description cue for a start line. The end line comes from a field only (KRI-667).
+- **Lines.** `speech_segments.ground_line`: the exact/token match first, then the
+  run of words whose folded text reads most like the quote (ratio >= 0.85,
+  3+ tokens), so "Carolina from Ecuador" (no second "I'm") still finds the line.
+  The end line is the first one after the start line.
+- **Worker.** `_phone_opening_cut` → `phone_opening_cut.apply_take_window` cuts the
+  cleanup `CutPlan` (cleanup on) or a no-op plan over the checked preflight words
+  (cleanup off) to `[start, end]` (removal reasons `opening_cut` / `end_cut`); the
+  compiler carries it to captions, title and lanes. Receipts: `variant.opening_cut`
+  and `variant.end_cut` (`applied` / `not_applied` + `not_found`, `implausible`,
+  `too_short`, `before_start`, `cleanup_off`). A start/end cut never counts as a
+  speech-cleanup outcome.
+- **Receipts.** Before approval the draft places both lines in the take's timed
+  sentences (`estimate_take_window`, the worker's own cut): the line names them
+  with their times ("I'll keep your take from “…” (0:12) to right after “…” (0:50),
+  if I find those lines") and the length line measures that part, not the whole
+  take. After render: met only when every asked line was cut.
+
+Gap: cleanup off with no checked preflight snapshot still reports `cleanup_off`.
+Verify on a real take (writes `report.json`, and with `--video` a `window.mp4` to
+watch): `cd src/apps/api && python -m app.cli.verify_take_window --take
+tests/fixtures/kri790_merope_t1_take.json --video <take.mp4>`.
+Tests: `tests/pipeline/test_phone_take_window.py`, `tests/pipeline/test_phone_opening_cut.py`.
+
 ### Text on a spoken word on phone Talking edits (KRI-707)
 
 "“Atakan” dediğimde ekrana büyük “ATAKAN” yazısı gelsin" (boat kit T1, thread
