@@ -1,0 +1,771 @@
+{
+  "ticket": "KRI-812",
+  "api_revision": "90f2a78e2564495d5c7174ba9b1667943d9cc3a8",
+  "effective_flags": {
+    "slide_posts_enabled": true,
+    "slide_post_chat_edit_enabled": true,
+    "slide_post_rich_text_enabled": true,
+    "kria_brief_binding_enabled": true,
+    "slide_post_framing_enabled": false,
+    "slide_post_sizes_enabled": false,
+    "slide_post_drawing_enabled": true,
+    "slide_post_stickers_enabled": true
+  },
+  "item_id": "f272dd97-bda2-489d-8d8c-dfe71a6cdd18",
+  "thread_id": "1ecce24d-a9d4-4051-9d0b-e16667201642",
+  "source_assets": [
+    {
+      "asset_id": "43823630-931f-4ea1-8d6e-1d80719b0916",
+      "title": "Sunrise",
+      "gcs_generation": "439999633870"
+    },
+    {
+      "asset_id": "1913b928-64a3-4e27-a3cd-815bfb6c42b1",
+      "title": "Market",
+      "gcs_generation": "422617012652"
+    },
+    {
+      "asset_id": "413dbb83-d047-4a36-9a4e-50e62690088a",
+      "title": "Horse",
+      "gcs_generation": "712096177087"
+    },
+    {
+      "asset_id": "c5a21933-e60c-46da-b9f1-27b934e05944",
+      "title": "Harbour",
+      "gcs_generation": "26789662825"
+    },
+    {
+      "asset_id": "0c661ac4-9e74-43c1-94c2-1b347915281e",
+      "title": "Dinner",
+      "gcs_generation": "110768582357"
+    }
+  ],
+  "steps": [
+    {
+      "step": "chat-edit: Make the caption summery",
+      "status": 200,
+      "outcome": "edited"
+    },
+    {
+      "step": "apply AI caption",
+      "request": {
+        "method": "PUT",
+        "slides": [
+          "43823630-931f-4ea1-8d6e-1d80719b0916",
+          "1913b928-64a3-4e27-a3cd-815bfb6c42b1",
+          "413dbb83-d047-4a36-9a4e-50e62690088a",
+          "c5a21933-e60c-46da-b9f1-27b934e05944",
+          "0c661ac4-9e74-43c1-94c2-1b347915281e"
+        ],
+        "cover_index": 3,
+        "expected_version": 1,
+        "binding_snapshot": [
+          "43823630-931f-4ea1-8d6e-1d80719b0916",
+          "1913b928-64a3-4e27-a3cd-815bfb6c42b1",
+          "413dbb83-d047-4a36-9a4e-50e62690088a",
+          "c5a21933-e60c-46da-b9f1-27b934e05944",
+          "0c661ac4-9e74-43c1-94c2-1b347915281e"
+        ],
+        "binding_digest": "bfc02eef2ea663ada942747ec6f49c8dc6ddc0053c189f494202f1ed15473b68"
+      },
+      "status": 200,
+      "detail": null
+    },
+    {
+      "step": "delete horse",
+      "request": {
+        "method": "PUT",
+        "slides": [
+          "43823630-931f-4ea1-8d6e-1d80719b0916",
+          "1913b928-64a3-4e27-a3cd-815bfb6c42b1",
+          "c5a21933-e60c-46da-b9f1-27b934e05944",
+          "0c661ac4-9e74-43c1-94c2-1b347915281e"
+        ],
+        "cover_index": 2,
+        "expected_version": 2,
+        "binding_snapshot": [
+          "43823630-931f-4ea1-8d6e-1d80719b0916",
+          "1913b928-64a3-4e27-a3cd-815bfb6c42b1",
+          "413dbb83-d047-4a36-9a4e-50e62690088a",
+          "c5a21933-e60c-46da-b9f1-27b934e05944",
+          "0c661ac4-9e74-43c1-94c2-1b347915281e"
+        ],
+        "binding_digest": "bfc02eef2ea663ada942747ec6f49c8dc6ddc0053c189f494202f1ed15473b68"
+      },
+      "status": 200,
+      "detail": null
+    },
+    {
+      "step": "chat-edit: Drop the sunrise photo",
+      "status": 200,
+      "outcome": "edited"
+    },
+    {
+      "step": "apply AI remove_clip",
+      "request": {
+        "method": "PUT",
+        "slides": [
+          "1913b928-64a3-4e27-a3cd-815bfb6c42b1",
+          "c5a21933-e60c-46da-b9f1-27b934e05944",
+          "0c661ac4-9e74-43c1-94c2-1b347915281e"
+        ],
+        "cover_index": 1,
+        "expected_version": 3,
+        "binding_snapshot": [
+          "43823630-931f-4ea1-8d6e-1d80719b0916",
+          "1913b928-64a3-4e27-a3cd-815bfb6c42b1",
+          "c5a21933-e60c-46da-b9f1-27b934e05944",
+          "0c661ac4-9e74-43c1-94c2-1b347915281e"
+        ],
+        "binding_digest": "a8ff5a32bb1d9f45d1b9caa18e02b2a7f725c7c93d7bc6bda4d60a6061f33402"
+      },
+      "status": 200,
+      "detail": null
+    },
+    {
+      "step": "add photo",
+      "request": {
+        "method": "PUT",
+        "slides": [
+          "1913b928-64a3-4e27-a3cd-815bfb6c42b1",
+          "c5a21933-e60c-46da-b9f1-27b934e05944",
+          "0c661ac4-9e74-43c1-94c2-1b347915281e",
+          "c5d6a9dc-add5-4102-8279-1ad5691102b3"
+        ],
+        "cover_index": 1,
+        "expected_version": 4,
+        "binding_snapshot": [
+          "1913b928-64a3-4e27-a3cd-815bfb6c42b1",
+          "c5a21933-e60c-46da-b9f1-27b934e05944",
+          "0c661ac4-9e74-43c1-94c2-1b347915281e"
+        ],
+        "binding_digest": "b5cd553100170ade194edd154dda6c1877aa944242b6ab2bb13367bbb4f374ad"
+      },
+      "status": 200,
+      "detail": null
+    },
+    {
+      "step": "reorder",
+      "request": {
+        "method": "PUT",
+        "slides": [
+          "c5d6a9dc-add5-4102-8279-1ad5691102b3",
+          "0c661ac4-9e74-43c1-94c2-1b347915281e",
+          "c5a21933-e60c-46da-b9f1-27b934e05944",
+          "1913b928-64a3-4e27-a3cd-815bfb6c42b1"
+        ],
+        "cover_index": 0,
+        "expected_version": 5,
+        "binding_snapshot": [
+          "1913b928-64a3-4e27-a3cd-815bfb6c42b1",
+          "c5a21933-e60c-46da-b9f1-27b934e05944",
+          "0c661ac4-9e74-43c1-94c2-1b347915281e",
+          "c5d6a9dc-add5-4102-8279-1ad5691102b3"
+        ],
+        "binding_digest": "10beaaddcd1eda1820544a3e238b6f88e6121823e01120ff23081fb03fb3d508"
+      },
+      "status": 200,
+      "detail": null
+    },
+    {
+      "step": "delete cover",
+      "request": {
+        "method": "PUT",
+        "slides": [
+          "0c661ac4-9e74-43c1-94c2-1b347915281e",
+          "c5a21933-e60c-46da-b9f1-27b934e05944",
+          "1913b928-64a3-4e27-a3cd-815bfb6c42b1"
+        ],
+        "cover_index": 0,
+        "expected_version": 6,
+        "binding_snapshot": [
+          "1913b928-64a3-4e27-a3cd-815bfb6c42b1",
+          "c5a21933-e60c-46da-b9f1-27b934e05944",
+          "0c661ac4-9e74-43c1-94c2-1b347915281e",
+          "c5d6a9dc-add5-4102-8279-1ad5691102b3"
+        ],
+        "binding_digest": "10beaaddcd1eda1820544a3e238b6f88e6121823e01120ff23081fb03fb3d508"
+      },
+      "status": 200,
+      "detail": null
+    },
+    {
+      "step": "post-render delete",
+      "request": {
+        "method": "PUT",
+        "slides": [
+          "c5a21933-e60c-46da-b9f1-27b934e05944",
+          "1913b928-64a3-4e27-a3cd-815bfb6c42b1"
+        ],
+        "cover_index": 0,
+        "expected_version": 7,
+        "binding_snapshot": [
+          "0c661ac4-9e74-43c1-94c2-1b347915281e",
+          "c5a21933-e60c-46da-b9f1-27b934e05944",
+          "1913b928-64a3-4e27-a3cd-815bfb6c42b1"
+        ],
+        "binding_digest": "3816ed34606a51f1005c26e6f7631083dda5c95a6b4983a026a5dd01b22334db"
+      },
+      "status": 200,
+      "detail": null
+    },
+    {
+      "step": "device-only delete",
+      "request": {
+        "method": "PUT",
+        "slides": [
+          "1913b928-64a3-4e27-a3cd-815bfb6c42b1"
+        ],
+        "cover_index": 0,
+        "expected_version": 8,
+        "binding_snapshot": [
+          "c5a21933-e60c-46da-b9f1-27b934e05944",
+          "1913b928-64a3-4e27-a3cd-815bfb6c42b1"
+        ],
+        "binding_digest": "72dc31f5504945e860ca0e5825e7f1b24d8b1395a3adc3840c637acdfa030cbe"
+      },
+      "status": 200,
+      "detail": null
+    }
+  ],
+  "binding_before_delete": {
+    "thread_id": "1ecce24d-a9d4-4051-9d0b-e16667201642",
+    "state": "pinned",
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "order",
+          "scope": "global",
+          "literal": null,
+          "description": "harbour as the cover",
+          "facts": {},
+          "source_turn_id": null,
+          "status": "open"
+        }
+      ]
+    },
+    "creator_request": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [order/global] harbour as the cover\nLatest message: Make a five-photo post of my trip with the harbour as the cover\n\nLatest message: Make the caption summery",
+    "media_snapshot": {
+      "draft": {
+        "schema_version": 1,
+        "version": 1,
+        "platform_profile": "tiktok_photo",
+        "slides": [
+          {
+            "id": "s0",
+            "asset_id": "43823630-931f-4ea1-8d6e-1d80719b0916",
+            "kind": "image",
+            "alt": null,
+            "edits": {
+              "text": {
+                "content": "Sunrise",
+                "position": "bottom"
+              },
+              "look_preset": "none",
+              "texts": [
+                {
+                  "id": "t0",
+                  "text": "Sunrise",
+                  "role": "text",
+                  "label_source": null,
+                  "edited": false,
+                  "font_family": "Inter-Bold",
+                  "color": "#FFFFFF",
+                  "size_px": 86,
+                  "alignment": "center",
+                  "position": "bottom",
+                  "x_frac": null,
+                  "y_frac": null,
+                  "max_width_frac": null,
+                  "stroke_width": 0,
+                  "shadow_enabled": true,
+                  "background": "none"
+                }
+              ]
+            }
+          },
+          {
+            "id": "s1",
+            "asset_id": "1913b928-64a3-4e27-a3cd-815bfb6c42b1",
+            "kind": "image",
+            "alt": null,
+            "edits": {
+              "text": {
+                "content": "Market",
+                "position": "bottom"
+              },
+              "look_preset": "none",
+              "texts": [
+                {
+                  "id": "t1",
+                  "text": "Market",
+                  "role": "text",
+                  "label_source": null,
+                  "edited": false,
+                  "font_family": "Inter-Bold",
+                  "color": "#FFFFFF",
+                  "size_px": 86,
+                  "alignment": "center",
+                  "position": "bottom",
+                  "x_frac": null,
+                  "y_frac": null,
+                  "max_width_frac": null,
+                  "stroke_width": 0,
+                  "shadow_enabled": true,
+                  "background": "none"
+                }
+              ]
+            }
+          },
+          {
+            "id": "s2",
+            "asset_id": "413dbb83-d047-4a36-9a4e-50e62690088a",
+            "kind": "image",
+            "alt": null,
+            "edits": {
+              "text": {
+                "content": "Horse",
+                "position": "bottom"
+              },
+              "look_preset": "none",
+              "texts": [
+                {
+                  "id": "t2",
+                  "text": "Horse",
+                  "role": "text",
+                  "label_source": null,
+                  "edited": false,
+                  "font_family": "Inter-Bold",
+                  "color": "#FFFFFF",
+                  "size_px": 86,
+                  "alignment": "center",
+                  "position": "bottom",
+                  "x_frac": null,
+                  "y_frac": null,
+                  "max_width_frac": null,
+                  "stroke_width": 0,
+                  "shadow_enabled": true,
+                  "background": "none"
+                }
+              ]
+            }
+          },
+          {
+            "id": "s3",
+            "asset_id": "c5a21933-e60c-46da-b9f1-27b934e05944",
+            "kind": "image",
+            "alt": null,
+            "edits": {
+              "text": {
+                "content": "Harbour",
+                "position": "bottom"
+              },
+              "look_preset": "none",
+              "texts": [
+                {
+                  "id": "t3",
+                  "text": "Harbour",
+                  "role": "text",
+                  "label_source": null,
+                  "edited": false,
+                  "font_family": "Inter-Bold",
+                  "color": "#FFFFFF",
+                  "size_px": 86,
+                  "alignment": "center",
+                  "position": "bottom",
+                  "x_frac": null,
+                  "y_frac": null,
+                  "max_width_frac": null,
+                  "stroke_width": 0,
+                  "shadow_enabled": true,
+                  "background": "none"
+                }
+              ]
+            }
+          },
+          {
+            "id": "s4",
+            "asset_id": "0c661ac4-9e74-43c1-94c2-1b347915281e",
+            "kind": "image",
+            "alt": null,
+            "edits": {
+              "text": {
+                "content": "Dinner",
+                "position": "bottom"
+              },
+              "look_preset": "none",
+              "texts": [
+                {
+                  "id": "t4",
+                  "text": "Dinner",
+                  "role": "text",
+                  "label_source": null,
+                  "edited": false,
+                  "font_family": "Inter-Bold",
+                  "color": "#FFFFFF",
+                  "size_px": 86,
+                  "alignment": "center",
+                  "position": "bottom",
+                  "x_frac": null,
+                  "y_frac": null,
+                  "max_width_frac": null,
+                  "stroke_width": 0,
+                  "shadow_enabled": true,
+                  "background": "none"
+                }
+              ]
+            }
+          }
+        ],
+        "cover_index": 3,
+        "caption": "Five photos",
+        "rendered_version": null,
+        "user_edited": false
+      },
+      "assets": [
+        {
+          "kind": "image",
+          "asset_id": "43823630-931f-4ea1-8d6e-1d80719b0916",
+          "gcs_generation": "439999633870",
+          "content_fingerprint": "fp-sunrise-534156"
+        },
+        {
+          "kind": "image",
+          "asset_id": "1913b928-64a3-4e27-a3cd-815bfb6c42b1",
+          "gcs_generation": "422617012652",
+          "content_fingerprint": "fp-market-b1feb9"
+        },
+        {
+          "kind": "image",
+          "asset_id": "413dbb83-d047-4a36-9a4e-50e62690088a",
+          "gcs_generation": "712096177087",
+          "content_fingerprint": "fp-horse-67d7ae"
+        },
+        {
+          "kind": "image",
+          "asset_id": "c5a21933-e60c-46da-b9f1-27b934e05944",
+          "gcs_generation": "26789662825",
+          "content_fingerprint": "fp-harbour-b61b2e"
+        },
+        {
+          "kind": "image",
+          "asset_id": "0c661ac4-9e74-43c1-94c2-1b347915281e",
+          "gcs_generation": "110768582357",
+          "content_fingerprint": "fp-dinner-0693c9"
+        }
+      ],
+      "item_id": "f272dd97-bda2-489d-8d8c-dfe71a6cdd18"
+    },
+    "choice_answers": [
+      {
+        "kind": "order_basis",
+        "option": "unordered",
+        "conflict": "order_basis",
+        "input_digest": "d"
+      }
+    ],
+    "digest": "bfc02eef2ea663ada942747ec6f49c8dc6ddc0053c189f494202f1ed15473b68"
+  },
+  "binding_after_delete": {
+    "thread_id": "1ecce24d-a9d4-4051-9d0b-e16667201642",
+    "state": "pinned",
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "order",
+          "scope": "global",
+          "literal": null,
+          "description": "harbour as the cover",
+          "facts": {},
+          "source_turn_id": null,
+          "status": "open"
+        }
+      ]
+    },
+    "creator_request": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [order/global] harbour as the cover\nLatest message: Make a five-photo post of my trip with the harbour as the cover\n\nLatest message: Make the caption summery",
+    "media_snapshot": {
+      "draft": {
+        "schema_version": 1,
+        "version": 3,
+        "platform_profile": "tiktok_photo",
+        "slides": [
+          {
+            "id": "s0",
+            "asset_id": "43823630-931f-4ea1-8d6e-1d80719b0916",
+            "kind": "image",
+            "alt": null,
+            "edits": {
+              "text": {
+                "content": "Sunrise",
+                "position": "bottom"
+              },
+              "look_preset": "none",
+              "texts": [
+                {
+                  "id": "t0",
+                  "text": "Sunrise",
+                  "role": "text",
+                  "label_source": null,
+                  "edited": false,
+                  "font_family": "Inter-Bold",
+                  "color": "#FFFFFF",
+                  "size_px": 86,
+                  "alignment": "center",
+                  "position": "bottom",
+                  "x_frac": null,
+                  "y_frac": null,
+                  "max_width_frac": null,
+                  "stroke_width": 0,
+                  "shadow_enabled": true,
+                  "background": "none"
+                }
+              ]
+            }
+          },
+          {
+            "id": "s1",
+            "asset_id": "1913b928-64a3-4e27-a3cd-815bfb6c42b1",
+            "kind": "image",
+            "alt": null,
+            "edits": {
+              "text": {
+                "content": "Market",
+                "position": "bottom"
+              },
+              "look_preset": "none",
+              "texts": [
+                {
+                  "id": "t1",
+                  "text": "Market",
+                  "role": "text",
+                  "label_source": null,
+                  "edited": false,
+                  "font_family": "Inter-Bold",
+                  "color": "#FFFFFF",
+                  "size_px": 86,
+                  "alignment": "center",
+                  "position": "bottom",
+                  "x_frac": null,
+                  "y_frac": null,
+                  "max_width_frac": null,
+                  "stroke_width": 0,
+                  "shadow_enabled": true,
+                  "background": "none"
+                }
+              ]
+            }
+          },
+          {
+            "id": "s3",
+            "asset_id": "c5a21933-e60c-46da-b9f1-27b934e05944",
+            "kind": "image",
+            "alt": null,
+            "edits": {
+              "text": {
+                "content": "Harbour",
+                "position": "bottom"
+              },
+              "look_preset": "none",
+              "texts": [
+                {
+                  "id": "t3",
+                  "text": "Harbour",
+                  "role": "text",
+                  "label_source": null,
+                  "edited": false,
+                  "font_family": "Inter-Bold",
+                  "color": "#FFFFFF",
+                  "size_px": 86,
+                  "alignment": "center",
+                  "position": "bottom",
+                  "x_frac": null,
+                  "y_frac": null,
+                  "max_width_frac": null,
+                  "stroke_width": 0,
+                  "shadow_enabled": true,
+                  "background": "none"
+                }
+              ]
+            }
+          },
+          {
+            "id": "s4",
+            "asset_id": "0c661ac4-9e74-43c1-94c2-1b347915281e",
+            "kind": "image",
+            "alt": null,
+            "edits": {
+              "text": {
+                "content": "Dinner",
+                "position": "bottom"
+              },
+              "look_preset": "none",
+              "texts": [
+                {
+                  "id": "t4",
+                  "text": "Dinner",
+                  "role": "text",
+                  "label_source": null,
+                  "edited": false,
+                  "font_family": "Inter-Bold",
+                  "color": "#FFFFFF",
+                  "size_px": 86,
+                  "alignment": "center",
+                  "position": "bottom",
+                  "x_frac": null,
+                  "y_frac": null,
+                  "max_width_frac": null,
+                  "stroke_width": 0,
+                  "shadow_enabled": true,
+                  "background": "none"
+                }
+              ]
+            }
+          }
+        ],
+        "cover_index": 2,
+        "caption": "Summer by the sea",
+        "rendered_version": null,
+        "user_edited": true
+      },
+      "assets": [
+        {
+          "kind": "image",
+          "asset_id": "43823630-931f-4ea1-8d6e-1d80719b0916",
+          "gcs_generation": "439999633870",
+          "content_fingerprint": "fp-sunrise-534156"
+        },
+        {
+          "kind": "image",
+          "asset_id": "1913b928-64a3-4e27-a3cd-815bfb6c42b1",
+          "gcs_generation": "422617012652",
+          "content_fingerprint": "fp-market-b1feb9"
+        },
+        {
+          "kind": "image",
+          "asset_id": "c5a21933-e60c-46da-b9f1-27b934e05944",
+          "gcs_generation": "26789662825",
+          "content_fingerprint": "fp-harbour-b61b2e"
+        },
+        {
+          "kind": "image",
+          "asset_id": "0c661ac4-9e74-43c1-94c2-1b347915281e",
+          "gcs_generation": "110768582357",
+          "content_fingerprint": "fp-dinner-0693c9"
+        }
+      ],
+      "item_id": "f272dd97-bda2-489d-8d8c-dfe71a6cdd18"
+    },
+    "choice_answers": [
+      {
+        "kind": "order_basis",
+        "option": "unordered",
+        "conflict": "order_basis",
+        "input_digest": "d"
+      }
+    ],
+    "digest": "15cd15756e97796769ab72df335ce12434b96621cdc1123f5bcc03ac6a39e8f1"
+  },
+  "export": {
+    "job_id": "b71194ea-293f-4627-8fb2-f93ae419f65a",
+    "slides": [
+      "0c661ac4-9e74-43c1-94c2-1b347915281e",
+      "c5a21933-e60c-46da-b9f1-27b934e05944",
+      "1913b928-64a3-4e27-a3cd-815bfb6c42b1"
+    ]
+  },
+  "post_render_rebuild": {
+    "job_id": "b71194ea-293f-4627-8fb2-f93ae419f65a",
+    "slides": [
+      "c5a21933-e60c-46da-b9f1-27b934e05944",
+      "1913b928-64a3-4e27-a3cd-815bfb6c42b1"
+    ]
+  },
+  "final_binding": {
+    "thread_id": "1ecce24d-a9d4-4051-9d0b-e16667201642",
+    "state": "pinned",
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "order",
+          "scope": "global",
+          "literal": null,
+          "description": "harbour as the cover",
+          "facts": {},
+          "source_turn_id": null,
+          "status": "open"
+        }
+      ]
+    },
+    "creator_request": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [order/global] harbour as the cover\nLatest message: Make a five-photo post of my trip with the harbour as the cover\n\nLatest message: Make the caption summery\n\nLatest message: Drop the sunrise photo",
+    "media_snapshot": {
+      "draft": {
+        "schema_version": 1,
+        "version": 9,
+        "platform_profile": "tiktok_photo",
+        "slides": [
+          {
+            "id": "s1",
+            "asset_id": "1913b928-64a3-4e27-a3cd-815bfb6c42b1",
+            "kind": "image",
+            "alt": null,
+            "edits": {
+              "text": {
+                "content": "Market",
+                "position": "bottom"
+              },
+              "look_preset": "none",
+              "texts": [
+                {
+                  "id": "t1",
+                  "text": "Market",
+                  "role": "text",
+                  "label_source": null,
+                  "edited": false,
+                  "font_family": "Inter-Bold",
+                  "color": "#FFFFFF",
+                  "size_px": 86,
+                  "alignment": "center",
+                  "position": "bottom",
+                  "x_frac": null,
+                  "y_frac": null,
+                  "max_width_frac": null,
+                  "stroke_width": 0,
+                  "shadow_enabled": true,
+                  "background": "none"
+                }
+              ]
+            }
+          }
+        ],
+        "cover_index": 0,
+        "caption": "Summer by the sea",
+        "rendered_version": null,
+        "user_edited": true
+      },
+      "assets": [
+        {
+          "kind": "image",
+          "asset_id": "1913b928-64a3-4e27-a3cd-815bfb6c42b1",
+          "gcs_generation": "422617012652",
+          "content_fingerprint": "fp-market-b1feb9"
+        }
+      ],
+      "item_id": "f272dd97-bda2-489d-8d8c-dfe71a6cdd18"
+    },
+    "choice_answers": [
+      {
+        "kind": "order_basis",
+        "option": "unordered",
+        "conflict": "order_basis",
+        "input_digest": "d"
+      }
+    ],
+    "digest": "936ebcecd5696381e44c0998f029e2e4c8a6183b06a0319f20b10d4030441bb6"
+  }
+}
