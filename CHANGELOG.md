@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.41.0] - 2026-10-22
+
+### Changed
+- fix(slides): Save after deleting or adding a slide in an AI-bound slide post (KRI-812) (#1751) <!-- release-pr: 1751 -->
+
 ## [0.81.40.0] - 2026-10-22
 
 ### Fixed
