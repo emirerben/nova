@@ -183,6 +183,7 @@ _ASK_FACT_KEYS = (
     "speech_cleanup",
     "captions",
     "caption_language",
+    "spellings",  # KRI-793
 )
 
 
