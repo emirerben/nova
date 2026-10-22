@@ -645,6 +645,18 @@
       ]
     },
     {
+      "id": "kri-788-order-answer-dispatch",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri788_order_answer_dispatch.py",
+      "paths": [
+        "src/apps/api/app/tasks/content_plan_build.py",
+        "src/apps/api/app/services/generative_jobs.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/kria/brief_binding.py",
+        "src/apps/api/tests/tasks/test_kri788_order_answer_dispatch.py"
+      ]
+    },
+    {
       "id": "kri-681-named-line-windows",
       "needs_native": false,
       "api_tests": "tests/tasks/test_named_line_windows_montage.py tests/tasks/test_long_take_moments_montage.py",
@@ -1165,6 +1177,16 @@
         "src/apps/api/app/pipeline/text_overlay.py",
         "src/apps/api/assets/fonts/glyph-fallbacks.json",
         "src/apps/api/tests/fixtures/overlay_verify/"
+      ]
+    },
+    {
+      "id": "kri-793-caption-spellings",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri793_caption_spellings.py tests/tasks/test_kri793_talking_caption_spellings.py tests/pipeline/test_caption_spelling.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri793_t1_caro/t1_brief_and_speech.json",
+        "src/apps/api/tests/kria/test_kri793_caption_spellings.py",
+        "src/apps/api/tests/tasks/test_kri793_talking_caption_spellings.py"
       ]
     }
   ]

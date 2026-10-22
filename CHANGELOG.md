@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.27.0] - 2026-10-22
+
+### Fixed
+- fix(kria): captions ask with a spelling list gets a line before approval and is spelled that way (KRI-793) (#1733) <!-- release-pr: 1733 -->
+
+## [0.81.26.0] - 2026-10-22
+
+### Fixed
+- fix(dispatch): the approved order answer reaches the render contract (KRI-788) (#1727) <!-- release-pr: 1727 -->
+
+## [0.81.25.0] - 2026-10-22
+
+### Fixed
+- fix(kria): record the chat song match against the plan item, not the thread (KRI-809) (#1737) <!-- release-pr: 1737 -->
+
+## [0.81.24.0] - 2026-10-22
+
+### Changed
+- fix(ios): verify actual TestFlight upload provenance (#1746) <!-- release-pr: 1746 -->
+
 ## [0.81.23.0] - 2026-10-22
 
 ### Changed

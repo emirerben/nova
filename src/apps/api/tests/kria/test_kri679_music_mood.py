@@ -34,6 +34,7 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents._runtime import RunContext
 from app.agents.music_matcher import (
     MusicMatcherAgent,
     MusicMatcherInput,
@@ -182,7 +183,7 @@ async def test_freeze_sends_the_ask_to_the_matcher(monkeypatch: pytest.MonkeyPat
         MagicMock(spec=AsyncSession),
         {"audio_strategy": "licensed_music"},
         snapshot,
-        job_id="thread-1",
+        run_context=RunContext(creator_id=str(uuid.uuid4())),
         music_ask=CALM,
     )
 

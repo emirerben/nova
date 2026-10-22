@@ -527,7 +527,7 @@ async def _freeze_licensed_music_section(
     strategy: Mapping[str, Any],
     snapshot: dict | None,
     *,
-    job_id: str,
+    run_context: RunContext,
     target_s: float | None = None,
     music_ask: str = "",
 ) -> dict[str, Any] | None:
@@ -535,6 +535,7 @@ async def _freeze_licensed_music_section(
 
     ``target_s`` is the creator's own length; the section follows it (KRI-679).
     ``music_ask`` is the creator's own words about the song; the matcher weighs it first.
+    ``run_context`` owns the matcher run: no render Job exists yet (KRI-809).
     """
     if not isinstance(db, AsyncSession) or not isinstance(snapshot, dict):
         return None
@@ -574,7 +575,9 @@ async def _freeze_licensed_music_section(
         for row in playable
         if row.get("media_id")
     ]
-    track = await asyncio.to_thread(_match_best_track, metas, job_id=job_id, music_ask=music_ask)
+    track = await asyncio.to_thread(
+        _match_best_track, metas, job_id=None, music_ask=music_ask, run_context=run_context
+    )
     if track is None:
         return {"status": "fallback_footage"}
     cfg = track_config_with_rank_one(track)
@@ -3648,7 +3651,11 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
         )
     planned = replace(planned, media_snapshot=after)
     return await _gate_unresolved_choices(
-        db, planned, thread_id=kwargs["thread_id"], creator_id=kwargs["creator_id"]
+        db,
+        planned,
+        thread_id=kwargs["thread_id"],
+        creator_id=kwargs["creator_id"],
+        item_id=kwargs["item_id"],
     )
 
 
@@ -3658,6 +3665,7 @@ async def _gate_unresolved_choices(
     *,
     thread_id: uuid.UUID,
     creator_id: uuid.UUID,
+    item_id: uuid.UUID | None = None,
 ) -> PlannedKriaTurn:
     """KRI-476: an unresolved material choice never becomes an approvable draft.
 
@@ -3788,7 +3796,15 @@ async def _gate_unresolved_choices(
             db,
             strategy,
             planned.media_snapshot,
-            job_id=str(thread_id),
+            # KRI-809: the thread id is not a Job; binding it as ``job_id`` broke the
+            # agent_run FK and left the creator unattributed for paid-call cost control.
+            # Record the run like Main Creator does: creator + plan item, no job. No
+            # request_id either, so an identical re-match later in the same thread is a
+            # new paid call rather than a replay of the settled first one.
+            run_context=RunContext(
+                creator_id=str(creator_id),
+                plan_item_id=str(item_id) if item_id else None,
+            ),
             target_s=music_target_s,
             music_ask=music_ask,
         )

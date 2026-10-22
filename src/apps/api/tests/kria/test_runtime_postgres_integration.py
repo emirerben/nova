@@ -3883,3 +3883,156 @@ async def test_kri705_phone_talking_t1_brief_names_all_seven_asks_and_promises_n
         assert card == f"Render this draft: {content}"
     finally:
         await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_kri793_t1_every_row_gets_a_line_before_approval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Café T1 (thread 32A5B608, 2026-10-21): the first draft and two approval cards never
+    named r5 ("Captions for both voices, ensuring correct spellings: Oblea de la Casa, ...")
+    nor r2 (the start/end lines): no Done, Partly or Couldn't.
+
+    Failure modes written down first, each asserted below:
+      1. the captions + spelling row is left out of the draft's checks (KRI-549 left it to
+         the render), so the reply and the card say nothing about it;
+      2. a row no checker judges before render is dropped as "unchecked" (r2 in prod);
+      3. the line for r5 does not name the four words or say whether the off-camera voice
+         is captioned;
+      4. the line holds the draft behind "a simpler version?" (it is a plan, not a miss).
+    """
+    import json
+    from pathlib import Path
+
+    from app.agents._schemas.creator_agent import (
+        CapabilityAvailability,
+        CreatorMediaRef,
+        ResolvedCreatorManifest,
+    )
+
+    fixture = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "fixtures"
+            / "kri793_t1_caro"
+            / "t1_brief_and_speech.json"
+        ).read_text(encoding="utf-8")
+    )
+    rows = [row for row in fixture["brief"]["requirements"] if row["status"] != "superseded"]
+    # r2 (the start/end lines filed as an order row) first asks the order question and, once
+    # answered, is refused at render: KRI-789 / KRI-788, other bugs with their own tests. In
+    # its place, another clause of the same message that no checker judges before render.
+    rows[1] = {
+        **rows[1],
+        "kind": "text",
+        "facts": {},
+        "description": "No text on her face or on the plate",
+    }
+    user_id, thread_id, _session_id = _seed_runtime_project()
+    with sync_session() as db:
+        thread = db.get(CreationThread, thread_id)
+        db.execute(
+            update(PlanItem)
+            .where(PlanItem.id == thread.active_plan_item_id)
+            .values(clip_gcs_paths=["u/analysis-proxy-ios-t1.mp4"], edit_format="subtitled")
+        )
+        db.commit()
+    plan = adapt_creator_action(
+        ProposeStrategy(
+            kind="propose_strategy",
+            strategy=CreativeStrategy(
+                direction="native",
+                edit_format="subtitled",
+                audio_strategy="original_audio",
+                pacing="balanced",
+                render_program="guided",
+                selected_media_ids=[],
+                rationale="Talking edit.",
+                opening_title="Colombian dessert, Ecuadorian hands",
+                caption_style="clean",
+            ),
+            summary="Caro's Talking edit with clean captions and the title.",
+        ),
+    )
+    manifest = ResolvedCreatorManifest(
+        item_id="item-1",
+        edit_format="subtitled",
+        render_program="guided",
+        media=[
+            CreatorMediaRef(media_id="clip-1", kind="video", duration_s=fixture["take_duration_s"])
+        ],
+        capabilities={"edit_format:subtitled": CapabilityAvailability(available=True)},
+        context_hash="a" * 64,
+        manifest_hash="b" * 64,
+    )
+    asks = tuple(
+        BriefUpdate(
+            kind=row["kind"],
+            scope=row["scope"],
+            literal=row["literal"],
+            description=row["description"],
+            facts=row["facts"],
+        )
+        for row in rows
+    )
+
+    async def _planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        return PlannedKriaTurn(
+            plan=plan,
+            manifest_hash="a" * 64,
+            context_hash="b" * 64,
+            brief_updates=asks,
+            brief_route="replan",
+            brief_clip_ids=("clip-1",),
+            brief_manifest=manifest,
+        )
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [])
+    monkeypatch.setattr(settings, "phone_subtitled_rendering_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planned)
+    try:
+        accepted = await _submit(user_id, thread_id, fixture["creator_request"], 2)
+        result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        # (4) the draft goes ahead to approval.
+        assert result["status"] == "awaiting_approval", result
+        with sync_session() as db:
+            event = db.execute(
+                select(CreationThreadEvent).where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.event_type == "draft_applied",
+                )
+            ).scalar_one()
+            payload = dict(event.payload)
+            content = event.content
+            card = db.execute(
+                select(CreatorAgentApproval.consequence_summary).where(
+                    CreatorAgentApproval.turn_id == uuid.UUID(accepted.turn_id)
+                )
+            ).scalar_one()
+        receipts = {r["requirement_id"]: r for r in payload["requirement_receipts"]}
+        # (1) + (2): every live row has a receipt and a line, on the reply and the card.
+        assert set(receipts) == {row["id"] for row in rows}, receipts.keys()
+        for row in rows:
+            words = row["literal"] or row["description"]
+            assert words in content, (row["id"], content)
+            assert words in card, (row["id"], card)
+        # (3) r5 names the four words and the off-camera voice, as a plan, not a miss.
+        r5 = receipts["r5"]
+        assert (r5["status"], r5["verification"]) == ("partial", "checked")
+        assert r5["reason"] == (
+            "Every voice in your take gets captions, off-camera ones too; I'll spell Oblea de "
+            "la Casa, dulce de leche, leche condensada and Merope the way you wrote them and "
+            "check them in the finished video"
+        )
+        assert receipts["r2"]["verification"] == "unchecked"
+        assert "Have a look at these in the video:\n- No text on her face or on the plate" in (
+            content
+        )
+        assert card == f"Render this draft: {content}"
+    finally:
+        await async_engine.dispose()

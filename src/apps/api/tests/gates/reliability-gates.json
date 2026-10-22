@@ -307,6 +307,49 @@
       "red_control": "pending"
     },
     {
+      "id": "kri-788-order-answer-dispatch",
+      "tickets": [
+        "KRI-788",
+        "KRI-787"
+      ],
+      "symptom": "Every render after the order answer \"Use the order you added the clips\" was refused at dispatch with \"I can't verify this ordering rule from the approved media.\": the approved binding held the answer, but the job factory erased the strategy's answers (KRI-492) and the dispatch rebuild never restored them, while the approval dry run read the draft that still had them.",
+      "boundary": "dispatch",
+      "status": "open_pr",
+      "owner": "KRI-788",
+      "journey": "kri-788-order-answer-dispatch",
+      "paths": [
+        "src/apps/api/app/tasks/content_plan_build.py",
+        "src/apps/api/app/services/generative_jobs.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/kria/brief_binding.py"
+      ],
+      "regression_tests": [
+        "tests/tasks/test_kri788_order_answer_dispatch.py"
+      ],
+      "harness": "real_contract",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "T1 render 2's approved strategy, answered brief and clip record through the real approval dry run, BriefBinding, dispatch over the real job factory, contract and phone dispatch gate; baseline fails with prod's exact refusal.",
+        "live_model": "n/a; no model call on this path",
+        "native_output": "unknown; T1 phone re-send after deploy pending",
+        "production": "not deployed"
+      },
+      "neighbours_covered": [
+        "attachment_order answer",
+        "unordered answer",
+        "client-written answer with no binding answer",
+        "binding answer differs from the strategy's",
+        "binding with no answers stays byte-identical",
+        "approval-time contract equals the dispatch contract"
+      ],
+      "neighbours_gap": [
+        "length, silent-tail and text-placement answers ride the same restore but have no T1-shaped replay here",
+        "approval readiness (KRI-721) still assesses the draft strategy, not the dispatch projection"
+      ],
+      "follow_ups": [],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-456-voiceover-alignment",
       "tickets": [
         "KRI-456",
@@ -771,7 +814,7 @@
       "tickets": [
         "KRI-542"
       ],
-      "symptom": "Main Creator at thinking=high exhausted the shared 8k output budget after a clip answer and the turn dead-ended ('plana d\u00f6n\u00fc\u015ft\u00fcremedim').",
+      "symptom": "Main Creator at thinking=high exhausted the shared 8k output budget after a clip answer and the turn dead-ended ('plana dönüştüremedim').",
       "boundary": "model_budget",
       "fix_prs": [
         1493
@@ -867,7 +910,7 @@
         "KRI-651",
         "KRI-674"
       ],
-      "symptom": "Phone Montage render-ready reply said 'Do\u011frulayamad\u0131m' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
+      "symptom": "Phone Montage render-ready reply said 'Doğrulayamadım' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
       "boundary": "publication",
       "fix_prs": [
         1503,
@@ -906,7 +949,7 @@
       "kill_switch": null,
       "evidence": {
         "offline_replay": "prod thread 7d7c5e25 shape: generation vs attempt id; KRI-651: pre-fix 6636cae71 fails the approved Unicode hook; fixed tree passes composition/reload/retry plus real-Postgres EN/TR publication receipt; fresh-edit title race: real-Postgres red control 97d44d932 repeats the provider call; first-step recovery fixes title-only completion for response/draft/read; KRI-674 follow-up timeout: stalled Pro transport causes both EN/TR healthy rendered follow-ups to fail before the fix (2 failed, 2 passed); Flash-first preserves successful clarification and single-call unknown recovery (4 passed).",
-        "live_model": "2026-10-17 final narrow configuration: Flash/medium/4096, prompt v11. Synthetic EN/TR title edits, ambiguous retry and 12k-contract/40-message compound rebuild: four one-call passes, 3.17\u201314.60s, $0.031400 settled. Earlier low-budget candidates omitted constraints or truncated and are not counted as passes. Production-account follow-up/retry re-send pending.",
+        "live_model": "2026-10-17 final narrow configuration: Flash/medium/4096, prompt v11. Synthetic EN/TR title edits, ambiguous retry and 12k-contract/40-message compound rebuild: four one-call passes, 3.17–14.60s, $0.031400 settled. Earlier low-budget candidates omitted constraints or truncated and are not counted as passes. Production-account follow-up/retry re-send pending.",
         "native_output": "Berlin re-run job a7d69a5b (2026-10-08) was the incident; post-fix phone re-send pending; KRI-651: native simulator export and pixel checks passed 2026-10-13 (exact hook, color emoji, no context caption)",
         "production": "merged 2026-10-08"
       },
@@ -1867,6 +1910,45 @@
         "KRI-776",
         "KRI-777"
       ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-809-chat-song-match-trace",
+      "tickets": [
+        "KRI-809",
+        "KRI-802"
+      ],
+      "symptom": "Every montage chat turn ran nova.audio.music_matcher with the creation-thread id as job_id: agent_run_persist_failed IntegrityError (agent_run.job_id FKs jobs), so the song suggestion was missing from /admin/plan-items/<id>/proposal-trace (Don Julio M1, threads F4083F1D / 3E27DEF8). With paid-call cost control on, the same context had no creator attribution and the reservation was refused, so the chat would silently fall back to the footage's own sound.",
+      "boundary": "persistence",
+      "status": "open_pr",
+      "owner": "KRI-809",
+      "paths": [
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/tasks/auto_music_orchestrate.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/agents/_persistence.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri809_chat_song_match_trace.py",
+        "tests/kria/test_kri679_music_mood.py"
+      ],
+      "harness": "real_with_db",
+      "evidence": {
+        "offline_replay": "Real plan_live_turn -> gate -> song freeze -> MusicMatcherAgent runtime -> cost-control ledger -> agent_run insert -> proposal-trace route on scratch Postgres; only the model transport, the main-creator call and the track catalog read are canned. Red before the fix: prod's exact agent_run_persist_failed IntegrityError (cost control off) and creator_attribution_required with no song (cost control on); green after: two plan-item rows, job_id NULL, two settled creator-attributed reservations, song selected both turns.",
+        "live_model": "Not run; no paid calls. The fix changes no prompt and no model call.",
+        "native_output": "not_applicable; server-side trace rows only.",
+        "production": "Not deployed. Prod proposal-trace for items 7a4ce1d5 and f65a21de lists only nova.creator.main rows (read 2026-10-21)."
+      },
+      "neighbours_covered": [
+        "render-time _match_best_track still records its real job_id",
+        "cost control off (prod today) and on (production environment)",
+        "an identical re-match in the same thread (no idempotency-key collision)",
+        "matcher log lines carry plan_item_id instead of the thread id"
+      ],
+      "neighbours_gap": [
+        "Chat-time clip-intent planning (planner.py RunContext(request_id, creator_id)), clip_intent_resolution, clip_intent_requery and kria_clip_understanding runs carry no owner, so they are dropped from agent_run silently (no IntegrityError, not the same bug); not fixed here."
+      ],
+      "follow_ups": [],
       "red_control": "not_applicable"
     },
     {
