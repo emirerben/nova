@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.29.0] - 2026-10-22
+
+### Changed
+- fix(kria): show a creator's text on a spoken word even when the brief has no trigger (KRI-791) (#1724) <!-- release-pr: 1724 -->
+
 ## [0.81.28.0] - 2026-10-22
 
 ### Fixed
