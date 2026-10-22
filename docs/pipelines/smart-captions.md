@@ -283,6 +283,31 @@ missed Turkish case errors 4 times out of 4, so it is not a safe cost swap.
 `SUBTITLED_ARCHETYPE_ENABLED` itself has been ON in production since 2026-07-02
 even though the code default is `false`.
 
+### Creator spellings (phone Talking writer; KRI-631, KRI-793)
+
+After correction and the sentence re-split, `_run_phone_subtitled_job` applies the
+creator's own spellings to the cues (`app/pipeline/caption_spelling.py`, no model):
+the quoted words of the raw request (`extract_spelling_asks`) plus every word the
+approved brief lists for its captions (`brief_checks.brief_caption_spellings`, read
+off `creator_brief_binding`). The list comes from the brief row's `facts.spellings`
+(Main Creator v65 records it) or, without that fact, the colon list after a spelling
+cue ("correct spellings: Oblea de la Casa, dulce de leche, ..."). A caption word or
+run of words is respelled only when it sounds like the target (same first sound,
+same last sound class, 1-2 edits); a several-word name matches only the same number
+of adjacent words with nothing but spaces between them, so word timings stay 1:1.
+Case-only differences are never edited. The `captions/creator_spellings` trace event
+lists the targets and every changed line.
+
+Before approval, a phone Talking draft answers such an ask with a plan line
+("Every voice in your take gets captions, off-camera ones too; I'll spell ... and
+check them in the finished video", `PlanFacts.caption_words_at_render`). After render,
+`_check_caption_words` checks each word against the caption lines: a hearing the
+respelling would have fixed (`is_mishearing`: "Meropa" for Merope) or another accent
+or spacing is a named miss, a word never said is "doesn't appear". Guards:
+`tests/kria/test_kri793_caption_spellings.py`,
+`tests/tasks/test_kri793_talking_caption_spellings.py`,
+`tests/pipeline/test_caption_spelling.py`.
+
 ## Licensed music bed
 
 - **Selection:** `_resolve_smart_music_treatment` in `tasks/generative_build.py`

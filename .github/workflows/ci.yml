@@ -852,6 +852,17 @@ jobs:
           set -o pipefail
           python3 -m pytest tests/kria/test_whole_line_routing.py tests/tasks/test_whole_line_ask_montage.py -q \
             | tee ../../../test-results/kri-559/whole-line-ask-api-tests.log
+      - name: Verify the creator's approved order answer reaches the render contract
+        if: contains(needs.changes.outputs.journey_ids, 'kri-788-order-answer-dispatch')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/tasks/test_kri788_order_answer_dispatch.py -q \
+            | tee ../../../test-results/kri-559/order-answer-dispatch-api-tests.log
       - name: Verify phone Talking captions stay short and keep the creator's spelling
         if: contains(needs.changes.outputs.journey_ids, 'kri-632-phone-captions')
         working-directory: src/apps/api
