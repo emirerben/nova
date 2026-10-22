@@ -41,3 +41,9 @@ required before merge. The original source includes the after-render visibility
 assertion; no new screenshot/device result is claimed by this refresh. Broader
 KRI-769 live-quality, attribution and physical-device work remain open.
 No paid call, phone operation, rollout setting or manual release was performed.
+
+## Current-head native coverage correction
+
+CI39733358559 passed on15088d510, including native unit tests and generic UI smoke, but did NOT execute the changed testServerSuggestionChipsSendOnTapAndReplaceFixedChips. That test contains the actual after-render buttons-above-composer assertion. The workflow maps full UI to smoke for PRs, so a green generic job alone does not establish this fix.
+
+The suggestion-chips journey now lists that existing UI test and runs it against the same built app/simulator. require-xctest checks the actual result for that exact name; zero/missing/failed execution cannot satisfy the gate. No assertion or timeout was weakened, and no duplicate build or physical-device operation is added. A fresh current-head pass is required before merge.
