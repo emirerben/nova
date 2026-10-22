@@ -1005,8 +1005,11 @@ struct ReadyStage: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            Text("What would you like to change?")
-                .font(KriaFont.body(13).weight(.medium))
+            // KRI-769: no chips to offer (capability on, set empty or still loading) = no dangling question either.
+            if serverSuggestions.map({ !$0.isEmpty }) ?? true {
+                Text("What would you like to change?")
+                    .font(KriaFont.body(13).weight(.medium))
+            }
 
             if let serverSuggestions {
                 // Capability on: the server's chips or nothing. The fixed chips are generic and the server's own

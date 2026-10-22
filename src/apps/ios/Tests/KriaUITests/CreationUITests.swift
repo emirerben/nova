@@ -1468,6 +1468,12 @@ final class CreationUITests: XCTestCase {
         let captions = app.buttons["Add captions"]
         XCTAssertTrue(captions.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Turn the music down"].exists)
+        // KRI-769: the chips arrive after the card, below the fold; a reader at the bottom is scrolled to them, so
+        // none sits under the composer.
+        let composerTop = app.textFields["Message Kria"].frame.minY
+        for chip in [captions, app.buttons["Turn the music down"]] {
+            XCTAssertLessThanOrEqual(chip.frame.maxY, composerTop, "\(chip.label) is hidden under the composer")
+        }
         XCTAssertFalse(app.buttons["Use suggestion: Try a stronger opening"].exists)
         XCTAssertFalse(app.buttons["Use suggestion: Make it warmer"].exists)
         captions.tap()
