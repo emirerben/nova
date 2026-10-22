@@ -1,0 +1,409 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-10-19-v64",
+  "input": {
+    "user_message": "Talking-to-camera edit of Caro at Merope. Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\". Cut her slip \"with bread, no,\" so it says \"waffle cookie with blackberry jam\". Also cut my half question \"how are you gonna\". Captions for both voices, and spell these right: Oblea de la Casa, dulce de leche, leche condensada, Merope. Title: \"Colombian dessert, Ecuadorian hands\". Show \"MEROPE\" in big letters the first time she says Merope. No text on her face or on the plate. About 35 seconds.",
+    "creator_request": "",
+    "creator_context": "{'summary': 'A creator making clear, engaging short-form videos.', 'tone': 'natural and direct', 'audience': 'people who enjoy relatable short videos', 'content_pillars': ['real-life moments'], 'style': {}}",
+    "creator_direction": "",
+    "item_context": "{'idea': 'Untitled video', 'theme': '', 'creator_notes': '', 'filming_guide': [], 'current_edit_format': 'subtitled', 'current_audio_mode': 'original', 'has_recorded_voiceover': False}",
+    "media_context": [
+      {
+        "kind": "video",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-10-16T15:24:17Z",
+            "provenance": "exif"
+          }
+        ],
+        "filename": "M2_01_footage",
+        "media_id": "clip-t1-take",
+        "duration_s": 68.37,
+        "creator_note": null,
+        "analysis_only_not_copy": {
+          "people": {
+            "note": "a woman in a t-shirt and shorts, a man in a black jacket and white t-shirt, and ",
+            "count": 3,
+            "speaks_to_camera": true
+          },
+          "speech": {
+            "segments": [
+              {
+                "e": 1.5,
+                "s": 0.0,
+                "text": "Yes we will show."
+              },
+              {
+                "e": 4.4,
+                "s": 2.7,
+                "text": "Merhaba arkadaşlar, hello everyone."
+              },
+              {
+                "e": 6.5,
+                "s": 4.9,
+                "text": "We are with Karo today."
+              },
+              {
+                "e": 11.8,
+                "s": 6.9,
+                "text": "Karo, can you describe, can you just tell about yourself, two sentences maybe, who you are, where you're from."
+              },
+              {
+                "e": 13.6,
+                "s": 12.0,
+                "text": "Hi, I'm Carolina, I'm from Ecuador."
+              },
+              {
+                "e": 16.9,
+                "s": 14.5,
+                "text": "This is the Oblea de la Casa."
+              },
+              {
+                "e": 20.6,
+                "s": 17.2,
+                "text": "It's a traditional Colombian dessert."
+              },
+              {
+                "e": 26.7,
+                "s": 20.6,
+                "text": "It's wafer cookie with red, no, with blackberry jam,"
+              },
+              {
+                "e": 29.1,
+                "s": 27.5,
+                "text": "cheese, dulce de leche,"
+              },
+              {
+                "e": 34.5,
+                "s": 30.2,
+                "text": "leche condensada and whipped cream."
+              },
+              {
+                "e": 35.5,
+                "s": 35.0,
+                "text": "Nice, delicious."
+              },
+              {
+                "e": 36.3,
+                "s": 35.7,
+                "text": "That's it."
+              }
+            ],
+            "to_camera": true,
+            "has_speech": true
+          },
+          "setting": "outdoor patio of a cafe/restaurant",
+          "subject": "woman presenting a dessert",
+          "summary": "A woman from Ecuador introduces a traditional Colombian dessert called \"Oblea de la Casa\" at a Colombian coffee and restaurant named Merope. She describes its ingredients and then a man takes a bite.",
+          "activity": "presenting a dessert and explaining its ingredients, then a man taking a bite of the dessert",
+          "audio_type": "dialogue",
+          "content_type": "talking_head"
+        }
+      }
+    ],
+    "conversation": [
+      {
+        "role": "assistant",
+        "content": "What are we making? Pick a format and we’ll shape it together."
+      },
+      {
+        "role": "user",
+        "content": "Talking-to-camera edit of Caro at Merope. Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\". Cut her slip \"with bread, no,\" so it says \"waffle cookie with blackberry jam\". Also cut my half question \"how are you gonna\". Captions for both voices, and spell these right: Oblea de la Casa, dulce de leche, leche condensada, Merope. Title: \"Colombian dessert, Ecuadorian hands\". Show \"MEROPE\" in big letters the first time she says Merope. No text on her face or on the plate. About 35 seconds."
+      }
+    ],
+    "capability_manifest": {
+      "media": [
+        {
+          "kind": "video",
+          "label": null,
+          "media_id": "clip-t1-take",
+          "duration_s": 68.37
+        }
+      ],
+      "limits": {
+        "max_commands": 4,
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_output_duration_s": 120.0
+      },
+      "catalog": [
+        {
+          "kind": "music",
+          "label": "PALMITO - La Cuarta Estrella [Versión Hinchada] (Vídeo Oficial) — PALMITO",
+          "catalog_id": "music-efa00333-4f19-4531-8366-681adf6736be"
+        }
+      ],
+      "item_id": "item-t1-merope",
+      "narration": null,
+      "edit_format": "subtitled",
+      "capabilities": {
+        "review": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "execution": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "wide_looks": {
+          "reason": "wide_looks cannot render on the iPhone yet",
+          "available": false,
+          "reason_code": "unsupported_on_phone"
+        },
+        "transitions": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "guided_story": {
+          "reason": "this edit format or audio contract requires the native renderer",
+          "available": false,
+          "reason_code": "native_render_required"
+        },
+        "automatic_cut": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "caption_style": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "motion_scenes": {
+          "reason": "motion_scenes cannot render on the iPhone yet",
+          "available": false,
+          "reason_code": "unsupported_on_phone"
+        },
+        "native_render": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "sound_effects": {
+          "reason": "sound_effects cannot render on the iPhone yet",
+          "available": false,
+          "reason_code": "unsupported_on_phone"
+        },
+        "visual_blocks": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "auto_iteration": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "media_overlays": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "reaction_beats": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "dispatch_render": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "set_item_intent": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "guided_voiceover": {
+          "reason": "guided voiceover requires a recorded voiceover",
+          "available": false,
+          "reason_code": "requires_voiceover"
+        },
+        "edit_format:slides": {
+          "reason": "slides is disabled or has no production renderer for this media snapshot",
+          "available": false,
+          "reason_code": "format_unavailable"
+        },
+        "guided_auto_design": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "main_creator_agent": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_source_audio": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_still_images": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "edit_format:montage": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "guided_conversation": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:slides": {
+          "reason": "slides does not render on this iPhone yet",
+          "available": false,
+          "reason_code": "phone_format_unavailable"
+        },
+        "phone_visual_videos": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "edit_format:day_vlog": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "edit_format:narrated": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:montage": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "select_ready_variant": {
+          "reason": "a ready variant is required before selection",
+          "available": false,
+          "reason_code": "no_ready_variant"
+        },
+        "draft_guided_proposal": {
+          "reason": "this edit format or audio contract requires the native renderer",
+          "available": false,
+          "reason_code": "native_render_required"
+        },
+        "edit_format:subtitled": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:day_vlog": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:narrated": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:subtitled": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "edit_format:single_hero": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "edit_format:talking_head": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:single_hero": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "media_overlays:fullscreen": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:talking_head": {
+          "reason": "talking_head does not render on this iPhone yet",
+          "available": false,
+          "reason_code": "phone_format_unavailable"
+        },
+        "edit_format:narrated_ready": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "media_overlays:video_cards": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:narrated_ready": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "edit_format:narrated_planned": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "guided_direction_confirmation": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:narrated_planned": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format_pending_voiceover:narrated": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format_pending_voiceover:narrated_ready": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format_pending_voiceover:narrated_planned": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        }
+      },
+      "context_hash": "bcc9601e70e5178cdbac0340923d0509fb81f836998e50e10ea17e039fd5f47e",
+      "current_edit": null,
+      "has_voiceover": false,
+      "manifest_hash": "2087fadc58e19362d866c78b227a2aef1ef0956ec297494d761c21f3c6810669",
+      "render_program": "native",
+      "schema_version": 1
+    },
+    "creative_copy_state": [],
+    "brief_enabled": true,
+    "reply_language": "en"
+  },
+  "raw_text": "{\"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"native\", \"edit_format\": \"subtitled\", \"render_program\": \"native\", \"audio_strategy\": \"original_audio\", \"pacing\": \"balanced\", \"media_scope\": \"selected\", \"selected_media_ids\": [\"clip-t1-take\"], \"caption_style\": \"auto\", \"opening_title\": \"Colombian dessert, Ecuadorian hands\", \"story_structure\": [\"Carolina introduces herself\", \"She describes the Oblea de la Casa ingredients\"], \"target_duration_s\": 35, \"video_reuse_policy\": \"once\", \"rationale\": \"About 35 seconds, as asked: her introduction and the dessert's ingredients.\"}, \"summary\": \"A Talking edit of Carolina's introduction and the dessert, about 35 seconds.\", \"render_intent_evidence\": {\"opening_title\": \"Talking-to-camera edit of Caro at Merope. Start at \\\"Hi, I'm Karolina, I'm from Ecuador\\\" and end right after \\\"I'm gonna be here all week\\\". Cut her slip \\\"with bread, no,\\\" so it says \\\"waffle cookie with blackberry jam\\\". Also cut my half question \\\"how are you gonna\\\". Captions for both voices, and spell these right: Oblea de la Casa, dulce de leche, leche condensada, Merope. Title: \\\"Colombian dessert, Ecuadorian hands\\\". Show \\\"MEROPE\\\" in big letters the first time she says Merope. No text on her face or on the plate. \", \"font_family\": null, \"text_color\": null, \"opening_title_duration_s\": null, \"shot_labels\": null, \"closing_title\": null, \"licensed_sfx\": null}}, \"brief_updates\": [{\"operation\": \"add\", \"kind\": \"timing\", \"scope\": \"global\", \"literal\": null, \"description\": \"About 35 seconds\", \"facts\": {\"duration_s\": 35}}, {\"operation\": \"add\", \"kind\": \"order\", \"scope\": \"global\", \"literal\": null, \"description\": \"Start at 'Hi, I'm Karolina, I'm from Ecuador' and end right after 'I'm gonna be here all week'\", \"facts\": {\"start\": \"Hi, I'm Karolina, I'm from Ecuador\", \"end\": \"I'm gonna be here all week\"}}, {\"operation\": \"add\", \"kind\": \"audio\", \"scope\": \"global\", \"literal\": null, \"description\": \"Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam'\", \"facts\": {\"speech_cleanup\": true}}, {\"operation\": \"add\", \"kind\": \"audio\", \"scope\": \"global\", \"literal\": null, \"description\": \"Cut the half question 'how are you gonna'\", \"facts\": {\"speech_cleanup\": true}}, {\"operation\": \"add\", \"kind\": \"style\", \"scope\": \"global\", \"literal\": null, \"description\": \"Captions for both voices, ensuring correct spellings: Oblea de la Casa, dulce de leche, leche condensada, Merope\", \"facts\": {\"captions\": \"on\"}}, {\"operation\": \"add\", \"kind\": \"text\", \"scope\": \"title\", \"literal\": \"Colombian dessert, Ecuadorian hands\", \"description\": \"Title on screen, placed so there is no text on her face or on the plate\", \"facts\": {}}, {\"operation\": \"add\", \"kind\": \"text\", \"scope\": \"global\", \"literal\": \"MEROPE\", \"description\": \"Show MEROPE in big letters the first time she says Merope, placed so there is no text on her face or on the plate\", \"facts\": {}}]}",
+  "output": {},
+  "meta": {
+    "source": "kri789-merope-t1-turn1 (prod 042c405c9, thread 32a5b608, 2026-10-21)",
+    "take_trim": {
+      "start_line": "Hi, I'm Karolina, I'm from Ecuador",
+      "end_line": "I'm gonna be here all week",
+      "duration_s": 35
+    },
+    "contract": "on a one-video edit, quoted start / end LINES are a timing trim with facts.start_line / facts.end_line, never an order requirement; the stated length stays its own timing requirement"
+  }
+}

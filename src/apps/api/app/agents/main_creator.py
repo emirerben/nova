@@ -32,6 +32,7 @@ from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.config import settings
 from app.kria.brief import BriefUpdate, parse_brief_updates
 from app.kria.reply_language import prompt_language_line
+from app.kria.take_trim import refile_take_trim
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import (
     MAX_OPENING_TITLE_DURATION_S,
@@ -95,7 +96,10 @@ log = structlog.get_logger()
 # arrived with no trigger), plus `speaker` when someone other than the creator says it.
 # v66 combines both authored changes without losing either prompt instruction.
 # v66 (KRI-792): named spoken cuts carry cut_lines; caption spellings remain intact.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-22-v66"
+# KRI-789: quoted start / end LINES inside a take are a `timing` trim (`start_line` /
+# `end_line`), never an `order` requirement; route places keep `order` (v66).
+# v68 combines caption spelling, spoken-text triggers/speaker, quoted trims and named cuts.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-22-v68"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -386,9 +390,16 @@ when the same words also sit in a title or sentence: a distance, activity, start
 point ("I ran 20K from Arnavutköy to Eminönü") go in `facts` as {"distance_km": 20,
 "activity": "run", "start": "Arnavutköy", "end": "Eminönü"} on the requested text/order
 requirement they describe. Never invent a requirement only to store background facts. ALWAYS add
-an `order` requirement when the creator ASKS the edit to follow a sequence ("put them in the order
-I filmed", "order them chronologically", "start the edit at X and finish at Y"): {"kind":
-"order", "scope": "global", "facts": {"key": "capture_time"}} plus "start"/"end" when named.
+an `order` requirement when the creator ASKS the edit to follow a sequence of clips or places
+("put them in the order I filmed", "order them chronologically", "start the edit in Arnavutköy
+and finish in Eminönü"): {"kind": "order", "scope": "global", "facts": {"key": "capture_time"}}
+plus "start"/"end" when named. A line someone SAYS in the footage is never a clip order:
+`Start at "Hello everyone" and end right after "see you tomorrow"` trims the speech, so it is
+ONE `timing` requirement {"kind": "timing", "scope": "global", "facts": {"start_line": "Hello
+everyone", "end_line": "see you tomorrow"}} with the quoted words exactly as the creator wrote
+them (just `start_line` or just `end_line` when only one line is named), never an `order`
+requirement and never `triggers`. Record it even when no length is stated; a stated length
+stays its own `timing` requirement.
 A clip the creator wants FIRST or LAST ("start with the video that is blue", "end on the
 sunset") goes in that SAME order requirement as `first_clip` / `last_clip`: the creator's own
 words for the clip ({"key": "capture_time", "first_clip": "the video that is blue"}); the
@@ -416,8 +427,9 @@ particular shot, photo or badge => {"closing": "<the creator's words for it>"}; 
 filler sounds or retakes from the speech => {"speech_cleanup": true}, keep them =>
 {"speech_cleanup": false}; cut out particular spoken words (a slip, a half question, a line, "the
 part where I say ...") => {"speech_cleanup": true, "cut_lines": ["with bread, no,"]}, one item per
-stretch in the creator's exact words, quoted or described, never translated (where the video
-starts or ends is the order requirement's "start"/"end", never a cut line); captions =>
+stretch in the creator's exact words, quoted or described, never translated. Quoted speech
+bounds use the timing requirement's "start_line"/"end_line", never a cut line; ordered clips
+or places still use the order requirement's "start"/"end". Captions =>
 {"captions": "on"}, {"captions": "off"} or {"captions":
 "word_by_word"} (karaoke, one word at a time), plus {"caption_language": "en"} (a two-letter
 code) when they name the captions' language ("Türkçe altyazı" => "tr"), plus {"spellings":
@@ -837,7 +849,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     else None
                 ),
                 brief_updates=(
-                    parse_brief_updates(data.get("brief_updates")) if input.brief_enabled else []
+                    _refile_take_trims(parse_brief_updates(data.get("brief_updates")), input)
+                    if input.brief_enabled
+                    else []
                 ),
             )
         except ValidationError as exc:
@@ -1225,6 +1239,27 @@ def _classed_schema_error(message: str, error_class: str) -> SchemaError:
     error = SchemaError(message)
     error.error_class = _clean_error_class(error_class)  # type: ignore[attr-defined]
     return error
+
+
+def _refile_take_trims(
+    updates: list[BriefUpdate], agent_input: MainCreatorInput
+) -> list[BriefUpdate]:
+    """KRI-789: quoted start / end lines of a one-video edit are a trim, not a clip order.
+
+    v64 filed "Start at “Hi, I'm Karolina…” and end right after “I'm gonna be here all week”"
+    as a key-less `order` requirement, which asked the order_basis question on a one-video
+    Talking edit. The prompt now teaches the `timing` shape; this keeps a reply in the old
+    shape from reaching the brief when the edit is one video (no clip order to mean instead).
+    """
+    media = agent_input.capability_manifest.media
+    visual = [m for m in media if m.kind in {"video", "image"}]
+    if not updates or len(visual) != 1 or visual[0].kind != "video":
+        return updates
+    refiled = [refile_take_trim(u, creator_message=agent_input.user_message) for u in updates]
+    moved = sum(new is not old for new, old in zip(refiled, updates, strict=True))
+    if moved:
+        log.info("main_creator_take_trim_refiled", count=moved)
+    return refiled
 
 
 def _hoist_misplaced_brief_updates(data: dict) -> dict:
