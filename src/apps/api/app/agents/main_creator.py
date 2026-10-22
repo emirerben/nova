@@ -88,7 +88,9 @@ log = structlog.get_logger()
 # KRI-700: a brighten / darken ask carries `footage_light`, so the server can say no draft
 # changes the footage's light instead of the summary promising it (v60).
 # v61 (KRI-674 live verification): per-clip camera sound is not spoken excerpts.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-19-v64"
+# KRI-793: a captions ask that lists words to spell records them in `spellings`, which the
+# phone Talking writer applies to its captions and the render-ready review checks (v65).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-21-v65"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -406,7 +408,9 @@ particular shot, photo or badge => {"closing": "<the creator's words for it>"}; 
 filler sounds or retakes from the speech => {"speech_cleanup": true}, keep them =>
 {"speech_cleanup": false}; captions => {"captions": "on"}, {"captions": "off"} or {"captions":
 "word_by_word"} (karaoke, one word at a time), plus {"caption_language": "en"} (a two-letter
-code) when they name the captions' language ("Türkçe altyazı" => "tr"); brighten or darken
+code) when they name the captions' language ("Türkçe altyazı" => "tr"), plus {"spellings":
+["Oblea de la Casa", "Merope"]} when they list words or names to spell a certain way in the
+captions, each exactly as the creator wrote it (never corrected or translated); brighten or darken
 the footage itself ("brighten the dark clips", "klipleri aydınlat") => a `style` requirement with
 {"footage_light": "brighter"} or {"footage_light": "darker"}; no edit can change the footage's
 light yet, so never say in `summary` that it is brightened or darkened.
