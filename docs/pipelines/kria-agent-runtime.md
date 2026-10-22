@@ -153,6 +153,7 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   explicit simpler-version choices still work. Regression coverage:
   `test_automatic_strategy_fallback.py`, `test_runtime_automatic_simplification.py`,
   and the EN/TR phone/cloud cases in `test_approval_readiness_postgres.py`.
+  Evidence and repeatable native verification: [automatic supported-version recovery](../reviews/automatic-render-fallback.md).
 - **Receipts.** Each draft turn attaches `requirement_receipts`
   (`met | partial | not_possible`, reason, `inferred`) to its `draft_applied`
   event payload. Checks: per-clip text coverage, order basis
