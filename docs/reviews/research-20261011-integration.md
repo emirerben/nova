@@ -52,3 +52,5 @@ for concept, post in [('early-riser-commitment-01', '7669218300676607239'), ('ea
     assert '/video/' + post in banks[concept]['source']
 print('PASS: two historical wrong-post controls retained; four current references match independent dated source counts and post identity.')
 ```
+
+Initial preship correctly blocked all four JSON banks as unmapped journey paths. Added one market-research-reference-banks journey running the existing bank/coupling/slop and four consuming-agent/replay suites whenever those reference inputs change. All prior journey objects and native requirements are unchanged. The original unmapped-path output is the negative control; the exact same four paths now have no mapping gaps. Existing selector tests run unchanged. Receipt validation also caught a diagnostic angle-bracket filename as a placeholder; the command label was corrected without changing its checks.
