@@ -40,6 +40,9 @@ F21 Same asset ids but a re-uploaded source (new generation) -> 422: approved so
     bytes changed, which is not a slide add/delete.
 F22 A post-render delete Save rebuilds the rendered slides variant from the saved 2-slide
     draft; under the iPhone-only fence the draft saves and the old render is kept.
+F23 Same-asset reorder/next chat from an older device keeps newer stored instructions.
+F24 Same-asset PUT and chat reject divergent requests, pinned briefs and frozen answers.
+F25 Same-asset valid extensions keep earlier instructions, brief and frozen answers.
 
 Repeatable artifact: set ``KRI812_EVIDENCE_DIR`` to write ``report.json`` (requests,
 binding before/after, asset ids + generations, API revision, effective flags, the slides
@@ -557,6 +560,92 @@ def _rebinding(binding: BriefBinding, **changes: Any) -> dict:
         fields["choice_answers"],
     )
     return BriefBinding(**fields, digest=digest).model_dump(mode="json")
+
+
+@pytest.mark.parametrize("route", ["put", "chat"])
+def test_same_assets_keep_newer_stored_instructions(
+    client: TestClient, seeded: SimpleNamespace, agent: type[_ParsedOps], route: str
+) -> None:
+    old = _stored(seeded)
+    agent.ops = [{"op": "set_post_caption", "caption": "Keep every original title"}]
+    chat = _chat(client, seeded, old, "Keep every original title")
+    assert chat.status_code == 200, chat.text
+    proposal = SlidePostDraft.model_validate(chat.json()["draft"])
+    saved = _put(client, seeded, _save_body(proposal, expected_version=1), "F23 newer save")
+    assert saved.status_code == 200, saved.text
+    newer = _stored(seeded).brief_binding
+    assert "Keep every original title" in newer.creator_request
+    reordered = old.model_copy(update={"slides": list(reversed(old.slides)), "cover_index": 0})
+    if route == "put":
+        stale = _put(client, seeded, _save_body(reordered, expected_version=1), "F23 stale")
+        assert stale.status_code == 409
+        response = _put(client, seeded, _save_body(reordered, expected_version=2), "F23 rebase")
+        assert response.status_code == 200, response.text
+        result = _stored(seeded).brief_binding
+        assert result.digest == newer.digest
+    else:
+        response = _chat(client, seeded, reordered, "Use my caption")
+        assert response.status_code == 200, response.text
+        result = SlidePostDraft.model_validate(response.json()["draft"]).brief_binding
+        assert result.creator_request.endswith("Latest message: Use my caption")
+    assert result.creator_request.startswith(newer.creator_request)
+    assert result.brief == newer.brief and result.choice_answers == newer.choice_answers
+
+
+@pytest.mark.parametrize("route", ["put", "chat"])
+@pytest.mark.parametrize("change", ["request", "brief", "answers"])
+def test_same_assets_reject_unanchored_authority(
+    client: TestClient, seeded: SimpleNamespace, agent: type[_ParsedOps], route: str, change: str
+) -> None:
+    before = _stored(seeded)
+    changes = {
+        "request": {"creator_request": "Only horses"},
+        "brief": {
+            "brief": CreativeBrief(
+                version=1,
+                requirements=[
+                    BriefRequirement(
+                        id="r1", kind="order", scope="global", description="horse first"
+                    )
+                ],
+            )
+        },
+        "answers": {"choice_answers": [{**CHOICE_ANSWERS[0], "option": "chronological"}]},
+    }
+    binding = BriefBinding.model_validate(_rebinding(before.brief_binding, **changes[change]))
+    draft = before.model_copy(update={"brief_binding": binding})
+    agent.ops = [{"op": "set_post_caption", "caption": "A normal edit"}]
+    response = (
+        _put(client, seeded, _save_body(draft, expected_version=1), "F24")
+        if route == "put"
+        else _chat(client, seeded, draft, "A normal edit")
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "slide_post_binding_invalid"
+    _assert_unchanged(seeded, before)
+
+
+@pytest.mark.parametrize("route", ["put", "chat"])
+def test_same_assets_accept_anchored_extension(
+    client: TestClient, seeded: SimpleNamespace, agent: type[_ParsedOps], route: str
+) -> None:
+    before = _stored(seeded)
+    request = before.brief_binding.creator_request + "\n\nLatest message: Keep all titles"
+    binding = BriefBinding.model_validate(_rebinding(before.brief_binding, creator_request=request))
+    draft = before.model_copy(update={"brief_binding": binding})
+    agent.ops = [{"op": "set_post_caption", "caption": "A normal edit"}]
+    if route == "put":
+        response = _put(client, seeded, _save_body(draft, expected_version=1), "F25")
+        assert response.status_code == 200, response.text
+        result = _stored(seeded).brief_binding
+        assert result.digest == binding.digest
+    else:
+        response = _chat(client, seeded, draft, "A normal edit")
+        assert response.status_code == 200, response.text
+        result = SlidePostDraft.model_validate(response.json()["draft"]).brief_binding
+    assert result.creator_request.startswith(request)
+    assert result.brief == before.brief_binding.brief
+    assert result.choice_answers == before.brief_binding.choice_answers
 
 
 def test_foreign_or_other_item_or_legacy_binding_is_rejected(

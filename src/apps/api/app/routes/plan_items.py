@@ -4567,6 +4567,23 @@ def _same_approval(a: BriefBinding, b: BriefBinding) -> bool:
     return a.state == b.state and brief_a == brief_b and a.choice_answers == b.choice_answers
 
 
+def _slide_post_binding_anchor(
+    binding: BriefBinding, *, stored: BriefBinding | None
+) -> BriefBinding | None:
+    """Keep stored creator authority for both unchanged and changed media (KRI-836)."""
+    if stored is None:
+        return binding
+    if binding.digest == stored.digest:
+        return stored
+    if not _same_approval(binding, stored):
+        return None
+    if _request_extends(binding.creator_request, stored.creator_request):
+        return binding
+    if _request_extends(stored.creator_request, binding.creator_request):
+        return stored
+    return None
+
+
 def _slide_post_rebind_anchor(
     binding: BriefBinding,
     *,
@@ -4600,15 +4617,7 @@ def _slide_post_rebind_anchor(
         # No stored authority: accept only what chat-edit mints without one
         # (no pinned brief, no frozen answers); the request is creator text.
         return binding if binding.brief is None and not binding.choice_answers else None
-    if binding.digest == stored.digest:
-        return stored
-    if not _same_approval(binding, stored):
-        return None
-    if _request_extends(binding.creator_request, stored.creator_request):
-        return binding
-    if _request_extends(stored.creator_request, binding.creator_request):
-        return stored
-    return None
+    return _slide_post_binding_anchor(binding, stored=stored)
 
 
 def _rebind_slide_post(
@@ -4899,29 +4908,29 @@ async def put_slide_post_draft(
                 },
             )
         binding = body.brief_binding
+        matches = _binding_matches_slide_post(
+            binding, thread=thread, item=item, draft=new_draft, owned_assets=owned_assets
+        )
+        stored_binding = current.brief_binding if current is not None else None
+        anchor = (
+            _slide_post_binding_anchor(binding, stored=stored_binding)
+            if matches
+            else _slide_post_rebind_anchor(binding, stored=stored_binding, draft=new_draft)
+        )
+        if anchor is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "slide_post_binding_invalid",
+                    "message": "This staged edit no longer belongs to this slide post.",
+                },
+            )
+        binding = anchor
         if not _binding_matches_slide_post(
             binding, thread=thread, item=item, draft=new_draft, owned_assets=owned_assets
         ):
-            # The creator removed or added a slide (by hand, or by applying an AI
-            # proposal whose binding was minted on the pre-edit draft).  Re-snapshot
-            # the saved assets from server rows, as the chat-edit route does, but
-            # only from a binding anchored on the one stored with this draft
-            # (KRI-812).  Anything else keeps the strict rejection.
-            anchor = _slide_post_rebind_anchor(
-                binding,
-                stored=current.brief_binding if current is not None else None,
-                draft=new_draft,
-            )
-            if anchor is None:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail={
-                        "code": "slide_post_binding_invalid",
-                        "message": "This staged edit no longer belongs to this slide post.",
-                    },
-                )
             binding = _rebind_slide_post(
-                anchor, thread=thread, item=item, draft=new_draft, owned_assets=owned_assets
+                binding, thread=thread, item=item, draft=new_draft, owned_assets=owned_assets
             )
         new_draft = new_draft.model_copy(update={"brief_binding": binding})
     item.slide_post = new_draft.model_dump(mode="json")
@@ -5176,13 +5185,7 @@ async def chat_edit_slide_post(
                 base_version=server_version,
             )
         previous = draft.brief_binding
-        if previous is not None and not _binding_matches_slide_post(
-            previous,
-            thread=thread,
-            item=item,
-            draft=draft,
-            owned_assets=owned_assets,
-        ):
+        if previous is not None:
             if not _binding_same_thread_and_item(previous, thread=thread, item=item):
                 # A submitted binding can be internally consistent while still
                 # belonging to another item.  Never use it as request context.
@@ -5193,9 +5196,23 @@ async def chat_edit_slide_post(
                         "message": "This staged edit does not belong to this slide post.",
                     },
                 )
-            # The asset set changed after the prior turn.  Preserve its complete
-            # creator request while minting a fresh snapshot for these assets;
-            # silently dropping it would erase an earlier requirement.
+            matches = _binding_matches_slide_post(
+                previous, thread=thread, item=item, draft=draft, owned_assets=owned_assets
+            )
+            stored_binding = stored.brief_binding if stored is not None else None
+            previous = (
+                _slide_post_binding_anchor(previous, stored=stored_binding)
+                if matches
+                else _slide_post_rebind_anchor(previous, stored=stored_binding, draft=draft)
+            )
+            if previous is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "code": "slide_post_binding_invalid",
+                        "message": "This staged edit does not belong to this slide post.",
+                    },
+                )
         brief_binding = _rebind_slide_post(
             previous,
             thread=thread,
