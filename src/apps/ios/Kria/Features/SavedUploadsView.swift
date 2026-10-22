@@ -235,10 +235,12 @@ struct SavedUploadsView: View {
             originalRevision += 1
             onAdded()
         } catch {
-            self.error = error.localizedDescription
+            self.error = (error as? APIError)?.conflictDetail ?? error.localizedDescription
             if error is SavedMediaError { requestRelink(asset, cloud: false) }
-            else if role == .visual, error as? APIError == .conflict {
-                // The cloud copy changed or expired: restore it from the original, then add.
+            else if role == .visual, (error as? APIError)?.isCloudCopyUnavailable == true, !addsOriginalToVisuals(asset) {
+                // Only the generation-drift conflict means the cloud copy changed: restore it from
+                // the original, then add. A device-only video already re-uploaded its original in
+                // attach, so another relink would only loop; its message stays on screen.
                 self.error = "The cloud copy of this file changed. Choose the original to restore it."
                 requestRelink(asset, cloud: true)
             }

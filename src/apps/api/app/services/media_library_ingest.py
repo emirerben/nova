@@ -188,6 +188,16 @@ async def reserve_library_upload(
     if row is not None:
         if row.request_json != payload:
             raise HTTPException(409, "Upload identity reused for different media")
+        if payload.get("attach_original") and not await _original_target_usable(db, row):
+            # KRI-822: an original's upload identity is fixed by its declared hash, so a
+            # cleaned-up target or a lost cloud copy must not become a permanent dead end.
+            await _reservation_capacity(db, owner_id, payload, exclude_reservation=row.id)
+            row.object_path = _mint_target(db, owner_id, payload)
+            row.status, row.asset_id, row.source_id = "reserved", None, None
+            row.client_event_id, row.analysis_dispatch_pending = None, False
+            row.expires_at = datetime.now(UTC) + _URL_TTL
+            await db.commit()
+            return row
         # Finalized targets never receive another signed PUT.
         if row.status == "finalized":
             await db.commit()
@@ -208,41 +218,83 @@ async def reserve_library_upload(
         receipt.retention_expires_at = datetime.now(UTC) + timedelta(days=1)
     else:
         await _reservation_capacity(db, owner_id, payload)
-        identifier = uuid.uuid4()
-        extension = {
-            "image/jpeg": "jpg",
-            "image/png": "png",
-            "image/webp": "webp",
-            "image/heic": "heic",
-            "image/heif": "heif",
-            "video/mp4": "mp4",
-            "video/quicktime": "mov",
-        }.get(payload["content_type"], "audio")
-        prefix = (
-            "analysis-proxy-"
-            if payload["upload_contract"].get("purpose") == "analysis_proxy"
-            else "source-"
-        )
-        path = f"users/{owner_id}/media-library/{identifier}/{prefix}{identifier}.{extension}"
         row = MediaAssetUploadReservation(
-            id=identifier,
+            id=uuid.uuid4(),
             user_id=owner_id,
             client_upload_id=payload["client_upload_id"],
             request_json=payload,
-            object_path=path,
+            object_path=_mint_target(db, owner_id, payload),
             expires_at=datetime.now(UTC) + _URL_TTL,
         )
         db.add(row)
-        db.add(
-            TemporaryMediaUpload(
-                user_id=owner_id,
-                object_path=path,
-                purpose="media_library",
-                retention_expires_at=datetime.now(UTC) + timedelta(days=1),
-            )
-        )
     await db.commit()
     return row
+
+
+def _mint_target(db: AsyncSession, owner_id: uuid.UUID, payload: dict) -> str:
+    """A fresh create-only object path plus its cleanup receipt."""
+    identifier = uuid.uuid4()
+    extension = {
+        "image/jpeg": "jpg",
+        "image/png": "png",
+        "image/webp": "webp",
+        "image/heic": "heic",
+        "image/heif": "heif",
+        "video/mp4": "mp4",
+        "video/quicktime": "mov",
+    }.get(payload["content_type"], "audio")
+    prefix = (
+        "analysis-proxy-"
+        if payload["upload_contract"].get("purpose") == "analysis_proxy"
+        else "source-"
+    )
+    path = f"users/{owner_id}/media-library/{identifier}/{prefix}{identifier}.{extension}"
+    db.add(
+        TemporaryMediaUpload(
+            user_id=owner_id,
+            object_path=path,
+            purpose="media_library",
+            retention_expires_at=datetime.now(UTC) + timedelta(days=1),
+        )
+    )
+    return path
+
+
+async def _original_target_usable(db: AsyncSession, row: MediaAssetUploadReservation) -> bool:
+    """Whether an attach-original reservation can still finish or still names a live copy."""
+    if row.status != "finalized":
+        receipt = await db.scalar(
+            select(TemporaryMediaUpload)
+            .where(TemporaryMediaUpload.object_path == row.object_path)
+            .with_for_update()
+        )
+        return (
+            receipt is not None
+            and receipt.status == "reserved"
+            and receipt.cleanup_claimed_at is None
+        )
+    source = await db.scalar(
+        select(MediaAssetSource)
+        .where(MediaAssetSource.id == row.source_id, MediaAssetSource.user_id == row.user_id)
+        .with_for_update()
+    )
+    if source is None or source.status != "available":
+        return False
+    try:
+        current = await asyncio.to_thread(storage.object_metadata, source.object_path)
+    except (NotFound, FileNotFoundError):
+        current = None
+    except Exception as exc:
+        raise HTTPException(503, "Cannot verify the existing cloud copy; retry") from exc
+    if (
+        current is None
+        or str(current.generation) != source.object_generation
+        or current.size != source.byte_count
+    ):
+        # The verified original is gone: say so, then accept a fresh upload of it.
+        source.status = "missing"
+        return False
+    return True
 
 
 def verified_source_metadata(
@@ -255,14 +307,27 @@ def verified_source_metadata(
         if str(before.generation) != generation or before.size != payload["file_size_bytes"]:
             raise ValueError("Uploaded source generation or size changed")
         with tempfile.TemporaryDirectory(prefix="library-verify-") as directory:
-            local = Path(directory) / "source"
-            storage.download_generation_to_file(path, str(local), generation=generation)
-            if local.stat().st_size != payload["file_size_bytes"]:
-                raise ValueError("Uploaded source length does not match")
             digest = hashlib.sha256()
-            with local.open("rb") as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            if payload.get("attach_original"):
+                # KRI-822: a camera original can reach 4 GB. Never stage it on the API
+                # machine (its /tmp is RAM): hash a bounded stream of the pinned
+                # generation and let ffprobe read only the ranges it needs.
+                length = 0
+                for chunk in storage.iter_object_generation(
+                    path, generation=generation, size=before.size
+                ):
                     digest.update(chunk)
+                    length += len(chunk)
+                local = storage.probe_input_for_generation(path, generation=generation)
+            else:
+                local = Path(directory) / "source"
+                storage.download_generation_to_file(path, str(local), generation=generation)
+                length = local.stat().st_size
+                with local.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(chunk)
+            if length != payload["file_size_bytes"]:
+                raise ValueError("Uploaded source length does not match")
             facts = {}
             if kind == "image":
                 import pillow_heif
@@ -296,7 +361,7 @@ def verified_source_metadata(
                     capture_output=True,
                     text=True,
                     check=True,
-                    timeout=30,
+                    timeout=90 if payload.get("attach_original") else 30,
                 )
                 probe = json.loads(completed.stdout)
                 streams = probe.get("streams", [])
@@ -448,8 +513,6 @@ async def register_verified_source(
             and str(current.generation) == current_source.object_generation
             and current.size == current_source.byte_count
         ):
-            if attach_original:
-                existing[0].original_availability = "cloud_backed"
             return existing[0], current_source
         current_source.status = "missing"
     if existing is None and repair is None:
@@ -515,9 +578,9 @@ async def register_verified_source(
         content_type=content_type,
         status="available",
     )
-    if attach_original:
-        # Only after the full bytes matched the declared original identity.
-        asset.original_availability = "cloud_backed"
+    # ``original_availability`` stays as imported (KRI-822): a device-only video keeps its
+    # analysis-proxy contract, so proxy repair and phone Footage are unchanged. The
+    # available ``original`` source row is what makes it usable in Visuals.
     db.add(asset)
     await db.flush()
     db.add(source)

@@ -26,6 +26,8 @@ struct SavedMediaAsset: Codable, Identifiable, Sendable {
         switch role {
         case .visual: availableSource(role: "original")
         case .clip where destination == .cloud: availableSource(role: "original") ?? availableSource(role: "analysis_proxy")
+        // A device-only project binds only the proxy; the full original never stands in for it.
+        case .clip where kind == "video" && originalAvailability == "device_only": availableSource(role: "analysis_proxy")
         case .clip: availableSource(role: "analysis_proxy") ?? availableSource(role: "original")
         case .voiceover, .song: availableSource(role: "original") ?? source
         }
@@ -254,11 +256,12 @@ extension KriaAPI {
         // Account removal fences every later original upload.
         guard !FileManager.default.fileExists(atPath: MediaLibraryOriginals(owner: owner).erasureMarker.path) else { throw SourceAssetError.invalidBinding }
         let body = SavedMediaUploadBody(client_upload_id: "ios-original-\(asset.id)-\(fingerprint.hex)", filename: asset.filename, content_type: contentType, file_size_bytes: actual.byteCount, kind: asset.kind, upload_contract: ProjectMediaUploadContract(purpose: .cloudRenderSource, proxy: nil), repair_asset_id: asset.id, attach_original: true)
-        return try await uploadSavedMediaFile(body, file: file)
+        // Finalize re-hashes every byte of a camera original server-side before answering.
+        return try await uploadSavedMediaFile(body, file: file, finalizeTimeout: 600)
     }
 
     /// Reserve, PUT (create-only) and finalize one library upload.
-    private func uploadSavedMediaFile(_ body: SavedMediaUploadBody, file: URL) async throws -> SavedMediaAsset {
+    private func uploadSavedMediaFile(_ body: SavedMediaUploadBody, file: URL, finalizeTimeout: TimeInterval? = nil) async throws -> SavedMediaAsset {
         let target = try await request(path: "me/media-assets/uploads", method: "POST", bodyData: JSONEncoder().encode(body), decode: SavedMediaUpload.self)
         if let url = target.uploadURL {
             var put = URLRequest(url: url)
@@ -271,7 +274,15 @@ extension KriaAPI {
             // verifies its full bytes and generation before accepting a 412 retry.
         } else if let id = target.assetID { return try await savedMediaAsset(id: id) }
         let finalized: [String: JSONValue] = ["client_event_id": .string("ios-finalize-\(target.reservationID)")]
-        return try await request(path: "me/media-assets/uploads/\(target.reservationID)/finalize", method: "POST", bodyData: JSONEncoder().encode(finalized), decode: SavedMediaAsset.self)
+        let path = "me/media-assets/uploads/\(target.reservationID)/finalize"
+        do {
+            return try await request(path: path, method: "POST", bodyData: JSONEncoder().encode(finalized), decode: SavedMediaAsset.self, timeoutInterval: finalizeTimeout)
+        } catch let error as APIError where error.conflictDetail?.contains("renew before finalizing") == true {
+            // A long PUT outlived the reservation: the same identity renews it; the bytes are already there.
+            let renewed = try await request(path: "me/media-assets/uploads", method: "POST", bodyData: JSONEncoder().encode(body), decode: SavedMediaUpload.self)
+            guard renewed.objectPath == target.objectPath else { throw error }
+            return try await request(path: path, method: "POST", bodyData: JSONEncoder().encode(finalized), decode: SavedMediaAsset.self, timeoutInterval: finalizeTimeout)
+        }
     }
 }
 

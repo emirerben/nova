@@ -8,7 +8,11 @@ Failure modes this file guards (written before the fix):
 - F6  an archived asset is upgraded;
 - F9  with both sources present, a source-less Visuals pick selects the proxy;
 - F10 a lost finalize response duplicates the source or the catalogue entry;
-- F15 a real iPhone .mov original is rejected by the mp4-only / 512 MB library limits.
+- F15 a real iPhone .mov original is rejected by the mp4-only / 512 MB library limits;
+- F16 a multi-GB original is staged whole on the API machine's RAM-backed /tmp;
+- F17 the fixed upload identity dead-ends once its target is cleaned up, or once the
+      verified cloud original is lost (every later upgrade replays the stale row);
+- F18 the upgrade flips the asset's contract, so its proxy can no longer be repaired.
 
 Runs the real routes and the real byte verification (sha256 + ffprobe) against
 PostgreSQL; only GCS is replaced by a local byte store.
@@ -19,7 +23,7 @@ import os
 import shutil
 import subprocess
 import uuid
-from pathlib import Path
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import httpx
@@ -30,6 +34,7 @@ from sqlalchemy import delete, select
 from app import storage
 from app.auth import get_current_user, is_native_client
 from app.database import AsyncSessionLocal, engine
+from app.kria.media_sources import MediaUploadContract
 from app.models import (
     ContentPlan,
     MediaAsset,
@@ -37,6 +42,7 @@ from app.models import (
     Persona,
     PlanItem,
     PlanItemAsset,
+    TemporaryMediaUpload,
     User,
 )
 from app.routes.media_assets import router
@@ -91,7 +97,7 @@ async def _user(db) -> uuid.UUID:
 
 
 @pytest.fixture
-async def world(monkeypatch, original_mov):
+async def world(monkeypatch, original_mov, tmp_path_factory):
     monkeypatch.setattr(ingest.settings, "media_library_enabled", True)
     monkeypatch.setattr(ingest, "dispatch_library_analysis", lambda *args: None)
     monkeypatch.setattr(projections, "get_media_asset_analysis", lambda **kwargs: None)
@@ -99,6 +105,8 @@ async def world(monkeypatch, original_mov):
     declared_sha = hashlib.sha256(original_mov).hexdigest()
     contract["proxy"]["original"]["sha256"] = declared_sha
     contract["proxy"]["original"]["byte_count"] = len(original_mov)
+    # Stored exactly as the upload route stores it (pydantic-normalized).
+    contract = MediaUploadContract.model_validate(contract).model_dump(mode="json")
     async with AsyncSessionLocal() as db:
         owner = await _user(db)
         stranger = await _user(db)
@@ -136,10 +144,26 @@ async def world(monkeypatch, original_mov):
         return SimpleNamespace(generation="77", size=len(objects[path]))
 
     def download(path, local, **kwargs):
-        Path(local).write_bytes(objects[path])
+        # F16: an original is streamed, never downloaded whole.
+        raise AssertionError(f"whole-object download of {path}")
+
+    def stream(path, *, generation, size, chunk_size=8 * 1024 * 1024):
+        data = objects[path]
+        assert generation == "77" and size == len(data)
+        for start in range(0, len(data), 4096):
+            yield data[start : start + 4096]
+
+    probes = tmp_path_factory.mktemp("probe")
+
+    def probe_input(path, *, generation):
+        local = probes / f"{uuid.uuid4()}.mov"
+        local.write_bytes(objects[path])
+        return str(local)
 
     monkeypatch.setattr(storage, "object_metadata", object_metadata)
     monkeypatch.setattr(storage, "download_generation_to_file", download)
+    monkeypatch.setattr(storage, "iter_object_generation", stream)
+    monkeypatch.setattr(storage, "probe_input_for_generation", probe_input)
     monkeypatch.setattr(storage, "signed_put_url", lambda *a, **k: "https://upload.test/signed")
 
     current = {"user": owner}
@@ -236,7 +260,8 @@ async def test_device_only_video_reaches_visuals_through_its_verified_original(w
     assert finalized.status_code == 200, finalized.text
     out = finalized.json()
     assert out["id"] == str(w.asset)
-    assert out["original_availability"] == "cloud_backed"
+    # F18: the asset keeps its device-only proxy contract; the original row is additive.
+    assert out["original_availability"] == "device_only"
     roles = {source["role"]: source for source in out["sources"]}
     assert roles["original"]["uploaded_sha256"] == w.declared_sha
     assert roles["original"]["byte_count"] == len(w.original)
@@ -248,7 +273,7 @@ async def test_device_only_video_reaches_visuals_through_its_verified_original(w
     retry = await _upload(w, _upgrade_body(w), w.original)
     assert retry.status_code == 200
     availability, sources = await _sources(w.asset)
-    assert availability == "cloud_backed"
+    assert availability == "device_only"
     assert [(role, status) for _, role, _, status in sources] == [
         ("analysis_proxy", "available"),
         ("original", "available"),
@@ -311,3 +336,73 @@ async def test_upgrade_requires_the_exact_original_from_the_owner(world):
     archived = await _upload(w, _upgrade_body(w, client_upload_id="archived"), w.original)
     assert archived.status_code == 409
     assert (await _sources(w.asset))[0] == "device_only"
+
+
+async def _claim_receipts(owner):
+    async with AsyncSessionLocal() as db:
+        for receipt_row in (
+            await db.scalars(
+                select(TemporaryMediaUpload).where(TemporaryMediaUpload.user_id == owner)
+            )
+        ).all():
+            receipt_row.cleanup_claimed_at = datetime.now(UTC)
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_upgrade_identity_recovers_after_cleanup_and_after_the_cloud_copy_is_lost(world):
+    w = world
+    body = _upgrade_body(w, client_upload_id=f"ios-original-{w.asset}-{w.declared_sha}")
+    # The PUT never finished (app killed) and cleanup later claimed the target (F17).
+    first = await w.client.post("/me/media-assets/uploads", json=body)
+    assert first.status_code == 200 and first.json()["upload_url"]
+    await _claim_receipts(w.owner)
+    finalized = await _upload(w, body, w.original)
+    assert finalized.status_code == 200, finalized.text
+    first_original = next(s for s in finalized.json()["sources"] if s["role"] == "original")
+    assert first_original["status"] == "available"
+
+    # The verified original later vanishes from storage (lifecycle or drift) (F17).
+    w.objects.pop(next(path for path in w.objects if path.endswith(".mov")))
+    with pytest.raises(HTTPException) as lost:
+        await _project(w)
+    assert lost.value.status_code == 409
+    again = await _upload(w, body, w.original)
+    assert again.status_code == 200, again.text
+    availability, sources = await _sources(w.asset)
+    assert availability == "device_only"
+    by_status = sorted((role, status) for _, role, _, status in sources)
+    assert by_status == [
+        ("analysis_proxy", "available"),
+        ("original", "available"),
+        ("original", "missing"),
+    ]
+    fresh = next(
+        sid for sid, role, _, status in sources if role == "original" and status == "available"
+    )
+    assert fresh != uuid.UUID(first_original["id"])
+    assert (await _project(w))[0] == fresh
+
+
+@pytest.mark.asyncio
+async def test_proxy_repair_still_works_after_the_upgrade(world):
+    w = world
+    assert (await _upload(w, _upgrade_body(w), w.original)).status_code == 200
+    # F18: the iOS proxy repair sends the asset's stored proxy contract; it must stay valid.
+    async with AsyncSessionLocal() as db:
+        asset = await db.get(MediaAsset, w.asset)
+        assert asset.metadata_json["upload_contract"] == w.contract
+        assert asset.original_availability == "device_only"
+    reserved = await w.client.post(
+        "/me/media-assets/uploads",
+        json=dict(
+            client_upload_id=f"ios-repair-{w.asset}",
+            filename="horse.mov",
+            kind="video",
+            content_type="video/mp4",
+            file_size_bytes=12,
+            upload_contract=w.contract,
+            repair_asset_id=str(w.asset),
+        ),
+    )
+    assert reserved.status_code == 200, reserved.text
