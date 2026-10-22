@@ -26,8 +26,10 @@ from app.config import settings
 from app.database import sync_session
 from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.brief import (
+    BriefRequirement,
     BriefUpdate,
     CreativeBrief,
+    apply_updates,
     load_latest_brief_sync,
     persist_brief_version_sync,
     render_brief_request,
@@ -35,6 +37,9 @@ from app.kria.brief import (
 from app.kria.brief_binding import BriefBindingRequestTooLongError
 from app.kria.brief_checks import (
     NARRATED_ALIGNMENT_FIELD,
+    _is_spoken_text_cue,
+    _wants_bed_muted,
+    _wants_source_sound_kept,
     build_receipts,
     clip_speed_notice,
     defers_caption_words_to_phone_render,
@@ -50,6 +55,7 @@ from app.kria.brief_checks import (
     reply_from_receipts,
     requirements_to_check_at_draft,
     speech_cleanup_review_note,
+    wants_light_change,
     with_planned_cuts,
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
@@ -84,6 +90,7 @@ from app.models import (
     ContentPlan,
     CreationThread,
     CreationThreadEvent,
+    CreativeBriefVersion,
     CreatorAgentApproval,
     CreatorAgentExecution,
     CreatorAgentSession,
@@ -780,6 +787,153 @@ def _simpler_version_already_offered(
     return False
 
 
+def _policy_text_omission_reason(
+    req: BriefRequirement, omitted_texts: Mapping[str, Sequence[str]]
+) -> str | None:
+    """Match exact brief copy to server-proven compiler omissions, never a model claim."""
+    if req.kind != "text" or not req.literal or _is_spoken_text_cue(req):
+        return None
+    if _wants_source_sound_kept(req) or _wants_bed_muted(req) or "audio_intent" in req.facts:
+        return None
+    fields = (
+        ("opening_title",)
+        if req.scope == "title"
+        else ("shot_labels", "pinned_texts")
+        if req.scope == "per_clip" or req.scope.startswith("clip:")
+        else ("closing_title", "pinned_texts")
+        if req.scope in {"global", "closing", "ending"}
+        else ()
+    )
+    literal = " ".join(req.literal.split())
+    if any(
+        literal == " ".join(text.split())
+        for field in fields
+        for text in omitted_texts.get(field, ())
+    ):
+        return say(
+            en="The selected renderer cannot draw this requested text.",
+            tr="Seçilen oluşturucu bu istenen yazıyı gösteremiyor.",
+        )
+    return None
+
+
+def _automatic_omission_reason(req: BriefRequirement, strategy: Mapping[str, Any]) -> str | None:
+    """Prove a supported fallback from a known capability, not a missing draft field."""
+    if (
+        req.kind not in {"text", "style"}
+        or _wants_source_sound_kept(req)
+        or _wants_bed_muted(req)
+        or "audio_intent" in req.facts
+    ):
+        return None
+    if wants_light_change(req):
+        return say(
+            en="This edit cannot change the footage's brightness yet.",
+            tr="Bu düzenleme henüz çekimin parlaklığını değiştiremiyor.",
+        )
+    # Exact shot labels belong to the guided renderer (creator_capabilities).
+    # A guided draft that forgot them is repairable, not an unsupported request.
+    # Spoken cues retain their own timing/trigger-word questions.
+    if (
+        req.kind == "text"
+        and (req.scope == "per_clip" or req.scope.startswith("clip:"))
+        and not _is_spoken_text_cue(req)
+        and (
+            strategy.get("edit_format") == "subtitled" or strategy.get("render_program") == "native"
+        )
+    ):
+        return say(
+            en="This edit cannot show separate text on each clip yet.",
+            tr="Bu düzenleme henüz her klipte ayrı yazı gösteremiyor.",
+        )
+    return None
+
+
+def _automatic_omission_ids(
+    brief: CreativeBrief | None,
+    requirement_receipts: Sequence[Mapping[str, Any]],
+    readiness_report: Mapping[str, Any] | None,
+    *,
+    strategy: Mapping[str, Any] | None = None,
+    omitted_texts: Mapping[str, Sequence[str]] | None = None,
+) -> tuple[str, ...]:
+    """Return only deterministic text/style requirements safe to omit automatically.
+
+    A missing choice, selection, order, audio or timing requirement changes the edit's
+    meaning, so it must still stop for the creator.  This allowlist is deliberately
+    narrower than the general ``unmet_ids`` set used by the explicit simpler-version
+    flow.  Unchecked and evidence-missing rows are also excluded: they do not prove the
+    renderer cannot perform the request.
+    """
+    if brief is None:
+        return ()
+    allowed = {
+        req.id
+        for req in brief.live()
+        if _policy_text_omission_reason(req, omitted_texts or {}) is not None
+    }
+    by_id = {
+        req.id: req
+        for req in brief.live()
+        if _automatic_omission_reason(req, strategy or {}) is not None
+    }
+    if readiness_report is not None:
+        if readiness_report.get("policy_problem"):
+            return tuple(req.id for req in brief.live() if req.id in allowed)
+        for row in readiness_report.get("requirements") or ():
+            if not isinstance(row, Mapping) or row.get("disposition") != "unsupported":
+                continue
+            req = by_id.get(str(row.get("requirement_id")))
+            if req is not None:
+                allowed.add(req.id)
+    else:
+        for row in requirement_receipts:
+            if row.get("verification") != "checked" or row.get("status") != "not_possible":
+                continue
+            req = by_id.get(str(row.get("requirement_id")))
+            if req is not None:
+                allowed.add(req.id)
+    return tuple(req.id for req in brief.live() if req.id in allowed)
+
+
+def _append_automatic_omissions_sync(
+    db: Any,
+    *,
+    thread_id: uuid.UUID,
+    brief: CreativeBrief,
+    updates: Sequence[BriefUpdate],
+) -> CreativeBrief:
+    """Append the automatic omission as a second ledger version in this turn.
+
+    The creator's additions are persisted first for normal per-turn idempotency.  A
+    second append is therefore required when the same turn discovers a deterministic
+    unsupported text/style requirement after compiling the draft.  ``source_turn_id``
+    stays NULL because the first version already owns the turn's source updates.
+    """
+    merged = apply_updates(brief, updates, source_turn_id=None)
+    next_version = (
+        int(
+            db.execute(
+                select(func.coalesce(func.max(CreativeBriefVersion.version), 0)).where(
+                    CreativeBriefVersion.thread_id == thread_id
+                )
+            ).scalar_one()
+        )
+        + 1
+    )
+    merged = CreativeBrief(version=next_version, requirements=merged.requirements)
+    db.add(
+        CreativeBriefVersion(
+            thread_id=thread_id,
+            version=next_version,
+            requirements=[req.model_dump(mode="json") for req in merged.requirements],
+            source_turn_id=None,
+        )
+    )
+    db.flush()
+    return merged
+
+
 def _complete_draft_turn(
     turn_id: uuid.UUID,
     *,
@@ -1317,6 +1471,37 @@ def _complete_draft_turn(
                 for row in readiness_report["requirements"]
                 if row["disposition"] not in {"executable", "delegated"}
             ]
+        automatic_omission_ids = _automatic_omission_ids(
+            brief,
+            requirement_receipts,
+            readiness_report,
+            strategy=document.strategy,
+            omitted_texts=planned.policy_omitted_texts,
+        )
+        # A removed title can have an unchecked/missing receipt precisely because
+        # the compiler removed it. Its exact server proof supersedes that absence,
+        # while every unrelated unknown requirement still blocks approval.
+        unmet_ids = list(
+            dict.fromkeys(
+                [
+                    *unmet_ids,
+                    *(
+                        req.id
+                        for req in (brief.live() if brief is not None else ())
+                        if _policy_text_omission_reason(req, planned.policy_omitted_texts)
+                    ),
+                ]
+            )
+        )
+        automatic_omission_ids = tuple(
+            req_id for req_id in automatic_omission_ids if req_id in unmet_ids
+        )
+        automatic_omission = (
+            bool(automatic_omission_ids)
+            and set(automatic_omission_ids) == set(unmet_ids)
+            and apply_intent.tool_name == "draft.apply_strategy"
+            and settings.brief_binding_for(thread.creator_id)
+        )
         simpler_version_chosen = (
             bool(unmet_ids)
             and apply_intent.tool_name == "draft.apply_strategy"
@@ -1333,8 +1518,22 @@ def _complete_draft_turn(
                 source_event=db.get(CreationThreadEvent, turn.source_event_id),
             )
         )
-        if simpler_version_chosen:
+        if simpler_version_chosen or automatic_omission:
             omitted = [req for req in brief.live() if req.id in unmet_ids]
+            omission_reasons = {
+                str(row["requirement_id"]): str(row.get("reason") or "")
+                for row in (
+                    readiness_report["requirements"] if readiness_report else requirement_receipts
+                )
+            }
+            if automatic_omission:
+                omission_reasons.update(
+                    {
+                        req.id: _policy_text_omission_reason(req, planned.policy_omitted_texts)
+                        or _automatic_omission_reason(req, document.strategy or {})
+                        for req in omitted
+                    }
+                )
             effective_brief_updates = tuple(
                 BriefUpdate(
                     operation="remove",
@@ -1343,15 +1542,25 @@ def _complete_draft_turn(
                 )
                 for req in omitted
             )
-            brief = persist_brief_version_sync(
-                db,
-                thread_id=thread.id,
-                turn_id=turn.id,
-                updates=effective_brief_updates,
-            )
+            if automatic_omission:
+                # The turn's creator additions were already persisted above.  Append
+                # the server-owned omission as its own immutable brief revision.
+                brief = _append_automatic_omissions_sync(
+                    db,
+                    thread_id=thread.id,
+                    brief=brief,
+                    updates=effective_brief_updates,
+                )
+            else:
+                brief = persist_brief_version_sync(
+                    db,
+                    thread_id=thread.id,
+                    turn_id=turn.id,
+                    updates=effective_brief_updates,
+                )
             if settings.kria_choice_questions_enabled:
                 brief = answered_brief(brief, document.strategy)
-            # These are now agreed omissions, not failed obligations in the new
+            # These are now disclosed omissions, not failed obligations in the new
             # revision. Keep the history; pin only the effective requirements.
             requirement_receipts = [
                 r for r in requirement_receipts if r["requirement_id"] not in unmet_ids
@@ -1367,6 +1576,9 @@ def _complete_draft_turn(
                     manifest=planned.readiness_manifest,
                     creator_request=_readiness_request,
                 )
+            requirement_receipts = [
+                {**receipt, "brief_version": brief.version} for receipt in requirement_receipts
+            ]
             log.info(
                 "kria_simpler_version_drafted",
                 thread_id=str(thread.id),
@@ -1376,8 +1588,16 @@ def _complete_draft_turn(
             lead = say(en="Here's the simpler version.", tr="İşte daha basit sürüm.")
             omissions = "\n".join(
                 say(
-                    en=f"- Left out as agreed: {req.text()}",
-                    tr=f"- Kararlaştırdığımız gibi çıkarıldı: {req.text()}",
+                    en=(
+                        f"- Left out: {req.text()} ({omission_reasons.get(req.id, '')})"
+                        if automatic_omission
+                        else f"- Left out as agreed: {req.text()}"
+                    ),
+                    tr=(
+                        f"- Çıkarıldı: {req.text()} ({omission_reasons.get(req.id, '')})"
+                        if automatic_omission
+                        else f"- Kararlaştırdığımız gibi çıkarıldı: {req.text()}"
+                    ),
                 )
                 for req in omitted
             )
@@ -1393,8 +1613,10 @@ def _complete_draft_turn(
             reply_text = "\n".join(part for part in (lead, kept, omissions, speed_notice) if part)
         if (
             settings.brief_binding_for(thread.creator_id)
-            and (unmet_ids or (readiness_report is not None and not readiness_report["ready"]))
-            and not simpler_version_chosen
+            and (
+                (unmet_ids and not (simpler_version_chosen or automatic_omission))
+                or (readiness_report is not None and not readiness_report["ready"])
+            )
             # KRI-558: an editor draft that really changed something is kept, and its
             # Partly / Couldn't lines say what is missing. Only an edit that changed
             # nothing falls back to the "different approach?" question.
@@ -1467,6 +1689,11 @@ def _complete_draft_turn(
                     if readiness_required
                     else SIMPLER_VERSION_REASON,
                     **({"approval_readiness": readiness_report} if readiness_required else {}),
+                    **(
+                        {"automatic_omission_ids": list(automatic_omission_ids)}
+                        if automatic_omission
+                        else {}
+                    ),
                 },
                 brief_expected_version=planned.brief_expected_version,
             )
@@ -1477,6 +1704,7 @@ def _complete_draft_turn(
             and brief is not None
             and (
                 simpler_version_chosen
+                or automatic_omission
                 or (requirement_receipts and not keeps_model_summary(brief, requirement_receipts))
             )
         ):
@@ -1491,11 +1719,19 @@ def _complete_draft_turn(
                     **(
                         {
                             "intent": say(
-                                en="Simpler version with the agreed omissions.",
-                                tr="Kararlaştırılan eksiklerle daha basit sürüm.",
+                                en=(
+                                    "Simpler video with the supported edits."
+                                    if automatic_omission
+                                    else "Simpler version with the agreed omissions."
+                                ),
+                                tr=(
+                                    "Desteklenen düzenlemelerle daha basit video."
+                                    if automatic_omission
+                                    else "Kararlaştırılan eksiklerle daha basit sürüm."
+                                ),
                             )
                         }
-                        if simpler_version_chosen
+                        if simpler_version_chosen or automatic_omission
                         else {}
                     ),
                 }
@@ -1553,7 +1789,11 @@ def _complete_draft_turn(
                     lease_epoch=lease_epoch,
                     claimed_thread_revision=claimed_thread_revision,
                     plan=blocked_plan,
-                    brief_updates=effective_brief_updates,
+                    # Auto omissions were speculative and rolled back too. Preserve
+                    # the original request; recompute omissions after the real choice.
+                    brief_updates=planned.brief_updates
+                    if automatic_omission
+                    else effective_brief_updates,
                     requirement_receipts=requirement_receipts,
                     brief_coverage={
                         **(planned.brief_coverage or {}),
@@ -1595,6 +1835,14 @@ def _complete_draft_turn(
                     req_id
                     for req_id in coverage.get("retrieved_ids", [])
                     if req_id not in unmet_ids
+                ]
+            if automatic_omission:
+                coverage["automatic_omission_ids"] = list(automatic_omission_ids)
+                coverage["applicable_ids"] = [req.id for req in brief.live()]
+                coverage["retrieved_ids"] = [
+                    req_id
+                    for req_id in coverage.get("retrieved_ids", [])
+                    if req_id not in automatic_omission_ids
                 ]
             coverage["enforced_ids"] = [
                 r["requirement_id"]
