@@ -1384,6 +1384,13 @@ class Settings(BaseSettings):
         "Kill switch: `fly secrets set RETAKE_CUT_ENABLED=false --app nova-video` "
         "+ worker restart.",
     )
+    speech_cleanup_retakes_enabled: bool = Field(
+        default=False,
+        description="Explicit-consent preflight retake detection. This remains off until every "
+        "client can present retake-aware consent; effective only with RETAKE_CUT_ENABLED. "
+        "Kill switch: `fly secrets set SPEECH_CLEANUP_RETAKES_ENABLED=false --app "
+        "nova-video` + worker restart.",
+    )
 
     # "Get a transcript" helper for narrated-walkthrough voiceovers. When False,
     # the transcript routes (POST/GET /plan-items/{id}/transcript/*) return 404 and

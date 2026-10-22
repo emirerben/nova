@@ -2471,6 +2471,12 @@ private struct CreationWorkspaceView: View {
         }
         isActing = true
         let offerBefore = SpeechCleanupOffer.resolve(fullThread?.speechCleanup)
+        let retakesAware: Bool
+        if case let .choice(stats) = offerBefore.offer, cleanupChoice == "clean" {
+            retakesAware = stats.removesRetakes
+        } else {
+            retakesAware = false
+        }
         // Only an approval carries the video shape, and only when the server offered one.
         let shape = decision == "approve" && approval.retryOfExecutionID == nil
             ? renderShapePicker.map { $0.offer.wire(for: $0.choice.wrappedValue) }
@@ -2487,6 +2493,7 @@ private struct CreationWorkspaceView: View {
                     expectedDraftRevision: draftRevision,
                     fingerprint: approval.approvalFingerprint,
                     speechCleanupAware: true,
+                    speechCleanupRetakesAware: retakesAware,
                     speechCleanupAnalysisID: analysisID,
                     speechCleanupChoice: cleanupChoice,
                     outputOrientation: shape?.orientation,

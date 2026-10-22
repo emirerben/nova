@@ -94,6 +94,11 @@
           ],
           "default": null,
           "title": "Speech Cleanup Choice"
+        },
+        "speech_cleanup_retakes_aware": {
+          "default": false,
+          "title": "Speech Cleanup Retakes Aware",
+          "type": "boolean"
         }
       },
       "required": [

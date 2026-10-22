@@ -266,6 +266,7 @@ _ACTION_PAYLOAD_KEYS = {
         "plan_hash",
         "speech_cleanup_analysis_id",
         "speech_cleanup_choice",
+        "speech_cleanup_retakes_aware",
         "output_orientation",
         "landscape_fit",
     },
@@ -276,6 +277,7 @@ _ACTION_PAYLOAD_KEYS = {
         "base_generation",
         "speech_cleanup_analysis_id",
         "speech_cleanup_choice",
+        "speech_cleanup_retakes_aware",
         "output_orientation",
         "landscape_fit",
     },
@@ -5698,6 +5700,7 @@ async def action_thread(
                 if recorded is not None:
                     cleanup_analysis_id, cleanup_choice = recorded
         elif body.action in {"generate", "confirm_generation"}:
+            reused_recorded_cleanup_decision = False
             raw_analysis_id = payload.get("speech_cleanup_analysis_id")
             if raw_analysis_id is not None:
                 try:
@@ -5723,6 +5726,7 @@ async def action_thread(
                 )
                 if recorded is not None:
                     cleanup_choice = recorded[1]
+                    reused_recorded_cleanup_decision = True
 
             if settings.speech_cleanup_preflight_mode == "enforce":
                 # Same gate as the projection above and the scheduler (KRI-205:
@@ -5742,6 +5746,8 @@ async def action_thread(
                         item,
                         cleanup_analysis_id=cleanup_analysis_id,
                         cleanup_choice=cleanup_choice,
+                        cleanup_retakes_aware=payload.get("speech_cleanup_retakes_aware") is True,
+                        reused_recorded_decision=reused_recorded_cleanup_decision,
                     )
                     if isinstance(result, SpeechCleanupDecisionConflict):
                         if result.refreshed:
@@ -5791,6 +5797,7 @@ async def action_thread(
             client_event_id=body.client_action_id,
             speech_cleanup_analysis_id=cleanup_analysis_id,
             speech_cleanup_choice=cleanup_choice,
+            speech_cleanup_retakes_aware=payload.get("speech_cleanup_retakes_aware") is True,
             output_orientation=shape_orientation,
             landscape_fit=shape_fit,
         )
