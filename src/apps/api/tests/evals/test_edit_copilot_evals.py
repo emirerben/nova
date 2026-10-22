@@ -343,3 +343,69 @@ def test_capability_unavailable_detail_is_user_readable() -> None:
 
     assert CAPABILITY_UNAVAILABLE_DETAIL == "I can't change that on this edit yet."
     assert "operation" not in CAPABILITY_UNAVAILABLE_DETAIL
+
+
+def test_recorded_label_selectors_survive_synthetic_reconstruction() -> None:
+    """A path-free clip link must not become a false stale-text rejection."""
+    from app.services.kria_editor_ops import compile_editor_ops
+    from app.services.kria_editor_ops_text import bars_from_variant, resolve_selector
+
+    from .runners.snapshot_variant import build_synthetic_variant_and_job
+
+    snapshot = {
+        "base_generation": "before",
+        "render_destination": "device",
+        "text_bars": [
+            {
+                "id": "clip-label-cut-a",
+                "text": "Old label",
+                "role": "clip_label",
+                "clip_id": "media-a",
+                "start_s": 0,
+                "end_s": 3,
+            }
+        ],
+        "slots": [{"slot_id": "cut-a", "media_id": "media-a", "duration_s": 3}],
+    }
+    op = {
+        "op": "rewrite_text",
+        "selector": {"group": "labels", "clip_ids": ["media-a"]},
+        "target_ids": ["clip-label-cut-a"],
+        "expected_count": 1,
+        "text": "New label",
+    }
+    job, variant = build_synthetic_variant_and_job(snapshot, [op])
+    assert resolve_selector(bars_from_variant(job, variant), op["selector"]) == op["target_ids"]
+    compiled = compile_editor_ops(job, variant, [op])
+    assert compiled.payload.text_elements[0]["text"] == "New label"
+    # A genuinely wrong clip still fails the authoritative drift guard.
+    from app.services.kria_editor_ops import KriaEditorOpError
+
+    with pytest.raises(KriaEditorOpError, match="Text changed"):
+        compile_editor_ops(job, variant, [{**op, "selector": {"clip_ids": ["media-b"]}}])
+
+
+def test_synthetic_label_links_preserve_creator_edited_provenance() -> None:
+    from app.services.kria_editor_ops import _clip_label_links
+
+    from .runners.snapshot_variant import build_synthetic_variant_and_job
+
+    snapshot = {
+        "text_bars": [
+            {
+                "id": "clip-label-cut-a",
+                "text": "Creator correction",
+                "clip_id": "media-a",
+                "edited": True,
+                "inferred": False,
+                "start_s": 0,
+                "end_s": 3,
+            }
+        ]
+    }
+    job, variant = build_synthetic_variant_and_job(snapshot)
+    assert _clip_label_links(job, variant)["clip-label-cut-a"] == {
+        "clip_id": "media-a",
+        "inferred": False,
+        "edited": True,
+    }

@@ -80,9 +80,15 @@ LABEL_MAX_CHARS = 24
 LABEL_MAX_WORDS = 3
 # KRI-678: the creator's OWN label words ("Parque de la Costa", "Sagrada Família de
 # Gaudí") are a name, not a model-authored tag, so they may run a little longer.
-# LABEL_MAX_CHARS stays the on-screen width bound for every label; model and vision
-# copy keep LABEL_MAX_WORDS.
+# Model and vision copy keep LABEL_MAX_WORDS and LABEL_MAX_CHARS.
 CREATOR_LABEL_MAX_WORDS = 5
+# KRI-804: 24 characters was never the renderer's bound. The montage label bar (Fraunces
+# 58px in a 0.82 x 1080 = 885.6px box, cloud Skia and the phone alike) draws
+# "chimichurri & salsa criolla" (27) on one line at 805.5px, and both renderers wrap a
+# longer label, never clip it (`make verify-overlays`: kri804_montage_clip_label_width).
+# 28 is what that bar holds on ONE line at the measured ~30px per character; a second
+# line would cover more of the shot.
+CREATOR_LABEL_MAX_CHARS = 28
 # Membership (group/order/include/caption) moves clips but prints nothing
 # itself, so it needs less certainty than a label's per-clip printed value
 # does.
@@ -111,7 +117,8 @@ CAPTION_MAX_WORDS = 10
 # line holds 280.
 CREATOR_CAPTION_MAX_CHARS = 200
 
-_LABEL_ALLOWED = re.compile(r"[^\w\s&'\-]", re.UNICODE)
+# KRI-804: the typographic apostrophe too; iOS smart punctuation types "Julio’s".
+_LABEL_ALLOWED = re.compile(r"[^\w\s&'’\-]", re.UNICODE)
 # Captions are ordinary short phrases: allow common sentence punctuation on
 # top of the label charset. Newlines can never survive `_clean` (it collapses
 # all whitespace, including newlines, to single spaces) so no explicit
@@ -263,7 +270,9 @@ class GroundedLabel(BaseModel):
     """The only shape the context-label render lane accepts when the flag is on."""
 
     media_id: str
-    text: str = Field(min_length=1, max_length=LABEL_MAX_CHARS)
+    # The creator's own words may use CREATOR_LABEL_MAX_CHARS; every other source is
+    # fenced to LABEL_MAX_CHARS before it gets here (`ground_label`).
+    text: str = Field(min_length=1, max_length=CREATOR_LABEL_MAX_CHARS)
     grounding: GroundingSource
     confidence: float = Field(ge=0.0, le=1.0)
     intent_id: str = ""
@@ -315,40 +324,123 @@ def ground_placeholder_label(*, media_id: str, intent_id: str = "") -> GroundedL
     )
 
 
-def clean_label_text(value: object, *, max_words: int = LABEL_MAX_WORDS) -> str | None:
+def clean_label_text(
+    value: object, *, max_words: int = LABEL_MAX_WORDS, max_chars: int = LABEL_MAX_CHARS
+) -> str | None:
     """Normalise candidate label copy; None when it can never be a label.
 
-    ``max_words`` is ``CREATOR_LABEL_MAX_WORDS`` only for the creator's own words.
+    The longer creator bounds are only for the creator's own words
+    (``clean_creator_label_text``).
     """
     text = _clean(value, 200)
     if not text or _LABEL_ALLOWED.search(text):
         return None
-    if len(text) > LABEL_MAX_CHARS or len(text.split()) > max_words:
+    if len(text) > max_chars or len(text.split()) > max_words:
         return None
     if not any(c.isalpha() for c in text):
         return None
     return text
 
 
+def clean_creator_label_text(value: object) -> str | None:
+    """``clean_label_text`` with the creator's own-words bounds (KRI-678, KRI-804)."""
+    return clean_label_text(
+        value, max_words=CREATOR_LABEL_MAX_WORDS, max_chars=CREATOR_LABEL_MAX_CHARS
+    )
+
+
 CreatorLabelProblem = Literal["too_long", "too_many_words", "characters", "empty"]
 
 
-def creator_label_problem(value: object) -> CreatorLabelProblem | None:
-    """Why the creator's own label words can never be printed, or None when they can.
+def creator_label_problems(value: object) -> tuple[CreatorLabelProblem, ...]:
+    """Every reason the creator's own label words can never be printed; () when they can.
 
-    KRI-678: such a label can never be grounded, so asking "which clips?" about it
-    loops forever. The caller says this reason instead of showing the clip picker.
+    KRI-804: a reply that names only the first reason ("+") sends the creator back with
+    a fix that is still unprintable (it was also too long). ``"empty"`` is always alone:
+    there is nothing else to fix.
     """
-    if clean_label_text(value, max_words=CREATOR_LABEL_MAX_WORDS) is not None:
-        return None
+    if clean_creator_label_text(value) is not None:
+        return ()
     text = _clean(value, 200)
     if not text or not any(c.isalpha() for c in text):
-        return "empty"
+        return ("empty",)
+    problems: list[CreatorLabelProblem] = []
     if _LABEL_ALLOWED.search(text):
-        return "characters"
-    if len(text) > LABEL_MAX_CHARS:
-        return "too_long"
-    return "too_many_words"
+        problems.append("characters")
+    if len(text) > CREATOR_LABEL_MAX_CHARS:
+        problems.append("too_long")
+    if len(text.split()) > CREATOR_LABEL_MAX_WORDS:
+        problems.append("too_many_words")
+    return tuple(problems)
+
+
+def creator_label_problem(value: object) -> CreatorLabelProblem | None:
+    """The first reason the creator's own label words can never be printed, or None.
+
+    KRI-678: such a label can never be grounded, so asking "which clips?" about it
+    loops forever. The caller says why instead of showing the clip picker; the reply
+    names every reason (``creator_label_problems``).
+    """
+    problems = creator_label_problems(value)
+    return problems[0] if problems else None
+
+
+_LABEL_BLOCKED_RUN = re.compile(f"{_LABEL_ALLOWED.pattern}+", re.UNICODE)
+
+
+def label_blocked_characters(value: object) -> list[str]:
+    """What a label can't show, each once, in the order it appears ("+", "🇦🇷").
+
+    Runs stay together, so a flag's two code points read as the one flag they are.
+    """
+    seen: list[str] = []
+    for run in _LABEL_BLOCKED_RUN.findall(_clean(value, 200)):
+        if run not in seen:
+            seen.append(run)
+    return seen
+
+
+# Joining words a shorter label never starts or ends on ("chimichurri &").
+_LABEL_JOINERS = frozenset({"&", "and", "ve", "y", "e", "et", "und"})
+
+
+def shorter_creator_label(value: object) -> str | None:
+    """A label made only of the creator's own words that CAN print, or None (KRI-804).
+
+    "+" reads as "&" and any other character a label can't show is dropped; if that is
+    still too long, ONE word (never the first) is left out, keeping the longest result:
+    "chimichurri + salsa criolla picante" -> "chimichurri & salsa criolla". Cutting
+    more would break names apart ("Parque de la Costa Aires"), so there is no suggestion
+    then. Never a word the creator didn't write, so it is still their copy if they pick it.
+    """
+    if not creator_label_problems(value):
+        return None
+    original = _clean(value, 200)
+    words = _LABEL_ALLOWED.sub(" ", original.replace("+", " & ")).split()
+
+    def joiner(word: str) -> bool:
+        return word.casefold() in _LABEL_JOINERS
+
+    def fits(candidate: list[str]) -> str | None:
+        if not candidate or joiner(candidate[0]) or joiner(candidate[-1]):
+            return None
+        if any(joiner(a) and joiner(b) for a, b in zip(candidate, candidate[1:], strict=False)):
+            return None
+        label = clean_creator_label_text(" ".join(candidate))
+        return label if label != original else None
+
+    whole = fits(words)
+    if whole is not None:
+        return whole
+    # Never the joiner itself: "chimichurri salsa" would read as one thing, not two. On a
+    # tie the later word goes, so the creator's phrase keeps its opening words in order.
+    fitting = [
+        (len(label), index, label)
+        for index in range(1, len(words))
+        if not joiner(words[index])
+        and (label := fits(words[:index] + words[index + 1 :])) is not None
+    ]
+    return max(fitting)[2] if fitting else None
 
 
 def vision_evidence_text(record: ClipUnderstanding) -> str:
@@ -459,7 +551,7 @@ def ground_label(
     intent_id: str = "",
 ) -> GroundedLabel | None:
     """Apply the on-screen text fence. Returns None when the label must not render."""
-    text = clean_label_text(value, max_words=CREATOR_LABEL_MAX_WORDS)
+    text = clean_creator_label_text(value)
     if text is None:
         return None
     if _contains_phrase(creator_request or "", text):
@@ -470,9 +562,9 @@ def ground_label(
             confidence=1.0,
             intent_id=intent_id,
         )
-    # KRI-678: only the creator's own words get the longer word cap. Copy grounded
-    # from a clip record or a vision answer keeps the short-tag bound.
-    if len(text.split()) > LABEL_MAX_WORDS:
+    # KRI-678 / KRI-804: only the creator's own words get the longer bounds. Copy
+    # grounded from a clip record or a vision answer keeps the short-tag bound.
+    if len(text.split()) > LABEL_MAX_WORDS or len(text) > LABEL_MAX_CHARS:
         return None
     words = _tokens(text)
     if not words:
