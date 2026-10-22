@@ -439,7 +439,7 @@ struct CameraRollCollectionView: View {
                 return
             }
             let topic = researchTopic.trimmingCharacters(in: .whitespacesAndNewlines)
-            let found = try await api.cameraRollStories(id: collection.id, revision: revision, query: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Find a story in this outing" : query, cacheOnly: cacheOnly, researchTopic: topic.isEmpty ? nil : topic, allowPartialAnalysis: allowPartial)
+            let found = try await api.cameraRollStories(id: collection.id, revision: revision, query: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Suggest different content ideas from this outing" : query, cacheOnly: cacheOnly, researchTopic: topic.isEmpty ? nil : topic, allowPartialAnalysis: allowPartial)
             stories = found
             if !untimed.isEmpty { status = "Story ideas currently use videos. Your \(untimed.count) photos remain in the collection." }
             showsStories = true

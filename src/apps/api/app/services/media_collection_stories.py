@@ -216,7 +216,13 @@ async def generate_stories(db, owner, identifier, body):
             continue
         moments = [by_id[value] for value in ids]
         duration = sum(value.end_s - value.start_s for value in moments)
-        identity = frozenset(ids)
+        # Multiple editorial ideas may reuse the same footage. Renaming a card
+        # or changing its rationale/source IDs does not make repeated copy new.
+        plan = idea.content_plan
+        identity = tuple(
+            " ".join(text.casefold().split())
+            for text in (plan.opening_text, plan.closing_text or "", plan.caption)
+        )
         if not 1 <= duration <= 60 or identity in seen:
             continue
         seen.add(identity)

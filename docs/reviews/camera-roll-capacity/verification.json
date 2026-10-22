@@ -149,5 +149,6 @@
     "passed": 2,
     "command": "bash scripts/check-api.sh test tests/integration/test_media_collections.py::test_story_candidates_cover_large_collections_in_bounded_passes -q",
     "assertions": "Retains exact all-source coverage for the 50 case and owned bounded candidate coverage for 500, with final-source retrieval."
-  }
+  },
+  "continuation": "Historical capacity receipt. Current prompt/service and native-default verification continues in multiple-ideas-verification.json; earlier live failures remain failures."
 }

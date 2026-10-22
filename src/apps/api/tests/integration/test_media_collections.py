@@ -1380,3 +1380,112 @@ async def test_incomplete_collection_waits_before_any_story_call_and_recovers(
     )
     assert changed.status_code == 409, changed.text
     assert len(calls) == 4
+
+
+@pytest.mark.parametrize("copy_clone", [False, True])
+async def test_distinct_ideas_can_share_footage_without_sharing_review_state(
+    collection_world, monkeypatch, copy_clone
+):
+    """Real planner/parser/persistence, with only the provider transport replayed."""
+    import copy
+
+    from app.models import CreatorAgentApproval
+    from app.services import media_collection_stories
+    from tests.evals.runners.eval_runner import CassetteModelClient
+
+    client, assets, sources, owner, _ = collection_world
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    assert (await client.put(path, json=selection(assets, sources))).status_code == 200
+    assert (await client.post(f"{path}/index", json={"expected_revision": 1})).status_code == 200
+    plans = [
+        (
+            "A crossing guide",
+            "Follow the recorded crossing to its final view",
+            "The final view from the ferry",
+            "A crossing and its arrival.",
+        ),
+        (
+            "The light at the end",
+            "Notice the illuminated house against the evening scene",
+            "The house is still lit",
+            "The light stands out after dark.",
+        ),
+        (
+            "An evening on the water",
+            "An atmosphere edit of the evening crossing",
+            "On the ferry after dark",
+            "An evening crossing.",
+        ),
+    ]
+    proposals = [
+        dict(
+            title=title,
+            moment_ids=["m1"],
+            content_plan=dict(
+                audience="Evening travellers",
+                angle=angle,
+                opening_text=opening,
+                caption=caption,
+                why_it_works="The recorded view supports this particular point.",
+                beat_reasons=["The house and ferry supply the setting"],
+            ),
+        )
+        for title, angle, opening, caption in plans
+    ]
+    if copy_clone:
+        proposals[1] = copy.deepcopy(proposals[0])
+        proposals[1]["title"] = "A new title is not a new idea"
+        proposals[1]["moment_ids"] = ["m2"]
+        proposals[1]["content_plan"]["why_it_works"] = "Different private reasoning."
+        # Cosmetic case/spacing and different footage cannot turn identical
+        # proposed copy into another content idea.
+        proposals[1]["content_plan"]["opening_text"] = "  THE FINAL VIEW FROM THE FERRY  "
+    transport = CassetteModelClient(json.dumps({"stories": proposals}))
+    monkeypatch.setattr(media_collection_stories, "default_client", lambda: transport)
+    body = {"expected_revision": 1, "query": "Suggest different content ideas for this crossing"}
+    response = await client.post(f"{path}/stories", json=body)
+    assert response.status_code == 200, response.text
+    offered = response.json()["stories"]
+    expected_titles = [plans[0][0], plans[2][0]] if copy_clone else [p[0] for p in plans]
+    assert [idea["title"] for idea in offered] == expected_titles
+    assert len({idea["id"] for idea in offered}) == len(expected_titles)
+    assert len({tuple(m["id"] for m in idea["moments"]) for idea in offered}) == 1
+    assert all(idea["requires_render_approval"] for idea in offered)
+    assert transport.invocations == 1
+    first = offered[0]
+    changed = await client.patch(
+        f"{path}/stories/{first['id']}",
+        json=dict(
+            expected_revision=1,
+            expected_story_revision=1,
+            client_event_id="change-only-one-idea",
+            content_plan={**first["content_plan"], "opening_text": "My corrected opening"},
+        ),
+    )
+    assert changed.status_code == 200, changed.text
+    rejected = await client.post(
+        f"{path}/stories/{first['id']}/reject",
+        json=dict(
+            expected_revision=1, expected_story_revision=2, client_event_id="reject-one-idea"
+        ),
+    )
+    assert rejected.status_code == 200, rejected.text
+    cached = await client.post(f"{path}/stories", json={**body, "cache_only": True})
+    assert cached.status_code == 200, cached.text
+    remaining = cached.json()["stories"]
+    assert remaining[0]["rejected"] and remaining[0]["revision"] == 2
+    assert remaining[1:] == offered[1:], "Other ideas must retain copy, source windows and state"
+    assert transport.invocations == 1
+    async with AsyncSessionLocal() as db:
+        assert (
+            await db.scalar(select(func.count()).select_from(Job).where(Job.user_id == owner.id))
+            == 0
+        )
+        assert (
+            await db.scalar(
+                select(func.count())
+                .select_from(CreatorAgentApproval)
+                .where(CreatorAgentApproval.creator_id == owner.id)
+            )
+            == 0
+        )

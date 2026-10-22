@@ -53,3 +53,9 @@ this change selects bounded source windows before the editor exists. Opening and
 closing text retain the shared schedule. Existing request/approval/export checks
 cover compilation; new index tests independently assert original source bounds.
 No new native-export or end-to-end creative-quality claim follows from replay.
+
+## Follow-up: multiple ideas
+
+The creator also requested more than one idea. The separate
+[pre-implementation criteria](multiple-ideas-acceptance.md) cover three distinct
+choices, shared-footage ideas, copy clones and independent review state.

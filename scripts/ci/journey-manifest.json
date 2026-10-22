@@ -1092,7 +1092,8 @@
         "KriaTests/CameraRollCollectionTests/testBoundedSelectionAndUnselectedMetadata",
         "KriaTests/CameraRollCollectionTests/testTimeGroupsAndExplicitCorrectionSurviveMetadataRefresh",
         "KriaTests/CameraRollCollectionTests/testFiveHundredItemsSurviveResume",
-        "KriaUITests/CameraRollCollectionUITests/testPartiallyIndexedCollectionWaitsForExplicitPartialChoice"
+        "KriaUITests/CameraRollCollectionUITests/testPartiallyIndexedCollectionWaitsForExplicitPartialChoice",
+        "KriaUITests/CameraRollStoriesUITests/testThreeIdeasRemainIndependentWhenOneIsRejected"
       ],
       "paths": [
         "src/apps/api/app/agents/camera_roll_stories.py",

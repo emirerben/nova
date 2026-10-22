@@ -127,6 +127,7 @@
       "KriaUITests/CameraRollBenchmarkUITests/testMetadataBenchmarkStartsWithNoAuthorizedAssets",
       "KriaUITests/CameraRollCollectionUITests/testReviewCorrectionRemovalAndResumeDoNotUpload",
       "KriaUITests/CameraRollStoriesUITests/testReviewReplaceAndRejectWithoutRendering",
+      "KriaUITests/CameraRollStoriesUITests/testThreeIdeasRemainIndependentWhenOneIsRejected",
       "KriaUITests/CameraRollStoriesUITests/testConfirmExamplesRateIdeaAndForget",
       "KriaUITests/CameraRollStoriesUITests/testResearchFactsAndSourcesStayBehindTheIdea",
       "KriaUITests/CameraRollCollectionUITests/testPartiallyIndexedCollectionWaitsForExplicitPartialChoice"

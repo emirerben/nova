@@ -1,6 +1,7 @@
 # Camera-roll capacity and coverage verification
 
-This is a bounded local fix for KRI-731/KRI-730. The original request and
+This is the initial bounded capacity fix for KRI-731/KRI-730. The multiple-idea
+continuation and current prompt are recorded in [the current receipt](multiple-ideas-verification.json). The original request and
 pre-implementation expectations are in [acceptance.md](acceptance.md). Safe
 aggregate results and retained-log hashes are in [verification.json](verification.json).
 Private uploads, descriptions, account IDs and generated copy remain outside Git.

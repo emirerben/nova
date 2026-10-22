@@ -50,7 +50,7 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.media.camera_roll_stories",
         prompt_id="camera_roll_stories",
-        prompt_version="2026-10-22.2",
+        prompt_version="2026-10-22.3",
         model="gemini-2.5-flash",
         max_attempts=1,
         timeout_s=20,
@@ -97,10 +97,17 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             '"format": "text_story", "audience": "", "angle": "", "why_it_works": "", '
             '"opening_text": "", "closing_text": null, "caption": "", '
             '"beat_reasons": ["why this exact moment advances the idea"]}}]}. '
-            "Offer zero to three DISTINCT "
-            "coherent stories grounded in candidate evidence, the creator's query, and supplied "
-            "public_research only. "
-            "Prefer one specific, publishable idea over repetitive alternatives. Choose a "
+            "Aim for three DISTINCT, worthwhile content ideas grounded in candidate evidence, "
+            "the creator's query, and supplied public_research only. Explore different viewer "
+            "takeaways, specific observations, footage subsets and editorial forms before "
+            "choosing. Each idea needs a different point in its angle and proposed copy, not "
+            "just another title or reordered version of the same edit. The SAME footage may "
+            "support multiple ideas when their points and proposed wording differ. "
+            "Return two if a third would be repetitive or weak. Return one only when the "
+            "footage supports just one worthwhile idea or the creator explicitly requests one; "
+            "return zero when none is supported. Never invent facts, personal opinions or "
+            "missing footage to fill the count. An explicit narrow creator request takes "
+            "priority over variety. Choose a "
             "suitable editorial "
             "form that fits the creator's request and footage: a useful guide, an honest firsthand "
             "review, a concrete observation or joke, a simple atmosphere/day-in-the-life post, "
