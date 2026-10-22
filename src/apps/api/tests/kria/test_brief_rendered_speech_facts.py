@@ -201,7 +201,10 @@ def test_a_named_retake_stays_partial_until_the_exact_line_is_verified(descripti
     )
     assert receipt.status == "partial"
     assert receipt.reason.startswith("Speech cleanup cut the long pauses")
-    assert "I have not confirmed that exact spoken line was removed; check it in the editor" in receipt.reason
+    assert (
+        "I have not confirmed that exact spoken line was removed; check it in the editor"
+        in receipt.reason
+    )
 
 
 def test_a_length_in_the_cleanup_ask_is_met_when_the_rendered_take_matches():
