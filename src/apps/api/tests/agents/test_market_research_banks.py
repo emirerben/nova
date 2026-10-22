@@ -224,8 +224,8 @@ def test_persona_bank_version_couples_to_prompt_version():
     #                  (allexmarielle 9to5 professional aesthetic lane).
     # Bump 2026-07-11-kria: product rename only; banks untouched.
     # Bump 2026-10-21-language: creator-language line (KRI-784); banks untouched.
-    assert archetypes_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-10-21-language"
+    assert archetypes_version() == "2026-10-22-research-11"
+    assert PERSONA_PROMPT_VERSION == "2026-10-22-research-11"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
@@ -248,8 +248,8 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     # 2026-06-14: weekly research refresh — added 9to5-minimal-glimpse-01 and
     #             parallel-life-aspiration-01 ideas.
     # 2026-10-21-language: creator-language line (KRI-784); banks untouched.
-    assert content_ideas_version() == "2026-06-14"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-10-21-language"
+    assert content_ideas_version() == "2026-10-22-research-11"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-10-22-research-11"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -270,12 +270,12 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     #                  (plans/015 — monkey/marketing incident); banks untouched here
     #                  (success-factor bank unchanged; overlay bank moved separately).
     # Persona/content plan bumped to 2026-10-21-language (KRI-784); banks untouched.
-    assert success_factors_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-10-21-language"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-10-21-language"
+    assert success_factors_version() == "2026-10-22-research-11"
+    assert PERSONA_PROMPT_VERSION == "2026-10-22-research-11"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-10-22-research-11"
     # Creator direction was added to the consuming prompt without changing
     # the research bank, so only the agent version advances.
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-09-06-creator-direction"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-22-research-11"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -307,11 +307,11 @@ def test_overlay_bank_version_couples_to_agent_versions():
     #                  bank content edit, so BOTH consuming agents bump. Guard:
     #                  tests/agents/test_overlay_examples_slop_guard.py now lints
     #                  every exemplar against the slop pattern class.
-    assert library_version() == "2026-08-05"
-    # Creator direction was added to the consuming prompt without changing
-    # the exemplar bank, so only the agent version advances.
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-09-06-creator-direction"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-08-05"
+    # Bump 2026-10-11: weekly research refresh — added early-morning-commitment-scaleup-01
+    #                  and series-comeback-fadein-01; bumped both consuming agents.
+    assert library_version() == "2026-10-22-research-11"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-22-research-11"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-10-22-research-11"
 
 
 @pytest.mark.parametrize(
