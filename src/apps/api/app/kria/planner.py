@@ -59,6 +59,7 @@ from app.kria.brief import (
     CurrentPlanShape,
     Route,
     apply_updates,
+    bind_updates,
     brief_context,
     load_latest_brief,
     new_requirements,
@@ -4690,18 +4691,14 @@ async def _plan_live_turn(
     # concurrency token. Bind its `expected_version` to the brief its prompt showed, as
     # the brief extractor does; apply_updates and the persist fence still refuse work
     # that is genuinely stale. A copied wrong number made "make it more basic" fail.
-    shown_version = prior_brief.version if prior_brief else 0
+    # KRI-805: a missing number, and a change naming only the field it changes, bind too.
     unique_updates = {
         json.dumps(update.model_dump(mode="json"), sort_keys=True): update
         for update in (
             pre_extracted_updates
             if extraction_complete
-            else tuple(
-                update
-                if update.operation == "add"
-                else update.model_copy(update={"expected_version": shown_version})
-                for result in outputs
-                for update in result.brief_updates
+            else bind_updates(
+                prior_brief, (update for result in outputs for update in result.brief_updates)
             )
         )
     }
