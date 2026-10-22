@@ -2677,15 +2677,28 @@ def _line_names(req: BriefRequirement) -> list[str]:
     return _dedupe_names(named or _quoted_triggers(req))
 
 
+def _keeps_named_line_sound(req: BriefRequirement) -> bool:
+    """KRI-803: "keep his name exchange audible ("What's your name?" "Lucas.")" is filed as the
+    typed source-sound intent with the spoken lines under `triggers` (no `keep_whole_take`).
+    Only lines the model recorded as spoken count: a quoted clip name is not a line."""
+    return (
+        req.kind == "audio"
+        and req.facts.get("audio_intent") == "source_unchanged"
+        and bool(_fact_triggers(req))
+    )
+
+
 def _wants_whole_line(req: BriefRequirement) -> bool:
-    """A named spoken line recorded as `keep_whole_take`, with nothing shown or played on it.
+    """A named spoken line recorded as `keep_whole_take`, or as its clip's own sound kept
+    (KRI-803), with nothing shown or played on it.
 
     A photo, sticker or pop-in word, or a word-triggered cue ("when I say ...", "dediğimde"),
     keeps the ask a pop-in even when the model also flagged the take as kept whole.
     """
     if req.kind not in _BEAT_ASK_KINDS or req.scope == "title" or _has_duration_target(req):
         return False
-    if _fact_flag(req, "keep_whole_take") is not True or not _line_names(req):
+    whole = _fact_flag(req, "keep_whole_take")
+    if whole is False or not ((whole is True and _line_names(req)) or _keeps_named_line_sound(req)):
         return False
     text = _req_text(req)
     return not (_EXPLICIT_POP_RE.search(text) or _SPOKEN_CUE_RE.search(text))

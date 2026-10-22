@@ -778,7 +778,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/services/spoken_quotes.py",
-                (True, "covered", "kri-628-opening-cut,kri-681-named-line-windows"),
+                (
+                    True,
+                    "covered",
+                    "kri-628-opening-cut,kri-681-named-line-windows,kri-760-whole-line-ask",
+                ),
             ),
             (
                 "src/apps/api/app/pipeline/caption_correct.py",
@@ -815,6 +819,10 @@ class GitDiffTests(unittest.TestCase):
             (
                 "src/apps/api/tests/fixtures/kri681_tigre_night_m1_clips.json",
                 (True, "covered", "kri-681-named-line-windows"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/kri803_don_julio_m1_clips.json",
+                (True, "covered", "kri-760-whole-line-ask"),
             ),
             (
                 "src/apps/api/app/pipeline/unified_montage.py",
