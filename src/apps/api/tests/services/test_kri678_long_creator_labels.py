@@ -27,10 +27,12 @@ import pytest
 from app.agents._runtime import RunContext
 from app.agents.clip_intent_planner import ClipIntentPlannerOutput, PlannedClipIntent
 from app.schemas.clip_intents import (
+    CREATOR_LABEL_MAX_CHARS,
     CREATOR_LABEL_MAX_WORDS,
     LABEL_MAX_CHARS,
     LABEL_MAX_WORDS,
     ClipUnderstanding,
+    clean_creator_label_text,
     clean_label_text,
     creator_label_problem,
     ground_label,
@@ -154,13 +156,17 @@ def test_model_and_vision_copy_keep_the_three_word_fence() -> None:
 
 
 def test_creator_cap_stays_inside_the_width_bound() -> None:
-    """Failure 3: the 24-character width bound applies to creator labels too."""
-    assert clean_label_text("Sagrada Família de Gaudí", max_words=CREATOR_LABEL_MAX_WORDS)
-    assert (
-        clean_label_text("Parque Nacional Tierra del Fuego", max_words=CREATOR_LABEL_MAX_WORDS)
-        is None
-    )
-    assert LABEL_MAX_CHARS == 24
+    """Failure 3: creator labels have a width bound too.
+
+    KRI-804 measured it: the montage label bar holds 28 characters on one line
+    (`kri804_montage_clip_label_width.json`); model and vision copy keep 24.
+    """
+    assert clean_creator_label_text("Sagrada Família de Gaudí")
+    assert clean_creator_label_text("chimichurri & salsa criolla")
+    assert clean_creator_label_text("Parque Nacional Tierra del Fuego") is None
+    assert clean_label_text("chimichurri & salsa criolla") is None
+    assert (LABEL_MAX_CHARS, CREATOR_LABEL_MAX_CHARS) == (24, 28)
+    assert CREATOR_LABEL_MAX_WORDS == 5
 
 
 @pytest.mark.parametrize(
@@ -181,8 +187,9 @@ def test_creator_label_problem_names_why_text_cannot_print(text, problem) -> Non
 @pytest.mark.parametrize(
     ("text", "en_hint"),
     [
-        ("Parque Nacional Tierra del Fuego", "too long"),
-        ("Café #1", "letters"),
+        # KRI-804: the reply states the bound itself ("a label holds up to 24").
+        ("Parque Nacional Tierra del Fuego", "a label holds up to 28"),
+        ("Café #1", 'a label can\'t show "#"'),
     ],
 )
 async def test_unusable_creator_label_gets_a_plain_reply_never_the_picker(
