@@ -2416,6 +2416,57 @@
         "Phone re-send of Don Julio M1 after deploy"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-803-keep-line-audible",
+      "tickets": [
+        "KRI-803",
+        "KRI-802",
+        "KRI-760"
+      ],
+      "symptom": "Phone montage refused \"keep his name exchange audible ('What's your name?' 'Lucas.')\" and \"keep that 'Cheers!' audible\" as pop-ins ('Photo and sound pop-ins timed to your words aren't available'): the brief filed them as audio_intent source_unchanged + triggers, which KRI-760's keep_whole_take route never read; and the line finder (two shared 5-letter stems) could not find one-word or short-word lines.",
+      "boundary": "brief",
+      "status": "open_pr",
+      "owner": "KRI-803",
+      "journey": "kri-760-whole-line-ask",
+      "paths": [
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/services/spoken_quotes.py",
+        "src/apps/api/tests/fixtures/kri803_don_julio_m1_clips.json"
+      ],
+      "regression_tests": [
+        "tests/tasks/test_keep_line_audible_montage.py",
+        "tests/kria/test_whole_line_routing.py",
+        "tests/tasks/test_whole_line_ask_montage.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Prod thread F4083F1D's r6/r7 and clip records (Main Creator input 19:38:04) through _ground_spoken_lines -> length plan -> plan_unified_montage -> phone recipe verify -> finished timeline -> receipts: m1_05 cut 0.0-2.83 s holds 'What's your name?' (0.14-1.64) + 'Lucas.' (1.9-2.5) and ends before the next words (2.9 s); m1_01 cut 0.87-3.4 s holds both 'Cheers' bursts (0.9-1.9 s); 15.0 s; both receipts met. Red on main: routing cases fail with the incident's exact pop-in refusal; reverting the routing (7 of 9 fail), the word-for-word match (3 fail) or the per-clip line union (1 fails) turns the replay red. Ground truth from the kit audio with local whisper.cpp + loudness (no paid calls); a preview MP4 cut from the kit files by the plan transcribes 'What's your name? / Lucas / ... / Cheers'.",
+        "live_model": "Not run; no paid calls. No prompt change: the route reads facts the model already records.",
+        "native_output": "unknown; preview cut with FFmpeg from the planned windows, not a phone export.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "prod shape (audio + source_unchanged + triggers), the KRI-760 keep_whole_take shape, Turkish wording",
+        "a sound or photo on a word and a 'when I say' cue stay pop-ins with source_unchanged recorded",
+        "quoted words the model did not record as spoken (a clip name) never become a line; keep_whole_take false still says no",
+        "plain 'keep the original audio' (no named line) keeps its own path and windows",
+        "two lines of one ask in one clip, in either order, seat one window",
+        "a one-word line two clips say is ambiguous, never guessed",
+        "word pass fails or misses the line: planning goes on, the line is named in a partial receipt",
+        "a finished cut that drops one of the lines is never met"
+      ],
+      "neighbours_gap": [
+        "The word pass is a real whisper call in prod (one ~4 s clip, only when the timed sentences miss a line one transcript has); offline it is a fixture.",
+        "The unquoted tail of an exchange ('Lucas, yeah.' 2.9-3.6 s) is not kept: only the creator's quoted lines are held.",
+        "Clip order for the rest of M1 (sauces -> menus -> cheers) and the other M1 issues are KRI-804..809."
+      ],
+      "follow_ups": [
+        "M1 phone re-send after deploy"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }
