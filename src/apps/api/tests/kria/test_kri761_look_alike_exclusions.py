@@ -787,6 +787,8 @@ async def test_a_file_name_exclude_that_matched_never_prints_the_could_not_tell_
 
 
 async def test_a_skip_nothing_matched_still_says_so(prod_profile, monkeypatch) -> None:
-    # KRI-680 stays: with no earlier match either, the unmatched ask is still reported.
+    # KRI-680 stays with the picker off: with no earlier match either, the unmatched ask is
+    # still reported. With it on, KRI-807 asks with the picker instead.
+    monkeypatch.setattr(settings, "kria_clip_selection_questions_enabled", False)
     planned = await _turn(monkeypatch, [_exclude()])
     assert [n for n in planned.policy_notices if "couldn't tell" in n]
