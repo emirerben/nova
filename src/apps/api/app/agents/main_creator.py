@@ -100,7 +100,7 @@ log = structlog.get_logger()
 # v66 combines both authored changes without losing either prompt instruction.
 # v66 (KRI-792): named spoken cuts carry cut_lines; caption spellings remain intact.
 # KRI-789: quoted start / end LINES inside a take are a `timing` trim (`start_line` /
-# `end_line`), never an `order` requirement; route places keep `order` (v66).
+# `end_line`), never an `order` requirement; route places keep `order` (v67).
 # v69 retains all shared brief instructions plus editorial audio pairing.
 MAIN_CREATOR_PROMPT_VERSION = "2026-10-22-v69"
 
