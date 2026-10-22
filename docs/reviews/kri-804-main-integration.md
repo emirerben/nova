@@ -32,3 +32,11 @@ Merged origin/main 7eaf217cb15bc8ebd8d2fea552bbcfe3ee7b0fea and #1739 source ed0
 Run39737293281 on head97790d6c passed actual production-image rendering: PASS=124, WARN=0, FAIL=0, SKIPPED=0, including the deliberate fallback negative control. Its upload step then warned that no files were found. It used upload-artifact v4 with include-hidden-files=false against the hidden .overlay-verify directory, so no reviewable report/montage was retained. A successful render log alone cannot replace required visual inspection.
 
 The existing upload step now names only report.json and montage.png, includes these hidden-directory outputs, and fails if none exist. This is a fail-closed artifact fix, not a test waiver. New-head rendering and downloaded report/montage inspection are still required before merge.
+
+## Actual post-picker planner integration
+
+Merged #1739 currenta3f5f90d3, including main1bf6d14a6. Real conflicts overlapped the resolution gate and internal result fields: KRI-804 adds label reply options, while KRI-807 moves exclusion-category augmentation ahead of the gate. Choosing incoming logic alone reproduced the original missing label-answer buttons (one failed/one passed); the independent red-cap + exclusion compound picker still passed.
+
+The final union uses the post-exclusion resolution gate AND forwards the original reply_options; it keeps both internal fields and every incident gate. No creator answer is invented and no exclude is silently applied. KRI-804 now maps the cloud verifier boundary too.250 combined label/parser/phone/cloud/editor/picker controls passed, including wrong-source and exact compound picker/label outcomes. Scoped formatting/whitespace checks passed.
+
+Oldhead2475 production-image run39738175253 report/montage were downloaded and viewed (124PASS); that remains correctly scoped historical evidence after this source merge. Current-head hosted rendering/artifact inspection and fullCI remain required, along with actual #1739 first. Renderer/fixture code is unchanged, but no old artifact is relabeled as the new head.
