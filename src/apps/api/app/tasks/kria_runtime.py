@@ -2038,6 +2038,8 @@ async def _plan_with_live_agent(
                     **({"editor_state": parsed_state} if parsed_state is not None else {}),
                     # KRI-282: a clip-picker answer must re-plan, never take the copilot path.
                     **({"answers_clip_question": True} if answers_clip_question else {}),
+                    # KRI-802: this app answers a title card and a clip picker on one turn.
+                    **({"batch_questions": True} if snapshot.get("batch_questions") else {}),
                     **scoped,
                 )
                 if (
@@ -2201,6 +2203,18 @@ def _answers_clip_question(source: Any) -> bool:
     )
 
 
+def _answers_batched_questions(source: Any) -> bool:
+    """KRI-802: the app that sent this message answers a reply's choice card and clip picker
+    on one turn (stamped at submit), and both card kinds are on."""
+    payload = getattr(source, "payload", None)
+    return (
+        isinstance(payload, dict)
+        and payload.get("answers_batched_questions") is True
+        and bool(settings.kria_choice_questions_enabled)
+        and bool(settings.kria_clip_selection_questions_enabled)
+    )
+
+
 def _scoped_turn_fields(source: Any) -> dict[str, Any] | None:
     """``{"scope": [...], "manual_edits": [...]}`` stored on a scoped turn's user_message."""
     payload = getattr(source, "payload", None)
@@ -2274,6 +2288,9 @@ def _claim(
         if live_scope is not None:
             # KRI-441: rides the snapshot dict so the claim tuple keeps its shape.
             claimed_snapshot["live_scope"] = live_scope
+        if _answers_batched_questions(source):
+            # KRI-802: the same way; only when true, so every other snapshot is unchanged.
+            claimed_snapshot["batch_questions"] = True
         return (
             claimed_snapshot,
             # KRI-694: the task binds the chat's language only after this claim.

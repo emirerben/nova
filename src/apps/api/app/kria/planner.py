@@ -2196,8 +2196,14 @@ async def _plan_from_creator_output(
     describe_clips: bool = False,
     spoken_text: Sequence[str] = (),
     effective_brief: CreativeBrief | None = None,
+    batch_questions: bool = False,
 ) -> PlannedKriaTurn:
-    """Turn a Main Creator answer into an inert plan (clip-intent resolution incl.)."""
+    """Turn a Main Creator answer into an inert plan (clip-intent resolution incl.).
+
+    KRI-802: ``batch_questions`` (the app answers a reply's cards together) holds a title
+    wording question while the clip checks run, so a clip picker they end on is asked in
+    the same reply instead of one full re-plan later.
+    """
     decision = getattr(output, "creative_decision", None)
     # Only the current creator message can authorize a replacement. Brief prose and
     # earlier assistant suggestions are not creator-authored evidence.
@@ -2223,29 +2229,95 @@ async def _plan_from_creator_output(
         manifest=manifest,
         response=output.action.question if isinstance(output.action, AskUser) else None,
     )
-    if creative_turn is not None:
+    hold_wording = batch_questions and isinstance(output.action, ProposeStrategy)
+    if creative_turn is not None and not hold_wording:
         return creative_turn
+    held: list[PlannedKriaTurn] = [creative_turn] if creative_turn is not None else []
     # Persist validated replacements alongside whichever result the normal planner
     # produces, within the same revision-fenced completion transaction.
-    planned = await _plan_creator_action(
-        db,
-        thread_id=thread_id,
-        item_id=item_id,
-        creator_id=creator_id,
-        user_message=user_message,
-        manifest=manifest,
-        inputs=inputs,
-        output=output,
-        brief_request=brief_request,
-        wants_capture_order=wants_capture_order,
-        brief_selects_clips=brief_selects_clips,
-        clip_scope_texts=clip_scope_texts,
-        requested_media=requested_media,
-        describe_clips=describe_clips,
-        spoken_text=spoken_text,
-        effective_brief=effective_brief,
-    )
+    try:
+        planned = await _plan_creator_action(
+            db,
+            thread_id=thread_id,
+            item_id=item_id,
+            creator_id=creator_id,
+            user_message=user_message,
+            manifest=manifest,
+            inputs=inputs,
+            output=output,
+            brief_request=brief_request,
+            wants_capture_order=wants_capture_order,
+            brief_selects_clips=brief_selects_clips,
+            clip_scope_texts=clip_scope_texts,
+            requested_media=requested_media,
+            describe_clips=describe_clips,
+            spoken_text=spoken_text,
+            effective_brief=effective_brief,
+            **({"held_wording": held} if hold_wording else {}),
+        )
+    except Exception as exc:  # noqa: BLE001 - re-raised unless a question is held
+        if not held:
+            raise
+        # KRI-802: planning on past a held question must never cost the creator that
+        # question: the turn asks it, exactly as it did before batching.
+        log.warning("kria_question_batch_failed_open", error_type=type(exc).__name__)
+        with suppress(Exception):  # a failed statement must not poison the rest of the turn
+            await db.rollback()
+        planned = held[0]
+    else:
+        if held:
+            planned = _with_wording_question(held[0], planned)
     return replace(planned, creative_copy_resolution=resolution)
+
+
+def _with_wording_question(wording: PlannedKriaTurn, planned: PlannedKriaTurn) -> PlannedKriaTurn:
+    """KRI-802: ask a held title-wording question in the same reply as a clip picker.
+
+    Only a plain clip picker joins it: the app answers the two cards on one turn. Any other
+    ending (a draft, a text question, another choice card, a refusal, a "still checking"
+    reply, a picker about the title's own words, a reply too long to persist) leaves the
+    wording question alone, exactly as before, so nothing is ever drafted with words the
+    creator has not approved.
+    """
+
+    plan = planned.plan
+    title = _pin_key(str((wording.plan.choice_question or {}).get("candidate") or ""))
+    words = [
+        _pin_key(str(category.get("creator_text") or ""))
+        for category in (plan.clip_question or {}).get("categories") or []
+        if isinstance(category, dict)
+    ]
+    if (
+        plan.mode != "respond"
+        or plan.turn_value != "question"
+        or not plan.clip_question
+        or plan.choice_question
+        or plan.song_order_question is not None
+        or plan.song_range_question is not None
+        or plan.reply_options
+        or planned.continuable
+        or any(word and title and (word in title or title in word) for word in words)
+    ):
+        return wording
+    closing = say(
+        en="Answer both and I'll plan your edit.",
+        tr="İkisini de yanıtla, düzenlemeni planlayayım.",
+    )
+    try:
+        merged = KriaTurnPlan.model_validate(
+            {
+                **plan.model_dump(mode="json"),
+                "response": "\n\n".join(
+                    [wording.plan.response or "", plan.response or "", closing]
+                ),
+                "choice_question": wording.plan.choice_question,
+                "diagnostics": {**(plan.diagnostics or {}), "question_batch": "wording+clips"},
+            }
+        )
+    except ValidationError:  # the joined reply is over the response limit
+        return wording
+    log.info("kria_questions_batched", batch="wording+clips")
+    return replace(planned, plan=merged)
 
 
 _PIN_QUOTES = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"'})
@@ -2468,7 +2540,10 @@ async def _plan_creator_action(
     describe_clips: bool = False,
     spoken_text: Sequence[str] = (),
     effective_brief: CreativeBrief | None = None,
+    held_wording: list[PlannedKriaTurn] | None = None,
 ) -> PlannedKriaTurn:
+    # KRI-802: given `held_wording`, a title-wording question is added there (one per turn)
+    # and planning goes on, so the caller can ask it together with a clip picker.
     action = output.action
     if isinstance(action, ProposeStrategy):
         user_sources = [
@@ -2511,12 +2586,17 @@ async def _plan_creator_action(
                 )
             grounded = grounded or quoted
             if value and not (state and state.approved == value) and not (authored or grounded):
-                return _creative_copy_turn(
+                copy_turn = _creative_copy_turn(
                     CreativeCopyDecision(target=target, status="candidate", proposed_text=value),
                     inputs=inputs,
                     creator_request=user_message,
                     manifest=manifest,
                 )
+                if held_wording is None or copy_turn is None:
+                    return copy_turn
+                if not held_wording:
+                    held_wording.append(copy_turn)
+                break
     policy_notices: tuple[str, ...] = ()
     server_song_takes: list[dict[str, Any]] | None = None
     server_song_captions: str | None = None
@@ -4343,7 +4423,10 @@ async def _plan_live_turn(
     answers_clip_question: bool = False,
     scope: list[str] | None = None,
     manual_edits: list[Any] | None = None,
+    batch_questions: bool = False,
 ) -> PlannedKriaTurn:
+    # KRI-802: `batch_questions` = the app that sent this message answers a reply's choice
+    # card and clip picker on one turn (`_plan_from_creator_output`).
     # KRI-282: `answers_clip_question` marks a turn that ANSWERS a clip-picker
     # question: structured `clip_selection` plus a synthetic message ("Dodgeball:
     # clip 21"). That message must never reach the editor copilot, which reads it
@@ -4780,6 +4863,7 @@ async def _plan_live_turn(
             manifest=manifest,
             inputs=inputs,
             output=output,
+            **({"batch_questions": True} if batch_questions else {}),
         )
 
     # KRI-611: the model owns which requirement a change/remove targets, never the
@@ -4942,6 +5026,7 @@ async def _plan_live_turn(
         describe_clips=wants_clip_descriptions(effective),
         spoken_text=spoken_text_literals(effective),
         effective_brief=effective,
+        **({"batch_questions": True} if batch_questions else {}),
     )
     return replace(
         planned,

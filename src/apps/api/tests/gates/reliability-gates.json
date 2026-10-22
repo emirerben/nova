@@ -17,6 +17,58 @@
   ],
   "gates": [
     {
+      "id": "kri-802-question-batch",
+      "tickets": [
+        "KRI-802"
+      ],
+      "symptom": "Don Julio M1 chat 1 asked its blocking questions one per turn: the title wording (19:24), then the red-cap clip picker a full re-plan later (19:26), although the first turn's clip checks would have found it; the title-wording gate returned before them, and every answer re-runs the Main Creator (1-2 min).",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-802",
+      "paths": [
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/fixtures/kri802_don_julio_m1_turn1.json",
+        "src/apps/ios/Kria/Core/QuestionBatch.swift",
+        "src/apps/ios/Kria/Features/ChatWorkspaceView.swift"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri802_question_batch.py",
+        "tests/kria/test_kri802_question_batch_postgres.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Chat 1's first turn: the recorded Main Creator input (run 05de835e), its strategy rebuilt from the turn (output redacted), the next turn's clip asks and resolver stats; real Main Creator parse, real planner, real clip-intent planner and resolver behind a provider-transport fake. Red before the fix: the reply asked only the title (byte-identical to prod) and never reached the resolver; green: one reply carries the title card and the red-cap picker. Submit/claim/fold over scratch Postgres: one turn with both answers is accepted, both fold, the worker plans with batch_questions.",
+        "live_model": "Not run; no paid calls. The change makes no new model call (the clip checks the first turn now runs are the ones the next turn ran anyway).",
+        "native_output": "XCUITest KriaUITests/CreationUITests/testTitleCardAndClipPickerInOneReplyGoOutOnOneTurn and testClipsFirstThenTheTitleTapSendsBothOnOneTurn (simulator, fixture server): the first answer is held, the second sends both on one turn. Physical iPhone re-send of M1 pending a TestFlight build at protocol 14.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "older app builds and the web (no stamp): one question per turn, byte-identical first reply, no resolver call",
+        "nothing else to ask: the title question alone, nothing drafted with unapproved words",
+        "a text-only clip question (the '+' label): the title question alone",
+        "a second choice card, reply chips, a 'still checking' reply, a recovery, a draft: the title question alone",
+        "a picker about the title's own words: the title question alone",
+        "a joined reply over the 1200-character limit: the title question alone",
+        "both titles model-written: one wording question (opening first)",
+        "kill switch KRIA_QUESTION_BATCH_MIN_CLIENT_PROTOCOL=999",
+        "answers in either order on the phone (title first, clips first)"
+      ],
+      "neighbours_gap": [
+        "The '+' label question (free-text answer) is not batched: a typed answer cannot ride a tap, and KRI-804 is reshaping that question.",
+        "The held-draft 'simpler version?' choice stays last: it reads the compiled draft.",
+        "Order/length choice cards are not batched: they need resolved clips and there is one choice slot per reply.",
+        "Vision calls are not replayed: the recorded resolver answer for the red cap is empty, as prod's was after its one vision check."
+      ],
+      "follow_ups": [
+        "KRI-804",
+        "KRI-807"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-422-long-intent-id",
       "tickets": [
         "KRI-422"

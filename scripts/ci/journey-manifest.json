@@ -1270,6 +1270,23 @@
       ]
     },
     {
+      "id": "kri-802-question-batch",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_kri802_question_batch.py tests/kria/test_kri802_question_batch_postgres.py",
+      "xctests": [
+        "KriaUITests/CreationUITests/testTitleCardAndClipPickerInOneReplyGoOutOnOneTurn",
+        "KriaUITests/CreationUITests/testClipsFirstThenTheTitleTapSendsBothOnOneTurn"
+      ],
+      "paths": [
+        "src/apps/api/tests/fixtures/kri802_don_julio_m1_turn1.json",
+        "src/apps/api/tests/kria/test_kri802_question_batch.py",
+        "src/apps/api/tests/kria/test_kri802_question_batch_postgres.py",
+        "src/apps/ios/Kria/Core/QuestionBatch.swift",
+        "src/apps/ios/Kria/Features/ChoiceQuestionCard.swift",
+        "src/apps/ios/Kria/Features/ChatWorkspaceView.swift"
+      ]
+    },
+    {
       "id": "market-research-reference-banks",
       "needs_native": false,
       "api_tests": "tests/agents/test_market_research_banks.py tests/agents/test_overlay_examples_slop_guard.py tests/agents/test_persona_generator.py tests/agents/test_content_plan_generator.py tests/agents/test_intro_writer.py tests/agents/test_overlay_format_matcher.py tests/evals/test_persona_generator_evals.py tests/evals/test_content_plan_generator_evals.py tests/evals/test_intro_writer_evals.py tests/evals/test_overlay_format_matcher_evals.py",
