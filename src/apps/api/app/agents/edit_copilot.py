@@ -3282,6 +3282,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.edit.copilot",
         prompt_id="edit_copilot",
+        sensitive_io=True,
         prompt_version=EDIT_COPILOT_PROMPT_VERSION,
         model=settings.edit_copilot_model,
         max_attempts=2,
@@ -3289,7 +3290,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         # Durable Kria turns supply a shared deadline and post-processing
         # reserve. Stateless HTTP callers override this back to 40 seconds.
         timeout_s=120.0,
-        thinking_level="high",
+        thinking_level=settings.edit_copilot_thinking_level,
         cost_per_1k_input_usd=0.002,
         cost_per_1k_output_usd=0.012,
     )

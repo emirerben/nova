@@ -228,7 +228,7 @@
     {
       "id": "slide-post-binding-recovery",
       "needs_native": true,
-      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/evals/test_edit_copilot_evals.py",
+      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/routes/test_slide_post_binding_save_postgres.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/evals/test_edit_copilot_evals.py",
       "xctests": [
         "KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave",
         "KriaTests/SlidePostFramingTests/testEncodingAlwaysWritesTheFramingKeySoAClearIsNeverMistakenForAnOlderApp",
@@ -247,6 +247,7 @@
         "src/apps/api/app/routes/plan_items.py",
         "src/apps/api/app/schemas/slide_post.py",
         "src/apps/api/tests/routes/test_slide_post_native_routes.py",
+        "src/apps/api/tests/routes/test_slide_post_binding_save_postgres.py",
         "src/apps/ios/Kria/Core/SlidePost.swift",
         "src/apps/ios/Tests/KriaTests/SlidePostTests.swift",
         "src/apps/ios/Tests/Fixtures/SlidePostBindingRoundTrip.json",
@@ -627,11 +628,15 @@
     {
       "id": "kri-628-opening-cut",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_phone_opening_cut.py",
+      "api_tests": "tests/pipeline/test_phone_opening_cut.py tests/pipeline/test_phone_take_window.py",
       "paths": [
         "src/apps/api/app/kria/opening_cut_ask.py",
         "src/apps/api/app/pipeline/phone_opening_cut.py",
-        "src/apps/api/app/services/spoken_quotes.py"
+        "src/apps/api/app/services/spoken_quotes.py",
+        "src/apps/api/app/services/speech_segments.py",
+        "src/apps/api/app/cli/verify_take_window.py",
+        "src/apps/api/tests/fixtures/kri790_merope_t1_take.json",
+        "src/apps/api/tests/pipeline/test_phone_take_window.py"
       ]
     },
     {
@@ -995,6 +1000,36 @@
       ]
     },
     {
+      "id": "creator-model-comparison",
+      "needs_native": false,
+      "api_tests": "tests/agents/test_text_provider_contracts.py tests/agents/test_comparison_workflow.py tests/services/test_text_provider_ledger.py tests/services/test_comparison_capture.py tests/integration/test_comparison_eligibility.py tests/services/test_ai_cost_control.py tests/evals/test_main_creator_evals.py tests/evals/test_edit_copilot_evals.py tests/agents/test_creator_wire_contract.py tests/agents/test_sealed_comparison.py tests/agents/test_comparison_sources.py tests/agents/test_recorded_copilot_sources.py tests/agents/test_json_guard_profile.py tests/integration/test_comparison_persistence.py tests/integration/test_comparison_development_inventory.py",
+      "paths": [
+        "src/apps/api/app/agents/_text_providers.py",
+        "src/apps/api/app/services/creator_model_comparison.py",
+        "src/apps/api/app/services/creator_comparison_capture.py",
+        "src/apps/api/app/cli/compare_creator_models.py",
+        "src/apps/api/app/routes/admin_request_following.py",
+        "src/apps/api/app/services/ai_cost_control.py",
+        "src/apps/api/tests/agents/test_text_provider_contracts.py",
+        "src/apps/api/tests/agents/test_comparison_workflow.py",
+        "src/apps/api/tests/services/test_text_provider_ledger.py",
+        "src/apps/api/tests/services/test_comparison_capture.py",
+        "src/apps/api/tests/integration/test_comparison_eligibility.py",
+        "scripts/compare_creator_models.py",
+        "src/apps/api/app/agents/_creator_wire.py",
+        "src/apps/api/app/services/creator_comparison_holdout.py",
+        "src/apps/api/app/services/creator_comparison_sources.py",
+        "src/apps/api/tests/agents/test_creator_wire_contract.py",
+        "src/apps/api/tests/agents/test_sealed_comparison.py",
+        "src/apps/api/tests/agents/test_comparison_sources.py",
+        "src/apps/api/app/services/creator_comparison_persistence.py",
+        "src/apps/api/tests/agents/test_recorded_copilot_sources.py",
+        "src/apps/api/tests/agents/test_json_guard_profile.py",
+        "src/apps/api/tests/integration/test_comparison_persistence.py",
+        "src/apps/api/tests/integration/test_comparison_development_inventory.py"
+      ]
+    },
+    {
       "id": "kri-756-suggestion-chips",
       "needs_native": true,
       "api_tests": "tests/evals/test_suggestion_chips_evals.py tests/evals/test_chip_suggester_evals.py tests/services/test_suggestion_chips_guards.py tests/scripts/test_suggestion_chip_funnel.py",
@@ -1242,6 +1277,26 @@
         "src/apps/api/tests/fixtures/kri793_t1_caro/t1_brief_and_speech.json",
         "src/apps/api/tests/kria/test_kri793_caption_spellings.py",
         "src/apps/api/tests/tasks/test_kri793_talking_caption_spellings.py"
+      ]
+    },
+    {
+      "id": "market-research-reference-banks",
+      "needs_native": false,
+      "api_tests": "tests/agents/test_market_research_banks.py tests/agents/test_overlay_examples_slop_guard.py tests/agents/test_persona_generator.py tests/agents/test_content_plan_generator.py tests/agents/test_intro_writer.py tests/agents/test_overlay_format_matcher.py tests/evals/test_persona_generator_evals.py tests/evals/test_content_plan_generator_evals.py tests/evals/test_intro_writer_evals.py tests/evals/test_overlay_format_matcher_evals.py",
+      "paths": [
+        "src/apps/api/prompts/persona_archetypes.json",
+        "src/apps/api/prompts/content_ideas.json",
+        "src/apps/api/prompts/tiktok_success_factors.json",
+        "src/apps/api/prompts/overlay_examples.json",
+        "src/apps/api/app/agents/_schemas/market_research.py",
+        "src/apps/api/app/agents/_schemas/persona.py",
+        "src/apps/api/app/agents/_schemas/content_plan.py",
+        "src/apps/api/app/agents/intro_writer.py",
+        "src/apps/api/app/agents/overlay_format_matcher.py",
+        "src/apps/api/app/agents/persona_examples.py",
+        "src/apps/api/app/agents/overlay_examples.py",
+        "src/apps/api/tests/agents/test_market_research_banks.py",
+        "src/apps/api/tests/agents/test_overlay_examples_slop_guard.py"
       ]
     }
   ]

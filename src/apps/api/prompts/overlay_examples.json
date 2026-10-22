@@ -1,5 +1,5 @@
 {
-  "version": "2026-08-05",
+  "version": "2026-10-22-research-18",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -322,6 +322,58 @@
       "highlight_color": "#FFE08A",
       "niche": "professional lifestyle & city aesthetics",
       "source": "tiktok market research 2026-06"
+    },
+    {
+      "id": "early-morning-commitment-scaleup-01",
+      "content_profile": "early-morning outdoor commitment — a hike, swim, or workout before sunrise — raw and energetic, the creator shows up before the world is awake",
+      "effect": "scale-up",
+      "text": "woke up at 5am for this",
+      "highlight_word": "5am",
+      "position": "center",
+      "size_class": "jumbo",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#A6FF6B",
+      "niche": "fitness & daily discipline",
+      "source": "https://www.tiktok.com/@izzsiomoi/video/7669218300676607239 (snapshot 2026-10-11T19:01:07.323428+00:00; illustrative authored overlay suggestion; effect/color/footage not visually verified)"
+    },
+    {
+      "id": "series-comeback-fadein-01",
+      "content_profile": "returning to a beloved content series after a long absence — a place, farm, neighborhood, or ritual the creator is revisiting for the first time in months",
+      "effect": "fade-in",
+      "text": "it's been a while — i'm back",
+      "highlight_word": "back",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFE08A",
+      "niche": "lifestyle & travel",
+      "source": "https://www.tiktok.com/@nermozdemir/video/7668975853270813960 (snapshot 2026-10-11T19:01:31.838550+00:00; illustrative authored overlay suggestion; effect/color/footage not visually verified)"
+    },
+    {
+      "id": "nostalgia-return-fadein-01",
+      "content_profile": "creator returning to a beloved series or ritual format after a long gap — community nostalgia energy, personal and unhurried",
+      "effect": "fade-in",
+      "text": "haven't done this in forever",
+      "highlight_word": "forever",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#A3E635",
+      "niche": "wellness & daily ritual",
+      "source": "https://www.tiktok.com/@nermozdemir/video/7668975853270813960 (snapshot 2026-10-18T19:02:29.536897+00:00; illustrative authored overlay alternative; effect/color/footage not visually verified)"
+    },
+    {
+      "id": "routine-anchor-popin-01",
+      "content_profile": "close-up of a daily ritual ingredient or practice — morning bowl, coffee, a specific wellness habit — warm and grounded, no voiceover needed",
+      "effect": "pop-in",
+      "text": "back to my morning routine",
+      "highlight_word": "routine",
+      "position": "bottom",
+      "size_class": "medium",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#A3E635",
+      "niche": "wellness & daily ritual",
+      "source": "https://www.tiktok.com/@nermozdemir/video/7677983862441479442 (snapshot 2026-10-18T19:02:29.536897+00:00; illustrative authored overlay from a disclosed sponsored caption; no measured organic or visual-style claim)"
     }
   ]
 }
