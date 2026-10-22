@@ -115,7 +115,7 @@ class Settings(BaseSettings):
     # `fly secrets set PHONE_SUBTITLED_RENDERING_ENABLED=false --app nova-video`
     # + `fly machine restart <id>` (api + worker).
     phone_subtitled_rendering_enabled: bool = True
-    # Requires processedAudio on a verified protocol-14 client cohort.
+    # Requires processedAudio on a verified protocol-15 client cohort.
     phone_engine_noise_reduction_enabled: bool = False
     phone_engine_noise_model_path: str = ""
     phone_engine_noise_model_sha256: str = ""
@@ -821,6 +821,12 @@ class Settings(BaseSettings):
     # Default TRUE; kill switch = false + restart (the field is dropped, no question is
     # asked, the montage behaves exactly as before).
     kria_choice_questions_enabled: bool = True
+    # KRI-802: an app build declaring `X-Kria-Client-Protocol` >= this answers a reply's
+    # choice card and clip picker on one turn, so the planner asks a title-wording question
+    # and a clip picker in the same reply. Lower builds and the web keep one question per
+    # turn. Kill switch: `fly secrets set KRIA_QUESTION_BATCH_MIN_CLIENT_PROTOCOL=999`
+    # (api + worker) + restart; messages sent after it get one question per turn again.
+    kria_question_batch_min_client_protocol: int = 14
     # KRI-470: "one plan, obeyed everywhere". Evaluated ONCE, when a creator
     # render contract is stamped onto a new job (`creator_plan_authority_version`
     # in `Job.all_candidates`); workers branch on that stamp, never on this live

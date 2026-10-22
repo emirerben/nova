@@ -350,7 +350,7 @@ async def get_device_render(
         from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
 
         # Old clients reject this new discriminator while decoding the response.
-        if (current_client_protocol() or 0) < 14:
+        if (current_client_protocol() or 0) < 15:
             raise HTTPException(
                 426, detail={"code": "client_update_required", "feature": "processed_audio"}
             )

@@ -13,6 +13,13 @@ Ways this can fail, each pinned below (written before the code):
 4. A recorded ``keep_whole_take: false`` is read as "keep it whole".
 5. Speech cleanup, captions or source-sound checkers swallow the ask ("kesilmesin" has `kes`).
 6. The draft (nothing rendered yet) reports a failure for something only the render can judge.
+
+KRI-803 (prod thread F4083F1D, Don Julio kit M1, 2026-10-21): "keep his name exchange audible
+("What's your name?" "Lucas.")" was filed as ``kind=audio, facts={"audio_intent":
+"source_unchanged", "triggers": [...]}`` with no ``keep_whole_take``, and refused as a pop-in.
+7. The source-sound fact with the lines recorded as `triggers` is still judged as a pop-in.
+8. A pop-in ask that also records `source_unchanged` (a sound or photo on a word) loses its
+   beat check, or quoted words the model did NOT record as spoken (a clip's name) become a line.
 """
 
 from __future__ import annotations
@@ -68,6 +75,29 @@ WHOLE_LINE_ASKS = [
     ),
     pytest.param(
         lambda: _req("audio", TR_ASK, keep_whole_take="true"), id="flag-spelled-as-a-string"
+    ),
+    # 7: KRI-803, r6 / r7 exactly as prod filed them.
+    pytest.param(
+        lambda: _req(
+            "audio",
+            "Keep waiter's name exchange audible",
+            audio_intent="source_unchanged",
+            triggers=["What's your name?", "Lucas."],
+        ),
+        id="kri803-r6-source-unchanged-triggers",
+    ),
+    pytest.param(
+        lambda: _req(
+            "audio",
+            'Keep that "Cheers!" audible too',
+            audio_intent="source_unchanged",
+            triggers=["Cheers!"],
+        ),
+        id="kri803-r7-one-word-line",
+    ),
+    pytest.param(
+        lambda: _req("audio", TR_ASK, audio_intent="source_unchanged", triggers=[LINE]),
+        id="kri803-shape-in-turkish",
     ),
 ]
 
@@ -143,6 +173,34 @@ POP_IN_ASKS = [
         lambda: _req("style", TR_ASK, triggers=[LINE], keep_whole_take=False),
         id="keep-whole-take-false",
     ),
+    # 8: a sound or photo on a word stays a pop-in even with the source sound kept.
+    pytest.param(
+        lambda: _req(
+            "audio",
+            "When I say 'cheers' play a glass clink, keep the original audio",
+            audio_intent="source_unchanged",
+            triggers=["cheers"],
+        ),
+        id="kri803-sound-on-word-with-source-kept",
+    ),
+    pytest.param(
+        lambda: _req(
+            "audio",
+            "her 'kahve' kelimesinde fincan sesi çalsın",
+            audio_intent="source_unchanged",
+            triggers=["kahve"],
+        ),
+        id="kri803-tr-sound-on-word-with-source-kept",
+    ),
+    pytest.param(
+        lambda: _req(
+            "audio",
+            "Pop up the medal photo on 'the medal', original sound on",
+            audio_intent="source_unchanged",
+            triggers=["the medal"],
+        ),
+        id="kri803-photo-on-word-with-source-kept",
+    ),
 ]
 
 
@@ -171,3 +229,24 @@ def test_a_line_with_no_flag_stays_what_it_was() -> None:
 def test_a_whole_take_with_no_named_line_is_the_old_timing_ask() -> None:
     req = _req("timing", "Videonun hepsi kalsın", keep_whole_take=True)
     assert not wants_whole_line(req)
+
+
+def test_the_source_sound_fact_needs_the_lines_recorded_as_spoken() -> None:
+    # 8: KRI-803 routes on the recorded `triggers`, never on quoted words alone: a quoted
+    # clip name is not a line. A recorded keep_whole_take false still says no.
+    for req in (
+        _req(
+            "audio",
+            'Keep the original audio on the "Beach day" clip',
+            audio_intent="source_unchanged",
+        ),
+        _req(
+            "audio",
+            TR_ASK,
+            audio_intent="source_unchanged",
+            triggers=[LINE],
+            keep_whole_take=False,
+        ),
+        _req("audio", TR_ASK, audio_intent="processed", triggers=[LINE]),
+    ):
+        assert not wants_whole_line(req)

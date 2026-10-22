@@ -52,7 +52,7 @@ impulses, pads and trims to compensate, and rejects unsupported source offsets o
 changed timing. An immutable private receipt binds the resulting audio to the
 job, variant, render generation, source generation, storage generation and hash.
 The phone receives an opaque asset identity, not a storage path. Processed audio
-follows the exact source windows and fades of the original video. Protocol 14 is
+follows the exact source windows and fades of the original video. Protocol 15 is
 required for recipes carrying processed audio. Editor saves restore an existing
 processed track and refuse a missing receipt instead of silently restoring noise.
 
