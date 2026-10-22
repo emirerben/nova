@@ -131,13 +131,24 @@ struct TextPreferenceOperation: Decodable, Sendable {
     private func mutate(path: String, method: String, extra: [String: JSONValue] = [:]) async throws {
         guard let memory else { return }
         isWorking = true; saved = false
-        defer { isWorking = false }
+        memoryProbe("mutate-start \(path)")
+        defer {
+            isWorking = false
+            memoryProbe("mutate-complete \(path)")
+        }
         var body = extra
         body["expected_revision"] = .number(Double(memory.revision))
         body["idempotency_key"] = .string(UUID().uuidString)
         _ = try await api.mutateTextPreferenceMemory(path: path, method: method, body: body)
         self.memory = try await api.textPreferenceMemory()
         error = nil; needsReload = false
+    }
+    private func memoryProbe(_ phase: String) {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-account") {
+            NSLog("%@", "[ACCOUNT-PICKER-PROBE] \(phase) model=\(ObjectIdentifier(self)) working=\(isWorking) revision=\(memory?.revision ?? -1) learning=\(String(describing: memory?.editLearning?.enabled)) titlePosition=\(memory?.rule(role: "title").position ?? "nil")")
+        }
+        #endif
     }
     private func show(_ error: Error) {
         needsReload = (error as? APIError)?.isConflict == true
@@ -254,8 +265,24 @@ struct TextPreferencesView: View {
         .disabled(model.isWorking)
         .scrollContentBackground(.hidden).background(KriaColor.paper)
         .navigationTitle("Text preferences").navigationBarTitleDisplayMode(.inline)
-        .task { await model.load(); reloadRule() }
-        .onChange(of: role) { _, _ in reloadRule() }
+        .task {
+            pickerProbe("load-start")
+            await model.load()
+            pickerProbe("load-complete")
+            reloadRule()
+        }
+        .onChange(of: role) { old, new in
+            pickerProbe("role-change \(old) -> \(new)")
+            reloadRule()
+        }
+    }
+    // Diagnostic branch only: observe the existing binding without changing it.
+    private func pickerProbe(_ phase: String) {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-account") {
+            NSLog("%@", "[ACCOUNT-PICKER-PROBE] \(phase) model=\(ObjectIdentifier(model)) role=\(role) working=\(model.isWorking) revision=\(model.memory?.revision ?? -1)")
+        }
+        #endif
     }
     @ViewBuilder private var status: some View {
         if model.saved { Text("Saved for future videos.").accessibilityIdentifier("text-preferences-saved") }
