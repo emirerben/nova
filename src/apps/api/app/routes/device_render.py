@@ -45,6 +45,7 @@ from app.kria.device_render import (
 )
 from app.kria.render_assets import (
     LibraryRenderAsset,
+    ProcessedAudioRenderAsset,
     SongRenderAsset,
     VisualRenderAsset,
     VoiceoverRenderAsset,
@@ -344,6 +345,15 @@ async def get_device_render(
         raise HTTPException(
             426, detail={"code": "client_update_required", "feature": "single_word_text"}
         )
+    manifest = getattr(status.request.recipe, "asset_manifest", None)
+    if manifest and any(isinstance(asset, ProcessedAudioRenderAsset) for asset in manifest.assets):
+        from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+
+        # Old clients reject this new discriminator while decoding the response.
+        if (current_client_protocol() or 0) < 14:
+            raise HTTPException(
+                426, detail={"code": "client_update_required", "feature": "processed_audio"}
+            )
     status = DeviceRenderStatusOut(
         **status.model_dump(),
         output_verification_required=verification_required,
@@ -411,6 +421,13 @@ async def download_device_asset(
         )
     if isinstance(asset, SongRenderAsset):
         url = await _song_download_url(db, job, user_id, asset)
+        return DeviceAssetDownloadOut(
+            asset_id=asset.id,
+            download_url=url,
+            expires_at=datetime.now(UTC) + timedelta(minutes=15),
+        )
+    if isinstance(asset, ProcessedAudioRenderAsset):
+        url = await _processed_audio_download_url(db, job, asset, record, body.identity)
         return DeviceAssetDownloadOut(
             asset_id=asset.id,
             download_url=url,
@@ -720,6 +737,62 @@ async def _song_download_url(
         )
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(409, "Song changed; refresh the recipe") from exc
+
+
+async def _processed_audio_download_url(
+    db: AsyncSession,
+    job: Job,
+    asset: ProcessedAudioRenderAsset,
+    record: dict,
+    identity: DeviceRenderIdentity,
+) -> str:
+    """Grant only the exact job/variant/source derivative pinned in the recipe.
+
+    The object path is read exclusively from private worker state.  Neither the
+    client nor the portable manifest supplies storage authority.
+    """
+    from app.pipeline.phone_processed_audio import (  # noqa: PLC0415
+        processed_audio_asset,
+        processed_audio_receipt_for,
+    )
+
+    changed = HTTPException(409, "Processed audio changed; refresh the recipe")
+    if (
+        asset.job_id != str(job.id)
+        or asset.variant_id != identity.variant_id
+        or asset.render_generation != str(record.get("base_generation") or "")
+    ):
+        raise changed
+    receipt = processed_audio_receipt_for(
+        job.assembly_plan or {}, variant_id=asset.variant_id, source_media_id=asset.source_media_id
+    )
+    if receipt is None or processed_audio_asset(receipt, asset_id=asset.id) != asset:
+        raise changed
+    try:
+        sources = approved_export_sources(job, record["status"]["request"])
+    except (KeyError, CreatorRenderContractError) as exc:
+        raise changed from exc
+    source = sources.get(asset.source_media_id)
+    if source is None or source.generation != asset.source_generation:
+        raise changed
+    prefix = (
+        f"generative-jobs/{job.id}/phone-processed-audio/"
+        f"{asset.variant_id}_{asset.source_media_id}_"
+    )
+    token = receipt.path[len(prefix) : -len(".m4a")] if receipt.path.endswith(".m4a") else ""
+    if (
+        not receipt.path.startswith(prefix)
+        or len(token) not in {32, 64}
+        or any(char not in "0123456789abcdef" for char in token)
+    ):
+        raise changed
+    await db.rollback()
+    try:
+        return await asyncio.to_thread(
+            storage.signed_get_url_for_generation, receipt.path, generation=asset.generation
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise changed from exc
 
 
 @router.post("/jobs/{job_id}/device-render/uploads", response_model=DeviceExportReservationOut)

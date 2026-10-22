@@ -115,6 +115,10 @@ class Settings(BaseSettings):
     # `fly secrets set PHONE_SUBTITLED_RENDERING_ENABLED=false --app nova-video`
     # + `fly machine restart <id>` (api + worker).
     phone_subtitled_rendering_enabled: bool = True
+    # Requires processedAudio on a verified protocol-14 client cohort.
+    phone_engine_noise_reduction_enabled: bool = False
+    phone_engine_noise_model_path: str = ""
+    phone_engine_noise_model_sha256: str = ""
     # KRI-174 Phase 1: a server-owned `_phone_subtitled_lanes_v1` request on
     # the job's assembly_plan (overlay sticker/photo cards pinned from the
     # Visuals pool, catalog sound effects on an `sfx` track, a muted ending

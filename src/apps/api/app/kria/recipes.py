@@ -245,6 +245,7 @@ MediaCapability = Literal[
     "slidePosts",
     "semanticCamera",
     "musicBed",
+    "processedAudio",
 ]
 
 

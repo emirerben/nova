@@ -1061,7 +1061,8 @@ enum KriaClientProtocolContract {
     /// 12 (KRI-734): withholds unverified local exports from playback/Save/Share
     /// when the server declares `output_verification_required`.
     /// 13: accepts durable background output checks and resumes status polling.
-    static let version = 13
+    /// 14: decodes and grants immutable `processed_audio` source derivatives.
+    static let version = 14
     static let header = "X-Kria-Client-Protocol"
 }
 
