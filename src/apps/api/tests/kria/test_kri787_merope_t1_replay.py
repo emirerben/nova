@@ -499,30 +499,6 @@ def test_approval_is_offered_for_both_drafts(index: int) -> None:
 
 
 @pytest.mark.parametrize("index", [0, 1], ids=JOBS)
-def test_prod_dispatch_rebuilds_the_contract_without_the_answer(
-    monkeypatch: pytest.MonkeyPatch, index: int
-) -> None:
-    """Prod's stored contract, byte for byte. Retired by KRI-788 (or KRI-789's one-clip rule)."""
-    render = RENDERS[index]
-    job = dispatch(monkeypatch, render)
-    contract = dispatched_contract(job)
-    assert "choice_answers" not in job.all_candidates["creator_strategy"]
-    rebound = contract.model_copy(update={"generation_id": render["generation_id"]}).rebind()
-    assert rebound.digest == render["prod_contract"]["digest"]
-    assert contract.unresolved == (ORDER_REFUSAL,)
-    assert render["prod_contract"]["unresolved"] == [ORDER_REFUSAL]
-
-
-@pytest.mark.parametrize("index", [0, 1], ids=JOBS)
-def test_prod_the_worker_refuses_it(monkeypatch: pytest.MonkeyPatch, index: int) -> None:
-    """Prod's failure reason, message and decline. Retired by KRI-788 (or KRI-789)."""
-    render = RENDERS[index]
-    outcome = run_worker(monkeypatch, dispatch(monkeypatch, render))
-    assert outcome == prod_refusal(render)
-    assert outcome.message == ORDER_REFUSAL
-
-
-@pytest.mark.parametrize("index", [0, 1], ids=JOBS)
 def test_prod_failure_card(monkeypatch: pytest.MonkeyPatch, index: int) -> None:
     """The observer's card for prod's refusal, word for word. Retired by KRI-795."""
     render = RENDERS[index]
@@ -552,7 +528,6 @@ _KRI_788 = (
 )
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_KRI_788)
 @pytest.mark.parametrize("index", [0, 1], ids=JOBS)
 def test_the_approved_answer_reaches_the_contract(
     monkeypatch: pytest.MonkeyPatch, index: int
@@ -562,7 +537,6 @@ def test_the_approved_answer_reaches_the_contract(
     assert (contract.order_basis, contract.order_ids) == ("attachment_order", (TAKE,))
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_KRI_788)
 @pytest.mark.parametrize("index", [0, 1], ids=JOBS)
 def test_an_offered_approval_is_never_refused_at_dispatch(
     monkeypatch: pytest.MonkeyPatch, index: int

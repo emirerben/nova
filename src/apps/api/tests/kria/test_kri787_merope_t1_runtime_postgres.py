@@ -304,21 +304,6 @@ def _verdicts(receipts: dict[str, dict], ids: tuple[str, ...] | None = None) -> 
 
 
 @pytest.mark.asyncio
-async def test_prod_chat_word_for_word(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every reply, receipt and the approval card, as prod sent them. Pins every line, so the
-    first of KRI-789/790/791/792/793 to land retires it."""
-    chat = await _chat_until_approval(monkeypatch)
-    assert [reply.content for reply in chat.replies] == [
-        EVENTS[6]["content"],
-        EVENTS[8]["content"],
-        EVENTS[10]["content"],
-    ]
-    assert _verdicts(_receipts(chat.replies[1])) == _verdicts(_prod_receipts(8))
-    assert _verdicts(_receipts(chat.replies[2])) == _verdicts(_prod_receipts(10))
-    assert chat.approval.consequence_summary == EVENTS[11]["payload"]["consequence_summary"]
-
-
-@pytest.mark.asyncio
 async def test_prod_turn_1_asks_the_clip_order_question(monkeypatch: pytest.MonkeyPatch) -> None:
     """Retired by KRI-789."""
     chat = await _chat_until_approval(monkeypatch)
@@ -363,28 +348,6 @@ async def test_prod_named_cuts_get_the_pause_line_then_done(
 
 
 @pytest.mark.asyncio
-async def test_prod_captions_and_spellings_get_no_line(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Retired by KRI-793."""
-    chat = await _chat_until_approval(monkeypatch)
-    assert all("r5" not in _receipts(reply) for reply in chat.replies)
-    assert "Oblea" not in chat.approval.consequence_summary
-
-
-@pytest.mark.asyncio
-async def test_prod_the_approved_draft_is_refused_at_dispatch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Prod's answer reaches approval and is lost at dispatch. Retired by KRI-788/789."""
-    chat = await _chat_until_approval(monkeypatch)
-    claim = await _approve(chat)
-    assert claim.strategy["choice_answers"] == RENDERS[0]["draft_strategy"]["choice_answers"]
-    assert claim.brief_binding["choice_answers"] == FIXTURE["binding"]["choice_answers"]
-    job = dispatch(monkeypatch, RENDERS[0], strategy=claim.strategy, binding=claim.brief_binding)
-    outcome = run_worker(monkeypatch, job)
-    assert (outcome.failure_reason, outcome.message) == ("phone_plan_unsupported", ORDER_REFUSAL)
-
-
-@pytest.mark.asyncio
 async def test_prod_the_approved_draft_keeps_the_whole_take(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -413,11 +376,6 @@ async def test_one_take_asks_no_clip_order_question(monkeypatch: pytest.MonkeyPa
         assert "order for the clips" not in str(reply.content)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-788: the approval card goes out for a draft the worker always refuses",
-)
 @pytest.mark.asyncio
 async def test_the_approved_draft_reaches_the_talking_renderer(
     monkeypatch: pytest.MonkeyPatch,
@@ -506,11 +464,6 @@ async def test_with_cleanup_chosen_a_named_phrase_cut_is_never_done(
     assert receipts["r4"]["status"] != "met"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-793: captions for both voices and the four spellings get no line",
-)
 @pytest.mark.asyncio
 async def test_captions_and_spellings_get_a_line(monkeypatch: pytest.MonkeyPatch) -> None:
     chat = await _chat_until_approval(monkeypatch)

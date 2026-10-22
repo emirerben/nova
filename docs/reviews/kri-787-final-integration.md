@@ -1,0 +1,9 @@
+# Final Merope T1 replay: landed-parent audit
+
+Private integration only; #1723 must merge last after actual child fixes. Fresh main1bf6d14a6 plus original23bd2653 replay, preserving the original request/fixture and every child acceptance condition. The selector conflict retained both landed order-dispatch and final T1 journey mappings.
+
+On actual landed main, original unchanged controls produced13failures,11passes,11strictxfails. Exactly7 fail instances were historical bad-behavior pins made obsolete by landed #1727/#1733: dispatch lost answer (twojobs), worker refused it (twojobs), runtime approved dispatch refusal, word-for-word old chat and missing-caption receipt. Exactly6 fail instances were strictXPASS acceptance cases for those same fixes: approved answer retained/talking route (twojobs each), real runtime reaches Talking and caption spellings appear.
+
+Retired only those five historical pin functions (seven parameterized cases) and removed only the six already passing acceptance xfail markers. Their full outcome assertions are unchanged and now mandatory. Original request data and the11 still failing unmerged-child acceptance cases are untouched. Replay now17passed/11strictxfails. This is deliberate retirement of reproduced obsolete incident behavior, not changing expectations to implementation or claiming unmerged/fulloutput success.
+
+Remaining final integration must consume actual landed trim, timedtext, namedcut, reanswer/refusal children; promote their acceptance only after independently proving the actual combined behavior. Source includes recorded model transports and mixed production/local word timings, not a newly run model or independently observed phone/export. Physical fulfillment stays open and belongs to the authorized device owner. No paid/model/device/production action was performed.
