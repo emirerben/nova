@@ -1205,6 +1205,23 @@ jobs:
         run: |
           python3 scripts/ci/journey-gate.py record-native --fixture test-results/kri-559/fixture --head "$KRIA_JOURNEY_HEAD_SHA" --xcresult test-results/kri-559/native.xcresult --test-results test-results/kri-559/native-test-results.json --render test-results/kri-559/fixture/frames/creation_words_retimed.mp4 --app-build test-results/kri-559/app-build.txt --output test-results/kri-559/journey-evidence.json
           python3 scripts/ci/journey-gate.py validate --evidence test-results/kri-559/journey-evidence.json --head "$KRIA_JOURNEY_HEAD_SHA"
+      - name: Verify saved originals can finish adding to Visuals
+        if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-384-ios-library')
+        working-directory: src/apps/ios
+        run: |
+          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
+            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
+            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/ios/simulator-id.txt)" \
+            -parallel-testing-enabled NO \
+            -only-testing:KriaUITests/SavedUploadsUITests/testDeviceOnlyVideoAddsToVisualsFromLocalOriginal \
+            -only-testing:KriaUITests/SavedUploadsUITests/testRelinkedOriginalFinishesTheVisualsAdd \
+            -resultBundlePath ../../../test-results/kri-559/saved-originals-ui.xcresult test-without-building
+          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/saved-originals-ui.xcresult \
+            > ../../../test-results/kri-559/saved-originals-ui-tests.json
+          python3 ../../../scripts/ci/journey-gate.py verify-tests \
+            --test-results ../../../test-results/kri-559/saved-originals-ui-tests.json \
+            --xctest SavedUploadsUITests/testDeviceOnlyVideoAddsToVisualsFromLocalOriginal \
+            --xctest SavedUploadsUITests/testRelinkedOriginalFinishesTheVisualsAdd
       - name: Verify selected named native unit journeys
         if: needs.changes.outputs.journey_needs_native == 'true'
         env:
