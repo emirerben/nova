@@ -629,7 +629,7 @@
     {
       "id": "kri-707-talking-spoken-text",
       "needs_native": false,
-      "api_tests": "tests/tasks/test_kri707_talking_spoken_text.py",
+      "api_tests": "tests/tasks/test_kri707_talking_spoken_text.py tests/tasks/test_kri791_spoken_text_trigger.py",
       "paths": [
         "src/apps/api/app/kria/spoken_text_ask.py",
         "src/apps/api/app/pipeline/phone_spoken_text.py"
