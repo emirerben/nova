@@ -47,4 +47,8 @@ Oldhead2e181 native job in run39732798893 completed SUCCESS, but its actual log 
 
 Merged actual reconciled #1741 sourcee1f4bb8 (including #1738newmain source7f8) and #1736baaebb native-state/coverage changes normally. ChatWorkspaceView, CanonicalChatComponents and CreationUITests merged automatically, with no Swift source or semantic assertion edits. The candidate now contains both batching @State and ready-chip scroll updates.
 
-A permanent batch journey step executes both existing answer-order UI tests against the same built app and simulator. require-xctest requires each exact name to pass, rejecting missing/skipped/zero execution. ChatWorkspaceView is explicitly mapped to this journey so future shared workspace changes cannot omit these scenarios. No duplicate build, changed wait/assertion, physical-device operation, paid call or manual release is introduced. Current combined native proof is required before merge.
+A permanent batch journey step executes both existing answer-order UI tests against the same built app and simulator. verify-tests requires each exact name to pass, rejecting missing/skipped/zero execution. ChatWorkspaceView is explicitly mapped to this journey so future shared workspace changes cannot omit these scenarios. No duplicate build, changed wait/assertion, physical-device operation, paid call or manual release is introduced. Current combined native proof is required before merge.
+
+## Compatible strict receipt command
+
+The #1736 chip scenario actually passed33.465s, but its new receipt step then failed because require-xctest was not a supported CLI command. Consumed corrected #1736source4168eda84: verify-tests passes the real saved chip result and rejects missing and real+missing names. Both this candidate's chip and batch steps now use that supported strict command; both batch names remain required and their actual execution is still pending. No Swift code, test assertion or timeout changed in this correction.
