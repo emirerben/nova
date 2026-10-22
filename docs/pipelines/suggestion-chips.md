@@ -76,8 +76,12 @@ miss, or any failure after the ownership check:
 * Chips are sorted by `rank` (1..4, unique, contiguous). First prompt: max 4 (rank 1 is
   `default_edit`, then up to 3). Ready: max 4. At most one chip per kind, no duplicate message.
 * `label` (<= 36 chars) is display only; **a tap sends `message`** (<= 120 chars, a closed
-  server template). `why` (<= 48 chars) is a display-only subtitle with footage evidence, present
-  only if it passed the lexical grounding check. Clients must render an unknown `kind` by label.
+  server template). `why` (<= 48 chars) is a display-only subtitle with footage evidence: the
+  wording agent's line when it passed the lexical grounding check, otherwise a deterministic
+  evidence line (KRI-769, `_evidence`) built from counts and edit state the server measured
+  ("You speak in 3 of 11 clips", "3 clips joined by hard cuts"; en/tr). Evidence lines state
+  measured facts, never quality judgements, and need no model. Clients must render an unknown
+  `kind` by label.
 * `requires_protocol`: the app drops the chip locally when it is non-null and above the app's own
   protocol (currently 13). No emitted kind needs one today; `ChipKindSpec.min_protocol` is the
   hook, and the server also drops a chip when the client's `X-Kria-Client-Protocol` is below it.

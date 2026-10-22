@@ -1063,6 +1063,69 @@ def label_problems(label: str, kind: str, lang: str) -> list[str]:
     return problems
 
 
+def expected_evidence(case: Case, chip: sc.SuggestionChipOut, state: str) -> str | None:
+    """The deterministic subtitle (KRI-769) a chip must carry when no agent ``why`` exists.
+
+    Written independently of the engine: counts come from the fixture clips and slots.
+    (Original docstring follows.)
+
+    Built only from counts and edit state the server already holds (never Gemini prose, never
+    ids or times), so it needs no model and cannot invent a moment. Every line states a fact the
+    server measured, not a judgement about quality. Shown as the chip's subtitle whenever the
+    wording agent supplied no grounded ``why`` of its own.
+    """
+    tr = (case.language if case.language in ("en", "tr") else "en") == "tr"
+    clips = [c for c in case.context_dict.get("clips") or [] if isinstance(c, dict)]
+    total = len(clips)
+    speech = sum(1 for c in clips if c.get("has_speech") or c.get("to_camera"))
+    quiet = total - speech
+    kind = chip.kind
+    line: str | None = None
+    if kind == "default_edit":
+        line = (
+            "Kesimi, temposu ve müziği Kria seçer" if tr else "Kria picks the cuts, pace and music"
+        )
+    elif kind == "captions" and speech:
+        if speech == total:
+            line = "Her klipte konuşuyorsun" if tr else "You speak in every clip"
+        else:
+            line = (
+                f"{speech}/{total} klipte konuşuyorsun"
+                if tr
+                else f"You speak in {speech} of {total} clips"
+            )
+    elif kind == "sfx":
+        if quiet > 0:
+            line = (
+                f"{quiet} klipte konuşma yok"
+                if tr
+                else ("1 clip has no speech" if quiet == 1 else f"{quiet} clips have no speech")
+            )
+        else:
+            line = "Henüz ses efekti yok" if tr else "No sound effects yet"
+    elif kind == "transition":
+        slots = [
+            x
+            for x in (case.snapshot or {}).get("slots") or []
+            if isinstance(x, dict) and not x.get("removed")
+        ]
+        cuts = len(slots) if state == "ready" else total
+        if cuts > 1:
+            line = (
+                f"{cuts} klip sert kesmelerle bağlı" if tr else f"{cuts} clips joined by hard cuts"
+            )
+    elif kind == "hook":
+        if state == "first_prompt":
+            line = "Henüz bir açılış cümlesi yok" if tr else "No opening line yet"
+        else:
+            line = "Henüz başlık yok" if tr else "There is no title yet"
+    elif kind == "music":
+        line = "Müzik sesini bastırıyor" if tr else "The music is competing with your voice"
+    elif kind == "title_animation":
+        line = "Başlık sabit duruyor" if tr else "The title just sits there"
+    return line if line and len(line) <= 48 else None
+
+
 def check_hygiene(case: Case, out: sc.SuggestionSetOut) -> list[str]:
     """G6: length, language, quotes, stoplist; label parity; ``why`` grounded and short."""
     problems: list[str] = []
@@ -1089,6 +1152,8 @@ def check_hygiene(case: Case, out: sc.SuggestionSetOut) -> list[str]:
             problems += [
                 f"{chip.id}: agent {p}" for p in label_problems(chip.label, chip.kind, lang)
             ]
+        if chip.why is not None and chip.why == expected_evidence(case, chip, out.state):
+            continue  # the deterministic evidence line: counted from the footage, no model
         if chip.why is not None:
             if len(chip.why) > 48:
                 problems.append(f"{chip.id}: why {len(chip.why)} chars (max 48)")

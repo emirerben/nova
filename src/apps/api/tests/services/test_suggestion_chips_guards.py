@@ -646,7 +646,8 @@ def test_a_grounded_label_and_why_reach_the_screen_and_an_ungrounded_why_does_no
     assert by_kind["hook"].why == "Open on the latte art pour"
     assert out.wording == "agent"
     if sfx is not None:
-        assert by_kind["sfx"].why is None, "a why with no footage word is dropped"
+        assert by_kind["sfx"].why != "c1 at 0:04", "a why with no footage word is dropped"
+        assert "speech" in (by_kind["sfx"].why or ""), "the deterministic evidence line stands in"
         assert by_kind["sfx"].label_source == "template", "'pile' is off the sfx lexicon"
 
 
