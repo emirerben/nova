@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-10-11",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -136,6 +136,24 @@
       "provenance": "corpus",
       "evidence": "In our fetched founder-lifestyle set, an event-appearance post indexed ~64x the account median at near-zero engagement (0.004) — the spike is discovery-only, not depth; use it to grow reach, then convert via your regular content cadence",
       "source": "tiktok market research 2026-06 (founder account, event sponsorship)"
+    },
+    {
+      "id": "early-morning-commitment-corpus-10",
+      "factor": "Open with the specific time you woke up — 'woke up at 5am to [activity]' is a proven high-ER hook that converts both the disciplined and the aspirational",
+      "why": "The specific time creates instant credibility and stakes; the exclamation converts earnestness, not performance — viewers root for you and share because they want to do it too",
+      "applies_to": ["hook", "plan"],
+      "provenance": "corpus",
+      "evidence": "In our fetched wellness/fitness account, 'Woke up at 5am to hike!!' indexed 20x the account median at 25.3% engagement — the highest engagement rate observed across all four accounts in the 2026-10 run",
+      "source": "tiktok market research 2026-10 (wellness/fitness account)"
+    },
+    {
+      "id": "series-comeback-nostalgia-corpus-11",
+      "factor": "Return to a beloved content series after a break with a time-away acknowledgment — the gap itself becomes the hook, not the content inside it",
+      "why": "Returning viewers feel the series earned its comeback; new viewers get a frictionless entry point with no prior history required. The accountability framing generates 'we missed this' comments and saves",
+      "applies_to": ["plan", "persona"],
+      "provenance": "corpus",
+      "evidence": "In our fetched lifestyle account, a farm-vlog series return after ~1 year indexed 19.4x the account median at 8.1% engagement — the comeback framing outperformed the account's entire recent catalog",
+      "source": "tiktok market research 2026-10 (lifestyle/wellness account)"
     }
   ]
 }
