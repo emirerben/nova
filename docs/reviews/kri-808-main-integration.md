@@ -37,3 +37,5 @@ Initial focused recorded-provider and quality/segment checks: 50 passed, one exp
 6. Parity: existing speech-segment, phone-speech montage and timeline verification fixtures cover source-window compilation; new recorded-provider controls cover which timed words reach them. No physical export claim.
 
 Current combined replay: 103 passed, one explicitly skipped local-medium kill-switch case. It includes real scratch Postgres task persistence and unchanged concurrent-analysis protection. The shared local Redis returned MISCONF because RDB persistence failed, causing the unchanged overlap test to time out; a separate loopback-only scratch Redis made the full suite pass without source/assertion changes. The shared service/config/data were untouched.
+
+Required make verify-editor-timeline passed: 209 frontend, 28 desktop browser, 42 mobile browser and 583 API checks. Preship passed 149 mapped reliability cases, 58 journey mappings, scoped Ruff, release metadata and request-evidence validation. The unchanged current-main concurrency case also timed out with the shared Redis and passed in0.48s with isolated Redis, confirming the service cause.
