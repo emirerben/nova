@@ -635,6 +635,23 @@
       ]
     },
     {
+      "id": "kri-789-take-trim-not-order",
+      "needs_native": false,
+      "api_tests": "tests/incidents/test_incident_corpus.py tests/agents/test_kri789_take_trim_brief.py tests/evals/test_main_creator_evals.py",
+      "paths": [
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/agents/brief_extractor.py",
+        "src/apps/api/app/kria/take_trim.py",
+        "src/apps/api/app/services/spoken_quotes.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/tests/fixtures/incidents/kri789-one-take-start-end-lines-ask-no-order.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri789_one_take_start_end_lines_trim.json",
+        "src/apps/api/tests/agents/test_kri789_take_trim_brief.py",
+        "src/apps/api/tests/evals/test_main_creator_evals.py"
+      ]
+    },
+    {
       "id": "kri-708-caption-correction",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_caption_correct.py",
