@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "claim": "local_fix",
+  "previous_reviewed_head": "a5dfbfabe535cda0012e9f85b50f20d775b327dc",
+  "expectation_source": "docs/reviews/camera-roll-capacity/multiple-ideas-acceptance.md",
+  "initial_capacity_evidence": "docs/reviews/camera-roll-capacity/verification.json",
+  "root_causes": [
+    "Writer explicitly preferred one idea.",
+    "Footage-set identity collapsed distinct creative plans over the same clips.",
+    "Empty native direction used single-story wording."
+  ],
+  "behavior": [
+    "Aim for three distinct ideas; keep the supported zero/one/two fallback rather than padding.",
+    "Normalize proposed opening/closing/caption for exact-copy duplicate detection; ignore title, rationale and footage IDs for that check.",
+    "Keep source-window checks, source ownership, cache-only rules, separate review state and render approval."
+  ],
+  "red_control": {
+    "failures": 2,
+    "description": "Three distinct copies over equal source IDs became one idea. A renamed copy on different footage displaced the real alternative while preserving the output count."
+  },
+  "free_replay": {
+    "passed": 2168,
+    "skipped": 15,
+    "xfailed": 7,
+    "warnings": 55,
+    "command": "bash scripts/check-api.sh test tests/evals/ tests/integration/test_media_collections.py tests/integration/test_editorial_taste.py tests/integration/test_camera_roll_execution.py tests/integration/test_camera_roll_retrieval_eval_cli.py tests/integration/test_camera_roll_pilot_cli.py -q"
+  },
+  "targeted_integration": {
+    "passed": 2,
+    "command": "bash scripts/check-api.sh test tests/integration/test_media_collections.py::test_distinct_ideas_can_share_footage_without_sharing_review_state -q",
+    "boundary": "Real HTTP/index, agent runtime/parser and SQL persistence, with only the provider transport replayed. Three plans share footage; clone control preserves count but must retain the correct alternatives. Correction/rejection leave other ideas unchanged; cached reuse invokes transport once; zero jobs/approvals."
+  },
+  "ios_orchestration": {
+    "passed": 117,
+    "command": "python3 -m unittest discover -s scripts/ios/tests -q"
+  },
+  "native": {
+    "platform": "Dedicated iPhone 17 Pro simulator, iOS 26.5",
+    "story_ui_passed": 4,
+    "initial_bundle": ".dev/multiple-ideas-native.xcresult",
+    "final_default_and_rejection": {
+      "passed": 3,
+      "bundle": ".dev/multiple-ideas-native-final.xcresult",
+      "cases": [
+        "Empty-direction plural query and explicit partial choice",
+        "Group correction/removal and relaunch",
+        "Three ideas reachable; rejecting one leaves the other two available"
+      ],
+      "command": "xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation -derivedDataPath .derived-data -destination 'platform=iOS Simulator,id=CB69B1FC-EACE-468A-A3DF-7D27A96DC21C' -parallel-testing-enabled NO -only-testing:KriaUITests/CameraRollCollectionUITests -only-testing:KriaUITests/CameraRollStoriesUITests/testThreeIdeasRemainIndependentWhenOneIsRejected CODE_SIGNING_ALLOWED=NO test"
+    },
+    "limits": "Synthetic fixture UI, no actual video export. Earlier unchanged 500-item disk save/load evidence remains in the initial receipt."
+  },
+  "model": {
+    "name": "gemini-2.5-flash",
+    "prompt_version": "2026-10-22.3",
+    "attempts": 1,
+    "timeout_s": 20,
+    "thinking_budget": 512,
+    "max_output_tokens": 4096,
+    "provider_changed": false
+  },
+  "live_previews": [
+    {
+      "case": "explicit_three",
+      "provider_calls": 1,
+      "settled_usd": 0.005135,
+      "accepted_ideas": 3,
+      "distinct_copy_count": 3,
+      "results": [
+        {
+          "moments": 5,
+          "duration_s": 12.033,
+          "overlapping_footage": false,
+          "creator_judgment": null
+        },
+        {
+          "moments": 7,
+          "duration_s": 21.04,
+          "overlapping_footage": false,
+          "creator_judgment": null
+        },
+        {
+          "moments": 6,
+          "duration_s": 17.667,
+          "overlapping_footage": false,
+          "creator_judgment": null
+        }
+      ],
+      "frozen_input_sha256": "de0d166d25630e749bb4d9871e28a1ab27330cea9977611e234163af3e33274c",
+      "outcome": "quantity/reference checks passed; creative quality remains insufficient",
+      "production_writes": 0,
+      "product_offered": false,
+      "rendered": false
+    },
+    {
+      "case": "stale_troy_default_fixture",
+      "provider_calls": 1,
+      "settled_usd": 0.004126,
+      "accepted_ideas": 0,
+      "distinct_copy_count": 0,
+      "results": [],
+      "frozen_input_sha256": "68df2504f7dc645a705b01977107f019941e62ea7dfaa67afa5e5a08bc1de2f7",
+      "outcome": "rejected: unsupported research references from stale test context",
+      "production_writes": 0,
+      "product_offered": false,
+      "rendered": false
+    },
+    {
+      "case": "actual_account_default",
+      "provider_calls": 1,
+      "settled_usd": 0.005195,
+      "accepted_ideas": 3,
+      "distinct_copy_count": 3,
+      "results": [
+        {
+          "moments": 6,
+          "duration_s": 15.74,
+          "overlapping_footage": false,
+          "creator_judgment": null
+        },
+        {
+          "moments": 5,
+          "duration_s": 11.633,
+          "overlapping_footage": false,
+          "creator_judgment": null
+        },
+        {
+          "moments": 5,
+          "duration_s": 16.667,
+          "overlapping_footage": false,
+          "creator_judgment": null
+        }
+      ],
+      "frozen_input_sha256": "5bd4031c1c4ef3cf979943a6b6a23e8f12312928d40e1e265a968191365c80bc",
+      "outcome": "quantity/reference checks passed; creative quality remains insufficient",
+      "production_writes": 0,
+      "product_offered": false,
+      "rendered": false
+    }
+  ],
+  "total_followup_live_usd": 0.014456,
+  "combined_capacity_and_followup_live_usd": 0.021112,
+  "live_limits": "Three separate frozen one-attempt cases, each capped at $0.05. Same 26 cached candidate windows from 19 available sources. The corrected default uses read-only production generation_context retrieval for this query. No media upload, research call, production model call, product offer or render. Stale-context failure retained and charged; no success claim for its zero results.",
+  "remaining_gaps": {
+    "KRI_731": [
+      "Creative quality: valid results still use generic/promotion-like wording. No creator verdict or publishable-quality claim.",
+      "Independent source-content/semantic checks and full physical-device export/reopen for this follow-up.",
+      "Merge/deployment and updated TestFlight client are unverified."
+    ]
+  },
+  "log_sha256": {
+    "multiple-ideas-red.log": "36cf7ef03d27006f9ddbf89288a3c19e8bfb24fc373a18478dc3c5da7a4b376c",
+    "multiple-ideas-green.log": "69bed9b563f72afa295c7d7e38385cb2f05cf44873cd9987a98f696993e5ee00",
+    "multiple-ideas-replay.log": "7b41b193ad5fd80f7e94d5e7aa0c84020b134dd506a4ba5e2c04cb0a83909df0",
+    "multiple-ideas-ios-orchestration.log": "00132aa87b82728c06499421c3bbf36bb4df8b4dd3623aedb7ac7e6671a21f99",
+    "multiple-ideas-native.log": "faa758fae96f27252fff47e85ce356423e1d8610d1ddf1b91baeb5ae9e2d9c01",
+    "multiple-ideas-native-final.log": "c83adc840445798beebbe9563e17809becb7947b49174f9b528e6c84668cadbf"
+  },
+  "code_sha256": {
+    "src/apps/api/app/agents/camera_roll_stories.py": "497848283e2b7e11f3c1507b15b0d366f975587e5de289b8312a5f79b3b14f1f",
+    "src/apps/api/app/services/media_collection_stories.py": "d7609ff446c1b9126c518dac64f1acf75044dd5378bdd3c4b5d3173a7bfa517c",
+    "src/apps/api/tests/integration/test_media_collections.py": "5c9632fabcf18227f829bd1eb93e1cf4f847719d3edf30ac4ed6b2db69d157f7",
+    "src/apps/ios/Kria/Features/CameraRollCollectionView.swift": "308c2e7327fae56c77a578e5022ff5fee4d2789298a7c846339ff956a8fa73aa",
+    "src/apps/ios/Kria/Features/CameraRollStoriesUITestFixture.swift": "675de92dc9bd6cb57824b8cd957f90ffcbfd708ef8c6ecbf9212f5269dd1abbc",
+    "src/apps/ios/Tests/KriaUITests/CameraRollStoriesUITests.swift": "72f7bf9c7974b6967d09c063c3fdb0ebdb41ef4d20cdc3b779332b0537ea8821"
+  }
+}

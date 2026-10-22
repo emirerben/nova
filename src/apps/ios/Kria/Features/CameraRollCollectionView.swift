@@ -35,6 +35,8 @@ struct CameraRollCollectionView: View {
     @State private var tasteAvailable = false
     @State private var confirmsUpload = false
     @State private var cacheOnly = true
+    @State private var missingAnalysisCount = 0
+    @State private var readyVideoCount = 0
     @State private var metadataElapsedMs = 0.0
     @State private var resumedCollection = false
     private var metadataOnly: Bool {
@@ -254,6 +256,12 @@ struct CameraRollCollectionView: View {
                 Button { requestIdeas() } label: { Text("Find story ideas").frame(maxWidth: .infinity) }
                     .buttonStyle(KriaPrimaryButtonStyle()).disabled(!canFindIdeas)
                     .accessibilityIdentifier("collection-find-stories")
+                if missingAnalysisCount > 0 && readyVideoCount > 0 {
+                    Button { work = Task { await findStories(allowPartial: true) } } label: {
+                        Text("Use \(readyVideoCount) ready \(readyVideoCount == 1 ? "video" : "videos")").frame(maxWidth: .infinity)
+                    }.buttonStyle(KriaSecondaryButtonStyle())
+                        .accessibilityIdentifier("collection-use-ready-videos")
+                }
                 DisclosureGroup("Research an angle") {
                     TextField("Public place or topic", text: $researchTopic)
                         .font(KriaFont.body(14)).textInputAutocapitalization(.sentences)
@@ -288,6 +296,7 @@ struct CameraRollCollectionView: View {
     @MainActor private func newCollection() {
         persist()
         collection = try! CameraRollCollection(name: "My outing", identifiers: [])
+        missingAnalysisCount = 0; readyVideoCount = 0
         revision = 0; providers = [:]; groupDrafts = [:]; stories = nil; status = nil; error = nil
         persist()
     }
@@ -300,13 +309,15 @@ struct CameraRollCollectionView: View {
             providers[id] = item
             if !identifiers.contains(id) { identifiers.append(id) }
         }
+        missingAnalysisCount = 0; readyVideoCount = 0
         do { try collection.select(identifiers); persist(); work = Task { await refreshMetadata() } }
-        catch { self.error = "Choose at most 50 items." }
+        catch { self.error = "Choose at most \(CameraRollCollection.maximumCount) items." }
     }
 
     @MainActor private func remove(_ id: String) {
         guard !running else { return }
         try? collection.select(collection.entries.map(\.id).filter { $0 != id })
+        missingAnalysisCount = 0; readyVideoCount = 0
         providers.removeValue(forKey: id)
         groupDrafts.removeValue(forKey: id)
         persist()
@@ -395,13 +406,15 @@ struct CameraRollCollectionView: View {
         do {
             try collection.select(collection.entries.map(\.id) + assets.map { "saved:\($0.id)" })
             for asset in assets { collection.bind(asset, to: "saved:\(asset.id)") }
+            missingAnalysisCount = 0; readyVideoCount = 0
             persist()
-        } catch { self.error = "Choose at most 50 items." }
+        } catch { self.error = "Choose at most \(CameraRollCollection.maximumCount) items." }
     }
 
-    @MainActor private func findStories() async {
+    @MainActor private func findStories(allowPartial: Bool = false) async {
         guard !fixture, !metadataOnly else { return }
         running = true; error = nil; status = nil
+        missingAnalysisCount = 0; readyVideoCount = 0
         defer { running = false }
         do {
             let saved = try await api.saveCameraRollCollection(collection, revision: revision)
@@ -418,9 +431,15 @@ struct CameraRollCollectionView: View {
                 offset = next
             } while offset < CameraRollCollection.maximumCount
             guard unavailable.isEmpty else { status = "\(unavailable.count) uploads are unavailable. Remove or restore them before continuing."; return }
-            if !missing.isEmpty { status = "Ideas use the available footage. \(missing.count) clips aren't included yet." }
+            missingAnalysisCount = missing.count
+            let videos = collection.entries.filter { ($0.savedAsset?.kind ?? $0.metadata?.kind) == "video" }.count
+            readyVideoCount = max(0, videos - missing.count)
+            guard missing.isEmpty || allowPartial else {
+                status = "\(missing.count) videos still need analysis. Wait for them, or use the ready videos."
+                return
+            }
             let topic = researchTopic.trimmingCharacters(in: .whitespacesAndNewlines)
-            let found = try await api.cameraRollStories(id: collection.id, revision: revision, query: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Find a story in this outing" : query, cacheOnly: cacheOnly, researchTopic: topic.isEmpty ? nil : topic)
+            let found = try await api.cameraRollStories(id: collection.id, revision: revision, query: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Suggest different content ideas from this outing" : query, cacheOnly: cacheOnly, researchTopic: topic.isEmpty ? nil : topic, allowPartialAnalysis: allowPartial)
             stories = found
             if !untimed.isEmpty { status = "Story ideas currently use videos. Your \(untimed.count) photos remain in the collection." }
             showsStories = true
@@ -477,6 +496,7 @@ struct CameraRollCollectionView: View {
         do {
             collection = try CameraRollCollection.load(id: id, in: originals, sharesCaptureContext: ClipCaptureSetting.isEnabled())
             resumedCollection = true
+            missingAnalysisCount = 0; readyVideoCount = 0
             revision = collection.serverRevision ?? 0; providers = [:]; groupDrafts = [:]; stories = nil; status = nil; error = nil
             work = Task { await refreshMetadata() }
         } catch { self.error = "Could not reopen this collection." }
