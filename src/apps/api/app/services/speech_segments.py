@@ -64,22 +64,11 @@ def _word_dict(word: Any) -> dict[str, Any]:
     }
 
 
-def words_to_segments(words: Sequence[Any]) -> list[SpeechSegment]:
-    """Group timed words into sentence segments (source-clip seconds)."""
+def sentence_groups(words: Sequence[Any]) -> list[list[dict[str, Any]]]:
+    """Timed words grouped into sentences: terminal punctuation, a long pause, or a cap."""
     rows = [_word_dict(w) for w in words or []]
-    segments: list[SpeechSegment] = []
+    groups: list[list[dict[str, Any]]] = []
     bucket: list[dict[str, Any]] = []
-
-    def flush() -> None:
-        if not bucket:
-            return
-        text = " ".join(str(w.get("text") or "").strip() for w in bucket).strip()
-        start = float(bucket[0].get("start_s") or 0.0)
-        end = float(bucket[-1].get("end_s") or start)
-        if text and end > start:
-            segments.append(SpeechSegment(start_s=round(start, 2), end_s=round(end, 2), text=text))
-        bucket.clear()
-
     for index, word in enumerate(rows):
         text = str(word.get("text") or "").strip()
         if not text:
@@ -95,8 +84,22 @@ def words_to_segments(words: Sequence[Any]) -> list[SpeechSegment]:
             or span >= _MAX_SEGMENT_S
             or len(bucket) >= _MAX_SEGMENT_WORDS
         ):
-            flush()
-    flush()
+            groups.append(bucket)
+            bucket = []
+    if bucket:
+        groups.append(bucket)
+    return groups
+
+
+def words_to_segments(words: Sequence[Any]) -> list[SpeechSegment]:
+    """Group timed words into sentence segments (source-clip seconds)."""
+    segments: list[SpeechSegment] = []
+    for bucket in sentence_groups(words):
+        text = " ".join(str(w.get("text") or "").strip() for w in bucket).strip()
+        start = float(bucket[0].get("start_s") or 0.0)
+        end = float(bucket[-1].get("end_s") or start)
+        if text and end > start:
+            segments.append(SpeechSegment(start_s=round(start, 2), end_s=round(end, 2), text=text))
     return segments
 
 
@@ -268,12 +271,81 @@ def transcribe_clip(
 def transcribe_stored_clip(
     gcs_path: str,
     *,
+    language: str | None = None,
     download: Callable[[str, str], Any] | None = None,
-    transcribe: Callable[[str], tuple[list[dict[str, Any]], str]] | None = None,
+    transcribe: Callable[..., tuple[list[dict[str, Any]], str]] | None = None,
     owner_id: str | None = None,
     generation: str | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
-    """Download one stored clip (an analysis proxy) and transcribe it. May raise."""
+    """Download one stored clip (an analysis proxy) and transcribe it. May raise.
+
+    ``language`` is the clip's decided spoken language (``speech.language``, KRI-808). The
+    auto-detected pass (cached, or the library fact) is returned when it already heard that
+    language; otherwise the clip is transcribed again in it, so render-time words match the
+    segments the planner quoted.
+    """
+    words, detected = _transcribe_stored_auto(
+        gcs_path,
+        download=download,
+        transcribe=transcribe,
+        owner_id=owner_id,
+        generation=generation,
+    )
+    wanted = str(language or "").strip().lower()
+    if not wanted or wanted == str(detected or "").strip().lower():
+        return words, detected
+    return transcribe_stored_clip_in(
+        gcs_path,
+        wanted,
+        download=download,
+        transcribe=transcribe,
+        owner_id=owner_id,
+        generation=generation,
+    )
+
+
+def transcribe_stored_clip_in(
+    gcs_path: str,
+    language: str,
+    *,
+    download: Callable[[str, str], Any] | None = None,
+    transcribe: Callable[..., tuple[list[dict[str, Any]], str]] | None = None,
+    owner_id: str | None = None,
+    generation: str | None = None,
+    run_context=None,  # noqa: ANN001 - app.agents._runtime.RunContext, kept lazy
+) -> tuple[list[dict[str, Any]], str]:
+    """One stored clip transcribed in ``language`` (never the auto-language library fact).
+
+    ``run_context`` books the whisper call on the creator's AI-spend ledger.
+    """
+    from app.config import settings
+
+    if settings.media_library_enabled and owner_id and generation:
+        from app.services.media_library_analysis import source_for_path
+
+        source = source_for_path(owner_id=str(owner_id), path=gcs_path, generation=generation)
+        if source is None and not gcs_path.startswith((f"users/{owner_id}/", f"{owner_id}/")):
+            raise ValueError("Stored speech source does not belong to this creator")
+    return _transcribe_downloaded(
+        gcs_path,
+        download=download,
+        generation=generation,
+        run=lambda local: (transcribe or transcribe_clip)(
+            local,
+            language=language,
+            **({"run_context": run_context} if run_context is not None else {}),
+        ),
+    )
+
+
+def _transcribe_stored_auto(
+    gcs_path: str,
+    *,
+    download: Callable[[str, str], Any] | None,
+    transcribe: Callable[..., tuple[list[dict[str, Any]], str]] | None,
+    owner_id: str | None,
+    generation: str | None,
+) -> tuple[list[dict[str, Any]], str]:
     from app.config import settings
 
     if settings.media_library_enabled and owner_id and generation:
@@ -293,6 +365,18 @@ def transcribe_stored_clip(
             return list(fact.get("words") or []), str(fact.get("language") or "")
         if not gcs_path.startswith((f"users/{owner_id}/", f"{owner_id}/")):
             raise ValueError("Stored speech source does not belong to this creator")
+    return _transcribe_downloaded(
+        gcs_path, download=download, generation=generation, run=transcribe or transcribe_clip
+    )
+
+
+def _transcribe_downloaded(
+    gcs_path: str,
+    *,
+    download: Callable[[str, str], Any] | None,
+    generation: str | None,
+    run: Callable[[str], tuple[list[dict[str, Any]], str]],
+) -> tuple[list[dict[str, Any]], str]:
     if download is None:
         from app.storage import download_generation_to_file, download_to_file  # noqa: PLC0415
 
@@ -301,7 +385,6 @@ def transcribe_stored_clip(
             if generation
             else download_to_file
         )
-    run = transcribe or transcribe_clip
     with tempfile.TemporaryDirectory(prefix="speech-seg-") as tmp:
         local = f"{tmp}/clip.mp4"
         download(gcs_path, local)
@@ -339,8 +422,10 @@ __all__ = [
     "GroundedExcerpt",
     "attach_segments_to_analysis",
     "ground_excerpt",
+    "sentence_groups",
     "spoken_word_count",
     "transcribe_clip",
     "transcribe_stored_clip",
+    "transcribe_stored_clip_in",
     "words_to_segments",
 ]

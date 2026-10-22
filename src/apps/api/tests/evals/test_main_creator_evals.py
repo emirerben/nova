@@ -301,6 +301,31 @@ def test_main_creator_eval(
             for key, value in expected_facts["order"].items():
                 assert order["facts"].get(key) == value, key
 
+    trim_meta = fixture.meta.get("take_trim")
+    if trim_meta:
+        # KRI-789 (prompt v65): quoted start / end LINES inside the one take are a trim, never
+        # a clip order (v64 filed them as a key-less `order` requirement, which asked "You
+        # gave me a specific order for the clips" on a one-video Talking edit). The stated
+        # length stays its own timing requirement. Words compare loosely for live replies.
+        from app.kria.brief import apply_updates, parse_brief_updates
+        from app.kria.brief_route import loose_text
+
+        def _said(text: object) -> list[str]:
+            return re.findall(r"\w+", loose_text(str(text or "")))
+
+        assert result.output is not None
+        live = apply_updates(
+            None, parse_brief_updates(result.output.get("brief_updates")), source_turn_id="eval"
+        ).live()
+        assert not [r for r in live if r.kind == "order"], [r.facts for r in live]
+        trims = [r for r in live if r.kind == "timing" and "start_line" in r.facts]
+        assert len(trims) == 1, [r.facts for r in live]
+        assert _said(trims[0].facts["start_line"]) == _said(trim_meta["start_line"])
+        assert _said(trims[0].facts.get("end_line")) == _said(trim_meta["end_line"])
+        assert "duration_s" not in trims[0].facts and "triggers" not in trims[0].facts
+        lengths = [r.facts.get("duration_s") for r in live if r.kind == "timing"]
+        assert trim_meta["duration_s"] in lengths
+
     shot_meta = fixture.meta.get("per_shot_texts")
     if shot_meta:
         # KRI-422 (prompt v42): text dictated for several described shots is one

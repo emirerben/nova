@@ -21,7 +21,7 @@ from app.schemas.clip_understanding import (
     ClipUnderstanding,
 )
 from app.services.clip_exposure import EXPOSURE_KEY, exposure_words
-from app.services.transcript_quality import is_degenerate_transcript
+from app.services.transcript_quality import is_degenerate_transcript, is_implausible_transcript
 
 
 def _moment_notes(raw: object) -> list[ClipMomentNote]:
@@ -130,6 +130,19 @@ def clip_record(analysis: dict[str, Any] | None, *, kind: str = "video") -> Clip
             merged["subject"] = analysis.get("subject") or ""
         if not merged.get("summary"):
             merged["summary"] = analysis.get("description") or ""
+        speech = merged.get("speech")
+        if isinstance(speech, dict) and is_implausible_transcript(
+            speech.get("transcript"), analysis.get("duration_s")
+        ):
+            # KRI-808: a short loop or more words than the clip holds is invented, and
+            # stored records predate the guard. Speech stays claimed only on timed words.
+            has_words = bool(speech.get("segments"))
+            merged["speech"] = {
+                **speech,
+                "transcript": "",
+                "has_speech": has_words,
+                "to_camera": bool(speech.get("to_camera")) and has_words,
+            }
         try:
             return ClipUnderstanding.model_validate(merged)
         except ValueError:
@@ -142,8 +155,8 @@ def clip_record(analysis: dict[str, Any] | None, *, kind: str = "video") -> Clip
     transcript = analysis.get("transcript") or (
         analysis.get("on_screen_text") if is_video_analysis else ""
     )
-    if is_degenerate_transcript(transcript):
-        transcript = ""  # KRI-653: stored before the parse-time guard existed
+    if is_implausible_transcript(transcript, analysis.get("duration_s")):
+        transcript = ""  # KRI-653/808: stored before the parse-time guard existed
     return ClipUnderstanding(
         kind=media_kind,
         subject=analysis.get("subject") or "",

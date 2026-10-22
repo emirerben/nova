@@ -151,11 +151,13 @@ def run_phone_speech_montage_job(
     by_path = {str(row.get("gcs_path")): row for row in assignments}
     candidates: list[SpeechCandidate] = []
     path_by_media: dict[str, str] = {}
+    spoken_language: dict[str, str] = {}
     for path in clip_paths:
         binding = binding_by_path[path]
         entry = by_path.get(path) or {}
         kind = "image" if str(entry.get("kind") or "video") == "image" else "video"
         record = clip_record(entry.get("analysis"), kind=kind)
+        spoken_language[path] = record.speech.language
         candidates.append(
             SpeechCandidate(
                 media_id=binding.media_id,
@@ -185,8 +187,11 @@ def run_phone_speech_montage_job(
 
         def load_words(candidate: SpeechCandidate):  # noqa: ANN202
             path = path_by_media[candidate.media_id]
+            # KRI-808: the language the stored segments were checked in, so a quoted
+            # segment grounds on words in that same language.
             return transcribe_stored_clip(
                 path,
+                language=spoken_language.get(path) or None,
                 **(
                     {"owner_id": str(user_id), "generation": binding_by_path[path].generation}
                     if settings.media_library_enabled
@@ -620,11 +625,20 @@ def run_phone_voice_behind_footage_job(
 
     _user_id, _assignments, brief = gb._load_unified_montage_inputs(job_id)
     if load_words is None:
+        from app.services.clip_understanding import clip_record  # noqa: PLC0415
         from app.services.speech_segments import transcribe_stored_clip  # noqa: PLC0415
 
+        spoken_language = {
+            str(row.get("gcs_path")): clip_record(row.get("analysis")).speech.language
+            for row in _assignments
+            if isinstance(row, dict)
+        }
+
         def load_words(binding):  # noqa: ANN202
+            # KRI-808: transcribe in the language the stored segments were checked in.
             return transcribe_stored_clip(
                 binding.proxy_path,
+                language=spoken_language.get(binding.proxy_path) or None,
                 **(
                     {"owner_id": str(_user_id), "generation": binding.generation}
                     if settings.media_library_enabled

@@ -729,6 +729,14 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-653-silent-take"),
             ),
             (
+                "src/apps/api/app/services/clip_speech_check.py",
+                (True, "covered", "kri-808-clip-speech-language"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/kri808_don_julio_clip_speech.json",
+                (True, "covered", "kri-808-clip-speech-language"),
+            ),
+            (
                 "src/apps/api/app/kria/clip_scope.py",
                 (True, "covered", "kri-623-ruled-out-clips"),
             ),
@@ -781,7 +789,7 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-628-opening-cut,kri-681-named-line-windows,kri-760-whole-line-ask",
+                    "kri-628-opening-cut,kri-789-take-trim-not-order,kri-681-named-line-windows,kri-760-whole-line-ask",
                 ),
             ),
             (
