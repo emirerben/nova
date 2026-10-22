@@ -246,6 +246,7 @@ def _classic_cloud_evidence(
 
 
 if TYPE_CHECKING:
+    from app.agents._runtime import RunContext
     from app.pipeline.silence_cut import CutPlan
 
 log = structlog.get_logger()
@@ -21371,11 +21372,19 @@ def _select_generative_style_set(clip_metas: list, agent_text, *, job_id: str) -
         return "default"
 
 
-def _match_best_track(clip_metas: list, *, job_id: str, music_ask: str = "") -> MusicTrack | None:
+def _match_best_track(
+    clip_metas: list,
+    *,
+    job_id: str | None,
+    music_ask: str = "",
+    run_context: RunContext | None = None,
+) -> MusicTrack | None:
     """Top-1 matched track, or None if the library has no confident match.
 
     ``music_ask`` is the creator's own words about the music (KRI-679), if any.
+    ``run_context`` owns a pre-render (chat) match; see ``_run_music_matcher``.
     """
+    plan_item_id = run_context.plan_item_id if run_context is not None else None
     try:
         from app.tasks.auto_music_orchestrate import (  # noqa: PLC0415
             _load_matcher_candidates,
@@ -21386,7 +21395,7 @@ def _match_best_track(clip_metas: list, *, job_id: str, music_ask: str = "") -> 
         # match against the whole analyzed library, not just published tracks.
         candidates = _load_matcher_candidates(len(clip_metas), require_published=False)
         if not candidates:
-            log.info("generative_no_labeled_tracks", job_id=job_id)
+            log.info("generative_no_labeled_tracks", job_id=job_id, plan_item_id=plan_item_id)
             return None
         ranked = _run_music_matcher(
             clip_metas=clip_metas,
@@ -21394,6 +21403,7 @@ def _match_best_track(clip_metas: list, *, job_id: str, music_ask: str = "") -> 
             n_variants=1,
             job_id=job_id,
             music_ask=music_ask,
+            run_context=run_context,
         )
         if not ranked:
             return None
@@ -21404,7 +21414,12 @@ def _match_best_track(clip_metas: list, *, job_id: str, music_ask: str = "") -> 
                 return track
         return None
     except Exception as exc:
-        log.warning("generative_song_match_failed", job_id=job_id, error=str(exc))
+        log.warning(
+            "generative_song_match_failed",
+            job_id=job_id,
+            plan_item_id=plan_item_id,
+            error=str(exc),
+        )
         return None
 
 
