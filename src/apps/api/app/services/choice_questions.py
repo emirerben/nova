@@ -22,6 +22,7 @@ strategy fields and returns at most the first still-open question.
 
 from __future__ import annotations
 
+import copy
 import functools
 import hashlib
 import json
@@ -356,16 +357,66 @@ def choice_question_text(candidate: ConflictCandidate) -> str:
                 ),
             )
         ]
-    for index, option in enumerate(options, start=1):
-        mark = say(en=" (recommended)", tr=" (önerilen)") if option.recommended else ""
-        lines.append(f"{index}. {option.label}{mark}")
+    lines.extend(_numbered_options((o.label, o.recommended) for o in options))
+    return "\n".join(lines)
+
+
+def _numbered_options(options: Iterable[tuple[str, bool]]) -> list[str]:
+    """``1. label (recommended)`` lines and the tap-or-type line that closes the list."""
+    lines = [
+        f"{index}. {label}{say(en=' (recommended)', tr=' (önerilen)') if recommended else ''}"
+        for index, (label, recommended) in enumerate(options, start=1)
+    ]
     lines.append(
         say(
             en="Tap an option, or tell me in your own words.",
             tr="Bir seçeneğe dokun ya da kendi sözlerinle anlat.",
         )
     )
-    return "\n".join(lines)
+    return lines
+
+
+def reask_choice_question(
+    question: Mapping[str, Any], *, refused: str | None = None
+) -> dict[str, Any] | None:
+    """A stored ``choice_question`` asked again: same conflict, inputs and options, new id.
+
+    KRI-795: a render refused for an unresolved choice re-asks the question the gate already
+    asked. Keeping its ``conflict`` and ``input_digest`` is what makes the answer count: the
+    next turn's gate replays an answer only for the inputs it computes now. The new
+    ``question_id`` keeps an earlier answer from closing it. ``refused`` is the answer the
+    refused render carried: it is never the recommendation again, so a delegated "you
+    choose" cannot hand the same refusal back (an order refusal recommends dropping the fixed
+    order, the way forward that renders). ``None`` for a question with fewer than two
+    options (one way forward is not a choice to tap).
+    """
+    options = [o for o in question.get("options") or [] if isinstance(o, Mapping) and o.get("key")]
+    if len(options) < 2 or not question.get("conflict"):
+        return None
+    reasked = {**copy.deepcopy(dict(question)), "question_id": str(uuid.uuid4())}
+    others = [str(o["key"]) for o in options if str(o["key"]) != refused]
+    if refused is not None and len(others) < len(options):
+        pick = OPT_UNORDERED if OPT_UNORDERED in others else others[0]
+        for option in reasked["options"]:
+            if isinstance(option, dict):
+                option["recommended"] = option.get("key") == pick
+    return reasked
+
+
+def reasked_question_text(question: Mapping[str, Any]) -> str:
+    """The question line and the numbered options of a re-asked question (old builds show
+    only the text, so the options must be readable without the picker)."""
+    options = [
+        (str(o.get("label") or o.get("key")), bool(o.get("recommended")))
+        for o in question.get("options") or []
+        if isinstance(o, Mapping) and o.get("key")
+    ][:MAX_CHOICE_OPTIONS]
+    return "\n".join(
+        [
+            say(en="Which do you prefer?", tr="Hangisini tercih edersin?"),
+            *_numbered_options(options),
+        ]
+    )
 
 
 SIMPLER_VERSION_REASON = "simplification_requires_choice"

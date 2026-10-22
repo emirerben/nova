@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.kria.brief import CreativeBrief
+from app.kria.brief_checks import is_spoken_text_cue
 from app.kria.brief_route import chapter_list
 from app.kria.freeze_ask import times_one_moment
 from app.kria.recipes_v2 import EditRecipeV2
@@ -859,6 +860,17 @@ def _pin_not_found(words: str) -> str:
     )
 
 
+def text_clip_not_found(literal: str) -> str:
+    """Creator text whose clip the server could not tell, in the chat's language."""
+    return say(
+        en=f"I couldn't tell which clip \"{literal}\" goes on, so I can't confirm that text.",
+        tr=(
+            f'"{literal}" yazısının hangi klibe gideceğini anlayamadım, o yüzden bu yazıyı '
+            "doğrulayamıyorum."
+        ),
+    )
+
+
 def _clip_intents_on() -> bool:
     """The planner seats a described sequence only when clip intents are on; so does the
     contract, or the two would disagree after a flag flip."""
@@ -1165,10 +1177,14 @@ def build_render_contract(
                     continue
                 durations.append(float(requirement.facts["duration_s"]))
             if requirement.kind == "text" and requirement.literal:
-                if talking_edit and requirement_spoken_text(requirement) is not None:
+                if talking_edit and (
+                    requirement_spoken_text(requirement) is not None
+                    or is_spoken_text_cue(requirement)
+                ):
                     # KRI-707: a Talking edit shows text on a spoken word only where the
                     # take says it (`phone_spoken_text`). Its own receipt answers it ("not
                     # heard" / "can't"), so pinning it would refuse an honest render.
+                    # KRI-791: so does one whose word the ask doesn't name ("which word?").
                     continue
                 shot_index = None
                 if requirement.is_shot_text:
@@ -1228,19 +1244,7 @@ def build_render_contract(
                             # question about the TEXT, never "which clip".
                             unresolved.append(label_reply.question)
                             continue
-                        unresolved.append(
-                            say(
-                                en=(
-                                    f'I couldn\'t tell which clip "{requirement.literal}" '
-                                    "goes on, so I can't confirm that text."
-                                ),
-                                tr=(
-                                    f'"{requirement.literal}" yazısının hangi klibe '
-                                    "gideceğini anlayamadım, o yüzden bu yazıyı "
-                                    "doğrulayamıyorum."
-                                ),
-                            )
-                        )
+                        unresolved.append(text_clip_not_found(requirement.literal))
                 role: Literal["opening", "closing", "any", "clip"] = (
                     "clip"
                     if requirement.scope.startswith("clip:") or requirement.scope == "per_clip"

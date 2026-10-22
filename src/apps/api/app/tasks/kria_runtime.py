@@ -4072,12 +4072,15 @@ _REDO_FROM_APPROVED = (
 )
 
 
-def _device_refusal_copy(decline: dict[str, str], *, last_good: bool = True) -> str:
+def _device_refusal_copy(
+    decline: dict[str, str], *, last_good: bool = True, question: dict[str, Any] | None = None
+) -> str:
     """What the creator hears when the contract refused an edit of a phone render.
 
     Says what could not be confirmed, that the edit was NOT applied, that the last good
     version is kept, and a next step that exists. Never promises an automatic rebuild and
-    never asks the creator to restate a clear instruction.
+    never asks the creator to restate a clear instruction. ``question`` is the re-asked
+    choice a `needs_choice` refusal shows (KRI-795).
     """
     # The message and alternative come from the server's contract checks, in English;
     # a Turkish chat gets their Turkish twin or, when there is none, the line below.
@@ -4106,12 +4109,9 @@ def _device_refusal_copy(decline: dict[str, str], *, last_good: bool = True) -> 
     not_applied = say(en="That edit was not applied.", tr="Bu düzenleme uygulanmadı.")
     if reason == "capability_unavailable":
         return f"{_capability_refusal_copy(decline)} {not_applied} {kept}"
-    if reason in {"needs_choice", "requirement_conflict"}:
-        alternative = _worker_copy(decline.get("alternative")) or say(
-            en="Tell me which way you want to go.",
-            tr="Hangi yoldan gitmek istediğini söyle.",
-        )
-        return f"{message} {not_applied} {alternative} {kept}"
+    if reason in _CHOICE_DECLINES:
+        unresolved, way = _choice_refusal_parts(decline, question)
+        return " ".join(part for part in (unresolved, not_applied, kept, way) if part)
     redo = say(
         en=_REDO_FROM_APPROVED,
         tr="Baştan yapmamı söylersen onayladığın isteğe göre yeni bir sürüm hazırlarım.",
@@ -4155,6 +4155,191 @@ def _phone_evidence_refusal_copy(decline: dict[str, str]) -> str:
         en="Your video wasn't made: the edit didn't keep something you asked for.",
         tr="Videon oluşturulmadı: düzenleme istediğin bir şeyi korumadı.",
     )
+
+
+# KRI-795: a refusal that needs the creator's decision (`needs_choice`,
+# `requirement_conflict`). The phone never saw the edit, so it is never "something your iPhone
+# can't render". The contract's unresolved sentences, keyed by the exact English the render
+# worker stores: (plain English, Turkish, what to do next in English and Turkish, the thread
+# question that answers it). That question is asked again on the failure card, so a tap (or
+# its label typed) is the answer the next turn's gate replays. A test pins every key to
+# `creator_render_contract`.
+_CHOICE_DECLINES = frozenset({"needs_choice", "requirement_conflict"})
+_ORDER_NEXT_STEP = (
+    "Tell me how you want the clips ordered, and I'll make a new draft.",
+    "Klipleri hangi sırayla istediğini söyle, yeni bir taslak hazırlayayım.",
+)
+_UNRESOLVED_PLAIN: dict[str, tuple[str, str, tuple[str, str], str | None]] = {
+    "I can't verify this ordering rule from the approved media.": (
+        "I couldn't keep the clip order you asked for.",
+        "İstediğin klip sırasını koruyamadım.",
+        _ORDER_NEXT_STEP,
+        "order_basis",
+    ),
+    # Written only after the creator chose upload order and the clip rows did not add up,
+    # so the order question's recommended answer would hit the same refusal: no picker.
+    "I need to know which clips are in the edit to verify their order.": (
+        "I couldn't tell which clips are in this edit, so I couldn't keep their order.",
+        "Bu düzenlemede hangi kliplerin olduğunu anlayamadım, o yüzden sıralarını koruyamadım.",
+        _ORDER_NEXT_STEP,
+        None,
+    ),
+    "I need capture times for every selected clip to verify chronological order.": (
+        "Some of your clips have no filming time, so I couldn't put them in the order you "
+        "filmed them.",
+        "Bazı kliplerinde çekim saati yok, o yüzden onları çektiğin sıraya koyamadım.",
+        _ORDER_NEXT_STEP,
+        "order_basis",
+    ),
+    # KRI-762: named first / last clips are the clip resolver's, never the order question.
+    "I couldn't tell which clips you want first or last, so I can't confirm their order.": (
+        "I couldn't tell which clips you want first or last.",
+        "Hangi klipleri başa ya da sona istediğini anlayamadım.",
+        (
+            "Tell me which clip goes first or last, and I'll make a new draft.",
+            "Hangi klibin başta ya da sonda olacağını söyle, yeni bir taslak hazırlayayım.",
+        ),
+        None,
+    ),
+}
+_CLIP_NEXT_STEP = (
+    "Tell me which clip you mean, and I'll make a new draft.",
+    "Hangi klibi kastettiğini söyle, yeni bir taslak hazırlayayım.",
+)
+
+
+def _quoted_unresolved(stored: str) -> tuple[str, tuple[str, str]] | None:
+    """A contract sentence that quotes the creator's words, in the chat's language.
+
+    The worker wrote it with one of the contract's own sentence builders, in English or (a
+    dispatch bound to the chat's language, KRI-765) in Turkish; the builder that produced it
+    is found by its fixed words around the quote and called again with the same words under
+    the chat's language, so both languages stay the contract's.
+    """
+    from app.services.clip_order_sequence import unclear_sequence_words  # noqa: PLC0415
+    from app.services.creator_render_contract import (  # noqa: PLC0415
+        _pin_not_found,
+        text_clip_not_found,
+    )
+
+    for build, step in (
+        (_pin_not_found, _CLIP_NEXT_STEP),
+        (unclear_sequence_words, _CLIP_NEXT_STEP),
+        (
+            text_clip_not_found,
+            (
+                "Tell me which clip that text goes on, and I'll make a new draft.",
+                "O yazının hangi klibe gideceğini söyle, yeni bir taslak hazırlayayım.",
+            ),
+        ),
+    ):
+        for written_in in ("en", "tr"):
+            with reply_language_for(written_in):
+                head, _, tail = build("\x00").partition("\x00")
+            if (
+                len(stored) > len(head) + len(tail)
+                and stored.startswith(head)
+                and stored.endswith(tail)
+            ):
+                return build(stored[len(head) : len(stored) - len(tail)]), step
+    return None
+
+
+def _choice_refusal_parts(
+    decline: dict[str, str], question: dict[str, Any] | None
+) -> tuple[str, str | None]:
+    """``(what is unresolved, the way forward)`` for a refusal that needs a decision.
+
+    The way forward is the re-asked question with its options listed, else the worker's
+    own alternative, else what to tell me; never "which option" with no options shown.
+    ``None`` when the reason is itself the question.
+    """
+    from app.services.choice_questions import reasked_question_text  # noqa: PLC0415
+    from app.services.creator_render_contract import _ASK_FOR_CHOICE  # noqa: PLC0415
+
+    stored = " ".join(str(decline.get("message") or "").split())
+    plain = _UNRESOLVED_PLAIN.get(stored)
+    quoted = None if plain else _quoted_unresolved(stored)
+    if plain:
+        reason, step = say(en=plain[0], tr=plain[1]), plain[2]
+    elif quoted:
+        reason, step = quoted
+    else:
+        step = None
+        reason = _worker_copy(stored) or say(
+            en="I couldn't keep something you asked for in this edit.",
+            tr="İstediğin bir şeyi bu düzenlemede koruyamadım.",
+        )
+    if question is not None:
+        return reason, reasked_question_text(question)
+    alternative = " ".join(str(decline.get("alternative") or "").split())
+    if alternative and alternative != _ASK_FOR_CHOICE:
+        return reason, _worker_copy(alternative) or _try_different_approach()
+    if step is not None:
+        return reason, say(en=step[0], tr=step[1])
+    return reason, None if reason.endswith("?") else _try_different_approach()
+
+
+def _choice_refusal_copy(decline: dict[str, str], question: dict[str, Any] | None) -> str:
+    reason, way = _choice_refusal_parts(decline, question)
+    return f"{reason} {way}" if way else reason
+
+
+def _reasked_choice_question(
+    db,  # noqa: ANN001 - SQLAlchemy sync Session
+    thread_id: uuid.UUID,
+    decline: dict[str, str] | None,
+    job: Job,
+) -> dict[str, Any] | None:
+    """The thread's latest question for this refusal's choice, asked again (KRI-795).
+
+    Only a refusal the thread's own question answers (`_UNRESOLVED_PLAIN`), only a question
+    the gate really asked in this thread (its digest is what the next turn replays an answer
+    against), and only while choice questions are on. Anything else gets no picker: a tap
+    nothing replays is worse than plain words. The answer the refused render carried is not
+    recommended again.
+    """
+    from app.services.choice_questions import reask_choice_question  # noqa: PLC0415
+
+    if (
+        decline is None
+        or decline.get("decline_reason") != "needs_choice"
+        or not settings.kria_choice_questions_enabled
+    ):
+        return None
+    plain = _UNRESOLVED_PLAIN.get(" ".join(str(decline.get("message") or "").split()))
+    conflict = plain[3] if plain else None
+    if conflict is None:
+        return None
+    asked = db.execute(
+        select(CreationThreadEvent.payload)
+        .where(
+            CreationThreadEvent.thread_id == thread_id,
+            CreationThreadEvent.role == "assistant",
+            CreationThreadEvent.payload["choice_question"]["conflict"].astext == conflict,
+        )
+        .order_by(CreationThreadEvent.sequence.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    question = asked.get("choice_question") if isinstance(asked, dict) else None
+    if not isinstance(question, dict):
+        return None
+    return reask_choice_question(question, refused=_pinned_answer(job, conflict))
+
+
+def _pinned_answer(job: Job, conflict: str) -> str | None:
+    """The option this job's approval pinned for ``conflict``: on the brief binding, or on
+    the approved strategy (the job factory may have stripped it there, KRI-788)."""
+    plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
+    binding = plan.get("creator_brief_binding")
+    candidates = getattr(job, "all_candidates", None)
+    strategy = candidates.get("creator_strategy") if isinstance(candidates, dict) else None
+    for source in (binding, strategy):
+        rows = source.get("choice_answers") if isinstance(source, dict) else None
+        for row in rows if isinstance(rows, list) else []:
+            if isinstance(row, dict) and row.get("conflict") == conflict and row.get("option"):
+                return str(row["option"])
+    return None
 
 
 def _capability_refusal_copy(decline: dict[str, str]) -> str:
@@ -5777,6 +5962,10 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             ):
                 recovery_receipts = [receipt.model_dump(mode="json") for receipt in receipts]
                 recovery_message = raw_recovery["message"].strip()
+        # KRI-795: the question a refusal for an unresolved choice asks again, if any.
+        reasked: dict[str, Any] | None = None
+        # The refusal copy below already says the way forward (never added twice).
+        says_way_forward = False
         if device_decline is not None:
             from app.services.device_render import has_accepted_artifact  # noqa: PLC0415
 
@@ -5804,7 +5993,10 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                     )
                 )
             else:
-                failure_content = _device_refusal_copy(device_decline, last_good=last_good)
+                reasked = _reasked_choice_question(db, thread.id, device_decline, job)
+                failure_content = _device_refusal_copy(
+                    device_decline, last_good=last_good, question=reasked
+                )
         elif device_failed and exact_retry_available:
             failure_content = say(
                 en=(
@@ -5848,6 +6040,21 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             )
         elif recovery_message is not None:
             failure_content = _localized_block_recovery(recovery_message, recovery_receipts)
+        elif (
+            typed_decline is not None
+            and typed_decline["decline_reason"] in _CHOICE_DECLINES
+            and (
+                failure_code == "phone_plan_unsupported"
+                or _cloud_decline_needs_the_creator(failure_code, typed_decline["decline_reason"])
+            )
+        ):
+            # KRI-795: a decision only the creator can make. The phone never saw this edit,
+            # so the "can't render yet" table line blamed the wrong thing, and "tell me which
+            # option" pointed at options nobody showed: name what is unresolved and ask the
+            # thread's own question again when there is one.
+            reasked = _reasked_choice_question(db, thread.id, typed_decline, job)
+            failure_content = _choice_refusal_copy(typed_decline, reasked)
+            says_way_forward = True
         elif typed_decline is not None and (
             typed_decline["decline_reason"] == "capability_unavailable"
             or _cloud_decline_needs_the_creator(failure_code, typed_decline["decline_reason"])
@@ -5890,12 +6097,13 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             and typed_decline["decline_reason"] != "capability_unavailable"
             and recovery_message is None
             and not device_failed
+            and not says_way_forward
             # A named missing text already asks its one question (KRI-701).
             and not _quoted_missing_text(typed_decline)
         ):
             # A deterministic phone decline keeps its copy and adds the way forward.
             failure_content = f"{failure_content} {worker_alternative}"
-        title_question = _blocked_title_question(recovery_receipts)
+        failure_question = _blocked_title_question(recovery_receipts) or reasked
         event = _append_sync_event(
             db,
             thread,
@@ -5910,7 +6118,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 "code": failure_code,
                 "recovery": recovery,
                 "title": _failure_title(failure_code, device_failed=device_failed),
-                **({"choice_question": title_question} if title_question else {}),
+                **({"choice_question": failure_question} if failure_question else {}),
                 "receipt_ids": [str(execution.id)],
                 **(
                     {
