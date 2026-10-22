@@ -53,3 +53,7 @@ are both retained. Product assertions were not changed.
 This is a new caption/trace integration check. The previous hosted run is
 retained as evidence for its old exact head; the newly published source still
 requires its selected CI before merge. No old run is relabeled as current-head.
+
+## Post-picker main reconciliation
+
+After #1742 landed, main1bf6d14a6 introduced a real appended gate conflict. Resolved by preserving actual main's order and every common identical gate, plus the unique KRI-805 entry. Planner code merged automatically without semantic edits. Combined actual parser/binder/planner + unmatched-exclusion picker controls:214passed. Native source files are unchanged; the old current-head run39734738100's iPhone validation completed SUCCESS (aggregate journey rollup was still queued when recorded). This refresh requires its own selected current-head checks; no manual rerun/skip/cancel or old-source green status was fabricated.
