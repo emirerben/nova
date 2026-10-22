@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.21.0] - 2026-10-22
+
+### Changed
+- test: align phone font journey with Turkish fallback (KRI-785) (#1740) <!-- release-pr: 1740 -->
+
 ## [0.81.20.0] - 2026-10-22
 
 ### Changed
