@@ -160,3 +160,66 @@ def test_measured_output_with_stale_authority_never_keeps_a_checked_receipt(
         assert stored["status"]["reason_code"] == "unsupported_recipe", (
             "Changed authority needs re-approval, not an exact retry loop"
         )
+
+
+@pytest.mark.parametrize(
+    "pinned,reported,expected",
+    [
+        # KRI-810: a request pinned before the verifier repair (Troya job
+        # 57602026 was pinned to v2) publishes bytes the repaired verifier checks.
+        ("phone-simple-cut-v2", "phone-simple-cut-v3", 200),
+        ("phone-simple-cut-v3", "phone-simple-cut-v3", 200),
+        # An older verifier never satisfies a pin, nor a newer pin.
+        ("phone-simple-cut-v2", "phone-simple-cut-v1", 422),
+        ("phone-simple-cut-v3", "phone-simple-cut-v2", 422),
+    ],
+)
+def test_pinned_verifier_accepts_its_own_or_the_current_verifier_only(
+    fixture, monkeypatch, pinned, reported, expected
+):
+    mock_storage(fixture, monkeypatch)
+    fixture.db.execute.return_value = scalar(
+        SimpleNamespace(
+            user_id=fixture.user.id,
+            status="reserved",
+            retention_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    attempt, _ = prepared(fixture)
+    record = device_record(fixture.job, "first")
+    record["actual_export_policy"] = {
+        "version": 1,
+        "verifier_version": pinned,
+        "source_receipts_digest": export_source_digest(
+            approved_export_sources(fixture.job, fixture.request)
+        ),
+    }
+    reservation = record["attempts"][attempt]
+    save_device_record(fixture.job, "first", record)
+
+    def verify(*args, **kwargs):
+        kwargs["verification_report"].update(
+            status="checked",
+            identity=fixture.request.identity.model_dump(mode="json"),
+            verifier_version=reported,
+            sha256=reservation["sha256"],
+            file_size_bytes=reservation["size"],
+            checks=[{"kind": "duration", "status": "passed"}],
+        )
+
+    monkeypatch.setattr(routes, "_verify_export", verify)
+    monkeypatch.setattr(
+        routes.storage,
+        "object_metadata",
+        lambda _: SimpleNamespace(
+            size=reservation["size"], content_type="video/mp4", generation="g"
+        ),
+    )
+    response = checked_completion(fixture, body(fixture, attempt))
+    assert response.status_code == expected, response.text
+    stored = device_record(fixture.job, "first")
+    if expected == 200:
+        assert stored["status"]["phase"] == "published"
+        assert stored["published_attempt"] == attempt
+    else:
+        assert stored["status"]["phase"] != "published"
