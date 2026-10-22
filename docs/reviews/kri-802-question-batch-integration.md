@@ -52,3 +52,15 @@ A permanent batch journey step executes both existing answer-order UI tests agai
 ## Compatible strict receipt command
 
 The #1736 chip scenario actually passed33.465s, but its new receipt step then failed because require-xctest was not a supported CLI command. Consumed corrected #1736source4168eda84: verify-tests passes the real saved chip result and rejects missing and real+missing names. Both this candidate's chip and batch steps now use that supported strict command; both batch names remain required and their actual execution is still pending. No Swift code, test assertion or timeout changed in this correction.
+
+## Actual published-head named native steps executed
+
+On publishede10af801, native run39743956631/job119719485541 completed the dedicated both-answer-orders step SUCCESS at08:53:35UTC (started08:51:50). Its exact-source workflow executes BOTH named CreationUITests cases and requires each successful result via verify-tests, so this is execution evidence rather than manifest declaration or a generic smoke inference. The suggestion-chip step on that same combined app also executed and succeeded08:50:16–08:51:50. At observation the job was still running Gameday/export; this does not claim whole-run success or final current-main dependency readiness. Download actual named result JSON after artifact publication.
+
+## Terminal native evidence and final published-parent union
+
+Run39743956631 on e10af801 completed full CI SUCCESS. Downloaded actual native artifact12413529691 to /private/tmp/nova-1744-e10-native-evidence and verified both named result rows with the strict CLI: title-first24.958s PASS, clips-first27.781s PASS. The chip scenario passed36.293s and actual Gameday save/reopen/export passed122.132s. No skipped-name inference or generic green substitute.
+
+The final private source consumes the currently published canonical69/16 editorial parent a069537d6, exclusive trim consumerbc4fc03b and CI-only deterministic-overlap repaird5d9c0e. Native application bytes and both batching/chip UI test methods remain exactly identical to successfule10. Backend Python ASTs match the188-pass combined batching/reanswer/consent/contract sourcec56c25a34; only version-history comments differ. All incident gate entries survive, with common entries proven identical. The inherited Gameday test adds its two stronger inspector/panel disappearance prerequisites; no application, batching/chip assertion or timeout changes.
+
+Actual parent merges are still required before this PR lands. Fresh exact-source CI remains required; olde10 artifacts are component/history evidence and are not relabeled as the new head. Full original Don Julio picture/audio, correction/save/export acceptance remains open under KRI-802/KRI-829.
