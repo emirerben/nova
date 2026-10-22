@@ -53,3 +53,11 @@ required on the final head.
 The scope remains deliberately partial: it makes named phrase-cut receipts truthful;
 it does not cut the original phrases or prove speaker-specific text, native export or
 the complete T1 request. Those gaps remain KRI-724/KRI-787 work.
+
+## Recovery from an unretryable GitHub startup error
+
+Preserved current author428c5193 by normal history. Actual-main integration7781fc42 includes landed #1730 and the deployed #1749 verifier, based on main c09c6a8b. Its exact prospective merge tree was b8d36ed2504deafba7e5bd60c03048efa6c69d2f.160 named-cut, complete-label, persisted reanswer/refusal and refusal-copy controls passed on that tree. This report is the only additional local file change before the recovery publication; product/test/workflow bytes stay the verified integration bytes.
+
+CI39789700199 attempt1 failed in API0/library APT package download after three600-second stalls and the existing40-minute setup caps; those tests never started. API1 and the offline journey passed. The first failed-only recovery ended as attempt2 startup_failure with zero jobs. Read-only GitHub run-page inspection showed an unexpected internal error, request ID3AE2:E2C2:7FAF42F:B9A0AEF:6ADA2059. The pinned synthetic merge and reusable workflow remained readable. Both another failed-only request and a specifically failed-job request were rejected as unretryable.
+
+The normal current-main integration and this evidence continuation are therefore being published to create a fresh CI event. This is recovery from an unretryable workflow, not a refresh merely because the branch is behind. Prior passed artifacts remain historical component proof; all newly published-head checks must independently pass. No feature edit, timeout increase, mirror/security change, skipped test or manual release is part of this recovery. The actual named phrase removal and complete original T1 output/export remain pending under KRI787.
