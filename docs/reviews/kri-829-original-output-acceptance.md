@@ -19,15 +19,42 @@ The existing sequence is [#1730](https://github.com/emirerben/nova/pull/1730)
 → [#1744](https://github.com/emirerben/nova/pull/1744).
 [#1723](https://github.com/emirerben/nova/pull/1723) updates the replay after
 the functional dependencies land. [#1745](https://github.com/emirerben/nova/pull/1745)
-is the independent label-recovery continuation after merged #1739. #1732
-is already merged. A copied dependency commit or a green local suite does not
-mean a dependency has landed.
+is the label-recovery continuation after merged #1739 and is also a
+dependency of #1741. #1732 is already merged. A copied dependency commit or a
+green local suite does not mean a dependency has landed.
 
 Emir owns KRI-723 (actual named actions and event-relative placement), KRI-724
 (executable phrase/speaker edits), KRI-828 (freeze engine), KRI-826 (text/layout),
 and KRI-827 (face/plate avoidance). This continuation's new implementation is
 the Yasin-owned KRI-551 consented-retake path, default off; see its
-[bounded evidence](kri-551-consented-retakes.md). KRI-798 is a separate open race.
+[bounded evidence](kri-551-consented-retakes.md) in [draft #1753](https://github.com/emirerben/nova/pull/1753).
+KRI-798 continues the saved worker-race fix in [draft #1754](https://github.com/emirerben/nova/pull/1754),
+with [bounded lifecycle evidence](https://github.com/emirerben/nova/blob/dac2707aa166ee41939bd7e5668a446b2384daff/docs/reviews/kri-798-worker-restart.md).
+Both remain local fixes with live acceptance pending.
+
+## Refreshed change evidence
+
+These are the published revisions reviewed in this continuation. Hosted checks
+were still queued/running at handoff; none of these rows claims a production or
+physical-export pass. The final PR descriptions bind their narrower evidence to
+the corresponding head.
+
+| Change | Published head | Local verification |
+| --- | --- | --- |
+| #1730 / KRI-790 | `4b41d613d898b0defc6a93c24eb768ef1e5f2ab2` | 173 focused tests; 1,255 mapped database-backed checks. |
+| #1728 / KRI-792 | `335e08e70e2419985f4052cedd1e780e3ff77719` | 214 focused tests; 1,448 mapped checks. Records named cuts honestly; does not establish actual deletion. |
+| #1738 / KRI-806 | `8f2dd811ffa60c11f4ee61147b32a768079849b7` | 419 focused tests; 2,133 structural evals passed, 15 skipped, 7 expected failures; 875 mapped checks. |
+| #1745 / KRI-804 | `fd5ebae9b9cc60e0a64852bafe30e3c95d3d82b4` | 274 focused tests; 1,921 mapped checks; current-head overlay artifact below. |
+| #1741 / KRI-803 | `aa973f7229496a4b5c3c08b0b194a76768c538e5` | 140 focused tests; 2,114 mapped checks. |
+| #1744 / KRI-802 | `b0ba380d4091438e2352bbb9aedb8d6cc7bf56d0` | 68 focused tests; 2,114 mapped checks. Parent integration preserved all 18 question-flow-owned file blobs unchanged. |
+| #1753 / KRI-551 | `0a0ce6cb125dda6d4c5d25aae6cdfe8bc763f700` (implementation; this follow-up updates documentation only) | 986 complete retake-journey tests; 786 mapped checks; 28 native simulator consent/request tests; editor gate 209 web unit + 28 desktop + 42 mobile-viewport browser + 583 backend tests. |
+
+| #1754 / KRI-798 | `dac2707aa166ee41939bd7e5668a446b2384daff` | 78 focused tests, including 15 real-PostgreSQL cases; 90 gate-manifest checks; 41 CI-selector tests; 149 mapped checks. Original source failed three controlled incidents; current source passed all three. No live Fly restart claim. |
+
+The #1741 release-metadata guard now compares against the actual merge base of
+the fetched base branch, avoiding a false failure on normally merged upstream
+release metadata. It still rejects feature-owned release-file edits. No feature
+PR changes VERSION, CHANGELOG or package versions.
 
 ## Source and request checks
 
@@ -52,10 +79,10 @@ N3 source SHA-256:
 
 ## Export and recovery evidence
 
-- **Label renderer:** #1745 head `40cc2179c83fde9d200c2966b82bf6238162d2b3`
+- **Label renderer:** #1745 head `fd5ebae9b9cc60e0a64852bafe30e3c95d3d82b4`
   passed the production-image overlay gate: 124 PASS, zero FAIL/WARN/SKIPPED.
   The report and montage, including enlarged center/left/right sauce/place
-  labels, were inspected. [Exact-head artifact](https://github.com/emirerben/nova/actions/runs/39766617602/artifacts/12421025714).
+  labels, were inspected. [Current-head artifact](https://github.com/emirerben/nova/actions/runs/39770493849/artifacts/12423030108).
   This is a renderer-only gate without OCR; it is not the Don Julio export.
 - **T1 local FFmpeg:** original-source trim diagnostics and endpoint frames
   were inspected. They expose remaining named-cut failures. The prepared
