@@ -29,7 +29,7 @@ from app.pipeline.prompt_loader import load_prompt
 # v13 (KRI-793): shared brief records the words to spell in the captions (`spellings`).
 # v14 (KRI-791 + KRI-793): retain spellings and record text `triggers` + `speaker`.
 # v14 (KRI-792): named spoken cuts carry cut_lines as well as caption spellings.
-# v14 (KRI-789): shared brief records quoted start / end lines as a `timing` trim.
+# v15 (KRI-789): shared brief records quoted start / end lines as a `timing` trim.
 # v16 shares the complete caption/spoken-trigger/quoted-trim/named-cut instruction union.
 BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-22-v16"
 _NARROW_BRIEF_SECTION = (
