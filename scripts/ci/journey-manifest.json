@@ -1207,7 +1207,8 @@
         "src/apps/api/tests/kria/test_kri802_question_batch.py",
         "src/apps/api/tests/kria/test_kri802_question_batch_postgres.py",
         "src/apps/ios/Kria/Core/QuestionBatch.swift",
-        "src/apps/ios/Kria/Features/ChoiceQuestionCard.swift"
+        "src/apps/ios/Kria/Features/ChoiceQuestionCard.swift",
+        "src/apps/ios/Kria/Features/ChatWorkspaceView.swift"
       ]
     }
   ]

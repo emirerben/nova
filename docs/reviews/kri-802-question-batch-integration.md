@@ -40,3 +40,11 @@ Committed preship and exact-head hosted CI remain required. Rollout needs the
 protocol14 app and compatible API/worker; old clients keep serial questions.
 The broader Don Julio request/export remains open. No prompt/model change,
 paid call, manual deployment, release or physical-phone action occurred.
+
+## Shared native state and actual UI coverage correction
+
+Oldhead2e181 native job in run39732798893 completed SUCCESS, but its actual log contains only generic Creation smoke and the learning chat test. Neither declared batch scenario executed: selectorjob119671461555 chose ios_ui_groups=full and the PR workflow mapped that to smoke. The manifest and UI inventory already named both scenarios; native-units intentionally ignores UI IDs. Thus generic green was not sufficient batch acceptance.
+
+Merged actual reconciled #1741 sourcee1f4bb8 (including #1738newmain source7f8) and #1736baaebb native-state/coverage changes normally. ChatWorkspaceView, CanonicalChatComponents and CreationUITests merged automatically, with no Swift source or semantic assertion edits. The candidate now contains both batching @State and ready-chip scroll updates.
+
+A permanent batch journey step executes both existing answer-order UI tests against the same built app and simulator. require-xctest requires each exact name to pass, rejecting missing/skipped/zero execution. ChatWorkspaceView is explicitly mapped to this journey so future shared workspace changes cannot omit these scenarios. No duplicate build, changed wait/assertion, physical-device operation, paid call or manual release is introduced. Current combined native proof is required before merge.
