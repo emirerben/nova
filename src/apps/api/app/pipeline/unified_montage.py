@@ -62,6 +62,7 @@ from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.edit_proposal import (
     CREATOR_SELECTED_ORIENTATION_REASON,
     MAX_PROPOSAL_DURATION_S,
+    MIN_PROPOSAL_DURATION_S,
     ClipLabel,
     EditProposalSnapshot,
     FastMontageCut,
@@ -117,7 +118,7 @@ STILL_MAX_S = READING_MAX_S
 # The strict snapshot's shortest video cut (``EditProposalSnapshot``). A clip
 # shorter than this is valid only shown whole.
 MIN_VIDEO_CUT_S = 0.4
-MIN_TOTAL_S = 3.0
+MIN_TOTAL_S = float(MIN_PROPOSAL_DURATION_S)
 # Model- and fact-derived labels stay short; the creator's own words are never cut
 # (``ClipLabel`` allows 120).
 MAX_LABEL_CHARS = 60
