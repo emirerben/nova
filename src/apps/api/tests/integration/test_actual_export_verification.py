@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import io
+import json
 import shutil
 import subprocess
 import threading
@@ -43,6 +44,7 @@ FFMPEG = (
     if Path("/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg").exists()
     else "ffmpeg"
 )
+FFPROBE = str(Path(FFMPEG).with_name("ffprobe")) if "/" in FFMPEG else "ffprobe"
 
 
 @pytest.mark.parametrize(
@@ -659,3 +661,417 @@ def test_silent_sources_accept_silent_export_and_reject_unrequested_audio(export
     assert any(
         value["kind"] == "audio" and value["status"] == "failed" for value in wrong["checks"]
     )
+
+
+# --- KRI-810: exact displayed-frame clock and overlay-isolated text evidence ---
+#
+# Failure modes written before the verifier change (plan F3/F4/F6-F9/F12):
+# - a non-frame-grid source_start (1.508 s at 30 fps) makes the last sample of a
+#   clip compare the neighbour of the frame the renderer displayed;
+# - a one-frame display tolerance must not compound into a wider window, so a
+#   moving picture shifted by one or two whole frames still fails;
+# - white text with a stroke and a blurred shadow over a white/high-key picture
+#   merges into the background for the colour-threshold OCR view;
+# - isolating the overlay must never read words that are not in the pixels:
+#   a missing word, wrong casing or missing layer still fails exact copy;
+# - without a decodable background the new evidence cannot accept anything.
+
+CLOCK_START = 1.508
+CLOCK_DURATION = 2.812
+
+
+def _single_clip(recipe, *, start, duration, text_layers=()):
+    recipe = copy.deepcopy(recipe)
+    clip = recipe.tracks[0].clips[0]
+    clip.source_start = start
+    clip.source_duration = duration
+    recipe.tracks[0].clips = [clip]
+    recipe.text_layers = list(text_layers)
+    recipe.audio.original_volume = 0
+    return recipe
+
+
+@pytest.fixture(scope="module")
+def moving(exports):
+    """Every frame differs: diagonal stripes advance 23 px per 30 fps frame."""
+    root, _, _ = exports
+    path = root / "moving.mp4"
+    ffmpeg(
+        "-f",
+        "lavfi",
+        "-i",
+        "nullsrc=s=640x360:r=30:d=6,"
+        r"geq=lum='255*lt(mod(X+Y-N*23\,150)\,75)':cb=128:cr=128,format=yuv420p",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-pix_fmt",
+        "yuv420p",
+        path,
+    )
+    return path
+
+
+def _cut(root, source, *, start, duration, fps=30):
+    path = root / f"{uuid.uuid4()}.mp4"
+    ffmpeg(
+        "-i",
+        source,
+        "-filter_complex",
+        f"[0:v]trim=start={start}:duration={duration},setpts=PTS-STARTPTS[v]",
+        "-map",
+        "[v]",
+        "-r",
+        fps,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-pix_fmt",
+        "yuv420p",
+        path,
+    )
+    return path
+
+
+def _composited(root, source, *, start, duration, fps=30, next_frame_at=None):
+    """Render a cut the way a compositor does, independent of FFmpeg's resampler.
+
+    Output frame n shows the last source frame presented at/before
+    start + n/fps (held frames repeat). FFmpeg's trim + -r conversion picks a
+    different frame across versions on VFR input, so it cannot stand in for
+    the phone here.
+    """
+
+    def probe(entries):
+        return subprocess.run(
+            [
+                FFPROBE,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                entries,
+                "-of",
+                "csv=p=0",
+                str(source),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout
+
+    width, height = (int(value) for value in probe("stream=width,height").strip().split(","))
+    clock = [float(line.split(",")[0]) for line in probe("frame=pts_time").split()]
+    raw = subprocess.run(
+        [
+            FFMPEG,
+            "-v",
+            "error",
+            "-i",
+            str(source),
+            "-fps_mode",
+            "passthrough",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-",
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    ).stdout
+    size = width * height * 3
+    assert len(raw) == size * len(clock) and clock == sorted(clock)
+    chosen = [
+        max(i for i, t in enumerate(clock) if t <= start + n / fps + 1e-6)
+        for n in range(round(duration * fps))
+    ]
+    if next_frame_at is not None:
+        chosen[next_frame_at] = min(chosen[next_frame_at] + 1, len(clock) - 1)
+    path = root / f"{uuid.uuid4()}.mp4"
+    subprocess.run(
+        [
+            FFMPEG,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-s",
+            f"{width}x{height}",
+            "-r",
+            str(fps),
+            "-i",
+            "-",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-pix_fmt",
+            "yuv420p",
+            str(path),
+        ],
+        input=b"".join(raw[i * size : (i + 1) * size] for i in chosen),
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    return path
+
+
+@pytest.mark.parametrize(
+    "shift_frames,expected", [(0, "checked"), (1, "rejected"), (-1, "rejected")]
+)
+def test_on_grid_whole_clip_frame_shift_never_counts_as_checked(
+    exports, moving, shift_frames, expected
+):
+    """KRI-831: independent frame-clock exports, not a widened pixel threshold."""
+    root, _, recipe = exports
+    recipe = _single_clip(recipe, start=1.5, duration=CLOCK_DURATION)
+    output = _composited(root, moving, start=1.5 + shift_frames / 30, duration=CLOCK_DURATION)
+    report = verify_actual_export(output, status(recipe), {"a": moving})
+    (root / f"kri831-on-grid-{shift_frames}.json").write_text(
+        json.dumps({"expected": expected, "output": str(output), "report": report}, indent=2)
+    )
+    assert report["status"] == expected, report
+    pictures = [check for check in report["checks"] if check["kind"] == "picture"]
+    assert pictures
+    if shift_frames:
+        assert any(check["status"] == "failed" for check in pictures), report
+
+
+def test_on_grid_single_neighbour_frame_remains_allowed(exports, moving):
+    """KRI-831: retain isolated resampling tolerance, without shifting the whole clip."""
+    root, _, recipe = exports
+    recipe = _single_clip(recipe, start=1.5, duration=CLOCK_DURATION)
+    output = _composited(root, moving, start=1.5, duration=CLOCK_DURATION, next_frame_at=3)
+    report = verify_actual_export(output, status(recipe), {"a": moving})
+    (root / "kri831-single-neighbour.json").write_text(
+        json.dumps({"expected": "checked", "output": str(output), "report": report}, indent=2)
+    )
+    assert report["status"] == "checked", report
+    pictures = [check for check in report["checks"] if check["kind"] == "picture"]
+    assert len(pictures) == 1
+    assert pictures[0]["neighbour_samples"] == 1
+
+
+def test_on_grid_original_export_keeps_resampled_proxy_tolerance(exports, moving):
+    """A correct original clock need not share its resampled proxy's sample grid."""
+    root, _, recipe = exports
+    proxy = root / "moving-proxy-2997.mp4"
+    ffmpeg(
+        "-i",
+        moving,
+        "-r",
+        "30000/1001",
+        "-fps_mode",
+        "cfr",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-pix_fmt",
+        "yuv420p",
+        proxy,
+    )
+    recipe = _single_clip(recipe, start=0, duration=CLOCK_DURATION)
+    output = _composited(root, moving, start=0, duration=CLOCK_DURATION)
+    request = status(recipe)
+    report = verify_actual_export(output, request, {"a": proxy})
+    (root / "kri831-resampled-proxy.json").write_text(
+        json.dumps(
+            {
+                "expected": "checked",
+                "output": str(output),
+                "source_proxy": str(proxy),
+                "request": request.model_dump(mode="json"),
+                "report": report,
+            },
+            indent=2,
+        )
+    )
+    assert report["status"] == "checked", report
+
+
+@pytest.mark.parametrize(
+    "shift_frames,expected",
+    [(0, "checked"), (1, "rejected"), (2, "rejected"), (-2, "rejected")],
+)
+def test_off_grid_source_start_compares_the_displayed_frame_without_widening_the_window(
+    exports, moving, shift_frames, expected
+):
+    root, _, recipe = exports
+    recipe = _single_clip(recipe, start=CLOCK_START, duration=CLOCK_DURATION)
+    output = _cut(root, moving, start=CLOCK_START + shift_frames / 30, duration=CLOCK_DURATION)
+    report = verify_actual_export(output, status(recipe), {"a": moving})
+    assert report["status"] == expected, report
+    picture = [c for c in report["checks"] if c["kind"] == "picture"]
+    assert picture and all(c["picture_clock"] == "output-pts-bracketed-v1" for c in picture)
+    if expected == "rejected":
+        assert any(c["status"] == "failed" for c in picture), report
+
+
+def test_variable_frame_rate_proxy_with_held_frames_matches_its_cfr_export(exports, moving):
+    """A proxy that holds frames (15 fps stretch) against the 30 fps render of it."""
+    root, _, recipe = exports
+    proxy = root / "moving-vfr.mp4"
+    ffmpeg(
+        "-i",
+        moving,
+        "-vf",
+        "setpts='if(lt(N,45),N,45+(N-45)*2)/(30*TB)'",
+        "-fps_mode",
+        "vfr",
+        "-t",
+        "6",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-pix_fmt",
+        "yuv420p",
+        proxy,
+    )
+    recipe = _single_clip(recipe, start=CLOCK_START, duration=CLOCK_DURATION)
+    output = _composited(root, proxy, start=CLOCK_START, duration=CLOCK_DURATION)
+    report = verify_actual_export(output, status(recipe), {"a": proxy})
+    assert report["status"] == "checked", [c for c in report["checks"] if c["status"] != "passed"]
+
+
+BRIGHT_TITLE = "Ancient City of Troy"
+
+
+@pytest.fixture(scope="module")
+def high_key(exports):
+    """Low-resolution proxy of a white sky with lit window strips and dark frames."""
+    root, _, _ = exports
+    path = root / "high-key.mp4"
+    ffmpeg(
+        "-f",
+        "lavfi",
+        "-i",
+        "nullsrc=s=320x180:r=30:d=4,"
+        r"geq=lum='if(lt(mod(X+N/3\,48)\,10)\,70\,if(lt(mod(X+N/3\,48)\,16)\,252\,"
+        r"236-Y/12))':cb=128:cr=126,format=yuv420p",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-pix_fmt",
+        "yuv420p",
+        path,
+    )
+    return path
+
+
+def _title_overlay(root, text):
+    """Fixture-only painting: white fill, black stroke, blurred drop shadow."""
+    from PIL import ImageFilter  # noqa: PLC0415
+
+    assert FONT is not None
+    font = ImageFont.truetype(str(FONT), 40)
+    shadow = Image.new("L", (640, 360), 0)
+    ImageDraw.Draw(shadow).text((60, 128), text, fill=160, font=font, anchor="ls")
+    shadow = shadow.filter(ImageFilter.GaussianBlur(6))
+    overlay = Image.new("RGBA", (640, 360), (0, 0, 0, 0))
+    overlay.putalpha(shadow)
+    ImageDraw.Draw(overlay).text(
+        (60, 125),
+        text,
+        fill=(255, 255, 255, 255),
+        font=font,
+        anchor="ls",
+        stroke_width=1,
+        stroke_fill=(0, 0, 0, 230),
+    )
+    path = root / f"title-{uuid.uuid4()}.png"
+    overlay.save(path)
+    return path
+
+
+def _bright_recipe(recipe):
+    layer = copy.deepcopy(recipe.text_layers[0])
+    layer.start, layer.end = 0, 2
+    run = layer.runs[0]
+    run.text, run.font_size, run.x, run.baseline_y = BRIGHT_TITLE, 40, 60, 125
+    return _single_clip(recipe, start=0.5, duration=2.5, text_layers=[layer])
+
+
+def _bright_export(root, source, text):
+    path = root / f"{uuid.uuid4()}.mp4"
+    inputs = ["-i", source]
+    graph = "[0:v]trim=start=0.5:duration=2.5,setpts=PTS-STARTPTS,scale=640:360[v]"
+    if text is not None:
+        inputs += ["-loop", "1", "-i", _title_overlay(root, text)]
+        graph += ";[v][1:v]overlay=0:0:shortest=1:enable='between(t,0,2)'[v]"
+    ffmpeg(
+        *inputs,
+        "-filter_complex",
+        graph,
+        "-map",
+        "[v]",
+        "-t",
+        "2.5",
+        "-r",
+        30,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-pix_fmt",
+        "yuv420p",
+        path,
+    )
+    return path
+
+
+@pytest.mark.parametrize(
+    "rendered,expected",
+    [
+        (BRIGHT_TITLE, "checked"),
+        ("Ancient City of", "rejected"),
+        ("Ancient City of troy", "rejected"),
+        ("Ancient Town of Troy", "rejected"),
+        (None, "rejected"),
+    ],
+)
+def test_white_title_over_a_high_key_picture_is_read_without_painting_the_expected_copy(
+    exports, high_key, rendered, expected
+):
+    root, _, recipe = exports
+    recipe = _bright_recipe(recipe)
+    report = verify_actual_export(
+        _bright_export(root, high_key, rendered), status(recipe), {"a": high_key}
+    )
+    assert report["status"] == expected, report
+    text = [c for c in report["checks"] if c["kind"] == "text"]
+    if expected == "rejected":
+        assert any(c["status"] == "failed" and c["expected_visible"] for c in text), report
+    else:
+        assert all(c["status"] == "passed" for c in report["checks"]), report
+
+
+def test_overlay_isolation_cannot_accept_text_without_a_decoded_background(
+    exports, high_key, monkeypatch
+):
+    root, _, recipe = exports
+    recipe = _bright_recipe(recipe)
+    output = _bright_export(root, high_key, BRIGHT_TITLE)
+    frames = measured._frames
+
+    def no_background(*args, **kwargs):
+        if kwargs.get("canvas") is not None:
+            raise subprocess.CalledProcessError(1, "ffmpeg")
+        return frames(*args, **kwargs)
+
+    monkeypatch.setattr(measured, "_frames", no_background)
+    report = verify_actual_export(output, status(recipe), {"a": high_key})
+    assert report["status"] != "checked", report
