@@ -57,3 +57,5 @@ for concept, post in [('early-riser-commitment-01', '7669218300676607239'), ('ea
     assert '/video/' + post in banks[concept]['source']
 print('PASS: five duplicate-source aliases use canonical IDs; wrong-post weights remain absent; four current signals match independent18October source counts/identity.')
 ```
+
+Actual-parent validation: the full combined bank/consumer/free recorded-eval run passes2310 cases, with15 explicit skips and7 existing expected failures. The first attempt reached2304 passes before ENOSPC caused one failure/ten errors; that log is retained. After removing only generated Python bytecode in explicit task-owned worktrees, the entire command was rerun successfully with PYTHONDONTWRITEBYTECODE=1. No source, raw data, media, reports or failure logs were removed. Independent dated-source acceptance also passes after the actual-parent merge.
