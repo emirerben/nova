@@ -1,5 +1,6 @@
 """Authored phone Save keeps the creator's exact selected source window."""
 
+import copy
 import uuid
 
 import pytest
@@ -72,6 +73,26 @@ def _save_phone_slot(monkeypatch, slot: gj.TimelineSlotEdit):
     return job, device_status(job, "original_text").request.recipe
 
 
+def _saved_authored_speed(monkeypatch):
+    """Persist the exact 2x window before exercising a stale partial Save."""
+    job, variant = _authored_phone_job(monkeypatch)
+    prepare_authored_editor_commit(
+        job,
+        "original_text",
+        gj.EditorCommitRequest(
+            base_generation="first",
+            editor_state_version=1,
+            timeline_slots=[
+                gj.TimelineSlotEdit(
+                    clip_index=1, in_s=2, source_end_s=8, duration_s=3, playback_rate=2
+                )
+            ],
+        ),
+        validation_arguments={},
+    )
+    return job, job.assembly_plan["variants"][0]
+
+
 def test_authored_phone_chat_speed_saves_reopens_and_keeps_exact_source_edges(monkeypatch):
     """Chat speed uses the normal device Save, not a mocked capability map."""
     job, variant = _authored_phone_job(monkeypatch)
@@ -112,6 +133,70 @@ def test_authored_phone_chat_speed_saves_reopens_and_keeps_exact_source_edges(mo
             expected_duration, abs=1e-6
         )
         assert gj.editor_deletion_timeline(job, variant)[0]["source_end_s"] == 8
+
+
+def test_authored_stale_save_omitting_speed_fields_keeps_saved_exact_window(monkeypatch):
+    """A closed speed capability cannot turn a stale partial Save into a 1x trim."""
+    job, variant = _saved_authored_speed(monkeypatch)
+    saved = variant["user_timeline"]["slots"][0]
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        ["basicComposition", "local1080Export", "audioMix"],
+    )
+
+    stale_slot = gj.TimelineSlotEdit(slot_id=saved["slot_id"], clip_index=1, in_s=2, duration_s=3)
+    resolved = resolve_authored_phone_slots(job, variant, [stale_slot])
+    assert (resolved[0]["source_end_s"], resolved[0]["playback_rate"]) == (8, 2)
+    before = copy.deepcopy(job.assembly_plan)
+
+    # The old app cannot render variable speed after its capability closes, so
+    # the real route rejects rather than accepting the stale partial Save and
+    # silently resetting its selected window to 1x.
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "original_text",
+            gj.EditorCommitRequest(
+                base_generation=variant["render_generation_id"],
+                editor_state_version=1,
+                timeline_slots=[stale_slot],
+            ),
+        )
+
+    assert exc.value.status_code == 422
+    assert job.assembly_plan == before
+
+
+def test_authored_explicit_speed_reset_stays_blocked_when_variable_speed_closes(monkeypatch):
+    """Explicit null is a reset request, so the Save guard rejects it atomically."""
+    job, variant = _saved_authored_speed(monkeypatch)
+    saved = variant["user_timeline"]["slots"][0]
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        ["basicComposition", "local1080Export", "audioMix"],
+    )
+    reset_slot = gj.TimelineSlotEdit(
+        slot_id=saved["slot_id"], clip_index=1, in_s=2, duration_s=3, playback_rate=None
+    )
+    reset = resolve_authored_phone_slots(job, variant, [reset_slot])
+    assert (reset[0]["playback_rate"], reset[0]["source_end_s"]) == (1, None)
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "original_text",
+            gj.EditorCommitRequest(
+                base_generation=variant["render_generation_id"],
+                editor_state_version=1,
+                timeline_slots=[reset_slot],
+            ),
+        )
+
+    assert exc.value.status_code == 422
+    assert job.assembly_plan == before
 
 
 @pytest.mark.parametrize(

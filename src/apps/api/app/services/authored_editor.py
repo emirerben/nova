@@ -309,8 +309,15 @@ def resolve_authored_phone_slots(
         if not 0 <= slot.clip_index < len(catalog):
             raise HTTPException(422, detail={"code": "TIMELINE_UNKNOWN_CLIP"})
         source = catalog[slot.clip_index]
+        old = baseline.get(slot.slot_id) or baseline.get(slot.parent_segment_id) or {}
         duration = slot.duration_s
-        rate = slot.playback_rate or 1.0
+        # A partial stale Save may omit newer speed fields. Preserve a saved
+        # authored rate in that case; explicit null remains the creator's 1x
+        # reset. New placements have no baseline and therefore retain 1x.
+        if "playback_rate" in slot.model_fields_set:
+            rate = slot.playback_rate or 1.0
+        else:
+            rate = float(old.get("playback_rate") or 1.0)
         if slot.duration_beats is not None or duration is None:
             raise HTTPException(422, detail={"code": "authored_seconds_required"})
         minimum_duration = (
@@ -333,7 +340,7 @@ def resolve_authored_phone_slots(
             raise HTTPException(422, detail={"code": "phone_edit_unsupported"})
         duration, source_end = _source_end_for_authored_slot(
             slot,
-            old=baseline.get(slot.slot_id) or {},
+            old=old,
             source=source,
             duration=duration,
             rate=rate,
@@ -363,9 +370,14 @@ def resolve_authored_phone_slots(
                 "order": len(resolved),
                 "duration_s": duration,
                 "source_end_s": source_end,
+                "playback_rate": (
+                    rate
+                    if "playback_rate" in slot.model_fields_set
+                    or old.get("playback_rate") is not None
+                    else None
+                ),
                 "source_start_locked": bool(
-                    slot.source_start_locked
-                    or (baseline.get(slot.slot_id) or {}).get("source_start_locked")
+                    slot.source_start_locked or old.get("source_start_locked")
                 ),
             }
         )
