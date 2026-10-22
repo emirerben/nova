@@ -2,7 +2,7 @@
 
 Nova transforms raw real-life videos into viral short-form content (TikTok, Reels, Shorts).
 
-Start with [docs/README.md](docs/README.md) to locate code and focused tests by symptom. For runtime evidence or ticket handoffs, use [agent navigation](docs/runbooks/agent-navigation.md).
+Start: [code/tests](docs/README.md), [request-to-output standard](docs/runbooks/request-to-output-standard.md) (required before implementation, review or PR), [runtime evidence/handoffs](docs/runbooks/agent-navigation.md).
 
 ## Codex agent routing
 
@@ -101,7 +101,7 @@ make local-render MODE=generative CLIPS="a.mp4 b.mp4 c.mp4"
 - Frontend tests: `cd src/apps/web && npm test` (Jest)
 - Kria gates: `make verify-kria`; iOS: `make ios-verify`; offline replay: `make kria-replay FIXTURE=nermin-matcha-update`
 - Pre-PR gate: `bash scripts/preship-check.sh` — ruff, drift, release metadata, KRI-577 gates, journey mapping, fix-chain WARN. Run before every PR.
-- Reliability gates (KRI-577): `python3 scripts/reliability-gates.py select|run|red-control`; ledger `tests/gates/reliability-gates.json`; checklist `docs/runbooks/pr-acceptance-checklist.md`; scratch DB `bash scripts/dev/test-db.sh`.
+- Reliability (KRI-577): `python3 scripts/reliability-gates.py select|run|red-control`; evidence and scratch-DB steps: `docs/runbooks/pr-acceptance-checklist.md`.
 
 ## Testing rules
 - **Never write unit tests after you write code** (they restate the implementation and pass by construction).

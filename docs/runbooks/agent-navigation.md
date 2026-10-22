@@ -8,6 +8,8 @@ for the symptom's source entrypoint and focused tests.
 
 1. Read the matching Linear issue and relevant comments. Record acceptance
    criteria and existing PR/worktree links before opening broad repository searches.
+   Before implementation or review, apply the [request-to-output standard](request-to-output-standard.md):
+   derive visible/audible acceptance from the original ask before changing code.
 2. For new implementation, follow the [worktree workflow](../../CLAUDE.md#session-workflow-isolate-in-a-worktree).
    Keep the selected worktree as the explicit cwd on every command. In-flight
    work continues in its existing worktree; verify branch and status first.
@@ -83,23 +85,25 @@ When changing a default, capability contract, deployment stage, or entrypoint,
 update the relevant runbook/map in the same PR. Date live-state claims and cite
 the observation and revision; an undated “dark rollout” label is not evidence.
 
-For journey verification, use [the KRI-559 baseline](../reviews/kri-559-journey-verification.md).
-Keep offline replay, live model, native output and production observations as
-separate evidence levels. Recheck evidence after a HEAD change, enforce the
-required render gate in CI, and record unknown test time or cost as `unknown`.
+For journey verification, follow the [request-to-output standard](request-to-output-standard.md)
+and [KRI-559 baseline](../reviews/kri-559-journey-verification.md). Keep plan
+executability, recipe fidelity and request fulfillment separate; named actions need
+independent source-interval evidence and a wrong-content control. Label offline
+replay, live model, native output and production separately. Rerun affected evidence
+on the final SHA after relevant changes; record unknown test time/cost as `unknown`.
+For rollout claims, identify API and worker settings separately, relevant client
+build/protocol and account/cohort eligibility, then record an observed result.
 
 ## Before coding a fix (KRI-577)
 
-Follow [`pr-acceptance-checklist.md`](pr-acceptance-checklist.md). In short: replay
-the real turn or job through the real boundary first; enumerate the sibling paths
-(other archetypes, empty vs explicit selection, EN/TR, draft vs render-ready, phone
-proxies) before patching one; check `python3 scripts/reliability-gates.py select`
-for incidents that already touched your paths; create the scratch test database
-with `bash scripts/dev/test-db.sh` before the first test run; and treat a
-phone-visible fix as done only after a device re-send. One worktree, one PR, one hot
-file: never fan out parallel PRs that edit `brief_checks.py` or bump
-`MAIN_CREATOR_PROMPT_VERSION` at the same time, and never stack a PR on an unmerged
-branch.
+Follow the [PR acceptance checklist](pr-acceptance-checklist.md): define acceptance,
+replay the original request through relevant boundaries, select neighboring and
+recovery cases, and check `python3 scripts/reliability-gates.py select` for existing
+gates. Create the scratch database with `bash scripts/dev/test-db.sh` before
+DB-backed tests. A bounded local fix can finish with named gaps and owners; keep
+the parent incident open until its full journey succeeds. Serialize concurrent
+changes to hot files such as `brief_checks.py` and `MAIN_CREATOR_PROMPT_VERSION`;
+never stack a PR on an unmerged branch.
 
 ## Durable ticket handoff
 
@@ -107,10 +111,13 @@ Use this compact record in the authorized ticket update or PR. If ticket writes
 were not requested, include it in the final response instead.
 
 ```text
-Issue / acceptance criteria:
-Plan / worktree / branch / base SHA:
+Issue / parent incident / original request / acceptance criteria:
+Relevant boundaries / neighboring and recovery cases / exclusions:
+Negative control / independent source intervals (when applicable):
+Plan / worktree / branch / base SHA / final tested SHA:
 Entrypoints and relevant symbols:
-Implemented vs deployed evidence (UTC, revision, environment/process):
+Evidence level / verified claim / artifacts:
+Deployed evidence (UTC, revision, API/worker settings, client, account/cohort):
 Changed files / PR:
 Checks (exact commands, cwd, result):
 Merge / deploy status and outstanding gates:

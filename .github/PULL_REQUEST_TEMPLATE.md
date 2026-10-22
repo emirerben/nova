@@ -12,7 +12,7 @@
 - [ ] Applied release labels when needed: `release:major` or `release:minor`, plus one changelog category (`release:added`, `release:fixed`, `release:changed`, `release:deprecated`, `release:removed`, or `release:security`). No label means a patch-level `Changed` entry.
 - [ ] If a Kria creation or edit journey is affected, the author linked the CI journey artifact for this HEAD, named the request and expected output, and recorded native render, model/prompt, cost, and any gaps. See `docs/reviews/kri-559-journey-verification.md`.
 - [ ] Reviewer checked the journey case matches this change, required stages and native evidence passed on this HEAD, and any live-model result is labelled separately from offline replay.
-- [ ] For prompt, model, or provider changes, link the protected `Agent evals` live run for this HEAD (maximum $2) and report its settled cost separately.
+- [ ] For prompt, model, or provider changes, link the applicable free replay checks. Any separately approved live evaluation names its exact revision and settled cost; paid calls are not required by this checklist.
 
 ## Reliability gates (KRI-577; required when a Kria chat, render, receipt or device path changes)
 <!-- Fill the five lines or write "n/a: <why>". See docs/runbooks/pr-acceptance-checklist.md -->
@@ -21,6 +21,40 @@
 - Platforms and evidence level: <offline replay | live model (cost) | native output (device/simulator export) | production (revision, UTC)>
 - Model/prompt resource envelope: <n/a, or tokens / timeout / cost / call count before and after>
 - Known environment failures vs regressions: <e.g. "9 DB-backed tests skipped locally; 0 regressions" — never "pre-existing" without the list>
+
+## Request-to-output evidence (KRI-577 / KRI-559)
+<!-- Required for affected runtime, fixture and evidence-policy changes. Docs-only
+     changes are classified automatically. Read docs/runbooks/request-to-output-standard.md.
+     Replace every empty field that applies. Pending checks need a reason and owner_issue;
+     not_applicable checks need a concrete reason. A local_fix claim keeps broader gaps open.
+     Passed checks need commands and immutable artifact references. Use safe repo-relative
+     paths at this HEAD, or pinned GitHub blob/action artifact/run-attempt URLs.
+     Passed incident/content checks also name expectation_source: a separate immutable
+     source/acceptance artifact, not prose claiming the result is correct.
+     Run: bash scripts/preship-check.sh --pr-body .dev/pr-body.md
+     This declaration does not certify the contents of an export; reviewers inspect evidence. -->
+
+```request-evidence
+{
+  "schema_version": 1,
+  "head_sha": "",
+  "claim": "local_fix",
+  "issue": "",
+  "original_request": "",
+  "request_provenance": "",
+  "request_artifact": "",
+  "expected_outcome": "",
+  "root_cause": "",
+  "checks": [
+    {"kind": "incident_replay", "status": "pending", "evidence_level": "pending", "reason": "", "owner_issue": ""},
+    {"kind": "wrong_content_control", "status": "pending", "evidence_level": "pending", "reason": "", "owner_issue": ""},
+    {"kind": "recovery", "status": "pending", "evidence_level": "pending", "reason": "", "owner_issue": ""},
+    {"kind": "request_fulfillment", "status": "pending", "evidence_level": "pending", "reason": "", "owner_issue": ""},
+    {"kind": "export_fidelity", "status": "pending", "evidence_level": "pending", "reason": "", "owner_issue": ""},
+    {"kind": "rollout", "status": "pending", "evidence_level": "pending", "reason": "", "owner_issue": ""}
+  ]
+}
+```
 
 <!-- Do not edit VERSION, CHANGELOG.md, or root package version fields here.
      Post-merge automation publishes all release metadata after this PR lands. -->

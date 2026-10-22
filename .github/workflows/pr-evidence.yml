@@ -1,0 +1,123 @@
+name: PR evidence
+
+# Body edits recheck evidence without starting API/native suites again.
+# Make `PR evidence` required in branch protection after this workflow lands.
+on:
+  pull_request:
+    branches: [main, dev]
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-evidence-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-evidence:
+    name: PR evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out trusted baseline policy
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .pr-evidence-policy
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Check out candidate history as data
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: .pr-evidence-diff
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve evidence policy
+        id: policy
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          POLICY_REPO: .pr-evidence-policy
+          DIFF_REPO: .pr-evidence-diff
+        run: |
+          state="$(python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          import subprocess
+
+          paths = ("scripts/ci/pr-evidence.py", ".github/workflows/pr-evidence.yml")
+          def entries(repo, revision):
+              raw = subprocess.check_output(["git", "-C", repo, "ls-tree", "-z", revision, "--", *paths])
+              result = {}
+              for entry in raw.split(b"\0"):
+                  if entry:
+                      metadata, path = entry.decode("utf-8").split("\t", 1)
+                      mode, kind, _sha = metadata.split()
+                      result[path] = (mode, kind)
+              return result
+
+          def regular(value):
+              return value in (("100644", "blob"), ("100755", "blob"))
+
+          baseline = entries(os.environ["POLICY_REPO"], os.environ["BASE_SHA"])
+          if paths[0] in baseline:
+              if not regular(baseline[paths[0]]):
+                  raise SystemExit("Baseline evidence validator must be a regular tracked file")
+              validator = Path(os.environ["POLICY_REPO"]) / paths[0]
+              if not validator.is_file() or validator.is_symlink():
+                  raise SystemExit("Baseline evidence validator checkout is missing or invalid")
+              print("baseline")
+          else:
+              candidate = entries(os.environ["DIFF_REPO"], os.environ["HEAD_SHA"])
+              if baseline or not all(regular(candidate.get(path)) for path in paths):
+                  raise SystemExit("Missing baseline policy: only the first validator + workflow introduction may bootstrap")
+              print("bootstrap")
+          PYTHON
+          )"
+          if [[ "$state" == bootstrap ]]; then
+            echo "bootstrap=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Policy introduction only: independent PR evidence validation is not active; required lint validates the candidate policy."
+            echo "PR evidence is not active for this policy introduction. Required lint validates the candidate policy and its tests. Make PR evidence required after merge." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "bootstrap=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Read current PR evidence
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/current-pr-evidence.json"
+          python3 - <<'PYTHON'
+          import json
+          import os
+          from pathlib import Path
+
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+          current = json.loads((Path(os.environ["RUNNER_TEMP"]) / "current-pr-evidence.json").read_text())
+          original = event["pull_request"]
+          if (
+              current.get("number") != original["number"]
+              or current.get("number") != int(os.environ["PR_NUMBER"])
+              or current.get("head", {}).get("sha") != os.environ["HEAD_SHA"]
+              or current.get("base", {}).get("ref") != original["base"]["ref"]
+              or not isinstance(current.get("body"), str)
+          ):
+              raise SystemExit("Current PR evidence must belong to this PR, head and base branch")
+          # Keep this run's immutable diff/base; refresh only the body as inert data.
+          original["body"] = current["body"]
+          (Path(os.environ["RUNNER_TEMP"]) / "pr-evidence-event.json").write_text(json.dumps(event))
+          PYTHON
+      - name: Validate request-to-output evidence
+        if: steps.policy.outputs.bootstrap == 'false'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 .pr-evidence-policy/scripts/ci/pr-evidence.py \
+            --repo .pr-evidence-diff --base "$BASE_SHA" --head "$HEAD_SHA" \
+            --event "$RUNNER_TEMP/pr-evidence-event.json"
