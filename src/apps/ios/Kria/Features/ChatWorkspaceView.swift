@@ -480,6 +480,9 @@ private struct CreationWorkspaceView: View {
     @State private var answeredClipSelections: [String: ClipSelectionSubmission] = [:]
     /// Conflict-choice answers sent from this device, by question id, for the collapsed "answered" summary.
     @State private var answeredChoices: [String: ChoiceSelectionSubmission] = [:]
+    /// KRI-802: answers held for a reply that asks a choice card and a clip picker together, by message id. Both go
+    /// out on one turn once both are in.
+    @State private var questionBatches: [String: QuestionBatch] = [:]
     /// KRI-588: song-range questions the server has said are closed (409 `song_range_stale`), and the server's
     /// reason for refusing the last range, shown on that question's card.
     @State private var closedSongRangeQuestions: Set<String> = []
@@ -952,6 +955,7 @@ private struct CreationWorkspaceView: View {
                            songDurationS: CreationAttachedMedia.song(threadState)?.durationS,
                            projectID: project.id,
                            choiceQuestionMode: choiceQuestionMode(for: message),
+                           questionBatch: asksTogether(message) ? questionBatches[message.id] ?? QuestionBatch() : nil,
                            songRangeMode: songRangeMode(for: message),
                            replyOptionsMode: replyOptionsMode(for: message))
                 .id(entry.id)
@@ -1011,6 +1015,10 @@ private struct CreationWorkspaceView: View {
         if isAnswered { return .answered(summary: answeredClipSelections[question.questionID]?.summary(question: question)) }
         if isLatestQuestion {
             return .active(isSending: isSending || isActing || isThinking) { submission, text in
+                if asksTogether(message) {
+                    holdBatchAnswer(for: message) { $0.hold(clips: submission, text: text) }
+                    return
+                }
                 answeredClipSelections[question.questionID] = submission
                 // A rejected send removes the pending message, which reopens the card for a retry.
                 Task { await send(message: text, clipSelection: submission) }
@@ -1096,10 +1104,36 @@ private struct CreationWorkspaceView: View {
         }
         guard !later.contains(where: { $0.choiceQuestion != nil }) else { return nil }
         return .active(isSending: isSending || isActing || isThinking) { submission, text in
+            if asksTogether(message) {
+                holdBatchAnswer(for: message) { $0.hold(choice: submission, text: text) }
+                return
+            }
             answeredChoices[question.questionID] = submission
             // A rejected send removes the pending message, which reopens the card for a retry.
             Task { await send(message: text, choiceSelection: submission) }
         }
+    }
+
+    /// KRI-802: this reply asks a choice card and a clip picker together (servers send that only to protocol 14
+    /// builds), and both cards are shown. Their answers then wait for each other and go out on one turn.
+    private func asksTogether(_ message: ChatTranscriptMessage) -> Bool {
+        message.choiceQuestion != nil && message.clipQuestion != nil && capabilities?.choiceQuestionsEnabled == true
+            && ClipSelectionAvailability.isAvailable(capabilities: capabilities)
+    }
+
+    /// Holds one answer of a two-question reply; the second answer sends both as one message.
+    private func holdBatchAnswer(for message: ChatTranscriptMessage, _ answer: (inout QuestionBatch) -> Void) {
+        var batch = questionBatches[message.id] ?? QuestionBatch()
+        answer(&batch)
+        guard let ready = batch.ready, let choice = message.choiceQuestion, let clips = message.clipQuestion else {
+            questionBatches[message.id] = batch
+            return
+        }
+        questionBatches[message.id] = nil
+        answeredChoices[choice.questionID] = ready.choice
+        answeredClipSelections[clips.questionID] = ready.clips
+        // A rejected send removes the pending message, which reopens both cards for a retry.
+        Task { await send(message: ready.message, clipSelection: ready.clips, choiceSelection: ready.choice) }
     }
 
     /// Chips for a plain `assistant_response` question, interactive only on the newest question that no later

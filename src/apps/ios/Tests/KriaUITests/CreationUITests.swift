@@ -1101,6 +1101,70 @@ final class CreationUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["requirement-also-changed"].exists, "the prose already says what else changed")
     }
 
+    // MARK: one reply, two questions (KRI-802)
+
+    private func launchQuestionBatchFixture() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_CHAT_QUESTION_BATCH"] = "1"
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+        let next = app.buttons["Send clips"]
+        XCTAssertTrue(next.waitForExistence(timeout: 5))
+        next.tap()
+        return app
+    }
+
+    /// The Don Julio first reply: the title wording card and the clip picker in one message. The first answer is
+    /// held (nothing is sent, the card says what is next); the second sends BOTH on one turn, so the creator waits
+    /// for one re-plan instead of two.
+    func testTitleCardAndClipPickerInOneReplyGoOutOnOneTurn() {
+        let app = launchQuestionBatchFixture()
+        let approve = app.buttons["choice-option-approve"]
+        XCTAssertTrue(approve.waitForExistence(timeout: 15))
+        let choose = app.buttons["clip-choose"]
+        XCTAssertTrue(choose.exists)
+        XCTAssertLessThan(approve.frame.minY, choose.frame.minY, "the cards follow the reply: title first, then clips")
+        let sent = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "You:"))
+        let sentBefore = sent.count
+        approve.tap()
+        XCTAssertTrue(app.staticTexts["choice-batch-note"].waitForExistence(timeout: 3))
+        XCTAssertEqual(approve.value as? String, "Selected")
+        XCTAssertEqual(sent.count, sentBefore, "the title answer waits for the clips")
+        choose.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["clip-sheet"].waitForExistence(timeout: 5))
+        let redCap = app.buttons["clip-thumb-red_cap-fixture-clip-2"]
+        XCTAssertTrue(redCap.waitForExistence(timeout: 3))
+        redCap.tap()
+        app.buttons["clip-done"].tap()
+        let echo = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "turns[1] choice[approve] answers[red_cap=fixture-clip-2]")).firstMatch
+        XCTAssertTrue(echo.waitForExistence(timeout: 10), "one turn carried both structured answers")
+        XCTAssertTrue(app.staticTexts["You: Use this wording · My friend in the red cap: clip 2"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["choice-card-answered"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["clip-card-answered"].exists)
+    }
+
+    /// The other order: clips first (held, the picker card says so), then the title tap sends both.
+    func testClipsFirstThenTheTitleTapSendsBothOnOneTurn() {
+        let app = launchQuestionBatchFixture()
+        let choose = app.buttons["clip-choose"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 15))
+        let sent = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "You:"))
+        let sentBefore = sent.count
+        choose.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["clip-sheet"].waitForExistence(timeout: 5))
+        app.buttons["clip-thumb-red_cap-fixture-clip-2"].tap()
+        app.buttons["clip-done"].tap()
+        XCTAssertTrue(app.staticTexts["clip-batch-note"].waitForExistence(timeout: 5))
+        XCTAssertEqual(sent.count, sentBefore, "the clips wait for the title answer")
+        app.buttons["choice-option-approve"].tap()
+        let echo = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "turns[1] choice[approve] answers[red_cap=fixture-clip-2]")).firstMatch
+        XCTAssertTrue(echo.waitForExistence(timeout: 10), "one turn carried both structured answers")
+    }
+
     // MARK: conflict-choice question (KRI-282)
 
     private func launchChoiceQuestionFixture(capability: String) -> XCUIApplication {
