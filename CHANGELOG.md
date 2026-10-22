@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.20.0] - 2026-10-22
+
+### Changed
+- test: reconcile Merope M2 receipts after sibling merges (KRI-775) (#1735) <!-- release-pr: 1735 -->
+
 ## [0.81.19.0] - 2026-10-21
 
 ### Changed
