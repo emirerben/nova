@@ -20,6 +20,9 @@ tmp/
 # Pre-PR overlay-verify outputs (reports + montages from `make verify-overlays`)
 .overlay-verify/
 
+# Take-window verify outputs (`python -m app.cli.verify_take_window`, KRI-790)
+.take-window-verify/
+
 # Suggestion-chip replay eval artifact (OLD vs NEW chips; scripts/suggestion_chip_report.py)
 .chip-eval/
 

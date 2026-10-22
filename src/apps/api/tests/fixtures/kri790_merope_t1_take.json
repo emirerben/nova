@@ -1,0 +1,959 @@
+{
+ "about": "KRI-790: Merope cafe T1 (prod 042c405c9, 2026-10-21, thread 32A5B608, jobs 0701fcc9 + f88555bc), one 68.37 s take. `segments`: the take's timed speech as the approved brief binding's media snapshot stored it (job2_debug.json). `words`: 0-29.35 s the run's own nova.audio.transcript words (proposal_trace.json; it heard 'Hi, I'm Carolina from Ecuador', C and no second I'm), after that the kit's local whisper.cpp words for the same file (_src/work/words_en.srt), which agree with the segments on the end line (47.84-50.30 s). `brief`: r1 and r2 as prod stored them (v1 before the order answer, v2 after it).",
+ "duration_s": 68.37,
+ "prompt": "Talking-to-camera edit of Caro at Merope. Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\". Cut her slip \"with bread, no,\" so it says \"waffle cookie with blackberry jam\". Also cut my half question \"how are you gonna\". Captions for both voices, and spell these right: Oblea de la Casa, dulce de leche, leche condensada, Merope. Title: \"Colombian dessert, Ecuadorian hands\". Show \"MEROPE\" in big letters the first time she says Merope. No text on her face or on the plate. About 35 seconds.",
+ "brief_v1": {
+  "r1": {
+   "id": "r1",
+   "kind": "timing",
+   "facts": {
+    "duration_s": 35
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "About 35 seconds",
+   "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+  },
+  "r2": {
+   "id": "r2",
+   "kind": "order",
+   "facts": {
+    "end": "I'm gonna be here all week",
+    "start": "Hi, I'm Karolina, I'm from Ecuador"
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "Start at 'Hi, I'm Karolina, I'm from Ecuador' and end right after 'I'm gonna be here all week'",
+   "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+  }
+ },
+ "brief_v2": {
+  "r1": {
+   "id": "r1",
+   "kind": "timing",
+   "facts": {
+    "duration_s": 35
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "About 35 seconds",
+   "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+  },
+  "r2": {
+   "id": "r2",
+   "kind": "order",
+   "facts": {
+    "end": "I'm gonna be here all week",
+    "key": "attachment",
+    "start": "Hi, I'm Karolina, I'm from Ecuador"
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "in the order the clips were added",
+   "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+  }
+ },
+ "segments": [
+  {
+   "text": "Yes we will show.",
+   "end_s": 1.46,
+   "start_s": 0.0
+  },
+  {
+   "text": "Merhaba arkadaşlar, hello everyone.",
+   "end_s": 4.44,
+   "start_s": 2.72
+  },
+  {
+   "text": "We are with Karo today.",
+   "end_s": 6.54,
+   "start_s": 4.86
+  },
+  {
+   "text": "Karo, can you describe, can you just tell about yourself, two sentences maybe, who you are, where you're from.",
+   "end_s": 11.78,
+   "start_s": 6.88
+  },
+  {
+   "text": "Hi, I'm Carolina, I'm from Ecuador.",
+   "end_s": 13.58,
+   "start_s": 12.04
+  },
+  {
+   "text": "This is the Oblea de la Casa.",
+   "end_s": 16.88,
+   "start_s": 14.54
+  },
+  {
+   "text": "It's a traditional Colombian dessert.",
+   "end_s": 20.62,
+   "start_s": 17.2
+  },
+  {
+   "text": "It's wafer cookie with red, no, with blackberry jam,",
+   "end_s": 26.66,
+   "start_s": 20.62
+  },
+  {
+   "text": "cheese, dulce de leche,",
+   "end_s": 29.12,
+   "start_s": 27.48
+  },
+  {
+   "text": "leche condensada and whipped cream.",
+   "end_s": 34.46,
+   "start_s": 30.18
+  },
+  {
+   "text": "Nice, delicious.",
+   "end_s": 35.54,
+   "start_s": 34.96
+  },
+  {
+   "text": "That's it.",
+   "end_s": 36.28,
+   "start_s": 35.74
+  },
+  {
+   "text": "And where we are right now is Merope, how are you going to...",
+   "end_s": 40.04,
+   "start_s": 36.9
+  },
+  {
+   "text": "Merope, it's a Colombian coffee and restaurant and Merope means god of honey.",
+   "end_s": 45.48,
+   "start_s": 40.04
+  },
+  {
+   "text": "Yeah, we definitely recommend coming to Merope, right?",
+   "end_s": 47.84,
+   "start_s": 45.62
+  },
+  {
+   "text": "Yeah, come back please, I'm gonna be here all week.",
+   "end_s": 50.3,
+   "start_s": 47.84
+  },
+  {
+   "text": "Nice, nice, cheers, thank you.",
+   "end_s": 51.94,
+   "start_s": 50.66
+  },
+  {
+   "text": "There you go, you should do this.",
+   "end_s": 53.1,
+   "start_s": 51.98
+  },
+  {
+   "text": "Take the first bite.",
+   "end_s": 54.42,
+   "start_s": 53.42
+  },
+  {
+   "text": "The coffee is really good here as well.",
+   "end_s": 58.36,
+   "start_s": 56.76
+  },
+  {
+   "text": "Yeah, it's Colombian.",
+   "end_s": 59.2,
+   "start_s": 58.56
+  },
+  {
+   "text": "Thank you, thank you Karo.",
+   "end_s": 65.56,
+   "start_s": 64.28
+  },
+  {
+   "text": "Thank you Karo, bye bye.",
+   "end_s": 67.36,
+   "start_s": 65.92
+  }
+ ],
+ "words": [
+  {
+   "text": "Um",
+   "start_s": 0.05,
+   "end_s": 0.44
+  },
+  {
+   "text": "yes,",
+   "start_s": 0.82,
+   "end_s": 1.12
+  },
+  {
+   "text": "we",
+   "start_s": 1.12,
+   "end_s": 1.18
+  },
+  {
+   "text": "will",
+   "start_s": 1.25,
+   "end_s": 1.4
+  },
+  {
+   "text": "sure.",
+   "start_s": 1.4,
+   "end_s": 1.81
+  },
+  {
+   "text": "Um",
+   "start_s": 2.21,
+   "end_s": 2.45
+  },
+  {
+   "text": "Merhaba",
+   "start_s": 3.06,
+   "end_s": 3.48
+  },
+  {
+   "text": "arkadaşlar.",
+   "start_s": 3.48,
+   "end_s": 4.14
+  },
+  {
+   "text": "Hello",
+   "start_s": 4.14,
+   "end_s": 4.47
+  },
+  {
+   "text": "everyone.",
+   "start_s": 4.47,
+   "end_s": 5.09
+  },
+  {
+   "text": "Uh",
+   "start_s": 5.09,
+   "end_s": 5.58
+  },
+  {
+   "text": "we",
+   "start_s": 5.61,
+   "end_s": 5.69
+  },
+  {
+   "text": "are",
+   "start_s": 5.76,
+   "end_s": 5.9
+  },
+  {
+   "text": "with",
+   "start_s": 6.01,
+   "end_s": 6.22
+  },
+  {
+   "text": "Caro",
+   "start_s": 6.22,
+   "end_s": 6.55
+  },
+  {
+   "text": "today.",
+   "start_s": 6.55,
+   "end_s": 6.94
+  },
+  {
+   "text": "Caro,",
+   "start_s": 7.04,
+   "end_s": 7.37
+  },
+  {
+   "text": "can",
+   "start_s": 7.37,
+   "end_s": 7.5
+  },
+  {
+   "text": "you",
+   "start_s": 7.5,
+   "end_s": 7.63
+  },
+  {
+   "text": "describe",
+   "start_s": 7.63,
+   "end_s": 8.16
+  },
+  {
+   "text": "can",
+   "start_s": 8.16,
+   "end_s": 8.35
+  },
+  {
+   "text": "you",
+   "start_s": 8.62,
+   "end_s": 8.8
+  },
+  {
+   "text": "um",
+   "start_s": 8.8,
+   "end_s": 8.88
+  },
+  {
+   "text": "just",
+   "start_s": 9.07,
+   "end_s": 9.24
+  },
+  {
+   "text": "tell",
+   "start_s": 9.24,
+   "end_s": 9.39
+  },
+  {
+   "text": "about",
+   "start_s": 9.39,
+   "end_s": 9.6
+  },
+  {
+   "text": "yourself",
+   "start_s": 9.6,
+   "end_s": 10.02
+  },
+  {
+   "text": "two",
+   "start_s": 10.02,
+   "end_s": 10.15
+  },
+  {
+   "text": "sentences",
+   "start_s": 10.15,
+   "end_s": 10.59
+  },
+  {
+   "text": "maybe,",
+   "start_s": 10.59,
+   "end_s": 10.96
+  },
+  {
+   "text": "who",
+   "start_s": 11.02,
+   "end_s": 11.23
+  },
+  {
+   "text": "you",
+   "start_s": 11.23,
+   "end_s": 11.41
+  },
+  {
+   "text": "are,",
+   "start_s": 11.41,
+   "end_s": 11.64
+  },
+  {
+   "text": "where",
+   "start_s": 11.64,
+   "end_s": 11.83
+  },
+  {
+   "text": "you're",
+   "start_s": 11.83,
+   "end_s": 11.97
+  },
+  {
+   "text": "from?",
+   "start_s": 11.97,
+   "end_s": 12.18
+  },
+  {
+   "text": "Hi,",
+   "start_s": 12.35,
+   "end_s": 12.63
+  },
+  {
+   "text": "I'm",
+   "start_s": 12.63,
+   "end_s": 12.75
+  },
+  {
+   "text": "Carolina",
+   "start_s": 12.75,
+   "end_s": 13.25
+  },
+  {
+   "text": "from",
+   "start_s": 13.25,
+   "end_s": 13.43
+  },
+  {
+   "text": "Ecuador.",
+   "start_s": 13.43,
+   "end_s": 14.07
+  },
+  {
+   "text": "And",
+   "start_s": 14.77,
+   "end_s": 15.01
+  },
+  {
+   "text": "this",
+   "start_s": 15.01,
+   "end_s": 15.2
+  },
+  {
+   "text": "is",
+   "start_s": 15.2,
+   "end_s": 15.35
+  },
+  {
+   "text": "the",
+   "start_s": 15.65,
+   "end_s": 15.93
+  },
+  {
+   "text": "Ole",
+   "start_s": 16.14,
+   "end_s": 16.48
+  },
+  {
+   "text": "de",
+   "start_s": 16.48,
+   "end_s": 16.63
+  },
+  {
+   "text": "la",
+   "start_s": 16.63,
+   "end_s": 16.79
+  },
+  {
+   "text": "Casa.",
+   "start_s": 16.79,
+   "end_s": 17.2
+  },
+  {
+   "text": "It's",
+   "start_s": 17.3,
+   "end_s": 17.52
+  },
+  {
+   "text": "a",
+   "start_s": 17.52,
+   "end_s": 17.55
+  },
+  {
+   "text": "traditional",
+   "start_s": 17.55,
+   "end_s": 19.06
+  },
+  {
+   "text": "Colombian",
+   "start_s": 19.9,
+   "end_s": 20.46
+  },
+  {
+   "text": "dessert.",
+   "start_s": 20.46,
+   "end_s": 21.01
+  },
+  {
+   "text": "It's",
+   "start_s": 21.1,
+   "end_s": 21.36
+  },
+  {
+   "text": "wafer",
+   "start_s": 21.36,
+   "end_s": 21.73
+  },
+  {
+   "text": "cookie",
+   "start_s": 21.73,
+   "end_s": 22.18
+  },
+  {
+   "text": "with",
+   "start_s": 22.8,
+   "end_s": 23.01
+  },
+  {
+   "text": "red",
+   "start_s": 24.38,
+   "end_s": 24.97
+  },
+  {
+   "text": "no,",
+   "start_s": 25.04,
+   "end_s": 25.5
+  },
+  {
+   "text": "with",
+   "start_s": 25.5,
+   "end_s": 25.75
+  },
+  {
+   "text": "blackberry",
+   "start_s": 25.75,
+   "end_s": 26.33
+  },
+  {
+   "text": "jam,",
+   "start_s": 26.33,
+   "end_s": 26.97
+  },
+  {
+   "text": "cheese,",
+   "start_s": 27.52,
+   "end_s": 28.16
+  },
+  {
+   "text": "dulce",
+   "start_s": 28.16,
+   "end_s": 28.48
+  },
+  {
+   "text": "de",
+   "start_s": 28.48,
+   "end_s": 28.61
+  },
+  {
+   "text": "leche,",
+   "start_s": 28.61,
+   "end_s": 29.35
+  },
+  {
+   "text": "leche",
+   "start_s": 29.43,
+   "end_s": 30.06
+  },
+  {
+   "text": "condensada,",
+   "start_s": 30.06,
+   "end_s": 31.91
+  },
+  {
+   "text": "and",
+   "start_s": 31.91,
+   "end_s": 32.78
+  },
+  {
+   "text": "whipped",
+   "start_s": 32.78,
+   "end_s": 33.91
+  },
+  {
+   "text": "cream,",
+   "start_s": 33.91,
+   "end_s": 35.02
+  },
+  {
+   "text": "that's",
+   "start_s": 35.02,
+   "end_s": 35.83
+  },
+  {
+   "text": "it.",
+   "start_s": 35.83,
+   "end_s": 36.22
+  },
+  {
+   "text": "Yes,",
+   "start_s": 36.22,
+   "end_s": 36.7
+  },
+  {
+   "text": "and",
+   "start_s": 36.7,
+   "end_s": 36.97
+  },
+  {
+   "text": "where",
+   "start_s": 36.97,
+   "end_s": 37.45
+  },
+  {
+   "text": "we",
+   "start_s": 37.45,
+   "end_s": 37.64
+  },
+  {
+   "text": "are",
+   "start_s": 37.64,
+   "end_s": 37.92
+  },
+  {
+   "text": "is",
+   "start_s": 37.92,
+   "end_s": 38.11
+  },
+  {
+   "text": "right",
+   "start_s": 38.11,
+   "end_s": 38.59
+  },
+  {
+   "text": "now",
+   "start_s": 38.59,
+   "end_s": 38.94
+  },
+  {
+   "text": "Merope,",
+   "start_s": 38.94,
+   "end_s": 39.55
+  },
+  {
+   "text": "how",
+   "start_s": 39.55,
+   "end_s": 39.63
+  },
+  {
+   "text": "are",
+   "start_s": 39.63,
+   "end_s": 39.73
+  },
+  {
+   "text": "you",
+   "start_s": 39.73,
+   "end_s": 39.88
+  },
+  {
+   "text": "gonna...",
+   "start_s": 39.88,
+   "end_s": 39.98
+  },
+  {
+   "text": "Merope,",
+   "start_s": 39.98,
+   "end_s": 40.54
+  },
+  {
+   "text": "it's",
+   "start_s": 40.54,
+   "end_s": 40.82
+  },
+  {
+   "text": "a",
+   "start_s": 40.82,
+   "end_s": 40.89
+  },
+  {
+   "text": "Colombian",
+   "start_s": 40.89,
+   "end_s": 41.53
+  },
+  {
+   "text": "coffee",
+   "start_s": 41.53,
+   "end_s": 41.88
+  },
+  {
+   "text": "and",
+   "start_s": 41.88,
+   "end_s": 42.2
+  },
+  {
+   "text": "restaurant,",
+   "start_s": 42.2,
+   "end_s": 43.0
+  },
+  {
+   "text": "and",
+   "start_s": 43.0,
+   "end_s": 43.1
+  },
+  {
+   "text": "Merope",
+   "start_s": 43.1,
+   "end_s": 43.66
+  },
+  {
+   "text": "means",
+   "start_s": 43.66,
+   "end_s": 44.3
+  },
+  {
+   "text": "\"god",
+   "start_s": 44.3,
+   "end_s": 44.77
+  },
+  {
+   "text": "of",
+   "start_s": 44.77,
+   "end_s": 45.05
+  },
+  {
+   "text": "honey\".",
+   "start_s": 45.05,
+   "end_s": 45.66
+  },
+  {
+   "text": "Yeah,",
+   "start_s": 45.66,
+   "end_s": 45.9
+  },
+  {
+   "text": "we",
+   "start_s": 45.9,
+   "end_s": 46.06
+  },
+  {
+   "text": "definitely",
+   "start_s": 46.06,
+   "end_s": 46.38
+  },
+  {
+   "text": "recommend",
+   "start_s": 46.38,
+   "end_s": 46.76
+  },
+  {
+   "text": "coming",
+   "start_s": 46.76,
+   "end_s": 46.98
+  },
+  {
+   "text": "to",
+   "start_s": 46.98,
+   "end_s": 47.06
+  },
+  {
+   "text": "Merope,",
+   "start_s": 47.06,
+   "end_s": 47.38
+  },
+  {
+   "text": "right?",
+   "start_s": 47.38,
+   "end_s": 47.74
+  },
+  {
+   "text": "Yeah,",
+   "start_s": 47.74,
+   "end_s": 48.14
+  },
+  {
+   "text": "come",
+   "start_s": 48.14,
+   "end_s": 48.29
+  },
+  {
+   "text": "back",
+   "start_s": 48.29,
+   "end_s": 48.51
+  },
+  {
+   "text": "please,",
+   "start_s": 48.51,
+   "end_s": 48.96
+  },
+  {
+   "text": "I'm",
+   "start_s": 48.96,
+   "end_s": 49.12
+  },
+  {
+   "text": "gonna",
+   "start_s": 49.12,
+   "end_s": 49.4
+  },
+  {
+   "text": "be",
+   "start_s": 49.4,
+   "end_s": 49.51
+  },
+  {
+   "text": "here",
+   "start_s": 49.51,
+   "end_s": 49.64
+  },
+  {
+   "text": "all",
+   "start_s": 49.64,
+   "end_s": 49.9
+  },
+  {
+   "text": "week.",
+   "start_s": 49.9,
+   "end_s": 50.38
+  },
+  {
+   "text": "Nice,",
+   "start_s": 50.38,
+   "end_s": 50.65
+  },
+  {
+   "text": "nice,",
+   "start_s": 50.65,
+   "end_s": 50.92
+  },
+  {
+   "text": "cheers,",
+   "start_s": 50.92,
+   "end_s": 51.28
+  },
+  {
+   "text": "thank",
+   "start_s": 51.28,
+   "end_s": 51.51
+  },
+  {
+   "text": "you.",
+   "start_s": 51.51,
+   "end_s": 51.82
+  },
+  {
+   "text": "There",
+   "start_s": 51.82,
+   "end_s": 51.99
+  },
+  {
+   "text": "you",
+   "start_s": 51.99,
+   "end_s": 52.09
+  },
+  {
+   "text": "go,",
+   "start_s": 52.09,
+   "end_s": 52.22
+  },
+  {
+   "text": "you",
+   "start_s": 52.22,
+   "end_s": 52.34
+  },
+  {
+   "text": "should",
+   "start_s": 52.34,
+   "end_s": 52.51
+  },
+  {
+   "text": "do",
+   "start_s": 52.51,
+   "end_s": 52.57
+  },
+  {
+   "text": "this.",
+   "start_s": 52.57,
+   "end_s": 52.86
+  },
+  {
+   "text": "Asaghan",
+   "start_s": 52.87,
+   "end_s": 53.46
+  },
+  {
+   "text": "take",
+   "start_s": 53.46,
+   "end_s": 53.8
+  },
+  {
+   "text": "the",
+   "start_s": 53.8,
+   "end_s": 54.06
+  },
+  {
+   "text": "first",
+   "start_s": 54.06,
+   "end_s": 54.49
+  },
+  {
+   "text": "bite.",
+   "start_s": 54.49,
+   "end_s": 55.77
+  },
+  {
+   "text": "The",
+   "start_s": 55.77,
+   "end_s": 55.98
+  },
+  {
+   "text": "coffee",
+   "start_s": 55.98,
+   "end_s": 57.1
+  },
+  {
+   "text": "is",
+   "start_s": 57.1,
+   "end_s": 57.48
+  },
+  {
+   "text": "really",
+   "start_s": 57.48,
+   "end_s": 57.69
+  },
+  {
+   "text": "good",
+   "start_s": 57.69,
+   "end_s": 57.83
+  },
+  {
+   "text": "here",
+   "start_s": 57.83,
+   "end_s": 57.97
+  },
+  {
+   "text": "as",
+   "start_s": 57.97,
+   "end_s": 58.12
+  },
+  {
+   "text": "well.",
+   "start_s": 58.12,
+   "end_s": 58.46
+  },
+  {
+   "text": "Yeah,",
+   "start_s": 58.46,
+   "end_s": 58.62
+  },
+  {
+   "text": "it's",
+   "start_s": 58.62,
+   "end_s": 58.8
+  },
+  {
+   "text": "Colombian.",
+   "start_s": 58.8,
+   "end_s": 59.1
+  },
+  {
+   "text": "Thank",
+   "start_s": 59.1,
+   "end_s": 60.5
+  },
+  {
+   "text": "you,",
+   "start_s": 60.5,
+   "end_s": 62.02
+  },
+  {
+   "text": "thank",
+   "start_s": 62.02,
+   "end_s": 63.3
+  },
+  {
+   "text": "you",
+   "start_s": 63.3,
+   "end_s": 64.15
+  },
+  {
+   "text": "Karo.",
+   "start_s": 64.15,
+   "end_s": 66.14
+  },
+  {
+   "text": "Thank",
+   "start_s": 66.14,
+   "end_s": 66.47
+  },
+  {
+   "text": "you",
+   "start_s": 66.47,
+   "end_s": 66.52
+  },
+  {
+   "text": "Karo.",
+   "start_s": 66.52,
+   "end_s": 66.86
+  },
+  {
+   "text": "Bye",
+   "start_s": 66.86,
+   "end_s": 68.14
+  },
+  {
+   "text": "bye.",
+   "start_s": 68.14,
+   "end_s": 68.14
+  }
+ ]
+}
