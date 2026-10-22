@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.33.0] - 2026-10-22
+
+### Changed
+- fix(kria): quoted start/end lines in one take are a trim, never a clip-order question (KRI-789) (#1731) <!-- release-pr: 1731 -->
+
 ## [0.81.32.0] - 2026-10-22
 
 ### Fixed
