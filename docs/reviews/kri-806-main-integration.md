@@ -60,3 +60,24 @@ The current published trim producer and named-cut source034aae1c1 are included w
 The prior published7f8 native run39741259795 failed the real Gameday UI test: the add-video control existed but was not hittable in its existing5s limit. This was not CoreData or the receipt CLI. Downloaded its actual result bundle and recorded simulator video. The test waits for title data, which changes before the inspector's outgoing transition finishes; that is not a panel-dismissal barrier. A four-line test-only candidate now requires the text inspector and connected panel to disappear before opening the next add menu. Existing menu/hittability limits and all fifth-clip, undo/redo, save/reopen/export assertions remain unchanged. No app code, retries, fixed sleeps, force taps or timeout increases. This is a bounded synchronization hypothesis, not yet confirmed: the exact new-head Gameday must execute and pass before merge.
 
 Current hosted checks are required. Merge after actual producer/named-cut parents; no prior failed or old passing run is relabeled as the new source proof. Full Don Julio output/export acceptance remains pending.
+
+## Fresh current-main integration check — 22 October
+
+Fresh main was `12d4e7662`; the unchanged PR source was
+`a069537d6df4f2a7316c220e29d24e0b8ed1c5da`. A normal no-commit merge of
+current main into that source conflicted only in the two prompt-version modules
+and their three version/hash assertions. The resolved union retains current
+main's quoted one-take trim instruction and the PR's named-cut instruction and
+editorial-plan repair: Main Creator is `2026-10-22-v69`, Brief Extractor is
+`2026-10-22-v16`, and the four reviewed prompt hashes remain the PR's v69
+values. No prompt wording was invented or changed during conflict resolution.
+
+Offline verification on this exact no-commit merge:
+
+- Focused parser, caption, spoken-trigger, quoted-trim, named-cut and brief
+  recovery controls: **397 passed**.
+- Full free recorded evaluation suite: **2133 passed, 15 skipped, 7 xfailed**.
+
+The inherited Gameday UI synchronization change is still not native evidence on
+this head. No paid model call, device operation, production operation, commit,
+push or deployment occurred in this check.
