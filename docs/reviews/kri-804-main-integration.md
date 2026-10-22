@@ -26,3 +26,9 @@ KRI-805 (#1739) supplies the safe shorter-answer binding path and must land befo
 ## Current-main and brief dependency integration
 
 Merged origin/main 7eaf217cb15bc8ebd8d2fea552bbcfe3ee7b0fea and #1739 source ed0523dac2398be815eb33c3616d868a3dd16b31 normally. Only the appended gate ledger conflicted; all common entries were byte-equal as parsed JSON and both unique incident gates were retained. No source/assertion conflict occurred. Combined focused suite: 231 passed, including the real KRI-805 parser/binder/planner path. Exact-head hosted checks and overlay artifact inspection remain required.
+
+## Hosted artifact gap found on repaired head
+
+Run39737293281 on head97790d6c passed actual production-image rendering: PASS=124, WARN=0, FAIL=0, SKIPPED=0, including the deliberate fallback negative control. Its upload step then warned that no files were found. It used upload-artifact v4 with include-hidden-files=false against the hidden .overlay-verify directory, so no reviewable report/montage was retained. A successful render log alone cannot replace required visual inspection.
+
+The existing upload step now names only report.json and montage.png, includes these hidden-directory outputs, and fails if none exist. This is a fail-closed artifact fix, not a test waiver. New-head rendering and downloaded report/montage inspection are still required before merge.
