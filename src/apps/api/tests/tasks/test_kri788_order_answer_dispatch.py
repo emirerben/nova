@@ -427,7 +427,6 @@ def test_a_client_written_answer_with_no_binding_answer_is_not_honored(monkeypat
         _phone_gate(job)
 
 
-
 def test_a_single_clip_discards_a_forged_answer_without_an_order_blocker(monkeypatch) -> None:
     """KRI-788 still strips the forgery; KRI-789 does not invent a one-clip order."""
     item = _item()
