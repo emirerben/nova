@@ -2355,6 +2355,10 @@ _CLEANUP_VERB_RE = re.compile(
 )
 # A specific stretch of speech named for removal ("the part where I say ...", a retake,
 # a quoted line): speech cleanup cuts pauses and non-word sounds, never spoken words.
+# KRI-792: a slip, stumble, mistake or half-finished question the creator says to cut names
+# spoken words too. Only right after the cut verb (Turkish: right before it), so "captions
+# with no spelling mistakes" stays a captions ask. The fallback for a brief without
+# `facts.cut_lines` (see `_wants_named_cuts`).
 _NAMED_CUT_RE = re.compile(
     r"\bretakes?\b|\brestart(s|ed|ing)?\b|\bfalse starts?\b"
     r"|\b(the )?(part|bit|place|section|moment) where\b"
@@ -2362,7 +2366,15 @@ _NAMED_CUT_RE = re.compile(
     r"|\bstart (that|it|this|one) (again|over)\b|\bstart (again|over)\b"
     r"|\btry (that|it|this) again\b"
     r"|\bscratch that\b|\bwhere was i\b"
+    r"|\b(cut|remove|trim|drop|delete|lose|take out|edit out|get rid of)( out)?"
+    r" (the |my |her |his |their |our |that |this |those |these |any |all |a )*"
+    r"(slips?|slip[- ]?ups?|stumbles?|mistakes?|flubs?|misspoken"
+    r"|half[- ]?(questions?|sentences?|lines?|words?)|unfinished (questions?|sentences?)"
+    r"|(bit|part|line|sentence|question|phrase) about)\b"
     r"|\btekrar(dan)? (baştan|söyle)|\bnerede kalmistim|\bdediğim (yer|kisim)|\bbaştan (al|başla)"
+    r"|\b(dil )?sürçme\w* (\w+ )?(kes|çikar|sil)"
+    r"|\byarim (kalan |kalmiş )?(soru|cümle|kelime)\w* (\w+ )?(kes|çikar|sil)"
+    r"|\bhata(yi|lari) (\w+ )?(kes|çikar|sil)"
 )
 # The opposite ask: the pauses are wanted. Never read as cleanup.
 _KEEP_PAUSES_RE = re.compile(
@@ -2798,15 +2810,54 @@ def _wants_cleanup(req: BriefRequirement) -> bool:
     return _cleanup_wording(req)
 
 
+def _cut_lines(req: BriefRequirement) -> list[str]:
+    """KRI-792: ``facts["cut_lines"]``, the spoken words the creator named to cut out, in their
+    own words and language; a filler sound on its own ("um") is cleanup, not a named line."""
+    value = req.facts.get("cut_lines")
+    items = value if isinstance(value, list) else [value]
+    lines = (" ".join(item.split()) for item in items if isinstance(item, str))
+    # Any length: a long described stretch is still a cut speech cleanup won't make.
+    return [
+        line
+        for line in lines
+        if line and not _CLEANUP_NOUN_RE.fullmatch(_fold(line).strip(" .,!?…"))
+    ]
+
+
+# Single quote marks the brief writer swaps in for the creator's double quotes (KRI-792:
+# 'with bread, no,'). The curly closing one is also the apostrophe iOS types.
+_SINGLE_QUOTES = "'‘’"
+
+
+def _single_quotes_as_double(text: str) -> str:
+    """``text`` with single quote marks read as double ones, so `_QUOTED_RE` finds
+    'a line' as it finds "a line". An apostrophe inside a word (I'm, Karolina's, Atakan'ı,
+    I’m) has a letter or digit on both sides and stays as it is."""
+    return "".join(
+        '"'
+        if ch in _SINGLE_QUOTES
+        and not (0 < i < len(text) - 1 and text[i - 1].isalnum() and text[i + 1].isalnum())
+        else ch
+        for i, ch in enumerate(text)
+    )
+
+
 def _wants_named_cuts(req: BriefRequirement) -> bool:
-    """The ask names a stretch of speech to remove, not just pauses and sounds."""
+    """The ask names a stretch of speech to remove, not just pauses and sounds.
+
+    KRI-792: the model records each such stretch in ``facts["cut_lines"]``; a recorded line
+    decides. The fact only ever adds a named cut: without it the words still decide, since a
+    missed named cut is a "Done" for a cut that never happens.
+    """
+    if _cut_lines(req):
+        return True
     text = _req_text(req)
     if _NAMED_CUT_RE.search(text):
         return True
     # A quoted line is a spoken stretch; a quoted "um" is a filler sound.
     return any(
         not _CLEANUP_NOUN_RE.search(_fold(quoted))
-        for quoted in _QUOTED_RE.findall(req.description or "")
+        for quoted in _QUOTED_RE.findall(_single_quotes_as_double(req.description or ""))
     )
 
 
@@ -7255,6 +7306,25 @@ def reply_from_receipts(
             text += "\n" + " ".join(notices)
     else:
         text = "\n".join(part for part in ((summary or "").strip(), body) if part)
+    if len(text) > MAX_REPLY_CHARS and judged and not (outcomes or guesses or unchecked):
+        # Keep every requested action/status visible when its labels fit. A long
+        # explanation must not consume the final action's display budget. Stored
+        # receipt reasons remain complete; ellipses mark shortened display only.
+        labels = [f"{_label(r.status)}: {by_id[r.requirement_id].text()}" for r in judged]
+        prefix, suffix = text.rsplit(body, 1)
+        label_body = "\n".join(f"- {line}" for line in labels)
+        available = MAX_REPLY_CHARS - len(prefix + label_body + suffix + "\n…")
+        if available >= 0:
+            reason_limit = max(0, available // len(judged) - 3)
+            compact = []
+            for label, receipt in zip(labels, judged, strict=True):
+                reason = _loc(receipt.reason).rstrip(".") if receipt.reason else ""
+                if reason and reason_limit >= 2:
+                    if len(reason) > reason_limit:
+                        reason = reason[: reason_limit - 1].rstrip() + "…"
+                    label += f" ({reason})"
+                compact.append(f"- {label}")
+            text = prefix + "\n".join(compact) + suffix + "\n…"
     if len(text) > MAX_REPLY_CHARS:
         text = text[: MAX_REPLY_CHARS - 1].rstrip() + "…"
     return text
