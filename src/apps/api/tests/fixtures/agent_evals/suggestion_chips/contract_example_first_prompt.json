@@ -27,7 +27,7 @@
         "moment": null,
         "text_bar_index": null
       },
-      "why": null,
+      "why": "Kria picks the cuts and pace",
       "label_source": "template",
       "requires_protocol": null
     },
@@ -45,7 +45,7 @@
         "moment": null,
         "text_bar_index": null
       },
-      "why": null,
+      "why": "Speech in 1 of 3 clips",
       "label_source": "template",
       "requires_protocol": null
     },
@@ -63,7 +63,7 @@
         "moment": null,
         "text_bar_index": null
       },
-      "why": null,
+      "why": "No opening line yet",
       "label_source": "template",
       "requires_protocol": null
     },
@@ -81,7 +81,7 @@
         "moment": null,
         "text_bar_index": null
       },
-      "why": null,
+      "why": "2 clips have no speech",
       "label_source": "template",
       "requires_protocol": null
     }
