@@ -1857,6 +1857,45 @@
         "KRI-777"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-809-chat-song-match-trace",
+      "tickets": [
+        "KRI-809",
+        "KRI-802"
+      ],
+      "symptom": "Every montage chat turn ran nova.audio.music_matcher with the creation-thread id as job_id: agent_run_persist_failed IntegrityError (agent_run.job_id FKs jobs), so the song suggestion was missing from /admin/plan-items/<id>/proposal-trace (Don Julio M1, threads F4083F1D / 3E27DEF8). With paid-call cost control on, the same context had no creator attribution and the reservation was refused, so the chat would silently fall back to the footage's own sound.",
+      "boundary": "persistence",
+      "status": "open_pr",
+      "owner": "KRI-809",
+      "paths": [
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/tasks/auto_music_orchestrate.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/agents/_persistence.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri809_chat_song_match_trace.py",
+        "tests/kria/test_kri679_music_mood.py"
+      ],
+      "harness": "real_with_db",
+      "evidence": {
+        "offline_replay": "Real plan_live_turn -> gate -> song freeze -> MusicMatcherAgent runtime -> cost-control ledger -> agent_run insert -> proposal-trace route on scratch Postgres; only the model transport, the main-creator call and the track catalog read are canned. Red before the fix: prod's exact agent_run_persist_failed IntegrityError (cost control off) and creator_attribution_required with no song (cost control on); green after: two plan-item rows, job_id NULL, two settled creator-attributed reservations, song selected both turns.",
+        "live_model": "Not run; no paid calls. The fix changes no prompt and no model call.",
+        "native_output": "not_applicable; server-side trace rows only.",
+        "production": "Not deployed. Prod proposal-trace for items 7a4ce1d5 and f65a21de lists only nova.creator.main rows (read 2026-10-21)."
+      },
+      "neighbours_covered": [
+        "render-time _match_best_track still records its real job_id",
+        "cost control off (prod today) and on (production environment)",
+        "an identical re-match in the same thread (no idempotency-key collision)",
+        "matcher log lines carry plan_item_id instead of the thread id"
+      ],
+      "neighbours_gap": [
+        "Chat-time clip-intent planning (planner.py RunContext(request_id, creator_id)), clip_intent_resolution, clip_intent_requery and kria_clip_understanding runs carry no owner, so they are dropped from agent_run silently (no IntegrityError, not the same bug); not fixed here."
+      ],
+      "follow_ups": [],
+      "red_control": "not_applicable"
     }
   ]
 }
