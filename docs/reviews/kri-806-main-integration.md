@@ -66,3 +66,24 @@ Current hosted checks are required. Merge after actual producer/named-cut parent
 Normal merge9a0c88b1d includes published #1728 source291675a83 and exclusive #1730 consumerbc4, preserving the complete canonical69/16 prompt union. The only merge conflict was a version-history comment; all prompt strings and hash assertions remain the reviewed69 baseline. The new shared receipt formatting correction addresses the independently reproduced KRI793 title-row truncation on combined named-cut/trim replies. No native application/test bytes changed relative to publishedd a069.
 
 207 combined editorial/producer/named-cut/caption-reply/take-window controls pass. Full free replay evals:2123 passed,15 explicit skips,7 existing expected failures. Old publishedd a069's actual native job119737388048 in run39751825532 completed SUCCESS, including the real Gameday fifth-clip/reopen/export, immutable evidence and artifact upload. This verifies execution with the stronger inspector/panel disappearance prerequisite; it is not a claim about a later source head. Actual #1730/#1728 merges and final current-head hosted checks remain required. Preserve the pending original Don Julio actual output/export acceptance.
+
+## Fresh current-main integration check — 22 October
+
+Fresh main was `12d4e7662`; the unchanged PR source was
+`a069537d6df4f2a7316c220e29d24e0b8ed1c5da`. A normal no-commit merge of
+current main into that source conflicted only in the two prompt-version modules
+and their three version/hash assertions. The resolved union retains current
+main's quoted one-take trim instruction and the PR's named-cut instruction and
+editorial-plan repair: Main Creator is `2026-10-22-v69`, Brief Extractor is
+`2026-10-22-v16`, and the four reviewed prompt hashes remain the PR's v69
+values. No prompt wording was invented or changed during conflict resolution.
+
+Offline verification on this exact no-commit merge:
+
+- Focused parser, caption, spoken-trigger, quoted-trim, named-cut and brief
+  recovery controls: **397 passed**.
+- Full free recorded evaluation suite: **2133 passed, 15 skipped, 7 xfailed**.
+
+The inherited Gameday UI synchronization change is still not native evidence on
+this head. No paid model call, device operation, production operation, commit,
+push or deployment occurred in this check.

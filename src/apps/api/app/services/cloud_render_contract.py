@@ -32,6 +32,7 @@ from app.services.creator_render_contract import (
     read_render_contract,
     stamped_plan_contract,
     text_field_path,
+    unresolved_field_path,
 )
 
 
@@ -258,6 +259,8 @@ def _decline(
 
     if requirement == "unresolved":
         decline = _CLOUD_UNRESOLVED
+        # KRI-794: an unresolved order line names the order choice, as on the phone.
+        field_path = field_path or unresolved_field_path(message)
     elif evidence:
         decline = _CLOUD_NO_RECEIPT
     elif declaration is not None and requirement in declaration.declines:

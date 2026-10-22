@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.36.0] - 2026-10-22
+
+### Changed
+- fix(research): ground October 11 references in their dated source posts (#1553) <!-- release-pr: 1553 -->
+
+## [0.81.35.0] - 2026-10-22
+
+### Changed
+- fix(kria): a typed option of a closed choice replaces the answer; an order refusal re-asks it (KRI-794) (#1732) <!-- release-pr: 1732 -->
+
+## [0.81.34.0] - 2026-10-22
+
+### Changed
+- feat(chips): evidence line per chip + after-render chips scroll into view (KRI-769) (#1736) <!-- release-pr: 1736 -->
+
 ## [0.81.33.0] - 2026-10-22
 
 ### Changed
