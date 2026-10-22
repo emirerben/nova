@@ -1,1 +1,3 @@
 postgresql://test:test@localhost
+# Synthetic rejected artifact URL in scripts/ci/test_pr_evidence.py; no real credential.
+https://user:secret@github.com
