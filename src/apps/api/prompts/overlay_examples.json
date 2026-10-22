@@ -1,5 +1,5 @@
 {
-  "version": "2026-08-05",
+  "version": "2026-10-18",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -322,6 +322,32 @@
       "highlight_color": "#FFE08A",
       "niche": "professional lifestyle & city aesthetics",
       "source": "tiktok market research 2026-06"
+    },
+    {
+      "id": "nostalgia-return-fadein-01",
+      "content_profile": "creator returning to a beloved series or ritual format after a long gap — community nostalgia energy, personal and unhurried",
+      "effect": "fade-in",
+      "text": "haven't done this in forever",
+      "highlight_word": "forever",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#A3E635",
+      "niche": "wellness & daily ritual",
+      "source": "tiktok market research 2026-10"
+    },
+    {
+      "id": "routine-anchor-popin-01",
+      "content_profile": "close-up of a daily ritual ingredient or practice — morning bowl, coffee, a specific wellness habit — warm and grounded, no voiceover needed",
+      "effect": "pop-in",
+      "text": "the thing that resets everything",
+      "highlight_word": "resets",
+      "position": "bottom",
+      "size_class": "medium",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#A3E635",
+      "niche": "wellness & daily ritual",
+      "source": "tiktok market research 2026-10"
     }
   ]
 }

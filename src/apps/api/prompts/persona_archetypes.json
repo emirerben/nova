@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-10-18",
   "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (best representative post per lane) so the persona generator surfaces proven lanes first. The agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
   "archetypes": [
     {
@@ -76,6 +76,17 @@
       "sample_hooks": ["felt cute this week", "before office", "the walk that fixes everything", "chic"],
       "source": "tiktok:@allexmarielle (2026-06)",
       "performance": {"engagement_rate": 0.128, "view_index": 1.05, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "wellness-ritual-lifestyle-01",
+      "niche": "wellness & daily ritual",
+      "summary": "You make daily rituals feel worth filming — the morning bowl, the post-vacation reset, the one ingredient that makes it all work. Not a polished wellness brand; warm and slightly imperfect, anchored in real routine.",
+      "tone": "warm, grounded, quietly aspirational",
+      "content_pillars": ["morning rituals and recipe ingredients", "local café culture and daily anchors", "return-to-routine after a break", "seasonal wellness moments"],
+      "audience": "people building their own daily rituals who find comfort in watching someone else's ordinary-but-intentional life",
+      "sample_hooks": ["my motivation to get back into routine", "the one thing that made mornings work again", "haven't done this in months — why did I stop"],
+      "source": "tiktok:@nermozdemir (2026-10)",
+      "performance": {"engagement_rate": 0.081, "view_index": 19.1, "sampled_at": "2026-10"}
     }
   ]
 }

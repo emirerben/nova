@@ -307,11 +307,11 @@ def test_overlay_bank_version_couples_to_agent_versions():
     #                  bank content edit, so BOTH consuming agents bump. Guard:
     #                  tests/agents/test_overlay_examples_slop_guard.py now lints
     #                  every exemplar against the slop pattern class.
-    assert library_version() == "2026-08-05"
-    # Creator direction was added to the consuming prompt without changing
-    # the exemplar bank, so only the agent version advances.
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-09-06-creator-direction"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-08-05"
+    # Bump 2026-10-18: weekly research refresh — added nostalgia-return-fadein-01
+    #                  and routine-anchor-popin-01 (wellness & daily ritual lane).
+    assert library_version() == "2026-10-18"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-18-weekly-bank"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-10-18-weekly-bank"
 
 
 @pytest.mark.parametrize(
