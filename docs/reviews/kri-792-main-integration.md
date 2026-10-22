@@ -33,3 +33,31 @@ New combined-source CI on sibling #1744 (2923, run39755712620/API0) exposed an a
 On overflow in ordinary judged-receipt replies, the display now reserves every complete request label and status before dividing the remaining budget among explanations. Explicit ellipses show shortened display; stored receipt reasons and decision/approval semantics remain unchanged. The existing cap is not raised. Already-fitting replies are byte-identical. This bounded path does not compact mixed outcomes/inferences/unchecked receipts; labels that alone exceed the cap still use the existing final hard cap. No universal lossless-display claim.
 
 The original six-row incident plus budget/status/immutable-receipt stress and existing brief/reaction/render-spelling suites pass283 cases. Original named-cut/trim-window/producer/prompt suites pass167 cases. Full free replay evals pass2122,15 explicit skips,7 existing expected failures; no paid/live/judge call. The final rsplit only selects the known generated body after any model summary; the final preship reruns mapped receipt gates on that source. Exact new-head hosted CI remains required. Old034's full native success is historical; this source must get its own required checks. Full phrase cutting and original physical export remain incomplete under KRI829/KRI787.
+
+## Current-base refresh — 22 October 2026
+
+Merged current main `a33c4b21b` into the existing #1728 source by normal merge.
+The unrelated research/release changes and shared journey manifest auto-merged without a
+product or prompt conflict. The canonical candidate Main Creator68 / Brief Extractor16
+union remains intact: caption spellings, spoken-text triggers/speaker, quoted trim
+bounds and named `cut_lines` all remain present. This dependency still waits for
+actual #1730 to land; copied history is not treated as a landed dependency.
+
+Against this exact refreshed source and its migrated isolated PostgreSQL database, the
+named-cut/KRI-667/Main Creator/user-song/Brief Extractor/KRI-793/phone-window suite
+passed 214 tests with no skips. Preship passed its scoped Ruff, drift, release,
+database-backed reliability (1,448 mapped checks), journey mapping (61 journeys) and
+fix-chain gates after its SHA-bound PR evidence was supplied. Hosted CI remains
+required on the final head.
+
+The scope remains deliberately partial: it makes named phrase-cut receipts truthful;
+it does not cut the original phrases or prove speaker-specific text, native export or
+the complete T1 request. Those gaps remain KRI-724/KRI-787 work.
+
+## Recovery from an unretryable GitHub startup error
+
+Preserved current author428c5193 by normal history. Actual-main integration7781fc42 includes landed #1730 and the deployed #1749 verifier, based on main c09c6a8b. Its exact prospective merge tree was b8d36ed2504deafba7e5bd60c03048efa6c69d2f.160 named-cut, complete-label, persisted reanswer/refusal and refusal-copy controls passed on that tree. This report is the only additional local file change before the recovery publication; product/test/workflow bytes stay the verified integration bytes.
+
+CI39789700199 attempt1 failed in API0/library APT package download after three600-second stalls and the existing40-minute setup caps; those tests never started. API1 and the offline journey passed. The first failed-only recovery ended as attempt2 startup_failure with zero jobs. Read-only GitHub run-page inspection showed an unexpected internal error, request ID3AE2:E2C2:7FAF42F:B9A0AEF:6ADA2059. The pinned synthetic merge and reusable workflow remained readable. Both another failed-only request and a specifically failed-job request were rejected as unretryable.
+
+The normal current-main integration and this evidence continuation are therefore being published to create a fresh CI event. This is recovery from an unretryable workflow, not a refresh merely because the branch is behind. Prior passed artifacts remain historical component proof; all newly published-head checks must independently pass. No feature edit, timeout increase, mirror/security change, skipped test or manual release is part of this recovery. The actual named phrase removal and complete original T1 output/export remain pending under KRI787.
