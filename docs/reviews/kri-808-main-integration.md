@@ -26,3 +26,14 @@ The original free whisper.cpp medium retries stand in for whisper-1 transport. T
 ## Verification
 
 Initial focused recorded-provider and quality/segment checks: 50 passed, one explicitly skipped local-medium kill-switch case. The full task/persistence and neighboring render-path results, preship and exact-head hosted CI must be recorded separately before merge.
+
+### Timeline decisions (existing timing model retained)
+
+1. Duration source: typed source-word timestamps and the existing speech montage plan/compiler own source windows and output duration. This PR does not insert or retime timeline entries.
+2. Ripple: no lane timestamps are mutated; existing compiler policies for text/visual/audio/SFX lanes and continuous music stay in force.
+3. Scrub bounds: existing canonical recipe duration remains the editor/preview bound. No independent UI duration was introduced.
+4. Resize: existing source-window and editor edge rules, frame rounding and overlap caps are unchanged.
+5. Undo: no editor gesture or snapshot boundary changes.
+6. Parity: existing speech-segment, phone-speech montage and timeline verification fixtures cover source-window compilation; new recorded-provider controls cover which timed words reach them. No physical export claim.
+
+Current combined replay: 103 passed, one explicitly skipped local-medium kill-switch case. It includes real scratch Postgres task persistence and unchanged concurrent-analysis protection. The shared local Redis returned MISCONF because RDB persistence failed, causing the unchanged overlap test to time out; a separate loopback-only scratch Redis made the full suite pass without source/assertion changes. The shared service/config/data were untouched.
