@@ -493,6 +493,20 @@
       ]
     },
     {
+      "id": "kri-808-clip-speech-language",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri808_clip_speech_language.py tests/tasks/test_kria_speech_segments.py tests/services/test_transcript_quality.py tests/services/test_phone_speech_montage_job.py",
+      "paths": [
+        "src/apps/api/app/services/clip_speech_check.py",
+        "src/apps/api/app/services/speech_segments.py",
+        "src/apps/api/app/services/transcript_quality.py",
+        "src/apps/api/app/services/clip_understanding.py",
+        "src/apps/api/app/tasks/kria_clip_understanding.py",
+        "src/apps/api/app/services/phone_speech_montage_job.py",
+        "src/apps/api/tests/fixtures/kri808_don_julio_clip_speech.json"
+      ]
+    },
+    {
       "id": "kri-623-ruled-out-clips",
       "needs_native": false,
       "api_tests": "tests/kria/test_kri623_ruled_out_clips.py",
@@ -613,11 +627,32 @@
     {
       "id": "kri-628-opening-cut",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_phone_opening_cut.py",
+      "api_tests": "tests/pipeline/test_phone_opening_cut.py tests/pipeline/test_phone_take_window.py",
       "paths": [
         "src/apps/api/app/kria/opening_cut_ask.py",
         "src/apps/api/app/pipeline/phone_opening_cut.py",
-        "src/apps/api/app/services/spoken_quotes.py"
+        "src/apps/api/app/services/spoken_quotes.py",
+        "src/apps/api/app/services/speech_segments.py",
+        "src/apps/api/app/cli/verify_take_window.py",
+        "src/apps/api/tests/fixtures/kri790_merope_t1_take.json",
+        "src/apps/api/tests/pipeline/test_phone_take_window.py"
+      ]
+    },
+    {
+      "id": "kri-789-take-trim-not-order",
+      "needs_native": false,
+      "api_tests": "tests/incidents/test_incident_corpus.py tests/agents/test_kri789_take_trim_brief.py tests/evals/test_main_creator_evals.py",
+      "paths": [
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/agents/brief_extractor.py",
+        "src/apps/api/app/kria/take_trim.py",
+        "src/apps/api/app/services/spoken_quotes.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/tests/fixtures/incidents/kri789-one-take-start-end-lines-ask-no-order.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri789_one_take_start_end_lines_trim.json",
+        "src/apps/api/tests/agents/test_kri789_take_trim_brief.py",
+        "src/apps/api/tests/evals/test_main_creator_evals.py"
       ]
     },
     {
@@ -666,6 +701,15 @@
         "src/apps/api/app/services/length_planning.py",
         "src/apps/api/app/services/spoken_quotes.py",
         "src/apps/api/tests/fixtures/kri681_tigre_night_m1_clips.json"
+      ]
+    },
+    {
+      "id": "kri-792-named-phrase-cuts",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri792_named_phrase_cuts.py",
+      "paths": [
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/tests/fixtures/kri792_t1_phrase_cuts.json"
       ]
     },
     {

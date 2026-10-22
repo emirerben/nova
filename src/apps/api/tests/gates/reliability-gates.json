@@ -904,6 +904,60 @@
       "red_control": "pending"
     },
     {
+      "id": "kri-790-take-window",
+      "tickets": [
+        "KRI-790",
+        "KRI-628",
+        "KRI-704"
+      ],
+      "symptom": "Merope T1 (2026-10-21): 'Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\"' in a 68.37 s Talking take: no end cut existed, the start line (brief facts on an order row, misheard 'Carolina' without the second I'm) never reached the phone plan, every draft said 'keeps your whole take ... 68.4s', and no draft or approval card named either line.",
+      "boundary": "compiler",
+      "status": "open_pr",
+      "owner": "KRI-790",
+      "journey": "kri-628-opening-cut",
+      "paths": [
+        "src/apps/api/app/kria/opening_cut_ask.py",
+        "src/apps/api/app/pipeline/phone_opening_cut.py",
+        "src/apps/api/app/services/speech_segments.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/tasks/kria_runtime.py"
+      ],
+      "regression_tests": [
+        "tests/pipeline/test_phone_take_window.py",
+        "tests/pipeline/test_phone_opening_cut.py",
+        "tests/tasks/test_phone_opening_cut_cleanup_off.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "T1's stored brief rows (v1 + v2) and the take's real timings (prod transcript words + local whisper.cpp words, prod segments) through the ask, the cut (cleanup on and off), the phone compiler, the caption remap, the worker's _phone_opening_cut and the draft/render receipts; each part of the fix switched off alone fails the guard. The KRI-787 runtime replay (PR #1723, run locally) flips exactly its KRI-790 xfails and pins; its kept window is [12.27, 50.38].",
+        "live_model": "n/a; no model call is involved and no paid run was made",
+        "native_output": "unknown; needs a phone re-send of T1 after deploy (also needs KRI-788 for the render to reach the phone)",
+        "production": "not deployed"
+      },
+      "neighbours_covered": [
+        "start + end, start only, end only",
+        "legacy order facts, KRI-789 timing start_line/end_line, KRI-628 description cue",
+        "misheard name and dropped short word; short quotes stay exact",
+        "end line said before the start line",
+        "cleanup on (window intersects cleanup cuts) and off (checked preflight words)",
+        "draft length line from timed segments; unplaced line falls back to the take length",
+        "rendered review: both sides cut, one side missed, older render without an end receipt",
+        "Turkish twins"
+      ],
+      "neighbours_gap": [
+        "cleanup off with no checked preflight snapshot still reports cleanup_off (no second transcription for the cut)",
+        "cloud (non-phone) Talking renders do not cut to the lines",
+        "the render still refuses T1 until KRI-788 restores the order answer (or KRI-789's one-clip rule lands)"
+      ],
+      "follow_ups": [
+        "KRI-788",
+        "KRI-789"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-546-montage-receipts",
       "tickets": [
         "KRI-546",
@@ -1187,6 +1241,59 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-789-take-trim-not-order",
+      "tickets": [
+        "KRI-789",
+        "KRI-787"
+      ],
+      "symptom": "A one-video Talking edit asking to 'Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\"' was asked 'You gave me a specific order for the clips' (attachment order / no fixed order): the brief filed the quoted lines as a key-less order rule, and the render contract left 'I can't verify this ordering rule' for the same one clip (Merope T1).",
+      "boundary": "brief",
+      "status": "open_pr",
+      "fix_prs": [
+        1731
+      ],
+      "owner": "KRI-789",
+      "journey": "kri-789-take-trim-not-order",
+      "paths": [
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/agents/brief_extractor.py",
+        "src/apps/api/app/kria/take_trim.py",
+        "src/apps/api/app/services/spoken_quotes.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/tests/fixtures/incidents/kri789-one-take-start-end-lines-ask-no-order.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri789_one_take_start_end_lines_trim.json"
+      ],
+      "regression_tests": [
+        "tests/incidents/test_incident_corpus.py",
+        "tests/agents/test_kri789_take_trim_brief.py",
+        "tests/evals/test_main_creator_evals.py"
+      ],
+      "harness": "real_parser",
+      "evidence": {
+        "offline_replay": "Incident record kri789-one-take-start-end-lines-ask-no-order (prod's stored v64 brief on the one 68.37 s take, through the real planner gate and contract builder) reproduces prod's turn-1 question word for word and the contract's unresolved ordering rule on main, and neither with the fix. Eval fixture kri789_one_take_start_end_lines_trim replays the turn-1 reply through the real Main Creator parser: an order requirement without the fix, the timing trim with it. The KRI-787 replay (PR #1723) through the real runtime, dispatch and worker gate flips its KRI-789 marker and the approved draft reaches the Talking renderer.",
+        "live_model": "Not run; no paid calls (prompt v65 is replay-only).",
+        "native_output": "unknown",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "two videos, or a video plus a photo: the model's order requirement is kept",
+        "unquoted places, a one-word quote, a first / last clip pin or a route fact: kept",
+        "a start line alone (no invented end), a change of an existing requirement",
+        "several clips with a key-less rule still ask (clarify-explicit-sequence record)",
+        "one clip with a filming-order key keeps its KRI-661 contract (kri661 record)"
+      ],
+      "neighbours_gap": [
+        "Several videos with quoted lines rely on the v65 prompt alone; no paid live eval run.",
+        "The question gate counts selected rows; the contract also drops a hidden voice clip.",
+        "The end line is consumed by KRI-790 (phone Talking window + length line)."
+      ],
+      "follow_ups": [
+        "KRI-790"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-612-clip-descriptions",
       "tickets": [
         "KRI-612"
@@ -1288,6 +1395,60 @@
       ],
       "red_control": "not_applicable",
       "journey": "kri-653-silent-take"
+    },
+    {
+      "id": "kri-808-clip-speech-language",
+      "tickets": [
+        "KRI-808",
+        "KRI-802"
+      ],
+      "symptom": "Don Julio M1 (2026-10-21, plan item 7a4ce1d5): the clip records Main Creator read had whisper TRANSLATIONS as timed segments (a Turkish speaker's \"What's your name?\" as \"Ne isminiz?\", \"Gracias\" as \"\u0421\u043f\u0430\u0441\u0438\u0431\u043e.\"), a 24-word Gemini sentence on a 1.1 s clip and a \"Video. Video...\" loop, so the quoted line \"What's your name?\" had no timed words.",
+      "boundary": "persistence",
+      "status": "open_pr",
+      "owner": "KRI-808",
+      "paths": [
+        "src/apps/api/app/services/clip_speech_check.py",
+        "src/apps/api/app/services/speech_segments.py",
+        "src/apps/api/app/services/transcript_quality.py",
+        "src/apps/api/app/services/clip_understanding.py",
+        "src/apps/api/app/tasks/kria_clip_understanding.py",
+        "src/apps/api/app/services/phone_speech_montage_job.py",
+        "src/apps/api/tests/fixtures/kri808_don_julio_clip_speech.json"
+      ],
+      "regression_tests": [
+        "tests/tasks/test_kri808_clip_speech_language.py",
+        "tests/tasks/test_kri808_clip_speech_language_postgres.py",
+        "tests/tasks/test_kria_speech_segments.py",
+        "tests/services/test_transcript_quality.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": "clip_speech_language_check_enabled",
+      "evidence": {
+        "offline_replay": "Prod's nine M1 clip records (proposal-trace media_context) and whisper-1's first passes rebuilt from them, through the real _with_speech_segments / clip_speech_check / clip_record / ground_excerpt; forced re-runs are free whisper.cpp medium passes on the kit clips (en/tr/es). Red on origin/main 3519e7cf0 (16 of 27 fail with prod's exact symptoms), green with the fix; also replayed with medium's own auto first pass. The background task also runs end to end on scratch Postgres (real thread language row, real store).",
+        "live_model": "Not run; no paid calls (no Gemini, no whisper-1).",
+        "native_output": "n/a: clip records are server-side; a phone re-send of M1 reads them through Main Creator.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "the waiter's Spanish stays Spanish in an English chat (no over-correction), with no re-run",
+        "Turkish table chatter never forced into English",
+        "\"Cheers\" stays quotable",
+        "speech in a non-Latin script is kept when both listeners agree",
+        "chat language unknown: a translation is still never stored",
+        "a failing re-run keeps the analysis",
+        "already-stored records cleaned on read (loop, impossible length)",
+        "whisper placeholders, caption credits, 3x loops; an unclosed bracket keeps its words",
+        "kill switch restores the first pass"
+      ],
+      "neighbours_gap": [
+        "Records stored before the fix keep their translated segments; a new chat (new attach) re-analyses.",
+        "ground_excerpt folds to ASCII, so a quote in a non-Latin script cannot ground (pre-existing).",
+        "whisper-1's forced passes are stood in for by whisper.cpp medium; whisper-1 may word them differently.",
+        "Gemini's own transcript can still be in the wrong language; it is only dropped when it loops or is too long for the clip."
+      ],
+      "follow_ups": [],
+      "red_control": "not_applicable",
+      "journey": "kri-808-clip-speech-language"
     },
     {
       "id": "kri-661-talking-visuals-and-order",

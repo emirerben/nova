@@ -1,0 +1,1366 @@
+{
+ "about": "KRI-808 Don Julio M1 (2026-10-21, thread F4083F1D, plan item 7a4ce1d5). prod_record = the clip records Main Creator received (proposal-trace media_context, GH_SHA c58b89bbd). prod_whisper_first_pass rebuilds whisper-1's words from those stored segments (evenly timed inside each segment); its language is read from the segment text because the prompt view omits it. local_whisper_medium = whisper.cpp ggml-medium on the kit clips (upload/M1_lunch_montage), auto-detect and forced en/tr/es, word-timed (-ml 1 -sow): a free stand-in for whisper-1's forced passes. spoken_truth: three independent listeners (whisper-1, whisper medium, Gemini) agree the waiter speaks Spanish; the kit's English lines for M1_08/M1_09 came from a forced-English whisper run, which translates.",
+ "chat_language": "en",
+ "clips": {
+  "M1_01": {
+   "spoken_truth": "Turkish table murmur, then \"Cheers!\" (pastel-shirt man)",
+   "duration_s": 3.4,
+   "prod_record": {
+    "has_speech": true,
+    "transcript": "Cheers. Cheers.",
+    "segments": [
+     {
+      "start_s": 0.0,
+      "end_s": 0.5,
+      "text": "şu an."
+     },
+     {
+      "start_s": 0.9,
+      "end_s": 1.6,
+      "text": "Biliyor mu?"
+     },
+     {
+      "start_s": 1.7,
+      "end_s": 1.9,
+      "text": "Cheers."
+     },
+     {
+      "start_s": 1.9,
+      "end_s": 2.7,
+      "text": "Biliyor mu?"
+     }
+    ]
+   },
+   "prod_whisper_first_pass": {
+    "language": "tr",
+    "words": [
+     {
+      "text": "şu",
+      "start_s": 0.0,
+      "end_s": 0.25
+     },
+     {
+      "text": "an.",
+      "start_s": 0.25,
+      "end_s": 0.5
+     },
+     {
+      "text": "Biliyor",
+      "start_s": 0.9,
+      "end_s": 1.25
+     },
+     {
+      "text": "mu?",
+      "start_s": 1.25,
+      "end_s": 1.6
+     },
+     {
+      "text": "Cheers.",
+      "start_s": 1.7,
+      "end_s": 1.9
+     },
+     {
+      "text": "Biliyor",
+      "start_s": 1.9,
+      "end_s": 2.3
+     },
+     {
+      "text": "mu?",
+      "start_s": 2.3,
+      "end_s": 2.7
+     }
+    ]
+   },
+   "local_whisper_medium": {
+    "auto": {
+     "language": "tr",
+     "words": [
+      {
+       "text": "-Biliyorum.",
+       "start_s": 0.0,
+       "end_s": 1.11
+      },
+      {
+       "text": "-Çeriz.",
+       "start_s": 1.11,
+       "end_s": 2.0
+      }
+     ]
+    },
+    "en": {
+     "language": "en",
+     "words": [
+      {
+       "text": "(speaking",
+       "start_s": 0.0,
+       "end_s": 0.56
+      },
+      {
+       "text": "in",
+       "start_s": 0.56,
+       "end_s": 0.68
+      },
+      {
+       "text": "foreign",
+       "start_s": 0.68,
+       "end_s": 1.12
+      },
+      {
+       "text": "language)",
+       "start_s": 1.12,
+       "end_s": 1.72
+      },
+      {
+       "text": "-",
+       "start_s": 1.72,
+       "end_s": 1.84
+      },
+      {
+       "text": "Cheers.",
+       "start_s": 1.84,
+       "end_s": 2.56
+      }
+     ]
+    },
+    "es": {
+     "language": "es",
+     "words": [
+      {
+       "text": "Cheers!",
+       "start_s": 0.0,
+       "end_s": 2.0
+      }
+     ]
+    },
+    "tr": {
+     "language": "tr",
+     "words": [
+      {
+       "text": "-Biliyorum.",
+       "start_s": 0.0,
+       "end_s": 1.11
+      },
+      {
+       "text": "-Çeriz.",
+       "start_s": 1.11,
+       "end_s": 2.0
+      }
+     ]
+    }
+   }
+  },
+  "M1_02": {
+   "spoken_truth": "1.1 s, quiet chatter, nothing quotable",
+   "duration_s": 1.133333,
+   "prod_record": {
+    "has_speech": true,
+    "transcript": "Right. Mhm. So I'm gonna ask you right now, you can leave. I'm going to start asking questions. You can leave. Okay. Mhm. Mhm. Yes.",
+    "segments": []
+   },
+   "prod_whisper_first_pass": {
+    "language": "",
+    "words": []
+   },
+   "local_whisper_medium": {
+    "auto": {
+     "language": "ko",
+     "words": []
+    },
+    "en": {
+     "language": "en",
+     "words": [
+      {
+       "text": "(laughing)",
+       "start_s": 0.0,
+       "end_s": 0.96
+      }
+     ]
+    },
+    "es": {
+     "language": "es",
+     "words": [
+      {
+       "text": "[Música]",
+       "start_s": 0.0,
+       "end_s": 3.0
+      }
+     ]
+    },
+    "tr": {
+     "language": "tr",
+     "words": [
+      {
+       "text": "Altyazı",
+       "start_s": 0.0,
+       "end_s": 1.13
+      },
+      {
+       "text": "M.K.",
+       "start_s": 1.13,
+       "end_s": 2.0
+      }
+     ]
+    }
+   }
+  },
+  "M1_03": {
+   "spoken_truth": "Spanish: \"Salsa criolla, chimichurri con …\" (Lucas)",
+   "duration_s": 3.5,
+   "prod_record": {
+    "has_speech": true,
+    "transcript": "Salsa criolla, chimichurri con sal marina.",
+    "segments": [
+     {
+      "start_s": 0.0,
+      "end_s": 2.7,
+      "text": "salsa criolla, chivichurri con salma y limón."
+     }
+    ]
+   },
+   "prod_whisper_first_pass": {
+    "language": "es",
+    "words": [
+     {
+      "text": "salsa",
+      "start_s": 0.0,
+      "end_s": 0.386
+     },
+     {
+      "text": "criolla,",
+      "start_s": 0.386,
+      "end_s": 0.771
+     },
+     {
+      "text": "chivichurri",
+      "start_s": 0.771,
+      "end_s": 1.157
+     },
+     {
+      "text": "con",
+      "start_s": 1.157,
+      "end_s": 1.543
+     },
+     {
+      "text": "salma",
+      "start_s": 1.543,
+      "end_s": 1.929
+     },
+     {
+      "text": "y",
+      "start_s": 1.929,
+      "end_s": 2.314
+     },
+     {
+      "text": "limón.",
+      "start_s": 2.314,
+      "end_s": 2.7
+     }
+    ]
+   },
+   "local_whisper_medium": {
+    "auto": {
+     "language": "es",
+     "words": [
+      {
+       "text": "Salsa",
+       "start_s": 0.0,
+       "end_s": 0.41
+      },
+      {
+       "text": "criolla,",
+       "start_s": 0.41,
+       "end_s": 1.09
+      },
+      {
+       "text": "chivichurri",
+       "start_s": 1.09,
+       "end_s": 1.58
+      },
+      {
+       "text": "con",
+       "start_s": 1.58,
+       "end_s": 1.71
+      },
+      {
+       "text": "sarail.",
+       "start_s": 1.71,
+       "end_s": 2.8
+      }
+     ]
+    },
+    "en": {
+     "language": "en",
+     "words": [
+      {
+       "text": "Salsa",
+       "start_s": 0.0,
+       "end_s": 0.41
+      },
+      {
+       "text": "Criolla,",
+       "start_s": 0.41,
+       "end_s": 1.15
+      },
+      {
+       "text": "Chibi",
+       "start_s": 1.15,
+       "end_s": 1.53
+      },
+      {
+       "text": "Churri",
+       "start_s": 1.53,
+       "end_s": 2.0
+      },
+      {
+       "text": "con",
+       "start_s": 2.0,
+       "end_s": 2.37
+      },
+      {
+       "text": "Sarayla.",
+       "start_s": 2.37,
+       "end_s": 3.12
+      }
+     ]
+    },
+    "es": {
+     "language": "es",
+     "words": [
+      {
+       "text": "Salsa",
+       "start_s": 0.0,
+       "end_s": 0.41
+      },
+      {
+       "text": "criolla,",
+       "start_s": 0.41,
+       "end_s": 1.09
+      },
+      {
+       "text": "chivichurri",
+       "start_s": 1.09,
+       "end_s": 1.58
+      },
+      {
+       "text": "con",
+       "start_s": 1.58,
+       "end_s": 1.71
+      },
+      {
+       "text": "sarail.",
+       "start_s": 1.71,
+       "end_s": 2.8
+      }
+     ]
+    },
+    "tr": {
+     "language": "tr",
+     "words": [
+      {
+       "text": "Salsa",
+       "start_s": 0.0,
+       "end_s": 0.82
+      },
+      {
+       "text": "kriyosu,",
+       "start_s": 0.82,
+       "end_s": 2.06
+      },
+      {
+       "text": "çivi",
+       "start_s": 2.06,
+       "end_s": 2.21
+      },
+      {
+       "text": "çuri",
+       "start_s": 2.21,
+       "end_s": 2.36
+      },
+      {
+       "text": "ve",
+       "start_s": 2.36,
+       "end_s": 2.42
+      },
+      {
+       "text": "sarayla.",
+       "start_s": 2.42,
+       "end_s": 2.78
+      }
+     ]
+    }
+   }
+  },
+  "M1_04": {
+   "spoken_truth": "quiet Turkish table chatter",
+   "duration_s": 2.6,
+   "prod_record": {
+    "has_speech": true,
+    "transcript": "Ne, hiçbir şey bilmedi. Bütün şeyler, var mı?",
+    "segments": [
+     {
+      "start_s": 0.0,
+      "end_s": 0.2,
+      "text": "Ne?"
+     },
+     {
+      "start_s": 0.4,
+      "end_s": 1.0,
+      "text": "Hiçbir şey bilmiyorum."
+     }
+    ]
+   },
+   "prod_whisper_first_pass": {
+    "language": "tr",
+    "words": [
+     {
+      "text": "Ne?",
+      "start_s": 0.0,
+      "end_s": 0.2
+     },
+     {
+      "text": "Hiçbir",
+      "start_s": 0.4,
+      "end_s": 0.6
+     },
+     {
+      "text": "şey",
+      "start_s": 0.6,
+      "end_s": 0.8
+     },
+     {
+      "text": "bilmiyorum.",
+      "start_s": 0.8,
+      "end_s": 1.0
+     }
+    ]
+   },
+   "local_whisper_medium": {
+    "auto": {
+     "language": "ko",
+     "words": [
+      {
+       "text": "네,",
+       "start_s": 0.0,
+       "end_s": 0.22
+      },
+      {
+       "text": "쉽지",
+       "start_s": 0.22,
+       "end_s": 0.48
+      },
+      {
+       "text": "않습니다.",
+       "start_s": 0.48,
+       "end_s": 1.2
+      }
+     ]
+    },
+    "en": {
+     "language": "en",
+     "words": [
+      {
+       "text": "(speaking",
+       "start_s": 0.0,
+       "end_s": 0.8
+      },
+      {
+       "text": "in",
+       "start_s": 0.8,
+       "end_s": 0.97
+      },
+      {
+       "text": "foreign",
+       "start_s": 0.97,
+       "end_s": 1.59
+      },
+      {
+       "text": "language)",
+       "start_s": 1.59,
+       "end_s": 2.42
+      }
+     ]
+    },
+    "es": {
+     "language": "es",
+     "words": [
+      {
+       "text": "-",
+       "start_s": 0.0,
+       "end_s": 0.05
+      },
+      {
+       "text": "Si,",
+       "start_s": 0.05,
+       "end_s": 0.25
+      },
+      {
+       "text": "es",
+       "start_s": 0.25,
+       "end_s": 0.34
+      },
+      {
+       "text": "un",
+       "start_s": 0.34,
+       "end_s": 0.44
+      },
+      {
+       "text": "poco",
+       "start_s": 0.44,
+       "end_s": 0.65
+      },
+      {
+       "text": "raro.",
+       "start_s": 0.65,
+       "end_s": 1.0
+      },
+      {
+       "text": "-",
+       "start_s": 1.0,
+       "end_s": 1.05
+      },
+      {
+       "text": "Hay",
+       "start_s": 1.05,
+       "end_s": 1.2
+      },
+      {
+       "text": "cosas",
+       "start_s": 1.2,
+       "end_s": 1.45
+      },
+      {
+       "text": "que",
+       "start_s": 1.45,
+       "end_s": 1.6
+      },
+      {
+       "text": "yo",
+       "start_s": 1.6,
+       "end_s": 1.7
+      },
+      {
+       "text": "no",
+       "start_s": 1.7,
+       "end_s": 1.8
+      },
+      {
+       "text": "puedo...",
+       "start_s": 1.8,
+       "end_s": 2.56
+      }
+     ]
+    },
+    "tr": {
+     "language": "tr",
+     "words": [
+      {
+       "text": "-Ne?",
+       "start_s": 0.0,
+       "end_s": 0.36
+      },
+      {
+       "text": "Sipciye",
+       "start_s": 0.36,
+       "end_s": 0.78
+      },
+      {
+       "text": "mi?",
+       "start_s": 0.78,
+       "end_s": 1.08
+      },
+      {
+       "text": "-İmparator.",
+       "start_s": 1.08,
+       "end_s": 2.0
+      }
+     ]
+    }
+   }
+  },
+  "M1_05": {
+   "spoken_truth": "English: \"What's your name?\" \"Lucas.\" \"Lucas, yeah.\"",
+   "duration_s": 4.0,
+   "prod_record": {
+    "has_speech": true,
+    "transcript": "Español, yeah. What's your name? Hey Lucas. Lucas. Yeah.",
+    "segments": [
+     {
+      "start_s": 0.0,
+      "end_s": 0.8,
+      "text": "Ne isminiz?"
+     },
+     {
+      "start_s": 1.9,
+      "end_s": 2.5,
+      "text": "Lucas"
+     }
+    ]
+   },
+   "prod_whisper_first_pass": {
+    "language": "tr",
+    "words": [
+     {
+      "text": "Ne",
+      "start_s": 0.0,
+      "end_s": 0.4
+     },
+     {
+      "text": "isminiz?",
+      "start_s": 0.4,
+      "end_s": 0.8
+     },
+     {
+      "text": "Lucas",
+      "start_s": 1.9,
+      "end_s": 2.5
+     }
+    ]
+   },
+   "local_whisper_medium": {
+    "auto": {
+     "language": "fi",
+     "words": [
+      {
+       "text": "Tupana",
+       "start_s": 0.01,
+       "end_s": 0.73
+      },
+      {
+       "text": "Espanjolle,",
+       "start_s": 0.73,
+       "end_s": 2.0
+      },
+      {
+       "text": "mitä",
+       "start_s": 2.0,
+       "end_s": 2.0
+      },
+      {
+       "text": "sinun",
+       "start_s": 2.0,
+       "end_s": 2.0
+      },
+      {
+       "text": "nimi",
+       "start_s": 2.0,
+       "end_s": 2.0
+      },
+      {
+       "text": "on?",
+       "start_s": 2.0,
+       "end_s": 2.0
+      },
+      {
+       "text": "Lucas",
+       "start_s": 2.0,
+       "end_s": 4.0
+      }
+     ]
+    },
+    "en": {
+     "language": "en",
+     "words": [
+      {
+       "text": "-",
+       "start_s": 0.01,
+       "end_s": 0.14
+      },
+      {
+       "text": "What's",
+       "start_s": 0.14,
+       "end_s": 0.77
+      },
+      {
+       "text": "your",
+       "start_s": 0.77,
+       "end_s": 1.21
+      },
+      {
+       "text": "name?",
+       "start_s": 1.21,
+       "end_s": 2.0
+      },
+      {
+       "text": "-",
+       "start_s": 2.0,
+       "end_s": 2.0
+      },
+      {
+       "text": "Lucas.",
+       "start_s": 2.0,
+       "end_s": 2.0
+      }
+     ]
+    },
+    "es": {
+     "language": "es",
+     "words": [
+      {
+       "text": "¿Qué",
+       "start_s": 0.01,
+       "end_s": 0.63
+      },
+      {
+       "text": "es",
+       "start_s": 0.63,
+       "end_s": 0.84
+      },
+      {
+       "text": "tu",
+       "start_s": 0.84,
+       "end_s": 1.05
+      },
+      {
+       "text": "nombre?",
+       "start_s": 1.05,
+       "end_s": 2.0
+      },
+      {
+       "text": "Lucas",
+       "start_s": 2.0,
+       "end_s": 4.0
+      }
+     ]
+    },
+    "tr": {
+     "language": "tr",
+     "words": [
+      {
+       "text": "Ne",
+       "start_s": 0.01,
+       "end_s": 0.3
+      },
+      {
+       "text": "isminin",
+       "start_s": 0.3,
+       "end_s": 1.36
+      },
+      {
+       "text": "adı?",
+       "start_s": 1.36,
+       "end_s": 2.0
+      }
+     ]
+    }
+   }
+  },
+  "M1_06": {
+   "spoken_truth": "quiet Turkish table chatter",
+   "duration_s": 2.0,
+   "prod_record": {
+    "has_speech": true,
+    "transcript": "Video, yeah. Video. Video. Video. Video video. Video video. Video. Video. Video.",
+    "segments": [
+     {
+      "start_s": 0.0,
+      "end_s": 1.4,
+      "text": "Biliyorum ya."
+     },
+     {
+      "start_s": 1.4,
+      "end_s": 2.0,
+      "text": "Yandık ya."
+     }
+    ]
+   },
+   "prod_whisper_first_pass": {
+    "language": "tr",
+    "words": [
+     {
+      "text": "Biliyorum",
+      "start_s": 0.0,
+      "end_s": 0.7
+     },
+     {
+      "text": "ya.",
+      "start_s": 0.7,
+      "end_s": 1.4
+     },
+     {
+      "text": "Yandık",
+      "start_s": 1.4,
+      "end_s": 1.7
+     },
+     {
+      "text": "ya.",
+      "start_s": 1.7,
+      "end_s": 2.0
+     }
+    ]
+   },
+   "local_whisper_medium": {
+    "auto": {
+     "language": "tr",
+     "words": [
+      {
+       "text": "Gidiyor",
+       "start_s": 0.0,
+       "end_s": 1.15
+      },
+      {
+       "text": "muyuz?",
+       "start_s": 1.15,
+       "end_s": 2.0
+      },
+      {
+       "text": "Yandık",
+       "start_s": 2.0,
+       "end_s": 2.0
+      },
+      {
+       "text": "yani.",
+       "start_s": 2.0,
+       "end_s": 2.0
+      }
+     ]
+    },
+    "en": {
+     "language": "en",
+     "words": [
+      {
+       "text": "(speaking",
+       "start_s": 0.0,
+       "end_s": 0.27
+      },
+      {
+       "text": "in",
+       "start_s": 0.27,
+       "end_s": 0.33
+      },
+      {
+       "text": "foreign",
+       "start_s": 0.33,
+       "end_s": 0.54
+      },
+      {
+       "text": "language)",
+       "start_s": 0.54,
+       "end_s": 0.84
+      },
+      {
+       "text": "(speaking",
+       "start_s": 0.84,
+       "end_s": 1.16
+      },
+      {
+       "text": "in",
+       "start_s": 1.16,
+       "end_s": 1.23
+      },
+      {
+       "text": "foreign",
+       "start_s": 1.23,
+       "end_s": 1.48
+      },
+      {
+       "text": "language)",
+       "start_s": 1.48,
+       "end_s": 1.84
+      }
+     ]
+    },
+    "es": {
+     "language": "es",
+     "words": [
+      {
+       "text": "¿Ves?",
+       "start_s": 0.0,
+       "end_s": 0.88
+      },
+      {
+       "text": "Se",
+       "start_s": 0.88,
+       "end_s": 1.1
+      },
+      {
+       "text": "quemaron.",
+       "start_s": 1.1,
+       "end_s": 2.0
+      }
+     ]
+    },
+    "tr": {
+     "language": "tr",
+     "words": [
+      {
+       "text": "Gidiyor",
+       "start_s": 0.0,
+       "end_s": 1.15
+      },
+      {
+       "text": "muyuz?",
+       "start_s": 1.15,
+       "end_s": 2.0
+      },
+      {
+       "text": "Yandık",
+       "start_s": 2.0,
+       "end_s": 2.0
+      },
+      {
+       "text": "yani.",
+       "start_s": 2.0,
+       "end_s": 2.0
+      }
+     ]
+    }
+   }
+  },
+  "M1_07": {
+   "spoken_truth": "quiet Turkish table chatter",
+   "duration_s": 1.8,
+   "prod_record": {
+    "has_speech": true,
+    "transcript": "Kim diyebilirim, evet.",
+    "segments": [
+     {
+      "start_s": 0.0,
+      "end_s": 0.8,
+      "text": "isteyebilirim."
+     },
+     {
+      "start_s": 1.0,
+      "end_s": 1.2,
+      "text": "Evet."
+     }
+    ]
+   },
+   "prod_whisper_first_pass": {
+    "language": "tr",
+    "words": [
+     {
+      "text": "isteyebilirim.",
+      "start_s": 0.0,
+      "end_s": 0.8
+     },
+     {
+      "text": "Evet.",
+      "start_s": 1.0,
+      "end_s": 1.2
+     }
+    ]
+   },
+   "local_whisper_medium": {
+    "auto": {
+     "language": "tr",
+     "words": [
+      {
+       "text": "-",
+       "start_s": 0.0,
+       "end_s": 0.06
+      },
+      {
+       "text": "Kim",
+       "start_s": 0.06,
+       "end_s": 0.25
+      },
+      {
+       "text": "bilirim?",
+       "start_s": 0.25,
+       "end_s": 0.9
+      },
+      {
+       "text": "-",
+       "start_s": 0.9,
+       "end_s": 0.93
+      },
+      {
+       "text": "Evet,",
+       "start_s": 0.93,
+       "end_s": 1.14
+      },
+      {
+       "text": "kimse",
+       "start_s": 1.14,
+       "end_s": 1.32
+      },
+      {
+       "text": "bilmiyor.",
+       "start_s": 1.32,
+       "end_s": 1.76
+      }
+     ]
+    },
+    "en": {
+     "language": "en",
+     "words": [
+      {
+       "text": "Can",
+       "start_s": 0.0,
+       "end_s": 0.18
+      },
+      {
+       "text": "I",
+       "start_s": 0.18,
+       "end_s": 0.24
+      },
+      {
+       "text": "use",
+       "start_s": 0.24,
+       "end_s": 0.42
+      },
+      {
+       "text": "the",
+       "start_s": 0.42,
+       "end_s": 0.6
+      },
+      {
+       "text": "Kim?",
+       "start_s": 0.6,
+       "end_s": 0.96
+      },
+      {
+       "text": "Yes,",
+       "start_s": 0.96,
+       "end_s": 1.26
+      },
+      {
+       "text": "of",
+       "start_s": 1.26,
+       "end_s": 1.38
+      },
+      {
+       "text": "course.",
+       "start_s": 1.38,
+       "end_s": 2.0
+      }
+     ]
+    },
+    "es": {
+     "language": "es",
+     "words": [
+      {
+       "text": "-",
+       "start_s": 0.0,
+       "end_s": 0.04
+      },
+      {
+       "text": "¿Puedo",
+       "start_s": 0.04,
+       "end_s": 0.34
+      },
+      {
+       "text": "ir",
+       "start_s": 0.34,
+       "end_s": 0.43
+      },
+      {
+       "text": "a",
+       "start_s": 0.43,
+       "end_s": 0.47
+      },
+      {
+       "text": "la",
+       "start_s": 0.47,
+       "end_s": 0.56
+      },
+      {
+       "text": "quimia?",
+       "start_s": 0.56,
+       "end_s": 0.96
+      },
+      {
+       "text": "-",
+       "start_s": 0.96,
+       "end_s": 1.0
+      },
+      {
+       "text": "Sí,",
+       "start_s": 1.0,
+       "end_s": 1.22
+      },
+      {
+       "text": "por",
+       "start_s": 1.22,
+       "end_s": 1.35
+      },
+      {
+       "text": "favor.",
+       "start_s": 1.35,
+       "end_s": 1.76
+      }
+     ]
+    },
+    "tr": {
+     "language": "tr",
+     "words": [
+      {
+       "text": "-",
+       "start_s": 0.0,
+       "end_s": 0.06
+      },
+      {
+       "text": "Kim",
+       "start_s": 0.06,
+       "end_s": 0.25
+      },
+      {
+       "text": "bilirim?",
+       "start_s": 0.25,
+       "end_s": 0.9
+      },
+      {
+       "text": "-",
+       "start_s": 0.9,
+       "end_s": 0.93
+      },
+      {
+       "text": "Evet,",
+       "start_s": 0.93,
+       "end_s": 1.14
+      },
+      {
+       "text": "kimse",
+       "start_s": 1.14,
+       "end_s": 1.32
+      },
+      {
+       "text": "bilmiyor.",
+       "start_s": 1.32,
+       "end_s": 1.76
+      }
+     ]
+    }
+   }
+  },
+  "M1_08": {
+   "spoken_truth": "Spanish: \"Acá tenemos salsas tradicionales argentinas\" (Lucas)",
+   "duration_s": 2.7,
+   "prod_record": {
+    "has_speech": true,
+    "transcript": "Acá tenemos salsas tradicionales argentinas.",
+    "segments": [
+     {
+      "start_s": 0.0,
+      "end_s": 2.1,
+      "text": "Acá tenemos salsas tradicionales argentinas."
+     }
+    ]
+   },
+   "prod_whisper_first_pass": {
+    "language": "es",
+    "words": [
+     {
+      "text": "Acá",
+      "start_s": 0.0,
+      "end_s": 0.42
+     },
+     {
+      "text": "tenemos",
+      "start_s": 0.42,
+      "end_s": 0.84
+     },
+     {
+      "text": "salsas",
+      "start_s": 0.84,
+      "end_s": 1.26
+     },
+     {
+      "text": "tradicionales",
+      "start_s": 1.26,
+      "end_s": 1.68
+     },
+     {
+      "text": "argentinas.",
+      "start_s": 1.68,
+      "end_s": 2.1
+     }
+    ]
+   },
+   "local_whisper_medium": {
+    "auto": {
+     "language": "es",
+     "words": [
+      {
+       "text": "-",
+       "start_s": 0.0,
+       "end_s": 0.04
+      },
+      {
+       "text": "Acá",
+       "start_s": 0.04,
+       "end_s": 0.22
+      },
+      {
+       "text": "tenemos",
+       "start_s": 0.22,
+       "end_s": 0.56
+      },
+      {
+       "text": "salsas",
+       "start_s": 0.56,
+       "end_s": 0.83
+      },
+      {
+       "text": "tradicionales",
+       "start_s": 0.83,
+       "end_s": 1.45
+      },
+      {
+       "text": "argentinas",
+       "start_s": 1.45,
+       "end_s": 2.0
+      }
+     ]
+    },
+    "en": {
+     "language": "en",
+     "words": [
+      {
+       "text": "(speaking",
+       "start_s": 0.0,
+       "end_s": 1.32
+      },
+      {
+       "text": "in",
+       "start_s": 1.32,
+       "end_s": 1.61
+      },
+      {
+       "text": "foreign",
+       "start_s": 1.61,
+       "end_s": 2.62
+      },
+      {
+       "text": "language)",
+       "start_s": 2.62,
+       "end_s": 4.0
+      }
+     ]
+    },
+    "es": {
+     "language": "es",
+     "words": [
+      {
+       "text": "-",
+       "start_s": 0.0,
+       "end_s": 0.04
+      },
+      {
+       "text": "Acá",
+       "start_s": 0.04,
+       "end_s": 0.22
+      },
+      {
+       "text": "tenemos",
+       "start_s": 0.22,
+       "end_s": 0.56
+      },
+      {
+       "text": "salsas",
+       "start_s": 0.56,
+       "end_s": 0.83
+      },
+      {
+       "text": "tradicionales",
+       "start_s": 0.83,
+       "end_s": 1.45
+      },
+      {
+       "text": "argentinas",
+       "start_s": 1.45,
+       "end_s": 2.0
+      }
+     ]
+    },
+    "tr": {
+     "language": "tr",
+     "words": [
+      {
+       "text": "Burda",
+       "start_s": 0.0,
+       "end_s": 0.33
+      },
+      {
+       "text": "tarzı",
+       "start_s": 0.33,
+       "end_s": 0.72
+      },
+      {
+       "text": "alçak",
+       "start_s": 0.72,
+       "end_s": 1.11
+      },
+      {
+       "text": "tarzı",
+       "start_s": 1.11,
+       "end_s": 1.5
+      },
+      {
+       "text": "var.",
+       "start_s": 1.5,
+       "end_s": 2.0
+      }
+     ]
+    }
+   }
+  },
+  "M1_09": {
+   "spoken_truth": "Spanish: \"Gracias\"",
+   "duration_s": 2.5,
+   "prod_record": {
+    "has_speech": true,
+    "transcript": "Gracias.",
+    "segments": [
+     {
+      "start_s": 0.0,
+      "end_s": 0.8,
+      "text": "Спасибо."
+     }
+    ]
+   },
+   "prod_whisper_first_pass": {
+    "language": "ru",
+    "words": [
+     {
+      "text": "Спасибо.",
+      "start_s": 0.0,
+      "end_s": 0.8
+     }
+    ]
+   },
+   "local_whisper_medium": {
+    "auto": {
+     "language": "es",
+     "words": [
+      {
+       "text": "¡Gracias!",
+       "start_s": 0.0,
+       "end_s": 2.0
+      }
+     ]
+    },
+    "en": {
+     "language": "en",
+     "words": [
+      {
+       "text": "Gracias!",
+       "start_s": 0.0,
+       "end_s": 2.0
+      }
+     ]
+    },
+    "es": {
+     "language": "es",
+     "words": [
+      {
+       "text": "¡Gracias!",
+       "start_s": 0.0,
+       "end_s": 2.0
+      }
+     ]
+    },
+    "tr": {
+     "language": "tr",
+     "words": [
+      {
+       "text": "Teşekkürler.",
+       "start_s": 0.0,
+       "end_s": 1.0
+      }
+     ]
+    }
+   }
+  }
+ }
+}
