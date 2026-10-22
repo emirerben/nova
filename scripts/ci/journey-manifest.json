@@ -995,7 +995,8 @@
       "xctests": [
         "KriaTests/SuggestionChipsTests/testContractResponseDecodesInRankOrderAndDropsOnlyTheBrokenChip",
         "KriaTests/SuggestionChipsTests/testADeliveredSetIsNeverReRankedOrRelabelledUnderTheSameSetID",
-        "KriaTests/SuggestionChipsTests/testTheTurnBodyCarriesTheTapOnlyWhenThereIsOne"
+        "KriaTests/SuggestionChipsTests/testTheTurnBodyCarriesTheTapOnlyWhenThereIsOne",
+        "KriaUITests/CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips"
       ],
       "paths": [
         "src/apps/api/app/agents/_registry.py",

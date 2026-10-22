@@ -30,8 +30,10 @@ from app.services.creator_render_contract import (
     DeclineReason,
     plan_voiceover_path,
     read_render_contract,
+    source_group_text_matches,
     stamped_plan_contract,
     text_field_path,
+    text_source_group,
     unresolved_field_path,
 )
 
@@ -579,7 +581,17 @@ def _verify_text(
                 targets = timeline[requirement.shot_index : requirement.shot_index + 1]
             elif requirement.media_id:
                 targets = [seg for seg in timeline if seg.media_id == requirement.media_id]
-            if not targets or any(
+            group = text_source_group(contract.exact_texts, requirement)
+            if group:
+                matches = source_group_text_matches(
+                    matches,
+                    group=group,
+                    media_id=requirement.media_id or "",
+                    spans=[(seg.media_id, seg.start_s, seg.end_s) for seg in timeline],
+                    tolerance_s=tolerance,
+                    minimum_overlap_s=1e-6,
+                )
+            elif not targets or any(
                 not any(
                     row["start_s"] >= seg.start_s - tolerance
                     and row["end_s"] <= seg.end_s + tolerance
