@@ -91,6 +91,11 @@ available `original` row is what makes it usable in Visuals. The analysis proxy
 row is never read as, or turned into, the original. Finalize streams the
 pinned generation through sha256 and probes it with ranged reads, so a multi-GB
 original is never staged on the API machine's RAM-backed `/tmp`.
+Attaching an original never resets the asset to `pending` and never dispatches
+library analysis: a device-only video's status, facts and analysis stay on its
+`analysis_proxy` (analysis and catalogue facts prefer that role), and the list
+serializes the proxy before the original so older clients still bind it for
+Footage.
 
 A retry with the same `client_upload_id` (`ios-original-<asset>-<sha>`) returns
 the same source. That identity is fixed, so reserve re-opens it with a fresh

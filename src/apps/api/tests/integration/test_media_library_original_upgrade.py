@@ -13,6 +13,10 @@ Failure modes this file guards (written before the fix):
 - F17 the fixed upload identity dead-ends once its target is cleaned up, or once the
       verified cloud original is lost (every later upgrade replays the stale row);
 - F18 the upgrade flips the asset's contract, so its proxy can no longer be repaired.
+- F19 attaching the original resets a ready asset to pending and re-runs paid library
+      analysis on the multi-GB original (whose failure would then mark Footage failed);
+- F20 an attached original is listed first, so pre-KRI-822 clients bind it for Footage;
+- F21 the real generation-pinned stream / probe input yields wrong or partial bytes.
 
 Runs the real routes and the real byte verification (sha256 + ffprobe) against
 PostgreSQL; only GCS is replaced by a local byte store.
@@ -406,3 +410,70 @@ async def test_proxy_repair_still_works_after_the_upgrade(world):
         ),
     )
     assert reserved.status_code == 200, reserved.text
+
+
+@pytest.mark.asyncio
+async def test_attached_original_keeps_analysis_and_footage_on_the_proxy(world, monkeypatch):
+    from app.services.media_library_analysis import _requested_source
+
+    w = world
+    dispatched = []
+    monkeypatch.setattr(ingest, "dispatch_library_analysis", lambda *a: dispatched.append(a))
+    async with AsyncSessionLocal() as db:
+        asset = await db.get(MediaAsset, w.asset)
+        asset.status = "ready"
+        await db.commit()
+
+    finalized = await _upload(w, _upgrade_body(w), w.original)
+    assert finalized.status_code == 200, finalized.text
+    # F19: no new library analysis; the asset stays ready on its proxy facts.
+    assert dispatched == []
+    async with AsyncSessionLocal() as db:
+        assert (await db.get(MediaAsset, w.asset)).status == "ready"
+    chosen = _requested_source(str(w.asset), str(w.owner), None)
+    assert chosen is not None and chosen.source_id == str(w.proxy)
+    assert chosen.role == "analysis_proxy"
+    # F20: older clients take the first available source for phone Footage.
+    listed = (await w.client.get("/me/media-assets")).json()["assets"]
+    mine = next(row for row in listed if row["id"] == str(w.asset))
+    assert [source["role"] for source in mine["sources"]] == ["analysis_proxy", "original"]
+
+
+def test_generation_stream_and_probe_input_read_the_pinned_bytes(
+    monkeypatch, tmp_path, original_mov
+):
+    """F21: the real local-storage branches, no monkeypatched storage."""
+    monkeypatch.setattr(storage.settings, "storage_provider", "local")
+    monkeypatch.setattr(storage.settings, "e2e_fixtures", True)
+    monkeypatch.setattr(storage.settings, "local_storage_root", str(tmp_path))
+    name = "users/u/media-library/x/source-x.mov"
+    storage.local_object_path(name).parent.mkdir(parents=True, exist_ok=True)
+    storage.local_object_path(name).write_bytes(original_mov)
+    generation = storage.object_metadata(name).generation
+    streamed = b"".join(
+        storage.iter_object_generation(
+            name, generation=generation, size=len(original_mov), chunk_size=1000
+        )
+    )
+    assert hashlib.sha256(streamed).hexdigest() == hashlib.sha256(original_mov).hexdigest()
+    probed = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "csv=p=0",
+            storage.probe_input_for_generation(name, generation=generation),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    assert "video" in probed.stdout
+    with pytest.raises(FileNotFoundError):
+        list(storage.iter_object_generation(name, generation="stale", size=len(original_mov)))
+    with pytest.raises(FileNotFoundError):
+        storage.probe_input_for_generation(name, generation="stale")

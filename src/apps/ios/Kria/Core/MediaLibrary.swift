@@ -252,6 +252,8 @@ extension KriaAPI {
         let contentType: String
         if type?.conforms(to: .quickTimeMovie) == true { contentType = "video/quicktime" }
         else if type?.conforms(to: .mpeg4Movie) == true { contentType = "video/mp4" }
+        // .m4v / other extensions: read the ISO-BMFF brand, so a relink never loops on the name.
+        else if let head = try? FileHandle(forReadingFrom: file).read(upToCount: 12), head.count == 12, head.subdata(in: 4..<8) == Data("ftyp".utf8) { contentType = head.subdata(in: 8..<12) == Data("qt  ".utf8) ? "video/quicktime" : "video/mp4" }
         else { throw SavedMediaError.originalRequired }
         // Account removal fences every later original upload.
         guard !FileManager.default.fileExists(atPath: MediaLibraryOriginals(owner: owner).erasureMarker.path) else { throw SourceAssetError.invalidBinding }

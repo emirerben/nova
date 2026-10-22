@@ -565,7 +565,10 @@ async def register_verified_source(
                     or old_copy.size != previous.byte_count
                 ):
                     previous.status = "missing"
-    asset.status = "pending"
+    if not attach_original:
+        # A full original added to a device-only video (KRI-822) is a second copy of
+        # already-analysed footage: the asset's status and facts stay on its proxy.
+        asset.status = "pending"
     source = MediaAssetSource(
         id=uuid.uuid4(),
         user_id=owner_id,
@@ -742,7 +745,9 @@ async def finalize_library_upload(
         receipt.status = "adopted"
     # Duplicate upload receipts stay reserved for bounded cleanup.
     row.asset_id, row.source_id, row.status = asset.id, source.id, "finalized"
-    row.client_event_id, row.analysis_dispatch_pending = client_event_id, True
+    # KRI-822: attaching an original never re-runs library analysis on the full file.
+    row.client_event_id = client_event_id
+    row.analysis_dispatch_pending = not payload.get("attach_original")
     await db.commit()
     await _publish_reservation(db, row)
     return asset, source
