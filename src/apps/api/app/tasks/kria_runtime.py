@@ -4260,6 +4260,8 @@ def _reasked_choice_question(
     thread_id: uuid.UUID,
     decline: dict[str, str] | None,
     job: Job,
+    *,
+    source_event_id: uuid.UUID | None = None,
 ) -> dict[str, Any] | None:
     """The thread's latest question for this refusal's choice, asked again (KRI-795).
 
@@ -4269,7 +4271,10 @@ def _reasked_choice_question(
     nothing replays is worse than plain words. The answer the refused render carried is not
     recommended again.
     """
-    from app.services.choice_questions import reask_choice_question  # noqa: PLC0415
+    from app.services.choice_questions import (  # noqa: PLC0415
+        fold_scoped_answers,
+        reask_choice_question,
+    )
 
     if (
         decline is None
@@ -4294,7 +4299,32 @@ def _reasked_choice_question(
     question = asked.get("choice_question") if isinstance(asked, dict) else None
     if not isinstance(question, dict):
         return None
-    return reask_choice_question(question, refused=_pinned_answer(job, conflict))
+    rows = db.execute(
+        select(
+            CreationThreadEvent.role,
+            CreationThreadEvent.payload,
+            CreationThreadEvent.sequence,
+        )
+        .where(CreationThreadEvent.thread_id == thread_id)
+        .order_by(CreationThreadEvent.sequence)
+    ).all()
+    history = [(role, payload) for role, payload, _sequence in rows]
+    if count_asks(history, conflict, question.get("input_digest")) >= MAX_ASKS_PER_QUESTION:
+        return None
+    # An old render can finish after a new server-derived answer is queued. Its
+    # failure must not reopen a choice the creator has already changed/confirmed.
+    source = db.get(CreationThreadEvent, source_event_id) if source_event_id else None
+    refused = _pinned_answer(job, conflict)
+    if source is not None:
+        approved = fold_scoped_answers(
+            (role, payload) for role, payload, sequence in rows if sequence <= source.sequence
+        ).get(conflict)
+        current = fold_scoped_answers(history).get(conflict)
+        if current is not None and (approved is None or current.index > approved.index):
+            return None
+        if refused is None and approved is not None:
+            refused = approved.option_key
+    return reask_choice_question(question, refused=refused)
 
 
 def _pinned_answer(job: Job, conflict: str) -> str | None:
@@ -5963,7 +5993,13 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                     )
                 )
             else:
-                reasked = _reasked_choice_question(db, thread.id, device_decline, job)
+                reasked = _reasked_choice_question(
+                    db,
+                    thread.id,
+                    device_decline,
+                    job,
+                    source_event_id=getattr(turn, "source_event_id", None),
+                )
                 failure_content = _device_refusal_copy(
                     device_decline, last_good=last_good, question=reasked
                 )
@@ -6022,7 +6058,13 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             # so the "can't render yet" table line blamed the wrong thing, and "tell me which
             # option" pointed at options nobody showed: name what is unresolved and ask the
             # thread's own question again when there is one.
-            reasked = _reasked_choice_question(db, thread.id, typed_decline, job)
+            reasked = _reasked_choice_question(
+                db,
+                thread.id,
+                typed_decline,
+                job,
+                source_event_id=getattr(turn, "source_event_id", None),
+            )
             failure_content = _choice_refusal_copy(typed_decline, reasked)
             says_way_forward = True
         elif typed_decline is not None and (
