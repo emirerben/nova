@@ -21,3 +21,34 @@ Current creator-language/creator-direction source logic and prompt-template byte
 ## Verification and limits
 
 92 existing bank/schema/ranking/coupling/overlay-example guards pass. Full free recorded evals:2132 passed,15 skipped,7 known expected failures. Existing consuming-agent tests run in /private/tmp/nova-1553-consuming-agents.log; normal preship and exact-head hosted checks remain required. Replays validate structural contracts, not fresh model preference, organic causality or a new physical export. No paid/live/judge result is claimed or required for these bounded historical-data corrections.
+
+The four consuming-agent suites also passed84 cases. The following offline acceptance command reads the retained primary snapshot and actual bank files; its original-source control must expose both wrongly weighted reset entries before the corrected artifacts pass:
+
+```python
+import json, statistics, subprocess
+from pathlib import Path
+root = Path('/Users/emirerben/Projects/nova/research/tiktok/raw')
+records = {}
+for path in root.glob('*-20261011.json'):
+    source = json.loads(path.read_text())
+    median = statistics.median(row['view_count'] for row in source['videos'] if row.get('view_count', 0) > 0)
+    for row in source['videos']:
+        records[row['id']] = (source, row, median)
+banks = {}
+for name, key in [('persona_archetypes', 'archetypes'), ('content_ideas', 'ideas')]:
+    path = 'src/apps/api/prompts/' + name + '.json'
+    current = {row['id']: row for row in json.loads(Path(path).read_text())[key]}
+    original = {row['id']: row for row in json.loads(subprocess.check_output(['git', 'show', 'c8e5604f76064f2e98c31973dc1c12ba913872c0:' + path]))[key]}
+    banks.update(current)
+    wrong = 'wellness-ritual-reset-01' if name == 'persona_archetypes' else 'routine-reset-after-disruption-01'
+    assert original[wrong]['performance']['view_index'] == 19.4  # Historical wrong-post control.
+    assert current[wrong].get('performance') is None
+for concept, post in [('early-riser-commitment-01', '7669218300676607239'), ('early-morning-commitment-01', '7669218300676607239'), ('series-comeback-accountability-01', '7668975853270813960'), ('audience-opinion-fashion-01', '7684196677896506642')]:
+    source, row, median = records[post]
+    signal = banks[concept]['performance']
+    assert signal['view_index'] == round(row['view_count'] / median, 4)
+    assert signal['engagement_rate'] == round(sum(row[key] for key in ('like_count', 'comment_count', 'repost_count')) / row['view_count'], 6)
+    assert signal['sampled_at'] == source['fetched_at'][:10]
+    assert '/video/' + post in banks[concept]['source']
+print('PASS: two historical wrong-post controls retained; four current references match independent dated source counts and post identity.')
+```
