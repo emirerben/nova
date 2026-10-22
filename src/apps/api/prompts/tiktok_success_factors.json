@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-22-research-11",
+  "version": "2026-10-22-research-18",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -184,8 +184,8 @@
         "plan"
       ],
       "provenance": "corpus",
-      "evidence": "One captioned 5am hike post had 12,100 views, 19.9505 times its account's median in the 20-post 11 October snapshot; (3,052 likes + 2 comments + 2 reposts) / 12,100 = 25.2562%. Highest observed engagement rate among these 80 sampled posts. No causal or generalization claim.",
-      "source": "https://www.tiktok.com/@izzsiomoi/video/7669218300676607239 (snapshot 2026-10-11T19:01:07.323428+00:00; observed caption and counts; causal effect unmeasured)"
+      "evidence": "The same captioned5am hike post is now12,100views /612.5 account-sample median =19.7551, with25.2727% engagement in the20-post18October snapshot. This repeats the same observed post, not an independent new success. Hook causality and production style are unmeasured.",
+      "source": "https://www.tiktok.com/@izzsiomoi/video/7669218300676607239 (snapshot 2026-10-18T19:01:57.074551+00:00; observed caption and counts; causal effect unmeasured)"
     },
     {
       "id": "series-comeback-nostalgia-corpus-11",
@@ -196,8 +196,20 @@
         "persona"
       ],
       "provenance": "corpus",
-      "evidence": "One farm-vlog return caption had 731,300 views, 19.3722 times its account's 37,750 median in the 20-post 11 October snapshot; engagement 8.1437%. It was not the account's largest post: the snapshot also includes a disclosed sponsored 10.2M-view post. No causal, organic-reach or comment/save lift claim.",
-      "source": "https://www.tiktok.com/@nermozdemir/video/7668975853270813960 (snapshot 2026-10-11T19:01:31.838550+00:00; observed caption and counts; causal effect unmeasured)"
+      "evidence": "The same farm-vlog return post is now733,400views /38,300 account-sample median =19.1488, with8.1364% engagement in the20-post18October snapshot. Repeated post observation, not an independent new success; a disclosed sponsored post remains larger. No causal, organic-reach or comment/save lift claim.",
+      "source": "https://www.tiktok.com/@nermozdemir/video/7668975853270813960 (snapshot 2026-10-18T19:02:29.536897+00:00; observed caption and counts; causal effect unmeasured)"
+    },
+    {
+      "id": "open-choice-engagement-corpus-11",
+      "factor": "Invite a genuine either-or styling response when a choice fits the creator's footage and request",
+      "why": "A concrete choice offers viewers a way to respond. Whether that choice increases engagement was not measured.",
+      "applies_to": [
+        "hook",
+        "plan"
+      ],
+      "provenance": "corpus",
+      "evidence": "One jacket-choice caption had19,100views /3,567 account-sample median =5.3546, with13.5916% engagement in the20-post18October snapshot. This is the same post as the11October observation, not a fresh independent success or a matched-length comparison.",
+      "source": "https://www.tiktok.com/@allexmarielle/video/7684196677896506642 (snapshot 2026-10-18T19:01:42.480515+00:00; observed caption and counts; causal effect unmeasured)"
     }
   ]
 }

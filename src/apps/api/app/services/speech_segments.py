@@ -245,6 +245,67 @@ def ground_excerpt(
     )
 
 
+# KRI-790: a line the creator quotes from memory ("Hi, I'm Karolina, I'm from Ecuador") can
+# differ from what was transcribed ("Hi, I'm Carolina from Ecuador") by a letter and a dropped
+# short word. As token counts that is 5 of 8 (below FUZZY_MIN_OVERLAP); as folded text it is
+# 93% the same. Shorter quotes stay exact: three letters off in two words is another line.
+LINE_MIN_RATIO = 0.85
+_LINE_MIN_TOKENS = 3
+_LINE_WIDTH_SLACK = 3
+
+
+def ground_line(
+    words: Sequence[Any],
+    quote: str,
+    *,
+    duration_s: float | None = None,
+    min_after_s: float = 0.0,
+) -> GroundedExcerpt | None:
+    """``ground_excerpt``, else the run of words that reads most like ``quote`` (KRI-790).
+
+    The fallback compares folded text character by character (``SequenceMatcher`` ratio at
+    least ``LINE_MIN_RATIO``) over runs within ``_LINE_WIDTH_SLACK`` tokens of the quote's own
+    length, so a misheard name or a dropped "I'm" still finds the line, and the tightest,
+    earliest best run wins. Never guessed below the ratio, and never for a quote of fewer
+    than ``_LINE_MIN_TOKENS`` tokens.
+    """
+    grounded = ground_excerpt(words, quote, duration_s=duration_s, min_after_s=min_after_s)
+    if grounded is not None:
+        return grounded
+    target = fold_tokens(quote)
+    stream = _token_stream([_word_dict(w) for w in words or []])
+    if len(target) < _LINE_MIN_TOKENS or not stream:
+        return None
+    first_index = next((i for i, t in enumerate(stream) if t.start_s >= min_after_s - 1e-6), None)
+    if first_index is None:
+        return None
+    from difflib import SequenceMatcher  # noqa: PLC0415
+
+    tokens = [t.text for t in stream]
+    want = " ".join(target)
+    low = max(2, len(target) - _LINE_WIDTH_SLACK)
+    high = len(target) + _LINE_WIDTH_SLACK
+    best: tuple[float, int, int] | None = None
+    for start in range(first_index, len(tokens)):
+        for width in range(low, min(high, len(tokens) - start) + 1):
+            run = " ".join(tokens[start : start + width])
+            ratio = SequenceMatcher(None, want, run, autojunk=False).ratio()
+            if ratio >= LINE_MIN_RATIO and (best is None or ratio > best[0] + 1e-9):
+                best = (ratio, start, start + width - 1)
+    if best is None:
+        return None
+    ratio, first, last = best
+    start_s, end_s = _safe_window(stream, first, last, duration_s)
+    return GroundedExcerpt(
+        start_s=start_s,
+        end_s=end_s,
+        word_start_s=stream[first].start_s,
+        word_end_s=stream[last].end_s,
+        exact=False,
+        overlap=round(ratio, 3),
+    )
+
+
 def transcribe_clip(
     local_path: str, *, language: str | None = None, run_context=None
 ) -> tuple[list[dict[str, Any]], str]:

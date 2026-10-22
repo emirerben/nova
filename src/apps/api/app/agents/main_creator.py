@@ -95,9 +95,11 @@ log = structlog.get_logger()
 # for photos, videos, stickers and sounds, so "Show MEROPE ... the first time she says Merope"
 # arrived with no trigger), plus `speaker` when someone other than the creator says it.
 # v66 combines both authored changes without losing either prompt instruction.
+# v66 (KRI-792): named spoken cuts carry cut_lines; caption spellings remain intact.
 # KRI-789: quoted start / end LINES inside a take are a `timing` trim (`start_line` /
 # `end_line`), never an `order` requirement; route places keep `order` (v67).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-22-v67"
+# v68 combines caption spelling, spoken-text triggers/speaker, quoted trims and named cuts.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-22-v68"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -423,7 +425,12 @@ Merope" => a text requirement, literal "MEROPE", facts {"triggers": ["Merope"], 
 "she"}; keep a take whole, uncut => {"keep_whole_take": true}; end on a
 particular shot, photo or badge => {"closing": "<the creator's words for it>"}; remove pauses,
 filler sounds or retakes from the speech => {"speech_cleanup": true}, keep them =>
-{"speech_cleanup": false}; captions => {"captions": "on"}, {"captions": "off"} or {"captions":
+{"speech_cleanup": false}; cut out particular spoken words (a slip, a half question, a line, "the
+part where I say ...") => {"speech_cleanup": true, "cut_lines": ["with bread, no,"]}, one item per
+stretch in the creator's exact words, quoted or described, never translated. Quoted speech
+bounds use the timing requirement's "start_line"/"end_line", never a cut line; ordered clips
+or places still use the order requirement's "start"/"end". Captions =>
+{"captions": "on"}, {"captions": "off"} or {"captions":
 "word_by_word"} (karaoke, one word at a time), plus {"caption_language": "en"} (a two-letter
 code) when they name the captions' language ("Türkçe altyazı" => "tr"), plus {"spellings":
 ["Oblea de la Casa", "Merope"]} when they list words or names to spell a certain way in the
@@ -537,8 +544,10 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         name="nova.creator.main",
         prompt_id="main_creator",
         prompt_version=MAIN_CREATOR_PROMPT_VERSION,
-        model="gemini-3.1-pro-preview",
-        fallback_models=("gemini-3.6-flash",),
+        model=settings.main_creator_model,
+        fallback_models=("gemini-3.6-flash",)
+        if settings.main_creator_model.startswith("gemini")
+        else (),
         # KRI-118 item 4: bumped from 2 -> 3 alongside `schema_retry_limit`
         # below -- `_run_on_model`'s loop bounds EVERY retry path (transient/
         # refusal/schema) by `max_attempts`, so a `schema_retry_limit` above
@@ -553,7 +562,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         # of ending outcome-unknown. A typical "high" call there takes 57-106 s.
         timeout_s=130.0,
         # Reserve output capacity for the full source manifest.
-        thinking_level="high",
+        thinking_level=settings.main_creator_thinking_level,
         sensitive_io=True,
         # This agent's output schema (bounded editorial choices across many
         # optional fields, typed evidence, clip intents) is wide enough that
