@@ -22,3 +22,7 @@ The wrong role=any assertion was tightened to require both source bindings. No a
 - Full Don Julio request fulfillment, physical phone rendering and exported result review remain pending under KRI-802. Offline contract controls do not prove these. No paid model call or device operation was made.
 
 KRI-805 (#1739) supplies the safe shorter-answer binding path and must land before this change. Later main integration and preship results are recorded below.
+
+## Current-main and brief dependency integration
+
+Merged origin/main 7eaf217cb15bc8ebd8d2fea552bbcfe3ee7b0fea and #1739 source ed0523dac2398be815eb33c3616d868a3dd16b31 normally. Only the appended gate ledger conflicted; all common entries were byte-equal as parsed JSON and both unique incident gates were retained. No source/assertion conflict occurred. Combined focused suite: 231 passed, including the real KRI-805 parser/binder/planner path. Exact-head hosted checks and overlay artifact inspection remain required.
