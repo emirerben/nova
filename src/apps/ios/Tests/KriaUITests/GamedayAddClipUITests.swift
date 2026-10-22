@@ -69,7 +69,18 @@ final class GamedayAddClipUITests: XCTestCase {
 
     private func waitUntilHittable(_ element: XCUIElement) {
         XCTAssertTrue(element.waitForExistence(timeout: 5))
-        let hittable = expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: element)
+        // After inspector dismissal XCUI can briefly expose the whole window
+        // with infinite origin and zero size. isHittable aborts on that snapshot
+        // instead of returning false, so wait for usable geometry first within
+        // the same deadline. A genuinely unavailable control still fails.
+        let hittable = expectation(for: NSPredicate { _, _ in
+            guard element.exists else { return false }
+            let frame = element.frame
+            guard frame.origin.x.isFinite, frame.origin.y.isFinite,
+                  frame.width.isFinite, frame.height.isFinite,
+                  frame.width > 0, frame.height > 0 else { return false }
+            return element.isHittable
+        }, evaluatedWith: element)
         XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: 5), .completed, "Control must be hittable: \(element.identifier)")
     }
 
