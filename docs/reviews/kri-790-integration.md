@@ -97,3 +97,18 @@ line. The transcript also confirms both unwanted phrases remain: actual phrase
 deletion and speaker-specific MEROPE placement remain KRI-724/KRI-787 work.
 Original case source observations are the kit's `T1_caro_full_take_talking/README.md`.
 No complete request, physical-iPhone export, correction/reopen, or rollout claim.
+
+## Current-base refresh — 22 October 2026
+
+Merged current main `a33c4b21b` (the unrelated research #1553 and release
+metadata) into this existing candidate without a product conflict; the shared journey
+manifest auto-merged and still contains the unique KRI-789 take-trim journey. The
+affected quoted-window, opening-cut, cleanup-off, recorded-parser, PostgreSQL runtime
+and gate checks passed: 121 passed, 1 intentional skip. Preship passed its scoped
+Ruff, drift, release, reliability, journey and fix-chain checks once the PR evidence
+record was refreshed. The current PR head still requires hosted CI.
+
+The pending scope is unchanged: the actual physical-iPhone original-T1 export and
+the complete original request (phrase deletion, Caro-specific MEROPE placement,
+captions/layout, correction/reopen and production verification) remain owned by
+KRI-787/KRI-829 and are not claimed here.
