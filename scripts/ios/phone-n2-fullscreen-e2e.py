@@ -25,7 +25,9 @@ import uuid
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-DEFAULT_SOURCE = Path.home() / "Downloads/kria-cabin-test/upload/N2_cabin_review_narrated"
+DEFAULT_SOURCE = (
+    Path.home() / "Downloads/kria-cabin-test/upload/N2_cabin_review_narrated"
+)
 sys.path.insert(0, str(REPO / "src/apps/api"))
 for name, value in {
     "STORAGE_BUCKET": "nova-test",
@@ -61,7 +63,16 @@ def _fingerprint(path: Path) -> tuple[str, int]:
 def _duration(path: Path) -> float:
     return float(
         subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nk=1:nw=1", str(path)],
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=nk=1:nw=1",
+                str(path),
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -72,17 +83,36 @@ def _duration(path: Path) -> float:
 def _probe_video(path: Path) -> tuple[float, int, int, int]:
     probe = json.loads(
         subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_streams", "-of", "json", str(path)],
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_streams",
+                "-of",
+                "json",
+                str(path),
+            ],
             check=True,
             capture_output=True,
             text=True,
         ).stdout
     )["streams"][0]
     rotation = next(
-        (entry.get("rotation", 0) for entry in probe.get("side_data_list", []) if "rotation" in entry),
+        (
+            entry.get("rotation", 0)
+            for entry in probe.get("side_data_list", [])
+            if "rotation" in entry
+        ),
         0,
     )
-    return _duration(path), int(probe["width"]), int(probe["height"]), int(rotation) % 360
+    return (
+        _duration(path),
+        int(probe["width"]),
+        int(probe["height"]),
+        int(rotation) % 360,
+    )
 
 
 def _binding(path: Path, media_id: str) -> PhoneSourceBinding:
@@ -117,12 +147,28 @@ def _visual(path: Path, media_id: str) -> PhoneVisualBinding:
 
 def _cover_rgb(path: Path, at_s: float, x: int, y: int) -> list[int]:
     """Reference RGB from ffmpeg's cover crop, away from title/caption bands."""
-    image_args = ["-loop", "1"] if path.suffix.lower() in {".jpg", ".jpeg", ".png"} else []
+    image_args = (
+        ["-loop", "1"] if path.suffix.lower() in {".jpg", ".jpeg", ".png"} else []
+    )
     raw = subprocess.run(
         [
-            "ffmpeg", "-v", "error", *image_args, "-ss", str(at_s), "-i", str(path), "-vf",
+            "ffmpeg",
+            "-v",
+            "error",
+            *image_args,
+            "-ss",
+            str(at_s),
+            "-i",
+            str(path),
+            "-vf",
             "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
-            "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
         ],
         check=True,
         capture_output=True,
@@ -136,7 +182,10 @@ def _active_source_time(recipe, media_id: str, timeline_s: float) -> float:
     asset_id = next(asset.id for asset in recipe.assets if asset.id == media_id)
     for clip in next(track for track in recipe.tracks if track.id == "narrated").clips:
         end_s = clip.timeline_start + clip.source_duration / clip.rate
-        if clip.source_asset_id == asset_id and clip.timeline_start <= timeline_s < end_s:
+        if (
+            clip.source_asset_id == asset_id
+            and clip.timeline_start <= timeline_s < end_s
+        ):
             return clip.source_start + (timeline_s - clip.timeline_start) * clip.rate
     raise ValueError(f"no active {media_id} clip at {timeline_s}")
 
@@ -166,16 +215,24 @@ def main() -> None:
     # Keep the private spoken copy local. These are deliberately authored,
     # estimated phrase windows for a deterministic renderer replay; they are
     # not claimed as transcription output or observed word timings.
-    caption_lines = [line.strip() for line in script.read_text().splitlines() if line.strip()]
+    caption_lines = [
+        line.strip() for line in script.read_text().splitlines() if line.strip()
+    ]
     caption_windows = [(0.2, 2.8), (3.0, 5.5), (5.7, 10.0), (10.3, 14.0), (14.2, 19.3)]
     if len(caption_lines) != len(caption_windows):
-        raise SystemExit("N2 script no longer matches the authored replay timing schedule")
+        raise SystemExit(
+            "N2 script no longer matches the authored replay timing schedule"
+        )
     caption_cues = [
         {"text": text, "start_s": start_s, "end_s": end_s}
         for text, (start_s, end_s) in zip(caption_lines, caption_windows, strict=True)
     ]
 
-    bindings = (_binding(loft, "n2-loft"), _binding(river, "n2-river"), _binding(laptop, "n2-laptop"))
+    bindings = (
+        _binding(loft, "n2-loft"),
+        _binding(river, "n2-river"),
+        _binding(laptop, "n2-laptop"),
+    )
     narration_sha, narration_bytes = _fingerprint(voiceover)
     narration = PhoneNarrationBed(
         plan_item_id="n2-cabin-replay",
@@ -187,9 +244,18 @@ def main() -> None:
     # slower than its speech window, exercising the narrated compiler's retime.
     recipe = compile_phone_narrated_plan(
         [
-            NarratedPhoneStep(step_id="loft", media_id="n2-loft", start_s=0, end_s=10.3),
-            NarratedPhoneStep(step_id="river", media_id="n2-river", start_s=10.3, end_s=14.0),
-            NarratedPhoneStep(step_id="laptop", media_id="n2-laptop", start_s=14.0, end_s=VOICEOVER_DURATION_S),
+            NarratedPhoneStep(
+                step_id="loft", media_id="n2-loft", start_s=0, end_s=10.3
+            ),
+            NarratedPhoneStep(
+                step_id="river", media_id="n2-river", start_s=10.3, end_s=14.0
+            ),
+            NarratedPhoneStep(
+                step_id="laptop",
+                media_id="n2-laptop",
+                start_s=14.0,
+                end_s=VOICEOVER_DURATION_S,
+            ),
         ],
         bindings,
         narration,
@@ -223,7 +289,7 @@ def main() -> None:
                     end_s=11.8,
                     display_mode="fullscreen",
                     fade=False,
-                )
+                ),
             ]
         ),
         visuals=(bathtub, photo),
@@ -247,10 +313,15 @@ def main() -> None:
     settings.phone_render_verified_features = sorted(recipe.required_capabilities)
     validate_phone_pilot_recipe(recipe, allow_editor_media=True)
     request = make_device_request(
-        job_id=uuid.UUID("d83cb0f5-d145-43dc-8f80-a0fa7b0a08e2"), variant_id="n2-fullscreen", revision=1, recipe=recipe
+        job_id=uuid.UUID("d83cb0f5-d145-43dc-8f80-a0fa7b0a08e2"),
+        variant_id="n2-fullscreen",
+        revision=1,
+        recipe=recipe,
     )
     (out / "status-n2-fullscreen.json").write_text(
-        DeviceRenderStatus(phase="awaiting_device", request=request).model_dump_json(indent=2)
+        DeviceRenderStatus(phase="awaiting_device", request=request).model_dump_json(
+            indent=2
+        )
     )
     x, y = 540, 960
     river_opening_t = 12.5
@@ -277,16 +348,73 @@ def main() -> None:
                 "expects_narration_audio": True,
                 "expected_copy": " ".join(["3 things we loved", *caption_lines]),
                 "samples": [
-                    {"name": "loft", "t": 2.8, "x": x, "y": y, "rgb": _cover_rgb(loft, _active_source_time(recipe, "n2-loft", 2.8), x, y)},
-                    {"name": "bathtub_photo", "t": 6.8, "x": x, "y": y, "rgb": _cover_rgb(bathtub_photo, 0, x, y)},
-                    {"name": "river_photo", "t": 10.8, "x": x, "y": y, "rgb": _cover_rgb(river_photo, 0, x, y)},
-                    {"name": "river_opening", "t": river_opening_t, "x": x, "y": y, "rgb": _cover_rgb(river, _active_source_time(recipe, "n2-river", river_opening_t), x, y)},
-                    {"name": "laptop_final", "t": laptop_final_t, "x": x, "y": y, "rgb": _cover_rgb(laptop, _active_source_time(recipe, "n2-laptop", laptop_final_t), x, y)},
+                    {
+                        "name": "loft",
+                        "t": 2.8,
+                        "x": x,
+                        "y": y,
+                        "rgb": _cover_rgb(
+                            loft, _active_source_time(recipe, "n2-loft", 2.8), x, y
+                        ),
+                    },
+                    {
+                        "name": "bathtub_photo",
+                        "t": 6.8,
+                        "x": x,
+                        "y": y,
+                        "rgb": _cover_rgb(bathtub_photo, 0, x, y),
+                    },
+                    {
+                        "name": "river_photo",
+                        "t": 10.8,
+                        "x": x,
+                        "y": y,
+                        "rgb": _cover_rgb(river_photo, 0, x, y),
+                    },
+                    {
+                        "name": "river_opening",
+                        "t": river_opening_t,
+                        "x": x,
+                        "y": y,
+                        "rgb": _cover_rgb(
+                            river,
+                            _active_source_time(recipe, "n2-river", river_opening_t),
+                            x,
+                            y,
+                        ),
+                    },
+                    {
+                        "name": "laptop_final",
+                        "t": laptop_final_t,
+                        "x": x,
+                        "y": y,
+                        "rgb": _cover_rgb(
+                            laptop,
+                            _active_source_time(recipe, "n2-laptop", laptop_final_t),
+                            x,
+                            y,
+                        ),
+                    },
                 ],
                 "caption_samples": [
-                    {"name": "title_on", "t": 1.0, "region": [0, 80, 1080, 620], "expect_text": True},
-                    {"name": "bath_caption_on", "t": 6.0, "region": [0, 1200, 1080, 1900], "expect_text": True},
-                    {"name": "river_caption_on", "t": 12.5, "region": [0, 1200, 1080, 1900], "expect_text": True},
+                    {
+                        "name": "title_on",
+                        "t": 1.0,
+                        "region": [0, 80, 1080, 620],
+                        "expect_text": True,
+                    },
+                    {
+                        "name": "bath_caption_on",
+                        "t": 6.0,
+                        "region": [0, 1200, 1080, 1900],
+                        "expect_text": True,
+                    },
+                    {
+                        "name": "river_caption_on",
+                        "t": 12.5,
+                        "region": [0, 1200, 1080, 1900],
+                        "expect_text": True,
+                    },
                 ],
                 "authored_replay": True,
                 "sequence_evidence": evidence,

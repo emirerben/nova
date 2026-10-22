@@ -6,6 +6,6 @@ The offline authored replay passed on iPhone 17 Pro Simulator (iOS 26.5, UUID `9
 
 Inspection artifacts from the passing export are local only: `/private/tmp/n2-fullscreen-e2e/frames/n2_fullscreen.mp4` and `n2_fullscreen-{loft,bathtub_photo,river_photo,river_opening,laptop_final}.png` in the same directory. Frame inspection confirmed the bathtub, river photo, river opening, final laptop, and exact title.
 
-After changing the sequence beat to the production `asset-n2-river-photo` identifier, the rebuilt canonical recipe JSON had the same immutable SHA-256 digest as the exported recipe: `2bb312039a0624eb00e03951fefd85446156b583f47716029e5177c59e398ba1`. The existing export evidence therefore remains applicable.
+After changing the sequence beat to the production `asset-n2-river-photo` identifier, the rebuilt canonical recipe had the same immutable SHA-256 digest as the exported recipe: `aeea2e6f8a3a4632bed7247c69da10b1adfd588dbbfeb83b4ec7e784105a82a7`. The digest normalizes the unordered capability set. The existing export evidence therefore remains applicable.
 
 This is renderer and data-flow evidence for an offline authored replay. It does not evaluate model understanding of the footage.

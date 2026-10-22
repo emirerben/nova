@@ -94,9 +94,9 @@ def test_voiceover_all_scope_resolves_follow_against_every_own_video(monkeypatch
 
 def test_voiceover_all_scope_still_rejects_visuals_video_follow(monkeypatch):
     manifest = _voiceover_manifest(monkeypatch)
-    strategy = _strategy(
-        selected_media_ids=[], following_clip_id="asset-river-video"
-    ).model_copy(update={"media_scope": "all"})
+    strategy = _strategy(selected_media_ids=[], following_clip_id="asset-river-video").model_copy(
+        update={"media_scope": "all"}
+    )
 
     plan = capabilities.compile_strategy_to_plan(manifest, strategy)
 
