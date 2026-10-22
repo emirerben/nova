@@ -814,7 +814,7 @@
       "tickets": [
         "KRI-542"
       ],
-      "symptom": "Main Creator at thinking=high exhausted the shared 8k output budget after a clip answer and the turn dead-ended ('plana d\u00f6n\u00fc\u015ft\u00fcremedim').",
+      "symptom": "Main Creator at thinking=high exhausted the shared 8k output budget after a clip answer and the turn dead-ended ('plana dönüştüremedim').",
       "boundary": "model_budget",
       "fix_prs": [
         1493
@@ -910,7 +910,7 @@
         "KRI-651",
         "KRI-674"
       ],
-      "symptom": "Phone Montage render-ready reply said 'Do\u011frulayamad\u0131m' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
+      "symptom": "Phone Montage render-ready reply said 'Doğrulayamadım' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
       "boundary": "publication",
       "fix_prs": [
         1503,
@@ -949,7 +949,7 @@
       "kill_switch": null,
       "evidence": {
         "offline_replay": "prod thread 7d7c5e25 shape: generation vs attempt id; KRI-651: pre-fix 6636cae71 fails the approved Unicode hook; fixed tree passes composition/reload/retry plus real-Postgres EN/TR publication receipt; fresh-edit title race: real-Postgres red control 97d44d932 repeats the provider call; first-step recovery fixes title-only completion for response/draft/read; KRI-674 follow-up timeout: stalled Pro transport causes both EN/TR healthy rendered follow-ups to fail before the fix (2 failed, 2 passed); Flash-first preserves successful clarification and single-call unknown recovery (4 passed).",
-        "live_model": "2026-10-17 final narrow configuration: Flash/medium/4096, prompt v11. Synthetic EN/TR title edits, ambiguous retry and 12k-contract/40-message compound rebuild: four one-call passes, 3.17\u201314.60s, $0.031400 settled. Earlier low-budget candidates omitted constraints or truncated and are not counted as passes. Production-account follow-up/retry re-send pending.",
+        "live_model": "2026-10-17 final narrow configuration: Flash/medium/4096, prompt v11. Synthetic EN/TR title edits, ambiguous retry and 12k-contract/40-message compound rebuild: four one-call passes, 3.17–14.60s, $0.031400 settled. Earlier low-budget candidates omitted constraints or truncated and are not counted as passes. Production-account follow-up/retry re-send pending.",
         "native_output": "Berlin re-run job a7d69a5b (2026-10-08) was the incident; post-fix phone re-send pending; KRI-651: native simulator export and pixel checks passed 2026-10-13 (exact hook, color emoji, no context caption)",
         "production": "merged 2026-10-08"
       },
@@ -1949,6 +1949,56 @@
         "Chat-time clip-intent planning (planner.py RunContext(request_id, creator_id)), clip_intent_resolution, clip_intent_requery and kria_clip_understanding runs carry no owner, so they are dropped from agent_run silently (no IntegrityError, not the same bug); not fixed here."
       ],
       "follow_ups": [],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-807-unmatched-skip-picker",
+      "tickets": [
+        "KRI-807",
+        "KRI-802"
+      ],
+      "symptom": "\"Skip the blurry shot of the empty table\" matched no clip (resolver n=0, one vision-check suspect thrown away), nothing was left out, and the held draft asked in free text \"Tell me which ones\" with no clip picker (Don Julio M1, turn bce4a799).",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-807",
+      "journey": "kri-761-look-alike-exclusions",
+      "paths": [
+        "src/apps/api/app/kria/clip_exclusions.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/services/clip_intent_resolution.py",
+        "src/apps/api/tests/fixtures/kri807_don_julio_m1_clips.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri807_unmatched_exclusion_picker.py",
+        "tests/kria/test_kri761_look_alike_exclusions.py",
+        "tests/kria/test_kri667_clip_exclusions.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": "kria_clip_selection_questions_enabled",
+      "evidence": {
+        "offline_replay": "Prod clip records of the held-draft turn (F4083F1D, 9 clips, attachment order) and the resolver's bce4a799 answer shape (exclude n=0, nv=1 on M1_04) as raw provider text: the real clip-intent planner and resolver agents render, call and parse; the real runtime-v2 planner turn asks the exclude picker with M1_04 pre-ticked. Red with the planner/resolution wiring reverted (free-text notice), green after. Ask -> tap -> next turn drafts without M1_04 and calls no resolver; the red-cap picker carries the skip as a second row.",
+        "live_model": "Not run; no paid calls. The fix adds no model call (an exclude still never pays for a vision check).",
+        "native_output": "unknown; the picker card is the existing KRI-761 exclude category, not device-checked for this ask.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "resolver suspect from a vision-check request and from a below-bar match",
+        "no suspect: every unpinned clip offered, nothing ticked",
+        "pinned suspect never offered or ticked",
+        "tap, file name, confident match never asked",
+        "none of these drops the skip for good",
+        "unmatched + look-alike skip in one picker",
+        "skip rides in the resolver's own clip picker (red cap), one answer settles both",
+        "one-clip project keeps the notice",
+        "picker flag off keeps the KRI-680 notice; exclusions off asks nothing",
+        "Turkish copy"
+      ],
+      "neighbours_gap": [
+        "A skip the clip-intent planner drops (exclusion_dropped) has no intent for a picker answer to bind to: it keeps the free-text notice.",
+        "A resolver question that is text-only (no clip picker) does not carry the skip rows; they are asked on the next turn.",
+        "Thread events and the earlier-draft read are stubbed in the turn tests (the earlier-draft read has its own Postgres test in test_kri761_look_alike_exclusions.py).",
+        "Blur is still not in any clip record: a measured sharpness fact was calibrated on 170 kit clips and rejected (M1_04 ranks 8th; its sharp look-alike M1_06 is only 6% sharper)."
+      ],
       "red_control": "not_applicable"
     }
   ]
