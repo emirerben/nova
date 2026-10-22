@@ -1707,9 +1707,9 @@
         "KRI-705",
         "KRI-700"
       ],
-      "symptom": "Approval omitted unchecked requirements and accepted unsupported format limits without a revision-bound waiver.",
+      "symptom": "Approval omitted unchecked requirements, accepted unsupported limits, or prepared a preview-tail window that became shorter than the montage minimum on the original.",
       "boundary": "contract",
-      "status": "open_pr",
+      "status": "merged",
       "owner": "KRI-721",
       "journey": "kri-721-approval-readiness",
       "paths": [
@@ -1720,21 +1720,24 @@
         "src/apps/api/app/kria/render_retry.py",
         "src/apps/api/app/tasks/kria_runtime.py",
         "src/apps/api/app/config.py",
-        "src/apps/api/tests/kria/test_approval_readiness_postgres.py"
+        "src/apps/api/tests/kria/test_approval_readiness_postgres.py",
+        "src/apps/api/app/services/length_planning.py",
+        "src/apps/api/tests/services/test_length_planning.py"
       ],
       "regression_tests": [
         "tests/kria/test_approval_readiness_postgres.py",
         "tests/kria/test_runtime_simpler_version_loop.py",
         "tests/kria/test_render_retry_postgres.py",
-        "tests/kria/test_plan_review.py"
+        "tests/kria/test_plan_review.py",
+        "tests/services/test_length_planning.py"
       ],
       "harness": "real_with_db",
       "kill_switch": "kria_approval_readiness_enabled",
       "evidence": {
-        "offline_replay": "Provider transport replay through real parsing, runtime, source-window validation, PostgreSQL and HTTP approval; baseline accepted the wind-noise request without evidence.",
-        "live_model": "unknown; no paid model calls",
-        "native_output": "unknown; physical approval UI is a separate evidence tier",
-        "production": "not deployed"
+        "offline_replay": "Real runtime/HTTP approval journeys plus captured preview4.333/original4.320 duration regression replay through the real montage and phone compilers; before-fix controls fail.",
+        "live_model": "Production Gemini v64: wind-only blocker and named simpler approval with retained title, duration and source sound; one earlier schema-recovery turn.",
+        "native_output": "Original-source timing case failed before a device recipe; final physical export with the follow-up fix is pending.",
+        "production": "#1683/#1687 deployed; late-preview-window minimum-duration failure observed 2026-10-19; original-clock follow-up not yet deployed."
       },
       "neighbours_covered": [
         "missing evidence",
@@ -1744,7 +1747,10 @@
         "direct and repeated HTTP approval",
         "scoped editor extraction",
         "legacy unstamped drafts",
-        "exact Retry and Undo regression suites"
+        "exact Retry and Undo regression suites",
+        "original/proxy timing at the three-second minimum",
+        "legacy approved late windows without new selection",
+        "unavailable original capacity and overlap/source-identity controls"
       ],
       "neighbours_gap": [
         "KRI-722/723 prepared-execution and montage coverage",
@@ -1756,7 +1762,12 @@
         "KRI-724",
         "KRI-725"
       ],
-      "red_control": "not_applicable"
+      "red_control": "verified",
+      "fix_prs": [
+        1683,
+        1687
+      ],
+      "fix_commit": "320f7bbf52bdb50999d4783671cbfaa4c2c9f813"
     },
     {
       "id": "kri-729-camera-roll-approval",

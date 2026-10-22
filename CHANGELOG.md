@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.22.0] - 2026-10-22
+
+### Changed
+- fix: preserve approved phone duration against original footage (KRI-721) (#1700) <!-- release-pr: 1700 -->
+
 ## [0.81.21.0] - 2026-10-22
 
 ### Changed
