@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.45.0] - 2026-10-22
+
+### Changed
+- fix(kria): drop an editorial_plan the edit can't run instead of refusing the reply (KRI-806) (#1738) <!-- release-pr: 1738 -->
+
 ## [0.81.44.0] - 2026-10-22
 
 ### Changed
