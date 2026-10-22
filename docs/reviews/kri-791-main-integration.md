@@ -74,3 +74,19 @@ These groups overlap and are not combined into one count. The full original
 Talking request, model compliance with the new facts, speaker identity and
 actual device video remain separate acceptance work in KRI-787 and siblings.
 No physical-phone operation, paid call or manual deployment occurred.
+
+
+## Caption dependency landed on main
+
+Published source `133c0812d2764483989e00dfb30a1aa8f208ef91` completed
+full CI39729690451 successfully, including its actual modified Gameday helper.
+After #1733 was squash-merged, GitHub could no longer merge that old source
+without reconciliation. A normal merge of freshly fetched main7eaf preserves
+the combined Main Creatorv66/extractorv14, both authors' instructions and all
+semantic assertions. The six conflicted caption files on main exactly matched
+the original dependency0995022c; keeping the already combined versions loses
+no landed change. Native source files are byte-identical to the successful
+133c run, and all API/iOS files match the private current-main prefix that
+passed97 order/caption/timed-text/trace/duration checks. No semantic conflict
+was hidden by changing a test expectation. New selected hosted checks remain
+required for the newly published reconciliation head.

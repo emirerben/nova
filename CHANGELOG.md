@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.31.0] - 2026-10-22
+
+### Fixed
+- fix(clip-speech): keep clip speech in the spoken language; drop invented transcripts (KRI-808) (#1743) <!-- release-pr: 1743 -->
+
+## [0.81.30.0] - 2026-10-22
+
+### Changed
+- fix(kria): a render refused for an unresolved choice names it and asks again (KRI-795) (#1729) <!-- release-pr: 1729 -->
+
+## [0.81.29.0] - 2026-10-22
+
+### Changed
+- fix(kria): show a creator's text on a spoken word even when the brief has no trigger (KRI-791) (#1724) <!-- release-pr: 1724 -->
+
 ## [0.81.28.0] - 2026-10-22
 
 ### Fixed
