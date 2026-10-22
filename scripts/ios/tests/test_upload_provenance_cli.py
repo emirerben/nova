@@ -56,7 +56,7 @@ class ProvenanceCLITests(unittest.TestCase):
                     [
                         "release\tRun actions/checkout@v4\t2026-10-21T19:58:25Z [command]/usr/bin/git log -1 --format=%H",
                         f"release\tRun actions/checkout@v4\t2026-10-21T19:58:26Z {sha}",
-                        "release\tUpload and distribute to external TestFlight\t2026-10-21T20:00:00Z Successfully uploaded the new binary to App Store Connect",
+                        "release\tUpload and distribute to external TestFlight\t2026-10-21T20:00:00Z [20:00:00]: Successfully uploaded the new binary to App Store Connect",
                     ]
                 )
 

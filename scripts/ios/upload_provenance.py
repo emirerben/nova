@@ -13,7 +13,7 @@ import sys
 ARCHIVE = "Archive signed Release IPA"
 UPLOAD = "Upload and distribute to external TestFlight"
 SHA = re.compile(r"[0-9a-f]{40}")
-ANSI = re.compile(r"\x1b\[[0-9;]*m")
+ANSI = re.compile(r"(?:\x1b|\^\[)\[[0-9;]*m")
 
 
 class ProvenanceError(RuntimeError):
@@ -65,12 +65,15 @@ def uploaded_source(attempt, log):
         ):
             checkout.add(body)
         if step == UPLOAD:
-            transferred |= (
-                "Successfully uploaded the new binary to App Store Connect" in body
+            transferred |= bool(
+                re.fullmatch(
+                    r"\[\d{2}:\d{2}:\d{2}\]: Successfully uploaded the new binary to App Store Connect",
+                    body,
+                )
             )
             duplicate |= bool(
-                re.search(
-                    r"TestFlight already has build \d+ .*; skipping duplicate upload \d+\.",
+                re.fullmatch(
+                    r"\[\d{2}:\d{2}:\d{2}\]: TestFlight already has build \d+ for [^;]+; skipping duplicate upload \d+\.",
                     body,
                 )
             )

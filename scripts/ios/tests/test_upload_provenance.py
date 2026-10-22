@@ -106,6 +106,24 @@ class ProvenanceTests(unittest.TestCase):
                     p.never_executed({k: v for k, v in job.items() if k != key})
                 )
 
+    def test_transfer_receipt_requires_complete_fastlane_runtime_message(self):
+        marker = "Successfully uploaded the new binary to App Store Connect"
+        for text in ["release notes mention " + marker, marker + " (example only)"]:
+            with self.subTest(text=text), self.assertRaises(p.ProvenanceError):
+                p.latest_source(
+                    [attempt(1, "a")], lambda _: log().replace(marker, text)
+                )
+        # GitHub stores Fastlane's terminal escapes both literally and as ^[.
+        for start, end in [("\x1b[32m", "\x1b[0m"), ("^[[32m", "^[[0m")]:
+            with self.subTest(start=start):
+                self.assertEqual(
+                    p.latest_source(
+                        [attempt(1, "a")],
+                        lambda _: log().replace(marker, start + marker + end),
+                    ),
+                    OLD,
+                )
+
     def test_incident_uses_checkout_source_not_workflow_head(self):
         a = attempt(39666180034, "2026-10-21T20:14:00Z")
         a["headSha"] = WORKFLOW
@@ -121,7 +139,7 @@ class ProvenanceTests(unittest.TestCase):
             2: log(HEAD, False)
             + "\nrelease\t"
             + p.UPLOAD
-            + "\t2026-10-21T20:20:00Z TestFlight already has build 1671 for 0.1.0; skipping duplicate upload 1670.",
+            + "\t2026-10-21T20:20:00Z [20:20:00]: TestFlight already has build 1671 for 0.1.0; skipping duplicate upload 1670.",
         }
         self.assertEqual(
             p.latest_source([attempt(2, "b"), attempt(1, "a")], logs.__getitem__), OLD
