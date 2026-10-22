@@ -208,14 +208,17 @@ def test_brief_label_asks_reads_only_live_dictated_shot_texts():
 @pytest.mark.asyncio
 async def test_words_a_label_can_never_print_are_not_added_as_a_new_question(monkeypatch):
     # 120-char positional shot labels are legal; a label intent allows far fewer. Adding it
-    # would turn valid dictated text into a "label too long" question for the creator.
+    # as a label would turn valid dictated text into a "label too long" question for the
+    # creator. KRI-804: leaving it out dead-ended the turn on "which clip" instead, so it
+    # joins as the shot's caption, which prints the creator's words as written.
     long_text = "Where every single crumb tells a whole story about the house dessert"
     models, planned = await _plan(
         [], monkeypatch, brief_labels=[BriefLabel(literal=long_text, description=DESCRIPTION)]
     )
 
-    assert models.resolved_intent_ids == []
-    assert planned.requested_intents == []
+    assert [(i.op, i.creator_text) for i in planned.requested_intents] == [("caption", long_text)]
+    # ... resolved (or asked with the picker) like any described shot.
+    assert models.resolved_intent_ids == [planned.requested_intents[0].intent_id]
     assert planned.resolution.error_code != "label_text_unusable"
 
 

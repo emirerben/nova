@@ -137,6 +137,7 @@ from app.services.clip_intent_planning import (
     brief_label_asks,
     kept_labels_from_strategy,
     plan_and_resolve_clip_intents,
+    shot_captions_safe,
 )
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_selection import fold_clip_selections
@@ -915,6 +916,7 @@ def _clip_intent_resolution_plan(
     status: str,
     diagnostics: dict[str, Any] | None = None,
     clip_question: dict[str, Any] | None = None,
+    reply_options: Sequence[str] = (),
 ) -> KriaTurnPlan:
     if status == "needs_creator":
         return KriaTurnPlan(
@@ -927,6 +929,8 @@ def _clip_intent_resolution_plan(
             ),
             diagnostics=_safe_diagnostics(status, diagnostics),
             clip_question=clip_question,
+            # KRI-804: tappable answers, e.g. "Keep ... exactly as written" for a label.
+            reply_options=list(reply_options) or None,
         )
     # KRI-282: `pending` is NOT a failure -- the foreground vision budget ran out
     # with answers already cached for the next turn. Saying "couldn't match" made
@@ -2875,6 +2879,11 @@ async def _plan_creator_action(
             getattr(action.strategy, "shot_labels", None) or (),
             spoken_text,
         )
+        # KRI-804: a creator text a label can't print may become the shot's caption only
+        # when that turns off no other text (positional shot labels, every-clip texts).
+        shot_captions = shot_captions_safe(
+            effective_brief, getattr(action.strategy, "shot_labels", None) or ()
+        )
         kept_labels = await _load_kept_labels(db, item_id) if effective_brief is not None else []
         earlier_excluded = (
             await _earlier_exclusions(db, item_id) if settings.clip_intent_exclude_enabled else []
@@ -2914,6 +2923,7 @@ async def _plan_creator_action(
                 **({"describe_clips": True} if describe_clips else {}),
                 **({"brief_labels": brief_labels} if brief_labels else {}),
                 **({"kept_labels": kept_labels} if kept_labels else {}),
+                **({} if shot_captions else {"shot_captions": False}),
                 # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
                 # never a clip question; its receipt tells the creator.
                 **(
@@ -3031,6 +3041,7 @@ async def _plan_creator_action(
                     manifest_hash=manifest.manifest_hash,
                     context_hash=manifest.context_hash,
                 )
+
         if settings.clip_intent_exclude_enabled:
             # KRI-761: the resolver is not deterministic and the whole request is re-planned
             # every turn, so an ask it matched in the draft before keeps that match when it
@@ -3083,6 +3094,9 @@ async def _plan_creator_action(
                     ),
                     diagnostics=_resolution_diagnostics(planned.resolution),
                     clip_question=clip_question,
+                    reply_options=(
+                        planned.resolution.reply_options if planned.resolution.needs_creator else ()
+                    ),
                 ),
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
