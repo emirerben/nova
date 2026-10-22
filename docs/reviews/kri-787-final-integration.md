@@ -11,3 +11,13 @@ Remaining final integration must consume actual landed trim, timedtext, namedcut
 ## Actual #1724 acceptance promotion
 
 After main049bdd0a6 (actual #1724) merged, exactly the old r7 exact-text-miss pin failed and its corresponding strict acceptance XPASSed:2failures,16passes,10strictxfails. The actual new receipt says it will use the first spoken occurrence, explicitly cannot identify the speaker and may use someone else. Retired that one obsolete pin and promoted only the already passing acceptance with its original “placed on her word OR honestly explained” assertion intact. Replay now17passes/10strictxfails. This is honest partial speaker support, not a claim Caro's precise utterance or full original output is verified. Original provider output and fixture words were not rewritten.
+
+## Private complete sibling candidate, not yet landed or published
+
+Normal private merges consume named-cut/trim producer c733227e0, typed reanswer42846c363 and quoted-window consumer a2b79fb0. The original source request and provider fixture are unchanged. Before edits: fifteen failures, nine passes and three strict expected failures. Eight failures were old tests asserting the incident's incorrect behavior; seven were strict XPASSes. The remaining refusal-card cases revealed that the generic device database double provided no original thread history.
+
+The replay adapter now supplies the fixture's original question/history rows to the real observer, without stubbing its decision. It does not establish the source-event race behavior; the independent real-Postgres KRI-794/KRI-795 controls own that proof. With the adapter, two more unchanged acceptance cases pass.
+
+Automatic approval review rejected a broad scripted cleanup because it could remove more coverage than justified. The safer applied change deletes no test functions and changes no outcome assertions: eight explicitly named acceptance functions (nine parameterized cases) first passed with --runxfail, then had only their expected-failure decorators removed. All nine now pass as ordinary hard checks. The obsolete production-bug pins and one historical one-take order-answer expectation remain for explicit individual review; the private full suite is therefore deliberately not claimed green. No remote push or merge of #1723 occurred.
+
+Hard-check proof: /private/tmp/nova-1723-nine-hard-acceptance-controls.log. Candidate-only proof must be refreshed/qualified against actual merged parents before final publication. Full original request, actual device output and export acceptance remain pending.

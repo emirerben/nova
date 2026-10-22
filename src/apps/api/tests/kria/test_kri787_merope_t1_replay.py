@@ -365,7 +365,8 @@ def run_worker(monkeypatch: pytest.MonkeyPatch, job) -> WorkerOutcome:  # noqa: 
 
 def failure_card(job, outcome: WorkerOutcome) -> dict:  # noqa: ANN001
     """The chat event the real observer posts for the failed job, as ``_fail_job`` left it."""
-    from tests.kria.test_runtime_phone_v2 import _observe  # noqa: PLC0415
+    from app.models import CreationThreadEvent  # noqa: PLC0415
+    from tests.kria.test_runtime_phone_v2 import _Db, _observe  # noqa: PLC0415
 
     assembly = copy.deepcopy(job.assembly_plan)
     if outcome.decline:
@@ -379,7 +380,28 @@ def failure_card(job, outcome: WorkerOutcome) -> dict:  # noqa: ANN001
         error_detail=outcome.message,
         assembly_plan=assembly,
     )
-    _outcome, _execution, events = _observe(failed, {})
+    # The generic device-state double has no thread history. Supply this incident's
+    # recorded rows to the real refusal/reask code; do not stub its result.
+    before = 15 if str(job.id) == RENDERS[0]["job_id"] else 22
+    history = [
+        (event["actor"], event["payload"], sequence)
+        for sequence, event in sorted(EVENTS.items())
+        if sequence < before and event["actor"] in {"user", "assistant"}
+    ]
+    execute = _Db.execute
+
+    def recorded_execute(db, statement):  # noqa: ANN001, ANN202
+        columns = statement.column_descriptions
+        names = tuple(column["name"] for column in columns)
+        if columns and columns[0].get("entity") is CreationThreadEvent:
+            if names == ("payload",):
+                return SimpleNamespace(scalar_one_or_none=lambda: EVENTS[6]["payload"])
+            if names == ("role", "payload", "sequence"):
+                return SimpleNamespace(all=lambda: history)
+        return execute(db, statement)
+
+    with patch.object(_Db, "execute", recorded_execute):
+        _outcome, _execution, events = _observe(failed, {})
     return events[-1]
 
 
@@ -560,7 +582,6 @@ async def test_typing_the_other_option_replaces_the_answer(monkeypatch: pytest.M
     assert order_answers(strategy) == [("order_basis", "unordered")]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_KRI_794)
 async def test_the_re_answered_draft_reaches_the_talking_renderer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -578,11 +599,6 @@ async def test_the_re_answered_draft_reaches_the_talking_renderer(
     assert run_worker(monkeypatch, job).route == "subtitled"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-795: the refusal card blames the iPhone and offers options it never shows",
-)
 @pytest.mark.parametrize("index", [0, 1], ids=JOBS)
 def test_the_failure_card_names_the_lost_choice_and_re_asks_it(
     monkeypatch: pytest.MonkeyPatch, index: int

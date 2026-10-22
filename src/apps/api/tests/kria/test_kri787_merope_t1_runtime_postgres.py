@@ -351,11 +351,6 @@ async def test_prod_the_approved_draft_keeps_the_whole_take(
 # == what the creator should have had (child tickets) =========================================
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-789: a one-take Talking edit with start/end lines asks the clip-order question",
-)
 @pytest.mark.asyncio
 async def test_one_take_asks_no_clip_order_question(monkeypatch: pytest.MonkeyPatch) -> None:
     chat = await _chat_until_approval(monkeypatch)
@@ -377,11 +372,6 @@ async def test_the_approved_draft_reaches_the_talking_renderer(
     assert outcome.route == "subtitled"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-790: the length line judges the whole take and ignores the quoted start/end",
-)
 @pytest.mark.asyncio
 async def test_the_length_line_measures_the_quoted_window(monkeypatch: pytest.MonkeyPatch) -> None:
     chat = await _chat_until_approval(monkeypatch)
@@ -390,11 +380,6 @@ async def test_the_length_line_measures_the_quoted_window(monkeypatch: pytest.Mo
     assert "68.4s" not in reason
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-790: no draft line or approval card names the start and end lines",
-)
 @pytest.mark.asyncio
 async def test_the_approval_card_names_the_start_and_end_lines(
     monkeypatch: pytest.MonkeyPatch,
@@ -419,11 +404,6 @@ async def test_merope_is_placed_on_her_word_or_honestly_explained(
     assert "r7" in _receipts(chat.approved_draft)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-792: a named phrase cut is promised by the pause-cleanup line",
-)
 @pytest.mark.asyncio
 async def test_a_named_phrase_cut_says_it_needs_the_editor(monkeypatch: pytest.MonkeyPatch) -> None:
     chat = await _chat_until_approval(monkeypatch)
@@ -433,11 +413,6 @@ async def test_a_named_phrase_cut_says_it_needs_the_editor(monkeypatch: pytest.M
         assert receipts[rid]["reason"] != _prod_receipts(10)[rid]["reason"], rid
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-792: with cleanup chosen a named phrase cut reads Done before any render",
-)
 @pytest.mark.asyncio
 async def test_with_cleanup_chosen_a_named_phrase_cut_is_never_done(
     monkeypatch: pytest.MonkeyPatch,
@@ -456,11 +431,6 @@ async def test_captions_and_spellings_get_a_line(monkeypatch: pytest.MonkeyPatch
         assert word in chat.approval.consequence_summary, word
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-788 + KRI-789/KRI-790: the quoted start and end lines become the kept window",
-)
 @pytest.mark.asyncio
 async def test_the_video_starts_on_hi_im_karolina_and_ends_after_here_all_week(
     monkeypatch: pytest.MonkeyPatch,
