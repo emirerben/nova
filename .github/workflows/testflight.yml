@@ -56,7 +56,10 @@ jobs:
           fi
           # Resolve actual checkout + transfer evidence, including legacy runs.
           # Unknown history blocks release; workflow headSha is not binary provenance.
-          provenance="$(python3 scripts/ios/upload_provenance.py)"
+          # Older tested sources may predate this helper. Use the workflow's
+          # policy revision for code only, never as uploaded binary evidence.
+          git show "$GITHUB_SHA:scripts/ios/upload_provenance.py" > "$RUNNER_TEMP/testflight-upload-provenance.py"
+          provenance="$(python3 "$RUNNER_TEMP/testflight-upload-provenance.py")"
           read -r base superseded <<< "$provenance"
           if [ "$superseded" = "true" ]; then
             echo "eligible=false" >> "$GITHUB_OUTPUT"

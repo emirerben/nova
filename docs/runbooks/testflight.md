@@ -15,7 +15,8 @@ releases stay in commit order.
 The duplicate gate reads checkout's full commit output and Fastlane's actual
 binary-transfer confirmation from retained release logs. GitHub workflow
 `headSha` identifies the workflow revision, which can differ from the dispatched
-`head_sha`; it is never used as binary provenance. A green workflow, skipped
+`head_sha`; it is never used as binary provenance. The policy helper is loaded
+from the workflow revision so an older tested checkout need not contain it. A green workflow, skipped
 upload step, or Fastlane build-number skip does not establish a new upload.
 Failed distribution after a confirmed transfer still protects that source from
 being uploaded again. Every verified source must remain on current main.

@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -28,8 +29,16 @@ class ProvenanceCLITests(unittest.TestCase):
             old = git("rev-parse", "HEAD")
             git("commit", "--allow-empty", "-qm", "candidate")
             head = git("rev-parse", "HEAD")
-            git("commit", "--allow-empty", "-qm", "workflow")
+            policy = root / "scripts/ios/upload_provenance.py"
+            policy.parent.mkdir(parents=True)
+            policy.write_bytes(resolver.read_bytes())
+            git("add", "scripts/ios/upload_provenance.py")
+            git("commit", "-qm", "workflow")
             workflow = git("rev-parse", "HEAD")
+            git("checkout", "-q", head)
+            self.assertFalse(
+                policy.exists(), "older binary source must predate the helper"
+            )
             (root / ".git/FETCH_HEAD").write_text(workflow + "\n")
             fixture = root / "fixture.json"
             cli = root / "gh"
@@ -84,6 +93,8 @@ class ProvenanceCLITests(unittest.TestCase):
                 FIXTURE=str(fixture),
                 GITHUB_RUN_ID="9",
                 GITHUB_REPOSITORY="fixture/repo",
+                GITHUB_SHA=workflow,
+                RUNNER_TEMP=directory,
                 HEAD_SHA=head,
             )
             for name, sources, expected in [
@@ -129,3 +140,42 @@ class ProvenanceCLITests(unittest.TestCase):
                 else:
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(result.stdout.strip(), expected, name)
+
+            # Execute the real workflow's policy loader from an old checkout.
+            workflow_text = (
+                resolver.parents[2] / ".github/workflows/testflight.yml"
+            ).read_text()
+            loader = re.search(
+                r'(?m)^          git show "\$GITHUB_SHA:scripts/ios/upload_provenance.py"[^\n]*\n          provenance=[^\n]*\n          read -r base superseded[^\n]*',
+                workflow_text,
+            )
+            self.assertIsNotNone(
+                loader, "workflow must load policy from its own revision"
+            )
+            data["unallocated"] = False
+            data["runs"] = [
+                {
+                    "databaseId": 1,
+                    "status": "completed",
+                    "attempt": 1,
+                    "headSha": workflow,
+                }
+            ]
+            data["logs"] = {"1": logs(old)}
+            fixture.write_text(json.dumps(data))
+            script = (
+                "set -euo pipefail\n"
+                + textwrap.dedent(loader.group())
+                + '\nprintf "%s %s\\n" "$base" "$superseded"\n'
+            )
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=directory,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), old + " false")
+            self.assertEqual(git("rev-parse", "HEAD"), head)
+            self.assertFalse(policy.exists())

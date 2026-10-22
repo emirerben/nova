@@ -221,7 +221,11 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
         # The executable ancestry cases live in test_upload_provenance.py;
         # keep this workflow contract tied to that resolver and its decision.
         self.assertIn(
-            'provenance="$(python3 scripts/ios/upload_provenance.py)"', testflight
+            'git show "$GITHUB_SHA:scripts/ios/upload_provenance.py"', testflight
+        )
+        self.assertIn(
+            'provenance="$(python3 "$RUNNER_TEMP/testflight-upload-provenance.py")"',
+            testflight,
         )
         self.assertIn('read -r base superseded <<< "$provenance"', testflight)
         self.assertIn('if [ "$superseded" = "true" ]; then', testflight)
