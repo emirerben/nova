@@ -1,6 +1,6 @@
 # Constant playback speed
 
-Status: implemented and locally verified; preship pending. Base: `1e119d4bf`
+Status: implemented and locally verified. Base: `1e119d4bf`
 (origin/main, 2026-10-22). No deployment performed.
 
 ## Request and observed failure
@@ -164,6 +164,10 @@ parity or the unavailable original M2 media.
   blocked npm; only this
   task's generated build cache was removed, and matching locked frontend dependencies were
   cloned locally to continue checks.
+- The KRI-689 CI journey now selects the speed compiler/Save/source-projection regressions
+  and named native boundary tests, including the previously unmapped `reframe.py` path.
+  The journey evidence-policy checks passed (6 tests). Implementation source is commit
+  `afd5ef22a`; the following CI/docs-only commit does not change that tested source.
 
 The original M2 report supplied no clip or saved job. Its specific incident replay, initial
 creation planner speed, website speed controls, timed-effect/speech integration and rollout
