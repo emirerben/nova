@@ -31,6 +31,14 @@ from app.tasks.maintenance import _CREATOR_ACTIVITY_SQL
 _WINDOW_S = 600
 _INFLIGHT_S = 3600
 _STALE_AT = datetime.now(UTC) - timedelta(seconds=_INFLIGHT_S + 60)
+# Parametrized times are offsets from the moment the case runs, not from
+# collection: a full suite can reach these cases minutes after collection.
+_NOW = timedelta(0)
+_STALE = -timedelta(seconds=_INFLIGHT_S + 60)
+
+
+def _at(offset: timedelta) -> datetime:
+    return datetime.now(UTC) + offset
 
 
 def _activity(db: Session) -> bool:
@@ -159,28 +167,28 @@ def _turn(
 
 @pytest.mark.parametrize(
     ("updated_at", "expected"),
-    [(datetime.now(UTC), True), (_STALE_AT, False)],
+    [(_NOW, True), (_STALE, False)],
     ids=["recent", "stale"],
 )
 def test_activity_sql_distinguishes_recent_and_stale_active_thread(
-    updated_at: datetime, expected: bool
+    updated_at: timedelta, expected: bool
 ) -> None:
     with _isolated_activity_case() as db:
         _user_id, thread_id = _thread(db, "thread")
         db.execute(
             text("UPDATE creation_threads SET updated_at = :updated_at WHERE id = :id"),
-            {"updated_at": updated_at, "id": thread_id},
+            {"updated_at": _at(updated_at), "id": thread_id},
         )
         assert _activity(db) is expected
 
 
 @pytest.mark.parametrize(
     ("expires_at", "expected"),
-    [(datetime.now(UTC) + timedelta(seconds=60), True), (_STALE_AT, False)],
+    [(timedelta(seconds=60), True), (_STALE, False)],
     ids=["live-reservation", "expired-reservation"],
 )
 def test_activity_sql_distinguishes_live_and_expired_upload_reservation(
-    expires_at: datetime, expected: bool
+    expires_at: timedelta, expected: bool
 ) -> None:
     with _isolated_activity_case() as db:
         user_id, thread_id = _thread(db, "upload")
@@ -190,7 +198,7 @@ def test_activity_sql_distinguishes_live_and_expired_upload_reservation(
                 creator_id=user_id,
                 media_id=f"media-{uuid.uuid4()}",
                 object_path=f"users/{user_id}/activity.mp4",
-                expires_at=expires_at,
+                expires_at=_at(expires_at),
             )
         )
         db.flush()
@@ -200,15 +208,15 @@ def test_activity_sql_distinguishes_live_and_expired_upload_reservation(
 @pytest.mark.parametrize(
     ("status", "updated_at", "expected"),
     [
-        ("queued", datetime.now(UTC), True),
-        ("running", datetime.now(UTC), True),
-        ("completed", datetime.now(UTC), False),
-        ("queued", _STALE_AT, False),
+        ("queued", _NOW, True),
+        ("running", _NOW, True),
+        ("completed", _NOW, False),
+        ("queued", _STALE, False),
     ],
     ids=["queued", "running", "completed", "stale-queued"],
 )
 def test_activity_sql_distinguishes_planning_attempt_lifecycle(
-    status: str, updated_at: datetime, expected: bool
+    status: str, updated_at: timedelta, expected: bool
 ) -> None:
     with _isolated_activity_case() as db:
         user_id, _thread_id, item_id, session_id, event_id = _session_graph(db, "planning")
@@ -224,7 +232,7 @@ def test_activity_sql_distinguishes_planning_attempt_lifecycle(
                 inputs={"fixture": True},
                 status=status,
                 attempts=0,
-                updated_at=updated_at,
+                updated_at=_at(updated_at),
             )
         )
         db.flush()
@@ -234,33 +242,33 @@ def test_activity_sql_distinguishes_planning_attempt_lifecycle(
 @pytest.mark.parametrize(
     ("status", "updated_at", "expected"),
     [
-        ("awaiting_approval", datetime.now(UTC), True),
-        ("completed", datetime.now(UTC), False),
-        ("awaiting_approval", _STALE_AT, False),
+        ("awaiting_approval", _NOW, True),
+        ("completed", _NOW, False),
+        ("awaiting_approval", _STALE, False),
     ],
     ids=["awaiting-approval", "completed", "stale-awaiting-approval"],
 )
 def test_activity_sql_distinguishes_turn_lifecycle(
-    status: str, updated_at: datetime, expected: bool
+    status: str, updated_at: timedelta, expected: bool
 ) -> None:
     with _isolated_activity_case() as db:
         _user_id, thread_id = _thread(db, "turn")
-        _turn(db, thread_id=thread_id, session_id=None, status=status, updated_at=updated_at)
+        _turn(db, thread_id=thread_id, session_id=None, status=status, updated_at=_at(updated_at))
         assert _activity(db) is expected
 
 
 @pytest.mark.parametrize(
     ("status", "created_at", "expected"),
     [
-        ("pending", datetime.now(UTC), True),
-        ("approved", datetime.now(UTC), True),
-        ("expired", datetime.now(UTC), False),
-        ("pending", _STALE_AT, False),
+        ("pending", _NOW, True),
+        ("approved", _NOW, True),
+        ("expired", _NOW, False),
+        ("pending", _STALE, False),
     ],
     ids=["pending", "approved", "expired", "stale-pending"],
 )
 def test_activity_sql_distinguishes_approval_lifecycle(
-    status: str, created_at: datetime, expected: bool
+    status: str, created_at: timedelta, expected: bool
 ) -> None:
     with _isolated_activity_case() as db:
         user_id, thread_id, _item_id, session_id, _event_id = _session_graph(db, "approval")
@@ -275,7 +283,7 @@ def test_activity_sql_distinguishes_approval_lifecycle(
                 consequence_summary="Activity guard fixture",
                 status=status,
                 expires_at=datetime.now(UTC) + timedelta(seconds=60),
-                created_at=created_at,
+                created_at=_at(created_at),
             )
         )
         db.flush()
