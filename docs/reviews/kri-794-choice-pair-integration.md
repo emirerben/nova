@@ -17,3 +17,5 @@ Tests now target the NEW open failure-card question for typed/tapped/delegated a
 141 combined real Postgres/observer/submit/gate/render-contract and refusal-copy/choice/cloud controls passed after the repair; Ruff/format/whitespace passed. Only recorded Main Creator transport is substituted. The first repair pass exposed 46 legacy SimpleNamespace observer fixtures without source_event_id; compatibility now uses absent-source fallback, with no original copy assertions relaxed. The real database-backed stale-answer path remains protected by the actual model's source_event_id.
 
 No paid model call, phone access or manual deployment. Full original T1/native/export acceptance remains open under KRI-787. Exact-head hosted CI and normal preship are still required before merge.
+
+Current-main658fa0eab (landed #1742 picker) merged normally without conflicts. The complete choice-pair suite plus the real unmatched-exclusion picker path passed160 controls on that union. No additional semantic changes or assertion updates were needed.
