@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import Photos
+import UniformTypeIdentifiers
 import KriaMediaEngine
 
 /// Mirrors the server-owned MediaAssetOut and immutable source contract.
@@ -18,6 +19,17 @@ struct SavedMediaAsset: Codable, Identifiable, Sendable {
     var filename: String { metadata["filename"]?.stringValue ?? "Saved \(kind)" }
     var displayName: String { BackgroundUploadCoordinator.displayFilename(filename) }
     var source: SavedMediaSource? { sources.first { $0.status == "available" && ["original", "analysis_proxy"].contains($0.role) } }
+    func availableSource(role wanted: String) -> SavedMediaSource? { sources.first { $0.status == "available" && $0.role == wanted } }
+    /// KRI-822: the cloud source a post role binds. Visuals render the full original only; phone
+    /// Footage binds the analysis proxy (its original stays on this iPhone); cloud Footage the original.
+    func bindableSource(for role: CreationMediaRole, destination: ProjectUploadDestination) -> SavedMediaSource? {
+        switch role {
+        case .visual: availableSource(role: "original")
+        case .clip where destination == .cloud: availableSource(role: "original") ?? availableSource(role: "analysis_proxy")
+        case .clip: availableSource(role: "analysis_proxy") ?? availableSource(role: "original")
+        case .voiceover, .song: availableSource(role: "original") ?? source
+        }
+    }
     var fingerprint: AssetFingerprint? {
         if let hash = originalDeclaredSHA256, let bytes = originalByteCount { return AssetFingerprint(hex: hash, byteCount: bytes) }
         guard let original = sources.first(where: { $0.role == "original" }), let hash = original.uploadedSHA256 else { return nil }
@@ -29,7 +41,7 @@ struct SavedMediaAsset: Codable, Identifiable, Sendable {
         case originalAvailability = "original_availability", metadata = "metadata_json", storageWarnings = "storage_warnings"
     }
 }
-struct SavedMediaSource: Codable, Identifiable, Sendable {
+struct SavedMediaSource: Codable, Identifiable, Equatable, Sendable {
     let id: UUID
     let role: String
     let status: String
@@ -200,6 +212,7 @@ struct SavedMediaUpload: Decodable {
 }
 extension KriaAPIClient {
     func repairSavedMedia(asset: SavedMediaAsset, file: URL) async throws -> SavedMediaAsset { throw APIError.unsupported }
+    func uploadSavedMediaOriginal(asset: SavedMediaAsset, file: URL) async throws -> SavedMediaAsset { throw APIError.unsupported }
 }
 extension KriaAPI {
     func repairSavedMedia(asset: SavedMediaAsset, file: URL) async throws -> SavedMediaAsset {
@@ -222,18 +235,36 @@ extension KriaAPI {
             contentType = original.contentType
         }
         let uploaded = try await Task.detached { try SHA256Fingerprinter().fingerprint(file: uploadFile) }.value
-        struct Body: Encodable {
-            let client_upload_id: String; let filename: String; let content_type: String
-            let file_size_bytes: Int64; let kind: String; let upload_contract: ProjectMediaUploadContract; let repair_asset_id: UUID
-        }
-        let body = Body(client_upload_id: "ios-repair-\(asset.id)-\(uploaded.hex)", filename: asset.filename, content_type: contentType, file_size_bytes: uploaded.byteCount, kind: asset.kind, upload_contract: contract, repair_asset_id: asset.id)
+        let body = SavedMediaUploadBody(client_upload_id: "ios-repair-\(asset.id)-\(uploaded.hex)", filename: asset.filename, content_type: contentType, file_size_bytes: uploaded.byteCount, kind: asset.kind, upload_contract: contract, repair_asset_id: asset.id, attach_original: nil)
+        return try await uploadSavedMediaFile(body, file: uploadFile)
+    }
+
+    /// KRI-822: give an owned device-only video its verified full-quality original, so it can be
+    /// used in Visuals. The server re-hashes every byte against the declared original identity
+    /// and never promotes the analysis proxy. A stable id makes a lost response safe to retry.
+    func uploadSavedMediaOriginal(asset: SavedMediaAsset, file: URL) async throws -> SavedMediaAsset {
+        guard asset.kind == "video", let fingerprint = asset.fingerprint, let owner = mediaLibraryOwner else { throw SourceAssetError.invalidBinding }
+        let actual = try await Task.detached { try SHA256Fingerprinter().fingerprint(file: file) }.value
+        guard actual == fingerprint else { throw SourceAssetError.changedOriginal(asset.id.uuidString) }
+        let type = UTType(filenameExtension: file.pathExtension)
+        let contentType: String
+        if type?.conforms(to: .quickTimeMovie) == true { contentType = "video/quicktime" }
+        else if type?.conforms(to: .mpeg4Movie) == true { contentType = "video/mp4" }
+        else { throw SavedMediaError.originalRequired }
+        // Account removal fences every later original upload.
+        guard !FileManager.default.fileExists(atPath: MediaLibraryOriginals(owner: owner).erasureMarker.path) else { throw SourceAssetError.invalidBinding }
+        let body = SavedMediaUploadBody(client_upload_id: "ios-original-\(asset.id)-\(fingerprint.hex)", filename: asset.filename, content_type: contentType, file_size_bytes: actual.byteCount, kind: asset.kind, upload_contract: ProjectMediaUploadContract(purpose: .cloudRenderSource, proxy: nil), repair_asset_id: asset.id, attach_original: true)
+        return try await uploadSavedMediaFile(body, file: file)
+    }
+
+    /// Reserve, PUT (create-only) and finalize one library upload.
+    private func uploadSavedMediaFile(_ body: SavedMediaUploadBody, file: URL) async throws -> SavedMediaAsset {
         let target = try await request(path: "me/media-assets/uploads", method: "POST", bodyData: JSONEncoder().encode(body), decode: SavedMediaUpload.self)
         if let url = target.uploadURL {
-            let reservation = UploadReservation(uploadURL: url, gcsPath: target.objectPath, kind: asset.kind, contentType: contentType, uploadHeaders: target.uploadHeaders, purpose: nil, reservationID: nil, retentionExpiresAt: nil)
-            var put = URLRequest(url: reservation.uploadURL)
-            put.httpMethod = "PUT"; put.setValue(contentType, forHTTPHeaderField: "Content-Type")
-            for (key, value) in reservation.uploadHeaders { put.setValue(value, forHTTPHeaderField: key) }
-            let (_, response) = try await session.upload(for: put, fromFile: uploadFile)
+            var put = URLRequest(url: url)
+            put.httpMethod = "PUT"; put.setValue(body.content_type, forHTTPHeaderField: "Content-Type")
+            for (key, value) in target.uploadHeaders { put.setValue(value, forHTTPHeaderField: key) }
+            let (_, response) = try await session.upload(for: put, fromFile: file)
             guard let status = (response as? HTTPURLResponse)?.statusCode,
                   (200..<300).contains(status) || status == 412 else { throw APIError.invalidResponse }
             // A lost finalize response can leave an existing create-only object. Finalize
@@ -242,6 +273,13 @@ extension KriaAPI {
         let finalized: [String: JSONValue] = ["client_event_id": .string("ios-finalize-\(target.reservationID)")]
         return try await request(path: "me/media-assets/uploads/\(target.reservationID)/finalize", method: "POST", bodyData: JSONEncoder().encode(finalized), decode: SavedMediaAsset.self)
     }
+}
+
+private struct SavedMediaUploadBody: Encodable {
+    let client_upload_id: String; let filename: String; let content_type: String
+    let file_size_bytes: Int64; let kind: String; let upload_contract: ProjectMediaUploadContract; let repair_asset_id: UUID
+    /// Omitted (not null) on repairs so their stored retry identity stays unchanged.
+    let attach_original: Bool?
 }
 
 /// Fingerprint matching over an explicit selection. Never enumerates the Photos library.

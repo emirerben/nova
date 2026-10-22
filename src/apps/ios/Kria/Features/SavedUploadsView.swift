@@ -4,6 +4,10 @@ import ImageIO
 import KriaMediaEngine
 
 struct SavedUploadsView: View {
+    #if DEBUG
+    /// UI-test fixture only: stands in for the file chosen in the Files picker.
+    @MainActor static var debugRelinkFile: URL?
+    #endif
     let projectID: UUID
     let itemID: String?
     let role: CreationMediaRole
@@ -98,24 +102,8 @@ struct SavedUploadsView: View {
             .fileImporter(isPresented: $showsRelink, allowedContentTypes: [.movie, .image, .audio], allowsMultipleSelection: false) { result in
                 guard let asset = relinking else { return }
                 relinking = nil
-                guard case .success = result else { return }
-                Task {
-                    restoring = true
-                    defer { restoring = false }
-                    do {
-                        guard let owner, let fingerprint = asset.fingerprint, let file = try result.get().first else { throw SavedMediaError.originalRequired }
-                        let scoped = file.startAccessingSecurityScopedResource()
-                        defer { if scoped { file.stopAccessingSecurityScopedResource() } }
-                        try await MediaLibraryOriginals(owner: owner).relink(assetID: asset.id, fingerprint: fingerprint, file: file)
-                        let updated: SavedMediaAsset
-                        if repairsCloud || asset.source == nil {
-                            updated = try await api.repairSavedMedia(asset: asset, file: file)
-                            replace(updated)
-                        } else { updated = asset }
-                        error = nil
-                        await add(updated)
-                    } catch { self.error = "This file must match the original video. \(error.localizedDescription)" }
-                }
+                guard case .success(let files) = result, let file = files.first else { return }
+                Task { await finishRelink(asset, file: file) }
             }
             .interactiveDismissDisabled(adding != nil || restoring)
         }
@@ -126,27 +114,33 @@ struct SavedUploadsView: View {
             SavedUploadThumbnail(asset: asset, owner: owner, api: api) { originalRevision += 1 }
             VStack(alignment: .leading, spacing: 6) {
                 Text(asset.displayName).font(KriaFont.body(15).weight(.medium)).lineLimit(2)
-                Text(availability(asset)).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                Text(eligibility(asset).text).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                    .accessibilityIdentifier("saved-upload-availability-\(asset.id)")
                 if !asset.storageWarnings.isEmpty { Text("Cloud copy expires soon. Saved posts keep their media.").font(KriaFont.body(12)).foregroundStyle(KriaColor.failureText) }
                 if !asset.usage.isEmpty { Text("Used in \(Set(asset.usage.compactMap(\.creationThreadID)).count) posts").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk) }
                 if added.contains(asset.id) || alreadyAttached.contains(asset.id) { Label("Added to this post", systemImage: "checkmark").font(KriaFont.body(13)) }
                 else {
                     Button { Task { await add(asset) } } label: {
-                        if adding == asset.id { ProgressView("Adding…") }
+                        if adding == asset.id { ProgressView(eligibility(asset).action == .uploadOriginal ? "Uploading full-quality original…" : "Adding…") }
                         else { Text("Add to post") }
                     }
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("saved-upload-add-\(asset.id)")
-                    .disabled(restoring || adding != nil || added.count >= budget || !canUse(asset))
+                    .disabled(restoring || adding != nil || added.count >= budget || !eligibility(asset).canAdd)
                 }
-                if asset.source == nil || (asset.kind == "video" && asset.originalAvailability == "device_only" && !hasLocal(asset)) {
-                    Button(asset.source == nil ? "Restore from original…" : "Locate original…") { repairsCloud = asset.source == nil; relinking = asset; showsRelink = true }
+                switch eligibility(asset).action {
+                case .restoreCloudCopy:
+                    Button("Restore from original…") { requestRelink(asset, cloud: true) }
                         .accessibilityIdentifier("saved-upload-relink-\(asset.id)")
+                case .locateOriginal:
+                    Button("Locate original…") { requestRelink(asset, cloud: false) }
+                        .accessibilityIdentifier("saved-upload-relink-\(asset.id)")
+                default: EmptyView()
                 }
             }
             Spacer(minLength: 0)
             Menu {
-                Button("Restore cloud copy from original…") { repairsCloud = true; relinking = asset; showsRelink = true }
+                Button("Restore cloud copy from original…") { requestRelink(asset, cloud: true) }
                 if asset.status == "failed" {
                     Button("Retry analysis") { Task { do { let updated = try await api.retrySavedMedia(id: asset.id); replace(updated) } catch { self.error = error.localizedDescription } } }
                 }
@@ -161,22 +155,42 @@ struct SavedUploadsView: View {
         guard let owner, let fingerprint = asset.fingerprint else { return false }
         return MediaLibraryOriginals(owner: owner).localURL(assetID: asset.id, fingerprint: fingerprint) != nil
     }
-    private func availability(_ asset: SavedMediaAsset) -> String {
-        if asset.source == nil { return "Cloud copy expired or unavailable. Restore it from the original to reuse it." }
-        if asset.kind == "video", asset.originalAvailability == "device_only" {
-            return hasLocal(asset) ? "Original on this iPhone" : "Full-quality original needed on this iPhone"
-        }
-        return asset.status == "failed" ? "Analysis needs retry" : asset.status == "ready" ? "Available to reuse" : "Analysis in progress"
+    /// KRI-822: the row text, the Add button and the Add action all read this one decision.
+    private func eligibility(_ asset: SavedMediaAsset) -> SavedMediaEligibility {
+        SavedMediaEligibility.evaluate(asset, role: role, destination: destination, signedIn: owner != nil, hasLocalOriginal: hasLocal(asset))
     }
-    private func canUse(_ asset: SavedMediaAsset) -> Bool {
-        guard owner != nil, let source = asset.source, destination.canUpload else { return false }
-        if role.isAudio { return asset.kind == "audio" }
-        if role == .clip { return asset.kind == "video" }
-        guard source.role == "original", asset.kind != "audio" else { return false }
-        if case .phoneVisuals(let kinds) = destination {
-            return kinds.contains(asset.kind == "image" ? .image : .video)
-        }
-        return true
+    /// A device-only video reaches Visuals through its own full original, never a new proxy.
+    private func addsOriginalToVisuals(_ asset: SavedMediaAsset) -> Bool {
+        role == .visual && asset.kind == "video" && asset.originalAvailability == "device_only"
+    }
+    private func requestRelink(_ asset: SavedMediaAsset, cloud: Bool) {
+        repairsCloud = cloud
+        #if DEBUG
+        if let file = Self.debugRelinkFile { Self.debugRelinkFile = nil; Task { await finishRelink(asset, file: file) }; return }
+        #endif
+        relinking = asset; showsRelink = true
+    }
+    /// Verify the chosen file against the saved original, then finish the creator's Add.
+    private func finishRelink(_ asset: SavedMediaAsset, file: URL) async {
+        restoring = true
+        defer { restoring = false }
+        do {
+            guard let owner, let fingerprint = asset.fingerprint else { throw SavedMediaError.originalRequired }
+            let scoped = file.startAccessingSecurityScopedResource()
+            defer { if scoped { file.stopAccessingSecurityScopedResource() } }
+            try await MediaLibraryOriginals(owner: owner).relink(assetID: asset.id, fingerprint: fingerprint, file: file)
+            originalRevision += 1
+            var updated = asset
+            // For Visuals the add itself uploads this verified original in full; re-uploading
+            // another analysis proxy here would leave the creator at a disabled Add again.
+            if !addsOriginalToVisuals(asset), repairsCloud || asset.bindableSource(for: role, destination: destination) == nil {
+                updated = try await api.repairSavedMedia(asset: asset, file: file)
+                replace(updated)
+            }
+            error = nil
+            restoring = false
+            await add(updated)
+        } catch { self.error = "This file must match the original video. \(error.localizedDescription)" }
     }
     private func replace(_ updated: SavedMediaAsset) { assets = assets.map { $0.id == updated.id ? updated : $0 } }
     private func load(more: Bool) async {
@@ -208,19 +222,26 @@ struct SavedUploadsView: View {
         }
     }
     private func add(_ asset: SavedMediaAsset) async {
-        guard adding == nil, !added.contains(asset.id), !alreadyAttached.contains(asset.id), added.count < budget, let owner, let source = asset.source else { return }
+        guard adding == nil, !added.contains(asset.id), !alreadyAttached.contains(asset.id), added.count < budget, let owner, eligibility(asset).canAdd else { return }
         adding = asset.id; error = nil
         defer { adding = nil }
-        let mediaID = mediaIDs[asset.id] ?? (source.role == "analysis_proxy" ? "analysis-proxy-" : "") + UUID().uuidString
+        let source = asset.bindableSource(for: role, destination: destination)
+        let mediaID = mediaIDs[asset.id] ?? (source?.role == "analysis_proxy" ? "analysis-proxy-" : "") + UUID().uuidString
         mediaIDs[asset.id] = mediaID
         do {
-            let thread = try await SavedMediaReuse.attach(asset: asset, source: source, threadID: projectID, itemID: itemID, role: role, mediaID: mediaID, owner: owner, api: api)
+            let thread = try await SavedMediaReuse.attach(asset: asset, threadID: projectID, itemID: itemID, role: role, destination: destination, mediaID: mediaID, owner: owner, api: api)
             uploads.acceptSavedMediaThread(thread)
             added.insert(asset.id)
+            originalRevision += 1
             onAdded()
         } catch {
-            if error is SavedMediaError { relinking = asset; showsRelink = true }
             self.error = error.localizedDescription
+            if error is SavedMediaError { requestRelink(asset, cloud: false) }
+            else if role == .visual, error as? APIError == .conflict {
+                // The cloud copy changed or expired: restore it from the original, then add.
+                self.error = "The cloud copy of this file changed. Choose the original to restore it."
+                requestRelink(asset, cloud: true)
+            }
         }
     }
 }

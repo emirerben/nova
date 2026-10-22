@@ -18,12 +18,23 @@ import KriaMediaEngine
         return nil
     }
 
-    static func attach(asset: SavedMediaAsset, source: SavedMediaSource, threadID: UUID, itemID: String?, role: CreationMediaRole, mediaID: String, owner: String, api: any KriaAPIClient) async throws -> CreationThread {
+    /// `pinned` binds an exact source (camera-roll stories); otherwise the role picks one.
+    static func attach(asset: SavedMediaAsset, source pinned: SavedMediaSource? = nil, threadID: UUID, itemID: String?, role: CreationMediaRole, destination: ProjectUploadDestination = .phone, mediaID: String, owner: String, api: any KriaAPIClient) async throws -> CreationThread {
         if role == .visual {
-            guard let itemID, source.role == "original" else { throw SavedMediaError.originalRequired }
-            _ = try await api.attachSavedVisual(itemID: itemID, asset: asset, source: source)
+            guard let itemID, asset.kind != "audio" else { throw SavedMediaError.originalRequired }
+            var target = asset
+            if target.bindableSource(for: .visual, destination: destination) == nil {
+                // KRI-822: Visuals render a full-quality cloud copy. A device-only video gets one
+                // from its verified original on this iPhone; the analysis proxy never stands in.
+                guard asset.kind == "video", asset.originalAvailability == "device_only",
+                      let local = try await adoptOriginal(asset: asset, owner: owner, api: api) else { throw SavedMediaError.originalRequired }
+                target = try await api.uploadSavedMediaOriginal(asset: asset, file: local)
+            }
+            guard let original = target.bindableSource(for: .visual, destination: destination) else { throw SavedMediaError.originalRequired }
+            _ = try await api.attachSavedVisual(itemID: itemID, asset: target, source: original)
             return try await api.project(threadID: threadID)
         }
+        guard let source = pinned ?? asset.bindableSource(for: role, destination: destination) else { throw SavedMediaError.originalRequired }
         if asset.kind == "video" {
             guard let fingerprint = asset.fingerprint else { throw SavedMediaError.originalRequired }
             let library = MediaLibraryOriginals(owner: owner)
@@ -57,6 +68,51 @@ import KriaMediaEngine
             }
         }
         throw APIError.conflict
+    }
+}
+
+/// KRI-822: one decision drives a saved upload's row text, its Add button and the Add action,
+/// so a row can never say "Original on this iPhone" next to a disabled Add.
+struct SavedMediaEligibility: Equatable {
+    enum Action: Equatable {
+        /// A cloud source for this role exists.
+        case attach
+        /// Visuals: upload the verified original on this iPhone in full, then attach it.
+        case uploadOriginal
+        /// The original must be chosen in Files first; Add opens Files and then finishes.
+        case locateOriginal
+        /// No usable cloud copy; restore it from the original first.
+        case restoreCloudCopy
+        case unavailable
+    }
+    let action: Action
+    let text: String
+    var canAdd: Bool { action == .attach || action == .uploadOriginal || action == .locateOriginal }
+
+    static let onThisIPhone = "Original on this iPhone"
+    static let originalNeeded = "Full-quality original needed on this iPhone"
+    static let expired = "Cloud copy expired or unavailable. Restore it from the original to reuse it."
+
+    static func evaluate(_ asset: SavedMediaAsset, role: CreationMediaRole, destination: ProjectUploadDestination, signedIn: Bool, hasLocalOriginal: Bool) -> Self {
+        let status = asset.status == "failed" ? "Analysis needs retry" : asset.status == "ready" ? "Available to reuse" : "Analysis in progress"
+        let deviceOnlyVideo = asset.kind == "video" && asset.originalAvailability == "device_only" && asset.fingerprint != nil
+        let fits = role.isAudio ? asset.kind == "audio" : role == .clip ? asset.kind == "video" : asset.kind != "audio"
+        if role == .visual, let kinds = destination.visualKinds, !kinds.contains(asset.kind == "image" ? .image : .video) {
+            return Self(action: .unavailable, text: asset.kind == "video" ? "Add videos to this post in Footage." : "Photos can’t be added to this post on iPhone.")
+        }
+        let source = asset.bindableSource(for: role, destination: destination)
+        let result: Self
+        if role == .visual, source == nil, deviceOnlyVideo {
+            result = hasLocalOriginal ? Self(action: .uploadOriginal, text: onThisIPhone) : Self(action: .locateOriginal, text: originalNeeded)
+        } else if source == nil {
+            result = Self(action: .restoreCloudCopy, text: expired)
+        } else if deviceOnlyVideo, role == .clip {
+            result = hasLocalOriginal ? Self(action: .attach, text: onThisIPhone) : Self(action: .locateOriginal, text: originalNeeded)
+        } else {
+            result = Self(action: .attach, text: status)
+        }
+        guard fits, signedIn, destination.canUpload else { return Self(action: .unavailable, text: result.text) }
+        return result
     }
 }
 

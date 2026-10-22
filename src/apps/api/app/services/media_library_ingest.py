@@ -41,6 +41,10 @@ _ALLOWED = {
     "audio": {"audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/wav", "audio/x-wav", "audio/aac"},
 }
 _BYTE_LIMIT = {"image": 25 * 1024**2, "video": 512 * 1024**2, "audio": 200 * 1024**2}
+# A creator-supplied full original (KRI-822) is a real camera file: HEVC .mov
+# or .mp4, bounded like plan-item Visuals uploads (routes/plan_items.py).
+_ORIGINAL_VIDEO_TYPES = {"video/mp4", "video/quicktime"}
+_ORIGINAL_VIDEO_LIMIT = 4 * 1024**3
 
 
 async def lock_library_owner(db: AsyncSession, owner_id: uuid.UUID) -> None:
@@ -79,6 +83,8 @@ async def _make_catalogue_room(db: AsyncSession, owner_id: uuid.UUID) -> None:
 
 
 def validate_upload_request(payload: dict, *, legacy: bool = False) -> MediaUploadContract:
+    if payload.get("attach_original"):
+        return _validate_original_attachment(payload)
     kind = payload["kind"]
     supported = _ALLOWED.get(kind, set()) | (
         {"video/quicktime", "video/webm"} if legacy and kind == "video" else set()
@@ -98,12 +104,42 @@ def validate_upload_request(payload: dict, *, legacy: bool = False) -> MediaUplo
     return contract
 
 
+def _validate_original_attachment(payload: dict) -> MediaUploadContract:
+    """The full original of an owned video; never a proxy, never a new asset."""
+    contract = MediaUploadContract.model_validate(payload.get("upload_contract") or {})
+    if (
+        payload["kind"] != "video"
+        or not payload.get("repair_asset_id")
+        or contract.purpose != "cloud_render_source"
+        or contract.proxy is not None
+    ):
+        raise HTTPException(
+            422, "An original upload needs an owned video and its full, unconverted bytes"
+        )
+    if payload["content_type"] not in _ORIGINAL_VIDEO_TYPES:
+        raise HTTPException(422, "Unsupported media type")
+    if not 0 < payload["file_size_bytes"] <= _ORIGINAL_VIDEO_LIMIT:
+        raise HTTPException(422, "Media exceeds the per-file limit")
+    return contract
+
+
+def _require_declared_original(asset: MediaAsset, byte_count: int) -> None:
+    if not asset.original_declared_sha256 or asset.original_byte_count is None:
+        raise HTTPException(422, "This video has no declared original to restore")
+    if byte_count != asset.original_byte_count:
+        raise HTTPException(422, "This file is not the original of this saved video")
+
+
 async def _repair_target(db: AsyncSession, owner_id: uuid.UUID, payload: dict) -> MediaAsset | None:
     if not payload.get("repair_asset_id"):
         return None
     asset = await load_library_asset(db, owner_id, uuid.UUID(str(payload["repair_asset_id"])))
     if asset.archived_at is not None or asset.kind != payload["kind"]:
         raise HTTPException(409, "Repair requires an active asset of the same media kind")
+    if payload.get("attach_original"):
+        # Size is checked before a PUT is signed; the full sha256 at finalize.
+        _require_declared_original(asset, payload["file_size_bytes"])
+        return asset
     if asset.kind == "video" and payload["upload_contract"] != asset.metadata_json.get(
         "upload_contract"
     ):
@@ -136,6 +172,9 @@ async def _reservation_capacity(db, owner_id, payload, *, exclude_reservation=No
 async def reserve_library_upload(
     db: AsyncSession, owner_id: uuid.UUID, payload: dict
 ) -> MediaAssetUploadReservation:
+    if not payload.get("attach_original"):
+        # Keep pre-KRI-822 retry identities byte-identical to stored requests.
+        payload = {key: value for key, value in payload.items() if key != "attach_original"}
     validate_upload_request(payload)
     await lock_library_owner(db, owner_id)
     row = await db.scalar(
@@ -177,6 +216,7 @@ async def reserve_library_upload(
             "image/heic": "heic",
             "image/heif": "heif",
             "video/mp4": "mp4",
+            "video/quicktime": "mov",
         }.get(payload["content_type"], "audio")
         prefix = (
             "analysis-proxy-"
@@ -332,8 +372,13 @@ async def register_verified_source(
     original_byte_count: int | None = None,
     metadata: dict | None = None,
     repair_asset_id: uuid.UUID | None = None,
+    attach_original: bool = False,
 ) -> tuple[MediaAsset, MediaAssetSource]:
-    """Admission seam for verified existing upload paths; caller owns commit."""
+    """Admission seam for verified existing upload paths; caller owns commit.
+
+    ``attach_original`` (KRI-822) adds the full original to an owned asset whose
+    declared original identity equals the verified uploaded bytes.
+    """
     if not re.fullmatch(r"[0-9a-f]{64}", uploaded_sha256):
         raise HTTPException(422, "A verified full source hash is required")
     await lock_library_owner(db, owner_id)
@@ -342,7 +387,13 @@ async def register_verified_source(
         repair = await load_library_asset(db, owner_id, repair_asset_id)
         if repair.archived_at is not None or repair.kind != kind:
             raise HTTPException(409, "Repair requires an active asset of the same media kind")
-        if role == "original":
+        if attach_original:
+            _require_declared_original(repair, byte_count)
+            if role != "original" or uploaded_sha256 != repair.original_declared_sha256:
+                raise HTTPException(422, "This file is not the original of this saved video")
+            original_declared_sha256 = repair.original_declared_sha256
+            original_byte_count = repair.original_byte_count
+        elif role == "original":
             known = await db.scalar(
                 select(MediaAssetSource.id).where(
                     MediaAssetSource.asset_id == repair.id,
@@ -397,6 +448,8 @@ async def register_verified_source(
             and str(current.generation) == current_source.object_generation
             and current.size == current_source.byte_count
         ):
+            if attach_original:
+                existing[0].original_availability = "cloud_backed"
             return existing[0], current_source
         current_source.status = "missing"
     if existing is None and repair is None:
@@ -462,6 +515,9 @@ async def register_verified_source(
         content_type=content_type,
         status="available",
     )
+    if attach_original:
+        # Only after the full bytes matched the declared original identity.
+        asset.original_availability = "cloud_backed"
     db.add(asset)
     await db.flush()
     db.add(source)
@@ -617,6 +673,7 @@ async def finalize_library_upload(
         repair_asset_id=uuid.UUID(payload["repair_asset_id"])
         if payload.get("repair_asset_id")
         else None,
+        attach_original=bool(payload.get("attach_original")),
     )
     if source.object_path == path:
         receipt.status = "adopted"
@@ -647,6 +704,7 @@ async def resolve_library_source(
     kind: str | None = None,
     allow_archived: bool = False,
     allow_missing: bool = False,
+    prefer_role: str | None = None,
 ) -> tuple[MediaAsset, MediaAssetSource]:
     asset = await load_library_asset(db, owner_id, asset_id)
     if (asset.archived_at is not None and not allow_archived) or (
@@ -662,8 +720,10 @@ async def resolve_library_source(
         query = query.where(MediaAssetSource.id == source_id)
     if not allow_missing:
         query = query.where(MediaAssetSource.status == "available")
+    ordering = [(MediaAssetSource.role == prefer_role).desc()] if prefer_role else []
     source = await db.scalar(
         query.order_by(
+            *ordering,
             (MediaAssetSource.status == "available").desc(),
             MediaAssetSource.created_at.desc(),
             MediaAssetSource.id.desc(),

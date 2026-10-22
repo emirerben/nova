@@ -78,6 +78,19 @@ Finalization downloads the pinned generation, verifies the full uploaded hash
 and length, and checks the actual media. Device declarations never prove the
 uploaded-byte identity. No automatic video-original backup is added.
 
+A creator can explicitly give a device-only video its full original (KRI-822):
+adding it to Visuals, or restoring it from Files for Visuals, uploads the
+original on that iPhone. The request sets `attach_original: true` with the
+owned `repair_asset_id`, `purpose: cloud_render_source` and no proxy
+(`video/mp4` or `video/quicktime`, up to 4 GB). Reserve rejects a byte count
+that differs from the asset's `original_byte_count`; finalize rejects any
+sha256 other than `original_declared_sha256`. Only then is a new `original`
+source added and the asset marked `cloud_backed`. The analysis proxy row is
+never read as, or turned into, the original. A retry with the same
+`client_upload_id` (`ios-original-<asset>-<sha>`) returns the same source.
+Phone Footage keeps binding the analysis proxy; Visuals bind the original
+(`project_library_visual` prefers it when no source id is given).
+
 Saved uploads keeps the newest 500 active catalogue assets per creator. A verified,
 unique import atomically archives the oldest active entry by upload/admission time
 (`created_at`, then `id` for ties). Reusing an old upload does not reset its age.
