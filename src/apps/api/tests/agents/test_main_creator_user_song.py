@@ -35,12 +35,14 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v63 adds source-backed explanations; no-song fixtures track the deliberate new baseline.
 # v62 grounds a phone montage story in owned clip IDs and explanatory text goals.
 # v64 adds typed unchanged-source audio intent; only the two brief-on renders change.
-# v66 combines caption spellings and named cut_lines; only brief-on renders change.
+# v65 (KRI-793) adds the `spellings` caption fact: only the two brief-on renders change.
+# v66 combines it with KRI-791 spoken-text `triggers` + `speaker`; legacy brief-off
+# renders remain unchanged. Re-pin brief-on hashes only after reviewing both additions.
 PRE_CHANGE_PROMPT_SHA = {
     (True, False): "4684c634fa88dcfec7865a41330b8a781bb706837861c6e7d63c796b8c2d0a2a",
-    (True, True): "9d4d1e5793f6aab35f397f275c5d52f67f6f35829f40402617dba7f2dbd27be3",
+    (True, True): "943a70c2748575c88f78c6c3f1cf484bb9812c739666cdf28b31069dbb769642",
     (False, False): "9ae7a03343fc258ce0fec6bc86976e6f24b1576bc4ad92920eb5e5b28f1e330d",
-    (False, True): "0aa77b37c96a3abfe922ef154910648e4e1ac49ee5ad634bad6634f3600b3d85",
+    (False, True): "b25c6b84633e5195091cde5d931bea8bcc6c0570407c3a588ada3d444334bffc",
 }
 
 

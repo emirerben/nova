@@ -15,7 +15,8 @@ same time; when no spot clears both, the face wins (text never covers a face).
 
 Matching is the reaction-beat trigger match (`phone_reaction_grounding`, KRI-178): folded
 tokens, so "Atakan'ı" says "Atakan". Never guessed: a word the take doesn't say places nothing
-and the receipt says so (``not_heard``).
+and the receipt says so (``not_heard``). Words carry no speaker, so "the first time SHE says
+Merope" is placed on the first "Merope" anyone says (KRI-791; the receipt says so).
 """
 
 from __future__ import annotations
@@ -188,6 +189,10 @@ def spoken_text_rows(
             "text": ask.text,
             "triggers": list(ask.triggers),
         }
+        if ask.speaker:
+            # KRI-791: the ask named who says it; the take's words can't tell, so the first
+            # time anyone says the word is the one shown (and the receipt says so).
+            entry["speaker"] = ask.speaker
         try:
             heard = find_spoken_word(words, ask.triggers)
             if heard is None:

@@ -1290,6 +1290,60 @@
       "journey": "kri-653-silent-take"
     },
     {
+      "id": "kri-808-clip-speech-language",
+      "tickets": [
+        "KRI-808",
+        "KRI-802"
+      ],
+      "symptom": "Don Julio M1 (2026-10-21, plan item 7a4ce1d5): the clip records Main Creator read had whisper TRANSLATIONS as timed segments (a Turkish speaker's \"What's your name?\" as \"Ne isminiz?\", \"Gracias\" as \"\u0421\u043f\u0430\u0441\u0438\u0431\u043e.\"), a 24-word Gemini sentence on a 1.1 s clip and a \"Video. Video...\" loop, so the quoted line \"What's your name?\" had no timed words.",
+      "boundary": "persistence",
+      "status": "open_pr",
+      "owner": "KRI-808",
+      "paths": [
+        "src/apps/api/app/services/clip_speech_check.py",
+        "src/apps/api/app/services/speech_segments.py",
+        "src/apps/api/app/services/transcript_quality.py",
+        "src/apps/api/app/services/clip_understanding.py",
+        "src/apps/api/app/tasks/kria_clip_understanding.py",
+        "src/apps/api/app/services/phone_speech_montage_job.py",
+        "src/apps/api/tests/fixtures/kri808_don_julio_clip_speech.json"
+      ],
+      "regression_tests": [
+        "tests/tasks/test_kri808_clip_speech_language.py",
+        "tests/tasks/test_kri808_clip_speech_language_postgres.py",
+        "tests/tasks/test_kria_speech_segments.py",
+        "tests/services/test_transcript_quality.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": "clip_speech_language_check_enabled",
+      "evidence": {
+        "offline_replay": "Prod's nine M1 clip records (proposal-trace media_context) and whisper-1's first passes rebuilt from them, through the real _with_speech_segments / clip_speech_check / clip_record / ground_excerpt; forced re-runs are free whisper.cpp medium passes on the kit clips (en/tr/es). Red on origin/main 3519e7cf0 (16 of 27 fail with prod's exact symptoms), green with the fix; also replayed with medium's own auto first pass. The background task also runs end to end on scratch Postgres (real thread language row, real store).",
+        "live_model": "Not run; no paid calls (no Gemini, no whisper-1).",
+        "native_output": "n/a: clip records are server-side; a phone re-send of M1 reads them through Main Creator.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "the waiter's Spanish stays Spanish in an English chat (no over-correction), with no re-run",
+        "Turkish table chatter never forced into English",
+        "\"Cheers\" stays quotable",
+        "speech in a non-Latin script is kept when both listeners agree",
+        "chat language unknown: a translation is still never stored",
+        "a failing re-run keeps the analysis",
+        "already-stored records cleaned on read (loop, impossible length)",
+        "whisper placeholders, caption credits, 3x loops; an unclosed bracket keeps its words",
+        "kill switch restores the first pass"
+      ],
+      "neighbours_gap": [
+        "Records stored before the fix keep their translated segments; a new chat (new attach) re-analyses.",
+        "ground_excerpt folds to ASCII, so a quote in a non-Latin script cannot ground (pre-existing).",
+        "whisper-1's forced passes are stood in for by whisper.cpp medium; whisper-1 may word them differently.",
+        "Gemini's own transcript can still be in the wrong language; it is only dropped when it loops or is too long for the clip."
+      ],
+      "follow_ups": [],
+      "red_control": "not_applicable",
+      "journey": "kri-808-clip-speech-language"
+    },
+    {
       "id": "kri-661-talking-visuals-and-order",
       "tickets": [
         "KRI-661",
