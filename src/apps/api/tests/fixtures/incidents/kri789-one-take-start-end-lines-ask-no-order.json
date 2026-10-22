@@ -1,0 +1,115 @@
+{
+  "id": "kri789-one-take-start-end-lines-ask-no-order",
+  "incident": {
+    "ticket": "KRI-789",
+    "summary": "Must not ask: a one-video Talking edit whose quoted start/end lines the brief filed as a key-less order rule was asked 'You gave me a specific order for the clips' (attachment order / no fixed order), and the render contract left 'I can't verify this ordering rule'. One clip has no order to promise or verify."
+  },
+  "kind": "clarification",
+  "approved": {
+    "strategy": {
+      "direction": "native",
+      "edit_format": "subtitled",
+      "render_program": "native",
+      "pacing": "balanced",
+      "media_scope": "selected",
+      "selected_media_ids": ["n0"],
+      "caption_style": "auto",
+      "opening_title": "Colombian dessert, Ecuadorian hands",
+      "audio_strategy": "original_audio",
+      "story_structure": [
+        "Carolina introduces herself",
+        "She describes the Oblea de la Casa ingredients"
+      ],
+      "target_duration_s": 35,
+      "target_duration_requested": true,
+      "video_reuse_policy": "once"
+    },
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "timing",
+          "scope": "global",
+          "description": "About 35 seconds",
+          "facts": {"duration_s": 35},
+          "source_turn_id": "turn-1"
+        },
+        {
+          "id": "r2",
+          "kind": "order",
+          "scope": "global",
+          "description": "Start at 'Hi, I'm Karolina, I'm from Ecuador' and end right after 'I'm gonna be here all week'",
+          "facts": {
+            "start": "Hi, I'm Karolina, I'm from Ecuador",
+            "end": "I'm gonna be here all week"
+          },
+          "source_turn_id": "turn-1"
+        },
+        {
+          "id": "r3",
+          "kind": "audio",
+          "scope": "global",
+          "description": "Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam'",
+          "facts": {"speech_cleanup": true},
+          "source_turn_id": "turn-1"
+        },
+        {
+          "id": "r4",
+          "kind": "audio",
+          "scope": "global",
+          "description": "Cut the half question 'how are you gonna'",
+          "facts": {"speech_cleanup": true},
+          "source_turn_id": "turn-1"
+        },
+        {
+          "id": "r6",
+          "kind": "text",
+          "scope": "title",
+          "literal": "Colombian dessert, Ecuadorian hands",
+          "description": "Title on screen, placed so there is no text on her face or on the plate",
+          "facts": {},
+          "source_turn_id": "turn-1"
+        }
+      ]
+    },
+    "creator_request": "Talking-to-camera edit of Caro at Merope. Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\". Cut her slip \"with bread, no,\" so it says \"waffle cookie with blackberry jam\". Also cut my half question \"how are you gonna\". Title: \"Colombian dessert, Ecuadorian hands\". About 35 seconds.",
+    "provenance": "Prod thread 32a5b608 (2026-10-21, prod 042c405c9, Main Creator v64), Merope cafe kit T1, anonymised: one 68.37 s iPhone take (EXIF capture time), brief v1 as the turn-1 Main Creator wrote it (r2 = key-less order with the quoted start/end lines). The caption-spelling (r5) and MEROPE word-text (r7) asks are left out: they are KRI-793 / KRI-791 and do not touch the order gate."
+  },
+  "inputs": {
+    "media": [
+      {
+        "id": "n0",
+        "kind": "video",
+        "duration_s": 68.37,
+        "capture_time": "2026-10-16T15:24:17Z",
+        "has_audio": true,
+        "speech": {"has_speech": true, "to_camera": true}
+      }
+    ],
+    "turns": [
+      {
+        "role": "user",
+        "text": "Talking-to-camera edit of Caro at Merope. Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\". Cut her slip \"with bread, no,\" so it says \"waffle cookie with blackberry jam\". Also cut my half question \"how are you gonna\". Title: \"Colombian dessert, Ecuadorian hands\". About 35 seconds."
+      }
+    ],
+    "phone_proxy_media": true,
+    "notes": [
+      "KRI-789: an order rule on a one-clip edit is trivially met: no order_basis question, no unresolved ordering rule in the contract.",
+      "New briefs record these lines as a timing trim (facts.start_line / facts.end_line); this record keeps the stored v64 shape so the gate is proven on briefs already saved."
+    ]
+  },
+  "expect": {
+    "contract": {
+      "resolved": true
+    },
+    "question": {
+      "no_question": true
+    }
+  },
+  "repro": {
+    "command": "pytest tests/incidents/test_incident_corpus.py -k kri789-one-take-start-end-lines-ask-no-order",
+    "status": "available"
+  },
+  "sources": []
+}

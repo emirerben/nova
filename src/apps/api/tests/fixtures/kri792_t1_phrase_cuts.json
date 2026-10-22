@@ -1,0 +1,135 @@
+{
+  "_source": "Prod café kit T1 Talking run 2026-10-21 on 042c405c9: thread 32A5B608-6397-4608-889F-DFF5AD9BEC40, job f88555bc (brief = the job's creator_brief_binding v2; strategy = all_candidates.creator_strategy). KRI-792.",
+  "creator_prompt": "Talking-to-camera edit of Caro at Merope. Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\". Cut her slip \"with bread, no,\" so it says \"waffle cookie with blackberry jam\". Also cut my half question \"how are you gonna\". Captions for both voices, and spell these right: Oblea de la Casa, dulce de leche, leche condensada, Merope. Title: \"Colombian dessert, Ecuadorian hands\". Show \"MEROPE\" in big letters the first time she says Merope. No text on her face or on the plate. About 35 seconds.",
+  "brief": {
+    "version": 2,
+    "requirements": [
+      {
+        "id": "r1",
+        "kind": "timing",
+        "facts": {
+          "duration_s": 35
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "About 35 seconds",
+        "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+      },
+      {
+        "id": "r2",
+        "kind": "order",
+        "facts": {
+          "end": "I'm gonna be here all week",
+          "key": "attachment",
+          "start": "Hi, I'm Karolina, I'm from Ecuador"
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "in the order the clips were added",
+        "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+      },
+      {
+        "id": "r3",
+        "kind": "audio",
+        "facts": {
+          "speech_cleanup": true
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam'",
+        "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+      },
+      {
+        "id": "r4",
+        "kind": "audio",
+        "facts": {
+          "speech_cleanup": true
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Cut the half question 'how are you gonna'",
+        "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+      },
+      {
+        "id": "r5",
+        "kind": "style",
+        "facts": {
+          "captions": "on"
+        },
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "description": "Captions for both voices, ensuring correct spellings: Oblea de la Casa, dulce de leche, leche condensada, Merope",
+        "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+      },
+      {
+        "id": "r6",
+        "kind": "text",
+        "facts": {},
+        "scope": "title",
+        "status": "open",
+        "literal": "Colombian dessert, Ecuadorian hands",
+        "description": "Title on screen, placed so there is no text on her face or on the plate",
+        "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+      },
+      {
+        "id": "r7",
+        "kind": "text",
+        "facts": {},
+        "scope": "global",
+        "status": "superseded",
+        "literal": "MEROPE",
+        "description": "Show MEROPE in big letters the first time she says Merope, placed so there is no text on her face or on the plate",
+        "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+      }
+    ]
+  },
+  "strategy": {
+    "pacing": "balanced",
+    "direction": "native",
+    "rationale": "Switching to the native pipeline so the video can render directly on your phone. This preserves the 35-second target length, exact text, accurate captions for the dessert ingredients, and cuts out the spoken slips you specified.",
+    "edit_format": "subtitled",
+    "media_scope": "selected",
+    "caption_style": "clean",
+    "opening_title": "Colombian dessert, Ecuadorian hands",
+    "audio_strategy": "original_audio",
+    "render_program": "native",
+    "story_structure": [
+      "Carolina introduces herself",
+      "Carolina describes the Oblea de la Casa and its ingredients"
+    ],
+    "target_duration_s": 35,
+    "selected_media_ids": [
+      "analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4"
+    ],
+    "video_reuse_policy": "once",
+    "optional_treatments": []
+  },
+  "prod_receipts": {
+    "turn3_cleanup_offered": {
+      "r3": {
+        "status": "partial",
+        "reason": "Choose Clean up speech when you approve and the long pauses are cut"
+      },
+      "r4": {
+        "status": "partial",
+        "reason": "Choose Clean up speech when you approve and the long pauses are cut"
+      }
+    },
+    "turn4_cleanup_on": {
+      "r3": {
+        "status": "met",
+        "reason": null
+      },
+      "r4": {
+        "status": "met",
+        "reason": null
+      }
+    }
+  },
+  "prod_approval_card": "Render this draft: Not everything you asked for made it in:\n- Partly: About 35 seconds (A Talking edit keeps your whole take, so its length follows your clip; your take is 68.4s and you asked for 35s)\n- Done: Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam'\n- Done: Cut the half question 'how are you gonna'\n- Done: Title on screen, placed so there is no text on her face or on the plate (\"Colombian dessert, Ecuadorian hands\")"
+}

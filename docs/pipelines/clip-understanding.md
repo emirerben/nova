@@ -608,6 +608,46 @@ loader: the follow-up turn only checks what the budget left) and
 `test_pending_diagnostics_show_differently_worded_chapter_intents_doubling_checks` in
 `tests/services/test_clip_intent_resolution.py`.
 
+## Spoken words: segments and the per-clip language (KRI-808)
+
+Two writers fill `speech`: the Gemini analyzer writes `transcript`/`has_speech`; whisper-1
+writes the timed `segments` and `language` afterwards
+(`tasks/kria_clip_understanding._with_speech_segments`, `SPEECH_EXCERPT_MONTAGE_ENABLED`).
+
+- **whisper guesses one language per clip and translates into a wrong guess.** On 2-4 s
+  clips the guess is close to random (Don Julio M1: a Turkish speaker's "What's your
+  name?" stored as "Ne isminiz?", "Gracias" as "Спасибо."). One language for the take is
+  no better: the same take holds English, the waiter's Spanish and Turkish chatter. So
+  `services/clip_speech_check.pick_spoken_words` compares whisper's first pass with the
+  clip's Gemini transcript. When they disagree (another EN/TR language, another script, no
+  word in common) the clip is transcribed again in the language Gemini heard and in the
+  chat's language (`CreationThread.state["reply_language"]`), and a re-run is kept only
+  when at least half its words are words Gemini heard. A disagreeing pass nothing confirms
+  is stored as no segments. The chat language is never forced: the waiter's Spanish stays
+  Spanish in an English chat. `speech.language` is the language the stored segments were
+  checked in; `transcribe_stored_clip(language=...)` (phone speech montage) and the
+  quoted-line word pass (`spoken_quotes`) transcribe in it, so a quoted segment grounds on
+  render-time words. Kill switch: `CLIP_SPEECH_LANGUAGE_CHECK_ENABLED=false` + worker
+  restart stores whisper's first pass as before.
+- **Silence inventions.** `clean_words` drops bracketed markers ("(speaking in foreign
+  language)", "[Música]"), caption credits ("Altyazı M.K."), a sentence repeated three or
+  more times (the first stays), and the whole pass when it has more words than the clip
+  can hold.
+- **Invented Gemini transcripts.** `transcript_quality.is_implausible_transcript`: the
+  KRI-653 loop guard now also catches short loops (8-19 tokens, one phrase covering 75%:
+  "Video. Video. Video..."), and a transcript with more than 5 words per second of clip
+  plus 4 is dropped. `clip_record` applies both on read with `analysis["duration_s"]`, so
+  stored records are cleaned too; such a clip claims speech only when it has segments.
+
+Guards: `tests/tasks/test_kri808_clip_speech_language.py` replays the nine M1 clip
+records (`tests/fixtures/kri808_don_julio_clip_speech.json`: prod's records plus free
+whisper.cpp medium re-runs per language); `test_kri808_clip_speech_language_postgres.py` runs
+the background task on scratch Postgres with a real thread language row;
+`tests/services/test_transcript_quality.py`.
+Gaps: `ground_excerpt` folds tokens to ASCII, so a quote in a non-Latin script still can't
+ground; whisper's per-segment `no_speech_prob`/`avg_logprob` are not used because the
+transcript cache does not keep them.
+
 ## Known gaps
 
 - Vision re-query remains video-only. Images need an inline media input path.
