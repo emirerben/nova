@@ -2654,6 +2654,33 @@ nova-video` + restart (api + worker). The draft says "can't" again and no row is
 placed; rows already on a variant keep rendering and survive Saves.
 Tests: `tests/tasks/test_kri707_talking_spoken_text.py`.
 
+**No trigger in the brief (KRI-791).** Café T1 (thread 32A5B608, 2026-10-21): "Show
+MEROPE in big letters the first time she says Merope" arrived as `literal: "MEROPE"`
+with `facts: {}`, because the brief prompt taught `triggers` only for photos, videos,
+stickers and sounds; "the first time she says" wasn't a known spoken cue either, so the
+draft said "that exact text isn't in this draft" and the contract pinned the text.
+
+- **Prompt (Main Creator v65, extractor v13).** On-screen text timed to a spoken word
+  carries `triggers`, plus `speaker` when someone other than the creator says it.
+- **Fallback.** Without `facts.triggers`, `requirement_spoken_text` reads the ask's own
+  description (`brief_checks.worded_spoken_cue`): the words after the cue verb, cut to
+  the shown text when they start with it ("the first time she says **Merope** in big
+  letters"), else quoted words that aren't the text (“Atakan” dediğimde ...). Only the
+  trigger reader (`_CUE_TRIGGER_RE`) knows "the first time" and she/he/they + a say-verb,
+  and only whole-video text asks use it; the spoken-cue recogniser that pop-in,
+  whole-line and cut asks share is unchanged. A plain "Show SALE in big letters" or a
+  described word ("the café's name") gets no trigger.
+- **Speaker.** Words carry no speaker, so a named other speaker ("she", `facts.speaker`)
+  is placed on the first time anyone says the word. The draft says so ("I can't tell
+  who's speaking ...") and the finished video is `partial` with that reason; both are
+  format-limit reasons, so they never hold the draft or block the render.
+- **No readable word.** A spoken-cue text whose word can't be read says "I couldn't
+  tell which spoken word to wait for ..." (not "can't show text at a word") and the
+  Talking contract never pins it.
+
+Tests: `tests/tasks/test_kri791_spoken_text_trigger.py` (replays the T1 brief, strategy
+and speech segments).
+
 ## Your song montages (KRI-374)
 
 A creator attaches their own song to a phone montage ("Add your song" in the

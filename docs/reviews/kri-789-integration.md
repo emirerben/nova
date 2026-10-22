@@ -40,3 +40,15 @@ asserts the forged answer is stripped, no order is invented, and the phone gate
 passes. All 19 dispatch-security and trim-parser controls pass. No product change
 or security assertion removal was needed. The original failed hosted case remains
 evidence of the integration interaction, not an accepted current result.
+
+## Landed KRI-791 integration
+
+Main 049bdd0a6 (KRI-791 plus the KRI-807 picker repair) landed while the earlier
+candidate's native CI continued. Local reconciliation retains caption spellings,
+spoken-text triggers and speaker-disclosure behavior, plus quoted take-trim facts.
+The combined prompt advances to v67 / extractor v15; only the brief-on hashes are
+regenerated. All 41 gates in the newer main remain unchanged. Focused parser,
+spoken-text, security and free replay checks: 2,450 passed, 15 skipped, nine expected
+failures. This new source needs its own hosted checks; earlier native evidence is
+not relabelled as evidence for the new combined source. No running hosted job was
+cancelled or superseded to prepare this local reconciliation.

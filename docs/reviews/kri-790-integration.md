@@ -44,3 +44,15 @@ and `tests/fixtures/kri790_merope_t1_take.json` under `src/apps/api`.
 No new live-model call, original-media upload, physical-phone action, deployment or
 full-request/native-export completion claim was made. The original take was not
 available at the historical author's local kit path in this source-owner workspace.
+
+## Landed spoken-trigger/speaker reconciliation
+
+The local consumer now incorporates main 049bdd0a6 through the reconciled producer,
+retaining caption spelling, spoken triggers/speaker disclosure and the quoted
+window. No extra consumer conflict was needed. All 358 changed-boundary checks
+passed, including the real PostgreSQL runtime and the preserved forged-answer
+controls. The real parser-to-compiler/receipt replay still keeps 12.265–50.380
+seconds (38.115 seconds without cleanup, 35.335 with cleanup) and retains the
+separate requested 35 seconds. Prompt versions are v67 / extractor v15. Existing
+hosted native runs remain attached to the preceding source and are not claimed
+as checks of this newer integration. Publication waits for those runs to finish.
