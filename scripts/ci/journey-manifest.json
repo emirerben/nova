@@ -52,7 +52,7 @@
     {
       "id": "kri-492-length-ownership",
       "needs_native": true,
-      "api_tests": "tests/services/test_length_policy_state.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_brief_binding.py tests/kria/test_request_binding_journey.py tests/kria/test_render_retry_postgres.py tests/agents/test_main_creator_voice_mode.py tests/kria/test_voice_flag_gating.py tests/services/test_phone_speech_montage_job.py tests/services/test_render_route.py tests/services/test_render_route_invariance.py tests/tasks/test_route_shadow_dispatch.py tests/tasks/test_unified_montage_dispatch.py tests/tasks/test_voice_behind_footage_dispatch.py tests/integration/test_actual_export_verification.py tests/integration/test_actual_export_completion.py tests/routes/test_actual_export_publication.py tests/integration/test_media_collections.py tests/integration/test_camera_roll_execution.py",
+      "api_tests": "tests/services/test_length_policy_state.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_brief_binding.py tests/kria/test_request_binding_journey.py tests/kria/test_render_retry_postgres.py tests/agents/test_main_creator_voice_mode.py tests/kria/test_voice_flag_gating.py tests/services/test_phone_speech_montage_job.py tests/services/test_render_route.py tests/services/test_render_route_invariance.py tests/tasks/test_route_shadow_dispatch.py tests/tasks/test_unified_montage_dispatch.py tests/tasks/test_voice_behind_footage_dispatch.py tests/integration/test_actual_export_verification.py tests/integration/test_actual_export_completion.py tests/routes/test_actual_export_publication.py tests/integration/test_media_collections.py tests/integration/test_camera_roll_execution.py tests/services/test_strict_export_duration.py tests/routes/test_strict_export_duration.py tests/services/test_length_policy.py tests/services/test_length_owner_choices.py tests/services/test_phone_editor_render_contract.py",
       "paths": [
         "src/apps/api/app/services/length_policy.py",
         "src/apps/api/app/services/length_policy_state.py",
@@ -108,7 +108,14 @@
         "src/apps/api/app/cli/benchmark_device_export.py",
         "src/apps/api/tests/integration/test_actual_export_verification.py",
         "src/apps/api/tests/integration/test_actual_export_completion.py",
-        "src/apps/api/tests/routes/test_actual_export_publication.py"
+        "src/apps/api/tests/routes/test_actual_export_publication.py",
+        "src/apps/api/app/services/export_duration_policy.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/tests/services/test_strict_export_duration.py",
+        "src/apps/api/tests/routes/test_strict_export_duration.py",
+        "src/apps/api/tests/services/test_length_policy.py",
+        "src/apps/api/tests/services/test_length_owner_choices.py",
+        "src/apps/api/tests/services/test_phone_editor_render_contract.py"
       ]
     },
     {
