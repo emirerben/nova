@@ -204,7 +204,12 @@ import XCTest
         do {
             _ = try await export(recipe, source: gone, name: "missing-export")
             XCTFail("a deleted original must not export")
-        } catch {}
+        } catch MediaEngineError.missingAsset(let id) {
+            XCTAssertEqual(id, "source", "relink needs the asset id, not a composition track id")
+        } catch {
+            XCTAssertFalse(String(describing: error).contains("missingAsset"), "unexpected track-level failure: \(error)")
+            XCTAssertFalse(error is NativePreviewFeatureError, "a deleted file is not an unsupported recipe: \(error)")
+        }
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("missing-export.mp4").path))
         do {
             _ = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: [:])
@@ -212,6 +217,22 @@ import XCTest
         } catch MediaEngineError.missingAsset(let id) {
             XCTAssertEqual(id, "source", "relink needs the asset id, not a composition track id")
         }
+    }
+
+    /// A freeze authored on a clip shorter than the empty head keeps its whole slot on the held
+    /// first frame instead of rendering black after the gap.
+    func testHoldOnAClipInsideTheEmptyHeadKeepsItsSlot() async throws {
+        let source = try await original()
+        let fingerprint = try SHA256Fingerprinter().fingerprint(file: source)
+        let manifest = try RenderAssetManifest(assets: [RenderAssetReference(id: "source", fingerprint: RenderFingerprint(fingerprint), source: .original(mediaID: "source"))])
+        let recipe = EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: 96, height: 160),
+            assets: [MediaAsset(id: "source", relativePath: "source", fingerprint: fingerprint)],
+            tracks: [TimelineTrack(id: "video", kind: .video, clips: [
+                TimelineClip(id: "freeze", sourceAssetID: "source", sourceDuration: 0.015, holdDuration: 1.0)])], assetManifest: manifest)
+        let output = try await export(recipe, source: source, name: "head-freeze-export")
+        let duration = try await AVURLAsset(url: output).load(.duration).seconds
+        XCTAssertEqual(duration, 1.015, accuracy: 1.0 / 30 + 0.002)
+        try await assertBrightRed(AVURLAsset(url: output), composition: nil, at: [0, 0.5, 0.95])
     }
 
     /// F16: a normalized control (video at 0) keeps its single moving segment and exports.

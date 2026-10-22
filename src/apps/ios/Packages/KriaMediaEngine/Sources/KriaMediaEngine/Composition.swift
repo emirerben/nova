@@ -204,7 +204,9 @@ public struct PreviewComposition: @unchecked Sendable {
                     let availableSourceDuration = max(0, window.end - movingStart)
                     let effectiveSourceDuration = availableSourceDuration > 0
                         ? min(clip.sourceDuration - headGap, availableSourceDuration) : clip.sourceDuration - headGap
-                    let headHold = headGap / clip.rate
+                    // A clip whose whole span sits inside the empty head has no moving part, so
+                    // its authored hold rides on the held first frame instead of being dropped.
+                    let headHold = headGap / clip.rate + (effectiveSourceDuration > 0 ? 0 : clip.holdDuration ?? 0)
                     var movingAt = time(clip.timelineStart)
                     if time(headHold) > .zero {
                         let head = CMTimeRange(start: time(movingStart), duration: time(min(sourceFrame, effectiveSourceDuration > 0 ? effectiveSourceDuration : sourceFrame)))
