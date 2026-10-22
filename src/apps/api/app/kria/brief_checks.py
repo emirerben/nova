@@ -50,7 +50,7 @@ from app.kria.style_asks import (
     text_look_facts,
     value_matches,
 )
-from app.pipeline.caption_spelling import extract_spelling_asks
+from app.pipeline.caption_spelling import extract_spelling_asks, is_mishearing
 from app.pipeline.sequence_text_evidence import complete_sequences, sequence_lineage
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.text_style_intent import (
@@ -328,6 +328,11 @@ class PlanFacts:
     # a title, captions, a start cut and speech cleanup; an ask outside that set is answered
     # with a plain "can't" before approval and after render (`_talking_honest_receipt`).
     phone_talking: bool = False
+    # KRI-793: True when this draft renders through the phone Talking writer, which captions
+    # the take, spells the creator's listed words their way and records every caption line
+    # (`defers_caption_words_to_phone_render`). A captions ask about language or spelling
+    # then gets a pre-approval line saying what the render will do, never silence.
+    caption_words_at_render: bool = False
     # Seconds of footage the draft would keep whole (the selected video clips' source length);
     # None = unknown, so the length line never states a number it was not given.
     take_duration_s: float | None = None
@@ -2275,10 +2280,20 @@ _BEAT_CUE_RE = re.compile(
     rf"{_SPOKEN_CUE_RE.pattern}|\bpop(s|ping)?[- ]?(up|in|ups|ins)\b|\b(sticker|stamp)s?\b"
     r"|\b[çc]ikartma"
 )
+# KRI-791: a text on a spoken word is also asked for "the first time ..." and in someone
+# else's voice ("... the first time she says Merope"). Only the trigger reader below knows
+# these: the spoken-cue recogniser the pop-in, whole-line and cut asks share is unchanged, so
+# "keep the whole line when she says it" or "a ding every time someone says cheers" read as
+# before. Someone else's voice counts only with a say-verb ("when they get to the summit" is
+# something seen, not said).
+_TRIGGER_CUE_OPENER = rf"(?:{_CUE_OPENER}|the (?:first|1st) time)"
+_OTHER_CUE_SPEAKER = r"(?:she|he|they|someone|somebody|anyone|anybody|everyone)"
+_SAY_VERB = r"(?:say|says|said|mention|mentions)"
 # The words after the cue verb ("... when voiceover says the medal, show ..."): the trigger
 # the creator named without quoting it.
 _CUE_TRIGGER_RE = re.compile(
-    rf"\b{_CUE_OPENER} {_CUE_SPEAKER} {_CUE_VERB}\s+"
+    rf"\b{_TRIGGER_CUE_OPENER} (?:{_CUE_SPEAKER} {_CUE_VERB}"
+    rf"|(?P<other>{_OTHER_CUE_SPEAKER}) {_SAY_VERB})\s+"
     r"(?:the (?:words?|phrase|name) )?(?P<trigger>.+)",
     re.IGNORECASE,
 )
@@ -2489,17 +2504,24 @@ def _fact_triggers(req: BriefRequirement) -> list[str]:
     return found
 
 
-def _cue_triggers(req: BriefRequirement) -> list[str]:
-    """The words right after a cue verb ("when voiceover says the medal, show ...").
+def _cue_trigger_match(
+    req: BriefRequirement, fields: Sequence[str | None] | None = None
+) -> tuple[list[str], str | None, bool]:
+    """The words right after a cue verb, someone else the cue says speaks them, and whether
+    any cue was found.
 
-    A guess at what the creator named without quoting it, in their own spelling. It only
-    ever CONFIRMS (picks which pop-ins an ask is about, recognises an unheard word); a
-    guess that matches nothing never becomes a "No pop-in for X" verdict.
+    "... the first time she says Merope, placed ..." -> (["Merope"], "she", True). The
+    speaker is read even when the words name nothing to look for.
     """
-    for field_value in (req.description, req.literal):
+    speaker: str | None = None
+    matched = False
+    for field_value in (req.description, req.literal) if fields is None else fields:
         match = _CUE_TRIGGER_RE.search(field_value or "")
         if match is None:
             continue
+        matched = True
+        other = (match.group("other") or "").lower()
+        speaker = speaker or (other if other in _NAMED_OTHER_SPEAKERS else None)
         words = _CUE_TRIGGER_END_RE.split(match.group("trigger"), maxsplit=1)[0]
         words = " ".join(words.split()).strip(" \"'\u201c\u201d")
         tokens = [t for t in re.split(r"\W+", _fold(words)) if t]
@@ -2510,8 +2532,64 @@ def _cue_triggers(req: BriefRequirement) -> list[str]:
             and not all(t in _TRIGGER_STOPWORDS for t in tokens)
             and not _GENERIC_TRIGGER_RE.search(words)
         ):
-            return [words]
-    return []
+            return [words], speaker, matched
+    return [], speaker, matched
+
+
+def _cue_triggers(req: BriefRequirement) -> list[str]:
+    """The words right after a cue verb ("when voiceover says the medal, show ...").
+
+    A guess at what the creator named without quoting it, in their own spelling. It only
+    ever CONFIRMS (picks which pop-ins an ask is about, recognises an unheard word); a
+    guess that matches nothing never becomes a "No pop-in for X" verdict.
+    """
+    return _cue_trigger_match(req)[0]
+
+
+# Someone else in the take a cue names as the speaker ("the first time she says ..."). "I",
+# "the voiceover" or "anyone" filter nothing the take's words could not already tell.
+_NAMED_OTHER_SPEAKERS = frozenset({"she", "he", "they"})
+# Punctuation around one spoken word ("Merope," / "“Merope”").
+_WORD_EDGE = "\"'.,;:!?()[]{}\u201c\u201d\u2018\u2019\u00ab\u00bb"
+
+
+def _text_head(words: str, literal: str | None) -> str:
+    """The guessed words cut to the shown text when they start with it: "Show MEROPE ... she
+    says Merope in big letters" waits for "Merope", not "Merope in big letters"."""
+    wanted = _fold(literal or "").split()
+    tokens = words.split()
+    if not wanted or len(tokens) <= len(wanted):
+        return words
+    head = [token.strip(_WORD_EDGE) for token in tokens[: len(wanted)]]
+    return " ".join(head) if _fold(" ".join(head)).split() == wanted else words
+
+
+def worded_spoken_cue(req: BriefRequirement) -> tuple[tuple[str, ...], str | None]:
+    """KRI-791: the spoken words a text ask waits for, and who says them, as its own wording
+    names them, for when the model left `facts.triggers` / `facts.speaker` out.
+
+    Only an ask worded as a spoken cue counts ("... the first time she says Merope",
+    "“Atakan” dediğimde ..."): the words after the cue verb (cut to the shown text when they
+    start with it), else the quoted words that are not the text itself. A described word
+    ("the café's name") or a plain text ask ("Show SALE in big letters") names no word, so
+    nothing is guessed. A guess the take never says places nothing, and the finished
+    video's receipt names the word it didn't hear.
+    """
+    if req.scope == "title":
+        return (), None
+    # The ask's own words only: the shown text is copy, never a cue ("WHEN SHE SAYS HI").
+    triggers, speaker, matched = _cue_trigger_match(req, (req.description,))
+    if not (matched or _worded_spoken_cue(req)):
+        return (), None
+    triggers = [_text_head(words, req.literal) for words in triggers]
+    if not triggers:
+        literal = (req.literal or "").strip()
+        triggers = [
+            quoted
+            for quoted in (" ".join(q.split()) for q in _quoted_triggers(req))
+            if quoted and quoted != literal
+        ]
+    return tuple(_dedupe_names(triggers)), speaker
 
 
 def _dedupe_names(named: Iterable[str]) -> list[str]:
@@ -2726,7 +2804,11 @@ def _wants_captions(req: BriefRequirement) -> bool:
             return False
     elif not (req.kind == "text" and req.scope == "global" and not req.literal):
         return False
-    if _caption_fact(req) is not None or _caption_language_fact(req) is not None:
+    if (
+        _caption_fact(req) is not None
+        or _caption_language_fact(req) is not None
+        or _spellings_fact(req)  # KRI-793: the words to spell in the captions
+    ):
         return True
     return bool(_CAPTION_RE.search(_req_text(req)))
 
@@ -2888,11 +2970,33 @@ _TALKING_SPOKEN_TEXT_PLAN = (
     "I'll show it the moment you say that word in your take; if I don't hear the word, it "
     "won't appear"
 )
+# KRI-793: what a phone Talking draft says about a captions ask naming a language or words
+# to spell: the writer captions everything said in the take (an off-camera voice too), and
+# the reason goes on to name the language and the words (`_caption_words_plan`).
+_TALKING_CAPTIONS_EVERY_VOICE = "Every voice in your take gets captions, off-camera ones too"
+# KRI-791: the take's words don't say who speaks, so "the first time SHE says it" is shown
+# the first time anyone says the word -- said before approval and on the finished video.
+_TALKING_SPOKEN_TEXT_ANY_VOICE = (
+    "I'll show it the first time that word is said in your take; I can't tell who's "
+    "speaking, so it may appear when someone else says it"
+)
+_SPOKEN_TEXT_FIRST_HEARD = (
+    "I can't tell who's speaking, so it shows the first time anyone says that word"
+)
+# KRI-791: a text asked for at a spoken word whose word the ask doesn't name ("when she says
+# the café's name"): the phone could show it, the server can't tell which word.
+_TALKING_SPOKEN_TEXT_NO_WORD = (
+    "I couldn't tell which spoken word to wait for, so tell me the exact word to show it on"
+)
 _TALKING_HONEST_EN: tuple[str, ...] = (
     _TALKING_NO_SUCH_EDIT,
     _TALKING_NO_SPOKEN_TEXT,
     _TALKING_OPENING_CUT_PLAN,
     _TALKING_SPOKEN_TEXT_PLAN,
+    _TALKING_CAPTIONS_EVERY_VOICE,
+    _TALKING_SPOKEN_TEXT_ANY_VOICE,
+    _SPOKEN_TEXT_FIRST_HEARD,
+    _TALKING_SPOKEN_TEXT_NO_WORD,
 )
 
 # The Turkish twin of every static reason above (KRI-520). Reasons are written into
@@ -2967,6 +3071,20 @@ _REASON_TR: dict[str, str] = {
     ),
     _TALKING_SPOKEN_TEXT_PLAN: (
         "Çekiminde o kelimeyi söylediğin anda yazıyı gösteririm; kelimeyi duymazsam yazı çıkmaz"
+    ),
+    _TALKING_CAPTIONS_EVERY_VOICE: (
+        "Çekimindeki her ses altyazıya girer, kamera dışındaki sesler de"
+    ),
+    _TALKING_SPOKEN_TEXT_ANY_VOICE: (
+        "Yazıyı çekiminde o kelime ilk söylendiğinde gösteririm; kimin konuştuğunu ayırt "
+        "edemiyorum, o yüzden başka biri söylediğinde çıkabilir"
+    ),
+    _SPOKEN_TEXT_FIRST_HEARD: (
+        "Kimin konuştuğunu ayırt edemiyorum, o yüzden yazı o kelime ilk söylendiğinde çıkıyor"
+    ),
+    _TALKING_SPOKEN_TEXT_NO_WORD: (
+        "Hangi kelimeyi beklemem gerektiğini anlayamadım; yazının çıkacağı kelimeyi tam olarak "
+        "söyle"
     ),
     "Some requested text ends before the video does.": "Bazı yazılar video bitmeden kayboluyor.",
 }
@@ -4126,14 +4244,14 @@ def _with_text_look(
     """Add the look check to a text requirement's presence check (KRI-558)."""
     base = _with_title_face(req, facts, base)
     base = _with_spoken_text_face(req, facts, base)
-    if not text_look_facts(req) or base.status != "met":
-        return base
-    look = check_text_look(req, facts)
-    if look is None:
+    if text_look_facts(req) and base.status == "met":
+        look = check_text_look(req, facts)
         # The words are there; whether they look as asked is not visible here (a record or
         # a draft). A presence check alone never certifies the look (KRI-524).
-        return _receipt(req, "partial", _NO_CHECKER)
-    return combine_receipts(base, look)
+        base = (
+            _receipt(req, "partial", _NO_CHECKER) if look is None else combine_receipts(base, look)
+        )
+    return _with_spoken_text_speaker(req, facts, base)
 
 
 def _check_clip_lengths(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -4392,6 +4510,22 @@ def _with_spoken_text_face(
             tr=f"{text} yüzünün üstüne denk geliyor; yüzünü açıkta bırakan bir yer bulamadım",
         ),
     )
+
+
+def _with_spoken_text_speaker(
+    req: BriefRequirement, facts: PlanFacts, base: RequirementReceipt
+) -> RequirementReceipt:
+    """KRI-791: "the first time SHE says it" was shown the first time anyone said the word,
+    so the finished video says so (the take's words don't say who speaks)."""
+    fact = _spoken_text_fact(facts, req)
+    if fact is None or fact.status != "placed":
+        return base
+    from app.kria.spoken_text_ask import requirement_spoken_text  # noqa: PLC0415
+
+    ask = requirement_spoken_text(req)
+    if ask is None or not ask.speaker:
+        return base
+    return combine_receipts(base, _receipt(req, "partial", _SPOKEN_TEXT_FIRST_HEARD))
 
 
 def _title_face_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
@@ -4921,7 +5055,7 @@ _LOOSE_CAPTION_LANGUAGE_PATTERNS = (
 # they come first ("A ve B doğru yazılsın", "A and B spelled right"). A colon list
 # ("spelling the names exactly: A, B") always follows.
 _SPELL_CUE_RE = re.compile(
-    r"\b(?P<after>spell(?:ing)?(?:\s+of)?)\b"
+    r"\b(?P<after>spell(?:ings?)?(?:\s+of)?)\b"
     r"|\b(?:spelled|spelt|spells)\b"
     r"|\b(?:do[gğ]ru|d[uü]zg[uü]n|hatas[ıi]z)\s+(?:bir\s+)?yaz\w*"
     r"|\byaz[ıi]m\w*|\bimla\w*",
@@ -4997,15 +5131,16 @@ def _name_lists(text: str) -> tuple[list[str], list[tuple[int, int, list[str]]]]
             if _capitalized(tokens[j]):
                 words.append(tokens[j])
                 j += 1
-            elif (
-                tokens[j].casefold() in _NAME_PARTICLES
-                and j + 1 < len(tokens)
-                and _capitalized(tokens[j + 1])
-            ):
-                words.extend(tokens[j : j + 2])
-                j += 2
             else:
-                break
+                # One or more lowercase particles may join two capitalized words
+                # ("Rio de Janeiro", "Oblea de la Casa").
+                k = j
+                while k < len(tokens) and tokens[k].casefold() in _NAME_PARTICLES:
+                    k += 1
+                if k == j or k >= len(tokens) or not _capitalized(tokens[k]):
+                    break
+                words.extend(tokens[j : k + 1])
+                j = k + 1
         chunks.append((i, j - 1, " ".join(words)))
         i = j
     lists: list[tuple[int, int, list[str]]] = []
@@ -5057,11 +5192,53 @@ def _clean_name(name: str) -> str | None:
     return " ".join(words)
 
 
+_MAX_LISTED_WORDS = 4  # words in one item of a colon list ("Oblea de la Casa")
+
+
+def _colon_list(text: str) -> list[str]:
+    """The items of the list after a spelling cue's colon, lowercase ones too (KRI-793).
+
+    "correct spellings: Oblea de la Casa, dulce de leche, leche condensada, Merope": the
+    colon makes the creator's own list explicit, so "dulce de leche" counts although it is
+    not capitalized. Items are split on commas and "and" / "ve" / "ile" / "&". An item is a
+    name ("Oblea de la Casa": capitalized words, lowercase particles between them) or, in a
+    list of two or more, a short lowercase phrase ("dulce de leche"). The list ends at the
+    first item that is neither ("Merope not Meropa", "keep it short", "names must be ...").
+    """
+    items: list[list[str]] = [[]]
+    for token in _NAME_TOKEN_RE.findall(text):
+        if token in {",", "&"} or token.casefold() in _NAME_JOINERS:
+            if items[-1]:
+                items.append([])
+            continue
+        items[-1].append(token)
+    names: list[str] = []
+    lowercase: list[bool] = []
+    for words in (item for item in items if item):
+        named = _capitalized(words[0]) and _capitalized(words[-1])
+        named = named and all(
+            _capitalized(word) or word.casefold() in _NAME_PARTICLES for word in words
+        )
+        phrase = (
+            not any(_capitalized(word) for word in words)
+            and len(words) < _MAX_LISTED_WORDS
+            and loose_text(words[0]) not in _NOT_NAMES
+        )
+        if len(words) > _MAX_LISTED_WORDS or not (named or phrase):
+            break
+        names.append(" ".join(words))
+        lowercase.append(phrase)
+    if len(names) == 1 and lowercase[0]:
+        return []
+    return names
+
+
 def _names_near_cue(clause: str, cue: re.Match[str]) -> list[str]:
     before, after = clause[: cue.start()], clause[cue.end() :]
     found: list[str] = []
     if ":" in after:
-        found = _list_after(after.split(":", 1)[1], max_gap=1)
+        listed = after.split(":", 1)[1]
+        found = _colon_list(listed) or _list_after(listed, max_gap=1)
     if not found:
         order = (
             ((_list_after, after), (_list_before, before))
@@ -5075,12 +5252,42 @@ def _names_near_cue(clause: str, cue: re.Match[str]) -> list[str]:
     return [name for name in map(_clean_name, found) if name]
 
 
+def _spellings_fact(req: BriefRequirement) -> tuple[str, ...]:
+    """``facts["spellings"]``: the words the model recorded the creator wants spelled their
+    way in the captions (KRI-793), cleaned; () when absent or unusable."""
+    raw = req.facts.get("spellings")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return ()
+    names: list[str] = []
+    for value in raw:
+        if not isinstance(value, str) or len(value) > 80:
+            continue
+        # Words only, as `_clean_name` reads a listed name: no edge punctuation ("Merope."),
+        # no Turkish case ending ("Kadıköy'ü" -> "Kadıköy").
+        words = [
+            token
+            for token in _NAME_TOKEN_RE.findall(unicodedata.normalize("NFC", value))
+            if token not in {",", "&"}
+        ]
+        name = _clean_name(" ".join(words)) if words else None
+        if name:
+            names.append(name)
+    return tuple(dict.fromkeys(names))[:_MAX_SPELLED_NAMES]
+
+
 def _spelled_names(req: BriefRequirement) -> tuple[str, ...] | None:
     """The names a requirement asks to be spelled right, as the creator wrote them.
 
-    None when the wording has no spelling cue; () when it has one but no capitalized
-    name list sits next to it (then nothing about spelling can be claimed).
+    The model's ``facts["spellings"]`` decides when present (KRI-667: the server checks the
+    recorded fact, not the words). Otherwise None when the wording has no spelling cue;
+    () when it has one but no capitalized name list (or colon list) sits next to it (then
+    nothing about spelling can be claimed).
     """
+    recorded = _spellings_fact(req)
+    if recorded:
+        return recorded
     text = unicodedata.normalize("NFC", " ".join(x for x in (req.description, req.literal) if x))
     cued = False
     names: list[str] = []
@@ -5181,6 +5388,10 @@ def _caption_spelling(name: str, captions: str, *, turkish: bool) -> tuple[bool,
                 and squashed.startswith(want)
                 and _GLUED_SUFFIX_RE.fullmatch(squashed[len(want) :])
             ):
+                other = shown
+            elif other is None and size == name_words and is_mishearing(shown, name):
+                # KRI-793: the same name heard another way ("Meropa" for Merope, "Ole de
+                # la Casa" for Oblea de la Casa): the rule the render's respelling uses.
                 other = shown
     return exact, other
 
@@ -5311,6 +5522,95 @@ def _check_caption_words(req: BriefRequirement, facts: PlanFacts) -> Requirement
     if unsure:
         return _receipt(req, "partial", " ".join([*unsure, *done]), verification="unchecked")
     return _receipt(req, "met", " ".join(done) or None)
+
+
+def _caption_words_plan(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """What a phone Talking draft will do with a captions ask about language or spelling
+    (KRI-793).
+
+    The draft has no captions to read yet (the render-ready review judges them, KRI-549), but
+    saying nothing left "Captions for both voices, ensuring correct spellings: Oblea de la
+    Casa, ..." silent through a held draft and two approval cards. The line says who gets
+    captions (everything said in the take, an off-camera voice too), the language, and the
+    words the render will spell the creator's way, then checks in the finished video. Its
+    reason starts with a Talking plan prefix, so it is an answer, never the "simpler
+    version?" question. Sentence captions for a word-by-word ask are a real miss and say so.
+    """
+    style = facts.caption_style
+    # The phone Talking writer captions every take whatever the strategy's style says (the
+    # style only picks word or sentence lines), so a "none" style is no reason to say "off".
+    if _wants_word_captions(req) and style not in {None, "auto", "none", "karaoke", "kinetic"}:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="Captions are on as full sentences, not word by word.",
+                tr="Altyazılar kelime kelime değil, tam cümleler olarak açık.",
+            ),
+        )
+    parts = [_loc(_TALKING_CAPTIONS_EVERY_VOICE)]
+    asked = _asked_caption_language(req)
+    names = _spelled_names(req)
+    if asked is not None:
+        language = _language_name(asked)
+        parts.append(
+            say(en=f"they'll be in {language}", tr=f"altyazılar {language} olacak")
+            if names or _asks_spelling(req)
+            else say(
+                en=f"they'll be in {language}, and I'll check that in the finished video",
+                tr=f"altyazılar {language} olacak, bunu bitmiş videoda kontrol edeceğim",
+            )
+        )
+    if names:
+        one = len(names) == 1
+        parts.append(
+            say(
+                en=(
+                    f"I'll spell {_and_names(names)} the way you wrote "
+                    f"{'it' if one else 'them'} and check {'it' if one else 'them'} in the "
+                    "finished video"
+                ),
+                tr=(
+                    f"{'şunu' if one else 'şunları'} senin yazdığın gibi yazıp bitmiş videoda "
+                    f"kontrol edeceğim: {_and_names(names)}"
+                ),
+            )
+        )
+    elif _asks_spelling(req):
+        parts.append(
+            say(
+                en="write out the words to spell and I'll spell them your way",
+                tr="yazımına dikkat edeceğim kelimeleri tek tek yaz, senin yazdığın gibi yazayım",
+            )
+        )
+    return _receipt(req, "partial", "; ".join(parts))
+
+
+def _plans_caption_words(req: BriefRequirement, facts: PlanFacts) -> bool:
+    """A phone Talking draft's captions ask about language or spelling (KRI-793)."""
+    return (
+        facts.caption_words_at_render
+        and not facts.rendered_variant
+        and not facts.editor
+        and _wants_captions(req)
+        and _caption_words_ask(req)
+    )
+
+
+def brief_caption_spellings(brief: CreativeBrief | None) -> tuple[str, ...]:
+    """The words the creator wants spelled their way in the captions, from every live
+    captions ask of the approved brief, in order (KRI-793).
+
+    The phone Talking writer applies them to its caption cues (`apply_spelling_to_cues`)
+    and the render-ready review checks the same list against the caption lines.
+    """
+    if brief is None:
+        return ()
+    names: list[str] = []
+    for req in brief.live():
+        if _wants_captions(req) and not _wants_no_captions(req):
+            names.extend(_spelled_names(req) or ())
+    return tuple(dict.fromkeys(names))[:_MAX_SPELLED_NAMES]
 
 
 _TITLE_SOURCES_THE_CREATOR_OWNS = frozenset({"creator", "brief"})
@@ -5497,10 +5797,19 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         if spoken is not None:
             # KRI-707: the phone Talking render recorded why this text isn't on screen.
             return _spoken_text_miss(req, spoken)
-        if facts.phone_talking and not facts.rendered_variant and _talking_shows_spoken_text(req):
-            # KRI-707: the phone Talking worker places it on the word itself, so the draft
-            # says what it will do (like the start cut), never "a simpler version?".
-            return _receipt(req, "partial", _TALKING_SPOKEN_TEXT_PLAN)
+        if facts.phone_talking and _talking_spoken_text_lane():
+            from app.kria.spoken_text_ask import requirement_spoken_text  # noqa: PLC0415
+
+            ask = requirement_spoken_text(req)
+            if ask is None and req.scope == "global":
+                # KRI-791: the phone could show it; what's missing is which word to wait for.
+                return _receipt(req, "not_possible", _TALKING_SPOKEN_TEXT_NO_WORD)
+            if ask is not None and not facts.rendered_variant:
+                # KRI-707: the phone Talking worker places it on the word itself, so the draft
+                # says what it will do (like the start cut), never "a simpler version?".
+                # KRI-791: and that it can't tell one voice from another.
+                plan = _TALKING_SPOKEN_TEXT_ANY_VOICE if ask.speaker else _TALKING_SPOKEN_TEXT_PLAN
+                return _receipt(req, "partial", plan)
         # KRI-705: a Talking edit has the same gap (a pinned line has no trigger field), and the
         # reply says so plainly instead of holding the draft behind "a simpler version?".
         return _receipt(req, "not_possible", _TALKING_NO_SPOKEN_TEXT)
@@ -5535,9 +5844,22 @@ def _is_spoken_text_cue(req: BriefRequirement) -> bool:
     """
     if req.scope == "title":
         return False
-    return any(req.facts.get(key) for key in _SPOKEN_TEXT_CUE_KEYS) or bool(
-        _SPOKEN_CUE_RE.search(_fold(req.description or ""))
+    return (
+        any(req.facts.get(key) for key in _SPOKEN_TEXT_CUE_KEYS)
+        or _worded_spoken_cue(req)
+        # KRI-791: "Show MEROPE the first time she says Merope" (whole-video text only, so a
+        # shot label "the shot when she says hi" keeps its own lane).
+        or (
+            req.kind == "text"
+            and req.scope == "global"
+            and _cue_trigger_match(req, (req.description,))[2]
+        )
     )
+
+
+def _worded_spoken_cue(req: BriefRequirement) -> bool:
+    """The ask's own description words a spoken cue ("when I say", "dediğimde")."""
+    return bool(_SPOKEN_CUE_RE.search(_fold(req.description or "")))
 
 
 def spoken_text_literals(brief: CreativeBrief | None) -> tuple[str, ...]:
@@ -5557,13 +5879,22 @@ def spoken_text_literals(brief: CreativeBrief | None) -> tuple[str, ...]:
     )
 
 
-def _talking_shows_spoken_text(req: BriefRequirement) -> bool:
-    """KRI-707: the phone Talking worker can place this text: its fields name the text and
-    the spoken word (`spoken_text_ask`), and the lane is rolled out."""
-    from app.kria.spoken_text_ask import requirement_spoken_text  # noqa: PLC0415
+def is_spoken_text_cue(req: BriefRequirement) -> bool:
+    """A whole-video text line asked to appear when someone says something, whether or not
+    its word could be read (KRI-791: a Talking render contract never pins one)."""
+    return (
+        req.kind == "text"
+        and req.scope == "global"
+        and bool(req.literal)
+        and _is_spoken_text_cue(req)
+    )
+
+
+def _talking_spoken_text_lane() -> bool:
+    """KRI-707: the phone Talking worker places texts on spoken words (rolled out)."""
     from app.services.phone_rollout import phone_subtitled_spoken_text_supported  # noqa: PLC0415
 
-    return requirement_spoken_text(req) is not None and phone_subtitled_spoken_text_supported()
+    return phone_subtitled_spoken_text_supported()
 
 
 def _is_voiceover_edit(facts: PlanFacts) -> bool:
@@ -6204,6 +6535,8 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_moments(req, facts)
     elif _wants_source_sound_kept(req):
         return _check_source_sound(req, facts)
+    if _plans_caption_words(req, facts):  # KRI-793: say before approval what the render does
+        return _caption_words_plan(req, facts)
     if _judges_caption_words(req, facts):  # KRI-549: language / names on a finished render
         return _check_caption_words(req, facts)
     if _wants_captions(req):
@@ -6310,8 +6643,8 @@ def defers_caption_words_to_phone_render(
     the render-ready review judges a caption-language or name-spelling ask a text-free draft
     cannot. Mirrors the dispatch gate: phone clips, an enrolled account, phone `subtitled`
     rendering on, and no voiceover lane (a recorded voiceover goes to the Voiceover writer).
-    A draft the gate then refuses never renders, so leaving the ask to the render costs
-    nothing there.
+    The draft itself says what that writer will do with such an ask (KRI-793,
+    `PlanFacts.caption_words_at_render`).
     """
     from app.config import settings  # noqa: PLC0415
     from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
@@ -6340,10 +6673,12 @@ def requirements_to_check_at_draft(
     `timing`) it is left out, so the draft reply is the plain summary instead of a
     premature failure notice; the render's own receipts (met / partial / not possible,
     plus guessed names) follow. A phone Voiceover draft likewise leaves its first/last
-    order, clip-timing and caption-language asks to the render's record (KRI-533), and a
-    phone Talking draft its caption-language / name-spelling asks (KRI-549). A freeze-frame
-    ask stays: no plan can carry it, so its "Couldn't" belongs before approval (KRI-777).
-    Otherwise this is the unchanged, full list.
+    order, clip-timing and caption-language asks to the render's record (KRI-533).
+    A phone Talking draft keeps its caption-language / name-spelling asks: the render
+    judges them (KRI-549), and the draft says what it will do (KRI-793,
+    `PlanFacts.caption_words_at_render`). A freeze-frame ask stays: no plan can carry it,
+    so its "Couldn't" belongs before approval (KRI-777). Otherwise this is the unchanged,
+    full list.
     """
     strategy = strategy or {}
     clip_paths = list(clip_paths or ())
@@ -6360,18 +6695,11 @@ def requirements_to_check_at_draft(
         audio_strategy=strategy.get("audio_strategy"),
         clip_paths=clip_paths,
     )
-    phone_captions = defers_caption_words_to_phone_render(
-        creator_id=creator_id,
-        edit_format=edit_format,
-        audio_strategy=strategy.get("audio_strategy"),
-        clip_paths=clip_paths,
-    )
     return [
         req
         for req in requirements
         if not (defers and req.kind in UNIFIED_SETTLED_KINDS and not asks_freeze_frame(req))
         and not (narrated and _settled_by_narrated_render(req, strategy))
-        and not (phone_captions and _wants_captions(req) and _caption_words_ask(req))
     ]
 
 
@@ -6745,6 +7073,7 @@ __all__ = [
     "NARRATED_ALIGNMENT_FIELD",
     "NarratedStepFact",
     "asks_caption_language",
+    "brief_caption_spellings",
     "keeps_model_summary",
     "wants_light_change",
     "defers_caption_words_to_phone_render",
@@ -6758,6 +7087,7 @@ __all__ = [
     "is_format_limit",
     "is_judged",
     "is_no_title_reason",
+    "is_spoken_text_cue",
     "judged_at_render",
     "narrated_alignment_recovery",
     "needs_creator_choice",

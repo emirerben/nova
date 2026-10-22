@@ -122,8 +122,10 @@ def test_a_missing_strategy_defers_nothing(unified_on):
 # A draft has no captions yet, so "altyazılar Türkçe olsun; Moda ... doğru yazılsın" read
 # "Bu taslaktaki altyazıları henüz kontrol edemiyorum" on the T3 draft. The phone Talking
 # writer records the captions' language and lines, and the render-ready review judges the
-# ask from them; the draft leaves it out, so the creator gets the existing "still needs an
-# output check" receipt instead (KRI-529).
+# ask from them. KRI-793: the draft no longer leaves the ask out (that was silence through a
+# held draft and two approval cards on café T1); it keeps it, and the draft's facts
+# (`caption_words_at_render`) give it a line saying what the render will do
+# (`tests/kria/test_kri793_caption_spellings.py`).
 
 _T3_CAPTIONS = BriefRequirement(
     id="c1",
@@ -160,40 +162,45 @@ def _talking(strategy=None, *, clips=(PROXY,), item_format="subtitled") -> list[
     ]
 
 
-def test_a_phone_talking_draft_leaves_caption_language_and_spelling_to_the_render(
-    phone_talking_on,
-):
-    # "add captions" is judged on the draft's caption style; a look ask is judged nowhere.
-    assert _talking() == ["c2", "c3"]
-    assert defers_caption_words_to_phone_render(
-        creator_id=USER,
-        edit_format="subtitled",
-        audio_strategy="original_audio",
-        clip_paths=(PROXY,),
+def _talking_writer(fmt: str = "subtitled", audio: str = "original_audio", clips=(PROXY,)):
+    return defers_caption_words_to_phone_render(
+        creator_id=USER, edit_format=fmt, audio_strategy=audio, clip_paths=clips
     )
 
 
+def test_a_phone_talking_draft_keeps_its_caption_language_and_spelling_asks(phone_talking_on):
+    # On main c1 and c4 were left out here, so the draft said nothing about them (KRI-793).
+    assert _talking() == ["c1", "c2", "c3", "c4"]
+    assert _talking_writer()
+
+
 @pytest.mark.parametrize("fmt", ["talking_head", "narrated", "narrated_planned"])
-def test_self_narrated_speech_formats_defer_too(phone_talking_on, fmt):
+def test_self_narrated_speech_formats_render_through_the_talking_writer(phone_talking_on, fmt):
     assert _talking({"edit_format": fmt, "audio_strategy": "original_audio"}, item_format=fmt) == [
+        "c1",
         "c2",
         "c3",
+        "c4",
     ]
+    assert _talking_writer(fmt)
 
 
 def test_a_voiceover_lane_is_left_to_the_voiceover_record(phone_talking_on):
     strategy = {"edit_format": "narrated_planned", "audio_strategy": "voiceover"}
     assert "c1" in _talking(strategy, item_format="narrated_planned")
+    assert not _talking_writer("narrated_planned", "voiceover")
 
 
 def test_cloud_clips_and_other_formats_judge_the_draft_as_before(phone_talking_on):
     assert len(_talking(clips=(CLOUD,))) == 4
     assert len(_talking({"edit_format": "slides", "audio_strategy": "original_audio"})) == 4
+    assert not _talking_writer(clips=(CLOUD,))
+    assert not _talking_writer("slides")
 
 
-def test_the_phone_talking_rollout_gates_the_deferral(phone_talking_on, monkeypatch):
+def test_the_phone_talking_rollout_gates_the_talking_writer(phone_talking_on, monkeypatch):
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", False)
-    assert len(_talking()) == 4
+    assert not _talking_writer()
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
     monkeypatch.setattr(settings, "phone_render_user_ids", [uuid.uuid4()])
-    assert len(_talking()) == 4
+    assert not _talking_writer()
