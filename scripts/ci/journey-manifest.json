@@ -226,6 +226,27 @@
       ]
     },
     {
+      "id": "kri-787-merope-t1-replay",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri787_merope_t1_replay.py tests/kria/test_kri787_merope_t1_runtime_postgres.py",
+      "paths": [
+        "src/apps/api/app/tasks/content_plan_build.py",
+        "src/apps/api/app/services/generative_jobs.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/kria/opening_cut_ask.py",
+        "src/apps/api/app/pipeline/phone_opening_cut.py",
+        "src/apps/api/tests/fixtures/kri787_merope_t1_turns.json",
+        "src/apps/api/tests/kria/test_kri787_merope_t1_replay.py",
+        "src/apps/api/tests/kria/test_kri787_merope_t1_runtime_postgres.py"
+      ]
+    },
+    {
       "id": "slide-post-binding-recovery",
       "needs_native": true,
       "api_tests": "tests/routes/test_slide_post_native_routes.py tests/routes/test_slide_post_binding_save_postgres.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/evals/test_edit_copilot_evals.py",
@@ -969,27 +990,6 @@
       ]
     },
     {
-      "id": "kri-787-merope-t1-replay",
-      "needs_native": false,
-      "api_tests": "tests/kria/test_kri787_merope_t1_replay.py tests/kria/test_kri787_merope_t1_runtime_postgres.py",
-      "paths": [
-        "src/apps/api/app/tasks/content_plan_build.py",
-        "src/apps/api/app/services/generative_jobs.py",
-        "src/apps/api/app/services/creator_render_contract.py",
-        "src/apps/api/app/tasks/generative_build.py",
-        "src/apps/api/app/tasks/kria_runtime.py",
-        "src/apps/api/app/kria/planner.py",
-        "src/apps/api/app/kria/runtime.py",
-        "src/apps/api/app/kria/brief_checks.py",
-        "src/apps/api/app/services/choice_questions.py",
-        "src/apps/api/app/kria/opening_cut_ask.py",
-        "src/apps/api/app/pipeline/phone_opening_cut.py",
-        "src/apps/api/tests/fixtures/kri787_merope_t1_turns.json",
-        "src/apps/api/tests/kria/test_kri787_merope_t1_replay.py",
-        "src/apps/api/tests/kria/test_kri787_merope_t1_runtime_postgres.py"
-      ]
-    },
-    {
       "id": "troya-footage-research",
       "needs_native": true,
       "api_tests": "tests/evals/request_following/test_troya_context_journey.py tests/evals/request_following/test_researched_text.py tests/services/test_kria_editor_clip_context.py",
@@ -1008,6 +1008,36 @@
         "src/apps/ios/Kria/Core/ResearchCitation.swift",
         "src/apps/ios/Kria/Features/NativeResearchSourcesView.swift",
         "src/apps/ios/Tests/KriaTests/NativeResearchSourcesTests.swift"
+      ]
+    },
+    {
+      "id": "creator-model-comparison",
+      "needs_native": false,
+      "api_tests": "tests/agents/test_text_provider_contracts.py tests/agents/test_comparison_workflow.py tests/services/test_text_provider_ledger.py tests/services/test_comparison_capture.py tests/integration/test_comparison_eligibility.py tests/services/test_ai_cost_control.py tests/evals/test_main_creator_evals.py tests/evals/test_edit_copilot_evals.py tests/agents/test_creator_wire_contract.py tests/agents/test_sealed_comparison.py tests/agents/test_comparison_sources.py tests/agents/test_recorded_copilot_sources.py tests/agents/test_json_guard_profile.py tests/integration/test_comparison_persistence.py tests/integration/test_comparison_development_inventory.py",
+      "paths": [
+        "src/apps/api/app/agents/_text_providers.py",
+        "src/apps/api/app/services/creator_model_comparison.py",
+        "src/apps/api/app/services/creator_comparison_capture.py",
+        "src/apps/api/app/cli/compare_creator_models.py",
+        "src/apps/api/app/routes/admin_request_following.py",
+        "src/apps/api/app/services/ai_cost_control.py",
+        "src/apps/api/tests/agents/test_text_provider_contracts.py",
+        "src/apps/api/tests/agents/test_comparison_workflow.py",
+        "src/apps/api/tests/services/test_text_provider_ledger.py",
+        "src/apps/api/tests/services/test_comparison_capture.py",
+        "src/apps/api/tests/integration/test_comparison_eligibility.py",
+        "scripts/compare_creator_models.py",
+        "src/apps/api/app/agents/_creator_wire.py",
+        "src/apps/api/app/services/creator_comparison_holdout.py",
+        "src/apps/api/app/services/creator_comparison_sources.py",
+        "src/apps/api/tests/agents/test_creator_wire_contract.py",
+        "src/apps/api/tests/agents/test_sealed_comparison.py",
+        "src/apps/api/tests/agents/test_comparison_sources.py",
+        "src/apps/api/app/services/creator_comparison_persistence.py",
+        "src/apps/api/tests/agents/test_recorded_copilot_sources.py",
+        "src/apps/api/tests/agents/test_json_guard_profile.py",
+        "src/apps/api/tests/integration/test_comparison_persistence.py",
+        "src/apps/api/tests/integration/test_comparison_development_inventory.py"
       ]
     },
     {
@@ -1275,36 +1305,6 @@
         "src/apps/ios/Kria/Core/QuestionBatch.swift",
         "src/apps/ios/Kria/Features/ChoiceQuestionCard.swift",
         "src/apps/ios/Kria/Features/ChatWorkspaceView.swift"
-      ]
-    },
-    {
-      "id": "creator-model-comparison",
-      "needs_native": false,
-      "api_tests": "tests/agents/test_text_provider_contracts.py tests/agents/test_comparison_workflow.py tests/services/test_text_provider_ledger.py tests/services/test_comparison_capture.py tests/integration/test_comparison_eligibility.py tests/services/test_ai_cost_control.py tests/evals/test_main_creator_evals.py tests/evals/test_edit_copilot_evals.py tests/agents/test_creator_wire_contract.py tests/agents/test_sealed_comparison.py tests/agents/test_comparison_sources.py tests/agents/test_recorded_copilot_sources.py tests/agents/test_json_guard_profile.py tests/integration/test_comparison_persistence.py tests/integration/test_comparison_development_inventory.py",
-      "paths": [
-        "src/apps/api/app/agents/_text_providers.py",
-        "src/apps/api/app/services/creator_model_comparison.py",
-        "src/apps/api/app/services/creator_comparison_capture.py",
-        "src/apps/api/app/cli/compare_creator_models.py",
-        "src/apps/api/app/routes/admin_request_following.py",
-        "src/apps/api/app/services/ai_cost_control.py",
-        "src/apps/api/tests/agents/test_text_provider_contracts.py",
-        "src/apps/api/tests/agents/test_comparison_workflow.py",
-        "src/apps/api/tests/services/test_text_provider_ledger.py",
-        "src/apps/api/tests/services/test_comparison_capture.py",
-        "src/apps/api/tests/integration/test_comparison_eligibility.py",
-        "scripts/compare_creator_models.py",
-        "src/apps/api/app/agents/_creator_wire.py",
-        "src/apps/api/app/services/creator_comparison_holdout.py",
-        "src/apps/api/app/services/creator_comparison_sources.py",
-        "src/apps/api/tests/agents/test_creator_wire_contract.py",
-        "src/apps/api/tests/agents/test_sealed_comparison.py",
-        "src/apps/api/tests/agents/test_comparison_sources.py",
-        "src/apps/api/app/services/creator_comparison_persistence.py",
-        "src/apps/api/tests/agents/test_recorded_copilot_sources.py",
-        "src/apps/api/tests/agents/test_json_guard_profile.py",
-        "src/apps/api/tests/integration/test_comparison_persistence.py",
-        "src/apps/api/tests/integration/test_comparison_development_inventory.py"
       ]
     },
     {

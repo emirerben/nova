@@ -17,6 +17,58 @@
   ],
   "gates": [
     {
+      "id": "kri-802-question-batch",
+      "tickets": [
+        "KRI-802"
+      ],
+      "symptom": "Don Julio M1 chat 1 asked its blocking questions one per turn: the title wording (19:24), then the red-cap clip picker a full re-plan later (19:26), although the first turn's clip checks would have found it; the title-wording gate returned before them, and every answer re-runs the Main Creator (1-2 min).",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-802",
+      "paths": [
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/fixtures/kri802_don_julio_m1_turn1.json",
+        "src/apps/ios/Kria/Core/QuestionBatch.swift",
+        "src/apps/ios/Kria/Features/ChatWorkspaceView.swift"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri802_question_batch.py",
+        "tests/kria/test_kri802_question_batch_postgres.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Chat 1's first turn: the recorded Main Creator input (run 05de835e), its strategy rebuilt from the turn (output redacted), the next turn's clip asks and resolver stats; real Main Creator parse, real planner, real clip-intent planner and resolver behind a provider-transport fake. Red before the fix: the reply asked only the title (byte-identical to prod) and never reached the resolver; green: one reply carries the title card and the red-cap picker. Submit/claim/fold over scratch Postgres: one turn with both answers is accepted, both fold, the worker plans with batch_questions.",
+        "live_model": "Not run; no paid calls. The change makes no new model call (the clip checks the first turn now runs are the ones the next turn ran anyway).",
+        "native_output": "XCUITest KriaUITests/CreationUITests/testTitleCardAndClipPickerInOneReplyGoOutOnOneTurn and testClipsFirstThenTheTitleTapSendsBothOnOneTurn (simulator, fixture server): the first answer is held, the second sends both on one turn. Physical iPhone re-send of M1 pending a TestFlight build at protocol 14.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "older app builds and the web (no stamp): one question per turn, byte-identical first reply, no resolver call",
+        "nothing else to ask: the title question alone, nothing drafted with unapproved words",
+        "a text-only clip question (the '+' label): the title question alone",
+        "a second choice card, reply chips, a 'still checking' reply, a recovery, a draft: the title question alone",
+        "a picker about the title's own words: the title question alone",
+        "a joined reply over the 1200-character limit: the title question alone",
+        "both titles model-written: one wording question (opening first)",
+        "kill switch KRIA_QUESTION_BATCH_MIN_CLIENT_PROTOCOL=999",
+        "answers in either order on the phone (title first, clips first)"
+      ],
+      "neighbours_gap": [
+        "The '+' label question (free-text answer) is not batched: a typed answer cannot ride a tap, and KRI-804 is reshaping that question.",
+        "The held-draft 'simpler version?' choice stays last: it reads the compiled draft.",
+        "Order/length choice cards are not batched: they need resolved clips and there is one choice slot per reply.",
+        "Vision calls are not replayed: the recorded resolver answer for the red cap is empty, as prod's was after its one vision check."
+      ],
+      "follow_ups": [
+        "KRI-804",
+        "KRI-807"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-422-long-intent-id",
       "tickets": [
         "KRI-422"
@@ -217,6 +269,76 @@
         "KRI-454 (#1395, #1400)"
       ],
       "red_control": "pending"
+    },
+    {
+      "id": "kri-787-merope-t1-replay",
+      "tickets": [
+        "KRI-787",
+        "KRI-788",
+        "KRI-789",
+        "KRI-790",
+        "KRI-791",
+        "KRI-792",
+        "KRI-793",
+        "KRI-794",
+        "KRI-795"
+      ],
+      "symptom": "A one-take phone Talking edit with quoted start and end lines was approved twice and refused at dispatch both times (\"I can't verify this ordering rule from the approved media.\"): the creator's order answer was dropped between approval and dispatch, and the chat before it asked a pointless clip-order question, held MEROPE back, promised phrase cuts and said nothing about captions or the start/end lines (Merope T1).",
+      "boundary": "dispatch",
+      "status": "open_pr",
+      "owner": "KRI-787",
+      "journey": "kri-787-merope-t1-replay",
+      "paths": [
+        "src/apps/api/app/tasks/content_plan_build.py",
+        "src/apps/api/app/services/generative_jobs.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/kria/opening_cut_ask.py",
+        "src/apps/api/app/pipeline/phone_opening_cut.py",
+        "src/apps/api/tests/fixtures/kri787_merope_t1_turns.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri787_merope_t1_replay.py",
+        "tests/kria/test_kri787_merope_t1_runtime_postgres.py"
+      ],
+      "harness": "real_with_db",
+      "evidence": {
+        "offline_replay": "Original recorded production chat, drafts, brief binding and jobs remain unchanged in the fixture. Historical failure pins document the pre-fix behavior in Git history. Landed children and the privately integrated pending KRI-790/792 sources now pass all27 replay/runtime acceptance cases as ordinary hard tests. Three additional original incident functions removed by the concurrent author cleanup are retained with independent corrected expectations. The six previously reviewed retired bad-behavior pin functions remain covered by the documented acceptance replacements. KRI-790 is now landed; KRI-792 remains a privately integrated pending source, not claimed landed; exact original media/native output remain unverified.",
+        "live_model": "Not run; no paid calls.",
+        "native_output": "unknown; no render reaches the phone (the Talking compiler needs the source file).",
+        "production": "Not deployed (tests only)."
+      },
+      "neighbours_covered": [
+        "both renders (simpler-version path and the normal act path)",
+        "the approval backstop vs the dispatch contract (approval offered, dispatch refused)",
+        "the creator's tapped answers replayed through the real gate, whatever turn they come on",
+        "cleanup chosen vs not (prod's first and second drafts)",
+        "turn 4: a typed option label after the question closed, with the failure card the observer posts today",
+        "the kept window of the take (KRI-628 opening cut over the take's word timings)"
+      ],
+      "neighbours_gap": [
+        "The Main Creator's own turn-1/turn-2 strategies were recorded only as hashes; the approved draft's strategy stands in.",
+        "The phone Talking compiler (cuts, captions, MEROPE placement, 32-38 s length) needs the source file and prod's cleanup snapshot, so the checklist stops at the kept window and the receipts.",
+        "Turn 4 runs at gate level, not through the database runtime.",
+        "The render queue wait (2 min 23 s on render 1) is KRI-798, not replayed."
+      ],
+      "follow_ups": [
+        "KRI-788",
+        "KRI-789",
+        "KRI-790",
+        "KRI-791",
+        "KRI-792",
+        "KRI-793",
+        "KRI-794",
+        "KRI-795",
+        "KRI-798"
+      ],
+      "red_control": "not_applicable"
     },
     {
       "id": "kri-454-named-place-labels",
@@ -904,6 +1026,60 @@
       "red_control": "pending"
     },
     {
+      "id": "kri-790-take-window",
+      "tickets": [
+        "KRI-790",
+        "KRI-628",
+        "KRI-704"
+      ],
+      "symptom": "Merope T1 (2026-10-21): 'Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\"' in a 68.37 s Talking take: no end cut existed, the start line (brief facts on an order row, misheard 'Carolina' without the second I'm) never reached the phone plan, every draft said 'keeps your whole take ... 68.4s', and no draft or approval card named either line.",
+      "boundary": "compiler",
+      "status": "open_pr",
+      "owner": "KRI-790",
+      "journey": "kri-628-opening-cut",
+      "paths": [
+        "src/apps/api/app/kria/opening_cut_ask.py",
+        "src/apps/api/app/pipeline/phone_opening_cut.py",
+        "src/apps/api/app/services/speech_segments.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/tasks/kria_runtime.py"
+      ],
+      "regression_tests": [
+        "tests/pipeline/test_phone_take_window.py",
+        "tests/pipeline/test_phone_opening_cut.py",
+        "tests/tasks/test_phone_opening_cut_cleanup_off.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "T1's stored brief rows (v1 + v2) and the take's real timings (prod transcript words + local whisper.cpp words, prod segments) through the ask, the cut (cleanup on and off), the phone compiler, the caption remap, the worker's _phone_opening_cut and the draft/render receipts; each part of the fix switched off alone fails the guard. The KRI-787 runtime replay (PR #1723, run locally) flips exactly its KRI-790 xfails and pins; its kept window is [12.27, 50.38].",
+        "live_model": "n/a; no model call is involved and no paid run was made",
+        "native_output": "unknown; needs a phone re-send of T1 after deploy (also needs KRI-788 for the render to reach the phone)",
+        "production": "not deployed"
+      },
+      "neighbours_covered": [
+        "start + end, start only, end only",
+        "legacy order facts, KRI-789 timing start_line/end_line, KRI-628 description cue",
+        "misheard name and dropped short word; short quotes stay exact",
+        "end line said before the start line",
+        "cleanup on (window intersects cleanup cuts) and off (checked preflight words)",
+        "draft length line from timed segments; unplaced line falls back to the take length",
+        "rendered review: both sides cut, one side missed, older render without an end receipt",
+        "Turkish twins"
+      ],
+      "neighbours_gap": [
+        "cleanup off with no checked preflight snapshot still reports cleanup_off (no second transcription for the cut)",
+        "cloud (non-phone) Talking renders do not cut to the lines",
+        "the render still refuses T1 until KRI-788 restores the order answer (or KRI-789's one-clip rule lands)"
+      ],
+      "follow_ups": [
+        "KRI-788",
+        "KRI-789"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-546-montage-receipts",
       "tickets": [
         "KRI-546",
@@ -1183,6 +1359,59 @@
       ],
       "follow_ups": [
         "KRI-551 (retake cleanup itself)"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-789-take-trim-not-order",
+      "tickets": [
+        "KRI-789",
+        "KRI-787"
+      ],
+      "symptom": "A one-video Talking edit asking to 'Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\"' was asked 'You gave me a specific order for the clips' (attachment order / no fixed order): the brief filed the quoted lines as a key-less order rule, and the render contract left 'I can't verify this ordering rule' for the same one clip (Merope T1).",
+      "boundary": "brief",
+      "status": "open_pr",
+      "fix_prs": [
+        1731
+      ],
+      "owner": "KRI-789",
+      "journey": "kri-789-take-trim-not-order",
+      "paths": [
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/agents/brief_extractor.py",
+        "src/apps/api/app/kria/take_trim.py",
+        "src/apps/api/app/services/spoken_quotes.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/tests/fixtures/incidents/kri789-one-take-start-end-lines-ask-no-order.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri789_one_take_start_end_lines_trim.json"
+      ],
+      "regression_tests": [
+        "tests/incidents/test_incident_corpus.py",
+        "tests/agents/test_kri789_take_trim_brief.py",
+        "tests/evals/test_main_creator_evals.py"
+      ],
+      "harness": "real_parser",
+      "evidence": {
+        "offline_replay": "Incident record kri789-one-take-start-end-lines-ask-no-order (prod's stored v64 brief on the one 68.37 s take, through the real planner gate and contract builder) reproduces prod's turn-1 question word for word and the contract's unresolved ordering rule on main, and neither with the fix. Eval fixture kri789_one_take_start_end_lines_trim replays the turn-1 reply through the real Main Creator parser: an order requirement without the fix, the timing trim with it. The KRI-787 replay (PR #1723) through the real runtime, dispatch and worker gate flips its KRI-789 marker and the approved draft reaches the Talking renderer.",
+        "live_model": "Not run; no paid calls (prompt v65 is replay-only).",
+        "native_output": "unknown",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "two videos, or a video plus a photo: the model's order requirement is kept",
+        "unquoted places, a one-word quote, a first / last clip pin or a route fact: kept",
+        "a start line alone (no invented end), a change of an existing requirement",
+        "several clips with a key-less rule still ask (clarify-explicit-sequence record)",
+        "one clip with a filming-order key keeps its KRI-661 contract (kri661 record)"
+      ],
+      "neighbours_gap": [
+        "Several videos with quoted lines rely on the v65 prompt alone; no paid live eval run.",
+        "The question gate counts selected rows; the contract also drops a hidden voice clip.",
+        "The end line is consumed by KRI-790 (phone Talking window + length line)."
+      ],
+      "follow_ups": [
+        "KRI-790"
       ],
       "red_control": "not_applicable"
     },
@@ -1533,6 +1762,60 @@
       ],
       "red_control": "not_applicable",
       "journey": "kri-492-length-ownership"
+    },
+    {
+      "id": "kri-794-reanswer-closed-choice",
+      "tickets": [
+        "KRI-794"
+      ],
+      "symptom": "After the order question was answered 'Use the order you added the clips' and the render was refused ('I can't verify this ordering rule from the approved media.'), the creator typed the other option's exact label, 'Continue without a fixed order'. No question was open, so it was read as a new edit: the draft kept the old answer, said 'I'm using the order you added the clips', and the session's last render was refused again (Merope T1).",
+      "boundary": "reply",
+      "status": "open_pr",
+      "owner": "KRI-794",
+      "fix_prs": [],
+      "paths": [
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/services/cloud_render_contract.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri794_reanswer_choice_postgres.py"
+      ],
+      "harness": "real_with_db",
+      "evidence": {
+        "offline_replay": "Postgres-backed submit_turn + run_kria_turn journey (only the Main Creator model call mocked): order question -> tapped answer -> the real dispatch contract refusal (check_phone_dispatch_contract over the approved binding with the answer lost, as in KRI-788) -> the real render observer card -> typed label / 'try again'. 11 of the first 20 cases fail with the four app files reverted to main; the 4 review cases (stale refusal, delegation, language hint, recommended fallback) fail with only the review fixes reverted. The incident's own events.json #0-#15 replayed through match_answered_choice returns (cc8e5377, unordered). On a scratch merge with the KRI-787 replay (#1723), its two KRI-794 strict xfails pass.",
+        "live_model": "n/a (no prompt or model change; no paid calls)",
+        "native_output": "unknown (the iOS client shows the typed text as a plain bubble and an answered card by any later message; no client change)",
+        "production": "not deployed"
+      },
+      "neighbours_covered": [
+        "exact label, punctuation/case, English alias, Turkish alias",
+        "the incident order: answer, refusal, typed other label",
+        "'try again' after an order refusal re-asks the picker once, 'no fixed order' recommended instead of the refused option",
+        "'you choose' on that re-ask never picks the refused option",
+        "a render approved before a typed re-answer and refused after it is not blamed on the new answer",
+        "the kept note's quoted reply still re-answers after the chat switched to Turkish",
+        "retyping the refused option after the refusal confirms it",
+        "second refusal after the re-ask keeps the answer, no third ask",
+        "a refusal about something else does not reopen the order",
+        "no card: '2', the internal key, 'you choose', 'fark etmez', a negated sentence, the standing answer",
+        "client-sent selection for the closed question stays choice_selection_stale",
+        "a closed simpler-version question is never re-answered",
+        "kept answers on later turns say 'As agreed earlier' and how to change them"
+      ],
+      "neighbours_gap": [
+        "only the order basis tags its refusal (field_path ordering_choice); other gate conflicts re-answer by label but are not re-asked after a refusal",
+        "non-order kinds re-answer by exact label only (their aliases read as edits without the card)",
+        "a phone re-send of the T1 kit (needs KRI-788 deployed too)",
+        "an order answer given on the question's second ask is not re-asked after a refusal (ask limit); the kept note names the typed way out",
+        "draft-time unresolved refusals (_unresolved_choice_plan) carry no field_path and do not trigger the re-ask"
+      ],
+      "follow_ups": [
+        "KRI-788",
+        "KRI-795"
+      ],
+      "red_control": "not_applicable"
     },
     {
       "id": "kri-674-whole-job-retry-consent",
@@ -2147,6 +2430,51 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-806-editorial-plan-pairing",
+      "tickets": [
+        "KRI-806",
+        "KRI-802"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-806",
+      "symptom": "Don Julio M1: the brief kept two spoken lines audible and only suggested a song; Main Creator paired an editorial_plan with kept clip sound and the parser refused the whole reply on attempt 3 of 3 ('editorial_plan requires a music-led phone montage of video clips'), so the chat said 'I couldn't turn that into a plan this time'.",
+      "boundary": "parser",
+      "paths": [
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/services/editorial_plan.py",
+        "src/apps/api/prompts/main_creator.txt",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri806_don_julio_kept_lines.json"
+      ],
+      "regression_tests": [
+        "tests/agents/test_main_creator_editorial_plan.py",
+        "tests/evals/test_main_creator_evals.py",
+        "tests/evals/request_following/test_troya_context_journey.py"
+      ],
+      "harness": "real_parser",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Prod Main Creator input of turn 3424b400 (agent_run 41b8346b, v64) through the real MainCreatorAgent.parse with no model call. Before the fix: kept clip sound, original_audio and a creator selection of 8 of 9 clips each raised; 9 of 10 new cases failed. After: the plan is dropped with a counts-only log line, the kept lines, selection, title and 15 s survive, and a valid music-led plan (all clips or the creator's selection) is kept unchanged.",
+        "live_model": "Not run; no paid calls. The prompt rule (v66) is unverified against the live model: a live Main Creator replay of the M1 turn would show whether the model stops emitting the plan (about $0.2 per turn at v64 token counts).",
+        "native_output": "unknown; the repair runs before approval, no render runs in these checks.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "kept clip sound (montage_audio), original_audio (normalisation then adds montage_audio), day_vlog format, recorded voiceover, photo in the manifest, a server two-clip cadence",
+        "a music-led plan over all clips and over the creator's selection is kept exactly",
+        "a plan that binds a skipped clip, leaves a selected clip out or invents a clip is dropped, not refused",
+        "the log line carries reasons and counts, never beat wording, viewer goal or media ids"
+      ],
+      "neighbours_gap": [
+        "Phone clips with no phone montage at all stay the montage's own refusal (normalisation raises first), unchanged.",
+        "A clip bound twice is still an EditorialPlan schema error the retry is told about.",
+        "Not checked: a clip removed after approval by a resolved skip intent while the approved plan still binds it (the render contract re-checks coverage and would refuse)."
+      ],
+      "follow_ups": [
+        "Don Julio M1 re-send after deploy (needs KRI-803/KRI-805 for a video)"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-804-label-text-reply",
       "tickets": [
         "KRI-804",
@@ -2212,212 +2540,6 @@
       "red_control": "not_applicable"
     },
     {
-      "id": "kri-789-take-trim-not-order",
-      "tickets": [
-        "KRI-789",
-        "KRI-787"
-      ],
-      "symptom": "A one-video Talking edit asking to 'Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\"' was asked 'You gave me a specific order for the clips' (attachment order / no fixed order): the brief filed the quoted lines as a key-less order rule, and the render contract left 'I can't verify this ordering rule' for the same one clip (Merope T1).",
-      "boundary": "brief",
-      "status": "open_pr",
-      "fix_prs": [
-        1731
-      ],
-      "owner": "KRI-789",
-      "journey": "kri-789-take-trim-not-order",
-      "paths": [
-        "src/apps/api/app/agents/main_creator.py",
-        "src/apps/api/app/agents/brief_extractor.py",
-        "src/apps/api/app/kria/take_trim.py",
-        "src/apps/api/app/services/spoken_quotes.py",
-        "src/apps/api/app/services/choice_questions.py",
-        "src/apps/api/app/services/creator_render_contract.py",
-        "src/apps/api/tests/fixtures/incidents/kri789-one-take-start-end-lines-ask-no-order.json",
-        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri789_one_take_start_end_lines_trim.json"
-      ],
-      "regression_tests": [
-        "tests/incidents/test_incident_corpus.py",
-        "tests/agents/test_kri789_take_trim_brief.py",
-        "tests/evals/test_main_creator_evals.py"
-      ],
-      "harness": "real_parser",
-      "evidence": {
-        "offline_replay": "Incident record kri789-one-take-start-end-lines-ask-no-order (prod's stored v64 brief on the one 68.37 s take, through the real planner gate and contract builder) reproduces prod's turn-1 question word for word and the contract's unresolved ordering rule on main, and neither with the fix. Eval fixture kri789_one_take_start_end_lines_trim replays the turn-1 reply through the real Main Creator parser: an order requirement without the fix, the timing trim with it. The KRI-787 replay (PR #1723) through the real runtime, dispatch and worker gate flips its KRI-789 marker and the approved draft reaches the Talking renderer.",
-        "live_model": "Not run; no paid calls (prompt v65 is replay-only).",
-        "native_output": "unknown",
-        "production": "Not deployed."
-      },
-      "neighbours_covered": [
-        "two videos, or a video plus a photo: the model's order requirement is kept",
-        "unquoted places, a one-word quote, a first / last clip pin or a route fact: kept",
-        "a start line alone (no invented end), a change of an existing requirement",
-        "several clips with a key-less rule still ask (clarify-explicit-sequence record)",
-        "one clip with a filming-order key keeps its KRI-661 contract (kri661 record)"
-      ],
-      "neighbours_gap": [
-        "Several videos with quoted lines rely on the v65 prompt alone; no paid live eval run.",
-        "The question gate counts selected rows; the contract also drops a hidden voice clip.",
-        "The end line is consumed by KRI-790 (phone Talking window + length line)."
-      ],
-      "follow_ups": [
-        "KRI-790"
-      ],
-      "red_control": "not_applicable"
-    },
-    {
-      "id": "kri-794-reanswer-closed-choice",
-      "tickets": [
-        "KRI-794"
-      ],
-      "symptom": "After the order question was answered 'Use the order you added the clips' and the render was refused ('I can't verify this ordering rule from the approved media.'), the creator typed the other option's exact label, 'Continue without a fixed order'. No question was open, so it was read as a new edit: the draft kept the old answer, said 'I'm using the order you added the clips', and the session's last render was refused again (Merope T1).",
-      "boundary": "reply",
-      "status": "open_pr",
-      "owner": "KRI-794",
-      "fix_prs": [],
-      "paths": [
-        "src/apps/api/app/kria/runtime.py",
-        "src/apps/api/app/services/choice_questions.py",
-        "src/apps/api/app/services/creator_render_contract.py",
-        "src/apps/api/app/services/cloud_render_contract.py"
-      ],
-      "regression_tests": [
-        "tests/kria/test_kri794_reanswer_choice_postgres.py"
-      ],
-      "harness": "real_with_db",
-      "evidence": {
-        "offline_replay": "Postgres-backed submit_turn + run_kria_turn journey (only the Main Creator model call mocked): order question -> tapped answer -> the real dispatch contract refusal (check_phone_dispatch_contract over the approved binding with the answer lost, as in KRI-788) -> the real render observer card -> typed label / 'try again'. 11 of the first 20 cases fail with the four app files reverted to main; the 4 review cases (stale refusal, delegation, language hint, recommended fallback) fail with only the review fixes reverted. The incident's own events.json #0-#15 replayed through match_answered_choice returns (cc8e5377, unordered). On a scratch merge with the KRI-787 replay (#1723), its two KRI-794 strict xfails pass.",
-        "live_model": "n/a (no prompt or model change; no paid calls)",
-        "native_output": "unknown (the iOS client shows the typed text as a plain bubble and an answered card by any later message; no client change)",
-        "production": "not deployed"
-      },
-      "neighbours_covered": [
-        "exact label, punctuation/case, English alias, Turkish alias",
-        "the incident order: answer, refusal, typed other label",
-        "'try again' after an order refusal re-asks the picker once, 'no fixed order' recommended instead of the refused option",
-        "'you choose' on that re-ask never picks the refused option",
-        "a render approved before a typed re-answer and refused after it is not blamed on the new answer",
-        "the kept note's quoted reply still re-answers after the chat switched to Turkish",
-        "retyping the refused option after the refusal confirms it",
-        "second refusal after the re-ask keeps the answer, no third ask",
-        "a refusal about something else does not reopen the order",
-        "no card: '2', the internal key, 'you choose', 'fark etmez', a negated sentence, the standing answer",
-        "client-sent selection for the closed question stays choice_selection_stale",
-        "a closed simpler-version question is never re-answered",
-        "kept answers on later turns say 'As agreed earlier' and how to change them"
-      ],
-      "neighbours_gap": [
-        "only the order basis tags its refusal (field_path ordering_choice); other gate conflicts re-answer by label but are not re-asked after a refusal",
-        "non-order kinds re-answer by exact label only (their aliases read as edits without the card)",
-        "a phone re-send of the T1 kit (needs KRI-788 deployed too)",
-        "an order answer given on the question's second ask is not re-asked after a refusal (ask limit); the kept note names the typed way out",
-        "draft-time unresolved refusals (_unresolved_choice_plan) carry no field_path and do not trigger the re-ask"
-      ],
-      "follow_ups": [
-        "KRI-788",
-        "KRI-795"
-      ],
-      "red_control": "not_applicable"
-    },
-    {
-      "id": "kri-806-editorial-plan-pairing",
-      "tickets": [
-        "KRI-806",
-        "KRI-802"
-      ],
-      "status": "open_pr",
-      "owner": "KRI-806",
-      "symptom": "Don Julio M1: the brief kept two spoken lines audible and only suggested a song; Main Creator paired an editorial_plan with kept clip sound and the parser refused the whole reply on attempt 3 of 3 ('editorial_plan requires a music-led phone montage of video clips'), so the chat said 'I couldn't turn that into a plan this time'.",
-      "boundary": "parser",
-      "paths": [
-        "src/apps/api/app/agents/main_creator.py",
-        "src/apps/api/app/services/editorial_plan.py",
-        "src/apps/api/prompts/main_creator.txt",
-        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri806_don_julio_kept_lines.json"
-      ],
-      "regression_tests": [
-        "tests/agents/test_main_creator_editorial_plan.py",
-        "tests/evals/test_main_creator_evals.py",
-        "tests/evals/request_following/test_troya_context_journey.py"
-      ],
-      "harness": "real_parser",
-      "kill_switch": null,
-      "evidence": {
-        "offline_replay": "Prod Main Creator input of turn 3424b400 (agent_run 41b8346b, v64) through the real MainCreatorAgent.parse with no model call. Before the fix: kept clip sound, original_audio and a creator selection of 8 of 9 clips each raised; 9 of 10 new cases failed. After: the plan is dropped with a counts-only log line, the kept lines, selection, title and 15 s survive, and a valid music-led plan (all clips or the creator's selection) is kept unchanged.",
-        "live_model": "Not run; no paid calls. The prompt rule (v66) is unverified against the live model: a live Main Creator replay of the M1 turn would show whether the model stops emitting the plan (about $0.2 per turn at v64 token counts).",
-        "native_output": "unknown; the repair runs before approval, no render runs in these checks.",
-        "production": "Not deployed."
-      },
-      "neighbours_covered": [
-        "kept clip sound (montage_audio), original_audio (normalisation then adds montage_audio), day_vlog format, recorded voiceover, photo in the manifest, a server two-clip cadence",
-        "a music-led plan over all clips and over the creator's selection is kept exactly",
-        "a plan that binds a skipped clip, leaves a selected clip out or invents a clip is dropped, not refused",
-        "the log line carries reasons and counts, never beat wording, viewer goal or media ids"
-      ],
-      "neighbours_gap": [
-        "Phone clips with no phone montage at all stay the montage's own refusal (normalisation raises first), unchanged.",
-        "A clip bound twice is still an EditorialPlan schema error the retry is told about.",
-        "Not checked: a clip removed after approval by a resolved skip intent while the approved plan still binds it (the render contract re-checks coverage and would refuse)."
-      ],
-      "follow_ups": [
-        "Don Julio M1 re-send after deploy (needs KRI-803/KRI-805 for a video)"
-      ],
-      "red_control": "not_applicable"
-    },
-    {
-      "id": "kri-790-take-window",
-      "tickets": [
-        "KRI-790",
-        "KRI-628",
-        "KRI-704"
-      ],
-      "symptom": "Merope T1 (2026-10-21): 'Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\"' in a 68.37 s Talking take: no end cut existed, the start line (brief facts on an order row, misheard 'Carolina' without the second I'm) never reached the phone plan, every draft said 'keeps your whole take ... 68.4s', and no draft or approval card named either line.",
-      "boundary": "compiler",
-      "status": "open_pr",
-      "owner": "KRI-790",
-      "journey": "kri-628-opening-cut",
-      "paths": [
-        "src/apps/api/app/kria/opening_cut_ask.py",
-        "src/apps/api/app/pipeline/phone_opening_cut.py",
-        "src/apps/api/app/services/speech_segments.py",
-        "src/apps/api/app/kria/brief_checks.py",
-        "src/apps/api/app/tasks/generative_build.py",
-        "src/apps/api/app/tasks/kria_runtime.py"
-      ],
-      "regression_tests": [
-        "tests/pipeline/test_phone_take_window.py",
-        "tests/pipeline/test_phone_opening_cut.py",
-        "tests/tasks/test_phone_opening_cut_cleanup_off.py"
-      ],
-      "harness": "real_compiler",
-      "kill_switch": null,
-      "evidence": {
-        "offline_replay": "T1's stored brief rows (v1 + v2) and the take's real timings (prod transcript words + local whisper.cpp words, prod segments) through the ask, the cut (cleanup on and off), the phone compiler, the caption remap, the worker's _phone_opening_cut and the draft/render receipts; each part of the fix switched off alone fails the guard. The KRI-787 runtime replay (PR #1723, run locally) flips exactly its KRI-790 xfails and pins; its kept window is [12.27, 50.38].",
-        "live_model": "n/a; no model call is involved and no paid run was made",
-        "native_output": "unknown; needs a phone re-send of T1 after deploy (also needs KRI-788 for the render to reach the phone)",
-        "production": "not deployed"
-      },
-      "neighbours_covered": [
-        "start + end, start only, end only",
-        "legacy order facts, KRI-789 timing start_line/end_line, KRI-628 description cue",
-        "misheard name and dropped short word; short quotes stay exact",
-        "end line said before the start line",
-        "cleanup on (window intersects cleanup cuts) and off (checked preflight words)",
-        "draft length line from timed segments; unplaced line falls back to the take length",
-        "rendered review: both sides cut, one side missed, older render without an end receipt",
-        "Turkish twins"
-      ],
-      "neighbours_gap": [
-        "cleanup off with no checked preflight snapshot still reports cleanup_off (no second transcription for the cut)",
-        "cloud (non-phone) Talking renders do not cut to the lines",
-        "the render still refuses T1 until KRI-788 restores the order answer (or KRI-789's one-clip rule lands)"
-      ],
-      "follow_ups": [
-        "KRI-788",
-        "KRI-789"
-      ],
-      "red_control": "not_applicable"
-    },
-    {
       "id": "kri-803-keep-line-audible",
       "tickets": [
         "KRI-803",
@@ -2465,128 +2587,6 @@
       ],
       "follow_ups": [
         "M1 phone re-send after deploy"
-      ],
-      "red_control": "not_applicable"
-    },
-    {
-      "id": "kri-787-merope-t1-replay",
-      "tickets": [
-        "KRI-787",
-        "KRI-788",
-        "KRI-789",
-        "KRI-790",
-        "KRI-791",
-        "KRI-792",
-        "KRI-793",
-        "KRI-794",
-        "KRI-795"
-      ],
-      "symptom": "A one-take phone Talking edit with quoted start and end lines was approved twice and refused at dispatch both times (\"I can't verify this ordering rule from the approved media.\"): the creator's order answer was dropped between approval and dispatch, and the chat before it asked a pointless clip-order question, held MEROPE back, promised phrase cuts and said nothing about captions or the start/end lines (Merope T1).",
-      "boundary": "dispatch",
-      "status": "open_pr",
-      "owner": "KRI-787",
-      "journey": "kri-787-merope-t1-replay",
-      "paths": [
-        "src/apps/api/app/tasks/content_plan_build.py",
-        "src/apps/api/app/services/generative_jobs.py",
-        "src/apps/api/app/services/creator_render_contract.py",
-        "src/apps/api/app/tasks/generative_build.py",
-        "src/apps/api/app/tasks/kria_runtime.py",
-        "src/apps/api/app/kria/planner.py",
-        "src/apps/api/app/kria/runtime.py",
-        "src/apps/api/app/kria/brief_checks.py",
-        "src/apps/api/app/services/choice_questions.py",
-        "src/apps/api/app/kria/opening_cut_ask.py",
-        "src/apps/api/app/pipeline/phone_opening_cut.py",
-        "src/apps/api/tests/fixtures/kri787_merope_t1_turns.json"
-      ],
-      "regression_tests": [
-        "tests/kria/test_kri787_merope_t1_replay.py",
-        "tests/kria/test_kri787_merope_t1_runtime_postgres.py"
-      ],
-      "harness": "real_with_db",
-      "evidence": {
-        "offline_replay": "Original recorded production chat, drafts, brief binding and jobs remain unchanged in the fixture. Historical failure pins document the pre-fix behavior in Git history. Landed children and the privately integrated pending KRI-790/792 sources now pass all27 replay/runtime acceptance cases as ordinary hard tests. Three additional original incident functions removed by the concurrent author cleanup are retained with independent corrected expectations. The six previously reviewed retired bad-behavior pin functions remain covered by the documented acceptance replacements. KRI-790 is now landed; KRI-792 remains a privately integrated pending source, not claimed landed; exact original media/native output remain unverified.",
-        "live_model": "Not run; no paid calls.",
-        "native_output": "unknown; no render reaches the phone (the Talking compiler needs the source file).",
-        "production": "Not deployed (tests only)."
-      },
-      "neighbours_covered": [
-        "both renders (simpler-version path and the normal act path)",
-        "the approval backstop vs the dispatch contract (approval offered, dispatch refused)",
-        "the creator's tapped answers replayed through the real gate, whatever turn they come on",
-        "cleanup chosen vs not (prod's first and second drafts)",
-        "turn 4: a typed option label after the question closed, with the failure card the observer posts today",
-        "the kept window of the take (KRI-628 opening cut over the take's word timings)"
-      ],
-      "neighbours_gap": [
-        "The Main Creator's own turn-1/turn-2 strategies were recorded only as hashes; the approved draft's strategy stands in.",
-        "The phone Talking compiler (cuts, captions, MEROPE placement, 32-38 s length) needs the source file and prod's cleanup snapshot, so the checklist stops at the kept window and the receipts.",
-        "Turn 4 runs at gate level, not through the database runtime.",
-        "The render queue wait (2 min 23 s on render 1) is KRI-798, not replayed."
-      ],
-      "follow_ups": [
-        "KRI-788",
-        "KRI-789",
-        "KRI-790",
-        "KRI-791",
-        "KRI-792",
-        "KRI-793",
-        "KRI-794",
-        "KRI-795",
-        "KRI-798"
-      ],
-      "red_control": "not_applicable"
-    },
-    {
-      "id": "kri-802-question-batch",
-      "tickets": [
-        "KRI-802"
-      ],
-      "symptom": "Don Julio M1 chat 1 asked its blocking questions one per turn: the title wording (19:24), then the red-cap clip picker a full re-plan later (19:26), although the first turn's clip checks would have found it; the title-wording gate returned before them, and every answer re-runs the Main Creator (1-2 min).",
-      "boundary": "planner",
-      "status": "open_pr",
-      "owner": "KRI-802",
-      "paths": [
-        "src/apps/api/app/kria/planner.py",
-        "src/apps/api/app/kria/runtime.py",
-        "src/apps/api/app/tasks/kria_runtime.py",
-        "src/apps/api/tests/fixtures/kri802_don_julio_m1_turn1.json",
-        "src/apps/ios/Kria/Core/QuestionBatch.swift",
-        "src/apps/ios/Kria/Features/ChatWorkspaceView.swift"
-      ],
-      "regression_tests": [
-        "tests/kria/test_kri802_question_batch.py",
-        "tests/kria/test_kri802_question_batch_postgres.py"
-      ],
-      "harness": "mocked_provider",
-      "kill_switch": null,
-      "evidence": {
-        "offline_replay": "Chat 1's first turn: the recorded Main Creator input (run 05de835e), its strategy rebuilt from the turn (output redacted), the next turn's clip asks and resolver stats; real Main Creator parse, real planner, real clip-intent planner and resolver behind a provider-transport fake. Red before the fix: the reply asked only the title (byte-identical to prod) and never reached the resolver; green: one reply carries the title card and the red-cap picker. Submit/claim/fold over scratch Postgres: one turn with both answers is accepted, both fold, the worker plans with batch_questions.",
-        "live_model": "Not run; no paid calls. The change makes no new model call (the clip checks the first turn now runs are the ones the next turn ran anyway).",
-        "native_output": "XCUITest KriaUITests/CreationUITests/testTitleCardAndClipPickerInOneReplyGoOutOnOneTurn and testClipsFirstThenTheTitleTapSendsBothOnOneTurn (simulator, fixture server): the first answer is held, the second sends both on one turn. Physical iPhone re-send of M1 pending a TestFlight build at protocol 14.",
-        "production": "Not deployed."
-      },
-      "neighbours_covered": [
-        "older app builds and the web (no stamp): one question per turn, byte-identical first reply, no resolver call",
-        "nothing else to ask: the title question alone, nothing drafted with unapproved words",
-        "a text-only clip question (the '+' label): the title question alone",
-        "a second choice card, reply chips, a 'still checking' reply, a recovery, a draft: the title question alone",
-        "a picker about the title's own words: the title question alone",
-        "a joined reply over the 1200-character limit: the title question alone",
-        "both titles model-written: one wording question (opening first)",
-        "kill switch KRIA_QUESTION_BATCH_MIN_CLIENT_PROTOCOL=999",
-        "answers in either order on the phone (title first, clips first)"
-      ],
-      "neighbours_gap": [
-        "The '+' label question (free-text answer) is not batched: a typed answer cannot ride a tap, and KRI-804 is reshaping that question.",
-        "The held-draft 'simpler version?' choice stays last: it reads the compiled draft.",
-        "Order/length choice cards are not batched: they need resolved clips and there is one choice slot per reply.",
-        "Vision calls are not replayed: the recorded resolver answer for the red cap is empty, as prod's was after its one vision check."
-      ],
-      "follow_ups": [
-        "KRI-804",
-        "KRI-807"
       ],
       "red_control": "not_applicable"
     }

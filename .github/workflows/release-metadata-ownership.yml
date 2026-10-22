@@ -20,6 +20,13 @@ jobs:
           fetch-depth: 0
       - name: Keep release metadata out of feature PRs
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: python3 scripts/release_metadata.py guard --base "$BASE_SHA" --head "$HEAD_SHA"
+        run: |
+          # A long-lived PR can merge a newer main while its event payload still
+          # names the original base SHA. Compare only the PR's own changes so
+          # release metadata inherited through that normal merge stays owned by
+          # post-merge automation.
+          git fetch origin "$BASE_REF" --quiet
+          BASE_SHA="$(git merge-base "$HEAD_SHA" "origin/$BASE_REF")"
+          python3 scripts/release_metadata.py guard --base "$BASE_SHA" --head "$HEAD_SHA"
