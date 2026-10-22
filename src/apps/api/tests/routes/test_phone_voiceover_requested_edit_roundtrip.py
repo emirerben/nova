@@ -78,10 +78,10 @@ def test_spoken_text_keeps_its_manual_narration_clock_across_cut_reopen_and_reor
 
 
 def test_selected_source_audio_survives_reorder_split_and_new_occurrence(monkeypatch):
-    _enable(monkeypatch, protocol=14)
+    _enable(monkeypatch, protocol=15)
     monkeypatch.setattr(gj.settings, "phone_voiceover_source_audio_enabled", True)
-    set_client_protocol(14)
-    job, variant_id = titled_job(monkeypatch, protocol=14)
+    set_client_protocol(15)
+    job, variant_id = titled_job(monkeypatch, protocol=15)
     variant = _variant(job)
     variant["source_audio_media_ids"] = ["c1"]
     variant["source_audio_bed_gain"] = 0.3
@@ -127,7 +127,7 @@ def test_selected_source_audio_survives_reorder_split_and_new_occurrence(monkeyp
 
 def test_old_client_cannot_reopen_or_save_persisted_source_audio_selection(monkeypatch):
     """The protocol gate applies even while creation rollout is switched off."""
-    job, variant_id = titled_job(monkeypatch, protocol=13)
+    job, variant_id = titled_job(monkeypatch, protocol=14)
     _variant(job)["source_audio_media_ids"] = []
 
     with pytest.raises(gj.HTTPException) as capabilities_refused:
@@ -136,7 +136,7 @@ def test_old_client_cannot_reopen_or_save_persisted_source_audio_selection(monke
     assert capabilities_refused.value.detail == {
         "code": "client_update_required",
         "feature": "voiceover_source_audio",
-        "minimum_client_protocol": 14,
+        "minimum_client_protocol": 15,
     }
 
     # The timeline endpoint is independently guarded: callers do not have to
@@ -152,7 +152,7 @@ def test_old_client_cannot_reopen_or_save_persisted_source_audio_selection(monke
 
 
 def test_new_client_can_reopen_and_save_persisted_source_audio_selection(monkeypatch):
-    job, variant_id = titled_job(monkeypatch, protocol=14)
+    job, variant_id = titled_job(monkeypatch, protocol=15)
     _variant(job)["source_audio_media_ids"] = []
 
     assert gj._editor_capabilities(job, _variant(job))["text_elements"] is True
@@ -163,7 +163,7 @@ def test_new_client_can_reopen_and_save_persisted_source_audio_selection(monkeyp
 
 
 def test_legacy_variant_remains_open_to_old_client(monkeypatch):
-    job, variant_id = titled_job(monkeypatch, protocol=13)
+    job, variant_id = titled_job(monkeypatch, protocol=14)
     assert "source_audio_media_ids" not in _variant(job)
 
     assert gj._editor_capabilities(job, _variant(job))["text_elements"] is True
@@ -173,7 +173,7 @@ def test_legacy_variant_remains_open_to_old_client(monkeypatch):
 
 
 def test_source_audio_protocol_guard_is_inert_outside_http_request(monkeypatch):
-    job, variant_id = titled_job(monkeypatch, protocol=13)
+    job, variant_id = titled_job(monkeypatch, protocol=14)
     _variant(job)["source_audio_media_ids"] = ["c1"]
     clear_request_context()
 

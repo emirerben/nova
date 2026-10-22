@@ -212,7 +212,7 @@ def test_a_split_piece_gets_a_server_slot_id(monkeypatch):
 
 
 def test_source_audio_selection_projects_and_survives_a_cut_save(monkeypatch):
-    _enable(monkeypatch, protocol=14)
+    _enable(monkeypatch, protocol=15)
     job, vid = voiceover_job()
     _variant(job)["source_audio_media_ids"] = ["c1"]
 

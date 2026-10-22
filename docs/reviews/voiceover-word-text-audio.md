@@ -28,7 +28,7 @@ they are not committed. Native export verification uses labelled synthetic media
 ## Rollout and evidence
 
 Implemented locally; draft review only. No production deployment performed. New source audio
-requires an app supporting protocol 14; new features start disabled. Backend/worker must
+requires an app supporting protocol 15; new features start disabled. Backend/worker must
 ship before enabling after that app is available. Existing generated rows and saved audio
 choices must remain playable when new creation is disabled.
 
@@ -80,7 +80,7 @@ The original compound request also asks for named footage, a photo, and an endin
 This change addresses its spoken-text and selected-sound gaps. Full semantic
 fulfillment of that compound request remains open under KRI-691. Production
 verification must confirm the deployed API/worker revision, effective flags,
-protocol-14 app, original-request replay and inspected output; workflow HEAD alone
+protocol-15 app, original-request replay and inspected output; workflow HEAD alone
 is insufficient. Turning authoring flags off must not erase saved choices.
 
 ## Original recording timing check

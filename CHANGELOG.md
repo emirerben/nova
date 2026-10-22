@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.47.0] - 2026-10-22
+
+### Changed
+- fix(kria): ask the title wording and the clip picker in one reply (KRI-802) (#1744) <!-- release-pr: 1744 -->
+
+## [0.81.46.0] - 2026-10-22
+
+### Changed
+- fix(kria): "keep '<line>' audible" holds the line on a montage, never a pop-in (KRI-803) (#1741) <!-- release-pr: 1741 -->
+
+## [0.81.45.0] - 2026-10-22
+
+### Changed
+- fix(kria): drop an editorial_plan the edit can't run instead of refusing the reply (KRI-806) (#1738) <!-- release-pr: 1738 -->
+
+## [0.81.44.0] - 2026-10-22
+
+### Changed
+- fix(kria): a named phrase cut is never "Done" before anything cuts it (KRI-792) (#1728) <!-- release-pr: 1728 -->
+
+## [0.81.43.0] - 2026-10-22
+
+### Changed
+- fix(export-verifier): accept correct Troya montage, keep wrong-output controls (KRI-810) (#1749) <!-- release-pr: 1749 -->
+
 ## [0.81.42.0] - 2026-10-22
 
 ### Changed

@@ -1061,9 +1061,11 @@ enum KriaClientProtocolContract {
     /// 12 (KRI-734): withholds unverified local exports from playback/Save/Share
     /// when the server declares `output_verification_required`.
     /// 13: accepts durable background output checks and resumes status polling.
-    /// 14: previews voiceover source-audio selections from per-slot
+    /// 14 (KRI-802): answers a reply that asks a choice card and a clip picker together on ONE turn (the first
+    /// answer waits for the second). The server asks those two together only to this protocol.
+    /// 15: previews voiceover source-audio selections from per-slot
     /// `source_audio_volume` without applying the global original-audio gain twice.
-    static let version = 14
+    static let version = 15
     static let header = "X-Kria-Client-Protocol"
 }
 

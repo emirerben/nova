@@ -16,7 +16,7 @@ from tests.kria.test_strategy_policy import CLIPS, _narrated, _narrated_manifest
 
 
 @pytest.mark.parametrize(
-    "protocol,enabled,allowed", [(13, True, False), (14, False, False), (14, True, True)]
+    "protocol,enabled,allowed", [(14, True, False), (15, False, False), (15, True, True)]
 )
 def test_selected_audio_requires_new_app_and_flag(
     prod_profile, monkeypatch, protocol, enabled, allowed
@@ -36,7 +36,7 @@ def test_selected_audio_requires_new_app_and_flag(
 
 def test_spoken_text_draft_no_longer_claims_impossible(prod_profile, monkeypatch):
     monkeypatch.setattr(capabilities.settings, "phone_voiceover_spoken_text_enabled", True)
-    set_client_protocol(14)
+    set_client_protocol(15)
     try:
         facts = plan_facts_from_strategy(
             _narrated().model_dump(mode="json"), manifest=_narrated_manifest()
