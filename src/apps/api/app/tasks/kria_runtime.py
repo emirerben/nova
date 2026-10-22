@@ -121,6 +121,7 @@ from app.services.choice_questions import (
 )
 from app.services.creation_thread_titles import conversation_revision_matches_sync
 from app.services.creative_copy_gate import CREATIVE_COPY_PENDING, creative_copy_problem
+from app.services.creator_label_reply import LabelTextReply, label_text_reply
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
 from app.services.kria_editor_ops import (
     EditorStateReplyError,
@@ -666,6 +667,19 @@ def _unresolved_choice_plan(
             "unresolved_requirement",
         )
     if contract is not None and contract.unresolved:
+        label_reply = _label_text_unresolved(contract.unresolved[0], contract_brief)
+        if label_reply is not None:
+            # KRI-804: a dictated text a label can't print is a question about its words,
+            # with tappable ways forward, never a recovery with nothing to tap.
+            return (
+                KriaTurnPlan(
+                    mode="respond",
+                    turn_value="question",
+                    response=f"{label_reply.question}{unchanged}",
+                    reply_options=list(label_reply.options) or None,
+                ),
+                "label_text_unusable",
+            )
         question = _worker_copy(contract.unresolved[0]) or say(
             en=contract.unresolved[0],
             tr="Onayladığın isteklerden birini bu düzenlemede doğrulayamıyorum.",
@@ -678,6 +692,22 @@ def _unresolved_choice_plan(
             ),
             "unresolved_requirement",
         )
+    return None
+
+
+def _label_text_unresolved(unresolved: str, brief: Any) -> LabelTextReply | None:
+    """The label-text question behind the contract's ``unresolved`` line, if it is one.
+
+    ``build_render_contract`` writes ``label_text_reply`` for a dictated shot text a label
+    can't print (KRI-804), in the language this turn is bound to; the same brief text
+    rebuilds it here with its tappable options.
+    """
+    for requirement in brief.live() if brief is not None else ():
+        if not requirement.is_shot_text:
+            continue
+        reply = label_text_reply([requirement.literal], keep=False)
+        if reply is not None and reply.question == unresolved:
+            return reply
     return None
 
 

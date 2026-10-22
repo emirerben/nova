@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.40.0] - 2026-10-22
+
+### Fixed
+- fix(kria): a label the clip label can't hold asks with every reason and answers to tap, never "which clip" (KRI-804) (#1745) <!-- release-pr: 1745 -->
+
 ## [0.81.39.0] - 2026-10-22
 
 ### Changed
