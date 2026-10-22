@@ -1090,7 +1090,9 @@
         "KriaTests/CameraRollCollectionTests/testSelectionResumeCorrectionsAndRemoval",
         "KriaTests/CameraRollCollectionTests/testMissingMetadataRevocationAndPrivacySwitch",
         "KriaTests/CameraRollCollectionTests/testBoundedSelectionAndUnselectedMetadata",
-        "KriaTests/CameraRollCollectionTests/testTimeGroupsAndExplicitCorrectionSurviveMetadataRefresh"
+        "KriaTests/CameraRollCollectionTests/testTimeGroupsAndExplicitCorrectionSurviveMetadataRefresh",
+        "KriaTests/CameraRollCollectionTests/testFiveHundredItemsSurviveResume",
+        "KriaUITests/CameraRollCollectionUITests/testPartiallyIndexedCollectionWaitsForExplicitPartialChoice"
       ],
       "paths": [
         "src/apps/api/app/agents/camera_roll_stories.py",

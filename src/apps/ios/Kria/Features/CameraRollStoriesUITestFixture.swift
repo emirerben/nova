@@ -163,7 +163,13 @@ private final class CameraRollStoriesFixtureServer: @unchecked Sendable {
             let missing = (CameraRollStoryFixture.result["coverage"] as? [String: Any])?["unindexed_asset_ids"] ?? ["CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"]
             return (200, ["next_offset": NSNull(), "missing_analysis_asset_ids": missing, "unavailable_asset_ids": [], "untimed_asset_ids": []])
         }
-        if request.url?.path.hasSuffix("/stories") == true { return (200, CameraRollStoryFixture.result) }
+        if request.url?.path.hasSuffix("/stories") == true {
+            if ProcessInfo.processInfo.arguments.contains("-camera-roll-collection-ready"),
+               body["allow_partial_analysis"] as? Bool != true {
+                return (409, ["detail": "Missing analysis requires an explicit partial choice"])
+            }
+            return (200, CameraRollStoryFixture.result)
+        }
         if request.httpMethod == "PATCH" {
             if let id = body["moment_id"] as? String, let index = body["replace_index"] as? Int,
                let replacement = CameraRollStoryFixture.moments.first(where: { ($0["id"] as? String)?.lowercased() == id.lowercased() }) {

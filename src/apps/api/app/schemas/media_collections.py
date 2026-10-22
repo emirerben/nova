@@ -19,7 +19,7 @@ class CollectionWrite(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=160)
     expected_revision: int = Field(ge=0)
-    members: list[CollectionMember] = Field(max_length=50)
+    members: list[CollectionMember] = Field(max_length=500)
 
     @model_validator(mode="after")
     def unique_members(self):
@@ -41,7 +41,7 @@ class CollectionOut(BaseModel):
 class CollectionIndexBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_revision: int = Field(ge=1)
-    offset: int = Field(default=0, ge=0, le=50)
+    offset: int = Field(default=0, ge=0, le=500)
     # Metadata batch measured with the native 53-asset mixed collection.
     limit: int = Field(default=32, ge=1, le=32)
 
@@ -90,6 +90,7 @@ class SemanticSearchBody(BaseModel):
 class StoryGenerationBody(SemanticSearchBody):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     research_topic: str | None = Field(default=None, min_length=4, max_length=200)
+    allow_partial_analysis: bool = False
 
     @model_validator(mode="after")
     def public_research_topic(self):

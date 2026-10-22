@@ -88,15 +88,37 @@ async def candidate_evidence(db, owner, identifier, revision, query="", *, momen
         for asset, source in eligible.values()
         if asset.kind == "video" and source.role == "analysis_proxy"
     }
+    supported_assets = {
+        asset.id
+        for asset, source in eligible.values()
+        if asset.kind == "video" and source.role == "analysis_proxy"
+    }
     # Only offer the hardware-verified adapter. Other catalogue sources remain
     # searchable, but cannot be advertised as executable phone stories.
     return evidence.model_copy(
-        update={"moments": [value for value in evidence.moments if value.source_id in supported]}
+        update={
+            "moments": [value for value in evidence.moments if value.source_id in supported],
+            "unindexed_asset_ids": [
+                value for value in evidence.unindexed_asset_ids if value in supported_assets
+            ],
+        }
     )
+
+
+def require_requested_coverage(evidence, body):
+    if evidence.unindexed_asset_ids and not body.allow_partial_analysis:
+        count = len(evidence.unindexed_asset_ids)
+        subject = "video still needs" if count == 1 else "videos still need"
+        raise HTTPException(
+            409,
+            f"{count} {subject} usable analysis. "
+            "Wait for analysis or retry those uploads, then find ideas again.",
+        )
 
 
 async def generate_stories(db, owner, identifier, body):
     evidence = await candidate_evidence(db, owner, identifier, body.expected_revision, body.query)
+    require_requested_coverage(evidence, body)
     candidates = [value for value in evidence.moments if 1 <= value.end_s - value.start_s <= 20]
     if not candidates:
         return CollectionStoriesOut(revision=body.expected_revision, stories=[], coverage=evidence)
@@ -131,6 +153,7 @@ async def generate_stories(db, owner, identifier, body):
                 input.model_dump(),
                 [value.evidence.get("index_spec") for value in candidates],
                 body.expected_revision,
+                body.allow_partial_analysis,
                 [research_topic, research_spec_identity()] if research_topic else None,
             ],
             sort_keys=True,
@@ -183,6 +206,7 @@ async def generate_stories(db, owner, identifier, body):
     if taste != await creator_editorial_taste.generation_context(db, owner, taste_query):
         raise HTTPException(409, "Personalization changed; request ideas again")
     fresh = await candidate_evidence(db, owner, identifier, body.expected_revision, body.query)
+    require_requested_coverage(fresh, body)
     by_id = {str(value.id): value for value in fresh.moments}
     accepted = []
     seen = set()
