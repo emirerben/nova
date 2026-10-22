@@ -29,8 +29,10 @@ from app.kria.recipes import MediaTransform
 from app.kria.recipes_v2 import EditRecipeV2
 from app.pipeline.cloud_render_evidence import normalize_text
 
-VERIFIER_VERSION = "phone-simple-cut-v2"
-HISTORICAL_VERIFIER_VERSIONS = frozenset({"phone-simple-cut-v1", VERIFIER_VERSION})
+VERIFIER_VERSION = "phone-simple-cut-v3"
+HISTORICAL_VERIFIER_VERSIONS = frozenset(
+    {"phone-simple-cut-v1", "phone-simple-cut-v2", VERIFIER_VERSION}
+)
 POLICY_FIELD = "actual_export_policy"
 SAMPLE_RATE = 8000
 # Both the phone export and its analysis proxies are local ISO media files.
@@ -146,8 +148,30 @@ def _probe(path: Path) -> dict:
     )
 
 
+def _geometry(size: tuple[int, int], region=None, canvas=None) -> str:
+    """Cover-fit/crop filter shared by the batched and independent decoders."""
+    if canvas is not None:
+        # Source picture as composed on the canvas (cover fit, no transform),
+        # then the same region the candidate is read from.
+        x0, y0, x1, y1 = region
+        return (
+            f"scale={canvas[0]}:{canvas[1]}:force_original_aspect_ratio=increase,"
+            f"crop={canvas[0]}:{canvas[1]},format=rgb24,"
+            f"crop={x1 - x0}:{y1 - y0}:{x0}:{y0}:exact=1"
+        )
+    if region is not None:
+        # Convert before cropping: YUV chroma subsampling must not shift an odd
+        # crop origin. These are the same RGB pixels Pillow previously cropped.
+        x0, y0, x1, y1 = region
+        return f"format=rgb24,crop={x1 - x0}:{y1 - y0}:{x0}:{y0}:exact=1"
+    return (
+        f"scale={size[0]}:{size[1]}:force_original_aspect_ratio=increase,"
+        f"crop={size[0]}:{size[1]},format=rgb24"
+    )
+
+
 def _frame(
-    path: Path, at: float, *, size: tuple[int, int] | None = None, region=None
+    path: Path, at: float, *, size: tuple[int, int] | None = None, region=None, canvas=None
 ) -> Image.Image:
     args = [
         "ffmpeg",
@@ -167,17 +191,16 @@ def _frame(
         "-frames:v",
         "1",
     ]
-    if size:
+    if canvas is not None:
+        args += ["-vf", _geometry(size, region, canvas)]
+    elif size:
         width, height = size
         args += [
             "-vf",
             f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}",
         ]
     elif region is not None:
-        x0, y0, x1, y1 = region
-        # Convert before cropping: YUV chroma subsampling must not shift an odd
-        # crop origin. These are the same RGB pixels Pillow previously cropped.
-        args += ["-vf", f"format=rgb24,crop={x1 - x0}:{y1 - y0}:{x0}:{y0}:exact=1"]
+        args += ["-vf", _geometry(size, region)]
     return Image.open(
         io.BytesIO(_run(args + ["-f", "image2pipe", "-vcodec", "png", "-threads", "1", "-"]))
     ).convert("RGB")
@@ -233,12 +256,25 @@ def _audio(
     return samples.reshape(-1, 2) if preserve_channels else samples
 
 
-def _frames(path: Path, times, *, size: tuple[int, int], probe=None, deadline=None, region=None):
+def _frames(
+    path: Path,
+    times,
+    *,
+    size: tuple[int, int],
+    probe=None,
+    deadline=None,
+    region=None,
+    canvas=None,
+    with_pts=False,
+):
     """Decode the same first-at/after samples with bounded process reuse.
 
     Keep exact input PTS in a private metadata sidecar, so sparse/VFR samples can
     share an observed frame without moving any requested sample time. Any batch
     uncertainty falls back to the original independent seek path.
+
+    with_pts also returns each selected frame's presentation time in seconds on
+    the requested clock (None when the independent fallback chose the frame).
     """
     deadline = deadline if deadline is not None else time.monotonic() + 90
     # Preserve the original _frame helper's rounding for either numeric type.
@@ -251,6 +287,7 @@ def _frames(path: Path, times, *, size: tuple[int, int], probe=None, deadline=No
         tick = Fraction(video["time_base"])
         unique = sorted(set(requested))
         observed = {}
+        shown = {}
         frame_bytes = size[0] * size[1] * 3
         maximum = max(1, min(17, (64 * 1024 * 1024) // frame_bytes))
         while unique:
@@ -272,15 +309,7 @@ def _frames(path: Path, times, *, size: tuple[int, int], probe=None, deadline=No
             )
             with tempfile.TemporaryDirectory(prefix="kria-sample-clock-") as directory:
                 clock = Path(directory) / "clock.txt"
-                geometry = (
-                    f"format=rgb24,crop={region[2] - region[0]}:{region[3] - region[1]}:"
-                    f"{region[0]}:{region[1]}:exact=1"
-                    if region is not None
-                    else (
-                        f"scale={size[0]}:{size[1]}:force_original_aspect_ratio=increase,"
-                        f"crop={size[0]}:{size[1]},format=rgb24"
-                    )
-                )
+                geometry = _geometry(size, region, canvas)
                 filters = (
                     f"select='{expression}',{geometry},"
                     "metadata=mode=add:key=lavfi.kria_sample:value=1,"
@@ -329,18 +358,69 @@ def _frames(path: Path, times, *, size: tuple[int, int], probe=None, deadline=No
                 index = next(i for i, pts in enumerate(points) if pts >= threshold)
                 data = raw[index * frame_bytes : (index + 1) * frame_bytes]
                 observed[at] = Image.frombytes("RGB", size, data)
-        return [observed[at] for at in requested]
+                shown[at] = float(points[index] * tick - base)
+        images = [observed[at] for at in requested]
+        return (images, [shown[at] for at in requested]) if with_pts else images
     except (OSError, ValueError, KeyError, StopIteration, subprocess.SubprocessError):
         result = []
         for at in requested:
             if time.monotonic() > deadline:
                 raise TimeoutError("verification_budget")
             result.append(
-                _frame(path, at, region=region)
+                _frame(path, at, size=size, region=region, canvas=canvas)
+                if canvas is not None
+                else _frame(path, at, region=region)
                 if region is not None
                 else _frame(path, at, size=size)
             )
-        return result
+        return (result, [None] * len(result)) if with_pts else result
+
+
+def _frame_clock(path: Path, start: float, end: float, probe=None) -> list[float]:
+    """Presentation times (seconds, sample clock) of video frames near a window.
+
+    Reads packet timestamps only; no decode. Used to find the source frame a
+    compositor displays at an instant, including on VFR/held-frame proxies.
+    """
+    probe = probe or _probe(path)
+    video = next(s for s in probe["streams"] if s["codec_type"] == "video")
+    base = Fraction(str(probe["format"].get("start_time", "0")))
+    tick = Fraction(video["time_base"])
+    raw = _run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            *_LOCAL_MP4_INPUT,
+            "-select_streams",
+            "v:0",
+            "-read_intervals",
+            f"{max(0.0, start + float(base)):.6f}%{end + float(base):.6f}",
+            "-show_entries",
+            "packet=pts",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ]
+    ).decode()
+    clock = sorted({float(int(value) * tick - base) for value in re.findall(r"-?\d+", raw)})
+    if not clock:
+        raise ValueError("missing_frame_clock")
+    return clock
+
+
+def _displayed(clock: list[float], instant: float) -> list[float]:
+    """The frame shown at `instant` and the one after it.
+
+    A compositor holds the last frame at/before the instant. The analysis proxy
+    is a resampled copy of the original the phone rendered, so its frame grid
+    can differ from the original's by under one proxy frame; the next frame is
+    the only other picture that can be the same moment. Anchored on the
+    candidate's real PTS, this never widens into a multi-frame search.
+    """
+    shown = [t for t in clock if t <= instant + 1e-6]
+    later = [t for t in clock if t > instant + 1e-6]
+    return ([shown[-1]] if shown else []) + later[:1]
 
 
 def _picture_similarity(expected: np.ndarray, actual: np.ndarray, mask: np.ndarray) -> float:
@@ -399,6 +479,23 @@ def _bounds(layer, recipe) -> tuple[int, int, int, int]:
     )
 
 
+def _ocr(view: Image.Image) -> str:
+    """Exact recognized copy at the fixed confidence bar."""
+    buffer = io.BytesIO()
+    view.save(buffer, format="PNG")
+    raw = _run(
+        ["tesseract", "stdin", "stdout", "--psm", "6", "tsv"],
+        data=buffer.getvalue(),
+        timeout=5,
+        # OpenMP teams contend across concurrent verifications on a
+        # CPU-limited worker. Bound this child only; retain the exact
+        # OCR algorithm, confidence bar and five-second deadline.
+        env={**os.environ, "OMP_THREAD_LIMIT": "1"},
+    )
+    rows = csv.DictReader(io.StringIO(raw.decode()), delimiter="\t")
+    return normalize_text(" ".join(row["text"] for row in rows if float(row["conf"]) >= 40))
+
+
 def _read_text(
     image: Image.Image, colors: list[tuple[int, int, int]], *, wanted: str | None = None
 ) -> set[str]:
@@ -412,21 +509,95 @@ def _read_text(
         distance = np.min([np.linalg.norm(pixels - color, axis=2) for color in colors], axis=0)
         painted = Image.fromarray(np.where(distance < 70, 0, 255).astype(np.uint8))
         for view in (scaled, painted):
-            buffer = io.BytesIO()
-            view.save(buffer, format="PNG")
-            raw = _run(
-                ["tesseract", "stdin", "stdout", "--psm", "6", "tsv"],
-                data=buffer.getvalue(),
-                timeout=5,
-                # OpenMP teams contend across concurrent verifications on a
-                # CPU-limited worker. Bound this child only; retain the exact
-                # OCR algorithm, confidence bar and five-second deadline.
-                env={**os.environ, "OMP_THREAD_LIMIT": "1"},
-            )
-            rows = csv.DictReader(io.StringIO(raw.decode()), delimiter="\t")
-            candidates.add(
-                normalize_text(" ".join(row["text"] for row in rows if float(row["conf"]) >= 40))
-            )
+            candidates.add(_ocr(view))
+            if wanted in candidates:
+                return candidates
+    return candidates
+
+
+_LUMA = np.array([0.2126, 0.7152, 0.0722])
+
+
+def _smooth(values: np.ndarray) -> np.ndarray:
+    """Approximate Gaussian (sigma ~2 px): three 5x5 box passes, edge-padded."""
+    for _ in range(3):
+        padded = np.pad(values, 2, mode="edge")
+        total = np.pad(padded.cumsum(0).cumsum(1), ((1, 0), (1, 0)))
+        values = (total[5:, 5:] - total[:-5, 5:] - total[5:, :-5] + total[:-5, :-5]) / 25
+    return values
+
+
+def _overlay_view(
+    image: Image.Image,
+    background: Image.Image,
+    colors: list[tuple[int, int, int]],
+    *,
+    font_px: float,
+    smooth_candidate: bool,
+) -> Image.Image:
+    """Overlay pixels isolated against the source picture displayed beneath them.
+
+    Inputs are only the candidate's pixels and the decoded source pixels; the
+    expected copy never enters the view. A glyph pixel is fill-coloured AND
+    either moved at least half way from the background toward the fill, or sits
+    where the background already matched the fill and was not pushed away (white
+    text over a lit window, where only its shadow darkens the surroundings).
+    Components touching the read region's border are background structure, not
+    authored glyphs (the region has margins). Specks far smaller than a full
+    stop (about 0.13 em) at the layer's smallest size are codec/upscale noise.
+
+    The background is always smoothed: it is an upscaled analysis proxy, so
+    its edges never align exactly. Smoothing the candidate as well suppresses
+    busy-background residue but erases thin strokes, so both are offered.
+    """
+    import cv2  # noqa: PLC0415 - heavy, only needed for this fallback view
+
+    pixels = np.asarray(image, dtype=float)
+    out = _smooth(pixels @ _LUMA) if smooth_candidate else pixels @ _LUMA
+    under = _smooth(np.asarray(background, dtype=float) @ _LUMA)
+    change = out - under
+    ink = np.zeros(out.shape, dtype=bool)
+    for color in colors:
+        fill = float(np.asarray(color, dtype=float) @ _LUMA)
+        near = np.linalg.norm(pixels - color, axis=2) < 70
+        # Distances measured toward the fill from the background beneath.
+        direction = np.where(fill >= under, 1.0, -1.0)
+        gap = (fill - under) * direction
+        moved = change * direction
+        # Distinct background: the pixel moved at least half way to the fill.
+        toward = (gap >= 16) & (moved > np.maximum(gap / 2, 8))
+        # Background already fill-coloured: a glyph is not pushed away from
+        # it, whereas its shadow is.
+        flat = (gap < 16) & (np.abs(out - fill) < 16) & (moved > -6)
+        ink |= near & (toward | flat)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(ink.astype(np.uint8), connectivity=8)
+    height, width = ink.shape
+    x, y, w, h = (stats[:, i] for i in range(4))
+    inside = (x > 0) & (y > 0) & (x + w < width) & (y + h < height)
+    inside &= stats[:, 4] >= max(3, (font_px / 10) ** 2)
+    inside[0] = False
+    return Image.fromarray(np.where(inside[labels], 0, 255).astype(np.uint8))
+
+
+def _read_overlay_text(
+    image: Image.Image,
+    background: Image.Image,
+    colors: list[tuple[int, int, int]],
+    *,
+    font_px: float,
+    wanted: str | None = None,
+    views: list | None = None,
+) -> set[str]:
+    """Extra OCR candidates under the same exact-copy and confidence rules."""
+    candidates = set()
+    for smooth_candidate in (True, False):
+        view = _overlay_view(
+            image, background, colors, font_px=font_px, smooth_candidate=smooth_candidate
+        )
+        if views is not None:
+            views.append(view)
+        for scale in (2, 1):
+            candidates.add(_ocr(view.resize((view.width * scale, view.height * scale))))
             if wanted in candidates:
                 return candidates
     return candidates
@@ -471,8 +642,12 @@ def verify_actual_export(
     sources: Mapping[str, Path],
     *,
     brand_tail: str = "none",
+    evidence: list | None = None,
 ) -> dict:
     """Return checked/rejected/partial/unsupported, with bounded measured evidence.
+
+    `evidence`, when given (offline replay only), collects the sampled pictures
+    behind each check for a review montage; it never affects the verdict.
 
     Caller resolves sources ONLY from server-owned immutable receipts and binds
     the returned report to the reserved storage generation under its row fence.
@@ -494,7 +669,8 @@ def verify_actual_export(
     unsupported = unsupported_reasons(recipe)
     if unsupported:
         return {**report, "status": "unsupported", "unsupported": unsupported}
-    deadline = time.monotonic() + 90
+    started = time.monotonic()
+    deadline = started + 90
     try:
         with output.open("rb") as stream:
             report["sha256"] = hashlib.file_digest(stream, "sha256").hexdigest()
@@ -541,6 +717,9 @@ def verify_actual_export(
                     x1 * size[0] / recipe.canvas.width
                 ),
             ] = False
+        # Per clip: source path/probe and its packet clock, shared by the
+        # picture check and the text background so both use one time mapping.
+        displayed_sources = {}
         if mask.mean() < 0.55:
             return {
                 **report,
@@ -567,43 +746,110 @@ def verify_actual_export(
                 similarities = []
                 offsets = [float(t) for t in np.linspace(0.1, clip.source_duration - 0.1, count)]
                 source_probe = _probe(source)
-                expected_frames = _frames(
-                    source,
-                    [clip.source_start + offset for offset in offsets],
-                    size=size,
-                    probe=source_probe,
-                    deadline=deadline,
-                )
-                actual_frames = _frames(
+                actual_frames, actual_pts = _frames(
                     output,
                     [clip.timeline_start + offset for offset in offsets],
                     size=size,
                     probe=probe,
                     deadline=deadline,
+                    with_pts=True,
                 )
-                for reference, candidate in zip(expected_frames, actual_frames, strict=True):
+                try:
+                    if None in actual_pts:
+                        raise ValueError("unknown_candidate_clock")
+                    clock = _frame_clock(
+                        source,
+                        clip.source_start - 1,
+                        clip.source_start + clip.source_duration + 1,
+                        probe=source_probe,
+                    )
+                except (OSError, ValueError, KeyError, StopIteration, subprocess.SubprocessError):
+                    clock = None
+                displayed_sources[clip.id] = (source, source_probe, clock)
+                if clock is None:
+                    # Previous nominal clock: never more permissive than before.
+                    picture_clock = "nominal-v1"
+                    references = [
+                        [frame]
+                        for frame in _frames(
+                            source,
+                            [clip.source_start + offset for offset in offsets],
+                            size=size,
+                            probe=source_probe,
+                            deadline=deadline,
+                        )
+                    ]
+                else:
+                    # Map each candidate frame's actual PTS to the source frame
+                    # displayed at that instant (plus the one after it).
+                    picture_clock = "output-pts-bracketed-v1"
+                    brackets = [
+                        _displayed(clock, shown - clip.timeline_start + clip.source_start)
+                        for shown in actual_pts
+                    ]
+                    wanted_times = sorted({t for bracket in brackets for t in bracket})
+                    decoded = dict(
+                        zip(
+                            wanted_times,
+                            _frames(
+                                source,
+                                wanted_times,
+                                size=size,
+                                probe=source_probe,
+                                deadline=deadline,
+                            ),
+                            strict=True,
+                        )
+                    )
+                    references = [[decoded[t] for t in bracket] for bracket in brackets]
+                neighbour_samples = 0
+                passes = []
+                matched = []
+                for options, candidate in zip(references, actual_frames, strict=True):
                     if time.monotonic() > deadline:
                         raise TimeoutError("verification_budget")
-                    expected = np.asarray(reference, dtype=float)
+                    if not options:
+                        raise ValueError("missing_displayed_source_frame")
                     actual = np.asarray(candidate, dtype=float)
-                    differences.append(float(np.abs(expected - actual)[mask].mean() / 255))
-                    similarities.append(_picture_similarity(expected, actual, mask))
+                    scored = []
+                    for reference in options:
+                        expected = np.asarray(reference, dtype=float)
+                        error = float(np.abs(expected - actual)[mask].mean() / 255)
+                        score = _picture_similarity(expected, actual, mask)
+                        # SSIM's relative luminance term is unstable near black:
+                        # an ordinary H.264 round trip can move a 10-code pixel
+                        # by 1-2 codes. Permit that small absolute codec error;
+                        # larger changes must also preserve structure.
+                        scored.append(
+                            (error <= 2 / 255 or (error <= 0.1 and score >= 0.95), error, score)
+                        )
+                    # The displayed frame first; a failing sample reports it.
+                    chosen = next((i for i, row in enumerate(scored) if row[0]), 0)
+                    neighbour_samples += chosen > 0
+                    passes.append(scored[chosen][0])
+                    matched.append(options[chosen])
+                    differences.append(scored[chosen][1])
+                    similarities.append(scored[chosen][2])
                 worst = max(differences)
                 similarity = min(similarities)
-                # SSIM's relative luminance term is unstable near black: an
-                # ordinary H.264 round trip can move a 10-code pixel by 1-2
-                # codes. Permit that small absolute codec error; larger changes
-                # must also preserve structure. Evaluate each sample separately.
-                picture_matches = all(
-                    error <= 2 / 255 or (error <= 0.1 and score >= 0.95)
-                    for error, score in zip(differences, similarities, strict=True)
-                )
+                picture_matches = all(passes)
+                if evidence is not None:
+                    sample = similarities.index(similarity)
+                    evidence.append(
+                        {
+                            "label": f"picture {clip.id} sample {sample} "
+                            f"ssim {similarity:.3f} {'passed' if picture_matches else 'FAILED'}",
+                            "images": [actual_frames[sample], matched[sample]],
+                        }
+                    )
                 checks.append(
                     {
                         "kind": "picture",
                         "clip_id": clip.id,
                         "status": "passed" if picture_matches else "failed",
                         "samples": count,
+                        "picture_clock": picture_clock,
+                        "neighbour_samples": neighbour_samples,
                         "max_mean_pixel_error": round(worst, 6),
                         "min_local_ssim": round(similarity, 6),
                     }
@@ -637,6 +883,59 @@ def verify_actual_export(
                         expected[start : start + SAMPLE_RATE], observed[start : start + SAMPLE_RATE]
                     )
                     checks.append({"kind": "audio", "clip_id": clip.id, "chunk": chunk, **measure})
+        clips = [clip for track in recipe.tracks for clip in track.clips]
+
+        def overlay_text(shown, rect, text_frame, colors, wanted, *, present, font_px, views):
+            """Read the overlay isolated against the source frame shown beneath it."""
+            clip = next(
+                (
+                    clip
+                    for clip in clips
+                    if clip.timeline_start - 1e-6
+                    <= shown
+                    < clip.timeline_start + clip.source_duration
+                ),
+                None,
+            )
+            source, source_probe, clock = displayed_sources.get(getattr(clip, "id", None)) or (
+                None,
+                None,
+                None,
+            )
+            found = set()
+            if clock is None:
+                return found  # brand tail, missing source or unknown clock
+            x0, y0, x1, y1 = rect
+            instants = _displayed(clock, shown - clip.timeline_start + clip.source_start)
+            # A hidden probe only gains an extra rejection chance; bound its
+            # cost to the displayed frame. Visible probes may use the bracket.
+            for instant in instants if present else instants[:1]:
+                try:
+                    background = _frames(
+                        source,
+                        [instant],
+                        size=(x1 - x0, y1 - y0),
+                        probe=source_probe,
+                        deadline=deadline,
+                        region=rect,
+                        canvas=(recipe.canvas.width, recipe.canvas.height),
+                    )[0]
+                except (OSError, ValueError, KeyError, StopIteration, subprocess.SubprocessError):
+                    # No decoded background, no extra evidence; the original
+                    # views alone decide, as before.
+                    return found
+                found |= _read_overlay_text(
+                    text_frame,
+                    background,
+                    colors,
+                    font_px=font_px,
+                    wanted=wanted,
+                    views=views,
+                )
+                if wanted in found:
+                    break
+            return found
+
         for layer, rect in zip(recipe.text_layers, rects, strict=True):
             wanted = normalize_text(" ".join(run.text for run in layer.runs))
             times = [
@@ -648,15 +947,16 @@ def verify_actual_export(
             if layer.end < expected_duration - 0.2:
                 times.append((layer.end + 0.15, False))
             x0, y0, x1, y1 = rect
-            text_frames = _frames(
+            text_frames, text_pts = _frames(
                 output,
                 [at for at, _ in times],
                 size=(x1 - x0, y1 - y0),
                 probe=probe,
                 deadline=deadline,
                 region=rect,
+                with_pts=True,
             )
-            for (at, present), text_frame in zip(times, text_frames, strict=True):
+            for (at, present), text_frame, shown in zip(times, text_frames, text_pts, strict=True):
                 if time.monotonic() > deadline:
                     raise TimeoutError("verification_budget")
                 colors = [
@@ -667,7 +967,30 @@ def verify_actual_export(
                     for run in layer.runs
                 ]
                 observed_text = _read_text(text_frame, colors, wanted=wanted)
+                views = []
+                if wanted not in observed_text and shown is not None:
+                    # Hidden probes too: an extra view can only find text that
+                    # is really there, so it can only catch more timing errors.
+                    observed_text |= overlay_text(
+                        shown,
+                        rect,
+                        text_frame,
+                        colors,
+                        wanted,
+                        present=present,
+                        font_px=min(run.font_size for run in layer.runs),
+                        views=views,
+                    )
                 matches = wanted in observed_text
+                if evidence is not None:
+                    evidence.append(
+                        {
+                            "label": f"text {layer.id} @{at:.3f}s visible={present} "
+                            f"{'passed' if matches == present else 'FAILED'} "
+                            f"read={sorted(observed_text)!r}",
+                            "images": [text_frame, *views],
+                        }
+                    )
                 checks.append(
                     {
                         "kind": "text",
@@ -679,6 +1002,7 @@ def verify_actual_export(
                 )
     except (OSError, ValueError, KeyError, subprocess.SubprocessError, TimeoutError) as exc:
         checks.append({"kind": "evidence", "status": "missing", "reason": type(exc).__name__})
+    report["elapsed_s"] = round(time.monotonic() - started, 3)
     report["status"] = (
         "rejected"
         if any(c["status"] == "failed" for c in checks)
