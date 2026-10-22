@@ -38,3 +38,18 @@ Julio video, a live model response, or native export. The 27-character label's
 rendering remains KRI-804; audible quotes remain KRI-803, optional editorial-plan
 refusal KRI-806 and whole-request acceptance KRI-802. No paid model call, phone
 operation, rollout setting or manual release was performed.
+
+
+## Landed caption dependency reconciliation
+
+The original refreshed head `efd8216612bc3865453c2c18d9ce06b12c52ecdf`
+completed full hosted CI39731119981 successfully. It became conflicting after
+#1733 was squash-merged. A normal merge of freshly fetched main
+`7eaf217cb` retains the landed caption behavior and the original label-parser
+repair. Only append-only gate JSON conflicted; current-main IDs and KRI-805
+are both retained. Product assertions were not changed.
+
+`bash scripts/check-api.sh test tests/kria/test_kri805_brief_change_answer.py tests/agents/test_brief_extractor_version_binding.py tests/kria/test_creative_brief.py tests/kria/test_kri793_caption_spellings.py tests/kria/test_kri809_chat_song_match_trace.py -q --tb=short`: **224 passed** on the new combined tree and isolated DB.
+This is a new caption/trace integration check. The previous hosted run is
+retained as evidence for its old exact head; the newly published source still
+requires its selected CI before merge. No old run is relabeled as current-head.
