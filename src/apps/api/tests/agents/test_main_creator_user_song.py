@@ -36,6 +36,11 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v62 grounds a phone montage story in owned clip IDs and explanatory text goals.
 # v64 adds typed unchanged-source audio intent; only the two brief-on renders change.
 # v65 (KRI-793) adds the `spellings` caption fact: only the two brief-on renders change.
+# v66 combines it with KRI-791 spoken-text `triggers` + `speaker`; legacy brief-off
+# renders remain unchanged. Re-pin brief-on hashes only after reviewing both additions.
+# v67 preserves those instructions and adds quoted start_line/end_line trim facts.
+# v68 combines caption spellings, spoken triggers/speaker, quoted trims and named cuts.
+# Only brief-on hashes change after reviewing the complete instruction union.
 # v69 retains editorial pairing with caption/spoken-text/quoted-trim/named-cut facts.
 # Brief-off hashes remain the reviewed editorial baseline; only brief-on hashes
 # change for the cumulative shared brief instructions.

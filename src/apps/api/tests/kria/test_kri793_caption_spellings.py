@@ -384,3 +384,22 @@ def test_a_word_never_said_is_not_called_misspelled():
         "leche condensada doesn't appear in the captions, so I couldn't check its spelling."
     )
     assert "The captions write" not in receipt.reason
+
+
+@pytest.mark.parametrize("reason_size", [200, 800])
+def test_overflow_keeps_each_request_and_status_without_mutating_receipts(reason_size):
+    from app.kria.brief_checks import MAX_REPLY_CHARS
+
+    receipts = build_receipts(T1_BRIEF.live(), _draft_facts(), include_unchecked=True)
+    receipts = [row.model_copy(update={"reason": "Explanation " * reason_size}) for row in receipts]
+    before = [row.model_dump(mode="json") for row in receipts]
+    reply = reply_from_receipts(T1_BRIEF, receipts, summary="Everything was done.")
+    assert len(reply) <= MAX_REPLY_CHARS
+    assert reply.startswith("Not everything you asked for made it in:\n")
+    assert "Everything was done." not in reply
+    assert reply.endswith("…")
+    for req, receipt in zip(T1_BRIEF.live(), receipts, strict=True):
+        assert req.text() in reply, req.id
+        label = "Done" if receipt.status == "met" else "Partly"
+        assert f"- {label}: {req.text()}" in reply, req.id
+    assert [row.model_dump(mode="json") for row in receipts] == before
