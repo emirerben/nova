@@ -3196,6 +3196,24 @@ _SPOKEN_TEXT_FIRST_HEARD = (
 _TALKING_SPOKEN_TEXT_NO_WORD = (
     "I couldn't tell which spoken word to wait for, so tell me the exact word to show it on"
 )
+# KRI-724: a phone Talking edit cuts the Nth time a quoted phrase is said (`speech_remove`)
+# and filters steady engine noise (`noise_reduction`), both read from brief facts.
+_SPEECH_CUT_DRAFT_PLAN = (
+    "Will locate the requested occurrence in the original speech before cutting; no guess"
+)
+_SPEECH_CUT_UNPROVEN = "Couldn't verify that exact spoken phrase occurrence was cut"
+_NOISE_REDUCTION_PLANNED = (
+    "Will reduce steady engine noise before rendering; engine and speech are not "
+    "independently isolated"
+)
+_NOISE_REDUCTION_APPLIED = (
+    "Applied noise reduction; engine and speech are not independently isolated"
+)
+_NOISE_REDUCTION_UNAVAILABLE = "Engine noise reduction isn't available for this edit"
+_NOISE_REDUCTION_UNSUPPORTED = (
+    "Engine noise reduction is only available for a single-source Talking edit"
+)
+_NOISE_REDUCTION_MISSED = "Couldn't apply engine noise reduction"
 _TALKING_HONEST_EN: tuple[str, ...] = (
     _TALKING_NO_SUCH_EDIT,
     _TALKING_NO_SPOKEN_TEXT,
@@ -3283,6 +3301,22 @@ _REASON_TR: dict[str, str] = {
         "Videoyu o cümlenin başladığı yerden başlatırım; çekiminde bulamazsam baştan açılır"
     ),
     _TALKING_WINDOW_PLAN: "Çekiminin ",
+    _SPEECH_CUT_DRAFT_PLAN: (
+        "Kesmeden önce istediğin tekrarı orijinal konuşmada bulacağım; tahmin etmeyeceğim"
+    ),
+    _SPEECH_CUT_UNPROVEN: "O konuşulan ifadenin tam o tekrarının kesildiğini doğrulayamadım",
+    _NOISE_REDUCTION_PLANNED: (
+        "Renderdan önce sabit motor gürültüsünü azaltacağım; motor sesiyle konuşmayı "
+        "birbirinden bağımsız ayıramam"
+    ),
+    _NOISE_REDUCTION_APPLIED: (
+        "Gürültü azaltma uygulandı; motor sesiyle konuşma birbirinden bağımsız ayrılmadı"
+    ),
+    _NOISE_REDUCTION_UNAVAILABLE: "Motor gürültüsü azaltma bu düzenlemede kullanılamıyor",
+    _NOISE_REDUCTION_UNSUPPORTED: (
+        "Motor gürültüsünü azaltma yalnızca tek klipli Konuşmalı düzenlemede yapılabiliyor"
+    ),
+    _NOISE_REDUCTION_MISSED: "Motor gürültüsünü azaltamadım",
     _TALKING_SPOKEN_TEXT_PLAN: (
         "Çekiminde o kelimeyi söylediğin anda yazıyı gösteririm; kelimeyi duymazsam yazı çıkmaz"
     ),
@@ -3362,6 +3396,12 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _NO_CLIP_SPEED,
     _NO_FREEZE_FRAME,
     _LIGHT_UNAVAILABLE,
+    # KRI-724: the planned source cut / noise filter, and what the noise filter can't do.
+    _SPEECH_CUT_DRAFT_PLAN,
+    _NOISE_REDUCTION_PLANNED,
+    _NOISE_REDUCTION_APPLIED,
+    _NOISE_REDUCTION_UNAVAILABLE,
+    _NOISE_REDUCTION_UNSUPPORTED,
     *_TALKING_HONEST_EN,
 )
 _FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
@@ -6730,24 +6770,6 @@ def _check_source_sound(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     )
 
 
-_SPEECH_CUT_DRAFT_PLAN = (
-    "Will locate the requested occurrence in the original speech before cutting; no guess"
-)
-_SPEECH_CUT_UNPROVEN = "Couldn't verify that exact spoken phrase occurrence was cut"
-_NOISE_REDUCTION_PLANNED = (
-    "Will reduce steady engine noise before rendering; engine and speech are not "
-    "independently isolated"
-)
-_NOISE_REDUCTION_APPLIED = (
-    "Applied noise reduction; engine and speech are not independently isolated"
-)
-_NOISE_REDUCTION_UNAVAILABLE = "Engine noise reduction isn't available for this edit"
-_NOISE_REDUCTION_UNSUPPORTED = (
-    "Engine noise reduction is only available for a single-source Talking edit"
-)
-_NOISE_REDUCTION_MISSED = "Couldn't apply engine noise reduction"
-
-
 def _same_speech_cut_quote(left: str, right: str) -> bool:
     return tuple(speech_cut_tokens(left)) == tuple(speech_cut_tokens(right))
 
@@ -6780,10 +6802,7 @@ def _explicit_speech_cut_reason(reason: str | None) -> str:
             en="That phrase is too short to cut without removing the whole take",
             tr="Bu ifade, çekimin tamamını kaldırmadan kesilemeyecek kadar kısa",
         )
-    return say(
-        en=_SPEECH_CUT_UNPROVEN,
-        tr="O konuşulan ifadenin tam o tekrarının kesildiğini doğrulayamadım",
-    )
+    return _loc(_SPEECH_CUT_UNPROVEN)
 
 
 def _check_explicit_speech_cut(
@@ -6791,17 +6810,7 @@ def _check_explicit_speech_cut(
 ) -> RequirementReceipt:
     """Only an exact, requirement-bound applied worker receipt proves the removal."""
     if facts.phone_talking and not facts.rendered_variant:
-        return _receipt(
-            req,
-            "partial",
-            say(
-                en=_SPEECH_CUT_DRAFT_PLAN,
-                tr=(
-                    "Kesmeden önce istediğin tekrarı orijinal konuşmada bulacağım; "
-                    "tahmin etmeyeceğim"
-                ),
-            ),
-        )
+        return _receipt(req, "partial", _loc(_SPEECH_CUT_DRAFT_PLAN))
     if not facts.rendered_variant:
         return _receipt(req, "partial", _NO_CHECKER)
     matches = [
@@ -6820,44 +6829,17 @@ def _check_explicit_speech_cut(
 def _check_engine_noise_reduction(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """A stationary-noise filter is helpful but never proof of isolated speech."""
     if not facts.phone_talking:
-        return _receipt(req, "not_possible", _NOISE_REDUCTION_UNSUPPORTED)
+        return _receipt(req, "not_possible", _loc(_NOISE_REDUCTION_UNSUPPORTED))
     if not facts.rendered_variant:
         if engine_noise_reduction_available():
-            return _receipt(
-                req,
-                "partial",
-                say(
-                    en=_NOISE_REDUCTION_PLANNED,
-                    tr=(
-                        "Renderdan önce sabit motor gürültüsünü azaltacağım; motor sesiyle "
-                        "konuşmayı birbirinden bağımsız ayıramam"
-                    ),
-                ),
-            )
-        return _receipt(
-            req,
-            "not_possible",
-            say(
-                en=_NOISE_REDUCTION_UNAVAILABLE,
-                tr="Motor gürültüsü azaltma bu düzenlemede kullanılamıyor",
-            ),
-        )
+            return _receipt(req, "partial", _loc(_NOISE_REDUCTION_PLANNED))
+        return _receipt(req, "not_possible", _loc(_NOISE_REDUCTION_UNAVAILABLE))
     receipt = facts.engine_noise_reduction
     if receipt is None or req.id not in receipt.requirement_ids:
-        return _receipt(req, "not_possible", _NOISE_REDUCTION_MISSED)
+        return _receipt(req, "not_possible", _loc(_NOISE_REDUCTION_MISSED))
     if receipt.status == "applied" and receipt.reason == "reduced_not_isolated":
-        return _receipt(
-            req,
-            "partial",
-            say(
-                en=_NOISE_REDUCTION_APPLIED,
-                tr=(
-                    "Gürültü azaltma uygulandı; motor sesiyle konuşma birbirinden bağımsız "
-                    "ayrılmadı"
-                ),
-            ),
-        )
-    return _receipt(req, "not_possible", _NOISE_REDUCTION_MISSED)
+        return _receipt(req, "partial", _loc(_NOISE_REDUCTION_APPLIED))
+    return _receipt(req, "not_possible", _loc(_NOISE_REDUCTION_MISSED))
 
 
 def _has_checker(req: BriefRequirement) -> bool:

@@ -17,8 +17,33 @@ from app.kria.brief_checks import build_receipts, plan_facts_from_phone_variant
 from app.pipeline.transcribe import Word
 from app.services.device_render import device_status
 from app.tasks import generative_build as gb
-from tests.tasks.test_kri707_talking_spoken_text import _faces, _run, _t1_job
+from tests.tasks.test_kri707_talking_spoken_text import (
+    T1_REQUIREMENTS,
+    _faces,
+    _run,
+    _t1_brief,
+    _t1_job,
+)
 from tests.tasks.test_phone_subtitled_narrated_dispatch import _setup_subtitled
+
+# T1's brief as Main Creator v70 records it (KRI-667): the phrase cut and the engine-noise
+# ask carry structured facts. Prod's stored v1 rows carry none, so they authorize no cut.
+_V70_FACTS = {
+    "r2": {"speech_remove": {"quote": "Neredesin", "occurrence": 2}},
+    "r5": {"noise_reduction": "engine"},
+}
+
+
+def _v70_job(monkeypatch):
+    brief = _t1_brief(
+        *(
+            req.model_copy(update={"facts": {**req.facts, **_V70_FACTS[req.id]}})
+            if req.id in _V70_FACTS
+            else req
+            for req in T1_REQUIREMENTS
+        )
+    )
+    return _t1_job(monkeypatch, brief=brief)
 
 
 def _assert_only_second_removed(recipe):
@@ -33,7 +58,7 @@ def _assert_only_second_removed(recipe):
 @pytest.mark.parametrize("preflight", [True, False])
 def test_original_request_removes_second_only_and_remaps_text(monkeypatch, preflight):
     _faces(monkeypatch)
-    job, snapshot = _t1_job(monkeypatch)
+    job, snapshot = _v70_job(monkeypatch)
     if not preflight:
         snapshot.pop("_speech_cleanup_internal")
         job.assembly_plan.pop("_speech_cleanup_internal")
@@ -69,20 +94,25 @@ def test_original_request_removes_second_only_and_remaps_text(monkeypatch, prefl
 
 
 @pytest.mark.parametrize(
-    "description",
+    ("quote", "occurrence"),
     [
-        'Remove "hello"',
-        'Remove the third "hello"',
-        'Remove the second "absent"',
+        ("hello", 3),
+        ("absent", 2),
     ],
 )
-def test_unresolved_request_keeps_source_and_reports_miss(monkeypatch, description):
+def test_unresolved_request_keeps_source_and_reports_miss(monkeypatch, quote, occurrence):
     words = [
         Word(text="hello", start_s=1, end_s=1.5, confidence=1),
         Word(text="hello", start_s=3, end_s=3.5, confidence=1),
     ]
     job, snapshot, _, _ = _setup_subtitled(monkeypatch, transcript_words=words)
-    req = BriefRequirement(id="r1", kind="timing", scope="global", description=description)
+    req = BriefRequirement(
+        id="r1",
+        kind="timing",
+        scope="global",
+        description=f'Remove occurrence {occurrence} of "{quote}"',
+        facts={"speech_remove": {"quote": quote, "occurrence": occurrence}},
+    )
     brief = CreativeBrief(version=1, requirements=[req])
     snapshot["creator_brief_binding"] = BriefBinding.create(uuid.uuid4(), brief).model_dump(
         mode="json"
@@ -105,7 +135,7 @@ def test_noise_replacement_uses_same_cut_segments_and_pins_private_receipt(monke
     from app.services import phone_noise_reduction as noise
 
     _faces(monkeypatch)
-    job, snapshot = _t1_job(monkeypatch)
+    job, snapshot = _v70_job(monkeypatch)
     monkeypatch.setattr(noise.settings, "phone_engine_noise_reduction_enabled", True)
     monkeypatch.setattr(noise.settings, "phone_engine_noise_model_path", "/configured/model.rnnn")
     monkeypatch.setattr(noise.settings, "phone_engine_noise_model_sha256", "a" * 64)
@@ -147,7 +177,7 @@ def test_failed_noise_processing_keeps_original_and_word_cut(monkeypatch):
     from app.services import phone_noise_reduction as noise
 
     _faces(monkeypatch)
-    job, snapshot = _t1_job(monkeypatch)
+    job, snapshot = _v70_job(monkeypatch)
     monkeypatch.setattr(noise, "engine_noise_reduction_available", lambda: True)
 
     def fail(*args, **kwargs):

@@ -296,8 +296,7 @@ def test_t1_atakan_lands_on_the_word_off_the_face_and_is_met(monkeypatch, lanes)
 
     cut = variant["opening_cut"]
     assert cut["status"] == "applied"
-    # The creator also explicitly removed the second Neredesin (9.22–9.70).
-    start = ATAKAN_SOURCE_START_S - cut["start_s"] - (9.70 - 9.22)
+    start = ATAKAN_SOURCE_START_S - cut["start_s"]
     # 1-3: on the cut timeline, from the start of "Atakan'ı" (read from the words, not cues).
     [row] = _spoken_rows(variant)
     assert row["start_s"] == pytest.approx(start, abs=0.01)

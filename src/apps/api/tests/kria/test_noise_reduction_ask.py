@@ -4,32 +4,30 @@ from app.kria.brief import BriefRequirement
 from app.kria.noise_reduction_ask import wants_engine_noise_reduction
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        "Motor sesini biraz kıs, sesim öne çıksın",
-        "Reduce engine noise separately from speech",
-        "Lower the engine noise",
-    ],
-)
-def test_explicit_engine_noise_request(text):
+def test_engine_noise_fact_on_an_audio_ask_authorizes_the_filter():
     assert wants_engine_noise_reduction(
-        BriefRequirement(id="r1", kind="audio", scope="global", description=text)
+        BriefRequirement(
+            id="r1",
+            kind="audio",
+            scope="global",
+            description="Motor sesini biraz kıs, sesim öne çıksın",
+            facts={"noise_reduction": "engine"},
+        )
     )
 
 
 @pytest.mark.parametrize(
-    "text",
+    ("kind", "description", "facts"),
     [
-        "Don't reduce engine noise",
-        "Motor sesini kısma",
-        "Keep engine noise",
-        "Replace engine noise with music",
-        "Lower original audio",
-        "Reduce wind noise",
+        # KRI-667: the words alone (a brief stored before v70, prod T1's r5) never authorize it.
+        ("audio", "Motor sesini biraz kıs, sesim öne çıksın", {}),
+        ("audio", "Reduce engine noise separately from speech", {}),
+        ("audio", "Reduce wind noise", {"noise_reduction": "wind"}),
+        ("audio", "Lower original audio", {"audio_intent": "source_unchanged"}),
+        ("style", "Lower the engine noise", {"noise_reduction": "engine"}),
     ],
 )
-def test_other_requests_do_not_authorize_engine_filter(text):
+def test_other_requests_do_not_authorize_engine_filter(kind, description, facts):
     assert not wants_engine_noise_reduction(
-        BriefRequirement(id="r1", kind="audio", scope="global", description=text)
+        BriefRequirement(id="r1", kind=kind, scope="global", description=description, facts=facts)
     )
