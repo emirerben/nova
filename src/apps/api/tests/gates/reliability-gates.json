@@ -1343,6 +1343,60 @@
       "journey": "kri-653-silent-take"
     },
     {
+      "id": "kri-808-clip-speech-language",
+      "tickets": [
+        "KRI-808",
+        "KRI-802"
+      ],
+      "symptom": "Don Julio M1 (2026-10-21, plan item 7a4ce1d5): the clip records Main Creator read had whisper TRANSLATIONS as timed segments (a Turkish speaker's \"What's your name?\" as \"Ne isminiz?\", \"Gracias\" as \"\u0421\u043f\u0430\u0441\u0438\u0431\u043e.\"), a 24-word Gemini sentence on a 1.1 s clip and a \"Video. Video...\" loop, so the quoted line \"What's your name?\" had no timed words.",
+      "boundary": "persistence",
+      "status": "open_pr",
+      "owner": "KRI-808",
+      "paths": [
+        "src/apps/api/app/services/clip_speech_check.py",
+        "src/apps/api/app/services/speech_segments.py",
+        "src/apps/api/app/services/transcript_quality.py",
+        "src/apps/api/app/services/clip_understanding.py",
+        "src/apps/api/app/tasks/kria_clip_understanding.py",
+        "src/apps/api/app/services/phone_speech_montage_job.py",
+        "src/apps/api/tests/fixtures/kri808_don_julio_clip_speech.json"
+      ],
+      "regression_tests": [
+        "tests/tasks/test_kri808_clip_speech_language.py",
+        "tests/tasks/test_kri808_clip_speech_language_postgres.py",
+        "tests/tasks/test_kria_speech_segments.py",
+        "tests/services/test_transcript_quality.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": "clip_speech_language_check_enabled",
+      "evidence": {
+        "offline_replay": "Prod's nine M1 clip records (proposal-trace media_context) and whisper-1's first passes rebuilt from them, through the real _with_speech_segments / clip_speech_check / clip_record / ground_excerpt; forced re-runs are free whisper.cpp medium passes on the kit clips (en/tr/es). Red on origin/main 3519e7cf0 (16 of 27 fail with prod's exact symptoms), green with the fix; also replayed with medium's own auto first pass. The background task also runs end to end on scratch Postgres (real thread language row, real store).",
+        "live_model": "Not run; no paid calls (no Gemini, no whisper-1).",
+        "native_output": "n/a: clip records are server-side; a phone re-send of M1 reads them through Main Creator.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "the waiter's Spanish stays Spanish in an English chat (no over-correction), with no re-run",
+        "Turkish table chatter never forced into English",
+        "\"Cheers\" stays quotable",
+        "speech in a non-Latin script is kept when both listeners agree",
+        "chat language unknown: a translation is still never stored",
+        "a failing re-run keeps the analysis",
+        "already-stored records cleaned on read (loop, impossible length)",
+        "whisper placeholders, caption credits, 3x loops; an unclosed bracket keeps its words",
+        "kill switch restores the first pass"
+      ],
+      "neighbours_gap": [
+        "Records stored before the fix keep their translated segments; a new chat (new attach) re-analyses.",
+        "ground_excerpt folds to ASCII, so a quote in a non-Latin script cannot ground (pre-existing).",
+        "whisper-1's forced passes are stood in for by whisper.cpp medium; whisper-1 may word them differently.",
+        "Gemini's own transcript can still be in the wrong language; it is only dropped when it loops or is too long for the clip."
+      ],
+      "follow_ups": [],
+      "red_control": "not_applicable",
+      "journey": "kri-808-clip-speech-language"
+    },
+    {
       "id": "kri-661-talking-visuals-and-order",
       "tickets": [
         "KRI-661",
@@ -2051,6 +2105,52 @@
         "A resolver question that is text-only (no clip picker) does not carry the skip rows; they are asked on the next turn.",
         "Thread events and the earlier-draft read are stubbed in the turn tests (the earlier-draft read has its own Postgres test in test_kri761_look_alike_exclusions.py).",
         "Blur is still not in any clip record: a measured sharpness fact was calibrated on 170 kit clips and rejected (M1_04 ranks 8th; its sharp look-alike M1_06 is only 6% sharper)."
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-805-brief-change-answer",
+      "tickets": [
+        "KRI-805",
+        "KRI-802"
+      ],
+      "symptom": "Answering Kria's own label question (\"chimichurri & salsa criolla\" for r2) failed sensitive_agent_error:brief_updates_invalid on 3 of 4 Main Creator attempts; one turn ended \"I couldn't turn that into a plan this time\". The retry was told only \"brief_updates contains an invalid entry\".",
+      "boundary": "brief",
+      "status": "open_pr",
+      "owner": "KRI-805",
+      "fix_prs": [],
+      "paths": [
+        "src/apps/api/app/agents/brief_extractor.py",
+        "src/apps/api/app/kria/brief.py",
+        "src/apps/api/app/kria/planner.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri805_brief_change_answer.py",
+        "tests/agents/test_brief_extractor_version_binding.py",
+        "tests/kria/test_creative_brief.py::test_the_main_creator_does_not_own_the_brief_version_it_changes"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Prod brief v1 (r1-r8) of thread F4083F1D; provider transport scripted, real MainCreatorAgent.run (parse + schema retries), plan_live_turn and apply_updates. 15 change shapes must land on the first call and 8 ambiguous batches must leave the brief unchanged. Red before the fix: 13 shapes took 3 calls and recorded nothing (prod's pattern); green after: 1 call, r2 = the creator's words at brief v1.",
+        "live_model": "Not run; no paid calls. Optional paid check: one live Main Creator call on turn 3424b400's input_json (about $0.20).",
+        "native_output": "unknown; the brief is server state, the label render is KRI-804.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "change without / null / garbled expected_version",
+        "wrong integer version (KRI-611)",
+        "partial change naming only the new literal",
+        "remove padded with null fields, facts null",
+        "target copied as rendered ([r2], R2)",
+        "operation update / replace naming a target",
+        "the brief extractor's copy of the same parser",
+        "stale brief after the prompt and unbound change/remove still refused"
+      ],
+      "neighbours_gap": [
+        "An `add` of the new label beside a live r2 (no change) still keeps both labels; prod's successful attempt used change.",
+        "Unknown extra keys (id, status) and a misspelled scope stay refused; the retry is now told the field.",
+        "\"chimichurri & salsa criolla\" is 27 characters, over the 24-character label cap: KRI-804."
       ],
       "red_control": "not_applicable"
     }
