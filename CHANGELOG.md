@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.42.0] - 2026-10-22
+
+### Changed
+- fix(kria): cut phone Talking to the quoted start AND end lines (KRI-790) (#1730) <!-- release-pr: 1730 -->
+
 ## [0.81.41.0] - 2026-10-22
 
 ### Changed
