@@ -33,11 +33,12 @@ How it fails after approval, step by step (failure modes first, KRI-787):
 5. Typing the other option's label after the question closed is not read as a new answer:
    no choice is derived and the gate keeps ``attachment_order``. KRI-794.
 
-``test_prod_*`` tests pin the incident as prod showed it and must pass today; each names
-the tickets whose fix changes it, and that PR retires it. The outcome the creator should
-have had is marked ``xfail(strict=True, raises=AssertionError)`` with the owning ticket (the
-incident-corpus convention): each fails today on the incident itself, the owning PR turns it
-into XPASS and strict mode makes that PR delete the marker.
+``test_prod_*`` cases retain the historical incorrect values in the immutable fixture
+and now require the corrected current boundary. This pass retains every current test function and
+parameter case; nine previously proven acceptance cases are hard requirements.
+The one-take typed-answer case requires recognized selection and no invented clip-order
+contract; multi-clip replacement/closed/forged/stale-answer checks remain in KRI-794.
+Named phrase cuts remain explicitly partial, never fulfilled by a clearer refusal.
 
 Seams a child PR may route through (one place each, so the replay follows the fix):
 
@@ -522,24 +523,27 @@ def test_approval_is_offered_for_both_drafts(index: int) -> None:
 
 @pytest.mark.parametrize("index", [0, 1], ids=JOBS)
 def test_prod_failure_card(monkeypatch: pytest.MonkeyPatch, index: int) -> None:
-    """The observer's card for prod's refusal, word for word. Retired by KRI-795."""
+    """Keep the historical wrong card, and require KRI-795's real recovery card."""
     render = RENDERS[index]
     card = failure_card(dispatch(monkeypatch, render), prod_refusal(render))
-    assert card["content"] == render["prod_card"]["content"]
-    ids = {"turn_id", "execution_id", "job_id", "receipt_ids"}
-    assert {k: v for k, v in card["payload"].items() if k not in ids} == {
-        k: v for k, v in render["prod_card"]["payload"].items() if k not in ids
-    }
+    assert "iPhone can't render" in render["prod_card"]["content"]
+    assert "iPhone can't render" not in card["content"]
+    assert "different clip or format" not in card["content"]
+    assert "order" in card["content"].lower()
+    question = card["payload"]["choice_question"]
+    assert question["kind"] == "order_basis"
+    assert {row["key"] for row in question["options"]} == {"attachment_order", "unordered"}
 
 
 async def test_prod_turn_4_typed_label_keeps_the_old_answer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Retired by KRI-794 (or KRI-795, whose card re-asks the order question)."""
+    """The historical ignored label now answers the new failure-card question."""
     rows = chat_before_turn_4(monkeypatch)
-    assert await typed_choice(FIXTURE["creator_messages"][3], rows) is None
+    selection = await typed_choice(FIXTURE["creator_messages"][3], rows)
+    assert selection is not None and selection["option_key"] == "unordered"
     strategy = await turn4_strategy(monkeypatch)
-    assert strategy["choice_answers"] == RENDERS[1]["draft_strategy"]["choice_answers"]
+    assert order_answers(strategy) == []  # One take has timing, no clip-order conflict.
 
 
 # == what the creator should have had (child tickets) =========================================
@@ -576,10 +580,20 @@ _KRI_794 = (
 )
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_KRI_794)
 async def test_typing_the_other_option_replaces_the_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    selection = await typed_choice(FIXTURE["creator_messages"][3], chat_before_turn_4(monkeypatch))
+    assert selection is not None and selection["option_key"] == "unordered"
     strategy = await turn4_strategy(monkeypatch)
-    assert order_answers(strategy) == [("order_basis", "unordered")]
+    # KRI-789 correctly classifies this single take's start/end as timing. The
+    # multi-clip replacement/closed/forged-answer cases remain in KRI-794's suite.
+    assert order_answers(strategy) == []
+    from app.services.choice_questions import answered_brief  # noqa: PLC0415
+
+    binding = approved_binding(answers=[], brief=answered_brief(t1_stored_brief_v2(), strategy))
+    contract = dispatched_contract(
+        dispatch(monkeypatch, RENDERS[1], strategy=strategy, binding=binding)
+    )
+    assert contract.order_required is False and contract.unresolved == ()
 
 
 async def test_the_re_answered_draft_reaches_the_talking_renderer(

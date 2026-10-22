@@ -25,10 +25,11 @@ word (``test_prod_chat_word_for_word``). Failure modes, each pinned below:
 5. Captions for both voices and the four spellings get no line at all (KRI-793).
 6. The approval card goes out for a draft the worker then refuses (KRI-788).
 
-``test_prod_*`` tests pin the incident as prod showed it; each names the tickets whose fix
-changes it, and that PR retires it with its own ``xfail`` marker. Turn 4 (a typed option
-label after the refusal) is replayed without a database in ``test_kri787_merope_t1_replay``
-(KRI-794/795).
+``test_prod_*`` cases preserve the historical incorrect values in the immutable fixture
+and require corrected current behavior. This pass retains all current functions/parameter
+cases and original source-window expectations. Named phrase cuts stay explicitly partial; this
+replay does not fulfill the full original edit. Turn4 typed-answer recovery is also
+replayed in ``test_kri787_merope_t1_replay``; real multi-clip safeguards remain KRI-794/795.
 """
 
 from __future__ import annotations
@@ -304,20 +305,23 @@ def _verdicts(receipts: dict[str, dict], ids: tuple[str, ...] | None = None) -> 
 
 @pytest.mark.asyncio
 async def test_prod_turn_1_asks_the_clip_order_question(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Retired by KRI-789."""
+    """Retain the historical invented question; require KRI-789's timing route."""
     chat = await _chat_until_approval(monkeypatch)
     first = chat.replies[0]
-    assert first.content == EVENTS[6]["content"]
-    assert first.payload["choice_question"]["kind"] == "order_basis"
+    assert EVENTS[6]["payload"]["choice_question"]["kind"] == "order_basis"
+    assert ((first.payload or {}).get("choice_question") or {}).get("kind") != "order_basis"
+    assert chat.approval is not None
 
 
 @pytest.mark.asyncio
 async def test_prod_the_length_line_judges_the_whole_take(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Retired by KRI-790."""
+    """Historical whole-take length must be replaced by the requested window."""
     chat = await _chat_until_approval(monkeypatch)
-    assert _verdicts(_receipts(chat.approved_draft), ("r1",)) == _verdicts(
-        _prod_receipts(10), ("r1",)
-    )
+    assert "68.4s" in _prod_receipts(10)["r1"]["reason"]
+    receipt = _receipts(chat.approved_draft)["r1"]
+    assert receipt["status"] == "partial" and receipt["verification"] == "checked"
+    assert "part of your take" in receipt["reason"]
+    assert "68.4s" not in receipt["reason"]
 
 
 @pytest.mark.asyncio
@@ -327,24 +331,31 @@ async def test_prod_the_length_line_judges_the_whole_take(monkeypatch: pytest.Mo
 async def test_prod_named_cuts_get_the_pause_line_then_done(
     monkeypatch: pytest.MonkeyPatch, cleanup_chosen: bool, sequence: int
 ) -> None:
-    """Retired by KRI-792. ``cleanup-on`` is prod's second draft (cleanup chosen at the first
-    approval): the slip and the half question read "Done" with nothing cut."""
+    """Both original drafts now disclose that named phrase cuts need the editor."""
     chat = await _chat_until_approval(monkeypatch, cleanup_chosen=cleanup_chosen)
-    assert _verdicts(_receipts(chat.approved_draft), ("r3", "r4")) == _verdicts(
-        _prod_receipts(sequence), ("r3", "r4")
-    )
+    for rid in ("r3", "r4"):
+        historical = _prod_receipts(sequence)[rid]
+        if cleanup_chosen:
+            assert historical["status"] == "met"  # Original false completion retained.
+        receipt = _receipts(chat.approved_draft)[rid]
+        assert receipt["status"] == "partial" and receipt["verification"] == "checked"
+        assert "trim that in the editor" in receipt["reason"]
+        assert receipt["reason"] != historical["reason"]
 
 
 @pytest.mark.asyncio
 async def test_prod_the_approved_draft_keeps_the_whole_take(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Neither quoted line reaches the Talking plan: Yasin's intro and Atakan's goodbye stay
-    in. Retired by KRI-789/790."""
+    """Original full take remains recorded; actual kept window honors both lines."""
     chat = await _chat_until_approval(monkeypatch)
     claim = await _approve(chat)
     job = dispatch(monkeypatch, RENDERS[0], strategy=claim.strategy, binding=claim.brief_binding)
-    assert kept_window(job) == (0.0, TAKE_S)
+    assert TAKE_S == 68.37
+    start, end = kept_window(job)
+    assert abs(start - START_LINE_S) <= 0.5
+    assert abs(end - END_LINE_S) <= 0.5
+    assert start > 0 and end < TAKE_S
 
 
 # == what the creator should have had (child tickets) =========================================
