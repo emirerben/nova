@@ -100,3 +100,9 @@ iPhone/TestFlight and production replays remain pending; no backend deployment o
 TestFlight build is performed by this PR. A model that refuses without proposing a
 strategy, unknown/unclassified optional capabilities, and failures discovered only
 after approval remain outside this bounded recovery path.
+
+## Current-main policy test-double correction
+
+Hosted run39771161500 failed24 API cases and one repeated KRI-612 offline journey case because narrow policy test doubles rejected the newly supplied simplify_unsupported keyword. The same24 failures reproduced locally before correction (104 other cases passed). Five test files now accept that explicit keyword with the real False default; the sixth affected suite imports the corrected shared helper. No broad catch-all, production fallback removal or assertion deletion was introduced. The existing kept-lipsync planner test also requires policy call modes [True, False]: simplify on initial compile, ordinary recheck for the kept strategy.
+
+After correction, all128 cases across the six previously failing suites pass on current-main integration. Existing strategy-policy, automatic fallback, runtime simplification, historical simpler-version and real-PostgreSQL approval-readiness controls are run separately. This is a CI contract repair; it does not close the original KRI-698 physical voiceover/request/output gap or replace current-head CI.
