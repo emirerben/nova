@@ -266,3 +266,11 @@ the browser binary were unavailable. The final run used permitted local-service
 access and isolated browser downloads and passed. The original physical iPhone
 proof remains blocked by missing Xcode developer-account provisioning, as
 recorded in the [parent acceptance ledger](kri-829-original-output-acceptance.md).
+
+## Current-main fixture and schema correction
+
+Exact-source hosted CI's14 failures reproduced locally (376 other cases passed). Current-positive synthetic analysis rows mixed current outer detector v5 with historical inner v4; unchanged hydration correctly rejected them. The test builder now explicitly constructs a synthetic current inner/outer identity. The original historical guided_voiceover_mixed_gap_v2.json is byte-unchanged, still asserted as v4 and distinct from current policy. No historical production consent is relabeled.
+
+Additive expectations retain retakes:0, default speech_cleanup_retakes_aware:false, the new sixth EN/TR consent-required message and the explicit v5 detector guard. Every previous assertion remains represented; stale-policy retirement, malformed snapshot, consent and downstream failure guards are unchanged. No production implementation changes are part of this correction.
+
+After correction,441 existing affected and neighboring hydration/policy/consent/localization tests pass. The complete make verify-editor-timeline gate also passes:209 web tests,28 desktop browser tests,42 mobile-viewport browser tests and583 backend tests. Browser execution used one worker and a fresh isolated test server; the temporary harness options were restored, no assertion, retry or timeout was changed, and the config is not committed. Browser result bundles and raw logs remain task-local; this is not physical-iPhone output or live detector accuracy. New current-head hosted checks remain required before merge.
