@@ -105,9 +105,9 @@ def turkish_score_number(text: Any) -> tuple[int, bool] | None:
     Turkish says a score with a dative on the first number ("üçe bir", "ikiye sıfır",
     "bire bir"), so "üçe" reads as (3, True).
     """
-    from app.kria.brief_route import loose_text  # noqa: PLC0415 - app.kria imports pipeline
+    from app.text_fold import loose_text, lower  # noqa: PLC0415
 
-    cased = str(text).replace("İ", "i").replace("I", "ı").lower()
+    cased = lower(str(text), "tr")
     token = "".join(ch for ch in cased if ch.isalpha())
     ascii_token = "".join(ch for ch in loose_text(str(text)) if ch.isalpha())
     for candidate, table in ((token, _TR_NUMBER_WORDS), (ascii_token, _TR_ASCII_NUMBER_WORDS)):
