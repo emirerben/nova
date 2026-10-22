@@ -26,9 +26,9 @@ word (that pin retired when KRI-789/791/793 landed). Failure modes:
 6. The approval card goes out for a draft the worker then refuses (KRI-788).
 
 ``test_prod_*`` tests pin the incident as prod showed it; each names the tickets whose fix
-changes it, and that PR retires it with its own ``xfail`` marker. KRI-788, 789, 791 and 793
-landed before this replay did, so their pins are gone and their outcomes run as plain
-tests; KRI-790 and KRI-792 still own theirs. Turn 4 (a typed option
+changes it, and that PR retires it with its own ``xfail`` marker. KRI-788 to KRI-791 and
+KRI-793 landed before this replay did, so their pins are gone and their outcomes run as
+plain tests; KRI-792 still owns its own. Turn 4 (a typed option
 label after the refusal) is replayed without a database in ``test_kri787_merope_t1_replay``
 (KRI-794/795).
 """
@@ -66,7 +66,6 @@ from tests.kria.test_kri787_merope_t1_replay import (
     FIXTURE,
     RENDERS,
     START_LINE_S,
-    TAKE_S,
     dispatch,
     kept_window,
     prod_flags,
@@ -305,15 +304,6 @@ def _verdicts(receipts: dict[str, dict], ids: tuple[str, ...] | None = None) -> 
 
 
 @pytest.mark.asyncio
-async def test_prod_the_length_line_judges_the_whole_take(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Retired by KRI-790."""
-    chat = await _chat_until_approval(monkeypatch)
-    assert _verdicts(_receipts(chat.approved_draft), ("r1",)) == _verdicts(
-        _prod_receipts(10), ("r1",)
-    )
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("cleanup_chosen", "sequence"), [(False, 10), (True, 17)], ids=["first-draft", "cleanup-on"]
 )
@@ -326,18 +316,6 @@ async def test_prod_named_cuts_get_the_pause_line_then_done(
     assert _verdicts(_receipts(chat.approved_draft), ("r3", "r4")) == _verdicts(
         _prod_receipts(sequence), ("r3", "r4")
     )
-
-
-@pytest.mark.asyncio
-async def test_prod_the_approved_draft_keeps_the_whole_take(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Neither quoted line reaches the Talking plan: Yasin's intro and Atakan's goodbye stay
-    in. Retired by KRI-790."""
-    chat = await _chat_until_approval(monkeypatch)
-    claim = await _approve(chat)
-    job = dispatch(monkeypatch, RENDERS[0], strategy=claim.strategy, binding=claim.brief_binding)
-    assert kept_window(job) == (0.0, TAKE_S)
 
 
 # == what the creator should have had (child tickets) =========================================
@@ -364,11 +342,6 @@ async def test_the_approved_draft_reaches_the_talking_renderer(
     assert outcome.route == "subtitled"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-790: the length line judges the whole take and ignores the quoted start/end",
-)
 @pytest.mark.asyncio
 async def test_the_length_line_measures_the_quoted_window(monkeypatch: pytest.MonkeyPatch) -> None:
     chat = await _chat_until_approval(monkeypatch)
@@ -377,11 +350,6 @@ async def test_the_length_line_measures_the_quoted_window(monkeypatch: pytest.Mo
     assert "68.4s" not in reason
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-790: no draft line or approval card names the start and end lines",
-)
 @pytest.mark.asyncio
 async def test_the_approval_card_names_the_start_and_end_lines(
     monkeypatch: pytest.MonkeyPatch,
@@ -443,11 +411,6 @@ async def test_captions_and_spellings_get_a_line(monkeypatch: pytest.MonkeyPatch
         assert word in chat.approval.consequence_summary, word
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-790: the quoted start and end lines become the kept window",
-)
 @pytest.mark.asyncio
 async def test_the_video_starts_on_hi_im_karolina_and_ends_after_here_all_week(
     monkeypatch: pytest.MonkeyPatch,

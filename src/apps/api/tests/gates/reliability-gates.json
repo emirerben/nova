@@ -1528,7 +1528,7 @@
       ],
       "harness": "real_with_db",
       "evidence": {
-        "offline_replay": "Prod's chat, approved drafts, brief binding and job rows for jobs 0701fcc9 and f88555bc. On 45ed79016 the real runtime (only the Main Creator's model call replaced by its recorded output) reproduces turns 1-3 and the approval card word for word; the real dispatch rebuilds prod's stored contract (same digest); the real worker refuses with prod's failure; the observer posts prod's card. Each child's outcome is a strict xfail. Red control: KRI-788/791/792/793's commits each flip exactly their own markers and pins, nothing else. KRI-788/789/791/793/794/795 landed before the replay, so their pins are retired and their outcomes pass as plain tests; KRI-790/792 stay strict xfails.",
+        "offline_replay": "Prod's chat, approved drafts, brief binding and job rows for jobs 0701fcc9 and f88555bc. On 45ed79016 the real runtime (only the Main Creator's model call replaced by its recorded output) reproduces turns 1-3 and the approval card word for word; the real dispatch rebuilds prod's stored contract (same digest); the real worker refuses with prod's failure; the observer posts prod's card. Each child's outcome is a strict xfail. Red control: KRI-788/791/792/793's commits each flip exactly their own markers and pins, nothing else. KRI-788 to KRI-791 and KRI-793 to KRI-795 landed before the replay, so their pins are retired and their outcomes pass as plain tests; KRI-792 stays a strict xfail.",
         "live_model": "Not run; no paid calls.",
         "native_output": "unknown; no render reaches the phone (the Talking compiler needs the source file).",
         "production": "Not deployed (tests only)."
