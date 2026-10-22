@@ -45,3 +45,7 @@ physical-phone operation, rollout setting or manual release was performed.
 4. Resize: generated source windows cover all named lines within each clip; neighboring duration and frame constraints remain in the existing length planner/compiler. No new resize handles, rounding or stretch semantics are introduced.
 5. Undo: grounding belongs to the initial generated/approved draft snapshot. It adds no pointer operation, repeated timestamp mutation or undo snapshot.
 6. Preview/render parity: original KRI-803 tests carry independently measured quoted-audio spans through grounding, length plan, unified compiler, phone recipe verification and final receipt. Wrong spans/missing/ambiguous words remain negative controls. Run the required verify-editor-timeline gate and preserve its current native dependency limits.
+
+## Post-picker actual parent reconciliation
+
+Merged #1738 source7f8ac50c2 normally, including actualmain1bf6d14a6 and refreshed parser source33115. No source or assertion conflicts/edits occurred. Existing native files are unchanged from old45fe, whose CI39732108721 completedSUCCESS. Current exact-parent backend checks:159passed, covering all original audible-line/source-window/length negatives plus the newly landed unmatched-exclusion picker. The earlier required timeline result remains scoped to identical timeline/renderer input code; no new timing implementation was added by this reconciliation. New exact-head selected CI and normal preship remain required; merge after actual #1738.
