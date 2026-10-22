@@ -617,7 +617,7 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-524-creation,kri-557-thinking,kri-577-reliability-gates,kri-760-whole-line-ask,kri-721-approval-readiness,kri-787-merope-t1-replay",
+                    "kri-524-creation,kri-557-thinking,kri-787-merope-t1-replay,kri-577-reliability-gates,kri-760-whole-line-ask,kri-721-approval-readiness",
                 ),
             ),
             (
@@ -629,7 +629,7 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates,kri-788-order-answer-dispatch,kri-648-phone-text,kri-787-merope-t1-replay",
+                    "kri-492-length-ownership,kri-524-creation,kri-787-merope-t1-replay,kri-577-reliability-gates,kri-788-order-answer-dispatch,kri-648-phone-text",
 
                 ),
             ),
@@ -779,11 +779,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/kria/opening_cut_ask.py",
-                (True, "covered", "kri-628-opening-cut,kri-787-merope-t1-replay"),
+                (True, "covered", "kri-787-merope-t1-replay,kri-628-opening-cut"),
             ),
             (
                 "src/apps/api/app/pipeline/phone_opening_cut.py",
-                (True, "covered", "kri-628-opening-cut,kri-787-merope-t1-replay"),
+                (True, "covered", "kri-787-merope-t1-replay,kri-628-opening-cut"),
             ),
             (
                 "src/apps/api/app/services/spoken_quotes.py",
