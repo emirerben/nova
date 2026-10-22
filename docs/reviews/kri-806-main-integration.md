@@ -44,3 +44,11 @@ and its completed local timeline gate; this PR adds no new timeline mutation.
 This is a bounded parser and prompt repair. Live model adherence and the full
 Don Julio request/export remain unproven, owned by KRI-802 with KRI-803/804 and
 other siblings. No paid call, phone operation, rollout or manual release occurred.
+
+## Actual post-picker main reconciliation
+
+Old sourcec8769456 completed CI39731609276 successfully, including native validation. Merged actualmain1bf6d14a6 normally. The six caption/prompt/assertion files conflicted because the original caption commits had since squash-landed. Proved each current-main blob byte-identical to7eaf217cb, then retained the already reviewed complete caption + timed-text + editorial union; no semantic assertion/hash/version changes were made. The new main picker/planner code merged automatically. Every common incident gate was equal as parsed JSON; all unique entries retained in actual main order.
+
+Consumed #1739 source33115c07a (the later a3f5f90d3 adds only its report). Combined parser/brief/caption/spoken-trigger/editorial + actual unmatched-picker checks:364passed. Core prompts and iOS files remain identical to the previously verified c876 candidate. MainCreator67/BriefExtractor14 remain candidate versions; any later landed trim/named-cut instruction must be preserved and deliberately versioned in the eventual union.
+
+Do not merge until actual #1724 and #1739 land and all newly consumed product inputs are verified. New exact-head checks and normal preship remain required; the old successful native result is retained as scoped historical evidence, not forged as a new-head status.
