@@ -3,8 +3,10 @@ import XCTest
 @preconcurrency import AVFoundation
 
 /// A solid-colour H.264 clip with a quiet AAC tone, written and muxed the way `TalkingHeadCutawayCompositionTests` does.
+/// `videoStartOffset` muxes the video track later than the audio (a leading empty edit), the shape of
+/// an original whose picture starts ~21 ms after its sound (KRI-811).
 enum SolidVideoFixture {
-    @MainActor static func make(directory: URL, name: String, color: CGColor, seconds: Double, size: (Int, Int) = (96, 160), fps: Int32 = 30) async throws -> URL {
+    @MainActor static func make(directory: URL, name: String, color: CGColor, seconds: Double, size: (Int, Int) = (96, 160), fps: Int32 = 30, videoStartOffset: Double = 0) async throws -> URL {
         let (width, height) = size
         let (w, h) = (width, height)
         let videoURL = directory.appendingPathComponent("\(name)-video.mp4")
@@ -44,7 +46,8 @@ enum SolidVideoFixture {
             let tracks = try await asset.loadTracks(withMediaType: kind)
             let track = try XCTUnwrap(tracks.first)
             let destination = try XCTUnwrap(composition.addMutableTrack(withMediaType: kind, preferredTrackID: kCMPersistentTrackID_Invalid))
-            try destination.insertTimeRange(try await track.load(.timeRange), of: track, at: .zero)
+            let at = kind == .video ? CMTime(seconds: videoStartOffset, preferredTimescale: 1_000_000) : .zero
+            try destination.insertTimeRange(try await track.load(.timeRange), of: track, at: at)
         }
         let output = directory.appendingPathComponent("\(name).mov")
         let exporter = try XCTUnwrap(AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough))

@@ -1,0 +1,178 @@
+# Final verification — overnight 19–20 October 2026
+
+Task branch: `codex/creator-model-comparison`; isolated checkout:
+`/private/tmp/nova-creator-model-comparison`. Integrated fetched main `30a17e05c` (restored-clip Save fix), after `ef671ddca`
+(suggestion-chip runtime/daily-cap additions) and `db31fbe47` (editor Save matrix).
+The shared checkout and physical-device sessions were left intact.
+
+## Offline integration
+
+**5,139 passed, 15 skipped, seven expected failures, zero unexpected failures** in
+90.32 seconds. Dummy provider keys and `NOVA_EVAL_MODE=replay`; provider contracts
+use actual SDKs with HTTP mock transports. PostgreSQL uses only the disposable
+`nova_creator_model_comparison_test` database. The paid ledger is a separate database.
+
+The final run covers all agent and replay-eval suites, accounting/provider ledger,
+private capture/eligibility, sealed holdouts, recorded-source imports, JSON profile
+selection, real draft persistence, request-following review, creator render contracts,
+actual-export verifier/publication guards, editor Save matrix, draft/approval fences,
+spoken-order regressions and the new upstream suggester guards/PostgreSQL caps.
+
+Reproduce the selected run from the task root:
+
+```sh
+NOVA_EVAL_MODE=replay GEMINI_API_KEY=test OPENAI_API_KEY=sk-test ANTHROPIC_API_KEY=test \
+  bash scripts/check-api.sh test tests/agents/ tests/evals/ \
+  tests/services/test_ai_cost_control.py tests/services/test_text_provider_ledger.py \
+  tests/services/test_comparison_capture.py tests/services/test_suggestion_chips_guards.py \
+  tests/services/test_suggestion_chips_postgres.py \
+  tests/integration/test_comparison_eligibility.py \
+  tests/integration/test_comparison_development_inventory.py \
+  tests/integration/test_comparison_persistence.py \
+  tests/integration/test_request_following_queue.py \
+  tests/incidents/test_request_following_private_review.py tests/test_edit_copilot.py \
+  tests/test_copilot_outcome_explanations.py tests/services/test_creator_render_contract.py \
+  tests/integration/test_actual_export_verification.py \
+  tests/integration/test_actual_export_completion.py tests/routes/test_actual_export_publication.py \
+  tests/routes/test_editor_save_contract_matrix.py tests/kria/test_editor_state_turns.py \
+  tests/kria/test_approval_readiness_postgres.py tests/pipeline/test_unified_montage_spoken_order.py \
+  tests/services/test_spoken_roles.py tests/tasks/test_kri585_spoken_order_montage.py \
+  -q --eval-mode=replay -rs
+```
+
+Skips are existing live/judge-only checks, fixture applicability and missing unrelated
+sidecars. The seven strict expected failures come from upstream suggestion-chip
+validator-gap fixtures. They are not silently counted as passes. Before that upstream
+integration the selected suite passed 4,215 tests with 15 skips.
+
+Logs: `/private/tmp/nova-comparison-last-integration-tests.log` and
+`/private/tmp/nova-comparison-final-selector.log`. Selector checks: **41 tests pass**.
+Scoped Ruff/format, whitespace, release metadata, journey mapping and preship
+reliability checks are recorded in `/private/tmp/nova-comparison-hardened-preship.log`;
+439 mapped incident checks passed. The manifest conflict from two appended journeys
+was resolved by preserving both complete entries.
+
+## Editor timing regression gate
+
+The default `make verify-editor-timeline` passed 209 frontend checks but its default
+browser concurrency produced six desktop failures and three flaky cases, primarily
+navigation/load timeouts. No frontend product file differs from integrated main.
+The initial failure log is retained; it is not reported as a green default invocation.
+
+Running the same browser assertions with `--workers=2 --retries=0` passed:
+
+- **28 desktop browser cases**, 40.8 seconds.
+- **42 mobile browser cases**, 45.8 seconds.
+- **582 backend timing checks**, 22.89 seconds.
+- Frontend `npx tsc --noEmit`, exit zero with no output.
+
+Commands for the browser override, from `src/apps/web`:
+
+```sh
+CI=true npx playwright test --project=desktop-editor --workers=2 --retries=0
+CI=true npx playwright test --project=iphone13 --project=iphone14 \
+  mobile-video-editor.spec.ts --workers=2 --retries=0
+```
+
+The backend half used the exact nine files in the Make target, through
+`scripts/check-api.sh`, on the scratch database. Logs:
+`/private/tmp/nova-comparison-editor-timeline.log`,
+`/private/tmp/nova-comparison-desktop-serial.log`,
+`/private/tmp/nova-comparison-mobile-timeline.log`, and
+`/private/tmp/nova-comparison-backend-timeline.log`. Browser reports/traces are local
+worktree artifacts. These are synthetic product regressions, not real candidate exports.
+
+## Returned real-candidate evidence
+
+The recent phases have 25 calls on seven real requests, including profile controls
+and one native smoke. Twenty returned parsed outputs; **17 actionable candidates**
+passed real scratch committed reopen, stale-write rejection, exact undo, restore,
+reopen and cleanup. Three hook questions/options have no executable draft and are
+marked not applicable. Five unusable responses remain in the denominators.
+
+A real clip-label response exposed a synthetic fixture bug: cut-to-media identity
+was dropped. A new acceptance failed first, then the fixture reconstruction was
+fixed. A genuinely wrong clip still fails the drift guard, and creator-edited label
+provenance is retained. Original live statuses were not rewritten; source-context
+compilation and persistence are separate receipts against the same returned bytes.
+Another acceptance caught server `json_guarded` configuration mistakenly selecting
+native transport; the fix preserves the exact explicit selection and legacy defaults.
+
+State checks are source-bound operator proposals, with human review pending. They
+retain fade entrances and fade-out phases as recorded-state differences. The earlier
+brief contains carry-over fade requirements, so these differences must not be
+misreported as automatic fulfillment failures. The private board displays those
+source clauses. This is an explicitly post-run audit; the original operator checklist
+is retained and supplies no human quality score. Word timing
+charts show exact adjacent overlaps instead of inferring visual fulfillment.
+The owned native Save feasibility probe was refused by the local
+`guided_story_editor_v2_disabled` gate; no gate was toggled to claim export evidence.
+
+Private pages were checked with gstack at 1440 px and 320 px: eight panels, 24 slots,
+two word charts and twenty prepared requests; no horizontal overflow, external
+resources, console errors or visible provider identities. Raw responses and mappings
+remain outside Git. Derived files are registered for conservative cleanup. The
+loopback server checks current eligibility before serving page bodies; direct HTML
+files still require a separate eligibility/purge check before reuse.
+
+## Final source and database hardening
+
+The final broad run includes the hardening cases. The preceding focused run also
+passed **58 checks** (1.97 seconds).
+They include five new DSN rejection cases: query overrides for host, host address,
+database and service, plus a missing host that could inherit remote environment
+settings. Scratch writes require an explicit loopback host, a `_test` database
+and no query overrides. The failure cases were demonstrated before the fix.
+
+The reusable Main importer now binds agent identity, owned item and the exact
+timezone-aware creator-turn window; it rejects redacted or normalized inputs.
+Future freezing rejects recorded-origin hash mismatches. All ten selected Main
+inputs reimport exactly. Two of 24 candidate imports fail exactness; one older
+initial-pilot context had also been normalized. Its public provenance is corrected
+separately, without rewriting frozen journals, repeating calls or changing cost.
+The current twenty-case prepared corpus and seven-request comparison are unaffected.
+Logs: `/private/tmp/nova-comparison-final-source-hardening.log`; source audit and
+raw-record reconciliation stay private. See `provenance-corrections.json`.
+
+The private review handler also passed HTTP checks proving eligibility-check
+failure returns no candidate body and a foreign Host is refused. Current sources
+passed read-only rechecks. Pre-push scanner warnings identified the synthetic `expired-grant` test value
+and the reserved documentation IP used by a negative DSN test. Neither is a
+credential or creator data.
+An additional scan found zero current source identity/grant values in the Git diff.
+
+## SDK qualification
+
+A final dependency/API-contract audit qualified Google GenAI **2.10.0**, OpenAI
+**2.44.0** and Anthropic **0.116.0**. The Google requirement is now `>=2.10,<3`,
+matching the version used by the live pilot and the retry/deadline contract tests;
+it no longer permits an unqualified 1.x installation.
+
+Sol effort `max` is rejected by both experiment preparation and the provider
+boundary before SDK construction; the qualified Responses contract uses `xhigh`
+instead. Anthropic retains its distinct SDK effort set. Labels are never silently
+translated. Existing unsupported-input tests now explicitly forbid SDK construction.
+The new failure cases failed before the fix, then **67 provider, comparison and
+accounting checks passed** in 3.27 seconds with dummy keys and mock transports.
+Log: `/private/tmp/nova-comparison-sdk-final.log`. No paid profile or result changed.
+
+## CI compatibility regression
+
+The first full CI run exposed 35 failures across both API shards. Legacy Gemini
+SDK doubles return an object for an absent `model_version`; converting that object
+to text replaced the requested model identity and correctly tripped strict pricing.
+The boundary now accepts only nonempty text for optional model/request identities,
+falling back to the requested model only when optional model metadata is malformed.
+An actual unknown model string still fails pricing. Five new cases failed before
+the fix; all six new cases and the affected legacy/provider/accounting suites then
+passed: **138 checks**, 3.28 seconds. No SDK retry, pricing relaxation, paid call or
+historical receipt change was introduced. Logs:
+`/private/tmp/nova-comparison-metadata-red.log` and
+`/private/tmp/nova-comparison-metadata-green.log`.
+
+## Limits
+
+No production routing, collection cohort, selected-model rollout or deployment was
+activated. No paid judge ran. No candidate was rendered or watched. No independent
+real holdout or human score was fabricated. See `morning-report.md` for the resulting
+selection limits and `final-development-results.json` for reconciled money and counts.
