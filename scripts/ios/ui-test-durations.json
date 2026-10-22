@@ -10,6 +10,8 @@
   "KriaUITests/AttachmentFlowUITests/testNarratedAttachmentsSwipeAndRequireExplicitAudioChoice": 27.1,
   "KriaUITests/CreationUITests/testChatBubblesPreserveShapeAndWrappingAtAccessibilityTextSize": 9.4,
   "KriaUITests/CreationUITests/testChoiceQuestionShowsRecommendedOptionAndSendsStructuredAnswerOnce": 22.5,
+  "KriaUITests/CreationUITests/testTitleCardAndClipPickerInOneReplyGoOutOnOneTurn": 30.0,
+  "KriaUITests/CreationUITests/testClipsFirstThenTheTitleTapSendsBothOnOneTurn": 28.0,
   "KriaUITests/CreationUITests/testClipPickerSelectsClipsAndSendsStructuredAnswerWithMissingThumbnailFallback": 27.5,
   "KriaUITests/CreationUITests/testClipPickerSlideAcrossTilesSelectsDeselectsAndKeepsTapAndHold": 27.4,
   "KriaUITests/CreationUITests/testClipPickerSlideNearBottomEdgeAutoScrollsAndVerticalDragStillScrolls": 32.0,
