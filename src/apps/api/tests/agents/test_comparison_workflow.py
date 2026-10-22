@@ -350,3 +350,59 @@ def test_normalized_import_cannot_be_frozen_as_exact():
 def test_sol_max_effort_fails_experiment_preflight():
     with pytest.raises(ValueError, match="effort"):
         build_agent("main_creator", Arm("O", "gpt-6.1-sol", "max"), None)
+
+
+@pytest.mark.parametrize("source_kind", ["exact_invocation", "reconstructed_real"])
+@pytest.mark.parametrize("eligible", [True, False])
+def test_unexpired_real_packet_rechecks_grant_and_only_retires_its_bodies(
+    tmp_path, monkeypatch, source_kind, eligible
+):
+    from datetime import UTC, datetime, timedelta
+
+    from app.cli import compare_creator_models as cli
+    from app.services.request_following_private_store import read, write
+
+    tmp_path.chmod(0o700)
+    case = {
+        "id": "reviewed-case",
+        "source_kind": source_kind,
+        "expires_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+    }
+    source = tmp_path / "source.json"
+    write(source, case)
+    packet = {"sha256": "c" * 64, "cases": [{**case, "capture_file": str(source)}]}
+    packet_path = tmp_path / "packet.json"
+    write(packet_path, packet)
+    journals = [tmp_path / (packet["sha256"] + suffix) for suffix in (".live.json", ".replay.json")]
+    for path in journals:
+        write(path, {"output": "private"})
+    derived = tmp_path / "candidate.json"
+    unrelated = tmp_path / "unrelated.json"
+    write(derived, {"private": "derived"})
+    write(unrelated, {"private": "another packet"})
+    index = tmp_path / "derived-artifacts.json"
+    write(
+        index,
+        {
+            "artifacts": [
+                {"cases": [case["id"]], "files": [derived.name]},
+                {"cases": ["another-case"], "files": [unrelated.name]},
+            ]
+        },
+    )
+    checked = []
+
+    def current_grant(row, *, require_review):
+        checked.append((row["id"], require_review))
+        if not eligible:
+            raise ValueError("revoked or eligibility unavailable")
+
+    monkeypatch.setattr(cli, "_eligibility", current_grant)
+    assert cli.purge_packet(packet_path, tmp_path, check_eligibility=True)["purged"] is (
+        not eligible
+    )
+    assert checked == [(case["id"], False)]
+    for path in (source, packet_path, derived, *journals):
+        assert path.exists() is eligible
+    assert read(unrelated) == {"private": "another packet"}
+    assert read(index)["artifacts"][-1] == {"cases": ["another-case"], "files": [unrelated.name]}

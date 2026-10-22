@@ -132,21 +132,33 @@ def from_recorded_main(export, recorded):
     return result
 
 
-def from_editor_snapshot(export, job, *, request_event_index):
+def from_editor_snapshot(export, job, *, request_event_index, variant_id):
     from app.agents.edit_copilot import EditCopilotInput
     from app.services.kria_editor_ops import build_editor_snapshot
 
-    events = export["capture"]["sections"]["events"]
+    sections = export["capture"]["sections"]
+    events = sections["events"]
+    if not 0 <= request_event_index < len(events):
+        raise ValueError("creator event index outside source")
     event = events[request_event_index]
     if event.get("kind") != "user_message" or event.get("actor") != "user":
         raise ValueError("creator-authored source request required")
-    if str(job.user_id) != export["eligibility"]["creator_id"]:
-        raise ValueError("editor source owner mismatch")
-    # Pin a persisted prior variant, not a manufactured editor/media example.
-    variants = job.assembly_plan.get("variants", [])
-    if not variants:
-        raise ValueError("persisted editor variant required")
-    snapshot = build_editor_snapshot(job, copy.deepcopy(variants[0]))
+    job_id = str(job.id)
+    captured_job = sections.get("job-" + job_id) or {}
+    if (
+        str(job.user_id) != export["eligibility"]["creator_id"]
+        or str(captured_job.get("id")) != job_id
+    ):
+        raise ValueError("editor source owner/job mismatch")
+    # An explicit variant must belong to both the reviewed capture and the
+    # persisted job. Reconstructed context is never an exact historical input.
+    variants = (job.assembly_plan or {}).get("variants", [])
+    captured_variants = (captured_job.get("assembly_plan") or {}).get("variants", [])
+    selected = [row for row in variants if row.get("variant_id") == variant_id]
+    reviewed = [row for row in captured_variants if row.get("variant_id") == variant_id]
+    if not variant_id or len(selected) != 1 or len(reviewed) != 1:
+        raise ValueError("one explicit reviewed persisted editor variant required")
+    snapshot = build_editor_snapshot(job, copy.deepcopy(selected[0]))
     prior = [
         {"role": e["actor"], "content": e["content"]}
         for e in events[:request_event_index]
@@ -165,13 +177,14 @@ def from_editor_snapshot(export, job, *, request_event_index):
         export,
         input=input.model_dump(mode="json"),
         agent="edit_copilot",
-        identity=[str(job.id), request_event_index],
+        identity=[job_id, variant_id, request_event_index],
         captured_at=datetime.now(UTC).isoformat(),
         source_kind="reconstructed_real",
     )
     result.update(
         source_pointer=f"/sections/events/{request_event_index}/content",
-        source_job_id=str(job.id),
+        source_job_id=job_id,
+        source_variant_id=variant_id,
         snapshot_sha256=digest(snapshot),
         reconstruction_notes=[
             "Snapshot assembled with current server builder from persisted prior job.",

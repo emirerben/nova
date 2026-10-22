@@ -183,7 +183,10 @@ def purge_packet(path, directory, *, check_eligibility=False):
             UTC
         ):
             invalid = True
-        if check_eligibility and case.get("source_kind") == "exact_invocation":
+        if check_eligibility and case.get("source_kind") in (
+            "exact_invocation",
+            "reconstructed_real",
+        ):
             try:
                 _eligibility(case, require_review=False)
             except Exception:

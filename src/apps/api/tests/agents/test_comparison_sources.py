@@ -129,3 +129,93 @@ def test_main_import_requires_exact_owned_turn(valid_main_source, failure):
         )
     with pytest.raises(ValueError):
         from_recorded_main(source, recorded)
+
+
+@pytest.fixture
+def editor_source(valid_main_source):
+    from types import SimpleNamespace
+
+    source, _ = copy.deepcopy(valid_main_source)
+    variants = [
+        {
+            "variant_id": "first",
+            "text_elements": [
+                {"id": "a", "text": "Wrong first title", "start_s": 0.0, "end_s": 2.0}
+            ],
+        },
+        {
+            "variant_id": "selected",
+            "text_elements": [
+                {"id": "b", "text": "Reviewed selected title", "start_s": 0.0, "end_s": 2.0}
+            ],
+        },
+    ]
+    job = SimpleNamespace(
+        id="reviewed-job",
+        user_id="creator",
+        assembly_plan={"variants": variants},
+        all_candidates={},
+    )
+    source["capture"]["sections"]["job-reviewed-job"] = {
+        "id": "reviewed-job",
+        "assembly_plan": copy.deepcopy(job.assembly_plan),
+    }
+    return source, job
+
+
+def test_editor_reconstruction_pins_explicit_reviewed_second_variant(editor_source):
+    from app.services.creator_comparison_sources import from_editor_snapshot
+    from app.services.kria_editor_ops import build_editor_snapshot
+    from app.services.request_following_cases import digest
+
+    source, job = editor_source
+    expected = build_editor_snapshot(job, copy.deepcopy(job.assembly_plan["variants"][1]))
+    case = from_editor_snapshot(source, job, request_event_index=0, variant_id="selected")
+    assert case["snapshot_sha256"] == digest(expected)
+    assert case["source_job_id"] == "reviewed-job"
+    assert case["source_variant_id"] == "selected"
+    assert case["source_kind"] == "reconstructed_real" and case["quality_verdict"] == "unassessed"
+    assert case["intent_review"]["decision"] == "source_reviewed"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "same_owner_other_job",
+        "captured_job_id",
+        "missing_variant",
+        "duplicate_variant",
+        "unreviewed_variant",
+        "negative_event",
+        "past_events",
+    ],
+)
+def test_editor_reconstruction_rejects_unbound_job_variant_or_turn(
+    editor_source, monkeypatch, failure
+):
+    from app.services.creator_comparison_sources import from_editor_snapshot
+
+    source, job = editor_source
+    index = 0
+    if failure == "same_owner_other_job":
+        job.id = "another-same-owner-job"
+    elif failure == "captured_job_id":
+        source["capture"]["sections"]["job-reviewed-job"]["id"] = "another-job"
+    elif failure == "missing_variant":
+        job.assembly_plan["variants"] = job.assembly_plan["variants"][:1]
+    elif failure == "duplicate_variant":
+        job.assembly_plan["variants"].append(copy.deepcopy(job.assembly_plan["variants"][1]))
+    elif failure == "unreviewed_variant":
+        source["capture"]["sections"]["job-reviewed-job"]["assembly_plan"]["variants"] = (
+            job.assembly_plan["variants"][:1]
+        )
+    elif failure == "negative_event":
+        index = -1
+    elif failure == "past_events":
+        index = 1
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops.build_editor_snapshot",
+        lambda *args: pytest.fail("unbound snapshot must not be built"),
+    )
+    with pytest.raises(ValueError):
+        from_editor_snapshot(source, job, request_event_index=index, variant_id="selected")
