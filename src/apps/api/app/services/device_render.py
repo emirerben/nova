@@ -295,7 +295,7 @@ def checked_export_report(record: dict, status: DeviceRenderStatus, attempt_id: 
         return True  # historical/unpromoted adapter; not a verified-output claim
     from app.services.actual_export_verification import (  # noqa: PLC0415
         HISTORICAL_VERIFIER_VERSIONS,
-        VERIFIER_VERSION,
+        VERIFIER_ORDER,
     )
 
     policy = record.get("actual_export_policy")
@@ -306,14 +306,14 @@ def checked_export_report(record: dict, status: DeviceRenderStatus, attempt_id: 
         and policy.get("version") == 1
         and policy.get("verifier_version", "phone-simple-cut-v1") in HISTORICAL_VERIFIER_VERSIONS
         and report.get("status") == "checked"
-        # A pinned policy accepts its own verifier or the current one: every
+        # A pinned policy accepts its own verifier or any later one: every
         # current control is a superset of a historical one (KRI-810), so a
         # request pinned before a verifier repair can still publish exact bytes
         # re-checked by the repaired verifier. An older report never satisfies
         # a newer pin.
         and report.get("verifier_version")
         in (
-            {policy["verifier_version"], VERIFIER_VERSION}
+            set(VERIFIER_ORDER[VERIFIER_ORDER.index(policy["verifier_version"]) :])
             if policy.get("verifier_version")
             else HISTORICAL_VERIFIER_VERSIONS
         )

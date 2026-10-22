@@ -30,9 +30,9 @@ from app.kria.recipes_v2 import EditRecipeV2
 from app.pipeline.cloud_render_evidence import normalize_text
 
 VERIFIER_VERSION = "phone-simple-cut-v3"
-HISTORICAL_VERIFIER_VERSIONS = frozenset(
-    {"phone-simple-cut-v1", "phone-simple-cut-v2", VERIFIER_VERSION}
-)
+# Oldest first; append every future bump so a pin accepts itself or any later verifier.
+VERIFIER_ORDER = ("phone-simple-cut-v1", "phone-simple-cut-v2", VERIFIER_VERSION)
+HISTORICAL_VERIFIER_VERSIONS = frozenset(VERIFIER_ORDER)
 POLICY_FIELD = "actual_export_policy"
 SAMPLE_RATE = 8000
 # Both the phone export and its analysis proxies are local ISO media files.
@@ -416,10 +416,15 @@ def _displayed(clock: list[float], instant: float) -> list[float]:
     is a resampled copy of the original the phone rendered, so its frame grid
     can differ from the original's by under one proxy frame; the next frame is
     the only other picture that can be the same moment. Anchored on the
-    candidate's real PTS, this never widens into a multi-frame search.
+    candidate's real PTS, this is at most one frame later. On a held-frame/VFR
+    gap the next frame can be far away, so it is offered only within 1.5x the
+    proxy's typical frame step.
     """
     shown = [t for t in clock if t <= instant + 1e-6]
     later = [t for t in clock if t > instant + 1e-6]
+    step = float(np.median(np.diff(clock))) if len(clock) > 1 else 0.0
+    if shown and later and later[0] - instant > 1.5 * step:
+        later = []
     return ([shown[-1]] if shown else []) + later[:1]
 
 
@@ -968,9 +973,11 @@ def verify_actual_export(
                 ]
                 observed_text = _read_text(text_frame, colors, wanted=wanted)
                 views = []
-                if wanted not in observed_text and shown is not None:
-                    # Hidden probes too: an extra view can only find text that
-                    # is really there, so it can only catch more timing errors.
+                partial = set(wanted.split()) & {w for c in observed_text for w in c.split()}
+                if wanted not in observed_text and shown is not None and (present or partial):
+                    # Hidden probes only when a standard view already read part
+                    # of the copy: bounds OCR cost on correct exports (90s
+                    # deadline) while still catching text that is really there.
                     observed_text |= overlay_text(
                         shown,
                         rect,
