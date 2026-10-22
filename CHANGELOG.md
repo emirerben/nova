@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.44.0] - 2026-10-22
+
+### Changed
+- fix(kria): a named phrase cut is never "Done" before anything cuts it (KRI-792) (#1728) <!-- release-pr: 1728 -->
+
+## [0.81.43.0] - 2026-10-22
+
+### Changed
+- fix(export-verifier): accept correct Troya montage, keep wrong-output controls (KRI-810) (#1749) <!-- release-pr: 1749 -->
+
 ## [0.81.42.0] - 2026-10-22
 
 ### Changed
