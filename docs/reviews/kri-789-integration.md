@@ -28,3 +28,15 @@ The broader KRI-787 compound request still needs original-media native export an
 receipt inspection, including its other requested cuts, captions and speaker-specific
 text. No live-model, physical-phone, production rollout or full-request completion
 claim is made here.
+
+## KRI-788 security-fixture integration
+
+Hosted CI exposed a stale one-clip refusal expectation in the dispatch security
+guard. Its forged-answer stripping assertion still passed; KRI-789 intentionally
+removed that clip-order blocker for one clip. Every original refusal assertion is
+retained using two distinct selected clips in the supported montage format (phone
+Talking supports exactly one clip). A separate original one-clip Talking control
+asserts the forged answer is stripped, no order is invented, and the phone gate
+passes. All 19 dispatch-security and trim-parser controls pass. No product change
+or security assertion removal was needed. The original failed hosted case remains
+evidence of the integration interaction, not an accepted current result.
