@@ -61,8 +61,8 @@ class AptInstallTests(unittest.TestCase):
             [
                 f"{ACQUIRE} update",
                 f"{ACQUIRE} update",
-                f"{ACQUIRE} install -y --download-only ffmpeg libegl1",
-                "install -y --no-download ffmpeg libegl1",
+                f"{ACQUIRE} install -y --no-install-recommends --download-only ffmpeg libegl1",
+                "install -y --no-install-recommends --no-download ffmpeg libegl1",
             ],
         )
 
@@ -74,9 +74,9 @@ class AptInstallTests(unittest.TestCase):
             calls,
             [
                 f"{ACQUIRE} update",
-                f"{ACQUIRE} install -y --download-only ffmpeg",
-                f"{ACQUIRE} install -y --download-only ffmpeg",
-                "install -y --no-download ffmpeg",
+                f"{ACQUIRE} install -y --no-install-recommends --download-only ffmpeg",
+                f"{ACQUIRE} install -y --no-install-recommends --download-only ffmpeg",
+                "install -y --no-install-recommends --no-download ffmpeg",
             ],
         )
 
@@ -90,6 +90,33 @@ class AptInstallTests(unittest.TestCase):
         result, calls = self.run_script([])
         self.assertEqual(result.returncode, 2)
         self.assertEqual(calls, [])
+
+    def test_download_exhaustion_never_starts_install(self):
+        result, calls = self.run_script(["ok", "fail", "fail"], "ffmpeg", attempts=2)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "::error::apt-get download failed after 2 attempts", result.stdout
+        )
+        self.assertEqual(
+            calls,
+            [
+                f"{ACQUIRE} update",
+                f"{ACQUIRE} install -y --no-install-recommends --download-only ffmpeg",
+                f"{ACQUIRE} install -y --no-install-recommends --download-only ffmpeg",
+            ],
+        )
+
+    def test_install_failure_is_propagated_without_retrying_dpkg(self):
+        result, calls = self.run_script(["ok", "ok", "fail"], "ffmpeg")
+        self.assertEqual(result.returncode, 100)
+        self.assertEqual(
+            calls,
+            [
+                f"{ACQUIRE} update",
+                f"{ACQUIRE} install -y --no-install-recommends --download-only ffmpeg",
+                "install -y --no-install-recommends --no-download ffmpeg",
+            ],
+        )
 
 
 if __name__ == "__main__":
