@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.28.0] - 2026-10-22
+
+### Fixed
+- fix(kria): a skip that matched no clip asks with the clip picker, never free text (KRI-807) (#1742) <!-- release-pr: 1742 -->
+
 ## [0.81.27.0] - 2026-10-22
 
 ### Fixed
