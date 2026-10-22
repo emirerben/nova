@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.48.0] - 2026-10-22
+
+### Changed
+- test(kria): offline replay of the Merope T1 Talking run (KRI-787) (#1723) <!-- release-pr: 1723 -->
+
 ## [0.81.47.0] - 2026-10-22
 
 ### Changed
