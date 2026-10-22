@@ -53,3 +53,9 @@ price in the display default, and a locale-free lower-cased `İ` (`i` + U+0307).
 `shaped_rtl_fallback.json` (KRI-785) is Arabic smooth-type in Inter. No registry face
 draws Arabic, but the shaped path fills each codepoint from the system font manager, so
 the glyph check must not FAIL it (it only FAILs codepoints no system face can draw).
+
+`kri804_montage_clip_label_width.json` (KRI-804) is the montage clip-label bar as
+`guided_story.label_element` burns it (Fraunces 58px, `max_width_frac=0.82`), centred and
+at both bottom corners, carrying "chimichurri & salsa criolla" (27) and a 28-character
+label: the `CREATOR_LABEL_MAX_CHARS` bound. Both must stay on one un-clipped line; a
+longer label wraps rather than clips, which is why the bound is a one-line limit.

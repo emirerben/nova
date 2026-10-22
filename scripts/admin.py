@@ -100,6 +100,8 @@ def main() -> int:
         default=[],
         help="Extra ?key=value query param (repeatable)",
     )
+    p.add_argument("--comparison-evaluator", action="store_true",
+                   help="Attach the separate holdout evaluator credential from environment")
     p.add_argument("--yes", action="store_true", help="Skip the prod-mutation confirm prompt")
     p.add_argument("--dry-run", action="store_true", help="Print what would be sent; no network")
     p.add_argument("-v", "--verbose", action="store_true", help="Show request/response headers")
@@ -163,10 +165,16 @@ def main() -> int:
     if body_bytes is not None:
         headers["Content-Type"] = "application/json"
 
+    if args.comparison_evaluator:
+        evaluator=env.get("CREATOR_COMPARISON_HOLDOUT_TOKEN", "").strip()
+        if not evaluator:
+            print("error: holdout evaluator credential unavailable",file=sys.stderr)
+            return 1
+        headers["X-Comparison-Evaluator-Token"]=evaluator
     if args.verbose or args.dry_run:
         print(f"→ {method} {url}", file=sys.stderr)
         for k, v in headers.items():
-            shown = "***" if k == "X-Admin-Token" else v
+            shown = "***" if k in {"X-Admin-Token", "X-Comparison-Evaluator-Token"} else v
             print(f"  {k}: {shown}", file=sys.stderr)
         if body_repr:
             print(f"  body: {body_repr}", file=sys.stderr)

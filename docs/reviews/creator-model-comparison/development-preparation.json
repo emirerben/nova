@@ -1,0 +1,39 @@
+{
+  "date": "2026-10-19",
+  "mode": "offline_preparation",
+  "additional_paid_calls": 0,
+  "additional_paid_spend_usd": 0,
+  "development": {
+    "cases": 8,
+    "threads": 2,
+    "creators": 1,
+    "exact_invocation_inputs": 8,
+    "turn_specific_human_reviews_pending": 8,
+    "current_parser_replays_passed": 8,
+    "inert_reference_compiles_passed": 8,
+    "execution_base": "labeled reconstruction from original recorded lanes and persisted owned jobs",
+    "state_checks": 26,
+    "state_checks_passed": 25,
+    "state_failures": [
+      {
+        "case": "CP-04",
+        "check": "vertical_positions_preserved"
+      }
+    ]
+  },
+  "holdout": {
+    "status": "intake_only_not_registered",
+    "cases_enrolled": 0,
+    "slots_prepared": 50,
+    "supported_tasks": 30,
+    "ambiguous_unsupported_controls": 10,
+    "recovery_controls": 10,
+    "supported_repeats_per_arm": 3,
+    "development_threads_excluded": 141,
+    "all_development_owner_map_complete": false,
+    "media_fingerprint_exclusion_complete": false
+  },
+  "human_candidate_preferences_recorded": 0,
+  "candidate_commands_executed": 0,
+  "candidate_exports_reviewed": 0
+}

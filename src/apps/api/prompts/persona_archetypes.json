@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-22-research-11",
+  "version": "2026-10-22-research-18",
   "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (best representative post per lane) so the persona generator surfaces proven lanes first. The agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
   "archetypes": [
     {
@@ -179,7 +179,7 @@
         "the thing that gets me out of bed",
         "slow start, real comeback"
       ],
-      "source": "https://www.tiktok.com/@nermozdemir/video/7677983862441479442 (snapshot 2026-10-11T19:01:31.838550+00:00; qualitative caption-derived reference from a disclosed sponsored post; no organic-performance signal)"
+      "source": "https://www.tiktok.com/@nermozdemir/video/7677983862441479442 (snapshot 2026-10-18T19:02:29.536897+00:00; qualitative caption-derived reference from a disclosed sponsored post; no organic-performance signal)"
     },
     {
       "id": "early-riser-commitment-01",
@@ -198,12 +198,12 @@
         "nobody was awake, and i loved it",
         "set the alarm — showed up — worth it"
       ],
-      "source": "https://www.tiktok.com/@izzsiomoi/video/7669218300676607239 (snapshot 2026-10-11T19:01:07.323428+00:00; caption-derived reference; filming style is a suggested treatment, not inspected footage)",
+      "source": "https://www.tiktok.com/@izzsiomoi/video/7669218300676607239 (snapshot 2026-10-18T19:01:57.074551+00:00; caption-derived reference; filming style is a suggested treatment, not inspected footage)",
       "performance": {
         "views": 12100,
-        "engagement_rate": 0.252562,
-        "view_index": 19.9505,
-        "sampled_at": "2026-10-11"
+        "engagement_rate": 0.252727,
+        "view_index": 19.7551,
+        "sampled_at": "2026-10-18"
       }
     }
   ]

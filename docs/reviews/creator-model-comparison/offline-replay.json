@@ -1,0 +1,11 @@
+{
+  "mode": "recorded_replay",
+  "packet_sha256": "da0eb4262af819c9f5252cfd02bca104ba16c103275b01a5b931cd5e5a45b06e",
+  "cases": 3,
+  "completed_rows": 9,
+  "parsed": 9,
+  "unknown": 0,
+  "quality_verdict": "unassessed",
+  "actual_export": "unassessed",
+  "inference_only": true
+}
