@@ -26,8 +26,9 @@ from app.pipeline.prompt_loader import load_prompt
 # v11 (KRI-674 follow-up): timing examples satisfy the non-empty content contract.
 # v12 (KRI-721 live check): shared brief carries unprocessed source-audio intent.
 # v13 (KRI-793): shared brief records the words to spell in the captions (`spellings`).
-# v14 (KRI-792): named spoken cuts carry cut_lines as well as caption spellings.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-22-v14"
+# v14 (KRI-791 + KRI-793): retain spellings and record text `triggers` + `speaker`.
+# v15 (KRI-792): shared brief records `cut_lines` for named spoken stretches to cut.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-22-v15"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
