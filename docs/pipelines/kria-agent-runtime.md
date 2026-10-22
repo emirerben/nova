@@ -434,6 +434,17 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   now keeps that match (`carry_forward_exclusions`, reads `CreatorEditDraft`, fails open).
   Picker off (`KRIA_CLIP_SELECTION_QUESTIONS_ENABLED=false`) = the silent pin-wins of
   KRI-667. Guard: `tests/kria/test_kri761_look_alike_exclusions.py`.
+  *Unmatched excludes (KRI-807, Don Julio M1)*: an exclude that leaves no clip out
+  ("skip the blurry shot of the empty table", resolver `n=0`) asks with the same picker
+  instead of the free-text "Tell me which ones" notice (`exclusions_to_ask`). Every
+  unpinned clip is offered; the clips the resolver put forward below the bar or for a
+  vision check (`IntentResolution.exclusion_suspects`, in memory only) come pre-ticked
+  and are never left out without a tap. When the resolver itself asks a clip picker,
+  the exclude rows ride in that same card (`with_exclusion_categories`). The notice is
+  kept for a planner-dropped exclude, the picker flag off, a one-clip project, or
+  nothing tappable. Blur is not a clip-record fact: a measured sharpness probe on 170
+  kit clips could not tell M1_04 from its sharp look-alike. Guard:
+  `tests/kria/test_kri807_unmatched_exclusion_picker.py`.
 - *Title*: confirmed strategy title > brief title literal > brief global literal
   (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`). With
   none of those sources, the visible opening title is omitted; `Montage` remains

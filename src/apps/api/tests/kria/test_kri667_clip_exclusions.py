@@ -617,7 +617,10 @@ async def test_a_clip_the_creator_also_placed_still_plays(prod_profile, monkeypa
 
 
 async def test_an_unsure_or_empty_exclusion_plays_everything(prod_profile, monkeypatch) -> None:
+    # With the picker on, KRI-807 asks which clip to leave out instead of drafting
+    # (test_kri807_unmatched_exclusion_picker); either way nothing is removed on a guess.
     monkeypatch.setattr(settings, "clip_intent_exclude_enabled", True)
+    monkeypatch.setattr(settings, "kria_clip_selection_questions_enabled", False)
     strategy = await _draft(monkeypatch, [_exclude(None)])
     assert _played(strategy) == set(ALL)
     assert _dispatched(strategy) == ALL
@@ -663,6 +666,8 @@ async def test_kri680_a_skip_the_planner_dropped_is_said_before_the_render(
 async def test_kri680_a_skip_no_clip_matched_is_said_before_the_render(
     prod_profile, monkeypatch
 ) -> None:
+    # The picker off: KRI-807 asks with the clip picker when it is on.
+    monkeypatch.setattr(settings, "kria_clip_selection_questions_enabled", False)
     planned = await _planned_turn(monkeypatch, [_exclude(None)], dropped_exclusions=1)
     assert len(_notices(planned)) == 1
 
