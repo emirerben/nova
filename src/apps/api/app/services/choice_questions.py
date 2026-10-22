@@ -1058,6 +1058,19 @@ def is_pin_only_order(req: Any) -> bool:
     return key not in CAPTURE_ORDER_KEYS and key != ATTACHMENT_ORDER_KEY
 
 
+def one_clip_edit(rows: Sequence[Any]) -> bool:
+    """KRI-661 / KRI-789: the edit is exactly one clip, so it has no order to promise.
+
+    ``rows`` are the edit's clip rows as the caller narrowed them (selected media; the render
+    contract also drops a hidden voice clip). The order_basis question and the render
+    contract both read this, so the gate never asks about an order the contract would not
+    check and the contract never leaves unverified an order the gate stayed quiet about.
+    Unknown rows (no approved media snapshot) are never one clip.
+    """
+
+    return len(rows) == 1 and isinstance(rows[0], Mapping) and bool(rows[0].get("media_id"))
+
+
 def _pin_intents(strategy: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     """The creator's first / last clip asks, as the server read them (any resolution)."""
 
@@ -1122,14 +1135,16 @@ def _order_basis(
         valid, ids = False, []
     missing = []
     # KRI-661: one clip has no order to promise (a talk-to-camera recording with photo
-    # Visuals), so a missing filming time on it is not a question worth asking.
-    if valid and wants_capture and len(rows) > 1:
+    # Visuals), so a missing filming time on it is not a question worth asking. KRI-789: nor
+    # is an ordering rule ("start at '…' and end right after '…'" inside the one take).
+    one_clip = one_clip_edit(rows)
+    if valid and wants_capture and not one_clip:
         for row in rows:
             capture = capture_from_assignment(row)
             if not (capture and capture.capture_time):
                 missing.append(str(row["media_id"]))
     ask_capture = bool(missing)
-    ask_rule = bool(rule_ids) and not _placed_sequence(strategy)
+    ask_rule = bool(rule_ids) and not _placed_sequence(strategy) and not one_clip
     if not (ask_capture or ask_rule):
         return None
     if ask_capture:
@@ -3140,6 +3155,7 @@ __all__ = [
     "fold_scoped_answers",
     "match_open_choice",
     "normalize_reply",
+    "one_clip_edit",
     "open_conflicts",
     "resolve_choices",
     "CONFLICT_ORDER_VS_GROUP",

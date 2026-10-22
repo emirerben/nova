@@ -36,11 +36,12 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v62 grounds a phone montage story in owned clip IDs and explanatory text goals.
 # v64 adds typed unchanged-source audio intent; only the two brief-on renders change.
 # v65 (KRI-793) adds the `spellings` caption fact: only the two brief-on renders change.
+# v66 (KRI-789) preserves spellings and adds quoted take-trim facts; brief-on renders change.
 PRE_CHANGE_PROMPT_SHA = {
     (True, False): "4684c634fa88dcfec7865a41330b8a781bb706837861c6e7d63c796b8c2d0a2a",
-    (True, True): "7b303dc5fb824a44c9e61f7a38e4a92453add19ddc63e8b08acd96f29dfd9bc6",
+    (True, True): "c6cf08cd51cdaf29efbb301762e320845f2b591ac31637646409a5d6be8c4250",
     (False, False): "9ae7a03343fc258ce0fec6bc86976e6f24b1576bc4ad92920eb5e5b28f1e330d",
-    (False, True): "94b73784b98596a6c7e9d6e9e90afb187fe94a6fbca8ead8b38dfb4b723e4a36",
+    (False, True): "f11ad2adc675e0a1d04e474cdf9203b82aad3b4d1efd2123bb2e8c2d82795c6e",
 }
 
 
@@ -110,7 +111,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-21-v65"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-22-v66"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

@@ -39,6 +39,7 @@ from app.services.choice_questions import (
     OPT_SILENT_TAIL,
     OPT_UNORDERED,
     is_pin_only_order,
+    one_clip_edit,
     pin_anchors,
 )
 from app.services.clip_order_sequence import (
@@ -984,6 +985,25 @@ def composition_route(assembly: Mapping[str, Any], contract_digest: str) -> str 
     return None
 
 
+def _edit_rows(
+    media_snapshot: Mapping[str, Any] | None,
+    typed: CreativeStrategy | None,
+    hidden_ids: frozenset[str],
+) -> list[Any]:
+    """The approved clip rows the edit shows: the selected media, minus hidden clips."""
+    rows = (media_snapshot or {}).get("clip_assignments") or []
+    selected = set(typed.selected_media_ids or ()) - hidden_ids if typed else set()
+    if selected:
+        rows = [row for row in rows if isinstance(row, Mapping) and row.get("media_id") in selected]
+    if hidden_ids:
+        rows = [
+            row
+            for row in rows
+            if not (isinstance(row, Mapping) and str(row.get("media_id")) in hidden_ids)
+        ]
+    return list(rows)
+
+
 def build_render_contract(
     strategy: Mapping[str, Any] | None,
     *,
@@ -1114,6 +1134,8 @@ def build_render_contract(
         if position and status == "resolved" and clip_ids.intersection(members)
     }
     talking_edit = str(raw.get("edit_format") or "") in {"subtitled", "talking_head"}
+    edit_rows = _edit_rows(media_snapshot, typed, hidden_ids)
+    one_clip = one_clip_edit(edit_rows)
     if brief:
         for requirement in brief.live():
             if (
@@ -1229,6 +1251,18 @@ def build_render_contract(
                     # landed (`brief_checks._check_order`), and a checked receipt that is
                     # not met blocks the unified montage before anything renders.
                     continue
+                if (
+                    one_clip
+                    and not answered
+                    and key not in CAPTURE_ORDER_KEYS
+                    and not is_pin_only_order(requirement)
+                ):
+                    # KRI-789: "start at '…' and end right after '…'" inside the one take.
+                    # A single clip is in any order, so there is nothing to pin or verify;
+                    # the question gate stays quiet about it for the same reason
+                    # (`choice_questions.one_clip_edit`). Filming order on one clip keeps its
+                    # KRI-661 path below; first / last pins keep KRI-762's.
+                    continue
                 order_required = True
                 if order_answer is not None and requirement.id in order_answer.requirement_ids:
                     continue  # the creator's answer decides how this order is met
@@ -1264,18 +1298,7 @@ def build_render_contract(
             attachment_order = True
     if order_required and attachment_order:
         # An explicit, verifiable basis: the order the clips were added to the project.
-        rows = (media_snapshot or {}).get("clip_assignments") or []
-        selected = set(typed.selected_media_ids or ()) - hidden_ids if typed else set()
-        if selected:
-            rows = [
-                row for row in rows if isinstance(row, Mapping) and row.get("media_id") in selected
-            ]
-        if hidden_ids:
-            rows = [
-                row
-                for row in rows
-                if not (isinstance(row, Mapping) and str(row.get("media_id")) in hidden_ids)
-            ]
+        rows = edit_rows
         ids = [
             str(row["media_id"]) for row in rows if isinstance(row, Mapping) and row.get("media_id")
         ]
@@ -1287,18 +1310,8 @@ def build_render_contract(
     elif order_required:
         from app.services.clip_facts import capture_from_assignment
 
-        rows = (media_snapshot or {}).get("clip_assignments") or []
+        rows = edit_rows
         selected = set(typed.selected_media_ids or ()) - hidden_ids if typed else set()
-        if selected:
-            rows = [
-                row for row in rows if isinstance(row, Mapping) and row.get("media_id") in selected
-            ]
-        if hidden_ids:
-            rows = [
-                row
-                for row in rows
-                if not (isinstance(row, Mapping) and str(row.get("media_id")) in hidden_ids)
-            ]
         dates = {}
         for row in rows:
             if not isinstance(row, Mapping) or not row.get("media_id"):
@@ -1310,7 +1323,7 @@ def build_render_contract(
             str(row["media_id"]) for row in rows if isinstance(row, Mapping) and row.get("media_id")
         ]
         # KRI-661: a single clip is trivially in order, dated or not.
-        single_clip = len(ids) == 1 and len(rows) == 1
+        single_clip = one_clip
         if (
             not ids
             or len(ids) != len(rows)
