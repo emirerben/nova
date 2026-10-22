@@ -926,6 +926,48 @@ import KriaMediaEngine
         XCTAssertEqual(program.assetURLs["narration"], narration.url)
     }
 
+    /// The server marks every rendered timeline slot when a creator selected
+    /// one source to remain audible under narration. The marker is a per-clip
+    /// pre-mix gain; the document's original level remains the one global gain
+    /// in AudioMixRecipe. Unmarked clips stay silent under narration.
+    func testNarratedSelectedSourceAudioUsesPerSlotGainOnceAndKeepsLegacySilent() throws {
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        func source(_ index: Int) -> ResolvedEditorSource {
+            ResolvedEditorSource(clipIndex: index, mediaID: "media-\(index)",
+                asset: MediaAsset(id: "media-\(index)", relativePath: "media-\(index).mp4", fingerprint: fingerprint, duration: 4),
+                url: URL(fileURLWithPath: "/media-\(index).mp4"))
+        }
+        let narration = ResolvedEditorSource(clipIndex: -1, mediaID: "voice", asset: MediaAsset(id: "voice", relativePath: "voice.m4a", fingerprint: fingerprint, duration: 4), url: URL(fileURLWithPath: "/voice.m4a"))
+        let clips = (0..<3).map { index in
+            EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: index, start: Double(index), end: Double(index + 1), trimIn: 0, trimOut: 1, sourceDuration: 4, slotID: "slot-\(index)")
+        }
+        var selected = EditorDocument(clips: [
+            .init(id: "slot-0", clipIndex: 0, inS: 0, durationS: 1, raw: ["source_audio_volume": .number(0)]),
+            .init(id: "slot-1", clipIndex: 1, inS: 0, durationS: 1, raw: ["source_audio_volume": .number(1)]),
+            .init(id: "slot-2", clipIndex: 2, inS: 0, durationS: 1),
+        ])
+        selected.mix["original_level"] = .number(0.35)
+        let selectedRecipe = try compiler.compile(document: selected, clips: clips, items: [],
+                                                   sources: [0: source(0), 1: source(1), 2: source(2)],
+                                                   audioSources: ["narration": narration]).recipe
+        let video = try XCTUnwrap(selectedRecipe.tracks.first { $0.kind == .video }?.clips)
+        XCTAssertEqual(video.map(\.volume), [0, 1, 0])
+        XCTAssertEqual(selectedRecipe.audio.originalVolume, 0.35, accuracy: 0.0001,
+                       "the global original-audio gain is applied once by the engine")
+        XCTAssertEqual(selectedRecipe.tracks.first { $0.id == "narration" }?.clips.first?.volume, 1)
+
+        // Absence is the compatibility gate for projects created before this
+        // feature. Narration keeps every camera clip silent.
+        let legacy = EditorDocument(clips: selected.clips.map { slot in
+            var slot = slot; slot.raw.removeValue(forKey: "source_audio_volume"); return slot
+        })
+        let legacyRecipe = try compiler.compile(document: legacy, clips: clips, items: [],
+                                                 sources: [0: source(0), 1: source(1), 2: source(2)],
+                                                 audioSources: ["narration": narration]).recipe
+        XCTAssertEqual(legacyRecipe.tracks.first { $0.kind == .video }?.clips.map(\.volume), [0, 0, 0])
+    }
+
     func testFeasibleSourceOverrunKeepsThreeSecondClockAndAuthoredWindow() throws {
         let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
         let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)

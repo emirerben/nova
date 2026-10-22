@@ -329,6 +329,7 @@ class PlanFacts:
     # a title, captions, a start cut and speech cleanup; an ask outside that set is answered
     # with a plain "can't" before approval and after render (`_talking_honest_receipt`).
     phone_talking: bool = False
+    phone_voiceover_spoken_text: bool = False
     # KRI-793: True when this draft renders through the phone Talking writer, which captions
     # the take, spells the creator's listed words their way and records every caption line
     # (`defers_caption_words_to_phone_render`). A captions ask about language or spelling
@@ -607,6 +608,8 @@ def plan_facts_from_strategy(
         extra = _beat_facts(strategy, manifest)
         extra["video_clip_count"] = _video_clip_count(strategy, manifest)
         extra["take_duration_s"] = _selected_video_seconds(strategy, manifest)
+        spoken_cap = manifest.capabilities.get("phone_voiceover_spoken_text")
+        extra["phone_voiceover_spoken_text"] = bool(spoken_cap and spoken_cap.available)
     edit_format = strategy.get("edit_format")
     caption_style = strategy.get("caption_style")
     audio_strategy = strategy.get("audio_strategy")
@@ -2981,6 +2984,10 @@ _TALKING_KEEPS_QUOTED_PART = (
     "A Talking edit keeps only the part of your take you asked for, so its length follows that part"
 )
 # KRI-707: the phone Talking worker shows the text from the word (`phone_spoken_text`).
+_VOICEOVER_SPOKEN_TEXT_PLAN = (
+    "I'll place that text on the matching words in your recording. If they repeat, I'll need "
+    "the occurrence you mean."
+)
 _TALKING_SPOKEN_TEXT_PLAN = (
     "I'll show it the moment you say that word in your take; if I don't hear the word, it "
     "won't appear"
@@ -3090,6 +3097,10 @@ _REASON_TR: dict[str, str] = {
         "Videoyu o cümlenin başladığı yerden başlatırım; çekiminde bulamazsam baştan açılır"
     ),
     _TALKING_WINDOW_PLAN: "Çekiminin ",
+    _VOICEOVER_SPOKEN_TEXT_PLAN: (
+        "Yazıyı kaydındaki eşleşen sözlerde göstereceğim. Sözler tekrarlanırsa hangi tekrarı "
+        "istediğini bilmem gerekecek."
+    ),
     _TALKING_SPOKEN_TEXT_PLAN: (
         "Çekiminde o kelimeyi söylediğin anda yazıyı gösteririm; kelimeyi duymazsam yazı çıkmaz"
     ),
@@ -3170,6 +3181,7 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _NO_FREEZE_FRAME,
     _LIGHT_UNAVAILABLE,
     *_TALKING_HONEST_EN,
+    _VOICEOVER_SPOKEN_TEXT_PLAN,
 )
 _FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
     *_FORMAT_LIMIT_EN,
@@ -4552,6 +4564,18 @@ def _spoken_text_miss(req: BriefRequirement, fact: SpokenTextFact) -> Requiremen
     """KRI-707: why a rendered phone Talking edit shows no text for this ask."""
     text = f"“{fact.text or req.literal or ''}”"
     word = f"“{fact.trigger}”" if fact.trigger else say(en="that word", tr="o kelimeyi")
+    if fact.status == "ambiguous":
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"I heard {word} more than once. Choose which occurrence should show {text}.",
+                tr=(
+                    f"{word} birden fazla kez geçiyor. {text} yazısının hangi tekrarda "
+                    "görüneceğini seç."
+                ),
+            ),
+        )
     if fact.status == "not_heard":
         reason = say(
             en=f"I didn't hear you say {word} in your take, so {text} isn't shown",
@@ -5895,6 +5919,29 @@ def render_block_recovery(failures: Sequence[Mapping[str, Any]]) -> RenderBlockR
 
 
 def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    # A rendered spoken-text receipt must prove timing, not just matching caption copy.
+    if _is_voiceover_edit(facts) and _is_spoken_text_cue(req) and facts.rendered_variant:
+        spoken = _spoken_text_fact(facts, req)
+        if spoken is None:
+            return _receipt(req, "partial", _NO_CHECKER)
+        if spoken.status != "placed":
+            return _spoken_text_miss(req, spoken)
+        # The receipt is the only evidence that this particular text appeared at
+        # the spoken cue. Captions and opening-title copy can contain the same
+        # words without satisfying the timed request.
+        if _contains_text(spoken.text, _fold(req.literal or "")):
+            # Placement proves the word anchor, not extra duration/sequence promises.
+            if set(req.facts or {}) & {
+                "segmentation",
+                "sequence",
+                "timing",
+                "overlap",
+                "animation_phases",
+                "duration_s",
+            }:
+                return _receipt(req, "partial", _NO_CHECKER)
+            return _receipt(req, "met", None)
+        return _receipt(req, "partial", _NO_CHECKER)
     wanted = _fold(req.literal or "")
     if req.scope == "title" and facts.title:
         # A title written from the brief may add the route to the creator's words
@@ -5943,6 +5990,11 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         # reply says so plainly instead of holding the draft behind "a simpler version?".
         return _receipt(req, "not_possible", _TALKING_NO_SPOKEN_TEXT)
     if _is_spoken_text_cue(req) and _is_voiceover_edit(facts):
+        spoken = _spoken_text_fact(facts, req)
+        if spoken is not None:
+            return _spoken_text_miss(req, spoken)
+        if facts.phone_voiceover_spoken_text and not facts.rendered_variant:
+            return _receipt(req, "partial", _VOICEOVER_SPOKEN_TEXT_PLAN)
         # KRI-699: a voiceover edit draws its title, captions and word-timed photos/sounds,
         # never a creator text on a spoken word, so a retry can't add it. Still the
         # creator's call (held draft), not a format limit.
@@ -6746,6 +6798,12 @@ def defers_to_narrated_render(
 
 def _settled_by_narrated_render(req: BriefRequirement, strategy: Mapping[str, Any]) -> bool:
     """The asks a rendered Voiceover record can judge and a draft cannot (see above)."""
+    if req.kind == "text" and _is_spoken_text_cue(req):
+        from app.services.phone_rollout import (
+            phone_voiceover_spoken_text_supported,  # noqa: PLC0415
+        )
+
+        return phone_voiceover_spoken_text_supported(require_client=False)
     if req.kind == "order":
         # A strategy that already names its ordering basis can judge a basis ask itself.
         return not strategy.get("ordering_basis")

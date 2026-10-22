@@ -397,6 +397,10 @@ class Settings(BaseSettings):
     # Saves. Rollback: `fly secrets set PHONE_SUBTITLED_SPOKEN_TEXT_ENABLED=false
     # --app nova-video` + `fly machine restart <id>` (api + worker).
     phone_subtitled_spoken_text_enabled: bool = True
+    # New Voiceover authoring; existing saved recipes remain playable when off.
+    phone_voiceover_spoken_text_enabled: bool = False
+    phone_voiceover_source_audio_enabled: bool = False
+    phone_voiceover_source_audio_min_client_protocol: int = 14
     # KRI-465 (editable title on phone Voiceover edits): the opening title the
     # status route shows (`narrated_title_text_elements`) opens as an ordinary
     # editable text element: the capability map opens `text_elements` and a

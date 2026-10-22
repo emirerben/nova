@@ -465,6 +465,12 @@ def effective_render_program(
                     phone_format_capability.reason
                     or "phone sources require a supported edit format"
                 )
+        if strategy.audio_strategy == "voiceover" and strategy.montage_audio is not None:
+            audio_cap = manifest.capabilities.get("phone_voiceover_source_audio")
+            if audio_cap is None or not audio_cap.available:
+                raise MixedMediaTimingUnavailableError(
+                    "Selected clip sound under narration needs a supported app and server release."
+                )
         source_ids: set[str] = set()
         if strategy.montage_cadence is not None:
             source_ids.update(strategy.montage_cadence.source_media_ids)

@@ -765,6 +765,23 @@ def resolve_creator_manifest(
         and resolved_narration is not None
         and capabilities.get(f"phone_format:{normalized_format}", _unavailable("x", "x")).available
     )
+    from app.services.phone_rollout import (
+        phone_voiceover_source_audio_supported,
+        phone_voiceover_spoken_text_supported,
+    )
+
+    for name, supported in (
+        ("phone_voiceover_spoken_text", phone_voiceover_spoken_text_supported()),
+        ("phone_voiceover_source_audio", phone_voiceover_source_audio_supported()),
+    ):
+        capabilities[name] = (
+            _available()
+            if is_phone_voiceover and supported
+            else _unavailable(
+                "voiceover_feature_unavailable",
+                "This Voiceover feature needs a supported app and server release.",
+            )
+        )
     if is_phone_voiceover and phone_voiceover_reaction_beats_supported():
         capabilities[CAPABILITY_REACTION_BEATS] = _available()
     elif is_phone_subtitled:

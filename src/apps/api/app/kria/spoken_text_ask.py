@@ -21,6 +21,7 @@ speaks, so the text shows the first time anyone says the word and the receipts s
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -64,6 +65,31 @@ class SpokenTextAsk:
     # Someone other than the creator the ask says speaks the word ("she"); None for the
     # creator's own voice or anyone's.
     speaker: str | None = None
+    # A structured selection among repeated trigger phrases.  ``None`` keeps
+    # the legacy Talking path's first-hit rule; narrated voiceovers refuse an
+    # unqualified repeat rather than inventing a moment.
+    occurrence: str | int | None = None
+
+
+def _fact_occurrence(req: BriefRequirement) -> str | int | None:
+    value = req.facts.get("occurrence")
+    if isinstance(value, str) and value in {"first", "last"}:
+        return value
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value
+    if isinstance(value, str) and value.isdecimal() and int(value) >= 1:
+        return int(value)
+    return None
+
+
+def _worded_occurrence(req: BriefRequirement) -> str | None:
+    """Only accept narrow, explicit occurrence wording; never infer an index."""
+    wording = " ".join((req.description or "").casefold().split())
+    first = re.search(r"\b(?:the )?(?:first|1st) time\b|\bilk (?:kez|defa)\b", wording)
+    last = re.search(r"\b(?:the )?(?:last|final) time\b|\bson (?:kez|defa)\b", wording)
+    if bool(first) == bool(last):
+        return None
+    return "first" if first else "last"
 
 
 def spoken_triggers(req: BriefRequirement) -> tuple[str, ...]:
@@ -102,7 +128,16 @@ def requirement_spoken_text(req: BriefRequirement) -> SpokenTextAsk | None:
         return None
     # A speaker the model wrote wins, even "I" over a "she" in the wording.
     speaker = _fact_speaker(req) if SPOKEN_TEXT_SPEAKER_KEY in req.facts else worded_speaker
-    return SpokenTextAsk(requirement_id=req.id, text=text, triggers=triggers, speaker=speaker)
+    # A structured field wins, including an unrecognized value: that prevents
+    # prose from silently choosing a time when the structured value is bad.
+    occurrence = _fact_occurrence(req) if "occurrence" in req.facts else _worded_occurrence(req)
+    return SpokenTextAsk(
+        requirement_id=req.id,
+        text=text,
+        triggers=triggers,
+        speaker=speaker,
+        occurrence=occurrence,
+    )
 
 
 def spoken_text_asks(requirements: Iterable[BriefRequirement]) -> tuple[SpokenTextAsk, ...]:

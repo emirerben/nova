@@ -74,6 +74,8 @@ def find_spoken_word(
     words: Sequence[Any], triggers: Sequence[str]
 ) -> tuple[str, float, float] | None:
     """The first time the take says any of ``triggers``: (trigger, start_s, end_s)."""
+    # Keep the original Talking matcher byte-for-byte in behavior: its
+    # first-only query has no repeated-occurrence cap or selection policy.
     from app.services.phone_reaction_grounding import (  # noqa: PLC0415
         _match_trigger,
         _token_stream,
@@ -86,6 +88,36 @@ def find_spoken_word(
         if windows and (heard is None or windows[0][0] < heard[1]):
             heard = (trigger, float(windows[0][0]), float(windows[0][1]))
     return heard
+
+
+def find_spoken_word_matches(
+    words: Sequence[Any], triggers: Sequence[str]
+) -> list[tuple[str, float, float]]:
+    """Every spoken match for the creator's triggers, in timeline order.
+
+    The Talking path still uses :func:`find_spoken_word` and therefore keeps its
+    shipped first-hit behavior.  Voiceover callers can inspect repetition before
+    choosing a time, rather than silently treating an ambiguous repeated phrase
+    as its first occurrence.
+    """
+    from app.services.phone_reaction_grounding import (  # noqa: PLC0415
+        _match_trigger,
+        _token_stream,
+    )
+
+    stream = _token_stream(_word_dicts(words))
+    heard: list[tuple[str, float, float]] = []
+    for trigger in triggers:
+        windows = _match_trigger(stream, trigger, None, "every").windows
+        heard.extend((trigger, float(start_s), float(end_s)) for start_s, end_s in windows)
+    # Different trigger spellings may resolve to the same spoken interval.  It
+    # is one moment, not an ambiguous pair of moments.
+    unique: dict[tuple[float, float], tuple[str, float, float]] = {}
+    for match in heard:
+        # Preserve the first trigger the creator supplied, which is how the
+        # original first-hit implementation resolved equivalent spellings.
+        unique.setdefault((match[1], match[2]), match)
+    return sorted(unique.values(), key=lambda match: match[1])
 
 
 def spoken_text_element(
@@ -243,6 +275,7 @@ __all__ = [
     "SPOKEN_TEXT_SOURCE",
     "caption_boxes",
     "find_spoken_word",
+    "find_spoken_word_matches",
     "spoken_text_element",
     "spoken_text_rows",
 ]

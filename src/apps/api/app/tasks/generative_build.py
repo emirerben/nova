@@ -2541,11 +2541,19 @@ def _run_generative_job_impl(
                     # A recording's mere presence cannot override the approved
                     # soundtrack. Historical jobs retain their original dispatch.
                     # Every decline here is typed (decline_reason/field_path).
+                    from app.services.phone_rollout import (
+                        phone_voiceover_source_audio_supported,  # noqa: PLC0415
+                    )
+
                     has_voiceover_candidate = check_phone_dispatch_contract(
                         contract,
                         snapshot_generation_id=phone_snapshot.get("creator_generation_id"),
                         has_voiceover_candidate=has_voiceover_candidate,
                         user_song=candidates.get("user_song"),
+                        allow_voiceover_source_audio=(
+                            phone_voiceover_source_audio_supported(require_client=False)
+                            and declared_format in NARRATED_EDIT_FORMATS
+                        ),
                     )
                 if isinstance(phone_snapshot.get("guided_edit"), dict):
                     _shadow_route(
@@ -9324,6 +9332,7 @@ def _run_phone_narrated_job(
     from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
         NarratedPhoneStep,
         compile_phone_narrated_plan,
+        narrated_title_element,
         narrated_title_end_s,
         narrated_title_text_elements,
     )
@@ -9338,6 +9347,8 @@ def _run_phone_narrated_job(
     from app.services.phone_reaction_grounding import trigger_vocabulary_prompt  # noqa: PLC0415
     from app.services.phone_rollout import (  # noqa: PLC0415
         phone_voiceover_reaction_beats_supported,
+        phone_voiceover_source_audio_supported,
+        phone_voiceover_spoken_text_supported,
         validate_phone_pilot_recipe,
     )
     from app.services.phone_sources import (  # noqa: PLC0415
@@ -9410,6 +9421,19 @@ def _run_phone_narrated_job(
     # my medal photo"), grounded below against this voiceover's own words.
     strategy = all_candidates.get("creator_strategy")
     strategy = strategy if isinstance(strategy, dict) else {}
+    source_audio_ids: tuple[str, ...] | None = None
+    raw_audio = strategy.get("montage_audio")
+    if isinstance(raw_audio, dict):
+        if not phone_voiceover_source_audio_supported(require_client=False):
+            raise UnsupportedPhonePlan("Selected clip sound under narration is not enabled yet")
+        from app.schemas.edit_proposal import MontageAudioPlan  # noqa: PLC0415
+
+        selected_audio = MontageAudioPlan.model_validate(raw_audio)
+        source_audio_ids = (
+            tuple(selected_audio.source_media_ids or [b.media_id for b in bindings])
+            if selected_audio.preserve_source_audio
+            else ()
+        )
     raw_beats = strategy.get("reaction_beats")
     beats: list = raw_beats if isinstance(raw_beats, list) else []
     raw_closing = strategy.get("closing_media")
@@ -9797,6 +9821,66 @@ def _run_phone_narrated_job(
             opening_title_end_s = narrated_title_end_s(
                 transcript.words[0].end_s if transcript.words else None
             )
+            spoken_rows: list[dict] = []
+            spoken_receipt: dict | None = None
+            if phone_voiceover_spoken_text_supported(require_client=False):
+                asks = _phone_spoken_text_asks(snapshot)
+                if asks:
+                    from app.kria.recipes import Canvas  # noqa: PLC0415
+                    from app.kria.reply_language import say  # noqa: PLC0415
+                    from app.pipeline.phone_narrated_spoken_text import (
+                        narrated_spoken_text_rows,  # noqa: PLC0415
+                    )
+
+                    canvas = Canvas(width=1080, height=1920)
+                    title = narrated_title_element(
+                        opening_title,
+                        end_s=opening_title_end_s,
+                        timeline_duration_s=voiceover_duration_s,
+                        canvas=canvas,
+                    )
+                    spoken_rows, spoken_receipt = narrated_spoken_text_rows(
+                        asks,
+                        words=transcript.words,
+                        cues=cues,
+                        caption_style=caption_style,
+                        timeline_duration_s=voiceover_duration_s,
+                        canvas=canvas,
+                        shown_rows=[title.model_dump(mode="json", exclude_none=True)]
+                        if title
+                        else [],
+                    )
+                    misses = [row for row in spoken_receipt["rows"] if row["status"] != "placed"]
+                    if misses:
+                        with _worker_reply_language(snapshot):
+                            repeated = any(row["status"] == "ambiguous" for row in misses)
+                            words = ", ".join(str(row["text"]) for row in misses)
+                            message = say(
+                                en=(
+                                    f"I found repeated trigger words for {words}. "
+                                    "Tell me first, last, or which occurrence."
+                                    if repeated
+                                    else (
+                                        f"I couldn't safely place {words} on the recorded words. "
+                                        "Check the phrase or choose a different moment."
+                                    )
+                                ),
+                                tr=(
+                                    f"{words} için beklenen sözler tekrarlanıyor. "
+                                    "İlk, son ya da hangi tekrar olduğunu söyle."
+                                    if repeated
+                                    else (
+                                        f"{words} yazısını kayıttaki sözlere yerleştiremedim. "
+                                        "Sözü kontrol et ya da başka bir an seç."
+                                    )
+                                ),
+                            )
+                        if not _save_request_recovery(
+                            job_id, snapshot, ownership_epoch=ownership_epoch, message=message
+                        ):
+                            return None
+                        raise UnsupportedPhonePlan(message)
+                    record_pipeline_event("narrated", "spoken_text", spoken_receipt)
             # KRI-519: beats become the Voiceover overlay / sound-effect lanes,
             # the same ones an editor Save recompiles (KRI-281).
             lanes: Any = None
@@ -9829,6 +9913,8 @@ def _run_phone_narrated_job(
                         opening_title_end_s=opening_title_end_s,
                         lanes=lanes,
                         visuals=visuals,
+                        source_audio_media_ids=source_audio_ids,
+                        resolved_text_elements=spoken_rows,
                     )
                     break
                 except UnsupportedPhonePlan as exc:
@@ -9918,8 +10004,13 @@ def _run_phone_narrated_job(
         title_elements = narrated_title_text_elements(
             recipe, opening_title, end_s=opening_title_end_s
         )
-        if title_elements:
-            new_entry["narrated_title_text_elements"] = title_elements
+        if title_elements or spoken_rows:
+            new_entry["narrated_title_text_elements"] = title_elements + spoken_rows
+        if spoken_receipt is not None:
+            new_entry["spoken_text_placement"] = spoken_receipt
+        if source_audio_ids is not None:
+            new_entry["source_audio_media_ids"] = list(source_audio_ids)
+            new_entry["source_audio_bed_gain"] = recipe.audio.original_volume
         # KRI-281: persist the cut the editor shows, derived from the very recipe
         # just pinned (same code the read-time projection uses for videos rendered
         # before this existed). Clip ids index the source pool the timeline lists.

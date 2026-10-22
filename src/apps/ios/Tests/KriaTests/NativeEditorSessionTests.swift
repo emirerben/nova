@@ -4071,6 +4071,24 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(voiced.clips.map(\.trimIn), [1, 0])
     }
 
+    func testPhoneNarratedSelectedSourceAudioHydratesFinalBedGainOnly() {
+        let server = DraftSnapshot(draftID: "job", itemID: "item", variantKey: "v", draftRevision: 0,
+                                   snapshotHash: "", etag: "", baseJobID: UUID().uuidString,
+                                   baseGenerationID: "generation", snapshot: [:], canUndo: false, createdAt: .now)
+        var selected: [String: JSONValue] = [
+            "resolved_archetype": .string("narrated"), "render_destination": .string("device"),
+            "source_audio_media_ids": .array([.string("media-1")]),
+            "source_audio_bed_gain": .number(0.0875),
+            "voiceover_bed_level": .number(0.25),
+        ]
+        let selectedDocument = EditorDocument(snapshot: server.editorDraft(projectID: UUID(), authoritativeVariant: selected).serverSnapshot)
+        XCTAssertEqual(selectedDocument.mix["original_level"], .number(0.0875), "the final ducked gain, not the display level")
+
+        selected.removeValue(forKey: "source_audio_media_ids")
+        let legacyDocument = EditorDocument(snapshot: server.editorDraft(projectID: UUID(), authoritativeVariant: selected).serverSnapshot)
+        XCTAssertNil(legacyDocument.mix["original_level"], "an unselected narrated variant remains legacy-muted")
+    }
+
     func testAuthoritativeVariantReplacesAdvancedCapabilitiesAndRequiredMotionHash() {
         let snapshot: [String: JSONValue] = [
             "editor_capabilities": .object([

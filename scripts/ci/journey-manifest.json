@@ -1277,6 +1277,22 @@
         "src/apps/api/tests/agents/test_market_research_banks.py",
         "src/apps/api/tests/agents/test_overlay_examples_slop_guard.py"
       ]
+    },
+    {
+      "id": "voiceover-word-text-selected-audio",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_voiceover_requested_capabilities.py tests/pipeline/test_phone_narrated_spoken_text.py tests/tasks/test_phone_voiceover_requested_edits.py tests/routes/test_phone_voiceover_requested_edit_roundtrip.py tests/services/test_creator_render_contract.py",
+      "xctests": [
+        "KriaTests/NativeEditorRenderCompilerTests/testNarratedSelectedSourceAudioUsesPerSlotGainOnceAndKeepsLegacySilent",
+        "KriaTests/NativeEditorSessionTests/testPhoneNarratedSelectedSourceAudioHydratesFinalBedGainOnly"
+      ],
+      "paths": [
+        "src/apps/api/app/pipeline/phone_narrated_spoken_text.py",
+        "src/apps/api/tests/kria/test_voiceover_requested_capabilities.py",
+        "src/apps/api/tests/pipeline/test_phone_narrated_spoken_text.py",
+        "src/apps/api/tests/tasks/test_phone_voiceover_requested_edits.py",
+        "src/apps/api/tests/routes/test_phone_voiceover_requested_edit_roundtrip.py"
+      ]
     }
   ]
 }
