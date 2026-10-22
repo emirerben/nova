@@ -18,6 +18,10 @@ final class GamedayAddClipUITests: XCTestCase {
         app.buttons["native-editor-text-done"].tap()
         let inspectorDone = app.buttons["native-editor-text-inspector-done"]
         XCTAssertTrue(inspectorDone.waitForExistence(timeout: 5)); inspectorDone.tap()
+        // The title changes before the inspector's outgoing transition finishes.
+        // Wait for the editing surface to close before tapping the underlying add menu.
+        XCTAssertTrue(inspectorDone.waitForNonExistence(timeout: 5), "The text inspector must close")
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-connected-panel"].waitForNonExistence(timeout: 5), "The editor panel must close before adding a clip")
         waitFor(probe, contains: "Gameday edited title")
         openQuickAdd(app, option: "native-editor-add-menu-video")
         waitFor(probe, contains: "clips=5;previewClips=5")
