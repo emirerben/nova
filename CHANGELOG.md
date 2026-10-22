@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.26.0] - 2026-10-22
+
+### Fixed
+- fix(dispatch): the approved order answer reaches the render contract (KRI-788) (#1727) <!-- release-pr: 1727 -->
+
 ## [0.81.25.0] - 2026-10-22
 
 ### Fixed
