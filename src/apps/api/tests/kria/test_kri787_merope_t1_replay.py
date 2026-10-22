@@ -37,7 +37,9 @@ How it fails after approval, step by step (failure modes first, KRI-787):
 the tickets whose fix changes it, and that PR retires it. The outcome the creator should
 have had is marked ``xfail(strict=True, raises=AssertionError)`` with the owning ticket (the
 incident-corpus convention): each fails today on the incident itself, the owning PR turns it
-into XPASS and strict mode makes that PR delete the marker.
+into XPASS and strict mode makes that PR delete the marker. Every ticket this module covers
+(KRI-788, KRI-794, KRI-795) landed before the replay did, so its pins are retired and the
+outcomes below run as plain tests.
 
 Seams a child PR may route through (one place each, so the replay follows the fix):
 
@@ -47,6 +49,8 @@ Seams a child PR may route through (one place each, so the replay follows the fi
   opening cut only). KRI-790's end cut joins it here.
 - ``chat_before_turn_4()``: the chat the server reads at turn 4, with the failure card the
   observer posts today in place of prod's (so KRI-795's re-asked picker reaches turn 4).
+- ``failure_card(..., before=)``: the observer reads the thread as prod had it before the
+  card (``RecordedThread``), so KRI-795 re-asks prod's own order question.
 
 Speech cleanup (chosen at approval in prod) is off in the dispatch here: it never reads or
 writes the contract, and prod's contract digest is reproduced without it.
@@ -92,6 +96,8 @@ CREATOR_ID = uuid.UUID(FIXTURE["creator_id"])
 THREAD_ID = uuid.UUID(FIXTURE["thread_id"])
 ITEM_ID = uuid.UUID(FIXTURE["plan_item_id"])
 EVENTS = {event["sequence"]: event for event in FIXTURE["events"]}
+# Where each render's failure card sits in the chat, by render.
+CARDS = [seq for seq, event in sorted(EVENTS.items()) if event["kind"] == "assistant_render_failed"]
 ORDER_REFUSAL = "I can't verify this ordering rule from the approved media."
 # The kit's ground truth for the take (T1 README): where the quoted lines are said.
 START_LINE_S = 12.0  # "Hi, I'm Karolina, I'm from Ecuador" (prod segment 12.04-13.58)
@@ -363,9 +369,46 @@ def run_worker(monkeypatch: pytest.MonkeyPatch, job) -> WorkerOutcome:  # noqa: 
     )
 
 
-def failure_card(job, outcome: WorkerOutcome) -> dict:  # noqa: ANN001
-    """The chat event the real observer posts for the failed job, as ``_fail_job`` left it."""
+class RecordedThread:
+    """The observer's thread reads, answered from the events prod recorded before a card.
+
+    ``_reasked_choice_question`` (KRI-795) asks for the latest assistant question on the
+    refused choice's conflict, then for the whole thread (to count the asks); both are
+    answered from the fixture, so the real re-ask runs on prod's own question.
+    """
+
+    def __init__(self, *, before: int) -> None:
+        self._events = [event for sequence, event in sorted(EVENTS.items()) if sequence < before]
+
+    def execute(self, statement):  # noqa: ANN001, ANN201
+        from sqlalchemy.dialects import postgresql  # noqa: PLC0415
+
+        bound = set(statement.compile(dialect=postgresql.dialect()).params.values())
+        asked = [
+            event["payload"]
+            for event in self._events
+            if event["actor"] == "assistant"
+            and ((event["payload"] or {}).get("choice_question") or {}).get("conflict") in bound
+        ]
+        rows = [(event["actor"], event["payload"], event["sequence"]) for event in self._events]
+        return SimpleNamespace(
+            scalar_one_or_none=lambda: asked[-1] if asked else None, all=lambda: rows
+        )
+
+    def get(self, _model, _identity):  # noqa: ANN001, ANN201
+        return None
+
+
+def failure_card(job, outcome: WorkerOutcome, *, before: int) -> dict:  # noqa: ANN001
+    """The chat event the real observer posts for the failed job, as ``_fail_job`` left it,
+    on the thread as prod had it before event ``before``."""
+    from app.tasks import kria_runtime  # noqa: PLC0415
     from tests.kria.test_runtime_phone_v2 import _observe  # noqa: PLC0415
+
+    reask = kria_runtime._reasked_choice_question
+
+    def on_recorded_thread(_db, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        return reask(RecordedThread(before=before), *args, **kwargs)
 
     assembly = copy.deepcopy(job.assembly_plan)
     if outcome.decline:
@@ -379,7 +422,8 @@ def failure_card(job, outcome: WorkerOutcome) -> dict:  # noqa: ANN001
         error_detail=outcome.message,
         assembly_plan=assembly,
     )
-    _outcome, _execution, events = _observe(failed, {})
+    with patch.object(kria_runtime, "_reasked_choice_question", on_recorded_thread):
+        _outcome, _execution, events = _observe(failed, {})
     return events[-1]
 
 
@@ -437,7 +481,9 @@ def planned(strategy: dict, *, summary: str = "") -> PlannedKriaTurn:
 def chat_before_turn_4(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
     """The chat the server reads when "Continue without a fixed order" arrives: prod's events,
     with the first render's failure card as the observer posts it today (a seam)."""
-    card = failure_card(dispatch(monkeypatch, RENDERS[0]), prod_refusal(RENDERS[0]))
+    card = failure_card(
+        dispatch(monkeypatch, RENDERS[0]), prod_refusal(RENDERS[0]), before=CARDS[0]
+    )
     return [
         ("assistant", card["payload"], card["event_type"], card["content"])
         if row[2] == "assistant_render_failed"
@@ -498,61 +544,9 @@ def test_approval_is_offered_for_both_drafts(index: int) -> None:
     assert approval_blocker(RENDERS[index]["draft_strategy"], t1_brief()) is None
 
 
-@pytest.mark.parametrize("index", [0, 1], ids=JOBS)
-def test_prod_dispatch_rebuilds_the_contract_without_the_answer(
-    monkeypatch: pytest.MonkeyPatch, index: int
-) -> None:
-    """Prod's stored contract, byte for byte. Retired by KRI-788 (or KRI-789's one-clip rule)."""
-    render = RENDERS[index]
-    job = dispatch(monkeypatch, render)
-    contract = dispatched_contract(job)
-    assert "choice_answers" not in job.all_candidates["creator_strategy"]
-    rebound = contract.model_copy(update={"generation_id": render["generation_id"]}).rebind()
-    assert rebound.digest == render["prod_contract"]["digest"]
-    assert contract.unresolved == (ORDER_REFUSAL,)
-    assert render["prod_contract"]["unresolved"] == [ORDER_REFUSAL]
-
-
-@pytest.mark.parametrize("index", [0, 1], ids=JOBS)
-def test_prod_the_worker_refuses_it(monkeypatch: pytest.MonkeyPatch, index: int) -> None:
-    """Prod's failure reason, message and decline. Retired by KRI-788 (or KRI-789)."""
-    render = RENDERS[index]
-    outcome = run_worker(monkeypatch, dispatch(monkeypatch, render))
-    assert outcome == prod_refusal(render)
-    assert outcome.message == ORDER_REFUSAL
-
-
-@pytest.mark.parametrize("index", [0, 1], ids=JOBS)
-def test_prod_failure_card(monkeypatch: pytest.MonkeyPatch, index: int) -> None:
-    """The observer's card for prod's refusal, word for word. Retired by KRI-795."""
-    render = RENDERS[index]
-    card = failure_card(dispatch(monkeypatch, render), prod_refusal(render))
-    assert card["content"] == render["prod_card"]["content"]
-    ids = {"turn_id", "execution_id", "job_id", "receipt_ids"}
-    assert {k: v for k, v in card["payload"].items() if k not in ids} == {
-        k: v for k, v in render["prod_card"]["payload"].items() if k not in ids
-    }
-
-
-async def test_prod_turn_4_typed_label_keeps_the_old_answer(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Retired by KRI-794 (or KRI-795, whose card re-asks the order question)."""
-    rows = chat_before_turn_4(monkeypatch)
-    assert await typed_choice(FIXTURE["creator_messages"][3], rows) is None
-    strategy = await turn4_strategy(monkeypatch)
-    assert strategy["choice_answers"] == RENDERS[1]["draft_strategy"]["choice_answers"]
-
-
 # == what the creator should have had (child tickets) =========================================
 
-_KRI_788 = (
-    "KRI-788: the approved order answer is dropped between approval and dispatch "
-    "(KRI-789's one-clip rule may land first)"
-)
 
-
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_KRI_788)
 @pytest.mark.parametrize("index", [0, 1], ids=JOBS)
 def test_the_approved_answer_reaches_the_contract(
     monkeypatch: pytest.MonkeyPatch, index: int
@@ -562,7 +556,6 @@ def test_the_approved_answer_reaches_the_contract(
     assert (contract.order_basis, contract.order_ids) == ("attachment_order", (TAKE,))
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_KRI_788)
 @pytest.mark.parametrize("index", [0, 1], ids=JOBS)
 def test_an_offered_approval_is_never_refused_at_dispatch(
     monkeypatch: pytest.MonkeyPatch, index: int
@@ -574,19 +567,18 @@ def test_an_offered_approval_is_never_refused_at_dispatch(
     assert outcome.route == "subtitled"
 
 
-_KRI_794 = (
-    "KRI-794: a typed option label is ignored once its question has closed "
-    "(KRI-795's re-asked picker may land first)"
-)
-
-
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_KRI_794)
 async def test_typing_the_other_option_replaces_the_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The typed label answers the order question the failure card re-asked (KRI-794/795), and
+    the old ``attachment_order`` answer never comes back. Since KRI-789 a one-take edit has no
+    order to promise, so the draft carries no order answer at all."""
+    rows = chat_before_turn_4(monkeypatch)
+    selection = await typed_choice(FIXTURE["creator_messages"][3], rows)
+    assert selection is not None
+    assert selection["option_key"] == "unordered"
     strategy = await turn4_strategy(monkeypatch)
-    assert order_answers(strategy) == [("order_basis", "unordered")]
+    assert ("order_basis", "attachment_order") not in order_answers(strategy)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_KRI_794)
 async def test_the_re_answered_draft_reaches_the_talking_renderer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -604,17 +596,12 @@ async def test_the_re_answered_draft_reaches_the_talking_renderer(
     assert run_worker(monkeypatch, job).route == "subtitled"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-795: the refusal card blames the iPhone and offers options it never shows",
-)
 @pytest.mark.parametrize("index", [0, 1], ids=JOBS)
 def test_the_failure_card_names_the_lost_choice_and_re_asks_it(
     monkeypatch: pytest.MonkeyPatch, index: int
 ) -> None:
     render = RENDERS[index]
-    card = failure_card(dispatch(monkeypatch, render), prod_refusal(render))
+    card = failure_card(dispatch(monkeypatch, render), prod_refusal(render), before=CARDS[index])
     assert "iPhone can't render" not in card["content"]
     assert "different clip or format" not in card["content"]
     assert "order" in card["content"].lower()

@@ -358,7 +358,8 @@ runtime), both reading `tests/fixtures/kri787_merope_t1_turns.json`.
 - **Pins and outcomes.** `test_prod_*` tests pin the incident and name the tickets that
   retire them; what the creator should have had is a strict xfail per child ticket. Red
   control: cherry-pick each child's commit onto the replay and check that only its own
-  markers and pins flip.
+  markers and pins flip. A child that lands before the replay does leaves the replay to
+  retire its pins and markers when it syncs with main.
 
 ## Deployment order
 

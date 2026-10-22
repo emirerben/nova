@@ -12,8 +12,8 @@ dispatch and the worker's first gate (``test_kri787_merope_t1_replay.dispatch`` 
 ``run_worker``). The creator answers each question the way Yasin did ("Use the order you
 added the clips", then "Make this simpler version"), whatever turn it comes on.
 
-On 45ed79016 the three replies, every receipt and the approval card equal prod's word for
-word (``test_prod_chat_word_for_word``). Failure modes, each pinned below:
+On 45ed79016 the three replies, every receipt and the approval card equalled prod's word for
+word (that pin retired when KRI-789/791/793 landed). Failure modes:
 
 1. Turn 1 asks the clip-order question on a one-take Talking edit (KRI-789).
 2. The first draft is held back over "MEROPE" ("That exact text isn't in this draft"), so the
@@ -26,7 +26,9 @@ word (``test_prod_chat_word_for_word``). Failure modes, each pinned below:
 6. The approval card goes out for a draft the worker then refuses (KRI-788).
 
 ``test_prod_*`` tests pin the incident as prod showed it; each names the tickets whose fix
-changes it, and that PR retires it with its own ``xfail`` marker. Turn 4 (a typed option
+changes it, and that PR retires it with its own ``xfail`` marker. KRI-788, 789, 791 and 793
+landed before this replay did, so their pins are gone and their outcomes run as plain
+tests; KRI-790 and KRI-792 still own theirs. Turn 4 (a typed option
 label after the refusal) is replayed without a database in ``test_kri787_merope_t1_replay``
 (KRI-794/795).
 """
@@ -62,7 +64,6 @@ from tests.kria.test_kri787_merope_t1_replay import (
     END_LINE_S,
     EVENTS,
     FIXTURE,
-    ORDER_REFUSAL,
     RENDERS,
     START_LINE_S,
     TAKE_S,
@@ -304,41 +305,6 @@ def _verdicts(receipts: dict[str, dict], ids: tuple[str, ...] | None = None) -> 
 
 
 @pytest.mark.asyncio
-async def test_prod_chat_word_for_word(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every reply, receipt and the approval card, as prod sent them. Pins every line, so the
-    first of KRI-789/790/791/792/793 to land retires it."""
-    chat = await _chat_until_approval(monkeypatch)
-    assert [reply.content for reply in chat.replies] == [
-        EVENTS[6]["content"],
-        EVENTS[8]["content"],
-        EVENTS[10]["content"],
-    ]
-    assert _verdicts(_receipts(chat.replies[1])) == _verdicts(_prod_receipts(8))
-    assert _verdicts(_receipts(chat.replies[2])) == _verdicts(_prod_receipts(10))
-    assert chat.approval.consequence_summary == EVENTS[11]["payload"]["consequence_summary"]
-
-
-@pytest.mark.asyncio
-async def test_prod_turn_1_asks_the_clip_order_question(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Retired by KRI-789."""
-    chat = await _chat_until_approval(monkeypatch)
-    first = chat.replies[0]
-    assert first.content == EVENTS[6]["content"]
-    assert first.payload["choice_question"]["kind"] == "order_basis"
-
-
-@pytest.mark.asyncio
-async def test_prod_merope_holds_the_first_draft_back(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Retired by KRI-791."""
-    chat = await _chat_until_approval(monkeypatch)
-    held = next(r for r in chat.replies if "r7" in _receipts(r))
-    assert _verdicts(_receipts(held), ("r7",)) == _verdicts(_prod_receipts(8), ("r7",))
-    assert held.content.endswith(EVENTS[8]["content"].rsplit("\n", 1)[-1])
-    assert held.payload["choice_question"]["conflict"] == "simplification_requires_choice"
-    assert "- Left out as agreed: Show MEROPE in big letters" in chat.approval.consequence_summary
-
-
-@pytest.mark.asyncio
 async def test_prod_the_length_line_judges_the_whole_take(monkeypatch: pytest.MonkeyPatch) -> None:
     """Retired by KRI-790."""
     chat = await _chat_until_approval(monkeypatch)
@@ -363,33 +329,11 @@ async def test_prod_named_cuts_get_the_pause_line_then_done(
 
 
 @pytest.mark.asyncio
-async def test_prod_captions_and_spellings_get_no_line(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Retired by KRI-793."""
-    chat = await _chat_until_approval(monkeypatch)
-    assert all("r5" not in _receipts(reply) for reply in chat.replies)
-    assert "Oblea" not in chat.approval.consequence_summary
-
-
-@pytest.mark.asyncio
-async def test_prod_the_approved_draft_is_refused_at_dispatch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Prod's answer reaches approval and is lost at dispatch. Retired by KRI-788/789."""
-    chat = await _chat_until_approval(monkeypatch)
-    claim = await _approve(chat)
-    assert claim.strategy["choice_answers"] == RENDERS[0]["draft_strategy"]["choice_answers"]
-    assert claim.brief_binding["choice_answers"] == FIXTURE["binding"]["choice_answers"]
-    job = dispatch(monkeypatch, RENDERS[0], strategy=claim.strategy, binding=claim.brief_binding)
-    outcome = run_worker(monkeypatch, job)
-    assert (outcome.failure_reason, outcome.message) == ("phone_plan_unsupported", ORDER_REFUSAL)
-
-
-@pytest.mark.asyncio
 async def test_prod_the_approved_draft_keeps_the_whole_take(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Neither quoted line reaches the Talking plan: Yasin's intro and Atakan's goodbye stay
-    in. Retired by KRI-789/790."""
+    in. Retired by KRI-790."""
     chat = await _chat_until_approval(monkeypatch)
     claim = await _approve(chat)
     job = dispatch(monkeypatch, RENDERS[0], strategy=claim.strategy, binding=claim.brief_binding)
@@ -399,11 +343,6 @@ async def test_prod_the_approved_draft_keeps_the_whole_take(
 # == what the creator should have had (child tickets) =========================================
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-789: a one-take Talking edit with start/end lines asks the clip-order question",
-)
 @pytest.mark.asyncio
 async def test_one_take_asks_no_clip_order_question(monkeypatch: pytest.MonkeyPatch) -> None:
     chat = await _chat_until_approval(monkeypatch)
@@ -413,11 +352,6 @@ async def test_one_take_asks_no_clip_order_question(monkeypatch: pytest.MonkeyPa
         assert "order for the clips" not in str(reply.content)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-788: the approval card goes out for a draft the worker always refuses",
-)
 @pytest.mark.asyncio
 async def test_the_approved_draft_reaches_the_talking_renderer(
     monkeypatch: pytest.MonkeyPatch,
@@ -458,11 +392,6 @@ async def test_the_approval_card_names_the_start_and_end_lines(
     assert "here all week" in summary
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-791: MEROPE on her first Merope is held back as an exact-text miss",
-)
 @pytest.mark.asyncio
 async def test_merope_is_placed_on_her_word_or_honestly_explained(
     monkeypatch: pytest.MonkeyPatch,
@@ -506,11 +435,6 @@ async def test_with_cleanup_chosen_a_named_phrase_cut_is_never_done(
     assert receipts["r4"]["status"] != "met"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-793: captions for both voices and the four spellings get no line",
-)
 @pytest.mark.asyncio
 async def test_captions_and_spellings_get_a_line(monkeypatch: pytest.MonkeyPatch) -> None:
     chat = await _chat_until_approval(monkeypatch)
@@ -522,7 +446,7 @@ async def test_captions_and_spellings_get_a_line(monkeypatch: pytest.MonkeyPatch
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="KRI-788 + KRI-789/KRI-790: the quoted start and end lines become the kept window",
+    reason="KRI-790: the quoted start and end lines become the kept window",
 )
 @pytest.mark.asyncio
 async def test_the_video_starts_on_hi_im_karolina_and_ends_after_here_all_week(
