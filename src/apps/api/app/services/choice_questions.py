@@ -31,7 +31,7 @@ import re
 import unicodedata
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
@@ -601,10 +601,15 @@ def latest_open_choice_question(events: Events) -> dict[str, Any] | None:
                 is_open = False
         elif role == "user":
             selection = payload.get("choice_selection")
-            if isinstance(selection, dict):
-                if last is not None and selection.get("question_id") == last.get("question_id"):
-                    last, is_open = None, False
+            if (
+                isinstance(selection, dict)
+                and last is not None
+                and selection.get("question_id") == last.get("question_id")
+            ):
+                last, is_open = None, False
             elif last is not None and is_open:
+                # Any other user turn, including a typed re-answer of an EARLIER question
+                # (KRI-794), is a turn taken after this one that did not answer it.
                 user_since = True
                 key = (last.get("conflict"), last.get("input_digest"))
                 if asked.get(key, 0) >= MAX_ASKS_PER_QUESTION:
@@ -2598,14 +2603,20 @@ def _ordinal_names(number: int) -> list[str]:
     return names
 
 
-def _option_names(number: int, option: Mapping[str, Any], *, ordinals: bool = True) -> list[str]:
+def _option_names(
+    number: int, option: Mapping[str, Any], *, ordinals: bool = True, names_only: bool = False
+) -> list[str]:
     """Every raw string a typed reply may use for this option (before normalisation).
 
     ``ordinals=False`` for a one-option question: there "İlk" or "birinci" is far more
     likely the creator's own words (a title) than a pick of "the first option".
+    ``names_only``: just the label and the server-defined aliases. With no card on screen
+    a "2" or an internal key names nothing the creator can see (KRI-794).
     """
 
     label = _RECOMMENDED_TAG.sub("", str(option.get("label") or ""))
+    if names_only:
+        return [label, *(str(a) for a in option.get("aliases") or [])]
     return [
         str(option["key"]),
         label,
@@ -2617,14 +2628,17 @@ def _option_names(number: int, option: Mapping[str, Any], *, ordinals: bool = Tr
     ]
 
 
-def match_open_choice(question: Mapping[str, Any], message: object) -> str | None:
+def match_open_choice(
+    question: Mapping[str, Any], message: object, *, names_only: bool = False
+) -> str | None:
     """The option key a plain message names, or ``None``.
 
     Deterministic and exact: after normalisation the message must equal exactly ONE
     option's key, label, list number ("1", "option 2", "ikinci", "2. seçenek") or
     server-defined alias. Anything else (including a message that fits two options) is
     not an answer. When nothing matches exactly, Turkish typed without its special letters
-    gets one more chance against the diacritic-free forms.
+    gets one more chance against the diacritic-free forms. ``names_only`` accepts just
+    the label and the aliases (a question no longer on screen, ``match_answered_choice``).
     """
 
     reply = normalize_reply(message)
@@ -2638,7 +2652,7 @@ def match_open_choice(question: Mapping[str, Any], message: object) -> str | Non
     for number, option in enumerate(options, start=1):
         if not isinstance(option, Mapping) or not option.get("key"):
             continue
-        names = _option_names(number, option, ordinals=several)
+        names = _option_names(number, option, ordinals=several, names_only=names_only)
         if reply in {n for n in map(normalize_reply, names) if n}:
             exact.add(str(option["key"]))
         if loose in {n for n in map(loose_reply, names) if n}:
@@ -2703,6 +2717,136 @@ def delegated_choice(question: Mapping[str, Any], message: object) -> str | None
         return None
     pick = next((o for o in options if o.get("recommended")), options[0])
     return str(pick["key"])
+
+
+# KRI-794: the strategy field a typed render refusal names (its ``field_path``) when it could
+# not keep a gate conflict's answer: ``creator_render_contract.unresolved_field_path`` tags
+# the unresolved ORDER lines only, so only the order basis is listed.
+REFUSED_CHOICE_FIELD_PATHS: dict[str, str] = {CONFLICT_ORDER_BASIS: "ordering_choice"}
+RENDER_REFUSAL_EVENT_TYPE = "assistant_render_failed"
+# Kinds whose server-defined aliases are about that question's topic ("no fixed order",
+# "upload order"), so they still name the option once the card is gone. Every other kind's
+# aliases ("longer", "30", "clip 2") read as a new edit request without the card: only the
+# option's exact label re-answers those.
+_TOPICAL_ALIAS_KINDS = frozenset({CONFLICT_ORDER_BASIS})
+# Aliases too generic to name an option without its card ("doesn't matter").
+_CARD_ONLY_ALIASES = frozenset(normalize_reply(a) for a in ("fark etmez",))
+
+
+def _turn_source_index(history: Sequence[tuple[str, Any]], turn_id: object) -> int | None:
+    """Position of the user message that started ``turn_id`` (``None`` when not in view)."""
+
+    if not turn_id:
+        return None
+    return next(
+        (
+            position
+            for position, (role, payload) in enumerate(history)
+            if role == "user" and isinstance(payload, dict) and payload.get("turn_id") == turn_id
+        ),
+        None,
+    )
+
+
+def _refused_since(history: Sequence[tuple[str, Any]], index: int, conflict_id: str) -> bool:
+    """Was a render built with the answer at position ``index`` refused over this conflict?
+
+    The ``needs_choice`` refusal naming the conflict must follow the answer AND come from a
+    turn planned with it. A render approved BEFORE a typed re-answer can be refused after the
+    re-answer is stored (the observer posts the card, then promotes the queued turn): that
+    refusal is about the old answer, never the new one. A refusal whose turn is not in view
+    counts.
+    """
+
+    path = REFUSED_CHOICE_FIELD_PATHS.get(conflict_id)
+    if path is None:
+        return False
+    for role, payload in history[index + 1 :]:
+        if not (
+            role == "assistant"
+            and isinstance(payload, dict)
+            and payload.get(EVENT_TYPE_KEY, RENDER_REFUSAL_EVENT_TYPE) == RENDER_REFUSAL_EVENT_TYPE
+            and payload.get("decline_reason") == "needs_choice"
+            and payload.get("field_path") == path
+        ):
+            continue
+        source = _turn_source_index(history, payload.get("turn_id"))
+        if source is None or source >= index:
+            return True
+    return False
+
+
+def _latest_questions(history: Sequence[tuple[str, Any]]) -> dict[str, dict[str, Any]]:
+    """The latest question asked for each gate conflict, as the creator saw it."""
+
+    latest: dict[str, dict[str, Any]] = {}
+    for role, payload in history:
+        question = payload.get("choice_question") if isinstance(payload, dict) else None
+        if (
+            role == "assistant"
+            and isinstance(question, dict)
+            and question.get("conflict") in CONFLICT_PRIORITY
+            and question.get("question_id")
+        ):
+            latest[str(question["conflict"])] = question
+    return latest
+
+
+def _without_card(question: Mapping[str, Any]) -> dict[str, Any]:
+    """``question`` with only the option names that still make sense once it is closed."""
+
+    topical = question.get("kind") in _TOPICAL_ALIAS_KINDS
+    options = []
+    for option in question.get("options") or []:
+        if not isinstance(option, Mapping):
+            continue
+        aliases = [
+            alias
+            for alias in option.get("aliases") or []
+            if topical and normalize_reply(alias) not in _CARD_ONLY_ALIASES
+        ]
+        options.append({**option, "aliases": aliases})
+    return {**question, "options": options}
+
+
+def match_answered_choice(events: Events, message: object) -> tuple[dict[str, Any], str] | None:
+    """KRI-794: ``(question, option key)`` when a plain message re-answers a CLOSED question.
+
+    "Continue without a fixed order", typed after "Use the order you added the clips" was
+    picked and the card had closed, was read as a new edit and the old answer stayed. Only
+    the gate's own questions (``CONFLICT_PRIORITY``, replayed last-wins by
+    ``resolve_choices``) that the creator HAS answered qualify, each through the latest
+    question asked for its conflict (the current inputs). Consent-scoped questions (the
+    simpler version, creative wording) belong to one ask and never do.
+
+    The message must exactly name one option by its label, or (order basis only) a
+    topical alias. List numbers, internal keys and "you choose" name nothing without the
+    card. A message naming options of two questions answers neither. Naming the standing
+    answer again is not a new answer (``None``: it stays a plain message, so an identical
+    re-send is still a copy, KRI-552) unless a render refusal of that choice followed it:
+    then it is the creator confirming it again.
+    """
+
+    history = _event_list(events)
+    answers = fold_scoped_answers(history)
+    latest = _latest_questions(history)
+    hits: list[tuple[dict[str, Any], str, bool]] = []
+    for conflict, prior in answers.items():
+        question = latest.get(conflict)
+        option_key = (
+            match_open_choice(_without_card(question), message, names_only=True)
+            if question is not None
+            else None
+        )
+        if option_key is not None:
+            changes = option_key != prior.option_key or _refused_since(
+                history, prior.index, conflict
+            )
+            hits.append((question, option_key, changes))
+    if len(hits) != 1 or not hits[0][2]:
+        return None
+    question, option_key, _ = hits[0]
+    return question, option_key
 
 
 @dataclass(frozen=True)
@@ -2868,6 +3012,103 @@ def _answer_superseded(
     return bool(restated) and not _emits_answered_value(data, choice, prior.option_key)
 
 
+_TIMING_KINDS = frozenset(
+    {
+        CONFLICT_DURATION_VS_COUNT,
+        CONFLICT_VOICE_VS_DURATION,
+        CONFLICT_LENGTH_VS_NATURAL,
+        CONFLICT_SOURCE_COVERAGE,
+    }
+)
+
+
+def _ask_limit(choice: UnresolvedChoice) -> int:
+    """How many times this conflict may be asked: once for a length, else the question and
+    one re-ask."""
+
+    return 1 if choice.kind in _TIMING_KINDS else MAX_ASKS_PER_QUESTION
+
+
+def _reask_after_refusal(
+    history: Sequence[tuple[str, Any]], prior: ScopedAnswer, choice: UnresolvedChoice
+) -> bool:
+    """KRI-794: a render refusal of this answer came after it, and one more ask is allowed.
+
+    Re-applying it would draft the same refused edit, so the next reply offers the choice
+    again. At the ask limit the answer keeps applying (it is never dropped for the creator).
+    """
+
+    return _refused_since(history, prior.index, choice.conflict_id) and count_asks(
+        history, choice.conflict_id, choice.input_digest
+    ) < _ask_limit(choice)
+
+
+# The option a refusal re-ask recommends: the way forward that cannot hit the same refusal
+# (no order promise to verify). It is also what "you choose" picks on that re-ask.
+_AFTER_REFUSAL = {CONFLICT_ORDER_BASIS: OPT_UNORDERED}
+
+
+def _refusal_reask(choice: UnresolvedChoice, refused: str) -> UnresolvedChoice:
+    """The question again, saying why, recommending a way forward other than the refused one.
+
+    Some option stays recommended, so a delegated "you choose" never lands on the option that
+    was just refused (``delegated_choice`` falls back to the first option otherwise).
+    """
+
+    others = [option.key for option in choice.options if option.key != refused]
+    pick = _AFTER_REFUSAL.get(choice.kind)
+    if pick not in others:
+        pick = others[0] if others else None
+    lead = say(
+        en="I couldn't make your last video with this choice.",
+        tr="Son videonu bu seçimle oluşturamadım.",
+    )
+    return replace(
+        choice,
+        intro=f"{lead} {choice.intro}",
+        options=tuple(replace(option, recommended=option.key == pick) for option in choice.options),
+    )
+
+
+def _answered_earlier(history: Sequence[tuple[str, Any]], prior: ScopedAnswer) -> bool:
+    """Has the creator sent another message since this answer (a later turn keeps it)?"""
+
+    return any(
+        role == "user" and isinstance(payload, dict) and not payload.get("inert")
+        for role, payload in history[prior.index + 1 :]
+    )
+
+
+def _kept_note(
+    note: str,
+    choice: UnresolvedChoice,
+    option_key: str,
+    history: Sequence[tuple[str, Any]],
+) -> str:
+    """A standing answer on a later turn: said as kept, with the way to change it.
+
+    "I'm using the order you added the clips." on every later draft read as a fresh
+    promise, even right after the creator typed the other option (KRI-794). The labels
+    quoted are those of the question as it was asked, the exact words
+    ``match_answered_choice`` accepts, even if the chat's language changed since.
+    """
+
+    kept = say(en=f"As agreed earlier: {note}", tr=f"Daha önce anlaştığımız gibi: {note}")
+    asked = _latest_questions(history).get(choice.conflict_id)
+    options = (
+        [(str(o.get("key")), str(o.get("label") or "")) for o in asked.get("options") or []]
+        if asked
+        else [(o.key, o.label) for o in choice.options]
+    )
+    others = [f'"{label}"' for key, label in options if key != option_key and label]
+    if not others or len(others) > 2:
+        return kept
+    return kept + say(
+        en=f" To change it, reply {' or '.join(others)}.",
+        tr=f" Değiştirmek için {' veya '.join(others)} yaz.",
+    )
+
+
 def resolve_choices(
     strategy: Any,
     brief: Any,
@@ -2890,6 +3131,9 @@ def resolve_choices(
       in ``exhausted`` and the plan passes through (receipts or the backstop then state the
       unmet requirement). Only an explicit delegation ("you choose") picks the
       recommended option, recorded as ``source="creator_delegated"``.
+    * KRI-794: a render refusal that names an answered choice after the answer reopens it
+      once (``_reask_after_refusal``); a standing answer on a later turn is disclosed as
+      kept from earlier (``_kept_note``), never as a fresh promise.
     * Model-authored ``choice_answers`` are discarded: answers are server-owned.
     """
 
@@ -2912,29 +3156,21 @@ def resolve_choices(
             superseded.append(choice.conflict_id)
             valid = False
             answer_superseded = True
-        if valid:
+        refused = bool(valid and _reask_after_refusal(history, prior, choice))
+        if valid and not refused:
             option_key = prior.option_key
             source = "creator_delegated" if prior.delegated else "creator"
         elif count_asks(
             history[prior.index + 1 :] if answer_superseded else history,
             choice.conflict_id,
             choice.input_digest,
-        ) >= (
-            1
-            if choice.kind
-            in {
-                CONFLICT_DURATION_VS_COUNT,
-                CONFLICT_VOICE_VS_DURATION,
-                CONFLICT_LENGTH_VS_NATURAL,
-                CONFLICT_SOURCE_COVERAGE,
-            }
-            else MAX_ASKS_PER_QUESTION
-        ):
+        ) >= _ask_limit(choice):
             exhausted.append(choice)
             continue
         else:
+            asked = _refusal_reask(choice, prior.option_key) if refused else choice
             return ChoiceResolution(
-                data, tuple(answers), choice, tuple(notices), tuple(exhausted), tuple(superseded)
+                data, tuple(answers), asked, tuple(notices), tuple(exhausted), tuple(superseded)
             )
         answers.append(
             {
@@ -2949,7 +3185,10 @@ def resolve_choices(
         _apply_effect(data, choice, option_key)
         note = _disclosure(choice.kind, option_key)
         if note:
-            notices.append(_disclose(note, source))
+            note = _disclose(note, source)
+            if _answered_earlier(history, prior):
+                note = _kept_note(note, choice, option_key, history)
+            notices.append(note)
     if answers:
         data["choice_answers"] = answers
     return ChoiceResolution(
@@ -3204,6 +3443,7 @@ __all__ = [
     "count_asks",
     "delegated_choice",
     "fold_scoped_answers",
+    "match_answered_choice",
     "match_open_choice",
     "normalize_reply",
     "one_clip_edit",
