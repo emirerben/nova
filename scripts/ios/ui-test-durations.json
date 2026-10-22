@@ -180,5 +180,9 @@
   "KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss": 45.4,
   "KriaUITests/SavedUploadsUITests/testReuseAcrossTwoPostsWithoutAnotherUpload": 30,
   "KriaUITests/SavedUploadsUITests/testSearchPaginationAndRetry": 30,
-  "KriaUITests/SavedUploadsUITests/testPhotoReuseAcrossPosts": 30
+  "KriaUITests/SavedUploadsUITests/testPhotoReuseAcrossPosts": 30,
+  "KriaUITests/SavedUploadsUITests/testDeviceOnlyVideoAddsToVisualsFromLocalOriginal": 30,
+  "KriaUITests/SavedUploadsUITests/testRelinkedOriginalFinishesTheVisualsAdd": 30,
+  "KriaUITests/SavedUploadsUITests/testPhotoOnlyVisualsSendVideosToFootage": 30,
+  "KriaUITests/SavedUploadsUITests/testPhoneFootageAttachesProxyWithoutUploadingTheOriginal": 30
 }

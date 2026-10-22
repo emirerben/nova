@@ -18,6 +18,10 @@ class MediaAssetUploadBody(BaseModel):
     kind: Literal["video", "image", "audio"]
     upload_contract: MediaUploadContract = Field(default_factory=MediaUploadContract)
     repair_asset_id: UUID | None = None
+    # KRI-822: the creator supplies the full original of their own device-only
+    # video (``repair_asset_id``). Its bytes must equal the asset's declared
+    # original identity; the analysis proxy is never promoted.
+    attach_original: bool = False
 
 
 class MediaAssetUploadOut(BaseModel):

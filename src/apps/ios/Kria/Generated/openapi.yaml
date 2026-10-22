@@ -5793,6 +5793,11 @@
       "MediaAssetUploadBody": {
         "additionalProperties": false,
         "properties": {
+          "attach_original": {
+            "default": false,
+            "title": "Attach Original",
+            "type": "boolean"
+          },
           "client_upload_id": {
             "maxLength": 160,
             "minLength": 1,
