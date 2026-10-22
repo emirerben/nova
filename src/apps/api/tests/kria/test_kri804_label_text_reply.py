@@ -403,14 +403,17 @@ def _caption(text: str, *media_ids: str) -> dict[str, Any]:
     }
 
 
-def test_a_caption_on_two_neighbouring_clips_needs_the_words_on_screen_not_per_clip() -> None:
+def test_a_caption_on_two_neighbouring_clips_retains_both_source_bindings() -> None:
     contract = build_render_contract(
         {"resolved_clip_intents": [_caption(PLUS, BOWLS, POINTS)]},
         generation_id="g",
         brief=_brief(PLUS),
     )
     assert contract is not None and not contract.unresolved
-    assert [(t.role, t.text, t.media_id) for t in contract.exact_texts] == [("any", PLUS, None)]
+    assert [(t.role, t.text, t.media_id) for t in contract.exact_texts] == [
+        ("clip", PLUS, BOWLS),
+        ("clip", PLUS, POINTS),
+    ]
 
 
 def test_a_caption_the_resolver_wrote_is_never_the_creators_placement() -> None:
@@ -588,3 +591,122 @@ def test_words_longer_than_the_montage_holds_are_never_kept_as_written() -> None
     reply = label_text_reply([long_text])
     assert reply is not None
     assert not any(option.startswith("Keep") for option in reply.options)
+
+
+def _group_recipe(media_ids: list[str], placements: list[tuple[float, float]]):
+    """Synthetic output recipe: one second per identified source, real typed verifier input."""
+    from app.kria.recipes_v2 import EditRecipeV2
+    from tests.kria.test_portable_text import text_document
+
+    document = text_document()
+    asset = copy.deepcopy(document["assets"][0])
+    original = copy.deepcopy(document["asset_manifest"]["assets"][0])
+    clip = copy.deepcopy(document["tracks"][0]["clips"][0])
+    font = document["assets"][1]
+    font_binding = document["asset_manifest"]["assets"][1]
+    document["assets"] = [font]
+    document["asset_manifest"]["assets"] = [font_binding]
+    document["tracks"][0]["clips"] = []
+    for index, media_id in enumerate(media_ids):
+        asset_id = f"source-{index}"
+        document["assets"].append({**asset, "id": asset_id, "relative_path": asset_id})
+        document["asset_manifest"]["assets"].append(
+            {**original, "id": asset_id, "media_id": media_id}
+        )
+        document["tracks"][0]["clips"].append(
+            {
+                **clip,
+                "id": f"clip-{index}",
+                "source_asset_id": asset_id,
+                "source_duration": 1.0,
+                "timeline_start": float(index),
+            }
+        )
+    layer = document["text_layers"][0]
+    layer["runs"][0]["text"] = PLUS
+    document["text_layers"] = [
+        {**copy.deepcopy(layer), "id": f"caption-{index}", "start": start, "end": end}
+        for index, (start, end) in enumerate(placements)
+    ]
+    return EditRecipeV2.model_validate(document)
+
+
+@pytest.mark.parametrize(
+    ("media_ids", "placements", "accepted"),
+    [
+        ([BOWLS, POINTS, WAITER], [(0.1, 1.9)], True),
+        ([BOWLS, POINTS, WAITER], [(0.1, 0.9), (1.1, 1.9)], True),
+        ([BOWLS, POINTS, WAITER], [(2.1, 2.9)], False),
+        ([BOWLS, POINTS, WAITER], [(0.1, 0.9)], False),
+        ([BOWLS, WAITER, POINTS], [(0.1, 2.9)], False),
+        ([BOWLS, WAITER, POINTS], [(0.1, 0.9), (2.1, 2.9)], True),
+        ([BOWLS, POINTS, WAITER], [(0.1, 2.9)], False),
+        ([WAITER], [(0.1, 0.9)], False),
+    ],
+    ids=[
+        "shared-adjacent",
+        "separate-adjacent",
+        "wrong-source",
+        "missing-member",
+        "unrelated-gap",
+        "separate-groups",
+        "outside-group",
+        "absent-sources",
+    ],
+)
+@pytest.mark.parametrize("adapter", ["phone", "cloud"])
+def test_group_caption_verifier_keeps_source_affinity(
+    media_ids, placements, accepted, adapter
+) -> None:
+    """KRI-577 wrong-content control: right words alone must not prove their placement.
+
+    These source identities and output intervals are independent expectations,
+    carried through the real contract builder, typed recipe and phone verifier.
+    """
+    from app.services.creator_render_contract import CreatorRenderContractError, verify_phone_recipe
+
+    contract = build_render_contract(
+        {"resolved_clip_intents": [_caption(PLUS, BOWLS, POINTS)]},
+        generation_id="g",
+        brief=_brief(PLUS),
+    )
+    recipe = _group_recipe(media_ids, placements)
+    if adapter == "cloud":
+        from app.services.cloud_render_contract import (
+            CloudRenderContractError,
+            verify_cloud_variant,
+        )
+        from app.services.creator_render_contract import CONTRACT_FIELD
+
+        def verify():
+            return verify_cloud_variant(
+                {CONTRACT_FIELD: contract.model_dump(mode="json")},
+                {
+                    "render_receipt": {
+                        "verified": True,
+                        "actual_duration_s": float(len(media_ids)),
+                        "picture_timeline": [
+                            {"media_id": media_id, "start_s": float(index), "end_s": index + 1.0}
+                            for index, media_id in enumerate(media_ids)
+                        ],
+                        "text_evidence": [
+                            {"role": "clip", "text": PLUS, "start_s": start, "end_s": end}
+                            for start, end in placements
+                        ],
+                    }
+                },
+                adapter="cloud_guided_story",
+            )
+
+        error = CloudRenderContractError
+    else:
+
+        def verify():
+            return verify_phone_recipe(contract, recipe)
+
+        error = CreatorRenderContractError
+    if accepted:
+        assert verify()
+    else:
+        with pytest.raises(error, match="text"):
+            verify()
