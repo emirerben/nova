@@ -43,6 +43,7 @@ FFMPEG = (
     if Path("/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg").exists()
     else "ffmpeg"
 )
+FFPROBE = str(Path(FFMPEG).with_name("ffprobe")) if "/" in FFMPEG else "ffprobe"
 
 
 @pytest.mark.parametrize(
@@ -733,6 +734,96 @@ def _cut(root, source, *, start, duration, fps=30):
     return path
 
 
+def _composited(root, source, *, start, duration, fps=30):
+    """Render a cut the way a compositor does, independent of FFmpeg's resampler.
+
+    Output frame n shows the last source frame presented at/before
+    start + n/fps (held frames repeat). FFmpeg's trim + -r conversion picks a
+    different frame across versions on VFR input, so it cannot stand in for
+    the phone here.
+    """
+
+    def probe(entries):
+        return subprocess.run(
+            [
+                FFPROBE,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                entries,
+                "-of",
+                "csv=p=0",
+                str(source),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout
+
+    width, height = (int(value) for value in probe("stream=width,height").strip().split(","))
+    clock = [float(line.split(",")[0]) for line in probe("frame=pts_time").split()]
+    raw = subprocess.run(
+        [
+            FFMPEG,
+            "-v",
+            "error",
+            "-i",
+            str(source),
+            "-fps_mode",
+            "passthrough",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-",
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    ).stdout
+    size = width * height * 3
+    assert len(raw) == size * len(clock) and clock == sorted(clock)
+    chosen = [
+        max(i for i, t in enumerate(clock) if t <= start + n / fps + 1e-6)
+        for n in range(round(duration * fps))
+    ]
+    path = root / f"{uuid.uuid4()}.mp4"
+    subprocess.run(
+        [
+            FFMPEG,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-s",
+            f"{width}x{height}",
+            "-r",
+            str(fps),
+            "-i",
+            "-",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-pix_fmt",
+            "yuv420p",
+            str(path),
+        ],
+        input=b"".join(raw[i * size : (i + 1) * size] for i in chosen),
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    return path
+
+
 @pytest.mark.parametrize(
     "shift_frames,expected",
     [(0, "checked"), (1, "rejected"), (2, "rejected"), (-2, "rejected")],
@@ -773,9 +864,9 @@ def test_variable_frame_rate_proxy_with_held_frames_matches_its_cfr_export(expor
         proxy,
     )
     recipe = _single_clip(recipe, start=CLOCK_START, duration=CLOCK_DURATION)
-    output = _cut(root, proxy, start=CLOCK_START, duration=CLOCK_DURATION)
+    output = _composited(root, proxy, start=CLOCK_START, duration=CLOCK_DURATION)
     report = verify_actual_export(output, status(recipe), {"a": proxy})
-    assert report["status"] == "checked", report
+    assert report["status"] == "checked", [c for c in report["checks"] if c["status"] != "passed"]
 
 
 BRIGHT_TITLE = "Ancient City of Troy"
