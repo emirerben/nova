@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.27.0] - 2026-10-22
+
+### Fixed
+- fix(kria): captions ask with a spelling list gets a line before approval and is spelled that way (KRI-793) (#1733) <!-- release-pr: 1733 -->
+
 ## [0.81.26.0] - 2026-10-22
 
 ### Fixed
