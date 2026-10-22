@@ -296,4 +296,35 @@ def build_synthetic_variant_and_job(
     """Convenience: build the variant, then the job that embeds it."""
     variant = build_synthetic_variant(snapshot, ops, variant_id=variant_id)
     job = build_synthetic_job(variant)
+    # The snapshot projects a label's cut -> media link as `clip_id`. Copying
+    # text_bars alone loses that provenance and falsely rejects clip selectors
+    # as stale. Reconstruct only recorded associations, never infer them from
+    # the candidate ops or invent a complete guided revision.
+    labels = [
+        row
+        for row in snapshot.get("text_bars") or []
+        if isinstance(row, dict)
+        and isinstance(row.get("id"), str)
+        and row["id"].startswith("clip-label-")
+        and not row["id"].startswith("clip-label-media-")
+        and row.get("clip_id")
+    ]
+    if labels:
+        job.assembly_plan["guided_edit"] = {
+            "approved_proposal": {
+                "fast_cuts": [
+                    {"cut_id": row["id"][len("clip-label-") :], "media_id": row["clip_id"]}
+                    for row in labels
+                ],
+                "clip_labels": [
+                    {
+                        "media_id": row["clip_id"],
+                        "text": row.get("text", ""),
+                        "inferred": bool(row.get("inferred")),
+                    }
+                    for row in labels
+                    if not row.get("edited")
+                ],
+            }
+        }
     return job, variant

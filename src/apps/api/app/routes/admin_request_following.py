@@ -188,6 +188,127 @@ async def require_current(db, case):
         raise HTTPException(409, "source_changed_wait_for_collection")
 
 
+@router.get("/comparison-development-groups")
+async def comparison_development_groups(db: DB):
+    """Historical exposure metadata only, including revoked/expired versions.
+
+    Never read request bodies or held-out identities. Content fingerprints need
+    a separate trusted asset inventory; thread identities cannot stand in for it.
+    A bounded result is explicitly incomplete when the bound is exceeded.
+    """
+    rows = (
+        await db.execute(
+            select(RequestFollowingCase.creator_id, RequestFollowingCase.thread_id)
+            .where(RequestFollowingCase.split == "development")
+            .distinct()
+            .order_by(RequestFollowingCase.creator_id, RequestFollowingCase.thread_id)
+            .limit(10_001)
+        )
+    ).all()
+    complete = len(rows) <= 10_000
+    rows = rows[:10_000]
+    owners = {str(r[0]) for r in rows}
+    threads = {str(r[1]) for r in rows}
+    groups = sorted({*("creator:" + v for v in owners), *("event:" + v for v in threads)})
+    return {
+        "schema_version": 1,
+        "groups": groups,
+        "groups_sha256": digest(groups),
+        "creator_count": len(owners),
+        "thread_count": len(threads),
+        "owner_map_complete": complete,
+        "media_map_complete": not rows and complete,
+        "metadata_only": True,
+        "generated_at": datetime.now(UTC).isoformat(),
+    }
+
+
+@router.get("/comparison-eligibility")
+async def comparison_eligibility(
+    db: DB,
+    thread_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    grant_key: str = Query(max_length=120),
+    captured_at: datetime = Query(),
+    expires_at: datetime = Query(),
+):
+    return await _comparison_eligibility(
+        db, thread_id, creator_id, grant_key, captured_at, expires_at, holdout=False
+    )
+
+
+@router.get("/comparison-holdout-eligibility")
+async def comparison_holdout_eligibility(
+    db: DB,
+    thread_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    grant_key: str = Query(max_length=120),
+    captured_at: datetime = Query(),
+    expires_at: datetime = Query(),
+    x_comparison_evaluator_token: str = Header(default=""),
+):
+    import hmac
+
+    expected = settings.creator_comparison_holdout_token
+    if not expected or not hmac.compare_digest(expected, x_comparison_evaluator_token):
+        raise HTTPException(403, "sealed_evaluator_required")
+    return await _comparison_eligibility(
+        db, thread_id, creator_id, grant_key, captured_at, expires_at, holdout=True
+    )
+
+
+async def _comparison_eligibility(
+    db, thread_id, creator_id, grant_key, captured_at, expires_at, *, holdout
+):
+    """Read-only eligibility for private exact captures; returns no case bodies.
+
+    A queue snapshot is not the invocation input. Bind directly to the existing
+    grant and owner instead of requiring a mutable queue version to stay current.
+    Protected holdouts remain unavailable through this development boundary.
+    """
+    from datetime import timedelta
+
+    from app.models import CreationThreadDeletion
+    from app.services.request_following_collection import eligibility_key
+    from app.services.training_eligibility import evaluate_training_eligibility_async
+
+    now = datetime.now(UTC)
+    if (
+        captured_at.tzinfo is None
+        or expires_at.tzinfo is None
+        or not captured_at <= now < expires_at <= captured_at + timedelta(days=30)
+    ):
+        return {"eligible": False}
+    if (
+        not settings.creator_comparison_capture_enabled
+        or str(creator_id) not in settings.creator_comparison_capture_user_ids
+    ):
+        return {"eligible": False}
+    _, _, holdouts, _ = scope()
+    thread = await db.get(CreationThread, thread_id)
+    if (
+        thread is None
+        or thread.creator_id != creator_id
+        or not in_scope(creator_id, thread_id)
+        or await db.get(CreationThreadDeletion, thread_id)
+    ):
+        return {"eligible": False}
+    # Historical holdout assignment survives configuration changes.
+    held_out = thread_id in holdouts or bool(
+        await db.scalar(
+            select(RequestFollowingCase.id)
+            .where(
+                RequestFollowingCase.thread_id == thread_id, RequestFollowingCase.split == "holdout"
+            )
+            .limit(1)
+        )
+    )
+    if held_out != holdout:
+        return {"eligible": False}
+    decision = await evaluate_training_eligibility_async(db, creator_id)
+    return {"eligible": eligibility_key(decision) == grant_key, "checked_at": now.isoformat()}
+
+
 @router.get("/{case_id}")
 async def detail(case_id: uuid.UUID, db: DB):
     case = await get_case(db, case_id)

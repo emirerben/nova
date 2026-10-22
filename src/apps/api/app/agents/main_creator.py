@@ -544,8 +544,10 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         name="nova.creator.main",
         prompt_id="main_creator",
         prompt_version=MAIN_CREATOR_PROMPT_VERSION,
-        model="gemini-3.1-pro-preview",
-        fallback_models=("gemini-3.6-flash",),
+        model=settings.main_creator_model,
+        fallback_models=("gemini-3.6-flash",)
+        if settings.main_creator_model.startswith("gemini")
+        else (),
         # KRI-118 item 4: bumped from 2 -> 3 alongside `schema_retry_limit`
         # below -- `_run_on_model`'s loop bounds EVERY retry path (transient/
         # refusal/schema) by `max_attempts`, so a `schema_retry_limit` above
@@ -560,7 +562,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         # of ending outcome-unknown. A typical "high" call there takes 57-106 s.
         timeout_s=130.0,
         # Reserve output capacity for the full source manifest.
-        thinking_level="high",
+        thinking_level=settings.main_creator_thinking_level,
         sensitive_io=True,
         # This agent's output schema (bounded editorial choices across many
         # optional fields, typed evidence, clip intents) is wide enough that

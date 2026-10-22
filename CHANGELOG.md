@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.42.0] - 2026-10-22
+
+### Changed
+- fix(kria): cut phone Talking to the quoted start AND end lines (KRI-790) (#1730) <!-- release-pr: 1730 -->
+
+## [0.81.41.0] - 2026-10-22
+
+### Changed
+- fix(slides): Save after deleting or adding a slide in an AI-bound slide post (KRI-812) (#1751) <!-- release-pr: 1751 -->
+
+## [0.81.40.0] - 2026-10-22
+
+### Fixed
+- fix(kria): a label the clip label can't hold asks with every reason and answers to tap, never "which clip" (KRI-804) (#1745) <!-- release-pr: 1745 -->
+
+## [0.81.39.0] - 2026-10-22
+
+### Changed
+- feat(ai): add verified creator model comparisons (#1701) <!-- release-pr: 1701 -->
+
+## [0.81.38.0] - 2026-10-22
+
+### Changed
+- fix(ios-engine): export an original whose picture starts after its sound (KRI-811) (#1748) <!-- release-pr: 1748 -->
+
+## [0.81.37.0] - 2026-10-22
+
+### Changed
+- fix(research): reconcile October 18 references with their canonical dated sources (#1676) <!-- release-pr: 1676 -->
+
 ## [0.81.36.0] - 2026-10-22
 
 ### Changed

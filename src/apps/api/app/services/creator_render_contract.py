@@ -49,6 +49,7 @@ from app.services.clip_order_sequence import (
     stated_anchors,
     unresolved_questions,
 )
+from app.services.creator_label_reply import label_text_reply
 from app.services.length_policy import creator_duration_s, length_owner
 
 CONTRACT_FIELD = "creator_render_requirements"
@@ -762,6 +763,37 @@ def _label_intent_media_ids(resolved_intents: object, literal: str) -> tuple[str
     return tuple(ids)
 
 
+def _caption_intent_media_ids(resolved_intents: object, literal: str) -> tuple[str, ...]:
+    """Clips a resolved described-shot caption prints the creator's ``literal`` on (KRI-804).
+
+    "Put "chimichurri & salsa criolla" on the sauce bowls" may travel as a caption with the
+    creator's words (``creator_text``), the lane that prints them as written however long
+    (KRI-296); the montage burns it on exactly its member clips. A chapter caption with no
+    creator words, or one the resolver wrote, is never this placement.
+    """
+    wanted = _normal(literal)
+    ids: list[str] = []
+    for intent in resolved_intents if isinstance(resolved_intents, Sequence) else ():
+        if not isinstance(intent, Mapping) or intent.get("op") != "caption":
+            continue
+        if str(intent.get("status") or "resolved") != "resolved":
+            continue
+        # The montage prints exactly these rows (`unified_montage._described_shot_labels`).
+        text = intent.get("caption_text")
+        if (
+            not intent.get("creator_text")
+            or intent.get("caption_grounding") != "creator_text"
+            or not isinstance(text, str)
+            or _normal(text) != wanted
+        ):
+            continue
+        for row in intent.get("assignments") or []:
+            media_id = str(row.get("media_id") or "") if isinstance(row, Mapping) else ""
+            if media_id and media_id not in ids:
+                ids.append(media_id)
+    return tuple(ids)
+
+
 def _json_value(value: object) -> object:
     if isinstance(value, BaseModel):
         return value.model_dump(mode="json")
@@ -1212,6 +1244,27 @@ def build_render_contract(
                                 )
                                 for media_id in placed_ids
                             )
+                            continue
+                        captioned = _caption_intent_media_ids(
+                            raw.get("resolved_clip_intents"), requirement.literal
+                        )
+                        if captioned:
+                            # A shared caption may cross neighboring member clips, but
+                            # its source identities must survive into verification.
+                            texts.extend(
+                                TextRequirement(
+                                    role="clip", text=requirement.literal, media_id=media_id
+                                )
+                                for media_id in captioned
+                            )
+                            continue
+                        # Nothing here turns the words into a caption, so the reply offers
+                        # no "keep as written" (the Talking formats never plan clip texts).
+                        label_reply = label_text_reply([requirement.literal], keep=False)
+                        if label_reply is not None:
+                            # KRI-804: words a label can't print (a "+", too long) are a
+                            # question about the TEXT, never "which clip".
+                            unresolved.append(label_reply.question)
                             continue
                         unresolved.append(text_clip_not_found(requirement.literal))
                 role: Literal["opening", "closing", "any", "clip"] = (
@@ -1820,6 +1873,68 @@ def _verify_composition(
         )
 
 
+def text_source_group(
+    requirements: Sequence[TextRequirement], requirement: TextRequirement
+) -> frozenset[str]:
+    """Source IDs for a shared literal, retaining the existing per-clip wire contract."""
+    if requirement.role != "clip" or not requirement.media_id or requirement.shot_index is not None:
+        return frozenset()
+    group = frozenset(
+        item.media_id
+        for item in requirements
+        if item.role == "clip"
+        and item.media_id
+        and item.shot_index is None
+        and item.text == requirement.text
+    )
+    return group if len(group) > 1 else frozenset()
+
+
+def source_group_text_matches(
+    matches: Sequence[dict[str, Any]],
+    *,
+    group: frozenset[str],
+    media_id: str,
+    spans: Sequence[tuple[str, float, float]],
+    tolerance_s: float,
+    minimum_overlap_s: float,
+) -> list[dict[str, Any]]:
+    """Visible matches within requested source groups, shared by phone and cloud.
+
+    Every named source must exist. A layer can span adjacent group members, but
+    cannot bridge unrelated footage or satisfy a member it never overlaps.
+    """
+    selected = [(source, start, end) for source, start, end in spans if source in group]
+    if not group.issubset({source for source, _start, _end in selected}):
+        return []
+    connected: list[tuple[float, float]] = []
+    for start, end in sorted((start, end) for _source, start, end in selected):
+        if connected and start <= connected[-1][1] + tolerance_s:
+            connected[-1] = (connected[-1][0], max(connected[-1][1], end))
+        else:
+            connected.append((start, end))
+    bounded = [
+        row
+        for row in matches
+        if (row.get("media_id") is None or row["media_id"] in group)
+        and any(
+            row["start_s"] >= start - tolerance_s and row["end_s"] <= end + tolerance_s
+            for start, end in connected
+        )
+    ]
+    targets = [(start, end) for source, start, end in selected if source == media_id]
+    minimum_overlap = max(minimum_overlap_s - 1e-6, 1e-6)
+    if not targets or any(
+        not any(
+            min(row["end_s"], end) - max(row["start_s"], start) >= minimum_overlap
+            for row in bounded
+        )
+        for start, end in targets
+    ):
+        return []
+    return bounded
+
+
 def verify_phone_recipe(
     contract: CreatorRenderContract,
     recipe: EditRecipeV2,
@@ -2043,7 +2158,27 @@ def verify_phone_recipe(
                     if isinstance(manifest.get(clip.source_asset_id), OriginalRenderAsset)
                     and manifest[clip.source_asset_id].media_id == requirement.media_id
                 ]
-            if not targets or any(
+            group = text_source_group(contract.exact_texts, requirement)
+            if group:
+                matches = source_group_text_matches(
+                    matches,
+                    group=group,
+                    media_id=requirement.media_id or "",
+                    spans=[
+                        (
+                            manifest[clip.source_asset_id].media_id,
+                            clip.timeline_start,
+                            clip.timeline_start
+                            + clip.source_duration / clip.rate
+                            + (clip.hold_duration or 0),
+                        )
+                        for clip in picture
+                        if isinstance(manifest.get(clip.source_asset_id), OriginalRenderAsset)
+                    ],
+                    tolerance_s=frame,
+                    minimum_overlap_s=frame,
+                )
+            elif not targets or any(
                 not any(
                     row["start_s"] >= clip.timeline_start - frame
                     and row["end_s"]
