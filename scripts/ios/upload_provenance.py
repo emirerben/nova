@@ -146,6 +146,25 @@ def history_attempts(runs, current_id):
     return result
 
 
+def never_executed(job):
+    """Actions records no runner allocation and no executed steps.
+
+    Require every raw assignment field: gh run view omits these fields, so its
+    empty steps/cancelled summary alone is insufficient. Missing or conflicting
+    metadata remains unknown. The incident's platform acquisition-failure
+    annotation independently confirms this no-runner state.
+    """
+    return (
+        job.get("status") == "completed"
+        and job.get("conclusion") == "cancelled"
+        and job.get("runner_id") == 0
+        and job.get("runner_name") == ""
+        and job.get("runner_group_id") == 0
+        and job.get("runner_group_name") == ""
+        and job.get("steps") == []
+    )
+
+
 def main():
     # Include failed/cancelled workflows: transfer may have succeeded before a
     # distribution failure. Never infer an upload from workflow/step success.
@@ -186,6 +205,16 @@ def main():
         job = releases[0]
         if job["conclusion"] == "skipped":
             continue
+        if job["conclusion"] == "cancelled" and job["steps"] == []:
+            # Query exact raw Actions metadata using existing actions:read.
+            # Never infer no-upload from cancellation or absent logs alone.
+            repo = os.environ["GITHUB_REPOSITORY"]
+            job_id = str(job["databaseId"])
+            detail = json.loads(
+                command("gh", "api", f"repos/{repo}/actions/jobs/{job_id}")
+            )
+            if never_executed(detail):
+                continue
         attempts.append(
             dict(
                 id=(run_id, attempt_number),

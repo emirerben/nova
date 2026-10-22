@@ -76,6 +76,36 @@ class ProvenanceTests(unittest.TestCase):
             p.latest_source([attempt(1, "a")], lambda _: "\n".join(lines)), OLD
         )
 
+    def test_unallocated_runner_requires_complete_raw_assignment_metadata(self):
+        # Raw Actions metadata for 39443830702/1. GitHub's check annotation
+        # independently confirms no hosted runner ever acquired this job.
+        job = {
+            "status": "completed",
+            "conclusion": "cancelled",
+            "runner_id": 0,
+            "runner_name": "",
+            "runner_group_id": 0,
+            "runner_group_name": "",
+            "steps": [],
+        }
+        self.assertTrue(p.never_executed(job))
+        for key, value in [
+            ("runner_id", 42),
+            ("runner_name", "runner"),
+            ("runner_group_id", 1),
+            ("runner_group_name", "hosted"),
+            ("steps", [{"name": p.UPLOAD}]),
+            ("conclusion", "success"),
+            ("status", "in_progress"),
+        ]:
+            with self.subTest(key=key):
+                self.assertFalse(p.never_executed(dict(job, **{key: value})))
+        for key in job:
+            with self.subTest(missing=key):
+                self.assertFalse(
+                    p.never_executed({k: v for k, v in job.items() if k != key})
+                )
+
     def test_incident_uses_checkout_source_not_workflow_head(self):
         a = attempt(39666180034, "2026-10-21T20:14:00Z")
         a["headSha"] = WORKFLOW

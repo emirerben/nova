@@ -20,6 +20,11 @@ upload step, or Fastlane build-number skip does not establish a new upload.
 Failed distribution after a confirmed transfer still protects that source from
 being uploaded again. Every verified source must remain on current main.
 
+A cancelled job with no steps is excluded only when the raw Actions job record
+also explicitly reports zero runner and runner-group IDs and empty assignment
+names. Missing assignment fields stay unknown. This uses existing `actions: read`
+access; cancellation, elapsed time, or empty logs alone are insufficient.
+
 The gate checks the most recent 100 runs, including failed/cancelled runs and
 previous attempts of reruns (including its own), and
 compares all verified uploaded sources by Git ancestry, independent of dispatch

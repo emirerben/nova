@@ -42,8 +42,10 @@ class ProvenanceCLITests(unittest.TestCase):
         from pathlib import Path
         f = json.loads(Path(os.environ['FIXTURE']).read_text())
         a = sys.argv
-        if a[1:3] == ['run','list']: print(json.dumps(f['runs']))
+        if a[1] == 'api': print(json.dumps(f['raw_job']))
+        elif a[1:3] == ['run','list']: print(json.dumps(f['runs']))
         elif '--log' in a: print(f['logs'][a[3]])
+        elif f['unallocated'] and a[3] == '2': print(json.dumps({'jobs':[{'databaseId':22,'name':'release','conclusion':'cancelled','completedAt':'2','steps':[]}]}))
         else: print(json.dumps({'jobs': [{'name':'release','conclusion':'success','completedAt':a[3], 'steps':f['steps']}]}))
         """)
             )
@@ -81,6 +83,7 @@ class ProvenanceCLITests(unittest.TestCase):
                 PATH=directory + ":" + os.environ["PATH"],
                 FIXTURE=str(fixture),
                 GITHUB_RUN_ID="9",
+                GITHUB_REPOSITORY="fixture/repo",
                 HEAD_SHA=head,
             )
             for name, sources, expected in [
@@ -88,6 +91,8 @@ class ProvenanceCLITests(unittest.TestCase):
                 ("true duplicate", [head], head + " true"),
                 ("out of order", [head, old], head + " true"),
                 ("unknown", ["unknown"], None),
+                ("unallocated confirmed", [old, "unknown"], old + " false"),
+                ("unallocated unproven", [old, "unknown"], None),
             ]:
                 data["runs"] = [
                     {
@@ -99,6 +104,18 @@ class ProvenanceCLITests(unittest.TestCase):
                     for i in range(1, len(sources) + 1)
                 ]
                 data["logs"] = {str(i): logs(sha) for i, sha in enumerate(sources, 1)}
+                data["unallocated"] = name.startswith("unallocated")
+                data["raw_job"] = {
+                    "status": "completed",
+                    "conclusion": "cancelled",
+                    "runner_id": 0,
+                    "runner_name": "",
+                    "runner_group_id": 0,
+                    "runner_group_name": "",
+                    "steps": [],
+                }
+                if name == "unallocated unproven":
+                    del data["raw_job"]["runner_id"]
                 fixture.write_text(json.dumps(data))
                 result = subprocess.run(
                     [sys.executable, str(resolver)],
