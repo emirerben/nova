@@ -229,6 +229,12 @@ bash scripts/check-api.sh lint format app/config.py app/pipeline/speech_cleanup_
 
 ### Integrated validation
 
+- Final complete retake journey after merging current main `a33c4b21b`:
+  **986 passed, no skips**, using every `api_tests` path in the
+  `kri-551-consented-retakes` journey. The broader preship initially found
+  four stale receipt-copy assertions in three additional suites; their exact
+  unverified-line assertions were updated while preserving `partial` status.
+  Those suites passed **80 tests** before the full 986-test run.
 - The final entrypoint audit found a reachable direct Creator-confirm bypass
   outside chat v1/v2. A red controller test reached the later ownership guard
   instead of refusing undisclosed retakes. The shared consent predicate now

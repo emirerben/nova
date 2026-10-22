@@ -1226,7 +1226,7 @@
     {
       "id": "kri-551-consented-retakes",
       "needs_native": true,
-      "api_tests": "tests/agents/test_retake_detector.py tests/services/test_speech_cleanup_preflight.py tests/services/test_speech_cleanup_retakes_consent.py tests/services/test_speech_cleanup_decision.py tests/tasks/test_speech_cleanup_analysis.py tests/routes/test_creation_threads_speech_cleanup.py tests/kria/test_runtime_v2.py tests/kria/test_runtime_speech_cleanup_approval.py tests/kria/test_kri520_receipts.py tests/kria/test_brief_talking_receipts.py tests/kria/test_brief_marathon_receipts.py tests/tasks/test_kri551_cleanup_review_note.py tests/routes/test_creator_agent.py",
+      "api_tests": "tests/agents/test_retake_detector.py tests/services/test_speech_cleanup_preflight.py tests/services/test_speech_cleanup_retakes_consent.py tests/services/test_speech_cleanup_decision.py tests/tasks/test_speech_cleanup_analysis.py tests/routes/test_creation_threads_speech_cleanup.py tests/kria/test_runtime_v2.py tests/kria/test_runtime_speech_cleanup_approval.py tests/kria/test_kri520_receipts.py tests/kria/test_brief_talking_receipts.py tests/kria/test_brief_marathon_receipts.py tests/tasks/test_kri551_cleanup_review_note.py tests/routes/test_creator_agent.py tests/tasks/test_marathon_render_ready_review.py tests/kria/test_brief_rendered_speech_facts.py tests/kria/test_runtime_talking_first_draft.py",
       "xctests": [
         "KriaTests/SpeechCleanupOfferTests/testLegacyStatsWithoutRetakesKeepTheOriginalDisclosure",
         "KriaTests/SpeechCleanupOfferTests/testSummarySentenceNamesRestartedSentencesWhenTheyAreIncludedInTheCount",
@@ -1264,7 +1264,30 @@
         "src/apps/api/tests/kria/test_brief_marathon_receipts.py",
         "src/apps/api/tests/tasks/test_kri551_cleanup_review_note.py",
         "src/apps/api/app/routes/creator_agent.py",
-        "src/apps/api/tests/routes/test_creator_agent.py"
+        "src/apps/api/tests/routes/test_creator_agent.py",
+        "src/apps/api/tests/tasks/test_marathon_render_ready_review.py",
+        "src/apps/api/tests/kria/test_brief_rendered_speech_facts.py",
+        "src/apps/api/tests/kria/test_runtime_talking_first_draft.py"
+      ]
+    },
+    {
+      "id": "market-research-reference-banks",
+      "needs_native": false,
+      "api_tests": "tests/agents/test_market_research_banks.py tests/agents/test_overlay_examples_slop_guard.py tests/agents/test_persona_generator.py tests/agents/test_content_plan_generator.py tests/agents/test_intro_writer.py tests/agents/test_overlay_format_matcher.py tests/evals/test_persona_generator_evals.py tests/evals/test_content_plan_generator_evals.py tests/evals/test_intro_writer_evals.py tests/evals/test_overlay_format_matcher_evals.py",
+      "paths": [
+        "src/apps/api/prompts/persona_archetypes.json",
+        "src/apps/api/prompts/content_ideas.json",
+        "src/apps/api/prompts/tiktok_success_factors.json",
+        "src/apps/api/prompts/overlay_examples.json",
+        "src/apps/api/app/agents/_schemas/market_research.py",
+        "src/apps/api/app/agents/_schemas/persona.py",
+        "src/apps/api/app/agents/_schemas/content_plan.py",
+        "src/apps/api/app/agents/intro_writer.py",
+        "src/apps/api/app/agents/overlay_format_matcher.py",
+        "src/apps/api/app/agents/persona_examples.py",
+        "src/apps/api/app/agents/overlay_examples.py",
+        "src/apps/api/tests/agents/test_market_research_banks.py",
+        "src/apps/api/tests/agents/test_overlay_examples_slop_guard.py"
       ]
     }
   ]

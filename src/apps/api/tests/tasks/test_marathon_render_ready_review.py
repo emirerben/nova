@@ -189,7 +189,7 @@ def test_prod_render_reply_has_no_couldnt_verify_line():
     # removes silences and filler sounds): an honest "Partly", never "Done".
     cleanup = _line(text, "Partly: cut long pauses and the restart of the kilometer thirty")
     assert "Speech cleanup cut the long pauses" in cleanup
-    assert "trim that in the editor" in cleanup
+    assert "I have not confirmed that exact spoken line was removed; check it in the editor" in cleanup
     assert receipts["r2"]["verification"] == "checked"
     assert receipts["r2"]["status"] == "partial"
     for req_id in ("r1", "r2"):

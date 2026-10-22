@@ -966,7 +966,8 @@ jobs:
             tests/kria/test_runtime_speech_cleanup_approval.py \
             tests/kria/test_kri520_receipts.py tests/kria/test_brief_talking_receipts.py \
             tests/kria/test_brief_marathon_receipts.py tests/tasks/test_kri551_cleanup_review_note.py \
-            tests/routes/test_creator_agent.py -q \
+            tests/routes/test_creator_agent.py tests/tasks/test_marathon_render_ready_review.py \
+            tests/kria/test_brief_rendered_speech_facts.py tests/kria/test_runtime_talking_first_draft.py -q \
             | tee ../../../test-results/kri-559/consented-retakes-api-tests.log
       - name: Seal portable fixture inputs for this exact workflow attempt
         if: needs.changes.outputs.journey_needs_native == 'true'
