@@ -1,0 +1,422 @@
+{
+  "scope": "Sanitized derived audit of existing18October metadata; no fresh fetch/model/video inspection.",
+  "view_index_formula": "views / median(positive views in the same account sample)",
+  "engagement_formula": "(available likes + comments + reposts) / views",
+  "sources": [
+    {
+      "file_name": "allexmarielle-20261018.json",
+      "sha256": "77004de84e3c651a46ec42943290b0205d0c83e7fe530eccd1c0dc1cd7fc48a1",
+      "handle": "allexmarielle",
+      "fetched_at": "2026-10-18T19:01:42.480515+00:00",
+      "sample_size": 20,
+      "positive_view_median": 3567.0,
+      "sample_members": [
+        {
+          "post_id": "7691576589380848903",
+          "views": 58300
+        },
+        {
+          "post_id": "7684196677896506642",
+          "views": 19100
+        },
+        {
+          "post_id": "7695306168780033288",
+          "views": 11000
+        },
+        {
+          "post_id": "7686021012713983239",
+          "views": 8941
+        },
+        {
+          "post_id": "7694201287549750546",
+          "views": 7243
+        },
+        {
+          "post_id": "7687201919298833682",
+          "views": 5337
+        },
+        {
+          "post_id": "7689045562108235016",
+          "views": 4888
+        },
+        {
+          "post_id": "7690117913700732168",
+          "views": 4697
+        },
+        {
+          "post_id": "7692484806092836104",
+          "views": 3775
+        },
+        {
+          "post_id": "7687597410746420498",
+          "views": 3601
+        },
+        {
+          "post_id": "7685763095729343752",
+          "views": 3533
+        },
+        {
+          "post_id": "7688753824198053127",
+          "views": 3073
+        },
+        {
+          "post_id": "7697167087017495815",
+          "views": 3071
+        },
+        {
+          "post_id": "7693475760924790024",
+          "views": 2616
+        },
+        {
+          "post_id": "7693825721067654418",
+          "views": 2426
+        },
+        {
+          "post_id": "7697561227655990536",
+          "views": 2425
+        },
+        {
+          "post_id": "7688625479074680082",
+          "views": 2355
+        },
+        {
+          "post_id": "7694940434094673160",
+          "views": 2272
+        },
+        {
+          "post_id": "7696581438379920648",
+          "views": 1563
+        },
+        {
+          "post_id": "7696421799789088018",
+          "views": 1514
+        }
+      ]
+    },
+    {
+      "file_name": "izzsiomoi-20261018.json",
+      "sha256": "fe2e62d094b2bf60002f227e28a16b6634ffe6a329f720abc170d4560fd78161",
+      "handle": "izzsiomoi",
+      "fetched_at": "2026-10-18T19:01:57.074551+00:00",
+      "sample_size": 20,
+      "positive_view_median": 612.5,
+      "sample_members": [
+        {
+          "post_id": "7669218300676607239",
+          "views": 12100
+        },
+        {
+          "post_id": "7666426729031929096",
+          "views": 2242
+        },
+        {
+          "post_id": "7671521167190084882",
+          "views": 1849
+        },
+        {
+          "post_id": "7667203760128806152",
+          "views": 1584
+        },
+        {
+          "post_id": "7671207519779753224",
+          "views": 1518
+        },
+        {
+          "post_id": "7694872986951732498",
+          "views": 856
+        },
+        {
+          "post_id": "7675403918418922759",
+          "views": 763
+        },
+        {
+          "post_id": "7677499214435192071",
+          "views": 740
+        },
+        {
+          "post_id": "7671887516684913928",
+          "views": 708
+        },
+        {
+          "post_id": "7678216716668783880",
+          "views": 654
+        },
+        {
+          "post_id": "7677534881303334152",
+          "views": 571
+        },
+        {
+          "post_id": "7675658943049452808",
+          "views": 550
+        },
+        {
+          "post_id": "7670465340211596562",
+          "views": 547
+        },
+        {
+          "post_id": "7672888514316373256",
+          "views": 503
+        },
+        {
+          "post_id": "7675587416207445255",
+          "views": 465
+        },
+        {
+          "post_id": "7667072783104396551",
+          "views": 428
+        },
+        {
+          "post_id": "7671204298281258258",
+          "views": 383
+        },
+        {
+          "post_id": "7674978156092083464",
+          "views": 335
+        },
+        {
+          "post_id": "7674912578719452424",
+          "views": 326
+        },
+        {
+          "post_id": "7668217723385580818",
+          "views": 320
+        }
+      ]
+    },
+    {
+      "file_name": "nermozdemir-20261018.json",
+      "sha256": "ce708622737b371bd4e95740945285e65651508864bc97b06c303eb4b96fb2a7",
+      "handle": "nermozdemir",
+      "fetched_at": "2026-10-18T19:02:29.536897+00:00",
+      "sample_size": 20,
+      "positive_view_median": 38300.0,
+      "sample_members": [
+        {
+          "post_id": "7677983862441479442",
+          "views": 10200000
+        },
+        {
+          "post_id": "7668975853270813960",
+          "views": 733400
+        },
+        {
+          "post_id": "7674217682970905874",
+          "views": 182600
+        },
+        {
+          "post_id": "7687940676377447687",
+          "views": 89200
+        },
+        {
+          "post_id": "7665071920924134674",
+          "views": 81000
+        },
+        {
+          "post_id": "7669786832292367623",
+          "views": 76300
+        },
+        {
+          "post_id": "7663412077460983058",
+          "views": 57200
+        },
+        {
+          "post_id": "7663862583685958930",
+          "views": 54700
+        },
+        {
+          "post_id": "7663525692155497735",
+          "views": 51900
+        },
+        {
+          "post_id": "7663930951868779784",
+          "views": 40600
+        },
+        {
+          "post_id": "7684556446796631314",
+          "views": 36000
+        },
+        {
+          "post_id": "7680984531360288008",
+          "views": 27800
+        },
+        {
+          "post_id": "7677595990362164487",
+          "views": 23800
+        },
+        {
+          "post_id": "7673457420408048903",
+          "views": 19500
+        },
+        {
+          "post_id": "7689956621023317266",
+          "views": 16000
+        },
+        {
+          "post_id": "7689793251301182738",
+          "views": 13800
+        },
+        {
+          "post_id": "7683596362235022610",
+          "views": 8652
+        },
+        {
+          "post_id": "7692760126704340276",
+          "views": 6223
+        },
+        {
+          "post_id": "7691364073933409543",
+          "views": 4421
+        },
+        {
+          "post_id": "7693627054071336199",
+          "views": 2793
+        }
+      ]
+    },
+    {
+      "file_name": "patricia.turchin-20261018.json",
+      "sha256": "61ee2ca26d6760444bbd38930944651c2d1f891c32af244993b2eabbc58f505a",
+      "handle": "patricia.turchin",
+      "fetched_at": "2026-10-18T19:02:13.590889+00:00",
+      "sample_size": 20,
+      "positive_view_median": 403.5,
+      "sample_members": [
+        {
+          "post_id": "7688255689671707937",
+          "views": 1588
+        },
+        {
+          "post_id": "7685061468974288161",
+          "views": 694
+        },
+        {
+          "post_id": "7688303561402354976",
+          "views": 548
+        },
+        {
+          "post_id": "7692782642311351584",
+          "views": 535
+        },
+        {
+          "post_id": "7688358281072479521",
+          "views": 482
+        },
+        {
+          "post_id": "7685339541410024737",
+          "views": 475
+        },
+        {
+          "post_id": "7697341110875606305",
+          "views": 469
+        },
+        {
+          "post_id": "7692406721309838624",
+          "views": 440
+        },
+        {
+          "post_id": "7686130513362341153",
+          "views": 424
+        },
+        {
+          "post_id": "7692785627565280545",
+          "views": 407
+        },
+        {
+          "post_id": "7692402213704011040",
+          "views": 400
+        },
+        {
+          "post_id": "7692162339705064736",
+          "views": 378
+        },
+        {
+          "post_id": "7692883853932907809",
+          "views": 368
+        },
+        {
+          "post_id": "7693240407097920801",
+          "views": 347
+        },
+        {
+          "post_id": "7694001533309963553",
+          "views": 344
+        },
+        {
+          "post_id": "7693469379224292641",
+          "views": 326
+        },
+        {
+          "post_id": "7692079960244194593",
+          "views": 295
+        },
+        {
+          "post_id": "7694951037798599969",
+          "views": 270
+        },
+        {
+          "post_id": "7694951074913897761",
+          "views": 262
+        },
+        {
+          "post_id": "7696238263417228577",
+          "views": 220
+        }
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "post_id": "7669218300676607239",
+      "handle": "izzsiomoi",
+      "views": 12100,
+      "likes": 3054,
+      "comments": 2,
+      "reposts": 2,
+      "sample_median": 612.5,
+      "view_index": 19.7551,
+      "engagement_rate": 0.252727,
+      "as_of": "2026-10-18T19:01:57.074551+00:00"
+    },
+    {
+      "post_id": "7668975853270813960",
+      "handle": "nermozdemir",
+      "views": 733400,
+      "likes": 51800,
+      "comments": 327,
+      "reposts": 7545,
+      "sample_median": 38300.0,
+      "view_index": 19.1488,
+      "engagement_rate": 0.081364,
+      "as_of": "2026-10-18T19:02:29.536897+00:00"
+    },
+    {
+      "post_id": "7684196677896506642",
+      "handle": "allexmarielle",
+      "views": 19100,
+      "likes": 2534,
+      "comments": 21,
+      "reposts": 41,
+      "sample_median": 3567.0,
+      "view_index": 5.3546,
+      "engagement_rate": 0.135916,
+      "as_of": "2026-10-18T19:01:42.480515+00:00"
+    }
+  ],
+  "canonical_aliases": {
+    "wellness-ritual-lifestyle-01": "wellness-ritual-reset-01",
+    "nostalgia-series-return-01": "series-comeback-accountability-01",
+    "outfit-choice-question-01": "audience-opinion-fashion-01",
+    "ritual-anchor-reset-01": "routine-reset-after-disruption-01",
+    "nostalgia-content-return-corpus-10": "series-comeback-nostalgia-corpus-11"
+  },
+  "distinct_new_references": [
+    "open-choice-engagement-corpus-11",
+    "nostalgia-return-fadein-01",
+    "routine-anchor-popin-01"
+  ],
+  "limits": [
+    "Repeated farm/hike/jacket post IDs are updated observations, not independent new successes.",
+    "Routine reset remains qualitative/disclosed-sponsored inspiration with no organic-performance weight.",
+    "Proposed overlay designs are authored suggestions, not inspected source-media effects."
+  ]
+}

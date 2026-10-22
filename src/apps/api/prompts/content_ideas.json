@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-22-research-11",
+  "version": "2026-10-22-research-18",
   "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
   "ideas": [
     {
@@ -271,12 +271,12 @@
       "idea": "an energetic short clip announcing you woke up at 5am (or earlier) to do [activity] — let the time and the energy sell the payoff, no narration needed",
       "hook_pattern": "woke up at 5am to [activity]!!",
       "filming_context": "candid, first-person, natural dawn light; show the arrival or first moment at the spot — rawness is better than polish here",
-      "source": "https://www.tiktok.com/@izzsiomoi/video/7669218300676607239 (snapshot 2026-10-11T19:01:07.323428+00:00; caption-derived reference; filming style is a suggested treatment, not inspected footage)",
+      "source": "https://www.tiktok.com/@izzsiomoi/video/7669218300676607239 (snapshot 2026-10-18T19:01:57.074551+00:00; caption-derived reference; filming style is a suggested treatment, not inspected footage)",
       "performance": {
         "views": 12100,
-        "engagement_rate": 0.252562,
-        "view_index": 19.9505,
-        "sampled_at": "2026-10-11"
+        "engagement_rate": 0.252727,
+        "view_index": 19.7551,
+        "sampled_at": "2026-10-18"
       }
     },
     {
@@ -286,7 +286,7 @@
       "idea": "a short ritual clip framed as getting back into routines after [disruption — vacation, busy stretch, illness] — the ritual is the reentry, not the disruption",
       "hook_pattern": "getting back into routines after [disruption]: [the ritual]",
       "filming_context": "morning kitchen or movement space, close-up on the ritual itself (the bowl, the mat, the shoes), calm natural light — the disruption is in the caption, not on screen",
-      "source": "https://www.tiktok.com/@nermozdemir/video/7677983862441479442 (snapshot 2026-10-11T19:01:31.838550+00:00; qualitative caption-derived reference from a disclosed sponsored post; no organic-performance signal)"
+      "source": "https://www.tiktok.com/@nermozdemir/video/7677983862441479442 (snapshot 2026-10-18T19:02:29.536897+00:00; qualitative caption-derived reference from a disclosed sponsored post; no organic-performance signal)"
     },
     {
       "id": "series-comeback-accountability-01",
@@ -295,12 +295,12 @@
       "idea": "bring back a content series after a break — open with 'it's been [X months] since I posted [content type]...' and let the accountability framing be the hook for returning and new viewers alike",
       "hook_pattern": "it's been [duration] since I posted [content type]... missed it",
       "filming_context": "same location, aesthetic, or format as the original series — the visual callback rewards loyal followers; the caption hooks newcomers who need no prior context",
-      "source": "https://www.tiktok.com/@nermozdemir/video/7668975853270813960 (snapshot 2026-10-11T19:01:31.838550+00:00; observed caption and counts; causal effect unmeasured)",
+      "source": "https://www.tiktok.com/@nermozdemir/video/7668975853270813960 (snapshot 2026-10-18T19:02:29.536897+00:00; observed caption and counts; causal effect unmeasured)",
       "performance": {
-        "views": 731300,
-        "engagement_rate": 0.081437,
-        "view_index": 19.3722,
-        "sampled_at": "2026-10-11"
+        "views": 733400,
+        "engagement_rate": 0.081364,
+        "view_index": 19.1488,
+        "sampled_at": "2026-10-18"
       }
     },
     {
@@ -310,12 +310,12 @@
       "idea": "show an item in one option and ask viewers to choose between two; use the question as an invitation to respond, without assuming it causes higher engagement",
       "hook_pattern": "which would you pick — [option A] or [option B]?",
       "filming_context": "show the item clearly in natural light; caption asks the question directly — the viewer becomes the decision-maker",
-      "source": "https://www.tiktok.com/@allexmarielle/video/7684196677896506642 (snapshot 2026-10-11T19:00:54.312542+00:00; observed caption and counts; causal effect unmeasured)",
+      "source": "https://www.tiktok.com/@allexmarielle/video/7684196677896506642 (snapshot 2026-10-18T19:01:42.480515+00:00; observed caption and counts; causal effect unmeasured)",
       "performance": {
-        "views": 17800,
-        "engagement_rate": 0.13382,
-        "view_index": 4.0774,
-        "sampled_at": "2026-10-11"
+        "views": 19100,
+        "engagement_rate": 0.135916,
+        "view_index": 5.3546,
+        "sampled_at": "2026-10-18"
       }
     }
   ]

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.38.0] - 2026-10-22
+
+### Changed
+- fix(ios-engine): export an original whose picture starts after its sound (KRI-811) (#1748) <!-- release-pr: 1748 -->
+
+## [0.81.37.0] - 2026-10-22
+
+### Changed
+- fix(research): reconcile October 18 references with their canonical dated sources (#1676) <!-- release-pr: 1676 -->
+
 ## [0.81.36.0] - 2026-10-22
 
 ### Changed
