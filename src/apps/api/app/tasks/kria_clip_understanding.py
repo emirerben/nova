@@ -133,13 +133,42 @@ def _store(item_id: uuid.UUID, entry: dict[str, Any]) -> bool:
         return True
 
 
-def _with_speech_segments(entry: dict[str, Any], *, owner_id: str | None = None) -> dict[str, Any]:
+def _chat_language(item_id: str | None) -> list[str]:
+    """The language of the chat working on this item, when it has told one (KRI-520)."""
+    if not item_id:
+        return []
+    from app.kria.reply_language import thread_reply_language  # noqa: PLC0415
+    from app.models import CreationThread  # noqa: PLC0415
+
+    try:
+        with sync_session() as db:
+            thread = db.execute(
+                select(CreationThread)
+                .where(CreationThread.active_plan_item_id == uuid.UUID(str(item_id)))
+                .order_by(CreationThread.updated_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            language = thread_reply_language(thread) if thread is not None else None
+    except Exception:  # noqa: BLE001 - a missing hint only means one fewer language to try
+        log.warning("kria_clip_chat_language_failed", item_id=str(item_id), exc_info=True)
+        return []
+    return [language] if language else []
+
+
+def _with_speech_segments(
+    entry: dict[str, Any], *, owner_id: str | None = None, item_id: str | None = None
+) -> dict[str, Any]:
     """KRI-282: add timed sentence segments to a clip that has speech. Best effort.
 
     Uses the cached whisper path on the same analysis proxy the vision analyzer
     just read. Any failure leaves the entry exactly as analysed, so this can
     never turn a successful analysis into a failed one. Kill switch:
     ``SPEECH_EXCERPT_MONTAGE_ENABLED=false`` (nothing is transcribed or stored).
+
+    KRI-808: whisper guesses one language per clip and TRANSLATES into a wrong guess, so
+    the first pass is checked against the clip's Gemini transcript and re-transcribed or
+    dropped when they disagree (``clip_speech_check``). Kill switch:
+    ``CLIP_SPEECH_LANGUAGE_CHECK_ENABLED=false`` stores the first pass as before.
     """
     if not settings.speech_excerpt_montage_enabled:
         return entry
@@ -153,16 +182,49 @@ def _with_speech_segments(entry: dict[str, Any], *, owner_id: str | None = None)
         from app.services.speech_segments import (  # noqa: PLC0415
             attach_segments_to_analysis,
             transcribe_stored_clip,
+            transcribe_stored_clip_in,
         )
 
-        words, language = transcribe_stored_clip(
-            str(entry["gcs_path"]),
-            **(
-                {"owner_id": owner_id, "generation": str(entry.get("generation") or "")}
-                if settings.media_library_enabled and owner_id
-                else {}
-            ),
+        gcs_path = str(entry["gcs_path"])
+        owner = (
+            {"owner_id": owner_id, "generation": str(entry.get("generation") or "")}
+            if settings.media_library_enabled and owner_id
+            else {}
         )
+        words, language = transcribe_stored_clip(gcs_path, **owner)
+        if settings.clip_speech_language_check_enabled:
+            from app.services.clip_speech_check import pick_spoken_words  # noqa: PLC0415
+
+            picked = pick_spoken_words(
+                words,
+                language,
+                reference=speech.transcript,
+                candidates=lambda: _chat_language(item_id),
+                retranscribe=lambda lang: transcribe_stored_clip_in(
+                    gcs_path,
+                    lang,
+                    run_context=RunContext(
+                        creator_id=owner_id,
+                        request_id=f"kria-clip-speech:{item_id}:{entry.get('media_id')}:{lang}",
+                        usage_purpose="optional_background",
+                    )
+                    if owner_id
+                    else None,
+                    **owner,
+                ),
+                duration_s=entry.get("duration_s") or analysis.get("duration_s"),
+            )
+            if picked.outcome != "kept":
+                log.info(
+                    "kria_clip_speech_language_checked",
+                    media_id=str(entry.get("media_id")),
+                    outcome=picked.outcome,
+                    reason=picked.reason,
+                    whisper_language=language,
+                    stored_language=picked.language,
+                    tried=list(picked.tried),
+                )
+            words, language = picked.words, picked.language
         return {**entry, "analysis": attach_segments_to_analysis(analysis, words, language)}
     except Exception:  # noqa: BLE001 - segments are an enhancement, never a reason to fail
         log.warning(
@@ -194,7 +256,7 @@ def _analyze_one(raw: dict[str, Any], *, user_id: uuid.UUID, item_id: str) -> di
                 ),
                 require_semantic=True,
             )
-            return _with_speech_segments(entry, owner_id=str(user_id))
+            return _with_speech_segments(entry, owner_id=str(user_id), item_id=item_id)
         except (AiBudgetExceededError, ProviderQuotaExceededError, ProviderOutcomeUnknownError):
             raise _Stop from None
         except Exception as exc:  # noqa: BLE001 - one bad clip must not stop the rest

@@ -52,3 +52,12 @@ spoken-text, security and free replay checks: 2,450 passed, 15 skipped, nine exp
 failures. This new source needs its own hosted checks; earlier native evidence is
 not relabelled as evidence for the new combined source. No running hosted job was
 cancelled or superseded to prepare this local reconciliation.
+
+## Recovery and source-language inputs
+
+Newer main 8eefea56d also carries KRI-795 refusal re-asking, KRI-805 brief-answer
+grounding and KRI-808 source-language transcript handling. These merge without
+additional producer conflicts. Focused parser/prompt/security, question recovery,
+incident and free replay checks: 2,536 passed, 15 skipped, nine expected failures.
+The timing-versus-order instructions remain intact; versions remain v67/v15.
+Publication still preserves the earlier source's running native results.

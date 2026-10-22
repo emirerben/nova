@@ -1265,9 +1265,9 @@ def test_capability_unavailable_decline_names_the_limit_and_a_supported_alternat
 
 
 @pytest.mark.parametrize("reason", ["requirement_conflict", "needs_choice"])
-def test_conflict_and_choice_declines_keep_todays_ask_behaviour(reason: str) -> None:
-    from app.tasks.content_plan_build import humanize_job_failure_reason
-
+def test_conflict_and_choice_declines_ask_without_blaming_the_iphone(reason: str) -> None:
+    """KRI-795: a decision the creator must make is not an iPhone limit (the phone never saw
+    the edit). With nothing more specific recorded, the card still asks for the change."""
     job = _declined_job(
         "phone_plan_unsupported",
         decline={"decline_reason": reason, "failure_reason": "phone_plan_unsupported"},
@@ -1275,7 +1275,10 @@ def test_conflict_and_choice_declines_keep_todays_ask_behaviour(reason: str) -> 
     _, execution, events = _observe(job, {})
     assert execution.error["recovery"] == "ask_user"
     assert execution.error["retryable"] is False
-    assert events[-1]["content"] == humanize_job_failure_reason("phone_plan_unsupported")
+    assert events[-1]["content"] == (
+        "I couldn't keep something you asked for in this edit. "
+        "Tell me what you'd like to change and I'll try a different approach."
+    )
 
 
 def test_untyped_contract_failure_keeps_its_existing_recovery() -> None:
