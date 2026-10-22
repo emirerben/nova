@@ -68,3 +68,32 @@ non-production first-pass fixture; that control intentionally only runs for the
 production replay, not an unavailable database or a failing implementation.
 The real parser/compiler/receipt chain still has the same 12.265–50.380-second
 window and 38.115/35.335-second output durations. No provider was called.
+
+## KRI-829 continuation — 22 October 2026
+
+Merged current main `12d4e7662` into the existing source history. The initial
+preship reproduced a duplicate `kri-789-take-trim-not-order` journey introduced
+by the earlier integration; its two records were byte-equivalent. Removed only
+the duplicate, retaining all paths and checks. The selected journey validator
+must accept the resulting unique list.
+
+Fresh quoted-window, opening-cut, cleanup-off, recorded parser, PostgreSQL runtime
+and gate-validator checks: 173 passed. Preship's mapped incident checks: 1,255
+passed. These are offline checks; hosted CI must rerun on the final source.
+
+The original local T1 footage is now available. Ran `app.cli.verify_take_window`
+with the committed KRI-790 fixture and that original, both with cleanup off and
+on. The kept window is 12.265–50.380 seconds; cleanup-off output is 38.133333
+seconds by ffprobe (38.115-second plan), with 540×960 picture and audio. Cleanup-on
+plan is 35.335 seconds. This CLI produces a diagnostic FFmpeg render, not a
+native app export or a full T1 result. Generated artifacts are retained locally
+under `/private/tmp/kri-829-evidence/t1-trim-off` and `t1-trim-on`; they are not
+committed media.
+
+Inspected the first/last output frames. Independently transcribed the rendered
+cleanup-off audio with local whisper.cpp medium (no provider call): it begins
+with the requested introduction and ends with the requested “here all week”
+line. The transcript also confirms both unwanted phrases remain: actual phrase
+deletion and speaker-specific MEROPE placement remain KRI-724/KRI-787 work.
+Original case source observations are the kit's `T1_caro_full_take_talking/README.md`.
+No complete request, physical-iPhone export, correction/reopen, or rollout claim.
