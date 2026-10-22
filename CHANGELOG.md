@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.47.0] - 2026-10-22
+
+### Changed
+- fix(kria): ask the title wording and the clip picker in one reply (KRI-802) (#1744) <!-- release-pr: 1744 -->
+
 ## [0.81.46.0] - 2026-10-22
 
 ### Changed
