@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  account-picker-probe:
+  account-picker-targeted:
     runs-on: macos-15
     timeout-minutes: 60
     steps:
@@ -21,21 +21,21 @@ jobs:
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '26.3'
-      - name: Prepare exact hosted simulator and unchanged test
+      - name: Prepare exact original SDK for targeted action measurement
         run: |
           set -euo pipefail
-          mkdir -p test-results/account-picker-probe
-          xcodebuild -version | tee test-results/account-picker-probe/xcode-version.txt
+          mkdir -p test-results/account-picker-targeted
+          xcodebuild -version | tee test-results/account-picker-targeted/xcode-version.txt
           python3 - <<'PYCODE'
           from pathlib import Path
-          version = Path("test-results/account-picker-probe/xcode-version.txt").read_text()
+          version = Path("test-results/account-picker-targeted/xcode-version.txt").read_text()
           assert "Build version 17C529" in version, "Hosted toolchain differs from the original failed run"
           PYCODE
-          xcrun simctl list devices available --json > test-results/account-picker-probe/devices.json
+          xcrun simctl list devices available --json > test-results/account-picker-targeted/devices.json
           python3 - <<'PYCODE'
           import json, re, subprocess
           from pathlib import Path
-          root = Path("test-results/account-picker-probe")
+          root = Path("test-results/account-picker-targeted")
           devices = json.loads((root / "devices.json").read_text())["devices"]
           candidates = [d for runtime, rows in devices.items() if runtime.endswith(".iOS-26-2") for d in rows if d["name"] == "iPhone 17 Pro" and d.get("isAvailable")]
           assert candidates, "Exact original iOS 26.2 / iPhone 17 Pro environment is unavailable; do not substitute another runtime"
@@ -49,91 +49,240 @@ jobs:
           PYCODE
           command -v xcodegen || brew install xcodegen
           bash scripts/ios/generate-project.sh
-      - name: Download the sealed original native fixture without rerunning backend tests
-        uses: actions/download-artifact@v4
-        with:
-          name: fixture-bundle-39814549006-1-ae44eefe832d292c1cd276648497fe7232ec3e83
-          run-id: 39814549006
-          github-token: ${{ github.token }}
-          path: test-results/kri-559
-      - name: Verify the original fixture producer and transferred bytes
+      - name: Prepare per-phase compact evidence runner
         run: |
-          python3 scripts/ci/journey-gate.py verify-bundle --root test-results/kri-559 \
-            --head ae44eefe832d292c1cd276648497fe7232ec3e83 --run 39814549006 --attempt 1
-      - name: Build the traced app and original unchanged test
+          cat > test-results/account-picker-targeted/run-phase.py <<'PYCODE'
+          import json, os, subprocess, sys
+          from pathlib import Path
+
+          phase = sys.argv[1]
+          cases = {
+              "original-zero": (0, False, False),
+              "original-2500ms": (2500, False, False),
+              "pending-9000ms": (9000, False, False),
+              "guarded-2500ms": (2500, True, False),
+              "guarded-wrong-position": (0, True, True),
+          }
+          delay, guarded, wrong = cases[phase]
+          root = Path.cwd()
+          folder = root / "test-results/account-picker-targeted" / phase
+          compact = folder / "compact"
+          compact.mkdir(parents=True, exist_ok=True)
+          probe_id = (root / "test-results/account-picker-targeted/simulator-id.txt").read_text().strip()
+          values = {
+              "KRIA_ACCOUNT_DISABLE_RESPONSE_DELAY_MS": str(delay),
+              "KRIA_ACCOUNT_PROBE_GUARD": "1" if guarded else "0",
+              "KRIA_ACCOUNT_WRONG_POSITION_CONTROL": "1" if wrong else "0",
+          }
+          env = os.environ.copy()
+          for key, value in values.items():
+              env[key] = value
+              env["TEST_RUNNER_" + key] = value
+          args = [
+              "xcodebuild", "-project", "Kria.xcodeproj", "-scheme", "Kria", "-skipPackagePluginValidation",
+              "-derivedDataPath", ".derived-data", "CODE_SIGNING_ALLOWED=NO",
+              "-destination", "platform=iOS Simulator,id=" + probe_id,
+              "-parallel-testing-enabled", "NO",
+              "-only-testing:KriaUITests/AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference",
+              "-test-timeouts-enabled", "YES", "-default-test-execution-time-allowance", "180",
+              "-maximum-test-execution-time-allowance", "600", "-resultBundlePath", str(folder / "native.xcresult"),
+              "test-without-building",
+          ]
+          (compact / "command.json").write_text(json.dumps({"phase": phase, "head": env["GITHUB_SHA"], "simulator": probe_id,
+              "environment": values, "arguments": args, "single_case": True, "automatic_retry": False}, indent=2) + "\n")
+          state_file = (compact / "app-state.log").open("w")
+          log_process = subprocess.Popen(["xcrun", "simctl", "spawn", probe_id, "log", "stream", "--level", "debug", "--style", "compact",
+              "--predicate", 'eventMessage CONTAINS "[ACCOUNT-"'], stdout=state_file, stderr=subprocess.STDOUT)
+          try:
+              with (compact / "test.log").open("w") as output:
+                  result = subprocess.run(args, cwd=root / "src/apps/ios", env=env, stdout=output, stderr=subprocess.STDOUT)
+          finally:
+              log_process.terminate()
+              try:
+                  log_process.wait(timeout=15)
+              except subprocess.TimeoutExpired:
+                  log_process.kill()
+                  log_process.wait()
+              state_file.close()
+          exports = {}
+          for kind in ["tests", "activities"]:
+              command = ["xcrun", "xcresulttool", "get", "test-results", kind, "--path", str(folder / "native.xcresult")]
+              if kind == "activities":
+                  command += ["--test-id", "AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference()"]
+              exported = subprocess.run(command, capture_output=True, text=True)
+              exports[kind] = exported.returncode
+              (compact / (kind + ".json")).write_text(exported.stdout)
+              (compact / (kind + "-export-error.txt")).write_text(exported.stderr)
+
+          parsed = {}
+          for name, filename, marker in [
+              ("actions", "test.log", "[ACCOUNT-ACTION] "),
+              ("input", "app-state.log", "[ACCOUNT-INPUT] "),
+              ("input-path", "app-state.log", "[ACCOUNT-INPUT-PATH] "),
+          ]:
+              records, bad = [], []
+              for line in (compact / filename).read_text(errors="replace").splitlines():
+                  if marker not in line:
+                      continue
+                  raw = line.split(marker, 1)[1]
+                  try:
+                      records.append(json.loads(raw))
+                  except json.JSONDecodeError:
+                      bad.append(raw)
+              (compact / (name + ".ndjson")).write_text("".join(json.dumps(row) + "\n" for row in records))
+              parsed[name] = {"records": len(records), "unparsed": bad}
+
+          def walk(value):
+              if isinstance(value, dict):
+                  yield value
+                  for child in value.values():
+                      yield from walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      yield from walk(child)
+          try:
+              nodes = list(walk(json.loads((compact / "tests.json").read_text())))
+          except json.JSONDecodeError:
+              nodes = []
+          tests = [{"id": row.get("nodeIdentifier"), "result": row.get("result"), "duration": row.get("durationInSeconds")}
+              for row in nodes if row.get("nodeType") == "Test Case"]
+          failures = [row.get("name", "") for row in nodes if row.get("nodeType") == "Failure Message"]
+          original_shape = any("text-preference-placement" in failure for failure in failures)
+          missing_navigation = any('"text-learning-enabled" IN identifiers' in failure for failure in failures)
+          preserve = result.returncode != 0 and (phase in ["original-zero", "guarded-2500ms"] or original_shape or missing_navigation or not tests)
+          summary = {"phase": phase, "head": env["GITHUB_SHA"], "test_exit": result.returncode, "export_exit": exports,
+              "tests": tests, "failures": failures, "parsed": parsed, "preserve_raw": preserve,
+              "original_shape_signature": original_shape,
+              "input_hook_installed": "[ACCOUNT-INPUT-INSTALL]" in (compact / "app-state.log").read_text(errors="replace"),
+              "expectation": "negative fault control" if phase in ["original-2500ms", "pending-9000ms", "guarded-wrong-position"] else "positive observation; never shipping readiness"}
+          (compact / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+          with Path(env["GITHUB_OUTPUT"]).open("a") as output:
+              output.write("preserve_raw=" + str(preserve).lower() + "\n")
+              output.write("test_exit=" + str(result.returncode) + "\n")
+          print(json.dumps(summary, indent=2))
+          raise SystemExit(result.returncode or (1 if any(exports.values()) else 0))
+          PYCODE
+          python3 - <<'PYCODE'
+          import hashlib, json, os
+          from pathlib import Path
+          root = Path("test-results/account-picker-targeted")
+          plan = Path("docs/reviews/kri-787-action-input-diagnostic.md")
+          (root / "plan.md").write_bytes(plan.read_bytes())
+          (root / "identity.json").write_text(json.dumps({"head": os.environ["GITHUB_SHA"], "run": os.environ["GITHUB_RUN_ID"], "plan_sha256": hashlib.sha256(plan.read_bytes()).hexdigest()}, indent=2) + "\n")
+          PYCODE
+      - name: Build diagnostic variants once with unchanged original assertions
         id: build
         working-directory: src/apps/ios
         run: |
           set -euo pipefail
-          probe_id="$(cat ../../../test-results/account-picker-probe/simulator-id.txt)"
+          probe_id="$(cat ../../../test-results/account-picker-targeted/simulator-id.txt)"
           xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
             -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
             -destination "platform=iOS Simulator,id=$probe_id" \
-            build-for-testing 2>&1 | tee ../../../test-results/account-picker-probe/build.log
-      - name: Observe ten samples without automatic retries or weaker assertions
-        working-directory: src/apps/ios
-        run: |
-          set -euo pipefail
-          probe_id="$(cat ../../../test-results/account-picker-probe/simulator-id.txt)"
-          xcrun simctl spawn "$probe_id" log stream --level debug --style compact \
-            --predicate 'eventMessage CONTAINS "[ACCOUNT-PICKER-PROBE]"' \
-            > ../../../test-results/account-picker-probe/standalone-state.log 2>&1 &
-          probe_log_pid=$!
-          trap 'kill "$probe_log_pid" 2>/dev/null || true; wait "$probe_log_pid" 2>/dev/null || true' EXIT
-          probe_exit=0
-          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
-            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
-            -destination "platform=iOS Simulator,id=$probe_id" \
-            -parallel-testing-enabled NO \
             -only-testing:KriaUITests/AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference \
-            -test-timeouts-enabled YES \
-            -default-test-execution-time-allowance 180 \
-            -maximum-test-execution-time-allowance 600 \
-            -test-iterations 10 \
-            -resultBundlePath ../../../test-results/account-picker-probe/native.xcresult \
-            test-without-building 2>&1 | tee ../../../test-results/account-picker-probe/test.log || probe_exit=$?
-          export_exit=0
-          xcrun xcresulttool get test-results tests \
-            --path ../../../test-results/account-picker-probe/native.xcresult \
-            > ../../../test-results/account-picker-probe/tests.json || export_exit=$?
-          if [ "$probe_exit" -ne 0 ]; then exit "$probe_exit"; fi
-          exit "$export_exit"
-      - name: Observe the original six-test typography and consent invocation
-        if: always() && steps.build.outcome == 'success'
-        working-directory: src/apps/ios
-        env:
-          TEST_RUNNER_KRIA_E2E_DIR: ${{ github.workspace }}/test-results/kri-559/kri-648
-        run: |
-          set -euo pipefail
-          probe_id="$(cat ../../../test-results/account-picker-probe/simulator-id.txt)"
-          xcrun simctl spawn "$probe_id" log stream --level debug --style compact \
-            --predicate 'eventMessage CONTAINS "[ACCOUNT-PICKER-PROBE]"' \
-            > ../../../test-results/account-picker-probe/context-state.log 2>&1 &
-          probe_log_pid=$!
-          trap 'kill "$probe_log_pid" 2>/dev/null || true; wait "$probe_log_pid" 2>/dev/null || true' EXIT
-          context_exit=0
-          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
-            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
-            -destination "platform=iOS Simulator,id=$probe_id" \
-            -parallel-testing-enabled NO -test-timeouts-enabled YES \
-            -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 600 \
-            -only-testing:KriaTests/DeviceMontageRenderE2ETests/testGenerationPinnedTextStylesPreviewAndExport \
-            -only-testing:KriaUITests/AccountPrivacyUITests/testTextPreferencesSaveOffEffectsAndReopen \
-            -only-testing:KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload \
-            -only-testing:KriaUITests/AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference \
-            -only-testing:KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory \
-            -only-testing:KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss \
-            -resultBundlePath ../../../test-results/account-picker-probe/context.xcresult \
-            test-without-building 2>&1 | tee ../../../test-results/account-picker-probe/context.log || context_exit=$?
-          export_exit=0
-          xcrun xcresulttool get test-results tests \
-            --path ../../../test-results/account-picker-probe/context.xcresult \
-            > ../../../test-results/account-picker-probe/context-tests.json || export_exit=$?
-          if [ "$context_exit" -ne 0 ]; then exit "$context_exit"; fi
-          exit "$export_exit"
+            build-for-testing 2>&1 | tee ../../../test-results/account-picker-targeted/build.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: account-picker-probe-${{ github.run_id }}-${{ github.sha }}
-          path: test-results/account-picker-probe
+          name: picker-targeted-setup-${{ github.run_id }}-${{ github.sha }}
+          path: |
+            test-results/account-picker-targeted/*.txt
+            test-results/account-picker-targeted/identity.json
+            test-results/account-picker-targeted/plan.md
+            test-results/account-picker-targeted/build.log
+          retention-days: 7
+      - name: Single case original-zero
+        id: phase_0
+        if: always() && steps.build.outcome == 'success'
+        run: python3 test-results/account-picker-targeted/run-phase.py original-zero
+      - name: Preserve compact original-zero before the next phase
+        uses: actions/upload-artifact@v4
+        if: always() && steps.build.outcome == 'success'
+        with:
+          name: picker-targeted-original-zero-${{ github.run_id }}-${{ github.sha }}
+          path: test-results/account-picker-targeted/original-zero/compact
+          if-no-files-found: error
+          retention-days: 7
+      - name: Preserve raw original-zero only for an unexpected or original-shaped failure
+        uses: actions/upload-artifact@v4
+        if: always() && steps.phase_0.outputs.preserve_raw == 'true'
+        with:
+          name: picker-targeted-raw-original-zero-${{ github.run_id }}-${{ github.sha }}
+          path: test-results/account-picker-targeted/original-zero/native.xcresult
+          retention-days: 7
+      - name: Single case original-2500ms
+        id: phase_1
+        if: always() && steps.build.outcome == 'success'
+        run: python3 test-results/account-picker-targeted/run-phase.py original-2500ms
+      - name: Preserve compact original-2500ms before the next phase
+        uses: actions/upload-artifact@v4
+        if: always() && steps.build.outcome == 'success'
+        with:
+          name: picker-targeted-original-2500ms-${{ github.run_id }}-${{ github.sha }}
+          path: test-results/account-picker-targeted/original-2500ms/compact
+          if-no-files-found: error
+          retention-days: 7
+      - name: Preserve raw original-2500ms only for an unexpected or original-shaped failure
+        uses: actions/upload-artifact@v4
+        if: always() && steps.phase_1.outputs.preserve_raw == 'true'
+        with:
+          name: picker-targeted-raw-original-2500ms-${{ github.run_id }}-${{ github.sha }}
+          path: test-results/account-picker-targeted/original-2500ms/native.xcresult
+          retention-days: 7
+      - name: Single case pending-9000ms
+        id: phase_2
+        if: always() && steps.build.outcome == 'success'
+        run: python3 test-results/account-picker-targeted/run-phase.py pending-9000ms
+      - name: Preserve compact pending-9000ms before the next phase
+        uses: actions/upload-artifact@v4
+        if: always() && steps.build.outcome == 'success'
+        with:
+          name: picker-targeted-pending-9000ms-${{ github.run_id }}-${{ github.sha }}
+          path: test-results/account-picker-targeted/pending-9000ms/compact
+          if-no-files-found: error
+          retention-days: 7
+      - name: Preserve raw pending-9000ms only for an unexpected or original-shaped failure
+        uses: actions/upload-artifact@v4
+        if: always() && steps.phase_2.outputs.preserve_raw == 'true'
+        with:
+          name: picker-targeted-raw-pending-9000ms-${{ github.run_id }}-${{ github.sha }}
+          path: test-results/account-picker-targeted/pending-9000ms/native.xcresult
+          retention-days: 7
+      - name: Single case guarded-2500ms
+        id: phase_3
+        if: always() && steps.build.outcome == 'success'
+        run: python3 test-results/account-picker-targeted/run-phase.py guarded-2500ms
+      - name: Preserve compact guarded-2500ms before the next phase
+        uses: actions/upload-artifact@v4
+        if: always() && steps.build.outcome == 'success'
+        with:
+          name: picker-targeted-guarded-2500ms-${{ github.run_id }}-${{ github.sha }}
+          path: test-results/account-picker-targeted/guarded-2500ms/compact
+          if-no-files-found: error
+          retention-days: 7
+      - name: Preserve raw guarded-2500ms only for an unexpected or original-shaped failure
+        uses: actions/upload-artifact@v4
+        if: always() && steps.phase_3.outputs.preserve_raw == 'true'
+        with:
+          name: picker-targeted-raw-guarded-2500ms-${{ github.run_id }}-${{ github.sha }}
+          path: test-results/account-picker-targeted/guarded-2500ms/native.xcresult
+          retention-days: 7
+      - name: Single case guarded-wrong-position
+        id: phase_4
+        if: always() && steps.build.outcome == 'success'
+        run: python3 test-results/account-picker-targeted/run-phase.py guarded-wrong-position
+      - name: Preserve compact guarded-wrong-position before the next phase
+        uses: actions/upload-artifact@v4
+        if: always() && steps.build.outcome == 'success'
+        with:
+          name: picker-targeted-guarded-wrong-position-${{ github.run_id }}-${{ github.sha }}
+          path: test-results/account-picker-targeted/guarded-wrong-position/compact
+          if-no-files-found: error
+          retention-days: 7
+      - name: Preserve raw guarded-wrong-position only for an unexpected or original-shaped failure
+        uses: actions/upload-artifact@v4
+        if: always() && steps.phase_4.outputs.preserve_raw == 'true'
+        with:
+          name: picker-targeted-raw-guarded-wrong-position-${{ github.run_id }}-${{ github.sha }}
+          path: test-results/account-picker-targeted/guarded-wrong-position/native.xcresult
           retention-days: 7

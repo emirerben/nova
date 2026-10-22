@@ -280,6 +280,7 @@ struct TextPreferencesView: View {
     private func pickerProbe(_ phase: String) {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-account") {
+            AccountPickerInputProbe.remember(model, role: role)
             NSLog("%@", "[ACCOUNT-PICKER-PROBE] \(phase) model=\(ObjectIdentifier(model)) role=\(role) working=\(model.isWorking) revision=\(model.memory?.revision ?? -1)")
         }
         #endif
