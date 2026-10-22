@@ -334,11 +334,11 @@ async def test_the_refusal_card_names_the_order_choice_by_field_path(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_the_next_reply_after_the_refusal_offers_the_order_choice_again(monkeypatch) -> None:
-    user_id, thread_id, _, first, _ = await _refused(monkeypatch)
+async def test_the_refusal_card_offers_the_order_choice_again_before_another_turn(
+    monkeypatch,
+) -> None:
+    user_id, thread_id, _, first, payload = await _refused(monkeypatch)
     revision = _head_draft(thread_id).draft_revision
-
-    await _say(user_id, thread_id, "Try again please")
 
     questions = _questions(thread_id)
     assert len(questions) == 2  # the one re-ask, as a picker
@@ -349,7 +349,8 @@ async def test_the_next_reply_after_the_refusal_offers_the_order_choice_again(mo
     # never recommend what was just refused; recommend the way forward that cannot hit it
     assert recommended == {"attachment_order": False, "unordered": True}
     reply = _last_reply(thread_id)
-    assert reply.content.startswith("I couldn't make your last video with this choice.")
+    assert reply.content.startswith("I couldn't keep the clip order you asked for.")
+    assert payload["choice_question"]["question_id"] == again["question_id"]
     assert _head_draft(thread_id).draft_revision == revision  # the refused edit is not redrafted
 
     tapped = {"question_id": again["question_id"], "option_key": "unordered"}
@@ -363,12 +364,13 @@ async def test_typing_the_other_option_right_after_the_refusal_needs_no_reask(
     monkeypatch,
 ) -> None:
     """The exact incident sequence: answer, refusal, typed other label."""
-    user_id, thread_id, _, first, _ = await _refused(monkeypatch)
+    user_id, thread_id, _, first, payload = await _refused(monkeypatch)
 
     result = await _say(user_id, thread_id, UNORDERED_LABEL)
 
     assert result["status"] == "awaiting_approval"
-    assert len(_questions(thread_id)) == 1
+    assert len(_questions(thread_id)) == 2  # already re-asked on the failure card, no third ask
+    assert _selections(thread_id)[-1]["question_id"] == payload["choice_question"]["question_id"]
     assert _selections(thread_id)[-1]["option_key"] == "unordered"
     assert _draft_strategy(_head_draft(thread_id))["choice_answers"][0]["option"] == "unordered"
     assert UNORDERED_NOTE in _last_summary(thread_id)
@@ -376,16 +378,15 @@ async def test_typing_the_other_option_right_after_the_refusal_needs_no_reask(
 
 @pytest.mark.asyncio
 async def test_retyping_the_refused_option_after_the_refusal_confirms_it(monkeypatch) -> None:
-    user_id, thread_id, _, first, _ = await _refused(monkeypatch)
+    user_id, thread_id, _, first, payload = await _refused(monkeypatch)
 
     result = await _say(user_id, thread_id, ATTACHMENT_LABEL)
 
     assert result["status"] == "awaiting_approval"
-    assert len(_questions(thread_id)) == 1
+    assert len(_questions(thread_id)) == 2
     assert _selections(thread_id)[-1] == {
-        "question_id": first["question_id"],
+        "question_id": payload["choice_question"]["question_id"],
         "option_key": "attachment_order",
-        "reanswer": True,
     }
     assert _last_summary(thread_id).endswith(ATTACHMENT_NOTE)  # a fresh answer, said plainly
 
@@ -395,11 +396,11 @@ async def test_a_second_refusal_after_the_reask_keeps_the_answer_without_a_third
     monkeypatch,
 ) -> None:
     user_id, thread_id, session_id, _, _ = await _refused(monkeypatch)
-    await _say(user_id, thread_id, "Try again please")
     again = _questions(thread_id)[-1]
     tapped = {"question_id": again["question_id"], "option_key": "attachment_order"}
     await _say(user_id, thread_id, ATTACHMENT_LABEL, selection=tapped)
     await asyncio.to_thread(_refuse_the_approved_render, thread_id, session_id)
+    assert len(_questions(thread_id)) == 2  # failure card must respect the same ask limit
 
     result = await _say(user_id, thread_id, "Try again please")
 
@@ -416,7 +417,6 @@ async def test_you_choose_on_the_refusal_reask_never_picks_the_refused_option(
     monkeypatch,
 ) -> None:
     user_id, thread_id, _, _, _ = await _refused(monkeypatch)
-    await _say(user_id, thread_id, "Try again please")
     assert len(_questions(thread_id)) == 2
 
     result = await _say(user_id, thread_id, "you choose")
