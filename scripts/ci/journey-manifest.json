@@ -601,7 +601,8 @@
         "src/apps/api/tests/pipeline/test_phone_guided_speed.py",
         "src/apps/api/tests/routes/test_authored_playback_speed.py",
         "src/apps/api/tests/routes/test_phone_speed_safety.py",
-        "src/apps/api/tests/services/test_guided_speed_projection.py"
+        "src/apps/api/tests/services/test_guided_speed_projection.py",
+        "src/apps/ios/Tests/KriaUITests/NativeSpeedUITests.swift"
       ],
       "xctests": [
         "KriaTests/NativeEditorSessionTests/testFootageSpeedPreservesImplicitSourceSpanAcrossResetAndUndo",
@@ -612,7 +613,8 @@
         "KriaTests/NativeEditorInteractionTests/testMarkedSpeedWindowsRoundEachOutputDurationToEvenThirtyFPSFrame",
         "KriaTests/NativeEditorInteractionTests/testMarkedTimelineUsesTheFrameClockForMixedClipAndTransitionBoundaries",
         "KriaTests/NativeEditorInteractionTests/testRemovedMarkedSpeedSlotDoesNotPutLegacySurvivorsOnFrameClock",
-        "KriaTests/GuidedLabelRebaseVectorTests/testSourceBoundTextUsesMarkedThirtyFPSWindowAfterHalfFrameSpeedRetime"
+        "KriaTests/GuidedLabelRebaseVectorTests/testSourceBoundTextUsesMarkedThirtyFPSWindowAfterHalfFrameSpeedRetime",
+        "KriaUITests/NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector"
       ]
     },
     {

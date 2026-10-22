@@ -32,7 +32,9 @@ native media engine already implement retiming. Web clip controls do not yet car
 source seconds per output second. A speed-only command computes the new duration from the
 selected source span and assigns an absolute rate. It never compounds rates, moves the start,
 extends the selection, or changes legacy payload interpretation. Old projects require no
-migration. Omitted rate remains legacy/1x; implicit source-span retimes need preserving.
+migration. Old projects without a saved rate remain 1x. Partial authored Saves inherit an
+omitted rate from the saved slot; explicit null is a reset. Implicit source-span retimes
+need preserving.
 
 Changing speed is a normal edit: original source assets are retained, the revision/hash changes,
 existing save generation guards invalidate old results, and existing job retries and failure
@@ -173,3 +175,46 @@ The original M2 report supplied no clip or saved job. Its specific incident repl
 creation planner speed, website speed controls, timed-effect/speech integration and rollout
 remain open under the KRI-689 feature boundary. This change establishes the narrower existing
 phone-editor speed capability. Do not describe the full original creation request as resolved.
+
+## Final PR verification
+
+- Merged `origin/main` at `c09c6a8b5` before the final checks. The final review found and fixed
+  a stale authored Save that omitted speed fields: it now inherits the persisted rate and
+  exact source edge. Explicit-null reset and unavailable-capability rejection are covered
+  through the real commit route. The authored speed suite now has **12 passing tests**.
+- Integrated backend check: **521 passed, 1 expected failure**, including the source/window,
+  authored/guided Save, audio, bounds, and current export-publication guards. The expected
+  crossfade-label failure is the same case documented above.
+- Generated API/mobile contracts, TypeScript checking, and the six journey-policy checks
+  passed after the merge.
+- Final `make verify-editor-timeline` passed again after the stale-Save fix: **209 Jest,
+  28 desktop browser, 42 mobile browser, and 583 backend tests**.
+- Full `make verify-kria` passed against an isolated, migrated local test database:
+  **4,992 passed, 6 skipped, 6 expected failures, 0 failures**. The skips require canonical
+  production Linux/FreeType/Skia pixel output; they are not phone-speed cases. The first
+  attempt used the unavailable default PostgreSQL test role; the isolated database resolved
+  that environment failure without changing source or shared database configuration.
+- The native screen check found that the normal **Adjust** action opened a nudge-only panel.
+  Added the shared speed/crop controls there while preserving the existing nudge and audio
+  controls. Speed and resulting clip duration are visible; a denied capability also disables
+  reset, since reset changes the same output clock.
+- iPhone 17 Pro / iOS 26.5 UI journey passed through **Adjust**: the same six-second selection
+  becomes 24 seconds at 0.25x, 1.5 seconds at 4x, returns to six seconds at reset, and returns
+  to 4x/1.5 seconds with undo. This fixture checks the real controls and canonical selected
+  clip duration. Its canned preview is not evidence of retimed playback or export; the
+  separate AVFoundation and FFmpeg checks above provide output evidence.
+- Full native app unit target on that simulator: **1,885 passed, 24 skipped, 0 failures**
+  (1,909 test entries, verified from xcresult). The skipped cases are 15 montage exports,
+  seven photo exports, one narration replay, and one research-source export requiring
+  external QA fixture directories/opt-ins. No unexpected skips. The complete all-UI suite
+  and physical-device acceptance are still unverified; the speed UI journey is focused.
+- After the final visible speed-label change, rebuilt and reran the UI journey plus both
+  denied/missing-capability reset tests: **3 passed, 0 skipped, 0 failures**. The final
+  simulator screenshot was inspected; it shows **4x**, **00:01.5** clip duration, and Reset.
+  CI selects this new UI journey alongside the paired timing vectors. UI selection policy
+  checks also passed (**25 tests**).
+- An extra attempt at the upstream actual-export integration suite could not run completely:
+  this host has no Tesseract binary, and the concurrent full iOS build exhausted disk space.
+  That run is not counted as passing evidence. The scoped backend check above passed after
+  recovery. The production actual-output verifier currently excludes retiming/holds; these
+  local export checks do not claim production verification enrollment for speed edits.

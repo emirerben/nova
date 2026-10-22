@@ -8,6 +8,9 @@ extension NativeEditorSession {
     func setFootagePlaybackRate(_ selection: EditorSelection, rate: Double) {
         guard rate.isFinite, (0.25...4).contains(rate), let section = footageSection(selection) else { return }
         guard selection.kind != .clip || speedBlockedReason(for: selection) == nil else { return }
+        // Reset changes the output clock too; a closed device capability must
+        // preserve a saved speed until the server permits retiming again.
+        guard selection.kind != .clip || !rendersOnDevice || canSetClipPlaybackRate else { return }
         let resetting = abs(rate - 1) < 0.000_001
         guard canEditFootage(section, keys: ["footage.retime", "playback_rate"], operation: "playback_rate", resetting: resetting) else { return }
         let clearValue = footageClearValue(selection, key: "playback_rate")
@@ -80,10 +83,9 @@ extension NativeEditorSession {
         }
     }
 
-    /// A clip's crop and speed also carry a `clips.<operation>` capability,
-    /// which device variants close. Returning to the default stays under the
-    /// section's own gate: a value saved before that clamp must stay clearable,
-    /// or the edit could never save again.
+    /// Legacy clearing stays under the section gate for crop and cloud speed.
+    /// Device clip speed checks its explicit capability before reaching here,
+    /// because resetting it changes duration just like any other speed edit.
     private func canEditFootage(_ section: EditorSection, keys: [String], operation: String, resetting: Bool) -> Bool {
         if resetting { return canEditOperation(keys + [section.rawValue], section: section) }
         // A phone render opens speed only when this exact clip operation is

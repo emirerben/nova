@@ -2158,10 +2158,9 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.document.clips, before)
     }
 
-    /// The server closes `clips.source_crop/playback_rate/looks` on device
-    /// variants because the phone compiler rejects them. A value saved before
-    /// that clamp must still clear, as an explicit null the guided writer honors.
-    func testDeviceVariantRefusesNewCropSpeedAndLookButClearsSavedOnes() async throws {
+    /// Crop/look retain legacy clearing, but a speed reset changes the clock
+    /// and must obey the same device capability as a new rate assignment.
+    func testDeviceVariantRefusesSpeedResetButClearsSavedCropAndLook() async throws {
         let (session, fake) = await Self.footageSession(destination: "device", operationsEditable: false, slot: [
             "source_crop": .object(["x": .number(0.1), "y": .number(0.1), "width": .number(0.5), "height": .number(0.5)]),
             "playback_rate": .number(2),
@@ -2180,21 +2179,33 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.document, original, "A device variant can't take a new crop, speed or look")
         XCTAssertFalse(session.hasUnsavedChanges)
 
-        session.setFootageCrop(selection, crop: nil)
         session.setFootagePlaybackRate(selection, rate: 1)
+        XCTAssertEqual(session.document, original, "A denied reset must preserve the entire saved timeline")
+        session.setFootageCrop(selection, crop: nil)
         session.setClipLookPreset(clipID: slotID, preset: "none")
         let slot = try XCTUnwrap(session.document.clips.first)
         XCTAssertEqual(slot.raw["source_crop"], .null)
-        XCTAssertEqual(slot.raw["playback_rate"], .null)
+        XCTAssertEqual(slot.raw["playback_rate"], .number(2))
         XCTAssertEqual(slot.lookPreset, "none")
         XCTAssertNil(session.footageCrop(for: selection))
-        XCTAssertEqual(session.footagePlaybackRate(for: selection), 1)
+        XCTAssertEqual(session.footagePlaybackRate(for: selection), 2)
         XCTAssertTrue(session.hasUnsavedChanges)
 
         await session.save()
         let sent = try XCTUnwrap(fake.lastRequest?.timelineSlots?.first?.objectValue)
         XCTAssertEqual(sent["source_crop"], .null, "An omitted key would keep the stored crop")
-        XCTAssertEqual(sent["playback_rate"], .null)
+        XCTAssertEqual(sent["playback_rate"], .number(2))
+    }
+
+    func testDeviceSpeedResetRequiresAnAdvertisedCapability() async throws {
+        let (session, _) = await Self.footageSession(destination: "device", operationsEditable: true, advertiseSpeed: false,
+            slot: ["playback_rate": .number(2)])
+        let selection = EditorSelection(kind: .clip, id: try XCTUnwrap(session.timelineClips.first).id.uuidString)
+        let original = session.document
+        XCTAssertFalse(session.canSetClipPlaybackRate)
+        session.setFootagePlaybackRate(selection, rate: 1)
+        XCTAssertEqual(session.document, original)
+        XCTAssertFalse(session.hasUnsavedChanges)
     }
 
     /// KRI-132 journey fix: a device-rendered edit's Add-clip control is silently
@@ -6044,14 +6055,16 @@ final class NativeEditorSessionTests: XCTestCase {
 
     /// Loads one clip slot (plus `extras`) under the server's per-clip
     /// `clips.*` crop, speed and look capabilities.
-    private static func footageSession(destination: String, operationsEditable: Bool, slot extras: [String: JSONValue] = [:]) async -> (NativeEditorSession, EditorCommitSpy) {
+    private static func footageSession(destination: String, operationsEditable: Bool, advertiseSpeed: Bool = true, slot extras: [String: JSONValue] = [:]) async -> (NativeEditorSession, EditorCommitSpy) {
         let threadID = UUID()
         var authoritative = variant(duration: 2, generation: "generation-1")
         authoritative["render_destination"] = .string(destination)
         let operation: JSONValue = .object(["editable": .bool(operationsEditable)])
+        var clipCapabilities: [String: JSONValue] = ["source_crop": operation, "looks": operation]
+        if advertiseSpeed { clipCapabilities["playback_rate"] = operation }
         authoritative["editor_capabilities"] = .object([
             "timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false),
-            "clips": .object(["source_crop": operation, "playback_rate": operation, "looks": operation]),
+            "clips": .object(clipCapabilities),
         ])
         var slot: [String: JSONValue] = ["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(4), "removed": .bool(false)]
         slot.merge(extras) { _, extra in extra }

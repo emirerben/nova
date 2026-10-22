@@ -1412,6 +1412,10 @@ private struct NativeAdjustInspector: View {
             }
             .disabled(!session.canEditTimeline)
             Section { Text("Trim handles appear in the timeline as soon as a clip is selected. These small nudge controls keep the adjustment reversible and precise.").font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc) }
+            if let selection = session.selection, selection.kind == .clip {
+                NativeFootagePanel(session: session, selection: selection)
+                    .disabled(!session.canEdit(.timeline))
+            }
             if let clipID = session.selection?.kind == .clip ? session.selection?.id : nil {
                 NativeClipAudioSection(clipID: clipID, session: session)
             }

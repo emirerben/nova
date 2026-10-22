@@ -49,6 +49,9 @@ enum NativeEditorUITestFixtures {
     }
 
     static func fixture(arguments: [String]) -> Fixture {
+        if arguments.contains("-ui-testing-editor-speed") {
+            return Fixture(shape: .reorderClips, draft: speedControls)
+        }
         if arguments.contains("-ui-testing-editor-captured-creation") {
             // External captures are not built-in deterministic fixture shapes:
             // they share source-preview behavior but require a supplied draft.
@@ -556,6 +559,19 @@ enum NativeEditorUITestFixtures {
         }
         do { return try JSONDecoder().decode(EditorDraft.self, from: data) }
         catch { preconditionFailure("KRI-524 captured editor fixture is invalid: \(error)") }
+    }()
+
+    static let speedControls: EditorDraft = {
+        let clips = [clip(960, start: 0, duration: 6, sourceDuration: 20)]
+        return draft(clips: clips, text: [], captions: false, music: false,
+                     sections: ["timeline_slots": slots(for: clips)], rootExtras: [
+                        "render_destination": .string("device"),
+                        "editor_timeline_mode": .string("authored"),
+                        "editor_capabilities": .object([
+                            "timeline": .bool(true),
+                            "clips": .object(["playback_rate": .object(["editable": .bool(true)])]),
+                        ]),
+                     ])
     }()
 
     static let reorderClips: EditorDraft = {
