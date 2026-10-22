@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.46.0] - 2026-10-22
+
+### Changed
+- fix(kria): "keep '<line>' audible" holds the line on a montage, never a pop-in (KRI-803) (#1741) <!-- release-pr: 1741 -->
+
 ## [0.81.45.0] - 2026-10-22
 
 ### Changed
