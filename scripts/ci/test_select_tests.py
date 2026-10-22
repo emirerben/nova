@@ -662,7 +662,7 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/schemas/guided_edit_revision.py",
-                (True, "covered", "kri-561-song-order"),
+                (True, "covered", "kri-561-song-order,kri-689-clip-speed"),
             ),
             (
                 "src/apps/api/app/kria/speaker_framing_ask.py",
