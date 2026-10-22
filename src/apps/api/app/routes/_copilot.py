@@ -32,6 +32,7 @@ from app.agents.edit_copilot import (
 from app.kria.brief_route import loose_text
 from app.kria.reply_language import current_reply_language, say
 from app.services.copilot_limits import COPILOT_SNAPSHOT_MAX_BYTES
+from app.services.creator_model_comparison import configure_creator_agent
 
 log = structlog.get_logger()
 
@@ -388,7 +389,7 @@ async def run_copilot_turn(
 
     try:
         output: EditCopilotOutput = await asyncio.to_thread(
-            EditCopilotAgent(default_client()).run,
+            configure_creator_agent(EditCopilotAgent(default_client()), "edit_copilot").run,
             agent_input,
             ctx=RunContext(
                 job_id=str(job_id),

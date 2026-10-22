@@ -239,6 +239,8 @@ class AgentSpec:
     schema_retry_limit: int = 1
     # Non-token provider tools (e.g. one grounded search prompt), reserved upfront.
     max_tool_cost_usd: float = 0.0
+    # Opt-in only; never silently fall back to JSON-only when rejected.
+    response_schema: dict[str, Any] | None = None
 
 
 class ThoughtSummaryAttemptPublisher(Protocol):
@@ -293,6 +295,7 @@ class ModelInvocation:
     tokens_cached: int = 0
     tokens_tool: int = 0
     token_details: dict[str, Any] = field(default_factory=dict)
+    finish_status: str = "completed"
 
 
 @dataclass(slots=True)
@@ -366,6 +369,7 @@ class ModelClient:
         thinking_budget: int | None = None,
         thinking_level: str | None = None,
         timeout_s: float = 30.0,
+        response_schema: dict[str, Any] | None = None,
     ) -> ModelInvocation:
         raise NotImplementedError
 
@@ -461,6 +465,13 @@ class Agent(ABC, Generic[InputT, OutputT]):
     ) -> dict[str, Any] | None:
         """Return safe input JSON for logs, admin persistence, and Langfuse."""
 
+        if self.spec.sensitive_io and input_dict is not None:
+            encoded = json.dumps(input_dict, sort_keys=True, default=str).encode()
+            return {
+                "redacted": True,
+                "keys": sorted(input_dict),
+                "sha256": hashlib.sha256(encoded).hexdigest(),
+            }
         projected = _project_sensitive_input(input_dict)
         return projected if isinstance(projected, dict) else None
 
@@ -496,6 +507,9 @@ class Agent(ABC, Generic[InputT, OutputT]):
         input_dump = (
             validated_input.model_dump() if hasattr(validated_input, "model_dump") else None
         )
+        from app.services.creator_comparison_capture import capture_invocation  # noqa: PLC0415
+
+        capture_invocation(self, validated_input, ctx)
         input_dump = self.project_input_for_observability(input_dump)
 
         # Rule-based bypass: no model client, no retries, no fallbacks
@@ -722,7 +736,9 @@ class Agent(ABC, Generic[InputT, OutputT]):
             stats.attempts += 1
             reservation = None
             provider_max_output_tokens = self.max_output_tokens
-            if model.startswith("gemini"):
+            from app.agents._text_providers import paid_provider  # noqa: PLC0415
+
+            if paid_provider(model):
                 from app.services.ai_cost_control import (  # noqa: PLC0415
                     PaidCallRequest,
                     effective_max_output_tokens,
@@ -735,7 +751,8 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 provider_max_output_tokens = effective_max_output_tokens(self.max_output_tokens)
                 estimated_cost = estimate_call_cost_usd(
                     model=model,
-                    prompt=prompt,
+                    prompt=prompt
+                    + (json.dumps(self.spec.response_schema) if self.spec.response_schema else ""),
                     max_output_tokens=provider_max_output_tokens,
                     media_mime=mime,
                     media_duration_s=self.media_duration_s(input),
@@ -760,6 +777,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                         ),
                         model=model,
                         estimated_cost_usd=estimated_cost + self.spec.max_tool_cost_usd,
+                        provider=paid_provider(model) or "google",
                         ctx=ctx,
                         cached_behavior_available=bool(
                             ctx.extra.get("cached_behavior_available", False)
@@ -794,6 +812,8 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     thinking_level=thinking_level,
                     timeout_s=provider_timeout_s,
                 )
+                if self.spec.response_schema is not None:
+                    invoke_kwargs["response_schema"] = self.spec.response_schema
                 # A publisher may mint a per-attempt closure. That closure
                 # carries an attempt generation so late chunks from a timed-out
                 # executor thread cannot update a replacement attempt.
@@ -847,7 +867,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 mark_paid_call_unknown(reservation)
                 raise TerminalError(self._terminal_message("unclassified", exc)) from exc
 
-            if model.startswith("gemini"):
+            if paid_provider(model):
                 from app.services.ai_cost_control import (  # noqa: PLC0415
                     PRICE_VERSION,
                     UsageMeter,
@@ -1019,6 +1039,12 @@ class Agent(ABC, Generic[InputT, OutputT]):
         stats: _RunStats | None = None,
         ctx: RunContext | None = None,
     ) -> None:
+        if inv.finish_status == "refused":
+            raise RefusalError("Content policy refusal")
+        if inv.finish_status == "truncated":
+            raise _OutputTruncatedError("model truncated output")
+        if inv.finish_status != "completed":
+            raise TerminalError("provider response incomplete")
         # Provider-specific finish_reason check (Gemini-flavored, but tolerant)
         raw = inv.raw_response
         if raw is not None:

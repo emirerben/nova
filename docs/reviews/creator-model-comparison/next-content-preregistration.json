@@ -1,0 +1,154 @@
+{
+  "status": "preregistered_before_live",
+  "created_at": "2026-10-19T19:42:40.500033+00:00",
+  "same_envelope_id": "e8a5c866-dd24-426e-8322-0b6a1789488b",
+  "cases": [
+    "MC-01",
+    "CP-04"
+  ],
+  "calls": 6,
+  "maximum_new_reservation_usd": 1.396602,
+  "max_attempts": 1,
+  "fallbacks": false,
+  "output_profiles": "explicit JSON; native Sonnet remains rejected",
+  "source_kind": "exact recorded invocation inputs with current pinned prompts",
+  "stop_rules": [
+    "Stop new paid work on unknown; never retry the protected old Gemini submission",
+    "Keep original failures; no automatic JSON repair or fallback",
+    "No production edits or exports; retain source-reviewed status and human-pending turn rubric"
+  ],
+  "grading": [
+    "all source obligations active at selected turn",
+    "unchanged fields preserved",
+    "first-attempt parsing and safe compilation",
+    "human creative preferences after blind review"
+  ],
+  "preflights": [
+    {
+      "mode": "offline_preflight",
+      "packet_sha256": "399e52b300c25099c9b265b43d10dde56557a227fd00f9e2d5ad6728b473e3a2",
+      "calls": 3,
+      "max_provider_submissions": 3,
+      "rows": [
+        {
+          "case": "57b73c4254aa7a05b5483525b87dd2b5a2d41e7a4990d2a8c94dd940809ffa9b",
+          "agent": "main_creator",
+          "arm": "GJ",
+          "source_kind": "exact_invocation",
+          "split": "development",
+          "input_sha256": "1942aae9f513bd50171ea6ea9a8ffbe757e7e77f7124eef953b2588d26ff74b3",
+          "prompt_sha256": "3ac6b73ecdb9f11e6c7fe59d98d21c8e4eb3c0e4da054309eab23768d148ca1f",
+          "prompt_version": "2026-10-19-v64",
+          "spec_sha256": "8932f3d3ca6bc45194ce853358ebfdfad631f2a265ee57ffb58acc2fcc3ce8c2",
+          "runtime_sha256": "d93462284864febbddc22edcfedfcc34c87533143cb8d6b48b5986cae53537bd",
+          "price_version": "multi-provider-2026-10-19.v5",
+          "output_mode": "json_mime",
+          "max_attempts": 1,
+          "fallback_models": [],
+          "estimated_max_usd": 0.435924
+        },
+        {
+          "case": "57b73c4254aa7a05b5483525b87dd2b5a2d41e7a4990d2a8c94dd940809ffa9b",
+          "agent": "main_creator",
+          "arm": "SJ",
+          "source_kind": "exact_invocation",
+          "split": "development",
+          "input_sha256": "1942aae9f513bd50171ea6ea9a8ffbe757e7e77f7124eef953b2588d26ff74b3",
+          "prompt_sha256": "3ac6b73ecdb9f11e6c7fe59d98d21c8e4eb3c0e4da054309eab23768d148ca1f",
+          "prompt_version": "2026-10-19-v64",
+          "spec_sha256": "a7c81dd4071e238eb803a7084a3ea269a9df66fa250f270cce75c598ba5d0f54",
+          "runtime_sha256": "d93462284864febbddc22edcfedfcc34c87533143cb8d6b48b5986cae53537bd",
+          "price_version": "multi-provider-2026-10-19.v5",
+          "output_mode": "prompt_json",
+          "max_attempts": 1,
+          "fallback_models": [],
+          "estimated_max_usd": 0.206548
+        },
+        {
+          "case": "57b73c4254aa7a05b5483525b87dd2b5a2d41e7a4990d2a8c94dd940809ffa9b",
+          "agent": "main_creator",
+          "arm": "OJ",
+          "source_kind": "exact_invocation",
+          "split": "development",
+          "input_sha256": "1942aae9f513bd50171ea6ea9a8ffbe757e7e77f7124eef953b2588d26ff74b3",
+          "prompt_sha256": "3ac6b73ecdb9f11e6c7fe59d98d21c8e4eb3c0e4da054309eab23768d148ca1f",
+          "prompt_version": "2026-10-19-v64",
+          "spec_sha256": "84304d93b1fe26124584aec69805cb80cbbd9f519b89c7befef0156702da5bf5",
+          "runtime_sha256": "d93462284864febbddc22edcfedfcc34c87533143cb8d6b48b5986cae53537bd",
+          "price_version": "multi-provider-2026-10-19.v5",
+          "output_mode": "json_object",
+          "max_attempts": 1,
+          "fallback_models": [],
+          "estimated_max_usd": 0.206548
+        }
+      ],
+      "estimated_max_usd": 0.84902,
+      "quality_verdict": "unassessed",
+      "actual_export": "unassessed",
+      "live_eligibility": "not_checked_offline"
+    },
+    {
+      "mode": "offline_preflight",
+      "packet_sha256": "704d55f339b8bfba8cc7c0759439a44fd0d30b2c0458819154a45ba643c145fc",
+      "calls": 3,
+      "max_provider_submissions": 3,
+      "rows": [
+        {
+          "case": "e96d2e708ece1e482d624512bb75f8d298913fadb4f1c1c99a29c428670a0a38",
+          "agent": "edit_copilot",
+          "arm": "GJ",
+          "source_kind": "exact_invocation",
+          "split": "development",
+          "input_sha256": "98403fe19b2ea214403f40040736a5d92d6d14d58c7932caddcca5c5118ad738",
+          "prompt_sha256": "4b1a09aaa679f9361ea96d401c16c94556b030b8b4a132b8243a4a0bd648b147",
+          "prompt_version": "2026-10-19-v85",
+          "spec_sha256": "d5679bc17c26288e8b0dbe5267acce9983e202fc8c7f908aa04c9faf763678f0",
+          "runtime_sha256": "d93462284864febbddc22edcfedfcc34c87533143cb8d6b48b5986cae53537bd",
+          "price_version": "multi-provider-2026-10-19.v5",
+          "output_mode": "json_mime",
+          "max_attempts": 1,
+          "fallback_models": [],
+          "estimated_max_usd": 0.258986
+        },
+        {
+          "case": "e96d2e708ece1e482d624512bb75f8d298913fadb4f1c1c99a29c428670a0a38",
+          "agent": "edit_copilot",
+          "arm": "SJ",
+          "source_kind": "exact_invocation",
+          "split": "development",
+          "input_sha256": "98403fe19b2ea214403f40040736a5d92d6d14d58c7932caddcca5c5118ad738",
+          "prompt_sha256": "4b1a09aaa679f9361ea96d401c16c94556b030b8b4a132b8243a4a0bd648b147",
+          "prompt_version": "2026-10-19-v85",
+          "spec_sha256": "d6424a1473c54e106be1ad2e9b505ab17ed4d251a60d387c702b8c4ef093e947",
+          "runtime_sha256": "d93462284864febbddc22edcfedfcc34c87533143cb8d6b48b5986cae53537bd",
+          "price_version": "multi-provider-2026-10-19.v5",
+          "output_mode": "prompt_json",
+          "max_attempts": 1,
+          "fallback_models": [],
+          "estimated_max_usd": 0.144298
+        },
+        {
+          "case": "e96d2e708ece1e482d624512bb75f8d298913fadb4f1c1c99a29c428670a0a38",
+          "agent": "edit_copilot",
+          "arm": "OJ",
+          "source_kind": "exact_invocation",
+          "split": "development",
+          "input_sha256": "98403fe19b2ea214403f40040736a5d92d6d14d58c7932caddcca5c5118ad738",
+          "prompt_sha256": "4b1a09aaa679f9361ea96d401c16c94556b030b8b4a132b8243a4a0bd648b147",
+          "prompt_version": "2026-10-19-v85",
+          "spec_sha256": "9280b189faef49e06a719cb0997f5209cf517e7645c7cb234ffa0b1bdbaa1013",
+          "runtime_sha256": "d93462284864febbddc22edcfedfcc34c87533143cb8d6b48b5986cae53537bd",
+          "price_version": "multi-provider-2026-10-19.v5",
+          "output_mode": "json_object",
+          "max_attempts": 1,
+          "fallback_models": [],
+          "estimated_max_usd": 0.144298
+        }
+      ],
+      "estimated_max_usd": 0.547582,
+      "quality_verdict": "unassessed",
+      "actual_export": "unassessed",
+      "live_eligibility": "not_checked_offline"
+    }
+  ]
+}

@@ -1275,6 +1275,56 @@
         "src/apps/ios/Kria/Features/ChoiceQuestionCard.swift",
         "src/apps/ios/Kria/Features/ChatWorkspaceView.swift"
       ]
+    },
+    {
+      "id": "creator-model-comparison",
+      "needs_native": false,
+      "api_tests": "tests/agents/test_text_provider_contracts.py tests/agents/test_comparison_workflow.py tests/services/test_text_provider_ledger.py tests/services/test_comparison_capture.py tests/integration/test_comparison_eligibility.py tests/services/test_ai_cost_control.py tests/evals/test_main_creator_evals.py tests/evals/test_edit_copilot_evals.py tests/agents/test_creator_wire_contract.py tests/agents/test_sealed_comparison.py tests/agents/test_comparison_sources.py tests/agents/test_recorded_copilot_sources.py tests/agents/test_json_guard_profile.py tests/integration/test_comparison_persistence.py tests/integration/test_comparison_development_inventory.py",
+      "paths": [
+        "src/apps/api/app/agents/_text_providers.py",
+        "src/apps/api/app/services/creator_model_comparison.py",
+        "src/apps/api/app/services/creator_comparison_capture.py",
+        "src/apps/api/app/cli/compare_creator_models.py",
+        "src/apps/api/app/routes/admin_request_following.py",
+        "src/apps/api/app/services/ai_cost_control.py",
+        "src/apps/api/tests/agents/test_text_provider_contracts.py",
+        "src/apps/api/tests/agents/test_comparison_workflow.py",
+        "src/apps/api/tests/services/test_text_provider_ledger.py",
+        "src/apps/api/tests/services/test_comparison_capture.py",
+        "src/apps/api/tests/integration/test_comparison_eligibility.py",
+        "scripts/compare_creator_models.py",
+        "src/apps/api/app/agents/_creator_wire.py",
+        "src/apps/api/app/services/creator_comparison_holdout.py",
+        "src/apps/api/app/services/creator_comparison_sources.py",
+        "src/apps/api/tests/agents/test_creator_wire_contract.py",
+        "src/apps/api/tests/agents/test_sealed_comparison.py",
+        "src/apps/api/tests/agents/test_comparison_sources.py",
+        "src/apps/api/app/services/creator_comparison_persistence.py",
+        "src/apps/api/tests/agents/test_recorded_copilot_sources.py",
+        "src/apps/api/tests/agents/test_json_guard_profile.py",
+        "src/apps/api/tests/integration/test_comparison_persistence.py",
+        "src/apps/api/tests/integration/test_comparison_development_inventory.py"
+      ]
+    },
+    {
+      "id": "market-research-reference-banks",
+      "needs_native": false,
+      "api_tests": "tests/agents/test_market_research_banks.py tests/agents/test_overlay_examples_slop_guard.py tests/agents/test_persona_generator.py tests/agents/test_content_plan_generator.py tests/agents/test_intro_writer.py tests/agents/test_overlay_format_matcher.py tests/evals/test_persona_generator_evals.py tests/evals/test_content_plan_generator_evals.py tests/evals/test_intro_writer_evals.py tests/evals/test_overlay_format_matcher_evals.py",
+      "paths": [
+        "src/apps/api/prompts/persona_archetypes.json",
+        "src/apps/api/prompts/content_ideas.json",
+        "src/apps/api/prompts/tiktok_success_factors.json",
+        "src/apps/api/prompts/overlay_examples.json",
+        "src/apps/api/app/agents/_schemas/market_research.py",
+        "src/apps/api/app/agents/_schemas/persona.py",
+        "src/apps/api/app/agents/_schemas/content_plan.py",
+        "src/apps/api/app/agents/intro_writer.py",
+        "src/apps/api/app/agents/overlay_format_matcher.py",
+        "src/apps/api/app/agents/persona_examples.py",
+        "src/apps/api/app/agents/overlay_examples.py",
+        "src/apps/api/tests/agents/test_market_research_banks.py",
+        "src/apps/api/tests/agents/test_overlay_examples_slop_guard.py"
+      ]
     }
   ]
 }

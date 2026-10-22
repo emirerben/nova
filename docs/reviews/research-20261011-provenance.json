@@ -1,0 +1,407 @@
+{
+  "scope": "Sanitized derived calculation audit of existing metadata; no new fetch or video inspection. Raw snapshots remain outside Git.",
+  "view_index_formula": "views / median(positive views in the same account sample)",
+  "engagement_formula": "(available likes + comments + reposts) / views",
+  "sources": [
+    {
+      "file_name": "allexmarielle-20261011.json",
+      "sha256": "8234b3c4b1eb6ba489f7191680f576353937896d7909ac01a2b25cdcac3ad8cf",
+      "handle": "allexmarielle",
+      "fetched_at": "2026-10-11T19:00:54.312542+00:00",
+      "sample_size": 20,
+      "positive_view_median": 4365.5,
+      "sample_members": [
+        {
+          "post_id": "7691576589380848903",
+          "views": 55200
+        },
+        {
+          "post_id": "7684196677896506642",
+          "views": 17800
+        },
+        {
+          "post_id": "7686021012713983239",
+          "views": 7822
+        },
+        {
+          "post_id": "7683421008929344786",
+          "views": 6739
+        },
+        {
+          "post_id": "7683797829634116871",
+          "views": 5991
+        },
+        {
+          "post_id": "7683042955384327431",
+          "views": 5148
+        },
+        {
+          "post_id": "7687201919298833682",
+          "views": 5119
+        },
+        {
+          "post_id": "7689045562108235016",
+          "views": 4491
+        },
+        {
+          "post_id": "7695306168780033288",
+          "views": 4367
+        },
+        {
+          "post_id": "7690117913700732168",
+          "views": 4367
+        },
+        {
+          "post_id": "7694201287549750546",
+          "views": 4364
+        },
+        {
+          "post_id": "7687597410746420498",
+          "views": 3405
+        },
+        {
+          "post_id": "7685763095729343752",
+          "views": 3394
+        },
+        {
+          "post_id": "7692484806092836104",
+          "views": 3246
+        },
+        {
+          "post_id": "7682673068321410322",
+          "views": 2907
+        },
+        {
+          "post_id": "7688753824198053127",
+          "views": 2841
+        },
+        {
+          "post_id": "7693475760924790024",
+          "views": 2330
+        },
+        {
+          "post_id": "7688625479074680082",
+          "views": 2241
+        },
+        {
+          "post_id": "7693825721067654418",
+          "views": 1838
+        },
+        {
+          "post_id": "7694940434094673160",
+          "views": 1641
+        }
+      ]
+    },
+    {
+      "file_name": "izzsiomoi-20261011.json",
+      "sha256": "6bcdbb3f2abe9c3cc0cf449813e10bcc655fcd20cb3e8adafb999e6d473a7057",
+      "handle": "izzsiomoi",
+      "fetched_at": "2026-10-11T19:01:07.323428+00:00",
+      "sample_size": 20,
+      "positive_view_median": 606.5,
+      "sample_members": [
+        {
+          "post_id": "7669218300676607239",
+          "views": 12100
+        },
+        {
+          "post_id": "7666426729031929096",
+          "views": 2242
+        },
+        {
+          "post_id": "7671521167190084882",
+          "views": 1773
+        },
+        {
+          "post_id": "7667203760128806152",
+          "views": 1571
+        },
+        {
+          "post_id": "7671207519779753224",
+          "views": 1515
+        },
+        {
+          "post_id": "7694872986951732498",
+          "views": 834
+        },
+        {
+          "post_id": "7675403918418922759",
+          "views": 761
+        },
+        {
+          "post_id": "7677499214435192071",
+          "views": 735
+        },
+        {
+          "post_id": "7671887516684913928",
+          "views": 708
+        },
+        {
+          "post_id": "7678216716668783880",
+          "views": 646
+        },
+        {
+          "post_id": "7677534881303334152",
+          "views": 567
+        },
+        {
+          "post_id": "7670465340211596562",
+          "views": 544
+        },
+        {
+          "post_id": "7675658943049452808",
+          "views": 535
+        },
+        {
+          "post_id": "7672888514316373256",
+          "views": 503
+        },
+        {
+          "post_id": "7675587416207445255",
+          "views": 460
+        },
+        {
+          "post_id": "7667072783104396551",
+          "views": 425
+        },
+        {
+          "post_id": "7671204298281258258",
+          "views": 380
+        },
+        {
+          "post_id": "7674978156092083464",
+          "views": 334
+        },
+        {
+          "post_id": "7674912578719452424",
+          "views": 326
+        },
+        {
+          "post_id": "7668217723385580818",
+          "views": 319
+        }
+      ]
+    },
+    {
+      "file_name": "nermozdemir-20261011.json",
+      "sha256": "a60f5dbe31649f2e166321c1ac99df6200dbcfa9c1f523f47fe2665d2c87ea20",
+      "handle": "nermozdemir",
+      "fetched_at": "2026-10-11T19:01:31.838550+00:00",
+      "sample_size": 20,
+      "positive_view_median": 37750.0,
+      "sample_members": [
+        {
+          "post_id": "7677983862441479442",
+          "views": 10200000
+        },
+        {
+          "post_id": "7668975853270813960",
+          "views": 731300
+        },
+        {
+          "post_id": "7674217682970905874",
+          "views": 180000
+        },
+        {
+          "post_id": "7687940676377447687",
+          "views": 84400
+        },
+        {
+          "post_id": "7665071920924134674",
+          "views": 80900
+        },
+        {
+          "post_id": "7669786832292367623",
+          "views": 75800
+        },
+        {
+          "post_id": "7663412077460983058",
+          "views": 57100
+        },
+        {
+          "post_id": "7663862583685958930",
+          "views": 54600
+        },
+        {
+          "post_id": "7663525692155497735",
+          "views": 51800
+        },
+        {
+          "post_id": "7663930951868779784",
+          "views": 40500
+        },
+        {
+          "post_id": "7684556446796631314",
+          "views": 35000
+        },
+        {
+          "post_id": "7680984531360288008",
+          "views": 25500
+        },
+        {
+          "post_id": "7677595990362164487",
+          "views": 23000
+        },
+        {
+          "post_id": "7673457420408048903",
+          "views": 19300
+        },
+        {
+          "post_id": "7689956621023317266",
+          "views": 15000
+        },
+        {
+          "post_id": "7689793251301182738",
+          "views": 13400
+        },
+        {
+          "post_id": "7683596362235022610",
+          "views": 8138
+        },
+        {
+          "post_id": "7692760126704340276",
+          "views": 5388
+        },
+        {
+          "post_id": "7691364073933409543",
+          "views": 3847
+        },
+        {
+          "post_id": "7693627054071336199",
+          "views": 2011
+        }
+      ]
+    },
+    {
+      "file_name": "patricia.turchin-20261011.json",
+      "sha256": "da1afe19e33edef31fd00105774940467d62417861feef58967c54d92aa9eeef",
+      "handle": "patricia.turchin",
+      "fetched_at": "2026-10-11T19:01:20.260395+00:00",
+      "sample_size": 20,
+      "positive_view_median": 399.0,
+      "sample_members": [
+        {
+          "post_id": "7688255689671707937",
+          "views": 1541
+        },
+        {
+          "post_id": "7685061468974288161",
+          "views": 681
+        },
+        {
+          "post_id": "7681661522455563552",
+          "views": 618
+        },
+        {
+          "post_id": "7682061448616480032",
+          "views": 601
+        },
+        {
+          "post_id": "7688303561402354976",
+          "views": 518
+        },
+        {
+          "post_id": "7692782642311351584",
+          "views": 487
+        },
+        {
+          "post_id": "7685339541410024737",
+          "views": 458
+        },
+        {
+          "post_id": "7688358281072479521",
+          "views": 453
+        },
+        {
+          "post_id": "7692406721309838624",
+          "views": 420
+        },
+        {
+          "post_id": "7686130513362341153",
+          "views": 412
+        },
+        {
+          "post_id": "7692785627565280545",
+          "views": 386
+        },
+        {
+          "post_id": "7692402213704011040",
+          "views": 377
+        },
+        {
+          "post_id": "7692162339705064736",
+          "views": 356
+        },
+        {
+          "post_id": "7692883853932907809",
+          "views": 343
+        },
+        {
+          "post_id": "7693240407097920801",
+          "views": 316
+        },
+        {
+          "post_id": "7694001533309963553",
+          "views": 310
+        },
+        {
+          "post_id": "7693469379224292641",
+          "views": 297
+        },
+        {
+          "post_id": "7692079960244194593",
+          "views": 273
+        },
+        {
+          "post_id": "7694951037798599969",
+          "views": 207
+        },
+        {
+          "post_id": "7694951074913897761",
+          "views": 189
+        }
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "post_id": "7669218300676607239",
+      "handle": "izzsiomoi",
+      "views": 12100,
+      "likes": 3052,
+      "comments": 2,
+      "reposts": 2,
+      "view_index": 19.9505,
+      "engagement_rate": 0.252562,
+      "as_of": "2026-10-11T19:01:07.323428+00:00"
+    },
+    {
+      "post_id": "7668975853270813960",
+      "handle": "nermozdemir",
+      "views": 731300,
+      "likes": 51700,
+      "comments": 327,
+      "reposts": 7528,
+      "view_index": 19.3722,
+      "engagement_rate": 0.081437,
+      "as_of": "2026-10-11T19:01:31.838550+00:00"
+    },
+    {
+      "post_id": "7684196677896506642",
+      "handle": "allexmarielle",
+      "views": 17800,
+      "likes": 2324,
+      "comments": 21,
+      "reposts": 37,
+      "view_index": 4.0774,
+      "engagement_rate": 0.13382,
+      "as_of": "2026-10-11T19:00:54.312542+00:00"
+    }
+  ],
+  "limits": [
+    "Convenience samples of20posts/account, not independent evidence of a hook's causal effect.",
+    "Repeated post IDs across weekly snapshots are one observed post, not new independent successes.",
+    "Routine-reset performance weight removed: farm-return19.4x is a different post; routine inspiration is disclosed sponsored content."
+  ]
+}
