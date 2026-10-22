@@ -308,39 +308,39 @@ class TestOrchestratePipelineHelpers:
         assert file_refs is fake_refs
 
     def test_probe_and_upload_concurrent_actually_overlaps(self):
-        """Wall-clock proof of parallelism: if probe and upload each sleep
-        for 0.2s, total time should be ~0.2s (not ~0.4s if serialized).
+        """Neither independent operation may finish before both have started.
 
-        Generous tolerance (0.35s) so the test isn't flaky on slow CI
-        runners — but a serialized implementation would always exceed it.
+        A rendezvous proves overlap without treating runner scheduling delays as
+        serialization. A serial implementation cannot reach the second party.
         """
-        import time
+        from threading import Barrier
 
         from app.tasks.template_orchestrate import _probe_and_upload_concurrent
 
-        def slow_probe(paths):
-            time.sleep(0.2)
-            return {p: {"duration_s": 1.0} for p in paths}
+        started = Barrier(2, timeout=5)
+        expected_probe = {"/tmp/a.mp4": {"duration_s": 1.0}}
+        expected_refs = [MagicMock()]
 
-        def slow_upload(paths):
-            time.sleep(0.2)
-            return [MagicMock() for _ in paths]
+        def overlapping_probe(paths):
+            started.wait()
+            return expected_probe
+
+        def overlapping_upload(paths):
+            started.wait()
+            return expected_refs
 
         with (
-            patch("app.tasks.template_orchestrate._probe_clips", side_effect=slow_probe),
+            patch("app.tasks.template_orchestrate._probe_clips", side_effect=overlapping_probe),
             patch(
                 "app.tasks.template_orchestrate._upload_clips_parallel",
-                side_effect=slow_upload,
+                side_effect=overlapping_upload,
             ),
         ):
-            t0 = time.monotonic()
-            _probe_and_upload_concurrent(["/tmp/a.mp4"])
-            elapsed = time.monotonic() - t0
+            probe_map, file_refs = _probe_and_upload_concurrent(["/tmp/a.mp4"])
 
-        assert elapsed < 0.35, (
-            f"probe+upload took {elapsed:.3f}s — expected ~0.2s if parallel, "
-            f"~0.4s if serialized. Test threshold is 0.35s."
-        )
+        assert not started.broken
+        assert probe_map is expected_probe
+        assert file_refs is expected_refs
 
     def test_probe_and_upload_concurrent_propagates_probe_error(self):
         """Probe failure must surface, not be swallowed by the parallel wrapper."""
