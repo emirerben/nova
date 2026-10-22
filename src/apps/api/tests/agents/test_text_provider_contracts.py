@@ -1,0 +1,273 @@
+"""Provider boundary failures specified before adapter implementation; no network."""
+
+import json
+
+import httpx
+import pytest
+
+from app.agents._runtime import ProviderOutcomeUnknownError, TerminalError
+from app.agents._text_providers import AnthropicTextClient, OpenAITextClient
+from app.services.ai_cost_control import UsageMeter, calculate_cost_usd
+
+
+def test_sol_wire_and_reasoning_accounting():
+    from openai import OpenAI
+
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "resp_contract",
+                "object": "response",
+                "created_at": 1,
+                "status": "completed",
+                "model": "gpt-6.1-sol",
+                "output": [
+                    {
+                        "id": "msg_1",
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [
+                            {"type": "output_text", "text": '{"ok":true}', "annotations": []}
+                        ],
+                    }
+                ],
+                "usage": {
+                    "input_tokens": 1000,
+                    "output_tokens": 200,
+                    "total_tokens": 1200,
+                    "input_tokens_details": {"cached_tokens": 100},
+                    "output_tokens_details": {"reasoning_tokens": 80},
+                },
+            },
+        )
+
+    sdk = OpenAI(
+        api_key="test",
+        max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+    )
+    result = OpenAITextClient(client=sdk).invoke(
+        model="gpt-6.1-sol", prompt="JSON please", thinking_level="high", max_output_tokens=1024
+    )
+    assert requests[0]["store"] is False
+    assert requests[0]["reasoning"] == {"effort": "high"}
+    assert "temperature" not in requests[0]
+    assert result.tokens_out == 120 and result.tokens_thoughts == 80
+    assert result.tokens_cached == 100 and result.finish_status == "completed"
+    assert calculate_cost_usd(
+        "gpt-6.1-sol",
+        UsageMeter(tokens_in=1000, tokens_cached=100, tokens_out=120, tokens_thoughts=80),
+    ) == pytest.approx(0.00381)
+
+
+@pytest.mark.parametrize(
+    "provider,model", [("openai", "gpt-6.1-sol"), ("anthropic", "claude-sonnet-5-5")]
+)
+@pytest.mark.parametrize("failure", ["timeout", "server"])
+def test_accepted_unknown_never_sdk_retried(provider, model, failure):
+    import anthropic
+    import openai
+
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        if failure == "timeout":
+            raise httpx.ReadTimeout("private payload must not appear", request=request)
+        return httpx.Response(500, json={"error": {"type": "api_error", "message": "private"}})
+
+    http = httpx.Client(transport=httpx.MockTransport(respond))
+    if provider == "openai":
+        client = OpenAITextClient(
+            client=openai.OpenAI(api_key="test", max_retries=0, http_client=http)
+        )
+    else:
+        client = AnthropicTextClient(
+            client=anthropic.Anthropic(api_key="test", max_retries=0, http_client=http)
+        )
+    with pytest.raises(ProviderOutcomeUnknownError, match="outcome unknown"):
+        client.invoke(model=model, prompt="JSON", max_output_tokens=1000, thinking_level="high")
+    assert len(calls) == 1
+
+
+def test_sonnet_usage_and_only_visible_text():
+    from anthropic import Anthropic
+
+    def respond(request):
+        wire = json.loads(request.content)
+        assert wire["thinking"] == {"type": "adaptive"}
+        assert wire["output_config"]["effort"] == "high"
+        return httpx.Response(
+            200,
+            json={
+                "id": "msg_test",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet-5-5",
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "content": [
+                    {"type": "thinking", "thinking": "never retain this", "signature": "secret"},
+                    {"type": "text", "text": '{"ok":true}'},
+                ],
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "cache_read_input_tokens": 200,
+                    "cache_creation_input_tokens": 300,
+                },
+            },
+        )
+
+    sdk = Anthropic(
+        api_key="test",
+        max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+    )
+    result = AnthropicTextClient(client=sdk).invoke(
+        model="claude-sonnet-5-5", prompt="JSON", thinking_level="high", max_output_tokens=1024
+    )
+    assert result.raw_text == '{"ok":true}' and result.raw_response is None
+    assert result.tokens_in == 600 and result.tokens_cached == 200
+    assert calculate_cost_usd(
+        "claude-sonnet-5-5",
+        UsageMeter(
+            tokens_in=600, tokens_cached=200, tokens_out=50, token_details=result.token_details
+        ),
+    ) == pytest.approx(0.00147)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"media_uri": "gs://private/video"},
+        {"thinking_level": "minimal"},
+        {"thinking_level": "max"},
+        {"thinking_budget": 100},
+    ],
+)
+def test_unsupported_inputs_fail_without_sdk(kwargs, monkeypatch):
+    monkeypatch.setattr(
+        OpenAITextClient, "_get", lambda _: pytest.fail("SDK construction forbidden")
+    )
+    with pytest.raises(TerminalError):
+        OpenAITextClient().invoke(model="gpt-6.1-sol", prompt="JSON", **kwargs)
+
+
+def test_gemini_sdk_retries_cannot_bypass_runtime_accounting(monkeypatch):
+    from google import genai
+    from google.genai import types
+
+    from app.agents._model_client import GeminiClient
+    from app.agents._runtime import TransientError
+
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(
+            500, json={"error": {"code": 500, "message": "failure", "status": "INTERNAL"}}
+        )
+
+    sdk = genai.Client(
+        api_key="test",
+        http_options=types.HttpOptions(
+            retry_options=types.HttpRetryOptions(attempts=2, initial_delay=0.001, max_delay=0.001),
+            client_args={"transport": httpx.MockTransport(respond)},
+        ),
+    )
+    client = GeminiClient()
+    monkeypatch.setattr(client, "_get", lambda: sdk)
+    with pytest.raises(TransientError):
+        client.invoke(model="gemini-3.1-pro-preview", prompt="JSON please", timeout_s=5)
+    assert len(calls) == 1
+
+
+def test_gemini_transport_has_the_same_deadline_as_runtime(monkeypatch):
+    from google import genai
+    from google.genai import types
+
+    from app.agents._model_client import GeminiClient
+
+    captured = []
+
+    def respond(request):
+        captured.append(request.extensions.get("timeout"))
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [{"content": {"parts": [{"text": "{}"}]}, "finishReason": "STOP"}],
+                "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1},
+            },
+        )
+
+    sdk = genai.Client(
+        api_key="test",
+        http_options=types.HttpOptions(client_args={"transport": httpx.MockTransport(respond)}),
+    )
+    client = GeminiClient()
+    monkeypatch.setattr(client, "_get", lambda: sdk)
+    client.invoke(model="gemini-3.1-pro-preview", prompt="JSON", timeout_s=7)
+    assert captured[0]["read"] == 7.0
+
+
+@pytest.mark.parametrize("model_version", [None, "", 42, {"unexpected": "value"}])
+def test_gemini_malformed_model_metadata_keeps_requested_cost_identity(monkeypatch, model_version):
+    """Optional provider metadata cannot replace a priceable requested identity with an object."""
+    from unittest.mock import MagicMock
+
+    from app.agents._model_client import GeminiClient
+
+    response = MagicMock(text="{}", usage_metadata=None, model_version=model_version)
+    client = GeminiClient()
+    sdk = MagicMock()
+    sdk.models.generate_content.return_value = response
+    monkeypatch.setattr(client, "_get", lambda: sdk)
+    result = client.invoke(model="gemini-2.5-flash", prompt="JSON")
+    assert result.model_used == "gemini-2.5-flash"
+    assert result.provider_request_id is None
+    assert calculate_cost_usd(result.model_used, UsageMeter(tokens_in=100)) > 0
+
+
+def test_gemini_missing_optional_metadata_on_legacy_sdk_double(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from app.agents._model_client import GeminiClient
+
+    sdk = MagicMock()
+    sdk.models.generate_content.return_value = MagicMock(text="{}", usage_metadata=None)
+    client = GeminiClient()
+    monkeypatch.setattr(client, "_get", lambda: sdk)
+    result = client.invoke(model="gemini-2.5-flash", prompt="JSON")
+    assert result.model_used == "gemini-2.5-flash"
+    assert result.provider_request_id is None
+
+
+def test_gemini_valid_provider_identity_is_preserved_even_when_unpriced(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.agents._model_client import GeminiClient
+    from app.agents._runtime import AiCostControlPolicyError
+
+    response = SimpleNamespace(
+        text="{}",
+        usage_metadata=None,
+        model_version="unknown-provider-model",
+        response_id="req_real",
+    )
+    client = GeminiClient()
+    monkeypatch.setattr(
+        client,
+        "_get",
+        lambda: SimpleNamespace(models=SimpleNamespace(generate_content=lambda **_: response)),
+    )
+    result = client.invoke(model="gemini-2.5-flash", prompt="JSON")
+    assert result.model_used == "unknown-provider-model"
+    assert result.provider_request_id == "req_real"
+    with pytest.raises(AiCostControlPolicyError, match="unpriced_model"):
+        calculate_cost_usd(result.model_used, UsageMeter(tokens_in=100))
