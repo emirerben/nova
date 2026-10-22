@@ -140,6 +140,20 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
 - **Request.** With the flag on, the Main Creator and the clip-intent planner
   read `render_brief_request(brief)`, and the approval dispatch passes it as
   `creator_request` instead of the draft summary.
+- **Automatic simpler drafts.** The runtime planner removes only typed, unavailable
+  optional text/SFX fields and recompiles the remaining strategy. At draft completion,
+  exact compiler-removed text, unavailable native/Talking clip labels and typed
+  brightness requests can be superseded automatically when they are the only blockers.
+  Receipt/readiness failure alone is insufficient: a missing supported label or
+  spoken trigger still needs repair/clarification. The same transaction
+  appends an omission revision, rebuilds approval readiness, and pins the effective
+  brief. The reply and approval name what was left out and why; they do not claim the
+  creator already agreed. Unknown evidence, source-audio restrictions, selection,
+  ordering, timing conflicts, and unavailable footage remain blocking. Existing
+  explicit simpler-version choices still work. Regression coverage:
+  `test_automatic_strategy_fallback.py`, `test_runtime_automatic_simplification.py`,
+  and the EN/TR phone/cloud cases in `test_approval_readiness_postgres.py`.
+  Evidence and repeatable native verification: [automatic supported-version recovery](../reviews/automatic-render-fallback.md).
 - **Receipts.** Each draft turn attaches `requirement_receipts`
   (`met | partial | not_possible`, reason, `inferred`) to its `draft_applied`
   event payload. Checks: per-clip text coverage, order basis
