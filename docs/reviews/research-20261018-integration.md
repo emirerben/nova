@@ -1,6 +1,6 @@
 # PR1676 dated canonical reference update
 
-Original cd8e192ae97834ecf25c905bb3f0a3c831e62323 and corrected PR1553 parentfe63b7751 are preserved by normal merges from fresh mainc97404dbe. Merge actual #1553 first. No fresh research/fetch, provider, paid evaluation or video inspection. KRI64 is related responsible-performance-data context; this bounded reference-data contribution does not fulfill or close its broader product work.
+Original cd8e192ae97834ecf25c905bb3f0a3c831e62323 and corrected PR1553 parentfe63b7751 are preserved by normal merges from fresh mainc97404dbe. Actual #1553 landed as36b4c1008e330c8df81f9d46f696f8e49d63e84c and is now reconciled normally. No fresh research/fetch, provider, paid evaluation or video inspection. KRI64 is related responsible-performance-data context; this bounded reference-data contribution does not fulfill or close its broader product work.
 
 Recovered original18October raw metadata in the author's untouched nova-tiktok-research-20261018 worktree:four accounts,20posts each. Recomputed all80 stored view-index/engagement pairs exactly. The sanitized derived research-20261018-provenance.json retains original file hashes/timestamps, sample IDs/views, medians, measured numerator counts and the canonical-alias decisions. Raw bodies and signed media URLs stay outside Git.
 
@@ -20,13 +20,13 @@ Keep the earlier canonical IDs for five equivalent concepts rather than weightin
 
 Refresh the canonical measured references to their actual18October snapshots. Retain three distinct additions from the original eight:one choice-question factor and two illustrative overlay design alternatives. The factor describes an invitation to respond, not a proven comment lift or matched-length experiment. Overlay effect/color/footage claims are explicitly unverified authored treatments; the routine overlay wording is concrete and does not teach the banned generic transformation frame.
 
-Combined with1553:2new personas,4new ideas,3new factors and4new overlay examples. All preexisting main objects remain unchanged by ID/object comparison:7/22/15/27 respectively. All canonical1553 concept IDs remain. Four bank/consuming-agent versions advance together to2026-10-22-research-18; creator-language/direction source and prompt-template bytes remain intact. Existing additive bank journey and every prior native requirement remain.
+Combined with1553:2new personas,4new ideas,3new factors and4new overlay examples. All pre-weekly-research baseline objects remain unchanged by ID/object comparison:7/22/15/27 respectively. The four canonical observations introduced by1553 deliberately advance to18October counts. All canonical1553 concept IDs remain. Four bank/consuming-agent versions advance together to2026-10-22-research-18; creator-language/direction source and prompt-template bytes remain intact. Existing additive bank journey and every prior native requirement remain.
 
 ## Checks and remaining scope
 
 178 existing bank/schema/ranking/coupling/slop/consuming-agent cases pass. Full free recorded evals:2132 passed,15 skipped,7 known expected failures. No fresh model preference or actual generated video is implied. Source data and duplicate decisions were defined before edits in the shared research-review-decisions document retained in the1553 task; the initial attempted copy here found no .dev directory, then the existing original plan was copied after creating it. No new failure criteria were inferred from implementation.
 
-Preship and exact final-source CI remain required. Keep this private until actual1553 merge so its squash/version overlap is reconciled once before publication. The historical11October report's acceptance command is scoped to1553sourcefe63; this branch deliberately updates those four signals. Use the18October command below on this branch.
+Actual1553 squash/version overlap is reconciled once: every bank/version/guard file on actual main was byte-identical to reviewed1553sourcefe63 before retaining the reviewed18October union. No unrelated main source changes were discarded. Preship and exact final-source CI remain required. The historical11October report's acceptance command is scoped to1553sourcefe63; this branch deliberately updates those four signals. Use the18October command below on this branch.
 
 ```python
 import json, statistics
