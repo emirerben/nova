@@ -62,7 +62,6 @@ from tests.kria.test_kri787_merope_t1_replay import (
     END_LINE_S,
     EVENTS,
     FIXTURE,
-    ORDER_REFUSAL,
     RENDERS,
     START_LINE_S,
     TAKE_S,
