@@ -75,7 +75,8 @@ fixture: `kri598_tigre_use_all_clips.json`. Prompt length changed from 65,049 to
 66,055 characters (+1,006). A rough characters/4 estimate is 16,262 to 16,514 input
 tokens; these are not measured provider tokens. Model/thinking settings unchanged;
 timeout remains 130s and output budget 16,384 tokens. Paid calls: 0; cost: $0.
-Prompt version: `2026-10-22-v69`.
+Prompt version: `2026-10-22-v69` at capture; renumbered `2026-10-22-v70` after merging
+main's own v69 (KRI-806 editorial audio pairing). The N2 instructions are unchanged.
 
 ## Evidence limits and delivery
 

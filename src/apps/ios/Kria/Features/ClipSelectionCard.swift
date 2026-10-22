@@ -18,16 +18,19 @@ struct ClipSelectionCard: View {
     let mode: ClipSelectionCardMode
     /// The language of the answer this card posts (the chat's reply language, KRI-694).
     let language: ClipAnswerLanguage
+    /// KRI-802: what happens next while the chosen clips wait for the reply's other answer.
+    let note: String?
     @State private var state: ClipSelectionState
     @State private var showsPicker = false
 
     init(question: ClipQuestion, media: [CreationAttachedMedia], projectID: UUID? = nil, mode: ClipSelectionCardMode,
-         language: ClipAnswerLanguage = .english) {
+         language: ClipAnswerLanguage = .english, note: String? = nil) {
         self.question = question
         self.media = media
         self.projectID = projectID
         self.mode = mode
         self.language = language
+        self.note = note
         _state = State(initialValue: ClipSelectionState(question: question))
     }
 
@@ -87,6 +90,12 @@ struct ClipSelectionCard: View {
                         Text(progressLine(category))
                             .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
                             .accessibilityIdentifier("clip-progress-\(category.key)")
+                    }
+                    if let note {
+                        Text(note)
+                            .font(KriaFont.body(13)).foregroundStyle(KriaColor.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("clip-batch-note")
                     }
                 }
             }

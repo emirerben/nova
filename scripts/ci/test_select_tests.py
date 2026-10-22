@@ -793,7 +793,7 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-628-opening-cut,kri-789-take-trim-not-order,kri-681-named-line-windows",
+                    "kri-628-opening-cut,kri-789-take-trim-not-order,kri-681-named-line-windows,kri-760-whole-line-ask",
                 ),
             ),
             (
@@ -831,6 +831,10 @@ class GitDiffTests(unittest.TestCase):
             (
                 "src/apps/api/tests/fixtures/kri681_tigre_night_m1_clips.json",
                 (True, "covered", "kri-681-named-line-windows"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/kri803_don_julio_m1_clips.json",
+                (True, "covered", "kri-760-whole-line-ask"),
             ),
             (
                 "src/apps/api/app/pipeline/unified_montage.py",
