@@ -1082,17 +1082,15 @@ def expected_evidence(case: Case, chip: sc.SuggestionChipOut, state: str) -> str
     kind = chip.kind
     line: str | None = None
     if kind == "default_edit":
-        line = (
-            "Kesimi, temposu ve müziği Kria seçer" if tr else "Kria picks the cuts, pace and music"
-        )
+        line = "Kesimi ve temposunu Kria seçer" if tr else "Kria picks the cuts and pace"
     elif kind == "captions" and speech:
         if speech == total:
-            line = "Her klipte konuşuyorsun" if tr else "You speak in every clip"
+            line = "Her klipte konuşma var" if tr else "Speech in every clip"
         else:
             line = (
-                f"{speech}/{total} klipte konuşuyorsun"
+                f"{speech}/{total} klipte konuşma var"
                 if tr
-                else f"You speak in {speech} of {total} clips"
+                else f"Speech in {speech} of {total} clips"
             )
     elif kind == "sfx":
         if quiet > 0:
@@ -1111,16 +1109,23 @@ def expected_evidence(case: Case, chip: sc.SuggestionChipOut, state: str) -> str
         ]
         cuts = len(slots) if state == "ready" else total
         if cuts > 1:
-            line = (
-                f"{cuts} klip sert kesmelerle bağlı" if tr else f"{cuts} clips joined by hard cuts"
-            )
+            if state == "ready":
+                line = (
+                    f"{cuts} klip sert kesmelerle bağlı"
+                    if tr
+                    else f"{cuts} clips joined by hard cuts"
+                )
+            else:
+                line = (
+                    f"Birleştirilecek {cuts} klip var" if tr else f"{cuts} clips ready to combine"
+                )
     elif kind == "hook":
         if state == "first_prompt":
             line = "Henüz bir açılış cümlesi yok" if tr else "No opening line yet"
         else:
             line = "Henüz başlık yok" if tr else "There is no title yet"
     elif kind == "music":
-        line = "Müzik sesini bastırıyor" if tr else "The music is competing with your voice"
+        line = "Konuşmalı klipler ve müzik var" if tr else "Speech clips and a music track"
     elif kind == "title_animation":
         line = "Başlık sabit duruyor" if tr else "The title just sits there"
     return line if line and len(line) <= 48 else None

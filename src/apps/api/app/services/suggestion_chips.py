@@ -1408,17 +1408,15 @@ def _evidence(cand: Candidate, ctx: SuggestionContext, state: str) -> str | None
     kind = cand.kind
     line: str | None = None
     if kind is ChipKind.DEFAULT_EDIT:
-        line = (
-            "Kesimi, temposu ve müziği Kria seçer" if tr else "Kria picks the cuts, pace and music"
-        )
+        line = "Kesimi ve temposunu Kria seçer" if tr else "Kria picks the cuts and pace"
     elif kind is ChipKind.CAPTIONS and speech:
         if speech == total:
-            line = "Her klipte konuşuyorsun" if tr else "You speak in every clip"
+            line = "Her klipte konuşma var" if tr else "Speech in every clip"
         else:
             line = (
-                f"{speech}/{total} klipte konuşuyorsun"
+                f"{speech}/{total} klipte konuşma var"
                 if tr
-                else f"You speak in {speech} of {total} clips"
+                else f"Speech in {speech} of {total} clips"
             )
     elif kind is ChipKind.SFX:
         if quiet > 0:
@@ -1432,16 +1430,23 @@ def _evidence(cand: Candidate, ctx: SuggestionContext, state: str) -> str | None
     elif kind is ChipKind.TRANSITION:
         cuts = len(_slots(ctx)) if state == "ready" else total
         if cuts > 1:
-            line = (
-                f"{cuts} klip sert kesmelerle bağlı" if tr else f"{cuts} clips joined by hard cuts"
-            )
+            if state == "ready":
+                line = (
+                    f"{cuts} klip sert kesmelerle bağlı"
+                    if tr
+                    else f"{cuts} clips joined by hard cuts"
+                )
+            else:
+                line = (
+                    f"Birleştirilecek {cuts} klip var" if tr else f"{cuts} clips ready to combine"
+                )
     elif kind is ChipKind.HOOK:
         if state == "first_prompt":
             line = "Henüz bir açılış cümlesi yok" if tr else "No opening line yet"
         else:
             line = "Henüz başlık yok" if tr else "There is no title yet"
     elif kind is ChipKind.MUSIC:
-        line = "Müzik sesini bastırıyor" if tr else "The music is competing with your voice"
+        line = "Konuşmalı klipler ve müzik var" if tr else "Speech clips and a music track"
     elif kind is ChipKind.TITLE_ANIMATION:
         line = "Başlık sabit duruyor" if tr else "The title just sits there"
     return line if line and len(line) <= _EVIDENCE_MAX else None

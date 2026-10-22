@@ -79,7 +79,7 @@ miss, or any failure after the ownership check:
   server template). `why` (<= 48 chars) is a display-only subtitle with footage evidence: the
   wording agent's line when it passed the lexical grounding check, otherwise a deterministic
   evidence line (KRI-769, `_evidence`) built from counts and edit state the server measured
-  ("You speak in 3 of 11 clips", "3 clips joined by hard cuts"; en/tr). Evidence lines state
+  ("Speech in 3 of 11 clips", "3 clips joined by hard cuts"; en/tr). Evidence lines state
   measured facts, never quality judgements, and need no model. Clients must render an unknown
   `kind` by label.
 * `requires_protocol`: the app drops the chip locally when it is non-null and above the app's own
