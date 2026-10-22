@@ -43,7 +43,9 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
@@ -192,7 +194,9 @@ def _seed_refused_render(
             target_thread_id=thread_id,
             target_job_id=job.id,
             target_ownership_epoch=0,
-            status="dispatched",
+            # Keep this fixture out of other xdist workers' global observer sweeps.
+            # Its own observer below makes the dispatched handoff atomically.
+            status="accepted",
             started_at=datetime.now(UTC),
             dispatched_at=datetime.now(UTC),
         )
@@ -236,7 +240,24 @@ async def _refused(
     history: list[dict], *, detail: str = PROD_DETAIL, answers: list[dict] | None = None
 ) -> tuple[uuid.UUID, uuid.UUID, CreationThreadEvent]:
     user_id, thread_id, execution_id = _seed_refused_render(history, detail=detail, answers=answers)
-    observed, _ = await asyncio.to_thread(_observe_dispatched_execution, execution_id)
+
+    def observe_fixture():  # noqa: ANN202
+        with sync_session() as db:
+            execution = db.get(CreatorAgentExecution, execution_id, with_for_update=True)
+            assert execution.status == "accepted"
+            execution.status = "dispatched"
+            db.flush()
+
+            @contextmanager
+            def owned_session():  # noqa: ANN202
+                yield db
+
+            # The real observer reads/locks/writes this real Postgres transaction.
+            # Other workers see accepted until its usual failed-card commit.
+            with patch.object(kria_runtime, "sync_session", owned_session):
+                return _observe_dispatched_execution(execution_id)
+
+    observed, _ = await asyncio.to_thread(observe_fixture)
     assert observed == "failed"
     return user_id, thread_id, _failed_event(thread_id)
 
@@ -483,5 +504,38 @@ async def test_a_refusal_the_order_question_cannot_fix_gets_no_picker(
             "I couldn't tell which clips are in this edit, so I couldn't keep their order. "
             "Tell me how you want the clips ordered, and I'll make a new draft."
         )
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_refusal_fixture_survives_an_unrelated_global_observer_sweep(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A parallel CI worker's global sweep cannot consume this test's observation."""
+    seed = _seed_refused_render
+    swept: list[uuid.UUID] = []
+
+    def seed_with_sweep(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        project = seed(*args, **kwargs)
+        swept.append(project[2])
+        assert kria_runtime._settle_dispatched_executions([project[2]]) == 0
+        return project
+
+    monkeypatch.setitem(globals(), "_seed_refused_render", seed_with_sweep)
+    try:
+        asked = await _draft_time_question(monkeypatch, "en")
+        _, thread_id, event = await _t1_refused(asked)
+        assert len(swept) == 1
+        _assert_no_dead_end(event.content)
+        assert event.payload["choice_question"]["kind"] == "order_basis"
+        with sync_session() as db:
+            failed_events = db.execute(
+                select(CreationThreadEvent.id).where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.event_type == "assistant_render_failed",
+                )
+            ).all()
+        assert len(failed_events) == 1
     finally:
         await async_engine.dispose()

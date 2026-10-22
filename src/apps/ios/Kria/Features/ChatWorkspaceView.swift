@@ -879,6 +879,8 @@ private struct CreationWorkspaceView: View {
             + "|feed\(feed.decidedCount)/\(feed.totalCount)"
             + "|thoughts\(liveThoughtToken)"
             + "|finishedEdits\(finishedEditSuggestionUpdate)"
+            // KRI-769: the after-render chips arrive after the card, below the fold; a reader at the bottom follows them in.
+            + "|readyChips\(suggestionChips(for: .ready).map(\.id).joined(separator: ","))"
     }
 
     private var streamingThoughtSummaries: [KriaThoughtSummary] {
