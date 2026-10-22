@@ -101,7 +101,8 @@ def test_explicit_occurrence_selects_the_requested_repeat(monkeypatch) -> None:
     assert receipt["rows"][0]["occurrence"] == "last"
 
 
-def test_occurrence_comes_from_facts_or_explicit_first_last_wording() -> None:
+def test_occurrence_comes_only_from_the_structured_fact() -> None:
+    """KRI-667: wording alone never picks a repeat; the brief's `facts.occurrence` does."""
     structured = BriefRequirement(
         id="structured",
         kind="text",
@@ -120,7 +121,7 @@ def test_occurrence_comes_from_facts_or_explicit_first_last_wording() -> None:
     )
 
     assert requirement_spoken_text(structured).occurrence == 2  # type: ignore[union-attr]
-    assert requirement_spoken_text(worded).occurrence == "last"  # type: ignore[union-attr]
+    assert requirement_spoken_text(worded).occurrence is None  # type: ignore[union-attr]
 
 
 @pytest.mark.parametrize("occurrence", [True, False, [], {}, 0, -1, "second"])

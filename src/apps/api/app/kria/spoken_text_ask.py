@@ -21,7 +21,6 @@ speaks, so the text shows the first time anyone says the word and the receipts s
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -82,16 +81,6 @@ def _fact_occurrence(req: BriefRequirement) -> str | int | None:
     return None
 
 
-def _worded_occurrence(req: BriefRequirement) -> str | None:
-    """Only accept narrow, explicit occurrence wording; never infer an index."""
-    wording = " ".join((req.description or "").casefold().split())
-    first = re.search(r"\b(?:the )?(?:first|1st) time\b|\bilk (?:kez|defa)\b", wording)
-    last = re.search(r"\b(?:the )?(?:last|final) time\b|\bson (?:kez|defa)\b", wording)
-    if bool(first) == bool(last):
-        return None
-    return "first" if first else "last"
-
-
 def spoken_triggers(req: BriefRequirement) -> tuple[str, ...]:
     """The spoken words ``req``'s facts name, in order, without blanks or repeats."""
     found: list[str] = []
@@ -128,9 +117,10 @@ def requirement_spoken_text(req: BriefRequirement) -> SpokenTextAsk | None:
         return None
     # A speaker the model wrote wins, even "I" over a "she" in the wording.
     speaker = _fact_speaker(req) if SPOKEN_TEXT_SPEAKER_KEY in req.facts else worded_speaker
-    # A structured field wins, including an unrecognized value: that prevents
-    # prose from silently choosing a time when the structured value is bad.
-    occurrence = _fact_occurrence(req) if "occurrence" in req.facts else _worded_occurrence(req)
+    # Only the structured field chooses among repeats (KRI-667: no regex reads the
+    # creator's wording for it). Without it, a repeated word is ambiguous and the
+    # narrated lane asks which occurrence the creator means.
+    occurrence = _fact_occurrence(req)
     return SpokenTextAsk(
         requirement_id=req.id,
         text=text,

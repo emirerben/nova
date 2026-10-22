@@ -770,13 +770,27 @@ def resolve_creator_manifest(
         phone_voiceover_spoken_text_supported,
     )
 
-    for name, supported in (
-        ("phone_voiceover_spoken_text", phone_voiceover_spoken_text_supported()),
-        ("phone_voiceover_source_audio", phone_voiceover_source_audio_supported()),
+    # Advertised only while its authoring flag is on: with the flag off the
+    # manifest (and its confirmation-fence hashes) stays byte-identical to
+    # before these lanes existed, and readers treat a missing entry as
+    # unavailable.
+    for name, enabled, supported in (
+        (
+            "phone_voiceover_spoken_text",
+            settings.phone_voiceover_spoken_text_enabled,
+            phone_voiceover_spoken_text_supported,
+        ),
+        (
+            "phone_voiceover_source_audio",
+            settings.phone_voiceover_source_audio_enabled,
+            phone_voiceover_source_audio_supported,
+        ),
     ):
+        if not enabled:
+            continue
         capabilities[name] = (
             _available()
-            if is_phone_voiceover and supported
+            if is_phone_voiceover and supported()
             else _unavailable(
                 "voiceover_feature_unavailable",
                 "This Voiceover feature needs a supported app and server release.",
