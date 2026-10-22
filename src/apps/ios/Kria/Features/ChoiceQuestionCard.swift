@@ -13,6 +13,10 @@ enum ChoiceQuestionCardMode {
 struct ChoiceQuestionCard: View {
     let question: ChoiceQuestion
     let mode: ChoiceQuestionCardMode
+    /// KRI-802: in a reply that also asks for clips, the option tapped but not sent yet (it goes with the clips).
+    var heldKey: String? = nil
+    /// KRI-802: what happens next while the tapped option waits for the clips.
+    var note: String? = nil
 
     var body: some View {
         switch mode {
@@ -34,9 +38,16 @@ struct ChoiceQuestionCard: View {
                         isRecommended: option.recommended,
                         detail: option.detail,
                         isDisabled: isSending,
+                        isSelected: option.key == heldKey,
                         action: { submit(question.submission(for: option), question.message(for: option)) }
                     )
                     .accessibilityIdentifier("choice-option-\(option.key)")
+                }
+                if let note {
+                    Text(note)
+                        .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("choice-batch-note")
                 }
             }
             .padding(.top, 2)

@@ -1,0 +1,290 @@
+{
+ "_source": "prod thread F4083F1D (2026-10-21, Don Julio kit M1), Main Creator input 19:38:04 (media_context: the clip records as the planner saw them; segment seconds rounded to 0.1 s by the model view, notable_moments as best_moments). Ids are the kit file names (KRI-803).",
+ "clips": [
+  {
+   "media_id": "m1_01",
+   "duration_s": 3.4,
+   "analysis": {
+    "transcript": "Cheers. Cheers.",
+    "understanding": {
+     "speech": {
+      "has_speech": true,
+      "transcript": "Cheers. Cheers.",
+      "segments": [
+       {
+        "text": "şu an.",
+        "start_s": 0.0,
+        "end_s": 0.5
+       },
+       {
+        "text": "Biliyor mu?",
+        "start_s": 0.9,
+        "end_s": 1.6
+       },
+       {
+        "text": "Cheers.",
+        "start_s": 1.7,
+        "end_s": 1.9
+       },
+       {
+        "text": "Biliyor mu?",
+        "start_s": 1.9,
+        "end_s": 2.7
+       }
+      ]
+     },
+     "summary": "A man is seated at an outdoor restaurant table, smiling and raising a glass of water as if toasting, while a waiter stands behind him."
+    }
+   }
+  },
+  {
+   "media_id": "m1_02",
+   "duration_s": 1.133333,
+   "analysis": {
+    "transcript": "Right. Mhm. So I'm gonna ask you right now, you can leave. I'm going to start asking questions. You can leave. Okay. Mhm. Mhm. Yes.",
+    "understanding": {
+     "speech": {
+      "has_speech": true,
+      "transcript": "Right. Mhm. So I'm gonna ask you right now, you can leave. I'm going to start asking questions. You can leave. Okay. Mhm. Mhm. Yes."
+     },
+     "summary": "Two men are sitting at an outdoor restaurant. One man speaks, telling another that he will start asking questions and the other can leave if they wish, while the second man nods and smiles."
+    }
+   }
+  },
+  {
+   "media_id": "m1_03",
+   "duration_s": 3.5,
+   "analysis": {
+    "transcript": "Salsa criolla, chimichurri con sal marina.",
+    "best_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 1.4,
+      "energy": 3.0,
+      "description": "waiter gesturing at condiments"
+     }
+    ],
+    "understanding": {
+     "speech": {
+      "has_speech": true,
+      "transcript": "Salsa criolla, chimichurri con sal marina.",
+      "segments": [
+       {
+        "text": "salsa criolla, chivichurri con salma y limón.",
+        "start_s": 0.0,
+        "end_s": 2.7
+       }
+      ]
+     },
+     "summary": "A waiter at a restaurant presents small bowls of salsa criolla, chimichurri, and sea salt to a customer at a table."
+    }
+   }
+  },
+  {
+   "media_id": "m1_04",
+   "duration_s": 2.6,
+   "analysis": {
+    "transcript": "Ne, hiçbir şey bilmedi. Bütün şeyler, var mı?",
+    "best_moments": [
+     {
+      "start_s": 3.0,
+      "end_s": 4.5,
+      "energy": 3.0,
+      "description": "overhead pan of table"
+     }
+    ],
+    "understanding": {
+     "speech": {
+      "has_speech": true,
+      "transcript": "Ne, hiçbir şey bilmedi. Bütün şeyler, var mı?",
+      "segments": [
+       {
+        "text": "Ne?",
+        "start_s": 0.0,
+        "end_s": 0.2
+       },
+       {
+        "text": "Hiçbir şey bilmiyorum.",
+        "start_s": 0.4,
+        "end_s": 1.0
+       }
+      ]
+     },
+     "summary": "The camera pans across a restaurant table set with plates, cutlery, and glasses of water, showing people's hands and torsos but no faces."
+    }
+   }
+  },
+  {
+   "media_id": "m1_05",
+   "duration_s": 4.0,
+   "analysis": {
+    "transcript": "Español, yeah. What's your name? Hey Lucas. Lucas. Yeah.",
+    "best_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 1.43,
+      "energy": 3.0,
+      "description": "customer asks about language"
+     },
+     {
+      "start_s": 3.09,
+      "end_s": 4.16,
+      "energy": 3.0,
+      "description": "waiter introduces self"
+     }
+    ],
+    "understanding": {
+     "speech": {
+      "has_speech": true,
+      "transcript": "Español, yeah. What's your name? Hey Lucas. Lucas. Yeah.",
+      "segments": [
+       {
+        "text": "Ne isminiz?",
+        "start_s": 0.0,
+        "end_s": 0.8
+       },
+       {
+        "text": "Lucas",
+        "start_s": 1.9,
+        "end_s": 2.5
+       }
+      ]
+     },
+     "summary": "A person asks a waiter, Lucas, if he speaks Spanish and then asks his name."
+    }
+   }
+  },
+  {
+   "media_id": "m1_06",
+   "duration_s": 2.0,
+   "analysis": {
+    "transcript": "Video, yeah. Video. Video. Video. Video video. Video video. Video. Video. Video.",
+    "best_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "energy": 3.0,
+      "description": "Diner holding a menu at table"
+     }
+    ],
+    "understanding": {
+     "speech": {
+      "has_speech": true,
+      "transcript": "Video, yeah. Video. Video. Video. Video video. Video video. Video. Video. Video.",
+      "segments": [
+       {
+        "text": "Biliyorum ya.",
+        "start_s": 0.0,
+        "end_s": 1.4
+       },
+       {
+        "text": "Yandık ya.",
+        "start_s": 1.4,
+        "end_s": 2.0
+       }
+      ]
+     },
+     "summary": "A person is seated at a restaurant table, holding a menu, with various dishes and drinks spread out. The table is set with a white tablecloth, bread, dips, and a glass of water."
+    }
+   }
+  },
+  {
+   "media_id": "m1_07",
+   "duration_s": 1.8,
+   "analysis": {
+    "transcript": "Kim diyebilirim, evet.",
+    "best_moments": [
+     {
+      "start_s": 2.6,
+      "end_s": 3.7,
+      "energy": 3.0,
+      "description": "man in black jacket gesturing while speaking"
+     }
+    ],
+    "understanding": {
+     "speech": {
+      "has_speech": true,
+      "transcript": "Kim diyebilirim, evet.",
+      "segments": [
+       {
+        "text": "isteyebilirim.",
+        "start_s": 0.0,
+        "end_s": 0.8
+       },
+       {
+        "text": "Evet.",
+        "start_s": 1.0,
+        "end_s": 1.2
+       }
+      ]
+     },
+     "summary": "A group of men are seated around a table at what appears to be an outdoor restaurant, engaged in conversation. One man speaks and gestures while holding a phone, and another man also speaks and gestur"
+    }
+   }
+  },
+  {
+   "media_id": "m1_08",
+   "duration_s": 2.7,
+   "analysis": {
+    "transcript": "Acá tenemos salsas tradicionales argentinas.",
+    "best_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 1.7,
+      "energy": 3.0,
+      "description": "waiter presenting sauces"
+     }
+    ],
+    "understanding": {
+     "speech": {
+      "has_speech": true,
+      "transcript": "Acá tenemos salsas tradicionales argentinas.",
+      "segments": [
+       {
+        "text": "Acá tenemos salsas tradicionales argentinas.",
+        "start_s": 0.0,
+        "end_s": 2.1
+       }
+      ]
+     },
+     "summary": "A waiter at a restaurant presents three traditional Argentine sauces to a diner. The sauces are in small wooden bowls on a white tablecloth, alongside bread rolls."
+    }
+   }
+  },
+  {
+   "media_id": "m1_09",
+   "duration_s": 2.5,
+   "analysis": {
+    "transcript": "Gracias.",
+    "best_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 1.5,
+      "energy": 3.0,
+      "description": "waiter holding tray"
+     },
+     {
+      "start_s": 2.0,
+      "end_s": 3.0,
+      "energy": 3.0,
+      "description": "waiter lowers tray"
+     }
+    ],
+    "understanding": {
+     "speech": {
+      "has_speech": true,
+      "transcript": "Gracias.",
+      "segments": [
+       {
+        "text": "Спасибо.",
+        "start_s": 0.0,
+        "end_s": 0.8
+       }
+      ]
+     },
+     "summary": "A waiter at an outdoor restaurant carries a rectangular tray past a dining table."
+    }
+   }
+  }
+ ]
+}
