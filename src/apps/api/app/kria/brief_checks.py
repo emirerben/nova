@@ -329,6 +329,9 @@ class PlanFacts:
     # a title, captions, a start cut and speech cleanup; an ask outside that set is answered
     # with a plain "can't" before approval and after render (`_talking_honest_receipt`).
     phone_talking: bool = False
+    # KRI-699: True only when this draft/render is routed through the native phone
+    # narrated voiceover writer. Cloud narrated renders must not promise spoken-text timing.
+    phone_narrated: bool = False
     # KRI-793: True when this draft renders through the phone Talking writer, which captions
     # the take, spells the creator's listed words their way and records every caption line
     # (`defers_caption_words_to_phone_render`). A captions ask about language or spelling
@@ -1486,6 +1489,8 @@ def _rendered_speech_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
         return {}
     device = variant.get("render_destination") == "device"
     facts: dict[str, Any] = {"rendered_variant": True, "edit_format": edit_format}
+    if device and edit_format == "narrated":
+        facts["phone_narrated"] = True
     cues = variant.get("caption_cues")
     if isinstance(cues, list) and cues:
         facts["caption_style"] = (
@@ -2985,6 +2990,15 @@ _TALKING_SPOKEN_TEXT_PLAN = (
     "I'll show it the moment you say that word in your take; if I don't hear the word, it "
     "won't appear"
 )
+# KRI-699: the same conditional wording applies to a native narrated voiceover. Keep this
+# separate from the Talking lane so cloud voiceover never inherits a native promise.
+_NARRATED_SPOKEN_TEXT_PLAN = (
+    "I'll show it the moment your voiceover says that word; if I don't hear the word, it "
+    "won't appear"
+)
+_NARRATED_SPOKEN_TEXT_PLAN_TR = (
+    "Yazıyı seslendirmen o kelimeyi söylediği anda gösteririm; kelimeyi duymazsam yazı çıkmaz"
+)
 # KRI-793: what a phone Talking draft says about a captions ask naming a language or words
 # to spell: the writer captions everything said in the take (an off-camera voice too), and
 # the reason goes on to name the language and the words (`_caption_words_plan`).
@@ -3013,6 +3027,7 @@ _TALKING_HONEST_EN: tuple[str, ...] = (
     _TALKING_SPOKEN_TEXT_ANY_VOICE,
     _SPOKEN_TEXT_FIRST_HEARD,
     _TALKING_SPOKEN_TEXT_NO_WORD,
+    _NARRATED_SPOKEN_TEXT_PLAN,
 )
 
 # The Turkish twin of every static reason above (KRI-520). Reasons are written into
@@ -3093,6 +3108,7 @@ _REASON_TR: dict[str, str] = {
     _TALKING_SPOKEN_TEXT_PLAN: (
         "Çekiminde o kelimeyi söylediğin anda yazıyı gösteririm; kelimeyi duymazsam yazı çıkmaz"
     ),
+    _NARRATED_SPOKEN_TEXT_PLAN: _NARRATED_SPOKEN_TEXT_PLAN_TR,
     _TALKING_CAPTIONS_EVERY_VOICE: (
         "Çekimindeki her ses altyazıya girer, kamera dışındaki sesler de"
     ),
@@ -3169,6 +3185,7 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _NO_CLIP_SPEED,
     _NO_FREEZE_FRAME,
     _LIGHT_UNAVAILABLE,
+    _NARRATED_SPOKEN_TEXT_PLAN,
     *_TALKING_HONEST_EN,
 )
 _FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
@@ -5895,6 +5912,41 @@ def render_block_recovery(failures: Sequence[Mapping[str, Any]]) -> RenderBlockR
 
 
 def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    # Spoken-cue text is judged by its timing evidence, never by a static title/text row that
+    # happens to contain the same words. This branch must precede the ordinary literal check.
+    if _is_spoken_text_cue(req) and _is_voiceover_edit(facts) and facts.phone_narrated:
+        # A finished native render is judged from its persisted receipt even if the
+        # rollout flag changed afterward; the receipt describes what actually happened.
+        if facts.rendered_variant or _narrated_spoken_text_lane():
+            spoken = _spoken_text_fact(facts, req)
+            if spoken is not None:
+                if spoken.status == "placed" and _same_spoken_text(spoken.text, req.literal):
+                    return _receipt(req, "met", None)
+                return _spoken_text_miss(req, spoken)
+            if not facts.rendered_variant:
+                from app.kria.spoken_text_ask import requirement_spoken_text  # noqa: PLC0415
+
+                ask = requirement_spoken_text(req)
+                if ask is None:
+                    return _receipt(req, "not_possible", _TALKING_SPOKEN_TEXT_NO_WORD)
+                return _receipt(req, "partial", _NARRATED_SPOKEN_TEXT_PLAN)
+            return _receipt(
+                req,
+                "partial",
+                say(
+                    en="I couldn't confirm where that spoken-word text landed",
+                    tr="Bu kelimede gösterilecek yazının nereye yerleştiğini doğrulayamadım",
+                ),
+            )
+        # The native lane's kill switch retains the old limitation.
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en="A voiceover edit can't show text at a word you say yet.",
+                tr="Seslendirmeli düzenleme henüz söylediğin bir kelimede yazı gösteremiyor.",
+            ),
+        )
     wanted = _fold(req.literal or "")
     if req.scope == "title" and facts.title:
         # A title written from the brief may add the route to the creator's words
@@ -5943,9 +5995,7 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         # reply says so plainly instead of holding the draft behind "a simpler version?".
         return _receipt(req, "not_possible", _TALKING_NO_SPOKEN_TEXT)
     if _is_spoken_text_cue(req) and _is_voiceover_edit(facts):
-        # KRI-699: a voiceover edit draws its title, captions and word-timed photos/sounds,
-        # never a creator text on a spoken word, so a retry can't add it. Still the
-        # creator's call (held draft), not a format limit.
+        # Cloud voiceover and the native kill-switch keep the historical limitation.
         return _receipt(
             req,
             "not_possible",
@@ -6024,6 +6074,18 @@ def _talking_spoken_text_lane() -> bool:
     from app.services.phone_rollout import phone_subtitled_spoken_text_supported  # noqa: PLC0415
 
     return phone_subtitled_spoken_text_supported()
+
+
+def _narrated_spoken_text_lane() -> bool:
+    """Whether the native phone narrated voiceover text lane is enabled."""
+    from app.services.phone_rollout import phone_narrated_spoken_text_supported  # noqa: PLC0415
+
+    return phone_narrated_spoken_text_supported()
+
+
+def _same_spoken_text(actual: str, expected: str | None) -> bool:
+    """Match the receipt's displayed text while preserving punctuation/case semantics."""
+    return " ".join((actual or "").split()) == " ".join((expected or "").split())
 
 
 def _is_voiceover_edit(facts: PlanFacts) -> bool:

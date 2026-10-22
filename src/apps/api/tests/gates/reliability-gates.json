@@ -865,7 +865,10 @@
       "fix_commit": "d39edcfad",
       "paths": [
         "src/apps/api/app/kria/brief_checks.py",
-        "src/apps/api/app/tasks/kria_runtime.py"
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/pipeline/phone_spoken_text.py",
+        "src/apps/api/app/pipeline/phone_narrated_spoken_text.py",
+        "src/apps/api/app/services/phone_editor.py"
       ],
       "regression_tests": [
         "tests/kria/test_brief_checks_narrated_alignment.py",
@@ -874,7 +877,10 @@
         "tests/tasks/test_marathon_render_ready_review.py",
         "tests/kria/test_brief_rendered_speech_facts.py",
         "tests/kria/test_draft_receipts_defer.py",
-        "tests/tasks/test_kri551_cleanup_review_note.py"
+        "tests/tasks/test_kri551_cleanup_review_note.py",
+        "tests/pipeline/test_voiceover_rule_windows.py",
+        "tests/tasks/test_phone_narrated_spoken_text.py",
+        "tests/services/test_narrated_spoken_text_contract.py"
       ],
       "harness": "real_reply",
       "kill_switch": null,
@@ -892,10 +898,12 @@
         "mix",
         "captions",
         "pause cut",
-        "name spelling"
+        "name spelling",
+        "recorded voiceover rule text: native compilation, cue disambiguation, save receipts (offline)"
       ],
       "neighbours_gap": [
-        "four PRs because each judged from a different fact source; the variant facts a render must persist for receipts are not a typed contract (KRI-577 item 1)"
+        "four PRs because each judged from a different fact source; the variant facts a render must persist for receipts are not a typed contract (KRI-577 item 1)",
+        "KRI-695 spoken-rule native export and production remain unverified; local simulator build ran out of disk space"
       ],
       "follow_ups": [
         "KRI-546 #1503",

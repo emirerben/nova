@@ -9326,6 +9326,10 @@ def _run_phone_narrated_job(
         compile_phone_narrated_plan,
         narrated_title_end_s,
         narrated_title_text_elements,
+        replace_narrated_title,
+    )
+    from app.pipeline.phone_narrated_spoken_text import (  # noqa: PLC0415
+        compile_narrated_spoken_text,
     )
     from app.pipeline.phone_subtitled_lanes import SubtitledLaneError, drop_lane  # noqa: PLC0415
     from app.pipeline.phrase_sequence import split_phrases  # noqa: PLC0415
@@ -9337,6 +9341,7 @@ def _run_phone_narrated_job(
     )
     from app.services.phone_reaction_grounding import trigger_vocabulary_prompt  # noqa: PLC0415
     from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_narrated_spoken_text_supported,
         phone_voiceover_reaction_beats_supported,
         validate_phone_pilot_recipe,
     )
@@ -9417,6 +9422,13 @@ def _run_phone_narrated_job(
     beats_enabled = bool(beats or closing) and phone_voiceover_reaction_beats_supported(
         require_client=False
     )
+    spoken_text_asks = (
+        _phone_spoken_text_asks(snapshot)
+        if phone_narrated_spoken_text_supported(require_client=False)
+        else ()
+    )
+    spoken_text_receipt: dict[str, Any] | None = None
+    narrated_text_elements: list[dict] = []
 
     # `required_v1`: the recorded voiceover is a normal, fully uploaded audio
     # file (never an analysis proxy -- see `content_plan_build.py`'s dispatch
@@ -9830,6 +9842,26 @@ def _run_phone_narrated_job(
                         lanes=lanes,
                         visuals=visuals,
                     )
+                    if spoken_text_asks:
+                        title_elements = narrated_title_text_elements(
+                            recipe, opening_title, end_s=opening_title_end_s
+                        )
+                        spoken_rows, spoken_text_receipt = compile_narrated_spoken_text(
+                            spoken_text_asks,
+                            words=transcript.words,
+                            cues=cues or [],
+                            caption_style=caption_style,
+                            timeline_duration_s=float(recipe.duration),
+                            canvas=recipe.canvas,
+                            shown_rows=title_elements,
+                        )
+                        narrated_text_elements = [*title_elements, *spoken_rows]
+                        if spoken_rows:
+                            recipe = replace_narrated_title(recipe, narrated_text_elements)
+                    else:
+                        narrated_text_elements = narrated_title_text_elements(
+                            recipe, opening_title, end_s=opening_title_end_s
+                        )
                     break
                 except UnsupportedPhonePlan as exc:
                     # A beat lane never fails the job: drop the lane that failed
@@ -9915,11 +9947,10 @@ def _run_phone_narrated_job(
         }
         # KRI-455: the editor preview draws text from the variant, not the
         # pinned recipe, so keep the title element the recipe was compiled from.
-        title_elements = narrated_title_text_elements(
-            recipe, opening_title, end_s=opening_title_end_s
-        )
-        if title_elements:
-            new_entry["narrated_title_text_elements"] = title_elements
+        if narrated_text_elements:
+            new_entry["narrated_title_text_elements"] = narrated_text_elements
+        if spoken_text_receipt is not None:
+            new_entry["spoken_text_placement"] = spoken_text_receipt
         # KRI-281: persist the cut the editor shows, derived from the very recipe
         # just pinned (same code the read-time projection uses for videos rendered
         # before this existed). Clip ids index the source pool the timeline lists.

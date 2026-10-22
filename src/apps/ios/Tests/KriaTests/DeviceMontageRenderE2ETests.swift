@@ -130,6 +130,10 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
     /// shorter than its step so its `TimelineClip.rate` is exercised < 1
     /// (slow-down, never freeze-hold), captions on top, footage bed audible
     /// under the voice.
+    func testSpokenVoiceoverRules() async throws {
+        try await assertCase("spoken_voiceover_rules")
+    }
+
     func testNarratedWalkthroughRendersOnTheIPhone() async throws {
         try await assertCase("narrated")
     }

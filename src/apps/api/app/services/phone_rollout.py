@@ -1033,6 +1033,24 @@ def phone_narrated_title_edits_supported(*, require_client: bool = True) -> bool
     return phone_narrated_title_preview_supported() if require_client else True
 
 
+def phone_narrated_spoken_text_supported(*, require_client: bool = False) -> bool:
+    """Whether native narrated voiceover edits may place text on spoken words.
+
+    This lane uses the narrated title/editor text implementation, so both the
+    narrated title capability and its editable text lane must be qualified. A
+    caller may require the client protocol when it is deciding what an editor
+    build can expose; worker and planning checks use the server-only default.
+    Cloud narrated renders do not use this helper and retain their existing
+    voiceover limitation.
+    """
+
+    return bool(
+        settings.phone_narrated_spoken_text_enabled
+        and phone_narrated_title_supported()
+        and phone_narrated_title_edits_supported(require_client=require_client)
+    )
+
+
 # Device feature the video-PiP lane needs on top of the overlay lane: the
 # compiler emits a video overlay card as a muted, trimmed `TimelineClip` on
 # the `subtitled-overlays` track, which the device composites through the

@@ -285,6 +285,50 @@ def _normal_text(value: object) -> str:
     return " ".join(str(value or "").split()).casefold()
 
 
+def _reconcile_narrated_spoken_text_receipt(variant: dict, title_elements: list[dict]) -> None:
+    """Invalidate native spoken-text placements changed by an editor text Save.
+
+    The placement receipt is evidence about the exact authored row and window. A
+    title Save may remove, reword, or retime that row while leaving the old receipt
+    in the variant, so keep unchanged placements and demote changed ones.
+    """
+    receipt = variant.get("spoken_text_placement")
+    rows = receipt.get("rows") if isinstance(receipt, Mapping) else None
+    if not isinstance(rows, list):
+        return
+    elements = {
+        str(element.get("id")): element
+        for element in title_elements
+        if isinstance(element, Mapping) and element.get("id")
+    }
+    changed = False
+    reconciled: list[dict[str, Any]] = []
+    for raw in rows:
+        if not isinstance(raw, Mapping) or raw.get("status") != "placed":
+            reconciled.append(dict(raw) if isinstance(raw, Mapping) else raw)
+            continue
+        row = dict(raw)
+        element = elements.get(str(row.get("element_id") or ""))
+        same = (
+            element is not None
+            and " ".join(str(element.get("text") or "").split())
+            == " ".join(str(row.get("text") or "").split())
+            and isinstance(element.get("start_s"), (int, float))
+            and isinstance(element.get("end_s"), (int, float))
+            and isinstance(row.get("start_s"), (int, float))
+            and isinstance(row.get("end_s"), (int, float))
+            and abs(float(element["start_s"]) - float(row.get("start_s"))) <= 0.001
+            and abs(float(element["end_s"]) - float(row.get("end_s"))) <= 0.001
+        )
+        if not same:
+            row["status"] = "edited"
+            row["error"] = "editor_text_changed"
+            changed = True
+        reconciled.append(row)
+    if changed:
+        variant["spoken_text_placement"] = {**dict(receipt), "rows": reconciled}
+
+
 def _relaxed_receipt(exc: CreatorRenderContractError) -> dict[str, str]:
     if isinstance(exc, TextPlacementError):
         return {
@@ -1409,6 +1453,7 @@ def _compile_narrated_editor_commit(
         # document also sends are the caption lane's, not title text.
         title_elements = narrated_authored_text_elements(variant.get("text_elements") or [])
         recipe = replace_narrated_title(recipe, title_elements)
+        _reconcile_narrated_spoken_text_receipt(variant, title_elements)
     if caption_save or cut_active:
         # A new cut re-bounds the captions to where the video now ends.
         caption_style = "word" if variant.get("voiceover_caption_style") == "word" else "sentence"

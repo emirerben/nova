@@ -38,6 +38,7 @@ from app.kria.brief_checks import (
     build_receipts,
     clip_speed_notice,
     defers_caption_words_to_phone_render,
+    defers_to_narrated_render,
     describe_text_look,
     is_judged,
     judged_at_render,
@@ -1166,9 +1167,16 @@ def _complete_draft_turn(
                     phone_talking = talking_writer and (
                         document.strategy.get("edit_format") or item.edit_format
                     ) in {"subtitled", "talking_head"}
+                    phone_narrated = defers_to_narrated_render(
+                        creator_id=thread.creator_id,
+                        edit_format=document.strategy.get("edit_format") or item.edit_format,
+                        audio_strategy=document.strategy.get("audio_strategy"),
+                        clip_paths=item.clip_gcs_paths or (),
+                    )
                     facts = replace(
                         facts,
                         phone_talking=phone_talking,
+                        phone_narrated=phone_narrated,
                         caption_words_at_render=talking_writer,
                         # KRI-790: quoted boundaries and length use the same kept window.
                         take_window=(

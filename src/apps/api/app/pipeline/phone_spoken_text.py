@@ -21,6 +21,7 @@ Merope" is placed on the first "Merope" anyone says (KRI-791; the receipt says s
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
@@ -88,8 +89,68 @@ def find_spoken_word(
     return heard
 
 
+def _find_sequential_cue(
+    words: Sequence[Any], ask: SpokenTextAsk
+) -> tuple[str, float, float] | None:
+    """Prefer explicit numbered announcements over an unrelated introductory count.
+
+    A bare numeric cue can match a title ("three rules") before rule three. Only
+    a unique bare number, an exact phrase, or an explicit "rule N" announcement
+    grounds it. This does not fuzzy-match or infer missing words.
+    """
+    from app.services.phone_reaction_grounding import _match_trigger, _token_stream, fold_tokens
+
+    def expanded(text: str) -> str:
+        # Unambiguous English contractions; leave possessives/ambiguous 's/'d alone.
+        for short, full in (
+            ("you're", "you are"),
+            ("we're", "we are"),
+            ("they're", "they are"),
+            ("i'm", "i am"),
+            ("don't", "do not"),
+            ("can't", "cannot"),
+        ):
+            text = text.replace("’", "'")
+            if text.casefold() == short:
+                return full
+        return text
+
+    source = _word_dicts(words)
+    normalized = [
+        {**word, "text": " ".join(expanded(t) for t in str(word.get("text") or "").split())}
+        for word in source
+    ]
+    stream = _token_stream(normalized)
+    phrases, numbers, announcements = [], [], []
+    literal_tokens = fold_tokens(ask.text)
+    for trigger in ask.triggers:
+        canonical = " ".join(expanded(t) for t in trigger.split())
+        tokens = fold_tokens(canonical)
+        matches = _match_trigger(stream, canonical, None, "every").windows
+        if len(tokens) == 1 and tokens[0].isdigit():
+            # An explicitly numbered display line can use its matching announcement.
+            if literal_tokens and literal_tokens[0] == tokens[0]:
+                for label in ("rule", "kural"):
+                    announced = _match_trigger(
+                        stream, f"{label} {tokens[0]}", None, "first"
+                    ).windows
+                    if announced:
+                        announcements.append((trigger, *announced[0]))
+            if len(matches) == 1 and len(literal_tokens) == 1:
+                numbers.append((trigger, *matches[0]))
+        elif matches:
+            phrases.append((trigger, *matches[0]))
+    candidates = announcements or phrases or numbers
+    return min(candidates, key=lambda hit: hit[1]) if candidates else None
+
+
 def spoken_text_element(
-    ask: SpokenTextAsk, *, start_s: float, timeline_duration_s: float, canvas: _Canvas
+    ask: SpokenTextAsk,
+    *,
+    start_s: float,
+    timeline_duration_s: float,
+    canvas: _Canvas,
+    hold_s: float = HOLD_S,
 ) -> dict | None:
     """The text as one editable TextElement row from ``start_s``, or ``None`` when the
     take has no time left to show it."""
@@ -97,7 +158,7 @@ def spoken_text_element(
 
     text = " ".join(ask.text.split())[:_MAX_CHARS]
     start_s = round(max(0.0, float(start_s)), 3)
-    end_s = round(min(start_s + HOLD_S, float(timeline_duration_s)), 3)
+    end_s = round(min(start_s + hold_s, float(timeline_duration_s)), 3)
     if not text or end_s - start_s < _MIN_S:
         return None
     element = TextElement(
@@ -174,6 +235,7 @@ def spoken_text_rows(
     canvas: _Canvas,
     place: Placer,
     shown_rows: Sequence[dict] = (),
+    sequential: bool = False,
 ) -> tuple[list[dict], dict[str, Any]]:
     """One placed row per ask the take says, plus the receipt of every ask.
 
@@ -181,6 +243,37 @@ def spoken_text_rows(
     ``place(row, avoid)`` moves a row off the speaker's face, keeping it clear of
     ``avoid`` when it can. ``shown_rows`` (the title) are kept clear too. Never raises
     for one ask: a failure is that ask's receipt row (``error``)."""
+    # Voiceover rules share one text slot. Resolve all cue windows first so brief order
+    # cannot change chronological display order. Talking retains its existing behavior.
+    heard_by_id = {}
+    invalid_clock = False
+    if sequential:
+        word_rows = _word_dicts(words)
+        for word in word_rows:
+            start, end = word.get("start_s"), word.get("end_s")
+            if (
+                isinstance(start, bool)
+                or isinstance(end, bool)
+                or not isinstance(start, (int, float))
+                or not isinstance(end, (int, float))
+                or not math.isfinite(start)
+                or not math.isfinite(end)
+                or start < 0
+                or end < start
+                or end > timeline_duration_s + 0.05
+            ):
+                invalid_clock = True
+                break
+        if not invalid_clock:
+            heard_by_id = {ask.requirement_id: _find_sequential_cue(words, ask) for ask in asks}
+            asks = sorted(
+                asks,
+                key=lambda ask: (
+                    heard_by_id[ask.requirement_id][1]
+                    if heard_by_id[ask.requirement_id]
+                    else math.inf
+                ),
+            )
     rows: list[dict] = []
     receipt_rows: list[dict[str, Any]] = []
     for ask in asks:
@@ -194,13 +287,40 @@ def spoken_text_rows(
             # time anyone says the word is the one shown (and the receipt says so).
             entry["speaker"] = ask.speaker
         try:
-            heard = find_spoken_word(words, ask.triggers)
+            if sequential and invalid_clock:
+                receipt_rows.append(
+                    {**entry, "status": "error", "error": "invalid_voiceover_clock"}
+                )
+                continue
+            if sequential and len(" ".join(ask.text.split())) > _MAX_CHARS:
+                receipt_rows.append({**entry, "status": "text_too_long"})
+                continue
+            heard = (
+                heard_by_id.get(ask.requirement_id)
+                if sequential
+                else find_spoken_word(words, ask.triggers)
+            )
             if heard is None:
                 receipt_rows.append({**entry, "status": "not_heard"})
                 continue
             trigger, start_s, _end_s = heard
+            limit_s = timeline_duration_s
+            if sequential:
+                other_starts = [
+                    hit[1]
+                    for rid, hit in heard_by_id.items()
+                    if rid != ask.requirement_id and hit is not None
+                ]
+                if any(abs(other - start_s) < 0.001 for other in other_starts):
+                    receipt_rows.append({**entry, "status": "overlap", "heard_at_s": start_s})
+                    continue
+                limit_s = min([limit_s, *(other for other in other_starts if other > start_s)])
             row = spoken_text_element(
-                ask, start_s=start_s, timeline_duration_s=timeline_duration_s, canvas=canvas
+                ask,
+                start_s=start_s,
+                timeline_duration_s=limit_s,
+                canvas=canvas,
+                hold_s=4.0 if sequential else HOLD_S,
             )
             if row is None:
                 receipt_rows.append({**entry, "status": "no_time", "heard_at_s": start_s})
@@ -212,6 +332,8 @@ def spoken_text_rows(
                     cues, window=window, caption_style=caption_style, canvas=canvas
                 )
             except Exception as exc:  # noqa: BLE001 - the captions are a nicety; the face is not
+                if sequential:
+                    raise
                 log.warning("phone_spoken_text.caption_boxes_failed", error=str(exc)[:200])
             placed, placement = place(row, avoid)
         except Exception as exc:  # noqa: BLE001 - one ask never fails the render

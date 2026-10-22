@@ -413,6 +413,12 @@ class Settings(BaseSettings):
     # restart <id>` (api). No NEXT_PUBLIC twin (the iOS editor follows the
     # server's capability map and the title's `read_only` marker).
     phone_narrated_title_edits_enabled: bool = True
+    # KRI-699: a confirmed text-on-spoken-word ask on a phone narrated edit
+    # (recorded voiceover) is placed by the native voiceover writer. It reuses
+    # the narrated title/editor text lane and therefore requires the same
+    # positioned/animated text device evidence. False preserves the cloud
+    # voiceover limitation and the old honest refusal.
+    phone_narrated_spoken_text_enabled: bool = True
     # KRI-290 (free clip edits on phone Voiceover videos): a phone `narrated`
     # or montage `voiceover` variant's timeline opens (trim, extend, reorder,
     # split, delete) instead of being locked to the voiceover. A Save swaps the

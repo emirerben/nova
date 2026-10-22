@@ -22,6 +22,7 @@ from app.kria.brief import CreativeBrief
 from app.kria.brief_checks import is_spoken_text_cue
 from app.kria.brief_route import chapter_list
 from app.kria.freeze_ask import times_one_moment
+from app.kria.media_sources import is_analysis_proxy_path
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
 from app.kria.reply_language import say
@@ -51,6 +52,7 @@ from app.services.clip_order_sequence import (
 )
 from app.services.creator_label_reply import label_text_reply
 from app.services.length_policy import creator_duration_s, length_owner
+from app.services.phone_rollout import phone_narrated_spoken_text_supported
 
 CONTRACT_FIELD = "creator_render_requirements"
 REQUIREMENT_VERSION_FIELD = "creator_render_requirements_version"
@@ -1178,6 +1180,20 @@ def build_render_contract(
         if position and status == "resolved" and clip_ids.intersection(members)
     }
     talking_edit = str(raw.get("edit_format") or "") in {"subtitled", "talking_head"}
+    # KRI-699: native narrated voiceover has the same spoken-text lane, but only when
+    # its device text capability is actually qualified. Cloud narrated output keeps the
+    # historical required-text rejection.
+    narrated_spoken_text_edit = (
+        str(raw.get("edit_format") or "") in {"narrated", "narrated_planned", "narrated_ready"}
+        and str(raw.get("audio_strategy") or "") == "voiceover"
+        and str(raw.get("render_program") or "") == "native"
+        and any(
+            is_analysis_proxy_path(str(row.get("gcs_path") or row.get("proxy_path") or ""))
+            for row in (media_snapshot or {}).get("clip_assignments") or []
+            if isinstance(row, Mapping)
+        )
+        and phone_narrated_spoken_text_supported(require_client=False)
+    )
     edit_rows = _edit_rows(media_snapshot, typed, hidden_ids)
     one_clip = one_clip_edit(edit_rows)
     if brief:
@@ -1199,7 +1215,7 @@ def build_render_contract(
                     continue
                 durations.append(float(requirement.facts["duration_s"]))
             if requirement.kind == "text" and requirement.literal:
-                if talking_edit and (
+                if (talking_edit or narrated_spoken_text_edit) and (
                     requirement_spoken_text(requirement) is not None
                     or is_spoken_text_cue(requirement)
                 ):
