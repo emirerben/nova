@@ -904,6 +904,60 @@
       "red_control": "pending"
     },
     {
+      "id": "kri-790-take-window",
+      "tickets": [
+        "KRI-790",
+        "KRI-628",
+        "KRI-704"
+      ],
+      "symptom": "Merope T1 (2026-10-21): 'Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\"' in a 68.37 s Talking take: no end cut existed, the start line (brief facts on an order row, misheard 'Carolina' without the second I'm) never reached the phone plan, every draft said 'keeps your whole take ... 68.4s', and no draft or approval card named either line.",
+      "boundary": "compiler",
+      "status": "open_pr",
+      "owner": "KRI-790",
+      "journey": "kri-628-opening-cut",
+      "paths": [
+        "src/apps/api/app/kria/opening_cut_ask.py",
+        "src/apps/api/app/pipeline/phone_opening_cut.py",
+        "src/apps/api/app/services/speech_segments.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/tasks/kria_runtime.py"
+      ],
+      "regression_tests": [
+        "tests/pipeline/test_phone_take_window.py",
+        "tests/pipeline/test_phone_opening_cut.py",
+        "tests/tasks/test_phone_opening_cut_cleanup_off.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "T1's stored brief rows (v1 + v2) and the take's real timings (prod transcript words + local whisper.cpp words, prod segments) through the ask, the cut (cleanup on and off), the phone compiler, the caption remap, the worker's _phone_opening_cut and the draft/render receipts; each part of the fix switched off alone fails the guard. The KRI-787 runtime replay (PR #1723, run locally) flips exactly its KRI-790 xfails and pins; its kept window is [12.27, 50.38].",
+        "live_model": "n/a; no model call is involved and no paid run was made",
+        "native_output": "unknown; needs a phone re-send of T1 after deploy (also needs KRI-788 for the render to reach the phone)",
+        "production": "not deployed"
+      },
+      "neighbours_covered": [
+        "start + end, start only, end only",
+        "legacy order facts, KRI-789 timing start_line/end_line, KRI-628 description cue",
+        "misheard name and dropped short word; short quotes stay exact",
+        "end line said before the start line",
+        "cleanup on (window intersects cleanup cuts) and off (checked preflight words)",
+        "draft length line from timed segments; unplaced line falls back to the take length",
+        "rendered review: both sides cut, one side missed, older render without an end receipt",
+        "Turkish twins"
+      ],
+      "neighbours_gap": [
+        "cleanup off with no checked preflight snapshot still reports cleanup_off (no second transcription for the cut)",
+        "cloud (non-phone) Talking renders do not cut to the lines",
+        "the render still refuses T1 until KRI-788 restores the order answer (or KRI-789's one-clip rule lands)"
+      ],
+      "follow_ups": [
+        "KRI-788",
+        "KRI-789"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-546-montage-receipts",
       "tickets": [
         "KRI-546",
@@ -1798,6 +1852,51 @@
         "KRI-723",
         "KRI-724",
         "KRI-725"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-810-troya-export-verifier-false-reject",
+      "tickets": [
+        "KRI-810"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-810",
+      "symptom": "A correct Troya montage (initial, exact retry and later run) was rejected by phone-simple-cut-v2 every time: the last picture sample of a clip with off-grid sourceStart compared the neighbour of the displayed frame, and white titles over sky/lit windows were unreadable to the colour-threshold OCR view.",
+      "boundary": "publication",
+      "journey": "kri-492-length-ownership",
+      "paths": [
+        "src/apps/api/app/services/actual_export_verification.py",
+        "src/apps/api/app/services/device_render.py",
+        "src/apps/api/app/cli/verify_device_export.py"
+      ],
+      "regression_tests": [
+        "tests/integration/test_actual_export_verification.py",
+        "tests/routes/test_actual_export_publication.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": "phone_actual_export_verification_enabled",
+      "evidence": {
+        "offline_replay": "Exact retained Troya bytes (c2 sha 55ae38ab, c3 sha 0b657d66) with the retained recipe and analysis proxies: rejected on origin/main 8eefea56d, checked by phone-simple-cut-v3 via app.cli.verify_device_export --montage. Synthetic off-grid (1.508 s) and high-key white-title fixtures fail before the fix; one/two-frame shifts, missing/wrong/lower-case words and missing layer stay rejected.",
+        "live_model": "No model calls or paid evaluation.",
+        "native_output": "Not re-exported on a device in this lane; a physical-device/Photos check on a named TestFlight candidate is a required follow-up.",
+        "production": "Not deployed. Requests pinned to v2 accept a v3 report after deploy; the creator retries job 57602026."
+      },
+      "neighbours_covered": [
+        "off-grid source start at a clip's last sample",
+        "held-frame/VFR analysis proxy",
+        "one- and two-frame shifted window",
+        "white title over high-key/lit-window background",
+        "missing word, wrong word, wrong casing, missing layer",
+        "no decodable background cannot add acceptance",
+        "historical verifier pin accepts only itself or the current verifier"
+      ],
+      "neighbours_gap": [
+        "physical-device/Photos delivery of the accepted export",
+        "coloured fills over same-coloured backgrounds beyond the difference view"
+      ],
+      "follow_ups": [
+        "KRI-810 device/Photos check on a named TestFlight candidate after deploy"
       ],
       "red_control": "not_applicable"
     },

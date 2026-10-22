@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.44.0] - 2026-10-22
+
+### Changed
+- fix(kria): a named phrase cut is never "Done" before anything cuts it (KRI-792) (#1728) <!-- release-pr: 1728 -->
+
+## [0.81.43.0] - 2026-10-22
+
+### Changed
+- fix(export-verifier): accept correct Troya montage, keep wrong-output controls (KRI-810) (#1749) <!-- release-pr: 1749 -->
+
+## [0.81.42.0] - 2026-10-22
+
+### Changed
+- fix(kria): cut phone Talking to the quoted start AND end lines (KRI-790) (#1730) <!-- release-pr: 1730 -->
+
+## [0.81.41.0] - 2026-10-22
+
+### Changed
+- fix(slides): Save after deleting or adding a slide in an AI-bound slide post (KRI-812) (#1751) <!-- release-pr: 1751 -->
+
 ## [0.81.40.0] - 2026-10-22
 
 ### Fixed
