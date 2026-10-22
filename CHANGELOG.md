@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.24.0] - 2026-10-22
+
+### Changed
+- fix(ios): verify actual TestFlight upload provenance (#1746) <!-- release-pr: 1746 -->
+
 ## [0.81.23.0] - 2026-10-22
 
 ### Changed
