@@ -137,6 +137,7 @@ from app.services.clip_intent_planning import (
     brief_label_asks,
     kept_labels_from_strategy,
     plan_and_resolve_clip_intents,
+    shot_captions_safe,
 )
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_selection import fold_clip_selections
@@ -189,10 +190,13 @@ from app.services.song_range import (
     song_range_question_text,
 )
 from app.services.spoken_quotes import (
+    Transcribe,
     closing_quote_notice,
     described_lines,
     ground_closing_quote,
+    ground_named_lines,
     named_line_records,
+    transcribe_stored_quote,
 )
 from app.services.spoken_roles import SpokenSeats
 
@@ -205,12 +209,15 @@ def _enrich_best_parts_snapshot(
     brief: CreativeBrief | None,
     *,
     closing_quote: Mapping[str, Any] | None = None,
+    named_lines: Sequence[Mapping[str, Any]] | None = None,
     camera_sound: bool = False,
 ) -> dict | None:
     """Attach source-bounded footage capacity before the choice collector runs.
 
     ``closing_quote`` is ``spoken_quotes.ground_closing_quote``'s record of the line the
-    creator asked to end on (KRI-597); the brief's moment ask (KRI-596, "the best six
+    creator asked to end on (KRI-597); ``named_lines`` is ``_ground_spoken_lines``' record of
+    the lines the creator wants heard whole (KRI-803, word timings included), else the timed
+    sentences alone place them; the brief's moment ask (KRI-596, "the best six
     moments, each very short") lets a long take give several windows; a clip the creator's
     sound or order ask describes by what is said in it starts on that sentence (KRI-681).
     ``camera_sound`` (``narration_notes.keeps_camera_sound``, KRI-585): every clip's own
@@ -248,19 +255,18 @@ def _enrich_best_parts_snapshot(
     if recording is None and isinstance(media_snapshot.get("voiceover"), dict):
         recording = media_snapshot["voiceover"].get("duration_s")
     moments = brief_moment_ask(brief)
-    held = (
-        [str(closing_quote.get("media_id"))]
-        if isinstance(closing_quote, Mapping) and closing_quote.get("status") == "found"
-        else []
-    )
-    quotes = _whole_line_quotes(brief)
+    held = _held_closing_ids(closing_quote)
+    grounded = {str(row.get("quote")): row for row in named_lines or () if isinstance(row, Mapping)}
+    named = [
+        dict(grounded.get(row["quote"], row))
+        for row in named_line_records(_whole_line_quotes(brief), media_snapshot, skip_ids=held)
+    ]
     described = {
         media_id: found.window
         for media_id, found in described_lines(
-            _described_clip_texts(brief), media_snapshot, skip_ids=held, lines=quotes
+            _described_clip_texts(brief), media_snapshot, skip_ids=held, named=named
         ).items()
     }
-    named = named_line_records(quotes, media_snapshot, skip_ids=held)
 
     def windows_for(seats: SpokenSeats | None) -> dict[str, Any]:
         quiet_id = seats.quiet_close[0] if seats and seats.quiet_close else None
@@ -343,6 +349,43 @@ def _whole_line_quotes(brief: CreativeBrief | None) -> list[str]:
     if brief is None:
         return []
     return list(dict.fromkeys(quote for req in brief.live() for quote in whole_line_quotes(req)))
+
+
+def _held_closing_ids(closing_quote: Mapping[str, Any] | None) -> list[str]:
+    """The clip a found closing line holds: its window belongs to the ending."""
+    if isinstance(closing_quote, Mapping) and closing_quote.get("status") == "found":
+        return [str(closing_quote.get("media_id"))]
+    return []
+
+
+async def _ground_spoken_lines(
+    strategy: Mapping[str, Any],
+    media_snapshot: Mapping[str, Any] | None,
+    brief: CreativeBrief | None,
+    *,
+    transcribe: Transcribe | None = transcribe_stored_quote,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]] | None]:
+    """(closing line, lines heard whole) on a montage, before the length plan freezes them.
+
+    KRI-597: "end on the moment I say '...'"; KRI-760/803: "keep '...' audible". Each is
+    found in the timed sentences, else by one word-timed pass of the clip whose transcript
+    says it. Any other edit format grounds neither.
+    """
+    if strategy.get("edit_format") != "montage":
+        return None, None
+    closing_quote = await ground_closing_quote(strategy, media_snapshot, transcribe=transcribe)
+    quotes = _whole_line_quotes(brief)
+    named = (
+        await ground_named_lines(
+            quotes,
+            media_snapshot,
+            skip_ids=_held_closing_ids(closing_quote),
+            transcribe=transcribe,
+        )
+        if quotes
+        else None
+    )
+    return closing_quote, named
 
 
 def _moment_count_notice(
@@ -873,6 +916,7 @@ def _clip_intent_resolution_plan(
     status: str,
     diagnostics: dict[str, Any] | None = None,
     clip_question: dict[str, Any] | None = None,
+    reply_options: Sequence[str] = (),
 ) -> KriaTurnPlan:
     if status == "needs_creator":
         return KriaTurnPlan(
@@ -885,6 +929,8 @@ def _clip_intent_resolution_plan(
             ),
             diagnostics=_safe_diagnostics(status, diagnostics),
             clip_question=clip_question,
+            # KRI-804: tappable answers, e.g. "Keep ... exactly as written" for a label.
+            reply_options=list(reply_options) or None,
         )
     # KRI-282: `pending` is NOT a failure -- the foreground vision budget ran out
     # with answers already cached for the next turn. Saying "couldn't match" made
@@ -2753,6 +2799,11 @@ async def _plan_creator_action(
             getattr(action.strategy, "shot_labels", None) or (),
             spoken_text,
         )
+        # KRI-804: a creator text a label can't print may become the shot's caption only
+        # when that turns off no other text (positional shot labels, every-clip texts).
+        shot_captions = shot_captions_safe(
+            effective_brief, getattr(action.strategy, "shot_labels", None) or ()
+        )
         kept_labels = await _load_kept_labels(db, item_id) if effective_brief is not None else []
         earlier_excluded = (
             await _earlier_exclusions(db, item_id) if settings.clip_intent_exclude_enabled else []
@@ -2792,6 +2843,7 @@ async def _plan_creator_action(
                 **({"describe_clips": True} if describe_clips else {}),
                 **({"brief_labels": brief_labels} if brief_labels else {}),
                 **({"kept_labels": kept_labels} if kept_labels else {}),
+                **({} if shot_captions else {"shot_captions": False}),
                 # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
                 # never a clip question; its receipt tells the creator.
                 **(
@@ -2909,6 +2961,7 @@ async def _plan_creator_action(
                     manifest_hash=manifest.manifest_hash,
                     context_hash=manifest.context_hash,
                 )
+
         if settings.clip_intent_exclude_enabled:
             # KRI-761: the resolver is not deterministic and the whole request is re-planned
             # every turn, so an ask it matched in the draft before keeps that match when it
@@ -2961,6 +3014,9 @@ async def _plan_creator_action(
                     ),
                     diagnostics=_resolution_diagnostics(planned.resolution),
                     clip_question=clip_question,
+                    reply_options=(
+                        planned.resolution.reply_options if planned.resolution.needs_creator else ()
+                    ),
                 ),
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
@@ -3849,13 +3905,9 @@ async def _gate_unresolved_choices(
         plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
         planned = replace(planned, plan=plan)
         arguments = apply_intent.arguments
-    # KRI-597: "end on the moment I say '...'" -- find when the line is said before the
-    # length plan freezes the closing window, and say so plainly when nobody can.
-    closing_quote = (
-        await ground_closing_quote(strategy, planned.media_snapshot)
-        if strategy.get("edit_format") == "montage"
-        else None
-    )
+    # KRI-597 / KRI-803: find when the closing line and each line to hear whole are said
+    # before the length plan freezes their windows, and say so plainly when nobody can.
+    closing_quote, named_lines = await _ground_spoken_lines(strategy, planned.media_snapshot, brief)
     # KRI-585: on the phone route that plays every clip's own sound, what the clips say
     # may order them; the length plan seats the windows that keeps right.
     camera_sound = settings.spoken_order_enabled and keeps_camera_sound(
@@ -3866,6 +3918,7 @@ async def _gate_unresolved_choices(
         planned.media_snapshot,
         brief,
         closing_quote=closing_quote,
+        named_lines=named_lines,
         camera_sound=camera_sound,
     )
     if enriched_snapshot is not planned.media_snapshot:
@@ -4002,6 +4055,7 @@ async def _gate_unresolved_choices(
         enriched_snapshot,
         final_brief,
         closing_quote=closing_quote,
+        named_lines=named_lines,
         camera_sound=camera_sound,
     )
     return _with_narration_note(

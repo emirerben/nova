@@ -121,6 +121,7 @@ from app.services.choice_questions import (
 )
 from app.services.creation_thread_titles import conversation_revision_matches_sync
 from app.services.creative_copy_gate import CREATIVE_COPY_PENDING, creative_copy_problem
+from app.services.creator_label_reply import LabelTextReply, label_text_reply
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
 from app.services.kria_editor_ops import (
     EditorStateReplyError,
@@ -666,6 +667,19 @@ def _unresolved_choice_plan(
             "unresolved_requirement",
         )
     if contract is not None and contract.unresolved:
+        label_reply = _label_text_unresolved(contract.unresolved[0], contract_brief)
+        if label_reply is not None:
+            # KRI-804: a dictated text a label can't print is a question about its words,
+            # with tappable ways forward, never a recovery with nothing to tap.
+            return (
+                KriaTurnPlan(
+                    mode="respond",
+                    turn_value="question",
+                    response=f"{label_reply.question}{unchanged}",
+                    reply_options=list(label_reply.options) or None,
+                ),
+                "label_text_unusable",
+            )
         question = _worker_copy(contract.unresolved[0]) or say(
             en=contract.unresolved[0],
             tr="Onayladığın isteklerden birini bu düzenlemede doğrulayamıyorum.",
@@ -678,6 +692,22 @@ def _unresolved_choice_plan(
             ),
             "unresolved_requirement",
         )
+    return None
+
+
+def _label_text_unresolved(unresolved: str, brief: Any) -> LabelTextReply | None:
+    """The label-text question behind the contract's ``unresolved`` line, if it is one.
+
+    ``build_render_contract`` writes ``label_text_reply`` for a dictated shot text a label
+    can't print (KRI-804), in the language this turn is bound to; the same brief text
+    rebuilds it here with its tappable options.
+    """
+    for requirement in brief.live() if brief is not None else ():
+        if not requirement.is_shot_text:
+            continue
+        reply = label_text_reply([requirement.literal], keep=False)
+        if reply is not None and reply.question == unresolved:
+            return reply
     return None
 
 
@@ -1126,20 +1156,28 @@ def _complete_draft_turn(
                     )
                     # KRI-705: a phone Talking draft answers every ask plainly, so the
                     # approval text cannot promise a cut or a mix change no receipt backs.
-                    # KRI-793: its captions asks about language or spelling say what the
-                    # render will do (the words it spells) instead of nothing.
+                    # KRI-793: caption language/spellings remain a render-time plan.
                     talking_writer = defers_caption_words_to_phone_render(
                         creator_id=thread.creator_id,
                         edit_format=document.strategy.get("edit_format") or item.edit_format,
                         audio_strategy=document.strategy.get("audio_strategy"),
                         clip_paths=item.clip_gcs_paths or (),
                     )
+                    phone_talking = talking_writer and (
+                        document.strategy.get("edit_format") or item.edit_format
+                    ) in {"subtitled", "talking_head"}
                     facts = replace(
                         facts,
-                        phone_talking=talking_writer
-                        and (document.strategy.get("edit_format") or item.edit_format)
-                        in {"subtitled", "talking_head"},
+                        phone_talking=phone_talking,
                         caption_words_at_render=talking_writer,
+                        # KRI-790: quoted boundaries and length use the same kept window.
+                        take_window=(
+                            _draft_take_window(
+                                brief, document.strategy, planned.media_snapshot, item
+                            )
+                            if phone_talking
+                            else None
+                        ),
                     )
                     # KRI-776: a moment ask is judged against the windows the approved length
                     # plan will cut, so the card never promises moments the plan doesn't hold.
@@ -2529,6 +2567,25 @@ class _DraftItemView:
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._item, name)
+
+
+def _draft_take_window(
+    brief: Any, strategy: Mapping[str, Any] | None, media_snapshot: Any, item: Any
+) -> Any:
+    """KRI-790: the take window a phone Talking draft's quoted lines keep (None = no ask, or
+    an estimate that failed: the receipts then say nothing about where the lines land)."""
+    from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+    from app.kria.opening_cut_ask import estimate_take_window  # noqa: PLC0415
+
+    try:
+        return estimate_take_window(
+            brief.live(),
+            media_snapshot if media_snapshot is not None else snapshot_media(item),
+            strategy=strategy,
+        )
+    except Exception as exc:  # noqa: BLE001 - an estimate never fails a turn
+        log.warning("kria_draft_take_window_failed", error=str(exc)[:200])
+        return None
 
 
 def _speech_cleanup_offered(item: Any, strategy: Mapping[str, Any] | None) -> bool | None:
