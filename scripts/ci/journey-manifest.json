@@ -513,9 +513,11 @@
     {
       "id": "kri-761-look-alike-exclusions",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri761_look_alike_exclusions.py",
+      "api_tests": "tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri807_unmatched_exclusion_picker.py",
       "paths": [
-        "src/apps/api/app/kria/clip_exclusions.py"
+        "src/apps/api/app/kria/clip_exclusions.py",
+        "src/apps/api/tests/fixtures/kri807_don_julio_m1_clips.json",
+        "src/apps/api/tests/kria/test_kri807_unmatched_exclusion_picker.py"
       ]
     },
     {
