@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.39.0] - 2026-10-22
+
+### Changed
+- feat(ai): add verified creator model comparisons (#1701) <!-- release-pr: 1701 -->
+
 ## [0.81.38.0] - 2026-10-22
 
 ### Changed

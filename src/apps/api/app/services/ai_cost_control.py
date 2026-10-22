@@ -32,7 +32,7 @@ from app.config import settings
 
 log = structlog.get_logger()
 
-PRICE_VERSION = "google-ai-2026-10-19.v4"
+PRICE_VERSION = "multi-provider-2026-10-19.v5"
 DEFAULT_MAX_OUTPUT_TOKENS = 8_192
 _IMAGE_TILE_SIZE_PX = 768
 _IMAGE_TOKENS_PER_TILE = 258
@@ -108,6 +108,16 @@ def _price_for(
 ) -> tuple[Decimal, Decimal, Decimal]:
     """Return text/non-audio input, output, and cached-input rates."""
 
+    if model == "gpt-6.1-sol":
+        return (
+            (Decimal("4"), Decimal("15"), Decimal(".20"))
+            if prompt_tokens > 272_000
+            else (Decimal("2"), Decimal("10"), Decimal(".10"))
+        )
+    if model == "claude-sonnet-5-5":
+        return (Decimal("2"), Decimal("10"), Decimal(".10"))
+    if not model.startswith("gemini"):
+        raise AiCostControlPolicyError(scope="pricing:model", reason="unpriced_model")
     lowered = model.lower()
     long_context = prompt_tokens > 200_000
     if lowered.startswith("gemini-3.1-pro"):
@@ -179,6 +189,12 @@ def calculate_cost_usd(model: str, usage: UsageMeter) -> float:
         + Decimal(cached) * cached_rate
         + Decimal(billable_out) * output_rate
     )
+    if model == "claude-sonnet-5-5":
+        writes = max(0, int(usage.token_details.get("cache_creation_input_tokens", 0)))
+        hour = min(
+            writes, max(0, int(usage.token_details.get("cache_creation_1h_input_tokens", 0)))
+        )
+        cost += Decimal(writes - hour) * Decimal(".5") + Decimal(hour) * Decimal("2")
 
     lowered = model.lower()
     if lowered.startswith(("gemini-2.5-flash", "gemini-2.5-flash-lite")):
@@ -276,7 +292,7 @@ def estimate_call_cost_usd(
             tokens_out=output_tokens,
             # Preview reasoning may consume output-priced tokens not represented
             # in max_output_tokens on every SDK version.
-            tokens_thoughts=output_tokens,
+            tokens_thoughts=output_tokens if model.startswith("gemini") else 0,
             token_details={"prompt_tokens_details": prompt_details},
         ),
     )
@@ -492,6 +508,107 @@ def _test_run_spend(conn: Any, *, test_run_id: str) -> Decimal:
     return Decimal(str(value or 0))
 
 
+def _envelope_spend(conn: Any, envelope: str) -> Decimal:
+    value = conn.execute(
+        text("""
+        SELECT COALESCE(SUM(CASE WHEN status='settled'
+            THEN COALESCE(settled_cost_usd,estimated_cost_usd)
+            WHEN status IN ('provider_started','unknown') THEN estimated_cost_usd
+            WHEN status='reserved' AND expires_at>now() THEN estimated_cost_usd
+            ELSE 0 END),0) FROM ai_cost_reservations
+        WHERE test_run_id LIKE :prefix
+    """),
+        {"prefix": envelope + ":%"},
+    ).scalar_one()
+    return Decimal(str(value or 0))
+
+
+def reconcile_unknown_liability(
+    reservation_id: uuid.UUID,
+    *,
+    test_run_id: str,
+    approved_batch_usd: float,
+    evidence: dict[str, Any],
+) -> None:
+    """Retain the entire approved batch for a terminated, unmetered call.
+
+    Local operator action only: no HTTP endpoint or caller-context bypass. This
+    is financial containment, not a usage receipt. The unknown status and original
+    idempotency fence remain; only independent batches may continue. Never release
+    money, label it settled, or authorize a larger envelope through this action.
+    """
+    retained = Decimal(str(approved_batch_usd))
+    maximum = Decimal(str(evidence.get("maximum_call_cost_usd", 0)))
+    proof = evidence.get("sha256", "")
+    protected_case = evidence.get("protected_case_id", "")
+    try:
+        parts = test_run_id.split(":")
+        envelope = "comparison:" + str(uuid.UUID(parts[1]))
+        valid_run = parts[0] == "comparison" and len(parts) == 3 and bool(parts[2])
+    except (ValueError, IndexError):
+        valid_run = False
+    if (
+        not valid_run
+        or not retained.is_finite()
+        or not maximum.is_finite()
+        or not 0 < maximum <= retained <= 2
+        or evidence.get("provider_call_terminated") is not True
+        or not isinstance(proof, str)
+        or len(proof) != 64
+        or any(c not in "0123456789abcdef" for c in proof)
+        or not isinstance(protected_case, str)
+        or len(protected_case) != 64
+        or any(c not in "0123456789abcdef" for c in protected_case)
+    ):
+        raise ValueError("invalid retained-liability reconciliation evidence")
+    from app.database import sync_engine  # noqa: PLC0415
+
+    with sync_engine.begin() as conn:
+        conn.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:scope,0))"),
+            {"scope": "envelope:" + envelope},
+        )
+        row = (
+            conn.execute(
+                text("SELECT * FROM ai_cost_reservations WHERE id=:id FOR UPDATE"),
+                {"id": str(reservation_id)},
+            )
+            .mappings()
+            .one()
+        )
+        if (
+            row["test_run_id"] != test_run_id
+            or row["environment"] != "development"
+            or row["usage_purpose"] != "live_eval"
+            or row["status"] != "unknown"
+            or retained < row["estimated_cost_usd"]
+        ):
+            raise ValueError("reservation cannot be reconciled by retained liability")
+        metadata = dict(row["usage_json"] or {})
+        prior = metadata.get("liability_reconciliation") or {}
+        metadata["liability_reconciliation"] = {
+            "version": 1,
+            "basis": "full_approved_batch_retained",
+            "actual_usage_known": False,
+            "retry_permitted": False,
+            "original_estimated_cost_usd": prior.get(
+                "original_estimated_cost_usd", float(row["estimated_cost_usd"])
+            ),
+            "retained_usd": float(retained),
+            "maximum_call_cost_usd": float(maximum),
+            "evidence_sha256": proof,
+            "protected_case_id": protected_case,
+            "at": datetime.now(UTC).isoformat(),
+        }
+        conn.execute(
+            text(
+                "UPDATE ai_cost_reservations SET estimated_cost_usd=:retained, "
+                "usage_json=CAST(:metadata AS JSONB),updated_at=now() WHERE id=:id"
+            ),
+            {"id": str(reservation_id), "retained": retained, "metadata": json.dumps(metadata)},
+        )
+
+
 def _override_total(conn: Any, scope: str, now: datetime) -> Decimal:
     value = conn.execute(
         text(
@@ -621,7 +738,26 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                     cached_behavior_available=request.cached_behavior_available,
                 )
 
+            envelope = request.ctx.extra.get("paid_experiment_envelope_id")
+            envelope_limit = request.ctx.extra.get("approved_envelope_max_usd")
+            if envelope:
+                # Fixed UUID namespace, never a caller-controlled SQL LIKE pattern.
+                try:
+                    envelope = "comparison:" + str(
+                        uuid.UUID(str(envelope).removeprefix("comparison:"))
+                    )
+                    valid = (test_run_id or "").startswith(envelope + ":") and float(
+                        envelope_limit
+                    ) > 0
+                except (ValueError, TypeError):
+                    valid = False
+                if not valid or environment != "development" or purpose != "live_eval":
+                    raise AiCostControlPolicyError(
+                        scope="experiment:envelope", reason="invalid_envelope"
+                    )
             scopes = [f"environment:{environment}"]
+            if envelope:
+                scopes.append("envelope:" + envelope)
             if purpose in _CANARY_PURPOSES:
                 scopes.append("purpose:release_canary")
             if request.feature == "edit_director" and creator_id is not None:
@@ -634,6 +770,35 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                 conn.execute(
                     text("SELECT pg_advisory_xact_lock(hashtextextended(:scope, 0))"),
                     {"scope": scope},
+                )
+
+            if (
+                envelope
+                and conn.execute(
+                    text(
+                        "SELECT EXISTS(SELECT 1 FROM ai_cost_reservations "
+                        "WHERE test_run_id LIKE :prefix AND status='unknown' AND (NOT "
+                        "COALESCE((usage_json->'liability_reconciliation'->>'version'='1' "
+                        "AND usage_json->'liability_reconciliation'->>'basis'="
+                        "'full_approved_batch_retained' "
+                        "AND usage_json->'liability_reconciliation'->>'actual_usage_known'='false' "
+                        "AND usage_json->'liability_reconciliation'->>'retry_permitted'='false' "
+                        "AND usage_json->'liability_reconciliation'->>'protected_case_id' "
+                        "~ '^[a-f0-9]{64}$' "
+                        "AND (usage_json->'liability_reconciliation'->>'retained_usd')::numeric "
+                        "=estimated_cost_usd),false) OR :case_id='' OR "
+                        "(usage_json->'liability_reconciliation'->>'protected_case_id'=:case_id "
+                        "AND requested_model=:model)))"
+                    ),
+                    {
+                        "prefix": envelope + ":%",
+                        "case_id": str(request.ctx.extra.get("comparison_case_id") or ""),
+                        "model": request.model,
+                    },
+                ).scalar_one()
+            ):
+                raise ProviderOutcomeUnknownError(
+                    "experiment envelope has an unresolved provider outcome"
                 )
 
             existing = (
@@ -713,6 +878,15 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                         reset_at=reset_at,
                         cached_behavior_available=request.cached_behavior_available,
                     )
+
+            if envelope and _envelope_spend(conn, envelope) + Decimal(str(estimate)) > Decimal(
+                str(envelope_limit)
+            ):
+                _reject(
+                    scope="envelope:" + envelope,
+                    reset_at=reset_at,
+                    cached_behavior_available=request.cached_behavior_available,
+                )
 
             if request.feature == "edit_director" and creator_id is not None:
                 used = int(

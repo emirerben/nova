@@ -1,0 +1,81 @@
+{
+  "inference_only": true,
+  "commands_executed": false,
+  "records": [
+    {
+      "batch": "funded-main-0-v64",
+      "agent": "main_creator",
+      "arm": "O",
+      "status": "compiled",
+      "executed": false,
+      "notices": 0,
+      "commands": 3
+    },
+    {
+      "batch": "funded-main-1-v64",
+      "agent": "main_creator",
+      "arm": "O",
+      "status": "compiled",
+      "executed": false,
+      "notices": 0,
+      "commands": 3
+    },
+    {
+      "batch": "funded-copilot-v85",
+      "agent": "edit_copilot",
+      "arm": "G0",
+      "status": "no_edit_ops_to_compile",
+      "executed": false
+    },
+    {
+      "batch": "funded-copilot-v85",
+      "agent": "edit_copilot",
+      "arm": "O",
+      "status": "no_edit_ops_to_compile",
+      "executed": false
+    },
+    {
+      "batch": "json-main-0",
+      "agent": "main_creator",
+      "arm": "OJ",
+      "status": "compiled",
+      "executed": false,
+      "notices": 0,
+      "commands": 3
+    },
+    {
+      "batch": "json-main-0",
+      "agent": "main_creator",
+      "arm": "SJ",
+      "status": "compiled",
+      "executed": false,
+      "notices": 0,
+      "commands": 3
+    },
+    {
+      "batch": "json-main-1",
+      "agent": "main_creator",
+      "arm": "OJ",
+      "status": "compiled",
+      "executed": false,
+      "notices": 0,
+      "commands": 3
+    },
+    {
+      "batch": "json-main-1",
+      "agent": "main_creator",
+      "arm": "SJ",
+      "status": "compiled",
+      "executed": false,
+      "notices": 0,
+      "commands": 3
+    },
+    {
+      "batch": "json-copilot",
+      "agent": "edit_copilot",
+      "arm": "OJ",
+      "status": "no_edit_ops_to_compile",
+      "executed": false
+    }
+  ]
+}
