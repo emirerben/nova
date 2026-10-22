@@ -2014,6 +2014,52 @@
         "Phone re-send of Don Julio M1 after deploy"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-805-brief-change-answer",
+      "tickets": [
+        "KRI-805",
+        "KRI-802"
+      ],
+      "symptom": "Answering Kria's own label question (\"chimichurri & salsa criolla\" for r2) failed sensitive_agent_error:brief_updates_invalid on 3 of 4 Main Creator attempts; one turn ended \"I couldn't turn that into a plan this time\". The retry was told only \"brief_updates contains an invalid entry\".",
+      "boundary": "brief",
+      "status": "open_pr",
+      "owner": "KRI-805",
+      "fix_prs": [],
+      "paths": [
+        "src/apps/api/app/agents/brief_extractor.py",
+        "src/apps/api/app/kria/brief.py",
+        "src/apps/api/app/kria/planner.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri805_brief_change_answer.py",
+        "tests/agents/test_brief_extractor_version_binding.py",
+        "tests/kria/test_creative_brief.py::test_the_main_creator_does_not_own_the_brief_version_it_changes"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Prod brief v1 (r1-r8) of thread F4083F1D; provider transport scripted, real MainCreatorAgent.run (parse + schema retries), plan_live_turn and apply_updates. 15 change shapes must land on the first call and 8 ambiguous batches must leave the brief unchanged. Red before the fix: 13 shapes took 3 calls and recorded nothing (prod's pattern); green after: 1 call, r2 = the creator's words at brief v1.",
+        "live_model": "Not run; no paid calls. Optional paid check: one live Main Creator call on turn 3424b400's input_json (about $0.20).",
+        "native_output": "unknown; the brief is server state, the label render is KRI-804.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "change without / null / garbled expected_version",
+        "wrong integer version (KRI-611)",
+        "partial change naming only the new literal",
+        "remove padded with null fields, facts null",
+        "target copied as rendered ([r2], R2)",
+        "operation update / replace naming a target",
+        "the brief extractor's copy of the same parser",
+        "stale brief after the prompt and unbound change/remove still refused"
+      ],
+      "neighbours_gap": [
+        "An `add` of the new label beside a live r2 (no change) still keeps both labels; prod's successful attempt used change.",
+        "Unknown extra keys (id, status) and a misspelled scope stay refused; the retry is now told the field.",
+        "\"chimichurri & salsa criolla\" is 27 characters, over the 24-character label cap: KRI-804."
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

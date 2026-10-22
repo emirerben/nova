@@ -17,6 +17,7 @@ from app.kria.brief import (
     BriefUpdateBatchError,
     CreativeBrief,
     apply_updates,
+    bind_updates,
     parse_brief_updates,
 )
 from app.pipeline.prompt_loader import load_prompt
@@ -155,24 +156,17 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
                     raise ValueError("clarify scope needs clarification")
                 if scope != "clarify" and clarification is not None:
                     raise ValueError("only clarify scope may include clarification")
-            raw_updates = data["brief_updates"]
-            if "current_brief" in input.model_fields_set and isinstance(raw_updates, list):
-                # The model owns semantic targets/content, not concurrency tokens.
-                # Bind to the immutable snapshot supplied BEFORE inference. Never
-                # read/rebind to a newer ledger here: apply_updates and the final
-                # persistence CAS must still reject genuinely stale work.
-                version = input.current_brief.version if input.current_brief else 0
-                raw_updates = [
-                    {**update, "expected_version": version}
-                    if isinstance(update, dict) and update.get("operation") in {"change", "remove"}
-                    else update
-                    for update in raw_updates
-                ]
-            updates = parse_brief_updates(raw_updates)
+            updates = parse_brief_updates(data["brief_updates"])
             # Keep old direct callers compatible: only planner-supplied context
             # enables ledger validation.  The planner always supplies the field,
             # including an empty brief, so non-additive updates fail closed.
             if "current_brief" in input.model_fields_set:
+                # The model owns semantic targets/content, not concurrency tokens.
+                # Bind to the immutable snapshot supplied BEFORE inference (and complete
+                # a partial change from it, KRI-805). Never read/rebind to a newer
+                # ledger here: apply_updates and the final persistence CAS must still
+                # reject genuinely stale work.
+                updates = list(bind_updates(input.current_brief, updates))
                 apply_updates(input.current_brief or CreativeBrief(), updates, source_turn_id=None)
             return BriefExtractionOutput(
                 brief_updates=updates,
