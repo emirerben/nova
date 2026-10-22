@@ -1501,12 +1501,35 @@ def _audio_decline(requirement: str, message: str) -> CreatorRenderContractError
     )
 
 
+# KRI-794: the unresolved lines an order-basis answer settles ("Use the order you added the
+# clips" / "Continue without a fixed order"). A refusal over one of these names the order
+# choice (``field_path``), so the next reply offers that choice again instead of drafting
+# the same refused edit. First / last clip and described-sequence lines are clip questions
+# (KRI-762), not this choice. Each line is written verbatim in ``build_render_contract``.
+ORDER_BASIS_UNRESOLVED = frozenset(
+    {
+        "I can't verify this ordering rule from the approved media.",
+        "I need to know which clips are in the edit to verify their order.",
+        "I need capture times for every selected clip to verify chronological order.",
+    }
+)
+
+
+def unresolved_field_path(message: str) -> str | None:
+    """The strategy field an unresolved line's refusal names, or ``None``."""
+
+    if message in ORDER_BASIS_UNRESOLVED:
+        return REQUIREMENT_FIELD_PATHS["order_required"]
+    return None
+
+
 def unresolved_decline(message: str) -> CreatorRenderContractError:
     """The typed refusal for an unresolved approved requirement (needs a choice)."""
 
     return CreatorRenderContractError(
         message,
         decline_reason=_UNRESOLVED_DECLINE.reason,
+        field_path=unresolved_field_path(message),
         alternative=_UNRESOLVED_DECLINE.alternative,
     )
 
