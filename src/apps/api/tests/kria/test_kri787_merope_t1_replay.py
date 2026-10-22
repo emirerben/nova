@@ -44,8 +44,8 @@ Seams a child PR may route through (one place each, so the replay follows the fi
 
 - ``turn1_brief_updates()``: the Main Creator's recorded turn-1 brief updates, through the
   server's own ``parse_brief_updates``.
-- ``kept_window(job)``: what the phone Talking worker keeps of the take (today the KRI-628
-  opening cut only). KRI-790's end cut joins it here.
+- ``kept_window(job)``: what the phone Talking worker keeps of the take (the KRI-628
+  opening cut and KRI-790's end cut).
 - ``chat_before_turn_4()``: the chat the server reads at turn 4, with the failure card the
   observer posts today in place of prod's (so KRI-795's re-asked picker reaches turn 4).
 
@@ -407,7 +407,7 @@ def failure_card(job, outcome: WorkerOutcome) -> dict:  # noqa: ANN001
 
 
 def kept_window(job) -> tuple[float, float]:  # noqa: ANN001
-    """What the phone Talking worker keeps of the take (a seam: today the opening cut only).
+    """What the phone Talking worker keeps of the take (a seam: the opening and end cuts).
 
     ``_phone_opening_cut`` reads the start line off the approved brief and grounds it in the
     take's words, as the worker does with cleanup off (KRI-704). The whole take is kept when

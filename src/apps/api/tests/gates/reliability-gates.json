@@ -2461,7 +2461,7 @@
       ],
       "harness": "real_with_db",
       "evidence": {
-        "offline_replay": "Original recorded production chat, drafts, brief binding and jobs remain unchanged in the fixture. Historical failure pins document the pre-fix behavior in Git history. Landed children and the privately integrated pending KRI-790/792 sources now pass all27 replay/runtime acceptance cases as ordinary hard tests. Three additional original incident functions removed by the concurrent author cleanup are retained with independent corrected expectations. The six previously reviewed retired bad-behavior pin functions remain covered by the documented acceptance replacements. Pending parents are not claimed landed; exact original media/native output remain unverified.",
+        "offline_replay": "Original recorded production chat, drafts, brief binding and jobs remain unchanged in the fixture. Historical failure pins document the pre-fix behavior in Git history. Landed children and the privately integrated pending KRI-790/792 sources now pass all27 replay/runtime acceptance cases as ordinary hard tests. Three additional original incident functions removed by the concurrent author cleanup are retained with independent corrected expectations. The six previously reviewed retired bad-behavior pin functions remain covered by the documented acceptance replacements. KRI-790 is now landed; KRI-792 remains a privately integrated pending source, not claimed landed; exact original media/native output remain unverified.",
         "live_model": "Not run; no paid calls.",
         "native_output": "unknown; no render reaches the phone (the Talking compiler needs the source file).",
         "production": "Not deployed (tests only)."
