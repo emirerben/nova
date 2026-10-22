@@ -20,6 +20,10 @@ KRI-789). Briefs stored before that carry them as ``facts.start`` / ``facts.end`
 Those fields are read as they are, never re-parsed from the words (KRI-667): the start line
 from them or from the cue above, the end line only from a field. ``estimate_take_window``
 places both in the take's timed speech before approval, with the same cut the worker makes.
+
+KRI-837: a line in ``start_line`` / ``end_line`` may be one word ("Cheers!" ends a take); the
+two-word floor stays for the cue reader and the legacy ``start`` / ``end`` keys, whose one
+words are titles, signs and a route's places.
 """
 
 from __future__ import annotations
@@ -128,14 +132,20 @@ def opening_quote(text: str | None) -> str | None:
 
 
 def _fact_line(req: BriefRequirement, key: str, legacy_key: str) -> str | None:
-    """The line stored under ``key``, else (on an `order` requirement) ``legacy_key``."""
+    """The line stored under ``key``, else (on an `order` requirement) ``legacy_key``.
+
+    KRI-837: the dedicated ``start_line`` / ``end_line`` keys hold the creator's own quoted
+    words, so one word is a line ("Cheers!" ends a take). The legacy ``start`` / ``end`` keys
+    keep the two-word floor: on an `order` row they are also a route's one-word places
+    (Arnavutköy -> Eminönü), which are never lines in a take.
+    """
     if req.kind not in _LINE_FACT_KINDS or not isinstance(req.facts, Mapping):
         return None
-    keys = (key, legacy_key) if req.kind == "order" else (key,)
-    for name in keys:
+    floors = ((key, 1), (legacy_key, MIN_QUOTE_TOKENS)) if req.kind == "order" else ((key, 1),)
+    for name, floor in floors:
         value = req.facts.get(name)
         line = value.strip() if isinstance(value, str) else ""
-        if len(fold_tokens(line)) >= MIN_QUOTE_TOKENS:
+        if len(fold_tokens(line)) >= floor:
             return line
     return None
 
@@ -161,6 +171,27 @@ def requirement_end_quote(req: BriefRequirement) -> str | None:
 def wants_take_window(req: BriefRequirement) -> bool:
     """True when ``req`` asks the take to start and/or end at a line the creator quotes."""
     return requirement_opening_quote(req) is not None or requirement_end_quote(req) is not None
+
+
+def unread_line_sides(req: BriefRequirement) -> tuple[bool, bool]:
+    """(start, end): True for a side whose ``start_line`` / ``end_line`` fact is a non-empty
+    string with no words in it (punctuation, an emoji), so no reader above gives that side a line.
+
+    KRI-837: the creator still asked for that side. The receipt keeps it unchecked instead of
+    certifying the ask from the other side's cut alone.
+    """
+    if not req.live or req.kind not in _LINE_FACT_KINDS or not isinstance(req.facts, Mapping):
+        return False, False
+
+    def _unread(key: str, read: Callable[[BriefRequirement], str | None]) -> bool:
+        value = req.facts.get(key)
+        wordless = isinstance(value, str) and bool(value.strip()) and not fold_tokens(value)
+        return wordless and read(req) is None
+
+    return (
+        _unread(START_LINE_FACT, requirement_opening_quote),
+        _unread(END_LINE_FACT, requirement_end_quote),
+    )
 
 
 def _first_line(
@@ -346,5 +377,6 @@ __all__ = [
     "requirement_opening_quote",
     "segment_words",
     "take_window_ask",
+    "unread_line_sides",
     "wants_take_window",
 ]
