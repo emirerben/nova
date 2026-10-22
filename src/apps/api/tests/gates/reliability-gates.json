@@ -1330,6 +1330,76 @@
       "journey": "kri-524-creation"
     },
     {
+      "id": "kri-787-merope-t1-replay",
+      "tickets": [
+        "KRI-787",
+        "KRI-788",
+        "KRI-789",
+        "KRI-790",
+        "KRI-791",
+        "KRI-792",
+        "KRI-793",
+        "KRI-794",
+        "KRI-795"
+      ],
+      "symptom": "A one-take phone Talking edit with quoted start and end lines was approved twice and refused at dispatch both times (\"I can't verify this ordering rule from the approved media.\"): the creator's order answer was dropped between approval and dispatch, and the chat before it asked a pointless clip-order question, held MEROPE back, promised phrase cuts and said nothing about captions or the start/end lines (Merope T1).",
+      "boundary": "dispatch",
+      "status": "open_pr",
+      "owner": "KRI-787",
+      "journey": "kri-787-merope-t1-replay",
+      "paths": [
+        "src/apps/api/app/tasks/content_plan_build.py",
+        "src/apps/api/app/services/generative_jobs.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/kria/opening_cut_ask.py",
+        "src/apps/api/app/pipeline/phone_opening_cut.py",
+        "src/apps/api/tests/fixtures/kri787_merope_t1_turns.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri787_merope_t1_replay.py",
+        "tests/kria/test_kri787_merope_t1_runtime_postgres.py"
+      ],
+      "harness": "real_with_db",
+      "evidence": {
+        "offline_replay": "Prod's chat, approved drafts, brief binding and job rows for jobs 0701fcc9 and f88555bc. On 45ed79016 the real runtime (only the Main Creator's model call replaced by its recorded output) reproduces turns 1-3 and the approval card word for word; the real dispatch rebuilds prod's stored contract (same digest); the real worker refuses with prod's failure; the observer posts prod's card. Each child's outcome is a strict xfail. Red control: KRI-788/791/792/793's commits each flip exactly their own markers and pins, nothing else.",
+        "live_model": "Not run; no paid calls.",
+        "native_output": "unknown; no render reaches the phone (the Talking compiler needs the source file).",
+        "production": "Not deployed (tests only)."
+      },
+      "neighbours_covered": [
+        "both renders (simpler-version path and the normal act path)",
+        "the approval backstop vs the dispatch contract (approval offered, dispatch refused)",
+        "the creator's tapped answers replayed through the real gate, whatever turn they come on",
+        "cleanup chosen vs not (prod's first and second drafts)",
+        "turn 4: a typed option label after the question closed, with the failure card the observer posts today",
+        "the kept window of the take (KRI-628 opening cut over the take's word timings)"
+      ],
+      "neighbours_gap": [
+        "The Main Creator's own turn-1/turn-2 strategies were recorded only as hashes; the approved draft's strategy stands in.",
+        "The phone Talking compiler (cuts, captions, MEROPE placement, 32-38 s length) needs the source file and prod's cleanup snapshot, so the checklist stops at the kept window and the receipts.",
+        "Turn 4 runs at gate level, not through the database runtime.",
+        "The render queue wait (2 min 23 s on render 1) is KRI-798, not replayed."
+      ],
+      "follow_ups": [
+        "KRI-788",
+        "KRI-789",
+        "KRI-790",
+        "KRI-791",
+        "KRI-792",
+        "KRI-793",
+        "KRI-794",
+        "KRI-795",
+        "KRI-798"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-669-gameday-hierarchy-import",
       "tickets": [
         "KRI-669",

@@ -922,6 +922,27 @@
       ]
     },
     {
+      "id": "kri-787-merope-t1-replay",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri787_merope_t1_replay.py tests/kria/test_kri787_merope_t1_runtime_postgres.py",
+      "paths": [
+        "src/apps/api/app/tasks/content_plan_build.py",
+        "src/apps/api/app/services/generative_jobs.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/kria/opening_cut_ask.py",
+        "src/apps/api/app/pipeline/phone_opening_cut.py",
+        "src/apps/api/tests/fixtures/kri787_merope_t1_turns.json",
+        "src/apps/api/tests/kria/test_kri787_merope_t1_replay.py",
+        "src/apps/api/tests/kria/test_kri787_merope_t1_runtime_postgres.py"
+      ]
+    },
+    {
       "id": "troya-footage-research",
       "needs_native": true,
       "api_tests": "tests/evals/request_following/test_troya_context_journey.py tests/evals/request_following/test_researched_text.py tests/services/test_kria_editor_clip_context.py",

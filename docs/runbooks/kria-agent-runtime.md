@@ -333,6 +333,33 @@ names and outcomes.
 - [ ] Refusal dead ends (a refusal with no next step for the creator)
 - [ ] Whether final outputs obeyed the creator's answers to questions
 
+## Replaying a whole test run
+
+When a live test-kit run (chat, approval, render) fails and its findings are split across
+child tickets, replay the run itself before fixing anything (KRI-775 M2, KRI-787 T1). The
+T1 replay is the template: `tests/kria/test_kri787_merope_t1_replay.py` (approval →
+dispatch → worker → failure card, no database) and
+`tests/kria/test_kri787_merope_t1_runtime_postgres.py` (the chat turns through the real
+runtime), both reading `tests/fixtures/kri787_merope_t1_turns.json`.
+
+- **Inputs** come from the run's evidence (thread events, turns, job debug, proposal
+  trace), copied, not paraphrased. The job-debug export drops `media_id`, `gcs_path`,
+  `manifest_identity` and `storage_generation` from the binding's media snapshot (restore
+  them from the item debug) and redacts media ids inside the stored contract; the proposal
+  trace keeps Main Creator outputs only as hashes and cuts long word lists.
+- **Only the model call is replaced**: `planner._call_main_creator` returns the recorded
+  output (brief updates plus the approved draft's strategy without its server-owned
+  `choice_answers`). The planner's own handling, the question gate, receipts, approval, the
+  dispatch claim, `_dispatch_item_render` over the real `build_generative_job`, and
+  `_run_generative_job_impl` up to the route it picks all run for real.
+- **Prove fidelity first.** Replies and the approval card must equal prod's word for word,
+  and the dispatched contract rebound to prod's `creator_generation_id`
+  (`contract.model_copy(update=...).rebind().digest`) must equal the digest prod stored.
+- **Pins and outcomes.** `test_prod_*` tests pin the incident and name the tickets that
+  retire them; what the creator should have had is a strict xfail per child ticket. Red
+  control: cherry-pick each child's commit onto the replay and check that only its own
+  markers and pins flip.
+
 ## Deployment order
 
 1. Deploy additive migrations and queue/task support with runtime v2 disabled.
