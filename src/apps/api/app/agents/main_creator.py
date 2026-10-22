@@ -90,7 +90,8 @@ log = structlog.get_logger()
 # v61 (KRI-674 live verification): per-clip camera sound is not spoken excerpts.
 # KRI-793: a captions ask that lists words to spell records them in `spellings`, which the
 # phone Talking writer applies to its captions and the render-ready review checks (v65).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-21-v65"
+# v66 (KRI-792): named spoken cuts carry cut_lines; caption spellings remain intact.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-22-v66"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -406,7 +407,10 @@ kelimesinde fincan sesi") => {"triggers": ["medal"]}, the spoken words exactly a
 wrote them, never translated; keep a take whole, uncut => {"keep_whole_take": true}; end on a
 particular shot, photo or badge => {"closing": "<the creator's words for it>"}; remove pauses,
 filler sounds or retakes from the speech => {"speech_cleanup": true}, keep them =>
-{"speech_cleanup": false}; captions => {"captions": "on"}, {"captions": "off"} or {"captions":
+{"speech_cleanup": false}; cut out particular spoken words (a slip, a half question, a line, "the
+part where I say ...") => {"speech_cleanup": true, "cut_lines": ["with bread, no,"]}, one item per
+stretch in the creator's exact words, quoted or described, never translated (where the video
+starts or ends is the order requirement's "start"/"end", never a cut line); captions => {"captions": "on"}, {"captions": "off"} or {"captions":
 "word_by_word"} (karaoke, one word at a time), plus {"caption_language": "en"} (a two-letter
 code) when they name the captions' language ("Türkçe altyazı" => "tr"), plus {"spellings":
 ["Oblea de la Casa", "Merope"]} when they list words or names to spell a certain way in the
