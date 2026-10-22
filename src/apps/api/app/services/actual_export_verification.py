@@ -837,7 +837,22 @@ def verify_actual_export(
                     similarities.append(scored[chosen][2])
                 worst = max(differences)
                 similarity = min(similarities)
-                picture_matches = all(passes)
+                # Neighbours absorb proxy resampling. Only when both the start
+                # and observed sample instants are on source frames can an
+                # all-neighbour window establish a systematic shift (KRI-831).
+                starts_on_source_frame = clock is not None and any(
+                    abs(t - clip.source_start) <= 1e-6 for t in clock
+                )
+                samples_on_source_frames = clock is not None and all(
+                    abs(shown - clip.timeline_start + clip.source_start - bracket[0]) <= 1e-6
+                    for shown, bracket in zip(actual_pts, brackets, strict=True)
+                )
+                whole_window_shifted = (
+                    starts_on_source_frame
+                    and samples_on_source_frames
+                    and neighbour_samples == count
+                )
+                picture_matches = all(passes) and not whole_window_shifted
                 if evidence is not None:
                     sample = similarities.index(similarity)
                     evidence.append(
@@ -855,6 +870,11 @@ def verify_actual_export(
                         "samples": count,
                         "picture_clock": picture_clock,
                         "neighbour_samples": neighbour_samples,
+                        **(
+                            {"reason": "whole_window_neighbour_shift"}
+                            if whole_window_shifted
+                            else {}
+                        ),
                         "max_mean_pixel_error": round(worst, 6),
                         "min_local_ssim": round(similarity, 6),
                     }

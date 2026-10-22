@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import io
+import json
 import shutil
 import subprocess
 import threading
@@ -734,7 +735,7 @@ def _cut(root, source, *, start, duration, fps=30):
     return path
 
 
-def _composited(root, source, *, start, duration, fps=30):
+def _composited(root, source, *, start, duration, fps=30, next_frame_at=None):
     """Render a cut the way a compositor does, independent of FFmpeg's resampler.
 
     Output frame n shows the last source frame presented at/before
@@ -790,6 +791,8 @@ def _composited(root, source, *, start, duration, fps=30):
         max(i for i, t in enumerate(clock) if t <= start + n / fps + 1e-6)
         for n in range(round(duration * fps))
     ]
+    if next_frame_at is not None:
+        chosen[next_frame_at] = min(chosen[next_frame_at] + 1, len(clock) - 1)
     path = root / f"{uuid.uuid4()}.mp4"
     subprocess.run(
         [
@@ -822,6 +825,80 @@ def _composited(root, source, *, start, duration, fps=30):
         timeout=60,
     )
     return path
+
+
+@pytest.mark.parametrize(
+    "shift_frames,expected", [(0, "checked"), (1, "rejected"), (-1, "rejected")]
+)
+def test_on_grid_whole_clip_frame_shift_never_counts_as_checked(
+    exports, moving, shift_frames, expected
+):
+    """KRI-831: independent frame-clock exports, not a widened pixel threshold."""
+    root, _, recipe = exports
+    recipe = _single_clip(recipe, start=1.5, duration=CLOCK_DURATION)
+    output = _composited(root, moving, start=1.5 + shift_frames / 30, duration=CLOCK_DURATION)
+    report = verify_actual_export(output, status(recipe), {"a": moving})
+    (root / f"kri831-on-grid-{shift_frames}.json").write_text(
+        json.dumps({"expected": expected, "output": str(output), "report": report}, indent=2)
+    )
+    assert report["status"] == expected, report
+    pictures = [check for check in report["checks"] if check["kind"] == "picture"]
+    assert pictures
+    if shift_frames:
+        assert any(check["status"] == "failed" for check in pictures), report
+
+
+def test_on_grid_single_neighbour_frame_remains_allowed(exports, moving):
+    """KRI-831: retain isolated resampling tolerance, without shifting the whole clip."""
+    root, _, recipe = exports
+    recipe = _single_clip(recipe, start=1.5, duration=CLOCK_DURATION)
+    output = _composited(root, moving, start=1.5, duration=CLOCK_DURATION, next_frame_at=3)
+    report = verify_actual_export(output, status(recipe), {"a": moving})
+    (root / "kri831-single-neighbour.json").write_text(
+        json.dumps({"expected": "checked", "output": str(output), "report": report}, indent=2)
+    )
+    assert report["status"] == "checked", report
+    pictures = [check for check in report["checks"] if check["kind"] == "picture"]
+    assert len(pictures) == 1
+    assert pictures[0]["neighbour_samples"] == 1
+
+
+def test_on_grid_original_export_keeps_resampled_proxy_tolerance(exports, moving):
+    """A correct original clock need not share its resampled proxy's sample grid."""
+    root, _, recipe = exports
+    proxy = root / "moving-proxy-2997.mp4"
+    ffmpeg(
+        "-i",
+        moving,
+        "-r",
+        "30000/1001",
+        "-fps_mode",
+        "cfr",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-pix_fmt",
+        "yuv420p",
+        proxy,
+    )
+    recipe = _single_clip(recipe, start=0, duration=CLOCK_DURATION)
+    output = _composited(root, moving, start=0, duration=CLOCK_DURATION)
+    request = status(recipe)
+    report = verify_actual_export(output, request, {"a": proxy})
+    (root / "kri831-resampled-proxy.json").write_text(
+        json.dumps(
+            {
+                "expected": "checked",
+                "output": str(output),
+                "source_proxy": str(proxy),
+                "request": request.model_dump(mode="json"),
+                "report": report,
+            },
+            indent=2,
+        )
+    )
+    assert report["status"] == "checked", report
 
 
 @pytest.mark.parametrize(

@@ -3243,3 +3243,9 @@ Prod step before the Bend control appears: add `textBend` to `PHONE_RENDER_VERIF
 (fly secret, api + worker, restart). Builds below protocol 9 get `426 client_update_required`
 (`feature: "text_bend"`) from `device-render` and `editor-commit` for a variant with bent text.
 The app reads `capabilities.text_bend` (creation) and `editor_capabilities.text_bend` (per variant).
+
+## Actual-export verifier v3 rollout boundary (KRI-832)
+
+`phone-simple-cut-v3` is a forward-only verifier policy. New v3 code accepts the pinned older supported verifier versions; an older server cannot interpret a newly pinned v3 policy and refuses it rather than publishing unchecked output. After v3 policies exist, rolling the API back below v3 can therefore leave those exports blocked. Do not downgrade the pin/minimum verifier or relabel an old report to recover them; preserve the attempt and restore a compatible server before the normal output-check retry.
+
+The existing Fly Deploy workflow checks all managed process groups, including stopped Machines, for one converged image digest before declaring deployment successful. That post-deploy check does not establish compatibility during a rolling deploy and does not make old binaries understand v3. Observe the actual merged revision's successful convergence separately; before that, KRI-832 remains pending. No source-only receipt or local replay proves production convergence or complete rollback compatibility.
