@@ -87,3 +87,13 @@ Offline verification on this exact no-commit merge:
 The inherited Gameday UI synchronization change is still not native evidence on
 this head. No paid model call, device operation, production operation, commit,
 push or deployment occurred in this check.
+
+## Final reconciliation after #1728 merged
+
+The final candidate preserves author source `8f2dd811` by normal history. #1728 actually merged as `5a09fdff`, and its release-metadata continuation is `b3c1d4fda`. Normal merge `f2f4694d0` integrates that actual parent. The incoming Main Creator module and two version/hash tests were byte-identical to the validated #1728 source `74ffb1e4`; conflicts were limited to the cumulative version and hash pins. The reviewed Main Creator 69 / Brief Extractor 16 union remains intact, including caption spellings, spoken-text triggers and speaker, quoted trim bounds, named-cut honesty and editorial audio pairing. The incoming v68 history comment was retained.
+
+The resolved module and both tests have exactly the same Python AST as the previously validated private candidate `9e83660f`. No prompt wording or semantic assertion changed. The other integration changes are release metadata and the full KRI-792 evidence continuation. All 49 incident gate IDs and 62 journey IDs are the exact unique parent union.
+
+The unchanged behavioral candidate passed 234 focused parser, source-audio, quoted-window, named-cut, label and real PostgreSQL recovery/refusal checks. The recorded evaluation baseline passed 2,135 cases, with 15 explicit skips and 7 existing expected failures; its reviewed prompt strings and relevant module AST remain unchanged. These are component and integration results, not a new live model run. Current committed preship and all final published-head hosted checks remain required before merge.
+
+The complete original Don Julio video, final picture/audio, correction/reopen and physical export remain pending under KRI-802/KRI-829. Earlier native successes are retained as scoped historical evidence and do not replace the final new-head checks. No paid provider, model, judge, phone, flag or manual release action was performed in this reconciliation.
