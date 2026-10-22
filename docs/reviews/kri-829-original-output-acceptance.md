@@ -48,7 +48,6 @@ the corresponding head.
 | #1741 / KRI-803 | `aa973f7229496a4b5c3c08b0b194a76768c538e5` | 140 focused tests; 2,114 mapped checks. |
 | #1744 / KRI-802 | `b0ba380d4091438e2352bbb9aedb8d6cc7bf56d0` | 68 focused tests; 2,114 mapped checks. Parent integration preserved all 18 question-flow-owned file blobs unchanged. |
 | #1753 / KRI-551 | `0a0ce6cb125dda6d4c5d25aae6cdfe8bc763f700` (implementation; this follow-up updates documentation only) | 986 complete retake-journey tests; 786 mapped checks; 28 native simulator consent/request tests; editor gate 209 web unit + 28 desktop + 42 mobile-viewport browser + 583 backend tests. |
-
 | #1754 / KRI-798 | `dac2707aa166ee41939bd7e5668a446b2384daff` | 78 focused tests, including 15 real-PostgreSQL cases; 90 gate-manifest checks; 41 CI-selector tests; 149 mapped checks. Original source failed three controlled incidents; current source passed all three. No live Fly restart claim. |
 
 The #1741 release-metadata guard now compares against the actual merge base of
