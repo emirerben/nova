@@ -3615,6 +3615,12 @@ class PlanItemAsset(Base):
                 "AND analysis_attempt_count < 2"
             ),
         ),
+        # KRI-820 reaper: in-flight analyses past their declared deadline.
+        Index(
+            "idx_plan_item_assets_in_flight_deadline",
+            "analysis_deadline_at",
+            postgresql_where=text("status IN ('queued', 'analyzing')"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -3684,6 +3690,10 @@ class PlanItemAsset(Base):
     analysis_attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     analysis_last_dispatched_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     analysis_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    # KRI-820 declared bound for the current attempt (services/pool_analysis_deadline.py):
+    # stamped at dispatch, only ever shortened at claim, never extended. Past it
+    # a queued/analyzing row is a retryable `analysis_timed_out` failure.
+    analysis_deadline_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     # Browser-safe JPEG preview object key (pool preview pipeline). NULL = never
     # attempted; "" = attempted, none produced (failure sentinel — do not retry
     # from the fast paths, only the bounded maintenance backfill); non-empty =

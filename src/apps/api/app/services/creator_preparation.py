@@ -27,10 +27,11 @@ from app.models import (
     PlanItemAsset,
 )
 from app.services.creator_clip_analysis import clip_analysis_ready, source_media_kind
+from app.services.pool_analysis_deadline import is_expired
 
 log = structlog.get_logger()
 ACTIVE_STATUSES = ("queued", "running")
-PUBLIC_FIELDS = ("status", "completed", "total", "message", "error_code", "retryable")
+PUBLIC_FIELDS = ("status", "completed", "total", "message", "error_code", "retryable", "omitted")
 
 
 def public_preparation(session: Any) -> dict | None:
@@ -48,6 +49,7 @@ def progress(
     *,
     error_code: str | None = None,
     retryable: bool = False,
+    omitted: list[dict] | None = None,
 ) -> dict:
     message = {
         "queued": "Preparing to analyze your clips. I'll continue automatically.",
@@ -74,7 +76,7 @@ def progress(
         message = (
             "Your footage changed while I was analyzing it. Send your next instruction to continue."
         )
-    return dict(
+    state = dict(
         attempt_id=str(attempt_id),
         status=status,
         completed=completed,
@@ -83,6 +85,18 @@ def progress(
         error_code=error_code,
         retryable=retryable,
     )
+    if omitted and status in {"resolving", "ready"}:
+        # KRI-820 / KRI-129: never drop a creator's file silently. Stalled or
+        # failed uploads are left out so the ready ones are still used, and the
+        # thread says so with the way back (retry or remove it in Media).
+        count = len(omitted)
+        noun, it = ("file", "it") if count == 1 else ("files", "them")
+        state["message"] = (
+            f"{message} I left out {count} {noun} that couldn't be prepared in time; "
+            f"retry or remove {it} in your media to use {it}."
+        )
+        state["omitted"] = [dict(entry) for entry in omitted]
+    return state
 
 
 def asset_query(item: PlanItem, creator_id: uuid.UUID):
@@ -130,6 +144,9 @@ def source_snapshot(item: PlanItem, assets: list[PlanItemAsset]) -> list[dict]:
                 duration_s=asset.duration_s,
                 aspect=asset.aspect,
                 asset_status=asset.status,
+                # KRI-820: in flight past its declared bound. Not an identity
+                # field, so it never changes `source_digest`.
+                analysis_expired=is_expired(asset),
             )
         )
     # Match the existing creator-manifest cap, without silently losing sources.
@@ -309,6 +326,7 @@ async def finish_preparation(db: AsyncSession, session: CreatorAgentSession) -> 
             retryable=failed
             and attempt.error_code
             not in {"provider_outcome_unknown", "media_unavailable", "clip_media_unavailable"},
+            omitted=state.get("omitted"),
         )
 
 

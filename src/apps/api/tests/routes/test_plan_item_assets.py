@@ -1852,6 +1852,8 @@ def test_reanalyze_active_asset_is_idempotent(client: TestClient, _no_real_broke
     item, _plan = _owned_item(user.id)
     asset = _asset_row(item.id, user.id)
     asset.status = "analyzing"
+    # Active = still inside its declared bound (KRI-820); past it, retry requeues.
+    asset.analysis_deadline_at = datetime.now(UTC) + timedelta(minutes=5)
     db = AsyncMock()
     db.execute = AsyncMock(return_value=_scalar_result(asset))
     _override(user, db)

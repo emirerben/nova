@@ -7509,6 +7509,13 @@
       },
       "PoolAssetOut": {
         "properties": {
+          "analysis_deadline_at": {
+            "default": null,
+            "format": "date-time",
+            "nullable": true,
+            "title": "Analysis Deadline At",
+            "type": "string"
+          },
           "aspect": {
             "nullable": true,
             "title": "Aspect",
@@ -9475,6 +9482,13 @@
       },
       "SlidePostStateAsset": {
         "properties": {
+          "analysis_deadline_at": {
+            "default": null,
+            "format": "date-time",
+            "nullable": true,
+            "title": "Analysis Deadline At",
+            "type": "string"
+          },
           "capture": {
             "$ref": "#/components/schemas/ClipCapture",
             "default": null,
@@ -9491,6 +9505,12 @@
             "nullable": true,
             "title": "Duration S",
             "type": "number"
+          },
+          "error_code": {
+            "default": null,
+            "nullable": true,
+            "title": "Error Code",
+            "type": "string"
           },
           "id": {
             "title": "Id",
@@ -9509,6 +9529,11 @@
             "nullable": true,
             "title": "Preview Url",
             "type": "string"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
           },
           "source_filename": {
             "default": null,

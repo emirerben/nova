@@ -88,20 +88,32 @@ struct SlidePostWorkspaceView: View {
     private var itemID: String? { ownerThread?.activePlanItemID ?? project.activePlanItemID ?? session.state?.itemID }
     private var isRendering: Bool { session.isRendering }
     private var uploadProjectID: UUID { ownerThread.flatMap { UUID(uuidString: $0.id) } ?? project.id }
-    private var hasPendingAssets: Bool {
-        session.slideAssets.contains { ["pending", "queued", "uploaded", "processing", "analyzing", "uploading"].contains($0.status) }
-            // A record whose upload failed stays for Retry but is not in progress (KRI-211).
-            || BackgroundUploadCoordinator.inProgressRecords(pendingUploads).contains { $0.projectID == uploadProjectID }
+    /// Files still transferring from this phone. A record whose upload failed stays for Retry but is
+    /// not in progress (KRI-211).
+    private var hasUploadsInFlight: Bool {
+        BackgroundUploadCoordinator.inProgressRecords(pendingUploads).contains { $0.projectID == uploadProjectID }
             || BackgroundUploadCoordinator.reservedCount(projectID: uploadProjectID, role: .visual, inFlight: uploadInFlight, records: pendingUploads, selections: photoSelections) > 0
     }
+    /// Anything still preparing anywhere in the pool: keeps polling and the progress copy alive.
+    private var hasPendingAssets: Bool { session.slideAssets.contains(where: SlidePostAssetGate.isInFlight) || hasUploadsInFlight }
+    /// KRI-820: only media the draft uses can hold the post back (see `SlidePostAssetGate`).
+    private var draftAssets: [SlidePostAsset] { SlidePostAssetGate.used(session.state?.assets ?? [], by: session.draft ?? session.proposal?.draft) }
+    private var hasPendingDraftAssets: Bool { draftAssets.contains(where: SlidePostAssetGate.isInFlight) || hasUploadsInFlight }
+    private var hasFailedDraftAssets: Bool { draftAssets.contains(where: SlidePostAssetGate.isFailed) }
     private var hasSkippedFiles: Bool {
         uploadFailures.contains { $0.projectID == uploadProjectID && !session.stickerUploadNames.contains(BackgroundUploadCoordinator.displayFilename($0.filename)) }
     }
     /// The server still lists an asset it could not keep. A file that never got that far — one the
     /// picker couldn't read (`hasSkippedFiles`) — is simply left out and never blocks asking Kria (KRI-211).
-    private var hasFailedAssets: Bool { session.slideAssets.contains { $0.status == "failed" || ["missing", "expired"].contains($0.mediaStatus ?? "") } }
+    private var hasFailedAssets: Bool { session.slideAssets.contains(where: SlidePostAssetGate.isFailed) }
     private var hasFailedUploads: Bool { hasSkippedFiles || hasFailedAssets }
-    private var canRequestProposal: Bool { !session.isBusy && !hasPendingAssets && !hasFailedAssets && !session.readyAssets.isEmpty }
+    private var canRequestProposal: Bool { !session.isBusy && !hasPendingDraftAssets && !hasFailedDraftAssets && !session.readyAssets.isEmpty }
+    private var proposalGuidance: String? {
+        if hasFailedDraftAssets { return "Retry or remove the failed photos and videos in your post before asking Kria." }
+        if hasPendingDraftAssets { return "Wait for every photo and video to finish importing before asking Kria." }
+        if hasFailedAssets || hasPendingAssets { return "Kria will use the photos and videos that are ready." }
+        return nil
+    }
 
     private var pollingKey: String { "\(itemID ?? "")-\(session.state?.renderStatus ?? "")-\(hasPendingAssets)-\(session.isBusy)" }
     /// The selected video plays only while the app is active and nothing covers the preview (a sheet, an export).
@@ -138,7 +150,7 @@ struct SlidePostWorkspaceView: View {
                 session: session, api: model.api, itemID: itemID,
                 chatEnabled: aiChatEnabled,
                 canRequestProposal: canRequestProposal,
-                uploadGuidance: hasFailedAssets ? "Resolve or remove failed photos and videos before asking Kria." : hasPendingAssets ? "Wait for every photo and video to finish importing before asking Kria." : nil,
+                uploadGuidance: proposalGuidance,
                 dictationEnabled: effectiveCapabilities?.voiceDictationEnabled == true
             )
                 .presentationDetents([.medium, .large])
@@ -327,7 +339,8 @@ struct SlidePostWorkspaceView: View {
     /// Why export cannot start right now (shown as a disabled row in the export menu); nil = it can.
     private var exportBlockReason: String? {
         if session.isChatting { return "Kria is editing. Export when it finishes." }
-        if hasPendingAssets { return "Wait for photos and videos to finish importing." }
+        if hasPendingDraftAssets { return "Wait for photos and videos to finish importing." }
+        if hasFailedDraftAssets { return "Retry or remove the photos and videos that couldn’t be prepared." }
         guard let draft = session.draft else { return "Add photos and videos first." }
         return draft.validationMessage
     }

@@ -58,6 +58,13 @@ def analyze_media_asset_task(self: Any, asset_id: str, owner_id: str) -> dict[st
     return {"asset_id": str(asset_id), "status": status}
 
 
+# KRI-820: a stale pending/processing library asset is re-sent at most this many
+# times. An input that keeps stalling (hard kill, poison file) then ends as a
+# visible `failed` instead of being re-dispatched every sweep forever.
+MEDIA_ANALYSIS_MAX_REDISPATCHES = 3
+_REDISPATCH_COUNT_KEY = "_analysis_redispatches"
+
+
 @celery_app.task(name="tasks.reconcile_media_library_analysis")
 def reconcile_media_library_analysis() -> int:
     """Bounded durable-publication recovery after a broker failure or worker crash."""
@@ -90,6 +97,13 @@ def reconcile_media_library_analysis() -> int:
             row.analysis_dispatch_pending = False
             sent += 1
         for asset in stale:
+            metadata = dict(asset.metadata_json or {})
+            redispatches = int(metadata.get(_REDISPATCH_COUNT_KEY) or 0)
+            if redispatches >= MEDIA_ANALYSIS_MAX_REDISPATCHES:
+                asset.status = "failed"
+                continue
+            metadata[_REDISPATCH_COUNT_KEY] = redispatches + 1
+            asset.metadata_json = metadata
             analyze_media_asset_task.delay(str(asset.id), str(asset.user_id))
             asset.updated_at = datetime.now(UTC)
             sent += 1
