@@ -1029,7 +1029,7 @@ jobs:
             -resultBundlePath ../../../test-results/kri-559/suggestion-chips-native.xcresult test-without-building
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/suggestion-chips-native.xcresult \
             > ../../../test-results/kri-559/suggestion-chips-native-tests.json
-          python3 ../../../scripts/ci/journey-gate.py require-xctest \
+          python3 ../../../scripts/ci/journey-gate.py verify-tests \
             --test-results ../../../test-results/kri-559/suggestion-chips-native-tests.json \
             --xctest CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips
       - name: Reuse the same simulator for selected native journeys

@@ -46,4 +46,10 @@ No paid call, phone operation, rollout setting or manual release was performed.
 
 CI39733358559 passed on15088d510, including native unit tests and generic UI smoke, but did NOT execute the changed testServerSuggestionChipsSendOnTapAndReplaceFixedChips. That test contains the actual after-render buttons-above-composer assertion. The workflow maps full UI to smoke for PRs, so a green generic job alone does not establish this fix.
 
-The suggestion-chips journey now lists that existing UI test and runs it against the same built app/simulator. require-xctest checks the actual result for that exact name; zero/missing/failed execution cannot satisfy the gate. No assertion or timeout was weakened, and no duplicate build or physical-device operation is added. A fresh current-head pass is required before merge.
+The suggestion-chips journey now lists that existing UI test and runs it against the same built app/simulator. verify-tests checks the actual result for that exact name; zero/missing/failed execution cannot satisfy the gate. No assertion or timeout was weakened, and no duplicate build or physical-device operation is added. A fresh current-head pass is required before merge.
+
+## Actual native result and command correction
+
+Run39738470568 job119693753616 executed the required testServerSuggestionChipsSendOnTapAndReplaceFixedChips and it PASSED in33.465s. The job failed afterward because the new workflow invoked unsupported command require-xctest. The supported command is verify-tests; this is an invocation defect, not a chip assertion failure or inherited CoreData issue.
+
+Downloaded actual named-result JSON from artifactkri-559-native-39738470568-1-8f301bf96c7dba1255f7ba5cc08d4975592d90fc. The exact corrected CLI passed it locally. Independent black-box controls rejected a nonexistent test and rejected a list containing the real passed test plus a nonexistent one, proving every required name is enforced. App/test/native input bytes, timeouts and assertions are unchanged. No blind rerun, skip, physical-phone operation or manual release. New-head CI still required.
