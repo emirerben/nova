@@ -493,6 +493,20 @@
       ]
     },
     {
+      "id": "kri-808-clip-speech-language",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri808_clip_speech_language.py tests/tasks/test_kria_speech_segments.py tests/services/test_transcript_quality.py tests/services/test_phone_speech_montage_job.py",
+      "paths": [
+        "src/apps/api/app/services/clip_speech_check.py",
+        "src/apps/api/app/services/speech_segments.py",
+        "src/apps/api/app/services/transcript_quality.py",
+        "src/apps/api/app/services/clip_understanding.py",
+        "src/apps/api/app/tasks/kria_clip_understanding.py",
+        "src/apps/api/app/services/phone_speech_montage_job.py",
+        "src/apps/api/tests/fixtures/kri808_don_julio_clip_speech.json"
+      ]
+    },
+    {
       "id": "kri-623-ruled-out-clips",
       "needs_native": false,
       "api_tests": "tests/kria/test_kri623_ruled_out_clips.py",
