@@ -1,0 +1,72 @@
+{
+  "reason": "Known HTTP400 circular-schema rejection before inference",
+  "preserve_prior_failures": true,
+  "provider_projection": "claude-acyclic-json-8-v1",
+  "dynamic_json_container_limit": 8,
+  "prior_settled_usd": 0.411512,
+  "retained_unknown_usd": 1.716306,
+  "preflight": {
+    "mode": "offline_preflight",
+    "packet_sha256": "9fc58d2c55d56be154204b57e6ac24be8d98bb9de7843ab3a652531efb92653f",
+    "calls": 3,
+    "max_provider_submissions": 3,
+    "rows": [
+      {
+        "case": "6e57328dab703908b056ba978fdec61075999825e23815b616ff9f216d576e25",
+        "agent": "main_creator",
+        "arm": "S",
+        "source_kind": "exact_invocation",
+        "split": "development",
+        "input_sha256": "83d4cba01d31cc2180b3f9bdde24f101ccb9ccd2bbda377bcf5896517fa8c0ef",
+        "prompt_sha256": "4585a124afa27863cca2078cebe10c0719d132c00b5ed177d6b87eb05e0fd249",
+        "prompt_version": "2026-10-19-v64+typed-presence-v2+claude-acyclic-json-8-v1",
+        "spec_sha256": "bc1c513bdde5fdf44977b9d5e1687370965be6be4aa81205d325d4d650b0672d",
+        "runtime_sha256": "06836b44b0343bc4ea481bc4454eb8c38990b0baeb7c178cffc578825175845f",
+        "price_version": "multi-provider-2026-10-19.v5",
+        "output_mode": "native",
+        "max_attempts": 1,
+        "fallback_models": [],
+        "estimated_max_usd": 0.229094
+      },
+      {
+        "case": "da8f8b5062752eeefa4aeae6d26d60092c5b7cce759e47891e9487fbf8bdaa3d",
+        "agent": "main_creator",
+        "arm": "S",
+        "source_kind": "exact_invocation",
+        "split": "development",
+        "input_sha256": "0ae62fe5952f8fb2e630904b0b276140dd3f16def156fb341a2de59f62ce0556",
+        "prompt_sha256": "bf5932f48df75dfe68d0564e3598d43ab17c7fd16d0220a088787bddda34f0ba",
+        "prompt_version": "2026-10-19-v64+typed-presence-v2+claude-acyclic-json-8-v1",
+        "spec_sha256": "bc1c513bdde5fdf44977b9d5e1687370965be6be4aa81205d325d4d650b0672d",
+        "runtime_sha256": "06836b44b0343bc4ea481bc4454eb8c38990b0baeb7c178cffc578825175845f",
+        "price_version": "multi-provider-2026-10-19.v5",
+        "output_mode": "native",
+        "max_attempts": 1,
+        "fallback_models": [],
+        "estimated_max_usd": 0.228566
+      },
+      {
+        "case": "8e1765fac3c8c081950582127ca02d020f0dc3978b2ec6e7ea8ca6517bcedfa5",
+        "agent": "edit_copilot",
+        "arm": "S",
+        "source_kind": "reconstructed_real",
+        "split": "development",
+        "input_sha256": "71bc0db75f43a959ee93c74c5b202fe91abf17acb4ebdcdb9d520114d7a427e0",
+        "prompt_sha256": "98212813847c22772d7953d354e958b1fb7feebde343289c29387e4b7c1a7df2",
+        "prompt_version": "2026-10-19-v85+typed-presence-v2+claude-acyclic-json-8-v1",
+        "spec_sha256": "a67b9481c5c4edba2b8afc8fc3288d6e6399343a25a839a16f6da93d528727c2",
+        "runtime_sha256": "06836b44b0343bc4ea481bc4454eb8c38990b0baeb7c178cffc578825175845f",
+        "price_version": "multi-provider-2026-10-19.v5",
+        "output_mode": "native",
+        "max_attempts": 1,
+        "fallback_models": [],
+        "estimated_max_usd": 0.213962
+      }
+    ],
+    "estimated_max_usd": 0.671622,
+    "quality_verdict": "unassessed",
+    "actual_export": "unassessed",
+    "live_eligibility": "not_checked_offline"
+  },
+  "combined_forecast_usd": 2.79944
+}
