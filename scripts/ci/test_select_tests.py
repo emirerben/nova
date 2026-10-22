@@ -738,7 +738,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/kria/clip_scope.py",
-                (True, "covered", "kri-623-ruled-out-clips"),
+                (True, "covered", "kri-598-voiceover-planner,kri-623-ruled-out-clips"),
+            ),
+            (
+                "src/apps/api/app/pipeline/narrated_photo_sequence.py",
+                (True, "covered", "kri-577-reliability-gates,kri-598-voiceover-planner"),
             ),
             (
                 "src/apps/api/tests/fixtures/kri623_tigre_m2_montage_turn.json",

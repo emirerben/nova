@@ -31,6 +31,15 @@ to the final committed source SHA. Raw media and private transcript remain local
   recovery and never pins a device request.
 - Changed API Python files: Ruff lint and format clean; `git diff --check` clean.
 
+## CI selection check
+
+The first GitHub run failed before selected suites ran: its selector test still
+expected clip-scope changes to select only the existing exclusion journey. N2
+adds the voiceover-planner journey too. Updated that exact expectation and added
+an explicit mapping case for the new sequence compiler; the CI gate remains
+fail-closed. The full `python3 -m unittest discover -s scripts/ci -p
+'test_*.py' -q` suite is rerun before republishing.
+
 ## Editor timeline gate
 
 Executed `make verify-editor-timeline` with the worktree's locked web dependencies,
