@@ -201,8 +201,13 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   v64-shaped reply (key-less `order` with quoted `start` / `end`) on a one-video edit, and
   `choice_questions.one_clip_edit` keeps both the order_basis question and the render
   contract quiet about any free-form order rule on one clip.
-- **Clip speed (KRI-689).** The phone montage plays every clip at natural speed
-  (`phone_guided_plan` refuses a `playback_rate` other than 1). A speed ask ("speed the
+- **Clip speed (KRI-689).** Initial creation still does not author requested clip speed.
+  Post-creation phone editing supports 0.25–4x in the clip control and editor chat when
+  `variableSpeed` is verified: it preserves the exact source selection, changes output
+  duration, and carries the rate through preview, Save and export. Captions, narration,
+  lip-sync and unprojected timed effects remain explicitly locked; website speed controls
+  are separate work. See `plans/playback-speed.md` for the contract and measured evidence.
+  The initial-creation notice below remains necessary. A speed ask ("speed the
   river shots up 2x", slow motion, time-lapse, "2 kat hızlandır") used to be dropped
   silently and only listed under "Have a look at these in the video" after the render.
   `brief_checks.clip_speed_notice` now adds one plain sentence to the draft reply and the

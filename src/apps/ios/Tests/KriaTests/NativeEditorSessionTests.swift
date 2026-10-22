@@ -2009,23 +2009,153 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(uploads.containsEditorPlacement(late.id))
     }
 
-    func testFootageEditsPersistAndUndoWithoutChangingTimelineWindows() throws {
+    func testFootageEditsPersistSpeedAsSourceSpanPreservingTimelineChange() throws {
         let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
         let original = session.document
         let clip = try XCTUnwrap(session.timelineClips.first)
         let selection = EditorSelection(kind: .clip, id: clip.id.uuidString)
-        let windows = session.timelineClips.map { [$0.start, $0.end] }
         session.setFootagePlaybackRate(selection, rate: 0.5)
         session.setFootageCrop(selection, crop: .init(x: 0.1, y: 0.2, width: 0.7, height: 0.6))
         let restored = EditorDocument(snapshot: session.document.encodeSnapshot())
         XCTAssertEqual(restored.clips.first?.raw["playback_rate"], .number(0.5))
         XCTAssertEqual(restored.clips.first?.raw["source_crop"]?.objectValue?["y"], .number(0.2))
-        XCTAssertEqual(session.timelineClips.map { [$0.start, $0.end] }, windows)
+        XCTAssertEqual(session.timelineClips.first?.end ?? 0, 2, accuracy: 0.000_001, "cloud speed retains the legacy fixed-duration timeline")
         session.undo()
         XCTAssertNil(session.footageCrop(for: selection))
         XCTAssertEqual(session.footagePlaybackRate(for: selection), 0.5)
         session.undo()
         XCTAssertEqual(session.document, original)
+    }
+
+    /// A speed assignment keeps the selected source window, including an old
+    /// implicit native span, and changes only its output clock. Repeated
+    /// assignments are absolute rather than compounded; one assignment is one
+    /// undo transaction with the timeline projection it moves.
+    func testFootageSpeedPreservesImplicitSourceSpanAcrossResetAndUndo() async throws {
+        let (session, _) = await Self.footageSession(destination: "device", operationsEditable: true, slot: [
+            "in_s": .number(2), "duration_s": .number(6), "source_duration_s": .number(20),
+            "native_source_span_s": .number(6),
+        ])
+        let selection = EditorSelection(kind: .clip, id: try XCTUnwrap(session.timelineClips.first).id.uuidString)
+        let original = session.document
+
+        session.setFootagePlaybackRate(selection, rate: 2)
+        var slot = try XCTUnwrap(session.document.clips.first)
+        XCTAssertEqual(slot.inS, 2, accuracy: 0.000_001)
+        XCTAssertEqual(slot.durationS ?? 0, 3, accuracy: 0.000_001, "six source seconds at 2x last three output seconds")
+        XCTAssertEqual(slot.raw["playback_rate"], .number(2))
+        XCTAssertEqual(slot.raw["source_end_s"], .number(8), "saved source end avoids recovery from a rounded output window")
+
+        session.setFootagePlaybackRate(selection, rate: 0.5)
+        slot = try XCTUnwrap(session.document.clips.first)
+        XCTAssertEqual(slot.inS, 2, accuracy: 0.000_001)
+        XCTAssertEqual(slot.durationS ?? 0, 12, accuracy: 0.000_001, "six source seconds at .5x last twelve output seconds")
+        XCTAssertEqual(slot.raw["native_source_span_s"], .number(6))
+
+        session.setFootagePlaybackRate(selection, rate: 1)
+        slot = try XCTUnwrap(session.document.clips.first)
+        XCTAssertEqual(slot.durationS ?? 0, 6, accuracy: 0.000_001)
+        XCTAssertNil(slot.raw["playback_rate"], "reset restores a normal-rate source window without discarding its span")
+        XCTAssertEqual(slot.raw["source_end_s"], .number(8))
+        let reopened = EditorDocument(snapshot: session.document.encodeSnapshot())
+        XCTAssertEqual(try XCTUnwrap(reopened.clips.first).inS, slot.inS, accuracy: 0.000_001)
+        XCTAssertEqual(try XCTUnwrap(reopened.clips.first?.durationS), try XCTUnwrap(slot.durationS), accuracy: 0.000_001)
+        XCTAssertEqual(reopened.clips.first?.raw["source_end_s"], .number(8), "reopening preserves the exact source window")
+
+        session.undo()
+        XCTAssertEqual(session.document.clips.first?.durationS ?? 0, 12, accuracy: 0.000_001)
+        session.undo()
+        XCTAssertEqual(session.document.clips.first?.durationS ?? 0, 3, accuracy: 0.000_001)
+        session.undo()
+        XCTAssertEqual(session.document, original)
+    }
+
+    func testSameFractionalSpeedAfterReopenDoesNotCreateASecondEdit() async throws {
+        let (session, _) = await Self.footageSession(destination: "device", operationsEditable: true, slot: [
+            "in_s": .number(2), "duration_s": .number(4.6), "source_duration_s": .number(20),
+            "source_end_s": .number(8), "playback_rate": .number(1.3),
+        ])
+        let selection = EditorSelection(kind: .clip, id: try XCTUnwrap(session.timelineClips.first).id.uuidString)
+        let before = session.document
+
+        session.setFootagePlaybackRate(selection, rate: 1.3)
+
+        XCTAssertEqual(session.document, before)
+        XCTAssertFalse(session.canUndo)
+    }
+
+    func testSpeedRejectsAWindowWhoseExactOutputWouldBeShorterThanMinimum() async throws {
+        let (session, _) = await Self.footageSession(destination: "device", operationsEditable: true, slot: [
+            "in_s": .number(0), "duration_s": .number(0.1), "source_duration_s": .number(4),
+            "source_end_s": .number(0.1),
+        ])
+        let selection = EditorSelection(kind: .clip, id: try XCTUnwrap(session.timelineClips.first).id.uuidString)
+        let before = session.document.clips
+
+        session.setFootagePlaybackRate(selection, rate: 4)
+
+        XCTAssertEqual(session.document.clips, before)
+    }
+
+    func testTrimmingAnExplicitSpeedWindowUpdatesItsSourceEndAnchor() async throws {
+        let (session, _) = await Self.footageSession(destination: "device", operationsEditable: true, slot: [
+            "in_s": .number(2), "duration_s": .number(6), "source_duration_s": .number(20),
+            "native_source_span_s": .number(6),
+        ])
+        let clip = try XCTUnwrap(session.timelineClips.first)
+        let selection = EditorSelection(kind: .clip, id: clip.id.uuidString)
+        session.setFootagePlaybackRate(selection, rate: 2)
+
+        session.beginTrim(clipID: clip.id, edge: .trailing)
+        session.updateTrim(by: -0.5)
+        session.endTrim()
+        var slot = try XCTUnwrap(session.document.clips.first)
+        XCTAssertEqual(slot.durationS ?? 0, 2.5, accuracy: 0.000_001)
+        XCTAssertEqual(slot.raw["source_end_s"], .number(7))
+
+        let moved = try XCTUnwrap(session.timelineClips.first)
+        session.beginTrim(clipID: moved.id, edge: .leading)
+        session.updateTrim(by: 0.5)
+        session.endTrim()
+        slot = try XCTUnwrap(session.document.clips.first)
+        XCTAssertEqual(slot.inS, 3, accuracy: 0.000_001)
+        XCTAssertEqual(slot.raw["source_end_s"], .number(7), "leading trim preserves the retained source end")
+    }
+
+    func testPhotoClipRejectsPlaybackSpeedWithoutAffectingCrop() async throws {
+        let (session, _) = await Self.footageSession(destination: "device", operationsEditable: true, slot: ["media_kind": .string("image")])
+        let selection = EditorSelection(kind: .clip, id: try XCTUnwrap(session.timelineClips.first).id.uuidString)
+        let before = session.document.clips
+
+        XCTAssertEqual(session.speedBlockedReason(for: selection), "Photos do not have playback speed.")
+        session.setFootagePlaybackRate(selection, rate: 2)
+
+        XCTAssertEqual(session.document.clips, before)
+        XCTAssertNil(session.cropBlockedReason(for: selection))
+    }
+
+    func testSpeedStaysClosedWhenAnUnprojectedTimedLaneIsPresent() async throws {
+        let (session, _) = await Self.footageSession(destination: "device", operationsEditable: true)
+        let selection = EditorSelection(kind: .clip, id: try XCTUnwrap(session.timelineClips.first).id.uuidString)
+        session.transactDocument(section: .soundEffects) {
+            $0.soundEffects = [.init(id: "sfx", startS: 1, endS: 2, pointS: 1, raw: ["at_s": .number(1)])]
+        }
+        let before = session.document.clips
+        XCTAssertNotNil(session.clipSpeedBlockedReason)
+        session.setFootagePlaybackRate(selection, rate: 2)
+        XCTAssertEqual(session.document.clips, before, "do not silently leave a timed SFX on the wrong footage clock")
+    }
+
+    func testSpeedStaysClosedWhenACarouselChangesTheOutputClock() async throws {
+        let (session, _) = await Self.footageSession(destination: "device", operationsEditable: true)
+        let selection = EditorSelection(kind: .clip, id: try XCTUnwrap(session.timelineClips.first).id.uuidString)
+        session.transactDocument(section: .timeline) {
+            $0.carouselMoment = ["id": .string("carousel"), "position": .string("intro"), "duration_s": .number(2)]
+        }
+        let before = session.document.clips
+        XCTAssertNotNil(session.clipSpeedBlockedReason)
+        session.setFootagePlaybackRate(selection, rate: 2)
+        XCTAssertEqual(session.document.clips, before)
     }
 
     /// The server closes `clips.source_crop/playback_rate/looks` on device
@@ -2129,6 +2259,8 @@ final class NativeEditorSessionTests: XCTestCase {
         var slot = try XCTUnwrap(session.document.clips.first)
         XCTAssertEqual(slot.raw["source_crop"]?.objectValue?["y"], .number(0.2))
         XCTAssertEqual(slot.raw["playback_rate"], .number(0.5))
+        XCTAssertEqual(slot.durationS, 2, "cloud speed keeps the renderer-owned duration contract")
+        XCTAssertNil(slot.raw["source_end_s"], "cloud speed does not opt into the native source-window contract")
         XCTAssertEqual(slot.lookPreset, "olive_film")
 
         // The saved slot never had these keys, so a reset drops them again.
@@ -2157,15 +2289,18 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNotNil(closed.cropBlockedReason(for: closedSelection), "Listed but closed: shown disabled with a reason")
     }
 
-    /// Once the server opens `clips.source_crop` for a phone-rendered variant, the crop saves; speed stays closed.
-    func testDeviceVariantTakesACropOnceTheServerOpensIt() async throws {
+    /// Device speed opens only when the server explicitly offers the native
+    /// `clips.playback_rate` operation; overlays and visuals remain governed
+    /// by their own unsupported operations.
+    func testDeviceVariantTakesClipSpeedOnceTheServerOpensIt() async throws {
         let (session, _) = await Self.footageSession(destination: "device", operationsEditable: true)
         XCTAssertTrue(session.rendersOnDevice)
         let selection = EditorSelection(kind: .clip, id: try XCTUnwrap(session.timelineClips.first).id.uuidString)
         session.setFootageCrop(selection, crop: .init(x: 0.1, y: 0.2, width: 0.7, height: 0.6))
         XCTAssertEqual(session.footageCrop(for: selection), .init(x: 0.1, y: 0.2, width: 0.7, height: 0.6))
         session.setFootagePlaybackRate(selection, rate: 0.5)
-        XCTAssertEqual(session.footagePlaybackRate(for: selection), 1, "Speed is still refused on a phone render")
+        XCTAssertEqual(session.footagePlaybackRate(for: selection), 0.5)
+        XCTAssertEqual(session.document.clips.first?.durationS ?? 0, 4, accuracy: 0.000_001)
     }
 
     func testClosedClipCropCapabilityIsHonoredOnCloudVariants() async throws {

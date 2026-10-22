@@ -296,9 +296,17 @@ class EditRecipeV1(_RecipeModel):
                             "a source crop cannot combine with a still card or a visual placement"
                         )
                     self.required_capabilities |= {"sourceCrop"}
+                # A fractional final frame pads a quantized main-video slot;
+                # it is not an authored freeze or permission for overlay fields.
+                frame_padding = (
+                    self.schema_version == 2
+                    and track.kind == "video"
+                    and clip.hold_duration is not None
+                    and clip.hold_duration <= 1 / self.frame_rate + 1e-6
+                )
                 if (
                     clip.overlay_dissolve_seed is not None
-                    or clip.hold_duration is not None
+                    or (clip.hold_duration is not None and not frame_padding)
                     or clip.overlay_above_text is not None
                     or clip.overlay_pop_in is not None
                     or clip.overlay_preserve_alpha is not None

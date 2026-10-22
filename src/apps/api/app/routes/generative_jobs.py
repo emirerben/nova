@@ -988,6 +988,9 @@ class TimelineSlotEdit(BaseModel):
     layout: Literal["fullscreen", "supporting_card"] | None = None
     source_crop: dict[str, float] | None = None
     playback_rate: float | None = Field(default=None, ge=0.25, le=4.0)
+    # Explicit selected source edge for source-preserving speed edits. Omission
+    # retains the legacy duration * rate window contract.
+    source_end_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     # Camera sound for this occurrence: True silences it. None = an older client omitted
     # the field; the saved value is kept. Honoured on phone-rendered guided edits only.
     muted: bool | None = None
@@ -6930,6 +6933,7 @@ def _clamp_phone_editor_capabilities(
     subtitled_lanes: bool = False,
     guided_story: bool = False,
     source_crop: bool = False,
+    playback_rate: bool = False,
     narrated: bool = False,
     narrated_captions: bool = False,
     narrated_text: bool = False,
@@ -7007,6 +7011,7 @@ def _clamp_phone_editor_capabilities(
                     if (names is None or name in names)
                     and (group, name) not in media_carve_out
                     and not (source_crop and (group, name) == ("clips", "source_crop"))
+                    and not (playback_rate and (group, name) == ("clips", "playback_rate"))
                     and not (group == "lanes" and name in subtitled_carve_out)
                     else value
                 )
@@ -7126,9 +7131,65 @@ def _clamp_phone_editor_capabilities(
 
 def _base_editor_capabilities(job: Job, variant: dict) -> dict:
     """The per-archetype capability map plus an explicit ``clips.source_crop`` (KRI-44)."""
-    return _ensure_source_crop_capability(
+    capabilities = _ensure_source_crop_capability(
         _compute_base_editor_capabilities(job, variant), job, variant
     )
+    if (
+        variant.get("render_destination") == "device"
+        and variant.get("editor_timeline_mode") == "authored"
+        and variant.get("resolved_archetype") != "slides"
+        and capabilities.get("timeline") is True
+    ):
+        reason = _phone_clip_speed_reason(job, variant)
+        capabilities["clips"] = {
+            **capabilities.get("clips", {}),
+            "playback_rate": {"editable": reason is None, "reason": reason},
+        }
+    return capabilities
+
+
+def _phone_speed_lane_reason(*states: dict) -> str | None:
+    """Keep clocks without native source-time projection closed on both surfaces."""
+    for state in states:
+        texts = state.get("text_elements") or []
+        if state.get("caption_cues") or any(_is_caption_cue_row(row) for row in texts):
+            return "caption_timing_locked"
+        for lane in (
+            "media_overlays",
+            "visual_blocks",
+            "motion_scenes",
+            "camera_effects",
+            "custom_effects",
+            "sound_effects",
+            "drawings",
+            "carousel_moment",
+        ):
+            if state.get(lane):
+                return "timed_effects_speed_unsupported"
+    return None
+
+
+def _phone_clip_speed_reason(job: Job, variant: dict) -> str | None:
+    """Speed is editable only when every clock in this recipe can follow it."""
+    if "variableSpeed" not in settings.phone_render_verified_features:
+        return "phone_playback_rate_unsupported"
+    song = _variant_user_song(job, variant)
+    if song and song.get("mode") == "lipsync":
+        return "user_song_lipsync_locked"
+    assembly = job.assembly_plan or {}
+    plan = variant.get("_phone_editor_saved_plan_v1") or variant.get("_phone_editor_plan_v1")
+    plan = plan or assembly.get("guided_story_execution_plan") or {}
+    if isinstance(plan, dict) and plan.get("narration"):
+        return "narration_timing_locked"
+    revision = _guided_v2_revision(job, variant) or {}
+    lane_reason = _phone_speed_lane_reason(variant, revision)
+    if lane_reason:
+        return lane_reason
+    if (variant.get("text_elements") or revision.get("text_elements")) and not (
+        _TEXT_ELEMENTS_ENABLED and _text_elements_allowed(variant)
+    ):
+        return "text_timing_locked"
+    return None
 
 
 def _phone_voiceover_crop_edits_enabled(job: Job, variant: dict) -> bool:
@@ -7315,6 +7376,13 @@ def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
                     variant.get("resolved_archetype") == "guided_story"
                     or _phone_voiceover_crop_edits_enabled(job, variant)
                 )
+            ),
+            playback_rate=(
+                (
+                    variant.get("resolved_archetype") == "guided_story"
+                    or variant.get("editor_timeline_mode") == "authored"
+                )
+                and _phone_clip_speed_reason(job, variant) is None
             ),
         )
     return capabilities
@@ -7534,12 +7602,10 @@ def _compute_base_editor_capabilities(job: Job, variant: dict) -> dict:
             # The footage's own sound (per clip, and one level for the whole video). Only the
             # phone compiler plays it at a creator-set level; the cloud render ignores both.
             on_device = variant.get("render_destination") == "device"
-            # KRI-770: the phone's story compiler has no retime (`phone_guided_plan` refuses any
-            # rate but 1), so advertising speed here made every chat/editor speed change a
-            # refused Save. A lane that is advertised editable must be saveable.
-            clips["playback_rate"] = operation(
-                not on_device, "phone_playback_rate_unsupported" if on_device else None
-            )
+            # The guided compiler now carries the rate into the native recipe.
+            # Independent narration/caption and lip-sync clocks stay protected.
+            speed_reason = _phone_clip_speed_reason(job, variant) if on_device else None
+            clips["playback_rate"] = operation(speed_reason is None, speed_reason)
             clips["audio"] = operation(
                 on_device, None if on_device else "original_audio_phone_only"
             )
@@ -8906,6 +8972,11 @@ def _guided_v2_slot_rows(
                     if segment.get("playback_rate") is not None
                     else {}
                 ),
+                **(
+                    {"source_end_s": segment["source_end_s"]}
+                    if segment.get("preserve_source_window")
+                    else {}
+                ),
                 **({"muted": True} if segment.get("source_audio_muted") else {}),
                 "duration_beats": None,
                 "output_start_s": segment.get("output_start_s"),
@@ -10177,6 +10248,29 @@ def require_guided_story_editor_commit(
     """Fail unsupported guided sections before route-specific lookups or writes."""
 
     variant = _find_variant(job, variant_id)
+    if isinstance(variant, dict) and variant.get("render_destination") == "device":
+        # A stale client must not bypass the capability, including a reset to
+        # 1x or adding a locked lane in the same transaction as a speed change.
+        speed_reason = _phone_clip_speed_reason(job, variant) or _phone_speed_lane_reason(
+            payload.model_dump(exclude_unset=True), payload.guided_revision or {}
+        )
+        if speed_reason and payload.timeline_slots is not None:
+            old_by_id = {row.get("slot_id"): row for row in editor_deletion_timeline(job, variant)}
+            for slot in payload.timeline_slots:
+                if slot.removed or "playback_rate" not in slot.model_fields_set:
+                    continue
+                old = old_by_id.get(slot.slot_id) or old_by_id.get(slot.parent_segment_id) or {}
+                if (slot.playback_rate or 1) != (old.get("playback_rate") or 1):
+                    raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, speed_reason)
+        if speed_reason and payload.guided_revision is not None:
+            old_revision = _guided_v2_revision(job, variant) or {}
+            old_by_id = {row["segment_id"]: row for row in old_revision.get("segments") or []}
+            for segment in payload.guided_revision.get("segments") or []:
+                if not isinstance(segment, dict):
+                    continue  # the revision validator owns malformed rows
+                old = old_by_id.get(segment.get("segment_id")) or {}
+                if (segment.get("playback_rate") or 1) != (old.get("playback_rate") or 1):
+                    raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, speed_reason)
     if not isinstance(variant, dict) or variant.get("resolved_archetype") != "guided_story":
         if isinstance(variant, dict) and payload.user_song is not None:
             # The creator's song only exists on a guided creator-song variant; never let

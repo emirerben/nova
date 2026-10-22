@@ -167,12 +167,17 @@ enum NativeEditorRenderError: Error, Equatable {
             // keeps narration and other audio tracks on their original clock.
             var sourceStart = clip.trimIn
             var sourceSpan = max(0, clip.trimOut - clip.trimIn)
+            if let selectedEnd = authoredSlot?.raw["source_end_s"]?.numberValue,
+               selectedEnd.isFinite, selectedEnd > sourceStart {
+                sourceSpan = selectedEnd - sourceStart
+            }
             let authoredMovingDuration = max(0, authoredSlot?.durationS ?? outputDuration)
             var requestedRate = explicitRate ?? sourceSpan / authoredMovingDuration
             // Narration and legacy projections can intentionally carry a
             // shorter moving span plus a hold. Only an unchanged authored
             // source window uses the duration-preserving render projection.
             let isAuthoredWindow = authoredSlot?.raw["native_source_span_s"] == nil
+                && authoredSlot?.raw["source_end_s"] == nil
                 && abs(outputDuration - authoredMovingDuration) < 0.000_001
                 && abs(sourceStart - (authoredSlot?.inS ?? sourceStart)) < 0.000_001
             if isAuthoredWindow, let authoredSlot,
