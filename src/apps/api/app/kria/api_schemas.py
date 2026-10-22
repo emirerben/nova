@@ -209,6 +209,9 @@ class ApprovalDecisionBody(_StrictBody):
     # that hash is computed from the server-authored `CreatorAgentApproval`
     # row alone, never from this request body.
     speech_cleanup_aware: bool = False
+    # KRI-551: clean can remove a restarted sentence only after the consent UI
+    # showed that exact consequence. Older clients omit this and remain false.
+    speech_cleanup_retakes_aware: bool = False
     speech_cleanup_analysis_id: uuid.UUID | None = None
     speech_cleanup_choice: Literal["clean", "keep_original", "create_without_cleanup"] | None = None
     # KRI-306: the creator's finished-video shape, sent only when the thread's

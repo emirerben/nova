@@ -6157,6 +6157,110 @@ async def test_direct_confirm_refuses_guided_clean_choice_while_cleanup_is_off(
 
 
 @pytest.mark.asyncio
+async def test_direct_confirm_refuses_new_clean_choice_when_current_analysis_has_retakes(
+    monkeypatch,
+) -> None:
+    """A legacy direct confirm cannot bypass the retake disclosure added to v1/v2.
+
+    Before the controller fence this reaches the deliberately mismatched
+    ownership epoch below, proving that the direct route accepts and carries
+    the clean choice instead of refusing it before an attempt is reserved.
+    """
+
+    from app.services import plan_item_media, speech_cleanup_preflight
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4(), current_job_id=None)
+    plan = SimpleNamespace(ownership_epoch=1)
+    analysis = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="ready",
+        category_counts={"retakes": 1},
+        decision=None,
+        source_policy_fingerprint="current-policy",
+    )
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        plan_item_id=item.id,
+        status="awaiting_confirmation",
+        revision=0,
+        # The next existing controller fence proves the new consent fence did
+        # not run when this regression is reproduced.
+        ownership_epoch=0,
+        active_plan={
+            "version": 1,
+            "plan_hash": "a" * 64,
+            "edit_plan": {"strategy": {"render_program": "native"}},
+        },
+        render_attempts=0,
+        max_render_attempts=2,
+    )
+    receipt_result = MagicMock()
+    receipt_result.scalar_one_or_none.return_value = None
+    db = AsyncMock()
+    db.execute.return_value = receipt_result
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_execution_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_rollout_percent", 100)
+    monkeypatch.setattr(
+        creator_routes, "_owned_context", AsyncMock(return_value=(item, plan, SimpleNamespace()))
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(creator_routes, "_confirmed_edit_plan", lambda _active: object())
+    monkeypatch.setattr(
+        speech_cleanup_preflight,
+        "current_analysis_async",
+        AsyncMock(return_value=analysis),
+    )
+    monkeypatch.setattr(
+        plan_item_media,
+        "resolve_item_narration",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            source=SimpleNamespace(source_policy_fingerprint="current-policy")
+        ),
+    )
+
+    with pytest.raises(HTTPException) as caught:
+        await creator_routes.confirm_creator_plan(
+            str(item.id),
+            ConfirmBody(
+                session_id=session.id,
+                expected_revision=0,
+                plan_version=1,
+                plan_hash="a" * 64,
+                client_event_id="confirm-retake-old-client",
+                speech_cleanup_analysis_id=analysis.id,
+                speech_cleanup_choice="clean",
+            ),
+            user,
+            db,
+        )
+
+    assert caught.value.status_code == 409
+    assert caught.value.detail == (
+        "This speech check also found restarted sentences. Update the app to review that cleanup "
+        "choice, or keep the original speech."
+    )
+    assert session.render_attempts == 0
+    assert session.status == "awaiting_confirmation"
+
+
+def test_confirm_digest_binds_retake_awareness_only_when_the_new_consent_is_present() -> None:
+    body = ConfirmBody(
+        session_id=uuid.uuid4(),
+        expected_revision=0,
+        plan_version=1,
+        plan_hash="a" * 64,
+        client_event_id="retake-awareness-digest",
+    )
+    assert "speech_cleanup_retakes_aware" not in creator_routes.confirm_digest_input(body)
+
+    aware = body.model_copy(update={"speech_cleanup_retakes_aware": True})
+    assert creator_routes.confirm_digest_input(aware)["speech_cleanup_retakes_aware"] is True
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "recovery_action",
     ["retry_required", "retry_preflight_dispatch"],

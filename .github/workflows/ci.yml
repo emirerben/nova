@@ -950,6 +950,24 @@ jobs:
           mkdir -p ../../../test-results/kri-559/kri-215
           python3 -m pytest tests/incidents/test_request_following_loop.py tests/incidents/test_request_following_private_review.py -q \
             --junitxml=../../../test-results/kri-559/kri-215/api-tests.xml
+      - name: Verify retake-aware speech cleanup and consent recovery
+        if: contains(needs.changes.outputs.journey_ids, 'kri-551-consented-retakes')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/agents/test_retake_detector.py \
+            tests/services/test_speech_cleanup_preflight.py tests/services/test_speech_cleanup_retakes_consent.py \
+            tests/services/test_speech_cleanup_decision.py tests/tasks/test_speech_cleanup_analysis.py \
+            tests/routes/test_creation_threads_speech_cleanup.py tests/kria/test_runtime_v2.py \
+            tests/kria/test_runtime_speech_cleanup_approval.py \
+            tests/kria/test_kri520_receipts.py tests/kria/test_brief_talking_receipts.py \
+            tests/kria/test_brief_marathon_receipts.py tests/tasks/test_kri551_cleanup_review_note.py \
+            tests/routes/test_creator_agent.py -q \
+            | tee ../../../test-results/kri-559/consented-retakes-api-tests.log
       - name: Seal portable fixture inputs for this exact workflow attempt
         if: needs.changes.outputs.journey_needs_native == 'true'
         run: python3 scripts/ci/journey-gate.py seal-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"

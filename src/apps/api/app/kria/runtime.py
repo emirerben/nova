@@ -1706,6 +1706,7 @@ async def _apply_strategy_approval_media(
 
     submitted_analysis_id = body.speech_cleanup_analysis_id
     submitted_choice = body.speech_cleanup_choice
+    reused_recorded_decision = False
     if submitted_analysis_id is None or submitted_choice is None:
         # Follow-up approval after the creator already chose: the projection
         # stopped asking, so the client sends neither. Reuse the recorded one.
@@ -1726,12 +1727,15 @@ async def _apply_strategy_approval_media(
             )
             submitted_analysis_id = reusable.analysis_id
             submitted_choice = reusable.choice
+            reused_recorded_decision = True
 
     result = await evaluate_enforce_mode_decision(
         db,
         item,
         cleanup_analysis_id=submitted_analysis_id,
         cleanup_choice=submitted_choice,
+        cleanup_retakes_aware=body.speech_cleanup_retakes_aware,
+        reused_recorded_decision=reused_recorded_decision,
         resolution=resolution,
     )
     if isinstance(result, SpeechCleanupDecisionConflict):
