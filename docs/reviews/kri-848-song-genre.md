@@ -58,15 +58,21 @@ bash scripts/check-api.sh test tests/kria/test_music_genre_honesty.py \
   tests/evals/test_music_matcher_evals.py -q
 ```
 
-- Branch (2 commits on main `e04ab19ee`): genre file 121 passed; related music, choice
-  gate, length, generative-build and guided-story suites green; whole `tests/kria` on a
-  scratch Postgres 4744 passed, 0 failed (before the last adjacency tightening, which
-  touched only `music_genre.py`).
-- Red control: the same test file copied onto unmodified main `e04ab19ee` gives **76
-  failed, 45 passed**, every failure an honesty assertion (song never named, "tango"
+- Branch (on main `1cfb929d5`): the command above plus `tests/gates/test_reliability_gates.py`
+  gives 338 passed (genre file 177). Related music, choice-gate, length,
+  generative-build and guided-story suites: 578 passed, 1 skipped (DB-only KRI-809 file
+  without a scratch DB). Whole `tests/kria` on a scratch Postgres
+  (`scripts/dev/test-db.sh`): 4805 passed, 6 skipped, 1 xfailed, 0 failed.
+- Red control: the same test file copied onto unmodified main `1cfb929d5` gives **98
+  failed, 79 passed**, every failure an honesty assertion (song never named, "tango"
   never said, the outranked tango track not suggested, no `asked_genre` field), no import
-  or fixture error. The 45 passes are the intended controls (mood-only asks, negated
-  genres, everyday non-music words, a matcher already ranking the tango track first).
+  or fixture error. The 79 passes are the intended controls (mood-only asks, negated
+  genres, everyday and source-sound words that are not a song ask, a matcher already
+  ranking the tango track first).
+- Independent review (separate agent, three rounds): false genre asks ("music for the
+  house tour", "Keep the tango band audible", "Make the music pop"), negations ("no rap,
+  reggaeton or rock", "doesn't have to be tango"), over-claimed fits (enum family alone,
+  "rock climbing" in a rationale) were found, turned into failing cases and fixed.
 - Wrong-content control: a pop track ranked first while a tango track exists must not be
   suggested; a track whose title (not labels) says tango, a `genre: other` track, and a
   generic electronic track for "house" must not be called the asked genre.
