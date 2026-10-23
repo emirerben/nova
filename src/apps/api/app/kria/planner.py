@@ -32,6 +32,7 @@ from app.agents._runtime import ProviderOutcomeUnknownError, RunContext, Termina
 from app.agents._schemas.brief_extractor import BriefExtractionOutput
 from app.agents._schemas.creator_agent import (
     AskUser,
+    DraftVoiceoverScript,
     ProposeStrategy,
     ResolvedCreatorManifest,
     ReviewDecision,
@@ -51,6 +52,7 @@ from app.agents.main_creator import (
     MainCreatorOutput,
 )
 from app.config import settings
+from app.kria import voiceover_script
 from app.kria.brief import (
     BriefCoverageError,
     BriefUpdate,
@@ -715,7 +717,7 @@ def _declares_delegation(outputs, updates) -> bool:  # noqa: ANN001
 
 
 def adapt_creator_action(
-    action: AskUser | ProposeStrategy | ReviewDecision,
+    action: AskUser | ProposeStrategy | ReviewDecision | DraftVoiceoverScript,
     *,
     server_clip_intents: list[ClipIntent] | None = None,
     server_resolved_clip_intents: list[ResolvedClipIntent] | None = None,
@@ -744,6 +746,9 @@ def adapt_creator_action(
             turn_value="question",
             response=action.question,
         )
+    if isinstance(action, DraftVoiceoverScript):
+        # KRI-815: planned by `_plan_voiceover_script`; never a strategy or a draft.
+        return voiceover_script.record_first_plan()
     if isinstance(action, ReviewDecision):
         return KriaTurnPlan(
             mode="respond",
@@ -991,6 +996,19 @@ def _is_voiceover_strategy(strategy: Any) -> bool:
         getattr(strategy, "edit_format", None) in NARRATED_EDIT_FORMATS
         and getattr(strategy, "audio_strategy", None) == "voiceover"
     )
+
+
+def _narrated_renders_once_recorded(manifest: Any, strategy: Any) -> bool:
+    """KRI-815: a narrated voiceover edit would render here once a voiceover is attached.
+
+    Server rollout state only (never this item's media): the narrated format is on, and on an
+    iPhone project its phone compiler is rolled out (`phone_format_pending_voiceover:*`)."""
+    if not settings.narrated_archetype_enabled:
+        return False
+    pending = manifest.capabilities.get(
+        f"phone_format_pending_voiceover:{getattr(strategy, 'edit_format', '')}"
+    )
+    return pending is None or pending.available
 
 
 def _is_lipsync_song_strategy(strategy: Any) -> bool:
@@ -2067,6 +2085,10 @@ async def _load_creator_inputs(
         creative_copy_state=compact_copy_state,
         # KRI-520: bound per Kria turn by the task; None leaves the prompt unchanged.
         reply_language=current_reply_language(),
+        # KRI-815: footage attached and no voiceover (the claim's own predicate).
+        voiceover_script_available=voiceover_script.available(
+            manifest, voiceover_attached=bool(getattr(item, "voiceover_gcs_path", None))
+        ),
         **extra,
     )
     # Do not pin an async DB connection or block the event loop that renews the
@@ -2278,6 +2300,17 @@ async def _plan_from_creator_output(
     wording question while the clip checks run, so a clip picker they end on is asked in
     the same reply instead of one full re-plan later.
     """
+    if isinstance(output.action, DraftVoiceoverScript):
+        return await _plan_voiceover_script(
+            db,
+            thread_id=thread_id,
+            item_id=item_id,
+            creator_id=creator_id,
+            user_message=user_message,
+            manifest=manifest,
+            inputs=inputs,
+            action=output.action,
+        )
     decision = getattr(output, "creative_decision", None)
     # Only the current creator message can authorize a replacement. Brief prose and
     # earlier assistant suggestions are not creator-authored evidence.
@@ -2342,6 +2375,100 @@ async def _plan_from_creator_output(
         if held:
             planned = _with_wording_question(held[0], planned)
     return replace(planned, creative_copy_resolution=resolution)
+
+
+def _creator_words(inputs: _CreatorInputs, user_message: str) -> list[str]:
+    """The creator's own messages this turn saw, oldest first, the current one last."""
+    earlier = [
+        str(row.get("content") or "")
+        for row in getattr(getattr(inputs, "agent_input", None), "conversation", [])
+        if row.get("role") == "user"
+    ]
+    if earlier and earlier[-1].strip() == user_message.strip():
+        earlier.pop()
+    return [*earlier, user_message]
+
+
+def _quoted_by_creator(evidence: str, words: Sequence[str]) -> bool:
+    """Whitespace-insensitive verbatim check: the model's excerpt is the creator's own text."""
+    excerpt = " ".join(evidence.split())
+    return bool(excerpt) and any(excerpt in " ".join(text.split()) for text in words)
+
+
+async def _plan_voiceover_script(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    item_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    user_message: str,
+    manifest: Any,
+    inputs: _CreatorInputs,
+    action: DraftVoiceoverScript | None,
+) -> PlannedKriaTurn:
+    """KRI-815: answer with a footage-grounded script (or the honest record/import ask).
+
+    ``action`` is the Main Creator's script action, or None when a narrated strategy was
+    proposed with no voiceover attached (the doomed-approval gate). Mints no approval, no
+    draft and no Job, and writes nothing to the brief or the item.
+    """
+    words = _creator_words(inputs, user_message)
+    hashes = {"manifest_hash": manifest.manifest_hash, "context_hash": manifest.context_hash}
+    if action is not None and not _quoted_by_creator(action.request_evidence, words):
+        # The model's reading is never the creator's request: ask instead of writing.
+        log.info("kria_voiceover_script_ungrounded", thread_id=str(thread_id))
+        return PlannedKriaTurn(
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="question",
+                response=say(
+                    en="Do you want me to write a voiceover script from your clips?",
+                    tr="Kliplerinden bir seslendirme metni yazmamı ister misin?",
+                ),
+            ),
+            **hashes,
+        )
+    item = await _refetch_item(db, item_id)
+    voiceover_attached = bool(item.voiceover_gcs_path)
+    await db.rollback()
+    if not voiceover_script.available(manifest, voiceover_attached=voiceover_attached):
+        return PlannedKriaTurn(plan=voiceover_script.record_first_plan(), **hashes)
+    clips = list(inputs.intent_clips or []) or await _reload_intent_clips(
+        db, item_id=item_id, creator_id=creator_id
+    )
+    video_ids = {media.media_id for media in manifest.media if media.kind == "video"}
+    pending = [
+        clip.media_id
+        for clip in clips
+        if clip.media_id in video_ids and understanding_incomplete(clip.analysis, kind=clip.kind)
+    ]
+    if pending:
+        # A script written from blank clips would be generic: wait, and re-run the turn.
+        await _kick_clip_understanding(item_id, clips)
+        return PlannedKriaTurn(
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="recovery",
+                response=_clips_still_checking_reply(len(pending)),
+            ),
+            continuable=True,
+            **hashes,
+        )
+    prior = await voiceover_script.latest_script(db, thread_id)
+    await db.rollback()
+    deadline = turn_deadline.get()
+    plan = await voiceover_script.draft_script(
+        thread_id=thread_id,
+        item_id=item_id,
+        creator_id=creator_id,
+        manifest=manifest,
+        clips=clips,
+        creator_words=words,
+        prior=prior,
+        revision_note=(action.revision_note if action is not None else None),
+        deadline_monotonic=(deadline - 5.0) if deadline is not None else None,
+    )
+    return PlannedKriaTurn(plan=plan, **hashes)
 
 
 def _with_wording_question(wording: PlannedKriaTurn, planned: PlannedKriaTurn) -> PlannedKriaTurn:
@@ -2722,6 +2849,29 @@ async def _plan_creator_action(
                     "strategy": hold_strategy.model_copy(update={"opening_title_duration_s": None})
                 }
             )
+    if (
+        isinstance(action, ProposeStrategy)
+        and _is_voiceover_strategy(action.strategy)
+        and _narrated_renders_once_recorded(manifest, action.strategy)
+        # The manifest already says so when the voiceover is in use; otherwise read the
+        # item's own voiceover column, the exact predicate the approval claim uses.
+        and not manifest.has_voiceover
+        and not (await _refetch_item(db, item_id)).voiceover_gcs_path
+    ):
+        # KRI-815: with no voiceover this edit is either refused as "unavailable" or approved
+        # and then cancelled at claim (`voiceover_required`). Neither helps: hand back a
+        # script to record (or ask for the take). No draft, no approval, no Job.
+        log.info("kria_narrated_without_voiceover", thread_id=str(thread_id))
+        return await _plan_voiceover_script(
+            db,
+            thread_id=thread_id,
+            item_id=item_id,
+            creator_id=creator_id,
+            user_message=user_message,
+            manifest=manifest,
+            inputs=inputs,
+            action=None,
+        )
     if isinstance(action, ProposeStrategy):
         # KRI-593: a Voiceover cue ("show X when I say Y") places a clip; it never
         # chooses which clips exist. Every attached video stays unless the creator
@@ -5144,6 +5294,11 @@ async def _plan_live_turn(
         effective_brief=effective,
         **({"batch_questions": True} if batch_questions else {}),
     )
+    if isinstance(output.action, DraftVoiceoverScript):
+        # KRI-815: a script draft or revision is not an edit request. "Make it shorter" is
+        # about the script, so it must not become a timing requirement on the video, and
+        # nothing the brief already holds changes.
+        return planned
     return replace(
         planned,
         brief_updates=updates,

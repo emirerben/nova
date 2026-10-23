@@ -1,0 +1,19 @@
+{
+  "agent": "nova.voiceover.script_writer",
+  "prompt_version": "2026-10-23-grounded",
+  "input": {
+    "brief": "Write a speakable narration script for these 3 clips so I can record it.",
+    "footage_clips": [
+      "Clip 1 (6s): a seated stone statue in a museum hall",
+      "Clip 2 (5s): painted clay pots behind glass",
+      "Clip 3 (7s): a gold mask with blue stripes under a spotlight"
+    ],
+    "target_duration_s": 18
+  },
+  "raw_text": "{\"text\": \"This hall stopped me in my tracks. A huge stone statue, just sitting there like it owns the place. Rows of painted clay pots behind glass, older than anything I own. And then the gold mask, glowing under the spotlight, said to be from 1323 BC.\", \"needs_check\": [{\"phrase\": \"said to be from 1323 BC\", \"reason\": \"The clips do not show a date.\"}]}",
+  "output": {},
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "KRI-815 chat input: one footage line per clip, every claim grounded in a clip line except the date, which the writer lists in needs_check instead of presenting as fact. 18s of footage -> inside the spoken band."
+  }
+}

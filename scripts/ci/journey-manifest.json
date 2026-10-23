@@ -1433,6 +1433,28 @@
         "src/apps/api/tests/tasks/test_render_worker_activity_sql.py",
         "src/apps/api/tests/test_render_worker_wake.py"
       ]
+    },
+    {
+      "id": "kri-815-voiceover-script",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_kri815_voiceover_script_journey.py tests/evals/test_main_creator_evals.py tests/evals/test_voiceover_script_writer_evals.py",
+      "xctests": [
+        "KriaUITests/VoiceoverScriptCardUITests/testRecordWithThisScriptOpensTheVoiceoverStepWithTheScript",
+        "KriaUITests/VoiceoverScriptCardUITests/testWithoutTheCapabilityTheScriptIsReplyText"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/voiceover_script.py",
+        "src/apps/api/app/agents/voiceover_script_writer.py",
+        "src/apps/api/prompts/write_voiceover_script.txt",
+        "src/apps/api/prompts/main_creator.txt",
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/ios/Kria/Core/VoiceoverScript.swift",
+        "src/apps/ios/Kria/Features/VoiceoverScriptCard.swift",
+        "src/apps/ios/Tests/KriaUITests/VoiceoverScriptCardUITests.swift",
+        "src/apps/api/tests/kria/test_kri815_voiceover_script_journey.py",
+        "src/apps/api/tests/fixtures/agent_evals/voiceover_script_writer/golden/kri815_museum_needs_check.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri815_script_request.json"
+      ]
     }
   ]
 }

@@ -270,6 +270,9 @@ final class CreationChatFixture: @unchecked Sendable {
             // KRIA_CHAT_CHOICE_QUESTION: "1" = server advertises choice_questions; "legacy" = it still sends the
             // choice_question payload but does not advertise the capability (old-server text fallback).
             if ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] == "1" { capabilities["choice_questions"] = true }
+            // KRIA_CHAT_VOICEOVER_SCRIPT (KRI-815): "1" = server advertises voiceover_script_cards; "legacy" = it still
+            // sends the voiceover_script payload but does not advertise the capability (old-client text fallback).
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_VOICEOVER_SCRIPT"] == "1" { capabilities["voiceover_script_cards"] = true }
             // KRIA_CHAT_QUESTION_BATCH (KRI-802): the first reply asks the title wording AND the clip picker.
             if ProcessInfo.processInfo.environment["KRIA_CHAT_QUESTION_BATCH"] == "1" {
                 capabilities["choice_questions"] = true
@@ -679,6 +682,24 @@ final class CreationChatFixture: @unchecked Sendable {
                                 ["key": "red_cap", "label": "My friend in the red cap", "op": "order",
                                  "candidate_media_ids": ["fixture-clip", "fixture-clip-2", "fixture-clip-3"], "suggested_media_ids": []],
                             ],
+                        ] as [String: Any],
+                    ])
+                }
+            } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_VOICEOVER_SCRIPT"] != nil {
+                let message = body["message"] as? String ?? ""
+                if message.hasPrefix("I recorded the voiceover") {
+                    // Echo what the server received so the UI test can pin the continuation message.
+                    append("assistant_response", text: "Got it. recorded[\(message)]")
+                } else {
+                    let script = VoiceoverScriptUITestFixture.text
+                    append("assistant_response", text: "Here's a script written from what your clips show. Check before recording, I couldn't confirm these from your clips: \u{201C}1922\u{201D}. Record it with \u{201C}Record with this script\u{201D} or import your own voiceover, then I'll plan the narrated edit around it.\n\n\(script)", payload: [
+                        "turn_id": turnID, "turn_value": "question",
+                        "voiceover_script": [
+                            "version": 1, "script_id": "vos-fixture", "revision": 1, "status": "draft",
+                            "item_id": id, "language": "en", "continuation": "record_or_import",
+                            "source_media_ids": ["fixture-clip"], "text": script,
+                            "lines": VoiceoverScriptUITestFixture.lines,
+                            "needs_check": [["phrase": "1922", "reason": "Not in your clips or your message."]],
                         ] as [String: Any],
                     ])
                 }
@@ -1330,5 +1351,17 @@ enum SongTimelineFixture {
         wav += le32(rate) + le32(rate * 2) + le16(2) + le16(16) + Data("data".utf8) + le32(pcm.count) + pcm
         return (try? wav.write(to: url, options: .atomic)) != nil ? url : nil
     }
+}
+#endif
+
+#if DEBUG
+/// KRI-815: the script the chat fixture hands back for `KRIA_CHAT_VOICEOVER_SCRIPT`.
+enum VoiceoverScriptUITestFixture {
+    static let lines = [
+        "This hall stopped me in my tracks.",
+        "A huge stone statue, just sitting there like it owns the place.",
+        "And the gold mask, found in 1922, glowing under the spotlight.",
+    ]
+    static var text: String { lines.joined(separator: " ") }
 }
 #endif

@@ -49,6 +49,9 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     /// Server sends `choice_question` payloads (tappable options for a conflict in the instructions) and accepts
     /// `choice_selection` on a turn (KRI-282). Nil/false = the plain text question only.
     var choiceQuestions: Bool? = nil
+    /// KRI-815: a reply may carry `voiceover_script` (a script written from the attached clips, with Record/Import).
+    /// Nil/false = the reply text only, which also holds the script.
+    var voiceoverScriptCards: Bool? = nil
     /// Additive server admission metadata. Nil preserves compatibility with a
     /// server predating iOS-only creation rollout.
     var creationMode: CreationMode? = nil
@@ -84,6 +87,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var songLimit: CreationMediaLimit? { media?[CreationMediaRole.song.capabilityKey] }
     var songUploadEnabled: Bool { songLimit != nil }
     var choiceQuestionsEnabled: Bool { choiceQuestions == true }
+    var voiceoverScriptCardsEnabled: Bool { voiceoverScriptCards == true }
     /// The chat composer needs BOTH flags: the server only reports chat-edit as on with rich text, and
     /// a stale cached capability must not enable it when rich text is off.
     var slidePostChatComposerEnabled: Bool { slidePostRichTextEnabled && slidePostChatEditEnabled }
@@ -112,6 +116,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case songFilmingRange = "song_filming_range"
         case songRangeQuestions = "song_range_questions"
         case choiceQuestions = "choice_questions"
+        case voiceoverScriptCards = "voiceover_script_cards"
         case creationMode = "creation_mode", minimumClientProtocol = "minimum_client_protocol"
         case livePlanReviewEnabled = "live_plan_review_enabled", livePlanReviewVersion = "live_plan_review_version"
     }
@@ -149,6 +154,7 @@ extension CreationCapabilities {
         songFilmingRange = try container.decodeIfPresent(Bool.self, forKey: .songFilmingRange)
         songRangeQuestions = try container.decodeIfPresent(Bool.self, forKey: .songRangeQuestions)
         choiceQuestions = try container.decodeIfPresent(Bool.self, forKey: .choiceQuestions)
+        voiceoverScriptCards = try container.decodeIfPresent(Bool.self, forKey: .voiceoverScriptCards)
         creationMode = try container.decodeIfPresent(CreationMode.self, forKey: .creationMode)
         minimumClientProtocol = try container.decodeIfPresent(Int.self, forKey: .minimumClientProtocol)
         livePlanReviewEnabled = try container.decodeIfPresent(Bool.self, forKey: .livePlanReviewEnabled)
