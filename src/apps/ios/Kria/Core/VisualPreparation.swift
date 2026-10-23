@@ -81,6 +81,9 @@ struct VisualPreparationSummary: Equatable, Sendable {
     let waitingForConnection: Bool
     let noun: String
     let surface: Surface
+    /// KRI-820: the latest server-declared deadline among the Visuals still preparing. By then each
+    /// is ready or shows a Retry/Remove failure, so the copy promises that instead of only "a minute".
+    let resolvesBy: Date?
 
     /// - Parameters:
     ///   - assets: the pool as last polled. Failed Visuals are left out: each
@@ -99,6 +102,12 @@ struct VisualPreparationSummary: Equatable, Sendable {
         let kinds = Set(counted.map(\.kind))
         self.noun = nounOverride ?? (kinds == ["image"] ? "photos" : kinds == ["video"] ? "videos" : "visuals")
         self.surface = surface
+        self.resolvesBy = counted.filter { $0.preparationStage != nil }.compactMap(\.analysisDeadline).max()
+    }
+
+    /// The declared bound in the creator's words; nil when the server sent none (older API).
+    private var boundSentence: String? {
+        resolvesBy.map { "Any not ready by \($0.formatted(date: .omitted, time: .shortened)) can be retried or removed." }
     }
 
     var fraction: Double { total > 0 ? Double(ready) / Double(total) : 0 }
@@ -114,15 +123,18 @@ struct VisualPreparationSummary: Equatable, Sendable {
         if waitingForConnection {
             return "Waiting for an internet connection. Uploads pick up again on their own once you’re back online."
         }
-        guard isSlow else {
-            return "Kria looks at each one before it can use it. This usually takes under a minute."
+        let base: String
+        if !isSlow {
+            base = "Kria looks at each one before it can use it. This usually takes under a minute."
+        } else {
+            switch surface {
+            case .addMediaSheet:
+                base = "This is taking longer than usual. Uploaded files are safe, so you can close this and keep chatting. Wait until they’re ready before you create the video."
+            case .editorLibrary:
+                base = "This is taking longer than usual. Uploaded files are safe and unlock here once they’re ready. You can keep editing meanwhile."
+            }
         }
-        switch surface {
-        case .addMediaSheet:
-            return "This is taking longer than usual. Uploaded files are safe, so you can close this and keep chatting. Wait until they’re ready before you create the video."
-        case .editorLibrary:
-            return "This is taking longer than usual. Uploaded files are safe and unlock here once they’re ready. You can keep editing meanwhile."
-        }
+        return boundSentence.map { base + " " + $0 } ?? base
     }
 
     var accessibilityLabel: String { title + ", " + count + ". " + detail }

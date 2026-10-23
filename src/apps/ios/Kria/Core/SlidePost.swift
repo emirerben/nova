@@ -382,10 +382,61 @@ struct SlidePostAsset: Codable, Equatable, Identifiable, Sendable {
     var mediaStatus: String? = nil
     /// When/where the photo or video was taken (KRI-300); nil when the phone sent none.
     var capture: SlidePostAssetCapture? = nil
+    /// KRI-820: why analysis failed (`analysis_timed_out`, …), whether Retry can fix it, and
+    /// while in flight the server's declared time by which it resolves (ISO-8601).
+    var errorCode: String? = nil
+    var retryable: Bool? = nil
+    var analysisDeadlineAt: String? = nil
     enum CodingKeys: String, CodingKey {
-        case id, kind, status, capture
+        case id, kind, status, capture, retryable
         case sourceFilename = "source_filename", displayURL = "display_url", previewURL = "preview_url", sourceURL = "source_url"
         case durationS = "duration_s", mediaStatus = "media_status"
+        case errorCode = "error_code", analysisDeadlineAt = "analysis_deadline_at"
+    }
+}
+
+/// KRI-820: which pool assets may hold a slide post back. Only media the draft actually uses (its
+/// slides and their stickers) can block export or asking Kria; a photo still preparing, or one that
+/// failed or timed out, outside the draft never blocks the ready slides. A photo whose AI analysis
+/// failed but whose bytes the server verified (`media_status == "ready"`) stays placeable, matching
+/// the server's slide routes (`_owned_ready_slide_assets`).
+enum SlidePostAssetGate {
+    static let inFlightStatuses: Set<String> = ["pending", "queued", "uploaded", "processing", "analyzing", "uploading"]
+
+    static func isInFlight(_ asset: SlidePostAsset) -> Bool { inFlightStatuses.contains(asset.status) }
+
+    /// Still preparing inside the server's declared bound (`analysis_deadline_at`). Asking Kria
+    /// waits for these, draft or not: the server proposes from ready rows only, so asking now
+    /// would silently leave out photos the creator just added. Past the bound it no longer waits.
+    static func isAwaited(_ asset: SlidePostAsset, now: Date = Date()) -> Bool {
+        guard isInFlight(asset) else { return false }
+        guard let deadline = asset.analysisDeadlineAt.flatMap(PlanBlock.parseDate) else { return true }
+        return deadline > now
+    }
+
+    static func isUsable(_ asset: SlidePostAsset) -> Bool {
+        guard !["missing", "expired"].contains(asset.mediaStatus ?? "") else { return false }
+        // Verified bytes stay placeable while an analysis-only Retry runs (server keeps media ready).
+        return asset.status == "ready" || (["failed", "queued", "analyzing"].contains(asset.status) && asset.mediaStatus == "ready")
+    }
+
+    /// Needs the creator: Retry or Remove (the row explains which).
+    static func isFailed(_ asset: SlidePostAsset) -> Bool {
+        !isUsable(asset) && (asset.status == "failed" || ["missing", "expired"].contains(asset.mediaStatus ?? ""))
+    }
+
+    static func usedAssetIDs(_ draft: SlidePostDraft?) -> Set<String> {
+        guard let draft else { return [] }
+        var ids = Set(draft.slides.map(\.assetID))
+        for slide in draft.slides {
+            for sticker in slide.edits?.stickers ?? [] { ids.insert(sticker.assetID) }
+        }
+        return ids
+    }
+
+    static func used(_ assets: [SlidePostAsset], by draft: SlidePostDraft?) -> [SlidePostAsset] {
+        let ids = usedAssetIDs(draft)
+        return assets.filter { ids.contains($0.id) }
     }
 }
 /// Mirrors the server's `ClipCapture`: every part may be absent. `captureTime` stays the ISO-8601 string
@@ -673,7 +724,7 @@ private struct SlidePostItemResponse: Decodable {
 
     /// Pool assets that can become slides: everything except the pictures used (or being uploaded) as stickers.
     var slideAssets: [SlidePostAsset] { state?.assets.filter { !isStickerAsset($0) } ?? [] }
-    var readyAssets: [SlidePostAsset] { slideAssets.filter { $0.status == "ready" && $0.mediaStatus != "missing" } }
+    var readyAssets: [SlidePostAsset] { slideAssets.filter(SlidePostAssetGate.isUsable) }
     /// A sticker's picture: referenced by a sticker of any draft we hold, or uploaded by a paste on this device.
     func isStickerAsset(_ asset: SlidePostAsset) -> Bool {
         if let name = asset.sourceFilename, stickerUploadNames.contains(BackgroundUploadCoordinator.displayFilename(name)) { return true }

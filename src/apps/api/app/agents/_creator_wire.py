@@ -248,6 +248,7 @@ def copilot_schema():
             "effect_bundle_id",
             "effect_id",
             "find",
+            "slide_id",
             "fit",
             "kind",
             "label_from",

@@ -36,6 +36,11 @@ ADD_TEXT_EXTRAS = (
     # compiler. They keep the model from guessing a renderer-specific offset.
     "below",
     "after_animation_of",
+    # KRI-818 (slide posts only): the ONE slide a text belongs to, by its stable id
+    # (`slots[i].media_id`) or its pre-edit `slots` index. Resolved to `slide_id`
+    # here so a reorder in the same bundle can never move the text to a neighbour.
+    "slide_id",
+    "slide_index",
 )
 
 
@@ -442,6 +447,17 @@ def coerce_add_text_extras(out: dict, snapshot: dict, state: Any) -> dict | None
             return None
         result["clip_id"] = clip_id
         result.setdefault("style_from", "labels")
+    if "slide_id" in out or "slide_index" in out:
+        from app.agents.editor_ops_v2.slides import resolve_text_slide_target  # noqa: PLC0415
+
+        slide_id = resolve_text_slide_target(out, snapshot, state)
+        if slide_id is None:
+            return None
+        result["slide_id"] = slide_id
+        if out.get("slide_id") is None:
+            # Only a position was given: the compiler re-checks it against the
+            # post-move numbering when the same bundle reorders (KRI-818).
+            result["slide_positional_index"] = out["slide_index"]
     return result
 
 
