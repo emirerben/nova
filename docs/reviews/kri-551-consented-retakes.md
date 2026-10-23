@@ -290,4 +290,7 @@ English and Turkish. The original-case, receipt, cleanup and strict-publication
 focused union passes184 tests against the isolated migrated database, without
 skips. The expanded full mapped retake journey passes1,001 tests with no skips.
 Mandatory preship and fresh exact-head CI are required before landing this
-revision; original physical/live acceptance stays open.
+revision; original physical/live acceptance stays open. A dedicated early offline
+CI step executes the original-case module against the disposable PostgreSQL
+service. Its XML receipt requires all14 cases and rejects skips, so merely mapping
+a database test cannot silently turn unavailable database access into a green gate.

@@ -632,6 +632,26 @@ jobs:
             tests/tasks/test_render_worker_activity_sql.py \
             tests/test_render_worker_wake.py -q \
             | tee ../../../test-results/kri-559/kri-798-render-worker-restart.log
+      - name: Verify original named-cut receipts before native allocation
+        if: contains(needs.changes.outputs.journey_ids, 'kri-551-consented-retakes')
+        working-directory: src/apps/api
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_journey_test
+          STORAGE_BUCKET: nova-test
+          NOVA_EVAL_MODE: replay
+          GEMINI_API_KEY: ci-noop
+          OPENAI_API_KEY: ci-noop
+        run: |
+          set -o pipefail
+          python -m alembic upgrade head
+          python -m pytest tests/kria/test_kri787_merope_t1_runtime_postgres.py -q \
+            --junitxml=../../../test-results/kri-559/retake-original-case.xml
+          python - <<'PY'
+          from xml.etree import ElementTree
+          cases = ElementTree.parse("../../../test-results/kri-559/retake-original-case.xml").findall(".//testcase")
+          if len(cases) < 14 or any(case.find("skipped") is not None for case in cases):
+              raise SystemExit("Original named-cut regression must execute all 14 cases without skips")
+          PY
       - name: Verify watermark-aware caption compile and its device fixture
         if: contains(needs.changes.outputs.journey_ids, 'kri-548-caption-watermark')
         working-directory: src/apps/api
