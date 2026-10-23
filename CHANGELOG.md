@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.51.0] - 2026-10-23
+
+### Changed
+- test(kria): Merope M2 replay runs through carry_moment_ask, stale xfails retired (KRI-850) (#1767) <!-- release-pr: 1767 -->
+
 ## [0.81.50.0] - 2026-10-23
 
 ### Changed
