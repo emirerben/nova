@@ -5,7 +5,7 @@ Not an original-footage replay or live-model test. Prepare runs the real-Postgre
 approval journey, phone compiler, immutable device pin and publication guard.
 Export that exact pinned recipe with the existing native package harness:
 
-  src/apps/api/.venv/bin/python scripts/ios/kri-698-simpler-version.py prepare OUT
+  src/apps/api/.venv/bin/python scripts/ios/kri-698-simpler-version.py prepare OUT [--automatic]
   KRIA_AUDIO_PARITY_DIR=OUT swift test --package-path src/apps/ios/Packages/KriaMediaEngine \
     --filter AudioParityFixtureTests
   src/apps/api/.venv/bin/python scripts/ios/kri-698-simpler-version.py compare OUT
@@ -40,7 +40,7 @@ def ffmpeg(*args: str) -> bytes:
     ).stdout
 
 
-def prepare(out: Path) -> None:
+def prepare(out: Path, *, automatic: bool = False) -> None:
     out.mkdir(parents=True, exist_ok=True)
     # A failed fresh export must never leave a previous run's movie as evidence.
     for name in ("approved", "missing_title"):
@@ -73,7 +73,10 @@ def prepare(out: Path) -> None:
             "bash",
             "scripts/check-api.sh",
             "test",
-            "tests/kria/test_runtime_simpler_version_loop.py::"
+            "tests/kria/test_runtime_automatic_simplification.py::"
+            "test_first_turn_automatic_omission_reaches_native_phone_recipe"
+            if automatic
+            else "tests/kria/test_runtime_simpler_version_loop.py::"
             "test_simpler_approval_compiles_and_pins_while_full_request_still_refuses",
             "-q",
         ],
@@ -209,5 +212,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("prepare", "compare"))
     parser.add_argument("out", type=Path)
+    parser.add_argument(
+        "--automatic",
+        action="store_true",
+        help="exercise first-turn automatic omission instead of the explicit simpler answer",
+    )
     args = parser.parse_args()
-    {"prepare": prepare, "compare": compare}[args.command](args.out.resolve())
+    if args.command == "prepare":
+        prepare(args.out.resolve(), automatic=args.automatic)
+    else:
+        compare(args.out.resolve())

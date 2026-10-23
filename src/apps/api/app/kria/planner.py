@@ -19,7 +19,7 @@ import unicodedata
 import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import structlog
@@ -681,6 +681,9 @@ class PlannedKriaTurn:
     # KRI-142: what the server strategy check repaired or left out, so the
     # receipts reply still says it when it replaces the model's summary.
     policy_notices: tuple[str, ...] = ()
+    # Server compiler evidence, never model-authored: exact text removed because
+    # the selected renderer cannot draw that field. Runtime binds the same omission.
+    policy_omitted_texts: dict[str, tuple[str, ...]] = field(default_factory=dict)
     creative_copy_resolution: dict | None = None
     # KRI-709: the plan is a "still checking, come back later" reply, and the work behind
     # it can still progress (cached vision answers, clip analysis or song alignment in
@@ -2598,6 +2601,7 @@ async def _plan_creator_action(
                     held_wording.append(copy_turn)
                 break
     policy_notices: tuple[str, ...] = ()
+    policy_omitted_texts: dict[str, tuple[str, ...]] = {}
     server_song_takes: list[dict[str, Any]] | None = None
     server_song_captions: str | None = None
     if isinstance(action, ProposeStrategy) and action.strategy.pinned_texts:
@@ -2687,6 +2691,7 @@ async def _plan_creator_action(
         # KRI-142: the same server compile v1 runs, so a phone render never
         # silently drops what it can't draw while the reply claims it.
         check_kwargs: dict[str, Any] = {
+            "simplify_unsupported": True,
             **({"ask_before_simplifying": True} if settings.brief_binding_for(creator_id) else {}),
             # KRI-476: also ask before a repair drops a title hold / full-screen ask the
             # creator stated. Off with the choice-questions flag: identical to before.
@@ -2794,7 +2799,22 @@ async def _plan_creator_action(
                     context_hash=manifest.context_hash,
                 )
         policy_notices = checked.notices
-        summary = " ".join([action.summary.strip(), *policy_notices]).strip()
+        for omitted_field in checked.omitted_fields:
+            value = getattr(action.strategy, omitted_field)
+            if omitted_field in {"opening_title", "closing_title"} and value:
+                policy_omitted_texts[omitted_field] = (value,)
+            elif omitted_field == "shot_labels" and value:
+                policy_omitted_texts[omitted_field] = tuple(value)
+            elif omitted_field == "pinned_texts" and value:
+                policy_omitted_texts[omitted_field] = tuple(pin.text for pin in value)
+        summary = " ".join(
+            [
+                say(en="I prepared a simpler draft.", tr="Daha sade bir taslak hazırladım.")
+                if checked.omitted_fields
+                else action.summary.strip(),
+                *policy_notices,
+            ]
+        ).strip()[:1000]
         action = action.model_copy(update={"strategy": checked.strategy, "summary": summary})
         # KRI-374: user-song lip-sync -- never place an uncertain take at a guessed time.
         gate = await _song_order_gate(
@@ -3196,6 +3216,7 @@ async def _plan_creator_action(
             manifest_hash=manifest.manifest_hash,
             context_hash=manifest.context_hash,
             policy_notices=policy_notices,
+            policy_omitted_texts=policy_omitted_texts,
         )
     if (
         isinstance(action, ProposeStrategy)
@@ -3224,6 +3245,7 @@ async def _plan_creator_action(
         manifest_hash=manifest.manifest_hash,
         context_hash=manifest.context_hash,
         policy_notices=policy_notices,
+        policy_omitted_texts=policy_omitted_texts,
     )
 
 

@@ -38,6 +38,8 @@ struct CameraRollCollectionView: View {
     @State private var tasteAvailable = false
     @State private var confirmsUpload = false
     @State private var cacheOnly = true
+    @State private var missingAnalysisCount = 0
+    @State private var readyVideoCount = 0
     @State private var metadataElapsedMs = 0.0
     @State private var resumedCollection = false
     private var metadataOnly: Bool {
@@ -102,8 +104,9 @@ struct CameraRollCollectionView: View {
             .sheet(isPresented: $showsStories) {
                 if let stories {
                     CameraRollStoriesView(api: api, collection: collection, result: stories, cacheOnly: cacheOnlyRequired || cacheOnly, onSelected: onSelected, onReviewed: { reviewed in
-                        if let saved = collection.matchingSavedIdeas {
-                            collection.savedIdeas = SavedCameraRollIdeas(revision: saved.revision, selection: saved.selection, query: saved.query, researchTopic: saved.researchTopic, result: reviewed)
+                        if var saved = collection.matchingSavedIdeas {
+                            saved.result = reviewed
+                            collection.savedIdeas = saved
                             persist()
                         }
                     })
@@ -270,6 +273,12 @@ struct CameraRollCollectionView: View {
                 }
                 .buttonStyle(KriaPrimaryButtonStyle()).disabled(!canFindIdeas || collectionChanged)
                 .accessibilityIdentifier("collection-find-stories")
+                if missingAnalysisCount > 0 && readyVideoCount > 0 {
+                    Button { work = Task { await findStories(allowPartial: true) } } label: {
+                        Text("Use \(readyVideoCount) ready \(readyVideoCount == 1 ? "video" : "videos")").frame(maxWidth: .infinity)
+                    }.buttonStyle(KriaSecondaryButtonStyle()).disabled(collectionChanged)
+                        .accessibilityIdentifier("collection-use-ready-videos")
+                }
                 if collection.matchingSavedIdeas != nil {
                     Button("Find more ideas") { showsOptions = true }
                         .font(KriaFont.body(14)).frame(minHeight: 44)
@@ -326,6 +335,7 @@ struct CameraRollCollectionView: View {
     @MainActor private func newCollection() {
         persist()
         collection = try! CameraRollCollection(name: "My outing", identifiers: [])
+        missingAnalysisCount = 0; readyVideoCount = 0
         revision = 0; providers = [:]; groupDrafts = [:]; stories = nil; status = nil; error = nil; collectionChanged = false; query = ""; researchTopic = ""
         persist()
     }
@@ -338,13 +348,15 @@ struct CameraRollCollectionView: View {
             providers[id] = item
             if !identifiers.contains(id) { identifiers.append(id) }
         }
+        missingAnalysisCount = 0; readyVideoCount = 0
         do { try collection.select(identifiers); persist(); work = Task { await refreshMetadata() } }
-        catch { self.error = "Choose at most 50 items." }
+        catch { self.error = "Choose at most \(CameraRollCollection.maximumCount) items." }
     }
 
     @MainActor private func remove(_ id: String) {
         guard !running else { return }
         try? collection.select(collection.entries.map(\.id).filter { $0 != id })
+        missingAnalysisCount = 0; readyVideoCount = 0
         providers.removeValue(forKey: id)
         groupDrafts.removeValue(forKey: id)
         persist()
@@ -437,15 +449,17 @@ struct CameraRollCollectionView: View {
         do {
             try collection.select(collection.entries.map(\.id) + assets.map { "saved:\($0.id)" })
             for asset in assets { collection.bind(asset, to: "saved:\(asset.id)") }
+            missingAnalysisCount = 0; readyVideoCount = 0
             persist()
-        } catch { self.error = "Choose at most 50 items." }
+        } catch { self.error = "Choose at most \(CameraRollCollection.maximumCount) items." }
     }
 
-    @MainActor private func findStories(reusingSavedIdeas: Bool = false) async {
+    @MainActor private func findStories(reusingSavedIdeas: Bool = false, allowPartial: Bool = false) async {
         guard !fixture, !metadataOnly else { return }
         guard !running else { return }
         let previous = reusingSavedIdeas ? collection.matchingSavedIdeas : nil
         running = true; error = nil; status = nil; collectionChanged = false
+        missingAnalysisCount = 0; readyVideoCount = 0
         defer { running = false }
         do {
             let saved = try await api.saveCameraRollCollection(collection, revision: revision)
@@ -462,13 +476,22 @@ struct CameraRollCollectionView: View {
                 offset = next
             } while offset < CameraRollCollection.maximumCount
             guard unavailable.isEmpty else { status = "\(unavailable.count) uploads are unavailable. Remove or restore them before continuing."; return }
-            if !missing.isEmpty { status = "Ideas use the available footage. \(missing.count) clips aren't included yet." }
+            missingAnalysisCount = missing.count
+            let videos = collection.entries.filter { ($0.savedAsset?.kind ?? $0.metadata?.kind) == "video" }.count
+            readyVideoCount = max(0, videos - missing.count)
+            let savedPartialConsent = previous?.allowPartialAnalysis == true
+                && Set(previous?.result.coverage.unindexed ?? []) == missing
+            let requestedPartial = allowPartial || savedPartialConsent
+            guard missing.isEmpty || requestedPartial else {
+                status = "\(missing.count) videos still need analysis. Wait for them, or use the ready videos."
+                return
+            }
             let topic = previous.map { $0.researchTopic ?? "" } ?? researchTopic.trimmingCharacters(in: .whitespacesAndNewlines)
-            let requestedQuery = previous?.query ?? (query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Find a story in this outing" : query)
-            let found = try await api.cameraRollStories(id: collection.id, revision: revision, query: requestedQuery, cacheOnly: previous != nil || cacheOnlyRequired || cacheOnly, researchTopic: topic.isEmpty ? nil : topic)
+            let requestedQuery = previous?.query ?? (query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Suggest different content ideas from this outing" : query)
+            let found = try await api.cameraRollStories(id: collection.id, revision: revision, query: requestedQuery, cacheOnly: previous != nil || cacheOnlyRequired || cacheOnly, researchTopic: topic.isEmpty ? nil : topic, allowPartialAnalysis: requestedPartial)
             try Task.checkCancellation()
             if let selection = collection.remoteSelection {
-                collection.savedIdeas = SavedCameraRollIdeas(revision: revision, selection: selection, query: requestedQuery, researchTopic: topic.isEmpty ? nil : topic, result: found)
+                collection.savedIdeas = SavedCameraRollIdeas(revision: revision, selection: selection, query: requestedQuery, researchTopic: topic.isEmpty ? nil : topic, result: found, allowPartialAnalysis: requestedPartial)
                 persist()
             }
             stories = found
@@ -512,6 +535,7 @@ struct CameraRollCollectionView: View {
             try collection.localCopy().save(in: originals)
             try rebuilt.save(in: originals)
             collection = rebuilt; revision = latest.revision
+            missingAnalysisCount = 0; readyVideoCount = 0
             providers = [:]; groupDrafts = [:]; stories = nil; collectionChanged = false; error = nil
             status = "Opened the latest collection. Your local changes are saved separately."
             persist()
@@ -567,6 +591,7 @@ struct CameraRollCollectionView: View {
         do {
             collection = try CameraRollCollection.load(id: id, in: originals, sharesCaptureContext: ClipCaptureSetting.isEnabled())
             resumedCollection = true
+            missingAnalysisCount = 0; readyVideoCount = 0
             query = collection.savedIdeas?.query ?? ""; researchTopic = collection.savedIdeas?.researchTopic ?? ""
             collectionChanged = false
             revision = collection.serverRevision ?? 0; providers = [:]; groupDrafts = [:]; stories = nil; status = nil; error = nil

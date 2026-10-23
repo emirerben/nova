@@ -25,7 +25,8 @@ struct SavedCameraRollIdeas: Codable, Sendable {
     let selection: CameraRollCollectionSelection
     let query: String
     let researchTopic: String?
-    let result: CameraRollStories
+    var result: CameraRollStories
+    var allowPartialAnalysis: Bool? = nil
 }
 
 extension CameraRollCollection {

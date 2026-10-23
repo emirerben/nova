@@ -254,7 +254,7 @@
     {
       "id": "slide-post-binding-recovery",
       "needs_native": true,
-      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/routes/test_slide_post_binding_save_postgres.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/evals/test_edit_copilot_evals.py",
+      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/routes/test_slide_post_binding_save_postgres.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/routes/test_slide_post_chat_edit_route.py tests/evals/test_edit_copilot_evals.py",
       "xctests": [
         "KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave",
         "KriaTests/SlidePostFramingTests/testEncodingAlwaysWritesTheFramingKeySoAClearIsNeverMistakenForAnOlderApp",
@@ -296,6 +296,9 @@
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_aspect_square.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_aspect_ig_9x16_refused.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_fit_all_blur.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_legacy_seen_captions.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_legacy_seen_captions_tr.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_legacy_seen_ideas.json",
         "src/apps/api/tests/evals/test_edit_copilot_evals.py"
       ]
     },
@@ -983,7 +986,7 @@
     {
       "id": "kri-721-approval-readiness",
       "needs_native": false,
-      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py",
+      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py",
       "paths": [
         "src/apps/api/app/kria/approval_readiness.py",
         "src/apps/api/app/kria/planner.py",
@@ -992,7 +995,9 @@
         "src/apps/api/app/kria/render_retry.py",
         "src/apps/api/app/tasks/kria_runtime.py",
         "src/apps/api/app/config.py",
-        "src/apps/api/tests/kria/test_approval_readiness_postgres.py"
+        "src/apps/api/tests/kria/test_approval_readiness_postgres.py",
+        "src/apps/api/tests/kria/test_automatic_strategy_fallback.py",
+        "src/apps/api/tests/kria/test_runtime_automatic_simplification.py"
       ]
     },
     {
@@ -1181,7 +1186,10 @@
         "KriaTests/CameraRollCollectionTests/testSelectionResumeCorrectionsAndRemoval",
         "KriaTests/CameraRollCollectionTests/testMissingMetadataRevocationAndPrivacySwitch",
         "KriaTests/CameraRollCollectionTests/testBoundedSelectionAndUnselectedMetadata",
-        "KriaTests/CameraRollCollectionTests/testTimeGroupsAndExplicitCorrectionSurviveMetadataRefresh"
+        "KriaTests/CameraRollCollectionTests/testTimeGroupsAndExplicitCorrectionSurviveMetadataRefresh",
+        "KriaTests/CameraRollCollectionTests/testFiveHundredItemsSurviveResume",
+        "KriaUITests/CameraRollCollectionUITests/testPartiallyIndexedCollectionWaitsForExplicitPartialChoice",
+        "KriaUITests/CameraRollStoriesUITests/testThreeIdeasRemainIndependentWhenOneIsRejected"
       ],
       "paths": [
         "src/apps/api/app/agents/camera_roll_stories.py",

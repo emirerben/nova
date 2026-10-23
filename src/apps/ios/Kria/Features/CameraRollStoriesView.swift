@@ -30,8 +30,11 @@ struct CameraRollStoriesView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                if !result.coverage.incompleteSpeech.isEmpty || !result.coverage.unindexed.isEmpty {
-                    Label("Some footage needs checking", systemImage: "info.circle")
+                if !result.coverage.unindexed.isEmpty {
+                    Label("\(result.coverage.unindexed.count) \(result.coverage.unindexed.count == 1 ? "video wasn’t" : "videos weren’t") included because analysis isn’t ready.", systemImage: "info.circle")
+                        .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                } else if !result.coverage.incompleteSpeech.isEmpty {
+                    Label("Some audio needs checking", systemImage: "info.circle")
                         .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
                 }
                 if stories.allSatisfy(\.rejected) { ContentUnavailableView("No story to suggest", systemImage: "photo.stack", description: Text("Try a smaller collection or a more specific story. You can also create a video from your chosen footage in chat.")) }

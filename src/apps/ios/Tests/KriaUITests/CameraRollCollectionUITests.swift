@@ -9,7 +9,7 @@ final class CameraRollCollectionUITests: XCTestCase {
         XCTAssertFalse(app.switches.matching(NSPredicate(format: "identifier BEGINSWITH 'collection-analysis-'")).firstMatch.exists)
         app.buttons["collection-options"].tap()
         app.buttons["Edit groups"].tap()
-        let group = app.textFields["collection-group-fixture-video"]
+        let group = app.textFields.matching(identifier: "collection-group-fixture-video").firstMatch
         group.tap()
         group.press(forDuration: 1.2)
         if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
@@ -24,8 +24,9 @@ final class CameraRollCollectionUITests: XCTestCase {
         XCTAssertTrue(app.buttons["collection-options"].waitForExistence(timeout: 10))
         app.buttons["collection-options"].tap()
         app.buttons["Edit groups"].tap()
-        XCTAssertTrue(app.textFields["collection-group-fixture-video"].waitForExistence(timeout: 10))
-        XCTAssertTrue((app.textFields["collection-group-fixture-video"].value as? String ?? "").contains("Evening"))
+        XCTAssertTrue(app.textFields.matching(identifier: "collection-group-fixture-video").firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textFields.matching(identifier: "collection-group-fixture-video").firstMatch.isHittable)
+        XCTAssertTrue((app.textFields.matching(identifier: "collection-group-fixture-video").firstMatch.value as? String ?? "").contains("Evening"))
         app.buttons["collection-groups-done"].tap()
         XCTAssertFalse(app.buttons["collection-remove-fixture-photo"].exists)
         XCTAssertTrue(app.buttons["collection-find-stories"].exists)
@@ -36,13 +37,18 @@ final class CameraRollCollectionUITests: XCTestCase {
         evidence.lifetime = .keepAlways
         add(evidence)
     }
-    func testPartiallyIndexedCollectionStillOffersStories() {
+    func testPartiallyIndexedCollectionWaitsForExplicitPartialChoice() {
         let app = XCUIApplication()
         app.launchArguments = ["-camera-roll-collection-ready", "-collection-ready-reset"]
         app.launch()
         XCTAssertTrue(app.buttons["collection-find-stories"].waitForExistence(timeout: 10))
         app.buttons["collection-find-stories"].tap()
-        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10), "One clip without timed moments must not block the usable footage")
+        let ready = app.buttons["collection-use-ready-videos"]
+        XCTAssertTrue(ready.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["Boat journey"].exists, "Full-collection ideas must wait for missing analysis")
+        ready.tap()
+        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["1 video wasn’t included because analysis isn’t ready."].exists)
     }
 
     func testSavedIdeasSurviveRelaunchWithoutReselectingFootage() {
@@ -52,7 +58,16 @@ final class CameraRollCollectionUITests: XCTestCase {
         let find = app.buttons["collection-find-stories"]
         XCTAssertTrue(find.waitForExistence(timeout: 10))
         find.tap()
+        let ready = app.buttons["collection-use-ready-videos"]
+        XCTAssertTrue(ready.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["Boat journey"].exists)
+        ready.tap()
         XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        let ideasNavigation = app.navigationBars["Story ideas"]
+        ideasNavigation.buttons["Done"].tap()
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: ideasNavigation)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed)
+        XCTAssertTrue(app.buttons["View saved ideas"].waitForExistence(timeout: 10))
         app.terminate()
         app.launchArguments = ["-camera-roll-collection-ready"]
         app.launch()
@@ -67,6 +82,29 @@ final class CameraRollCollectionUITests: XCTestCase {
         add(shot)
     }
 
+    func testSavedPartialIdeasRequireNewChoiceWhenCoverageChanges() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-camera-roll-collection-ready", "-collection-ready-reset"]
+        app.launch()
+        let find = app.buttons["collection-find-stories"]
+        XCTAssertTrue(find.waitForExistence(timeout: 10))
+        find.tap()
+        let ready = app.buttons["collection-use-ready-videos"]
+        XCTAssertTrue(ready.waitForExistence(timeout: 10))
+        ready.tap()
+        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        app.terminate()
+        // Same number of missing clips, but a different excluded source: old
+        // consent cannot silently authorize the changed coverage.
+        app.launchArguments = ["-camera-roll-collection-ready", "-collection-coverage-changed"]
+        app.launch()
+        let saved = app.buttons["View saved ideas"]
+        XCTAssertTrue(saved.waitForExistence(timeout: 10))
+        saved.tap()
+        XCTAssertTrue(app.buttons["collection-use-ready-videos"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["Boat journey"].exists)
+    }
+
     func testUnavailableAnalysisIsNotAnEditConflict() {
         let app = XCUIApplication()
         app.launchArguments = ["-camera-roll-collection-ready", "-collection-ready-reset", "-collection-cache-miss"]
@@ -74,6 +112,9 @@ final class CameraRollCollectionUITests: XCTestCase {
         let find = app.buttons["collection-find-stories"]
         XCTAssertTrue(find.waitForExistence(timeout: 10))
         find.tap()
+        let ready = app.buttons["collection-use-ready-videos"]
+        XCTAssertTrue(ready.waitForExistence(timeout: 10))
+        ready.tap()
         XCTAssertTrue(app.staticTexts["This footage needs analysis. Your collection is saved; new analysis is unavailable right now."].waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'edit changed elsewhere'")).firstMatch.exists)
         XCTAssertTrue(app.textFields["collection-name"].exists)

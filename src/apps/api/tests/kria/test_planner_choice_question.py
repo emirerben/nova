@@ -92,7 +92,9 @@ async def _turn(
     monkeypatch.setattr(
         planner,
         "check_strategy_for_runtime_v2",
-        lambda _manifest, strategy: CheckedStrategy(strategy=strategy, notices=()),
+        lambda _manifest, strategy, *, simplify_unsupported=False: CheckedStrategy(
+            strategy=strategy, notices=()
+        ),
     )
     return await planner._plan_from_creator_output(
         SimpleNamespace(),

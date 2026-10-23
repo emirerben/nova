@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.59.0] - 2026-10-23
+
+### Changed
+- test(ios): use readable media for upload preparation guard (#1774) <!-- release-pr: 1774 -->
+
+## [0.81.58.0] - 2026-10-23
+
+### Changed
+- fix(slides): give the slide copilot what each ready photo shows (KRI-817) (#1769) <!-- release-pr: 1769 -->
+
+## [0.81.57.0] - 2026-10-23
+
+### Fixed
+- fix(kria): render supported edits when optional requests are unavailable (#1752) <!-- release-pr: 1752 -->
+
+## [0.81.56.0] - 2026-10-23
+
+### Fixed
+- fix(camera-roll): support 500 uploads and distinct content ideas (KRI-731) (#1747) <!-- release-pr: 1747 -->
+
 ## [0.81.55.0] - 2026-10-23
 
 ### Changed

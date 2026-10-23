@@ -185,11 +185,15 @@ never mistakes an unavailable cached analysis for an editor change.
 
 The native collection keeps footage review before idea selection (KRI-853). Optional
 direction/research/grouping live in options. Account-scoped snapshots retain the exact
-selection, query and last reviewed result; **View saved ideas** revalidates the selection,
+selection, query, explicit partial-analysis choice and last reviewed result;
+**View saved ideas** revalidates the selection,
 source availability and cached response without new model work. Selection/name/source
 changes invalidate the local shortcut. Opening a genuinely newer server collection is
 explicit and retains the previous local state as a separate collection. Legacy local
 snapshots without saved-idea context remain readable.
+Partial-consent reuse requires the same excluded-video IDs, not merely the same count;
+changed coverage offers a fresh ready-video choice. Catalogue capacity remains 500;
+selected-story rendering keeps its separate bound.
 
 Stories support review, exact-interval replacement/order/removal, original/muted audio,
 rejection and selection. Selection prepares the common revisioned draft, with a server-owned
