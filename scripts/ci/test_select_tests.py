@@ -775,7 +775,7 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/prompts/analyze_clip.txt",
-                (True, "covered", "kri-625-moment-quality"),
+                (True, "covered", "kri-845-clip-detail-evidence,kri-625-moment-quality"),
             ),
             (
                 "src/apps/api/prompts/edit_copilot.txt",

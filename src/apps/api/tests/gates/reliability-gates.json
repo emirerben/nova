@@ -2400,8 +2400,64 @@
         "A skip the clip-intent planner drops (exclusion_dropped) has no intent for a picker answer to bind to: it keeps the free-text notice.",
         "A resolver question that is text-only (no clip picker) does not carry the skip rows; they are asked on the next turn.",
         "Thread events and the earlier-draft read are stubbed in the turn tests (the earlier-draft read has its own Postgres test in test_kri761_look_alike_exclusions.py).",
-        "Blur is still not in any clip record: a measured sharpness fact was calibrated on 170 kit clips and rejected (M1_04 ranks 8th; its sharp look-alike M1_06 is only 6% sharper)."
+        "Blur is still not in any clip record: a measured sharpness fact was calibrated on 170 kit clips and rejected (M1_04 ranks 8th; its sharp look-alike M1_06 is only 6% sharper). KRI-845 adds the analyzer's own model-judged visual_quality instead of a measurement."
       ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-845-clip-detail-evidence",
+      "tickets": [
+        "KRI-845",
+        "KRI-761",
+        "KRI-807"
+      ],
+      "symptom": "The clip record never said what is in a clip, what the people do, or how it looks, so the resolver could not tell look-alikes apart: cafe M1 \"skip the clip where Caro bends and puts the plate down\" could not tell M1_05 from M1_08 (the clip pinned FIRST: the only one with a black tray), Don Julio M1 \"the big wooden menus\" read as \"waiter carrying a tray\", and \"the blurry shot of the empty table\" matched nothing.",
+      "boundary": "persistence",
+      "status": "open_pr",
+      "owner": "KRI-845",
+      "journey": "kri-845-clip-detail-evidence",
+      "paths": [
+        "src/apps/api/app/agents/clip_metadata.py",
+        "src/apps/api/app/agents/clip_request_resolver.py",
+        "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
+        "src/apps/api/app/pipeline/clip_cache.py",
+        "src/apps/api/app/schemas/clip_understanding.py",
+        "src/apps/api/app/services/clip_understanding.py",
+        "src/apps/api/app/services/creator_sessions.py",
+        "src/apps/api/prompts/analyze_clip.txt",
+        "src/apps/api/prompts/clip_request_resolver.txt",
+        "src/apps/api/tests/fixtures/kri845_m1_clip_detail.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri845_clip_detail_evidence.py",
+        "tests/agents/test_clip_metadata.py",
+        "tests/kria/test_kri761_look_alike_exclusions.py",
+        "tests/kria/test_kri807_unmatched_exclusion_picker.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Authored analyzer outputs (props / actions / visual_quality) from the footage of the cafe and Don Julio M1 kits (frames + local sharpness, no model), layered on the Don Julio prod records, through the real ClipMetadataAgent.parse, analyze_clip shim, understanding_payload, clip_record, the REAL rendered resolver prompt and the real clip-intent planner, resolution, exclusion and runtime-v2 planner code; only the provider transport is a stand-in that matches rules over the records in the prompt. Red on origin/main (the three fields do not exist), green after: the cafe skip drops M1_05 only, the tray clip stays first, no picker; Don Julio menus resolve to M1_09 and the blurry pan goes without a picker. Negative controls on the records as main wrote them (both cafe pickers, the KRI-807 picker), and wrong-evidence controls.",
+        "live_model": "Not run; no paid calls. Needs one bounded development-ledger check (about 21 clips through clip_metadata plus the two resolver calls, about $0.10 by the cost-control price table): docs/reviews/kri-845-clip-detail.md.",
+        "native_output": "n/a: server-side clip records. A fresh-chat iPhone re-send of cafe M1 and Don Julio M1 after the deploy is pending (older chats keep their old records).",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "records written before the change gain no key (prompt view and chat evidence byte-identical)",
+        "drifted analyzer values (string for list, object, None) never fail the parse; comma strings split",
+        "role markers, fences and runaway lists are defanged and capped",
+        "a skip that matches both look-alikes asks and never offers the pinned clip",
+        "evidence that puts the put-down, or the tray, on the wrong clip: asks, M1_08 kept",
+        "cafe and Don Julio on the records as main wrote them: nothing dropped, the pickers ask",
+        "the sharp look-alike of the blurry pan (fast pan, stays sharp) plays"
+      ],
+      "neighbours_gap": [
+        "Gemini's real props / actions / visual_quality for the kit footage are authored, not observed; the stand-in resolver proves the pipeline delivers the evidence, not that Gemini reads it.",
+        "KNOWN LIMIT: if the tray AND the put-down are both read onto the wrong clips, the answer is self-consistent and a confident skip drops the pinned clip without a question (pinned by test_known_limit_fully_swapped_evidence_is_followed_not_second_guessed).",
+        "Clips analysed before the deploy keep their records (ANALYSIS_VERSION is not bumped, so no prod-wide paid re-analysis): only fresh attaches carry the fields.",
+        "No deterministic number separates a motion-smeared clip from a sharp look-alike (Don Julio M1_04 vs M1_06); blur is the model's judgment."
+      ],
+      "follow_ups": [],
       "red_control": "not_applicable"
     },
     {

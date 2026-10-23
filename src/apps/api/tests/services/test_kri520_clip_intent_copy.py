@@ -349,7 +349,7 @@ def test_resolver_prompt_gets_the_language_line_only_for_turkish() -> None:
 
 def test_prompt_versions_moved_with_the_new_prompt_tail() -> None:
     assert ClipIntentPlannerAgent.spec.prompt_version == "2026-10-21.1"  # KRI-552
-    assert ClipRequestResolverAgent.spec.prompt_version == "2026-10-19.1"  # KRI-612/613/766
+    assert ClipRequestResolverAgent.spec.prompt_version == "2026-10-23.1"  # KRI-612/613/766/845
 
 
 # ── grounding folds Turkish case ────────────────────────────────────────────────────
