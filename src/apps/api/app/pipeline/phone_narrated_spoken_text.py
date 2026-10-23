@@ -21,6 +21,7 @@ from app.pipeline.phone_spoken_text import (
     _text_boxes,
     caption_boxes,
     find_spoken_word_matches,
+    spoken_cue_length,
     spoken_text_element,
 )
 from app.pipeline.render_geometry import NormalizedBox
@@ -56,7 +57,18 @@ def _ask_occurrence(ask: SpokenTextAsk) -> str | int | None:
 def _selected_match(
     ask: SpokenTextAsk, words: Sequence[Any]
 ) -> tuple[str, float, float] | tuple[None, str]:
-    matches = find_spoken_word_matches(words, ask.triggers)
+    # An ask's triggers are alternative cues for one moment, not a list of moments: N2's
+    # "1" and "leave before 11" both name rule one (PR #1758). The longest cue heard
+    # decides; a shorter one counts only when no longer cue is heard at all, so a bare
+    # number never outvotes its phrase and a phrase said twice is never hidden behind it.
+    by_length: dict[int, list[str]] = {}
+    for trigger in ask.triggers:
+        by_length.setdefault(spoken_cue_length(trigger), []).append(trigger)
+    matches: list[tuple[str, float, float]] = []
+    for length in sorted(by_length, reverse=True):
+        matches = find_spoken_word_matches(words, by_length[length])
+        if matches:
+            break
     if not matches:
         return None, "not_heard"
     occurrence = _ask_occurrence(ask)

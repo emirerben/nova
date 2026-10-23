@@ -90,6 +90,52 @@ def find_spoken_word(
     return heard
 
 
+# English contractions with exactly one long form, so a cue written "you're" finds a
+# recording transcribed "you are" and the reverse (PR #1758's N2 rule two). "'s" and "'d"
+# are left alone: each has two long forms ("it is" / "it has"), so neither side is rewritten.
+_CONTRACTIONS = {
+    "i'm": "i am",
+    "you're": "you are",
+    "we're": "we are",
+    "they're": "they are",
+    "i've": "i have",
+    "you've": "you have",
+    "we've": "we have",
+    "they've": "they have",
+    "i'll": "i will",
+    "you'll": "you will",
+    "we'll": "we will",
+    "they'll": "they will",
+    "don't": "do not",
+    "doesn't": "does not",
+    "didn't": "did not",
+    "isn't": "is not",
+    "aren't": "are not",
+    "wasn't": "was not",
+    "weren't": "were not",
+    "won't": "will not",
+    "can't": "can not",
+    "cannot": "can not",
+}
+_EDGE_PUNCTUATION = '.,!?;:"“”()[]'
+
+
+def _long_form(text: object) -> str:
+    """``text`` with every contraction above in its long form; other words unchanged."""
+    out: list[str] = []
+    for token in str(text or "").split():
+        key = token.replace("’", "'").strip(_EDGE_PUNCTUATION).casefold()
+        out.append(_CONTRACTIONS.get(key, token))
+    return " ".join(out)
+
+
+def spoken_cue_length(trigger: str) -> int:
+    """How many spoken words ``trigger`` names once folded ("leave before 11" is 3)."""
+    from app.services.phone_reaction_grounding import fold_tokens  # noqa: PLC0415
+
+    return len(fold_tokens(_long_form(trigger)))
+
+
 def find_spoken_word_matches(
     words: Sequence[Any], triggers: Sequence[str]
 ) -> list[tuple[str, float, float]]:
@@ -98,17 +144,20 @@ def find_spoken_word_matches(
     The Talking path still uses :func:`find_spoken_word` and therefore keeps its
     shipped first-hit behavior.  Voiceover callers can inspect repetition before
     choosing a time, rather than silently treating an ambiguous repeated phrase
-    as its first occurrence.
+    as its first occurrence.  Both the recording and the triggers are compared in
+    their long form (`_CONTRACTIONS`); a match keeps the word's own timing.
     """
     from app.services.phone_reaction_grounding import (  # noqa: PLC0415
         _match_trigger,
         _token_stream,
     )
 
-    stream = _token_stream(_word_dicts(words))
+    stream = _token_stream(
+        [{**word, "text": _long_form(word.get("text"))} for word in _word_dicts(words)]
+    )
     heard: list[tuple[str, float, float]] = []
     for trigger in triggers:
-        windows = _match_trigger(stream, trigger, None, "every").windows
+        windows = _match_trigger(stream, _long_form(trigger), None, "every").windows
         heard.extend((trigger, float(start_s), float(end_s)) for start_s, end_s in windows)
     # Different trigger spellings may resolve to the same spoken interval.  It
     # is one moment, not an ambiguous pair of moments.
@@ -276,6 +325,7 @@ __all__ = [
     "caption_boxes",
     "find_spoken_word",
     "find_spoken_word_matches",
+    "spoken_cue_length",
     "spoken_text_element",
     "spoken_text_rows",
 ]
