@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.52.0] - 2026-10-23
+
+### Changed
+- docs: persist iPhone-only product scope for agent sessions (#1768) <!-- release-pr: 1768 -->
+
 ## [0.81.51.0] - 2026-10-23
 
 ### Changed
