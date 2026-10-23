@@ -42,6 +42,7 @@ from app.kria.freeze_ask import times_one_moment
 from app.kria.reply_language import current_reply_language, say
 from app.services.clip_facts import (
     CAPTURE_ORDER_KEYS,
+    CURRENT_ORDER_KEY,
     capture_from_assignment,
     order_by_capture_time,
 )
@@ -1173,6 +1174,8 @@ def _order_basis(
         key = str((req.facts or {}).get("key") or "").casefold()
         if key in CAPTURE_ORDER_KEYS:
             capture_ids.append(str(req.id))
+        elif key == CURRENT_ORDER_KEY:
+            continue  # applied in place by the editor; there is no basis to ask about
         elif key != ATTACHMENT_ORDER_KEY and not is_pin_only_order(req):
             # A key-less or non-capture rule ("clips 1, 2, 3 in that sequence", "along my
             # route") the contract cannot verify from the approved media. First / last

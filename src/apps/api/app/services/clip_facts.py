@@ -68,6 +68,10 @@ LANDMARK_BUDGET_S = 45.0
 # requirement receipts (what is reported) must never disagree about it. `route` uses
 # capture-time order today (see `order_by_capture_time`), as do `time` and `shot_order`.
 CAPTURE_ORDER_KEYS = frozenset({"capture_time", "chronological", "route", "time", "shot_order"})
+# A brief order requirement that re-sequences the clips already in the edit ("reverse the
+# order", "swap clip 2 and 5"). The editor's `reorder_clips_by` custom order applies it in
+# place; no render contract pins it and no order question asks about it.
+CURRENT_ORDER_KEY = "current_order"
 
 
 def capture_from_assignment(assignment: Mapping[str, Any]) -> ClipCapture | None:
