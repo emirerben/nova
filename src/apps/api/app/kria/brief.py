@@ -41,8 +41,9 @@ from sqlalchemy import func, select
 
 from app.agents._schemas.text_element import _ALLOWED_FONTS, _HEX_COLOR_RE
 from app.kria.brief_route import fold_text, loose_text, wants_filming_time_text
+from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.reply_language import detect_chat_language
-from app.models import CreativeBriefVersion
+from app.models import CreationThreadEvent, CreativeBriefVersion, CreatorAgentTurn
 from app.schemas.clip_intents import asks_clip_description
 from app.schemas.text_style_intent import normalize_title_animation
 from app.services.kria_editor_ops_diff import font_family_key
@@ -1453,6 +1454,30 @@ def load_latest_brief_sync(db: Any, thread_id: uuid.UUID) -> CreativeBrief | Non
     return _brief_from_row(row)
 
 
+def _delegation_covers_request(db: Any, *, thread_id: uuid.UUID, turn_id: uuid.UUID) -> bool:
+    """True only when the turn's source message is the only creator line in the thread.
+
+    Mirrors the pinned full request (`_full_creator_request_sync`): non-empty user lines,
+    re-sent copies excluded. Any earlier line with no brief version was never read into
+    the ledger, so a delegation declared now cannot speak for it.
+    """
+    turn = db.get(CreatorAgentTurn, turn_id)
+    source = db.get(CreationThreadEvent, turn.source_event_id) if turn is not None else None
+    if source is None or source.thread_id != thread_id or source.role != "user":
+        return False
+    earlier = db.execute(
+        select(CreationThreadEvent.content, CreationThreadEvent.payload).where(
+            CreationThreadEvent.thread_id == thread_id,
+            CreationThreadEvent.role == "user",
+            CreationThreadEvent.sequence < source.sequence,
+            CreationThreadEvent.content.is_not(None),
+        )
+    ).all()
+    return not any(
+        str(content).strip() and not is_duplicate_answer(payload) for content, payload in earlier
+    )
+
+
 def persist_brief_version_sync(
     db: Any,
     *,
@@ -1471,7 +1496,10 @@ def persist_brief_version_sync(
     requirement and delegates every choice. With no prior brief, an empty version is
     written as the evidence that the request was read, so approval readiness does not
     mistake it for a missing extraction. A prior brief is returned unchanged: its live
-    requirements stay in force.
+    requirements stay in force. The declaration only describes the turn's own message,
+    so the empty version is written only when that message is the creator's whole
+    request (`_delegation_covers_request`); an earlier line that never reached the brief
+    (failed extraction, brief off) keeps the readiness hold.
     """
     updates = list(updates)
     existing = db.execute(
@@ -1483,7 +1511,11 @@ def persist_brief_version_sync(
     if existing is not None:
         return _brief_from_row(existing)
     prior = load_latest_brief_sync(db, thread_id)
-    if not updates and not (record_empty and prior is None):
+    if not updates and not (
+        record_empty
+        and prior is None
+        and _delegation_covers_request(db, thread_id=thread_id, turn_id=turn_id)
+    ):
         return prior
     merged = apply_updates(prior, updates, source_turn_id=str(turn_id))
     next_version = (
