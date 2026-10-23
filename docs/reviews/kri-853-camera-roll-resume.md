@@ -76,3 +76,5 @@ tests), smoke, preship, and new exact-head remote CI. Original account/physical
 acceptance remains unverified. No web-editor changes, paid calls, manual release,
 phone changes or cleanup. The earlier head-bound review/CI receipt will be stale
 after integration; record new code trees and results before handoff.
+
+Integrated local verification: HTTP/PostgreSQL gate 111 passed; full native suite 1,897 executed, 25 skipped, zero failures; 14 native UI/smoke journeys passed without retries. The partial-resume control failed before the context repair. Changed excluded IDs with the same count require a new choice. The landed three-idea independence test and explicit partial-choice assertions remain. The close/reopen test scopes Done to the Story ideas navigation bar and waits for dismissal; no assertions were relaxed. Final native screenshot inspected. Original physical/account and rollout gaps remain open.
