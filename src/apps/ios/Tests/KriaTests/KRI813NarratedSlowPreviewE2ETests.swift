@@ -139,20 +139,20 @@ import KriaMediaEngine
         XCTAssertThrowsError(try compile(["native_source_span_s": .number(0.04)], trimOut: 0.04))
     }
 
-    /// A slot whose source is missing from the resolved pool is a missing original (actionable recovery),
-    /// not "the timeline couldn't be read". A removed slot needs no source at all.
-    func testMissingNarratedSourceRoutesToOriginalsRecovery() throws {
+    /// A removed slot needs no source; an unresolved history-document slot hydrates leniently.
+    func testUnresolvedNarratedSourceHydratesLeniently() throws {
         let sources = [0: Self.source(index: 0, duration: 2.4)]
         var removed = EditorTimelineSlot(id: "gone", clipIndex: 7, inS: 0, durationS: 3)
         removed.removed = true
         let ok = try NativeNarratedSourceTiming.hydrate(EditorDocument(clips: [.init(id: "a", clipIndex: 0, inS: 0, durationS: 14.22), removed]), sources: sources)
         XCTAssertEqual(ok.clips[0].raw["native_source_span_s"], .number(2.35))
         XCTAssertNil(ok.clips[1].raw["native_source_span_s"])
-        XCTAssertThrowsError(try NativeNarratedSourceTiming.hydrate(
+        // A history document (undo/clean) may reference a clip the current document no longer resolves: it
+        // hydrates leniently instead of sending the creator to an originals recovery with nothing to relink.
+        let history = try NativeNarratedSourceTiming.hydrate(
             EditorDocument(clips: [.init(id: "a", clipIndex: 0, inS: 0, durationS: 3), .init(id: "b", clipIndex: 4, inS: 0, durationS: 3)]),
-            sources: sources)) {
-            XCTAssertTrue(NativeEditorSession.isMissingOriginals($0), "\($0)")
-        }
+            sources: sources)
+        XCTAssertNil(history.clips[1].raw["native_source_span_s"])
         // A present source with no usable footage stays an honest timeline error, as on the server.
         XCTAssertThrowsError(try NativeNarratedSourceTiming.hydrate(EditorDocument(clips: [.init(id: "a", clipIndex: 0, inS: 0, durationS: 3)]),
                                                                     sources: [0: Self.source(index: 0, duration: 0.04)])) {

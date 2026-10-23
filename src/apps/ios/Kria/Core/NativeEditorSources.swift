@@ -379,10 +379,10 @@ enum NativeNarratedSourceTiming {
             // A removed slot plays nothing, so it needs no source and no span.
             if slot.removed { continue }
             guard let source = sources[slot.clipIndex] else {
-                // KRI-813: a required original that is not in the resolved pool is a missing original
-                // (actionable recovery), not "the timeline couldn't be read".
-                NativePreviewDiagnostics.record("rate-guard", fields: ["guard": "narrated-missing-source", "index": String(slot.clipIndex)])
-                throw SourceAssetError.missingOriginal("clip-\(slot.clipIndex)")
+                // KRI-813: only history documents (clean/undo/redo/chat-staged) reach here -- the resolver already
+                // throws for a current-document source it cannot load. Leave that slot unhydrated, never a dead-end recovery.
+                NativePreviewDiagnostics.record("rate-guard", fields: ["guard": "narrated-unresolved-history-source", "index": String(slot.clipIndex)])
+                continue
             }
             guard let total = source.asset.duration, let target = slot.durationS, target > 0,
                   total > NarratedRateGate.minimumSourceSpanS else {

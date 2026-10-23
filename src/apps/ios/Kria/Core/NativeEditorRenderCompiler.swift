@@ -1149,10 +1149,9 @@ enum NarratedRateGate {
         guard rate < creatorRange.lowerBound, slot?.raw["native_composite_source"] == .bool(true),
               let span = narratedSpan(slot), span.isFinite, span >= minimumSourceSpanS - 1e-9,
               let duration = slot?.durationS, duration.isFinite, duration > 0 else { return false }
-        // The seed's rate is the recipe's own span / duration (10 ms of timeline rounding allowed). An unsaved
-        // trim that shortens the slot keeps that rate and plays less footage, with no freeze-hold; a slot the
-        // seed rate cannot fill is not a seed rate and is refused.
-        return duration <= span / rate + 0.01
+        // The seed's rate is the server recipe's own. The compiler consumes min(span, duration * rate) source
+        // seconds, so device/server duration skew or a creator-lengthened slot holds the last frame (as at 0.25x+).
+        return true
     }
 
     /// The rate the compiler derives from the slot's source window.
