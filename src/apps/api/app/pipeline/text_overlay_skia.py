@@ -685,11 +685,17 @@ def _overlay_max_width_px(overlay: dict, canvas: Canvas = PORTRAIT) -> float:
     """Per-overlay wrap budget. Missing field preserves the legacy 0.9 width.
 
     ``wrap_lines=False`` (the creator's own lines, KRI-564) has no box to wrap in, so
-    its only bound is the frame's safe width, 0.9 of the canvas (KRI-826, see
-    `_authored_lines`); a stale ``max_width_frac`` never re-wraps a line that fits.
+    its only bound is the frame's safe area (KRI-826, see `_authored_lines`): 0.9 of
+    the canvas, narrowed by where the line is anchored (`text_fit.authored_safe_width`)
+    so text dragged off-centre or left-anchored never runs past the edge. A stale
+    ``max_width_frac`` never re-wraps a line that fits.
     """
     if overlay.get("wrap_lines") is False:
-        return canvas.width * _MAX_LINE_W_FRAC
+        from app.pipeline.text_fit import authored_safe_width  # noqa: PLC0415
+
+        return authored_safe_width(
+            canvas.width, overlay.get("position_x_frac"), _resolve_text_anchor(overlay)
+        )
     return canvas.width * resolve_max_width_frac(overlay.get("max_width_frac"))
 
 

@@ -74,17 +74,21 @@ def test_portable_and_cloud_keep_manual_rows_and_font_size(size, phases):
     assert layer.runs[-1].baseline_y - layer.runs[-2].baseline_y > layer.runs[0].font_size * 2
 
 
-def test_pillow_manual_text_never_wraps_or_resolves_a_smaller_font(tmp_path):
+def test_pillow_manual_text_keeps_rows_and_size_inside_the_safe_width(tmp_path):
+    """KRI-826: the Pillow renderer (server slide export, classic burns) applies the
+    same authored-line fit as Skia: hard breaks kept, a too-wide row soft-wraps at
+    the creator's size, a stale narrow ``max_width_frac`` never re-wraps."""
     original = ImageDraw.ImageDraw.text
     drawn = []
 
     def record(self, xy, text, *args, **kwargs):
-        drawn.append((text, kwargs["font"].size))
+        drawn.append((text, kwargs["font"]))
         return original(self, xy, text, *args, **kwargs)
 
+    text = "Long text " * 20 + "\n\nLast"
     with patch.object(ImageDraw.ImageDraw, "text", record):
         pillow._draw_text_png(
-            "Long text " * 20 + "\n\nLast",
+            text,
             "center",
             str(tmp_path / "text.png"),
             font_family="Inter",
@@ -93,11 +97,65 @@ def test_pillow_manual_text_never_wraps_or_resolves_a_smaller_font(tmp_path):
             wrap_lines=False,
             shadow_enabled=False,
         )
-    assert drawn and all(size == 96 for _, size in drawn)
-    assert any(text == "Long text " * 20 for text, _ in drawn)
+    rows = [row for row, _ in drawn]
+    assert drawn and all(font.size == 96 for _, font in drawn)
+    assert rows[-1] == "Last"
+    assert " ".join(rows[:-1]).split() == ("Long text " * 20).split()
+    assert len(rows) > 3  # soft-wrapped, not one 2000px line
+    assert all(font.getlength(row) <= 0.9 * pillow.CANVAS_W for row, font in drawn)
 
 
-def test_classic_animation_disables_ass_wrap_and_keeps_explicit_rows(tmp_path):
+@pytest.mark.parametrize(
+    ("x_frac", "anchor"), [(0.5, "center"), (0.7, "center"), (0.3, "left"), (0.8, "right")]
+)
+def test_pillow_authored_line_never_leaves_the_safe_area(tmp_path, x_frac, anchor):
+    """Off-centre or edge-anchored authored text wraps to the room it has (KRI-826)."""
+    import numpy as np
+    from PIL import Image
+
+    out = tmp_path / "text.png"
+    pillow._draw_text_png(
+        "İstanbul'da ğüşıöç sabahları kahvaltı ve çay keyfi harika bir gün",
+        "center",
+        str(out),
+        font_family="Inter",
+        text_size_px=72,
+        position_x_frac=x_frac,
+        text_anchor=anchor,
+        wrap_lines=False,
+        shadow_enabled=False,
+    )
+    alpha = np.array(Image.open(out))[..., 3]
+    xs = np.nonzero(alpha > 0)[1]
+    margin = 0.05 * pillow.CANVAS_W
+    assert xs.min() >= margin - 4
+    assert xs.max() <= pillow.CANVAS_W - margin + 4
+
+
+def test_pillow_inline_emoji_draws_in_color_not_as_a_box(tmp_path):
+    import numpy as np
+    from PIL import Image
+
+    if pillow._emoji_font() is None:
+        pytest.skip("no color emoji face on this machine")
+    out = tmp_path / "text.png"
+    pillow._draw_text_png(
+        "sabahları 🔥 kahvaltı",
+        "center",
+        str(out),
+        font_family="Inter",
+        text_size_px=96,
+        text_color=(255, 255, 255, 255),
+        wrap_lines=False,
+        shadow_enabled=False,
+    )
+    rgba = np.array(Image.open(out)).astype(int)
+    opaque = rgba[rgba[..., 3] > 200]
+    # White text only has r == g == b; the flame has saturated pixels.
+    assert ((opaque[:, 0] - opaque[:, 2]) > 80).sum() > 200
+
+
+def test_classic_animation_disables_ass_wrap_and_fits_explicit_rows(tmp_path):
     (path,) = pillow.generate_animated_overlay_ass(
         [
             {
@@ -118,7 +176,13 @@ def test_classic_animation_disables_ass_wrap_and_keeps_explicit_rows(tmp_path):
         row for row in Path(path).read_text().splitlines() if row.startswith("Dialogue:")
     )
     assert r"{\q2\fs96}" in dialogue
-    assert dialogue.count(r"\N") == 2
+    rows = dialogue.split("}")[-1].split(r"\N")
+    # KRI-826: libass wrapping stays off (\q2), so the rows are fitted up front: the
+    # blank row and "Last" survive, the long line soft-wraps inside 0.9 x W.
+    assert rows[-2:] == ["", "Last"]
+    font = pillow._resolve_font_family("Inter", 96)
+    assert len(rows) > 4
+    assert all(font.getlength(row) <= 0.9 * pillow.CANVAS_W for row in rows)
 
 
 def test_blank_rows_survive_build_and_read_adapter():
@@ -218,3 +282,42 @@ def test_classic_manual_blank_rows_advance_by_font_metrics(tmp_path, text):
     metrics = cloud._measure_block(skia.Font(typeface, 84), lines)
     # Pillow rounds font metrics to integers; Skia retains fractional metrics.
     assert abs((last_y - first_y) - 2 * metrics["line_step"]) <= 4
+
+
+@pytest.mark.parametrize(
+    ("x_frac", "alignment"), [(None, "center"), (0.7, "center"), (0.3, "left"), (0.8, "right")]
+)
+def test_server_slide_export_keeps_long_turkish_emoji_text_inside_the_frame(
+    tmp_path, x_frac, alignment
+):
+    """KRI-826 E2E on the real slide renderer: the iOS Slider sets ``wrap_lines=False``
+    on a hand-edited text; the server export (Pillow) must wrap it inside the safe area
+    on a 4:5 slide, in color for the emoji, exactly like the iOS canvas does."""
+    import numpy as np
+    from PIL import Image
+
+    from app.pipeline.slide_post.build import render_text_element_png
+    from app.schemas.slide_post import SlideTextElement
+
+    text = "Bugün İstanbul’da ılık bir akşam 🌅 şimdi Kadıköy’de çay içiyoruz ☕️ 50% {off}: a\\b"
+    element = SlideTextElement(
+        id="t1",
+        text=text,
+        font_family="Inter",
+        size_px=72,
+        alignment=alignment,
+        position="custom",
+        x_frac=x_frac,
+        y_frac=0.5,
+        max_width_frac=0.3,
+        wrap_lines=False,
+    )
+    out = tmp_path / "slide_text.png"
+    render_text_element_png(element, str(out), canvas=(1080, 1350))
+    rgba = np.array(Image.open(out)).astype(int)
+    assert rgba.shape[:2] == (1350, 1080)
+    xs = np.nonzero(rgba[..., 3] > 40)[1]
+    assert xs.min() >= 0.05 * 1080 - 6 and xs.max() <= 0.95 * 1080 + 6, (xs.min(), xs.max())
+    if pillow._emoji_font() is not None:
+        opaque = rgba[rgba[..., 3] > 200]
+        assert ((opaque[:, 0] - opaque[:, 2]) > 80).sum() > 100  # the sunset/coffee in color

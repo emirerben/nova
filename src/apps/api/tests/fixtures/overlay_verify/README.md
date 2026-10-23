@@ -74,4 +74,8 @@ stale narrow `max_width_frac`. The authored line breaks stay; a line wider than 
 frame's safe width (0.9 x W) soft-wraps at the creator's size; a single over-wide word
 shrinks (never below 24px). All must stay inside the side margins. The slide fixture is
 verified on the 1080-wide portrait frame: slides share its width, so the side margins are
-the same.
+the same. The last two slide overlays sit off-centre (centred at x=0.7, left-anchored at x=0.3):
+the wrap width is the room between the anchor and the safe margins
+(`text_fit.authored_safe_width`), not a flat 0.9 x W. The server slide export draws
+through Pillow, not Skia, so `tests/pipeline/test_authored_newlines.py` renders the same
+text through the real `slide_post.build.render_text_element_png`.

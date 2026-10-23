@@ -320,16 +320,20 @@ struct SlidePostTextLayerView: View {
         // KRI-826: the creator's own lines (`wrap_lines == false`) keep their breaks but stay inside the frame:
         // a line wider than 0.9 x W wraps at that width, and only a single over-wide word shrinks the text
         // (`AuthoredTextFit`, the rule the server render and the video compiler apply).
-        let safeWidth = CGFloat(AuthoredTextFit.safeWidth(canvasWidth: Double(size.width)))
+        // The room is measured from the text's anchor to the safe margins (`AuthoredTextFit.safeWidth`), and
+        // the shrink floor is the export's 24px scaled to this preview.
+        let anchor = SlidePostTextLayout.anchor(for: element)
+        let safeWidth = CGFloat(AuthoredTextFit.safeWidth(canvasWidth: Double(size.width), xFraction: Double(anchor.x),
+                                                          alignment: element.alignment))
         let points = element.wrapsLines ? max(1, CGFloat(element.sizePx) * scale) : CGFloat(AuthoredTextFit.fittedSize(
-            text: element.text, size: Double(max(1, CGFloat(element.sizePx) * scale)), safeWidth: Double(safeWidth)) { points in
+            text: element.text, size: Double(max(1, CGFloat(element.sizePx) * scale)), safeWidth: Double(safeWidth),
+            minimum: AuthoredTextFit.minimumSize * Double(scale)) { points in
                 NativeFontCatalog.shared.ctFont(element.fontFamily, size: CGFloat(points)).map { [NSAttributedString.Key(kCTFontAttributeName as String): $0] } ?? [:]
             })
         let font = NativeFontCatalog.shared.ctFont(element.fontFamily, size: points).map(Font.init) ?? KriaFont.body(points).weight(.bold)
         let selected = accessibility?.selectedID == element.id
         let alignment: TextAlignment = element.alignment == "left" ? .leading : (element.alignment == "right" ? .trailing : .center)
         let stroke = element.strokeWidth > 0 ? max(0.6, CGFloat(element.strokeWidth) * scale) : 0
-        let anchor = SlidePostTextLayout.anchor(for: element)
         // Server parity: x is the left edge / centre / right edge by alignment; y is the block centre.
         let frameAlignment: Alignment = element.alignment == "left" ? .leading : (element.alignment == "right" ? .trailing : .center)
         let offsetX = element.alignment == "left" ? anchor.x : (element.alignment == "right" ? anchor.x - 1 : anchor.x - 0.5)

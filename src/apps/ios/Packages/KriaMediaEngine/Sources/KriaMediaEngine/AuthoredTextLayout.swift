@@ -89,14 +89,16 @@ public enum AuthoredTextLayout {
         let normalized = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         // KRI-826: the creator's own lines (`wrapsLines == false`) keep their breaks and size, but stay
         // inside the frame: the same rule as cloud `text_overlay_skia._authored_lines` (see `AuthoredTextFit`).
+        let authoredWidth = AuthoredTextFit.safeWidth(canvasWidth: Double(canvas.width), xFraction: style.xFraction,
+                                                      alignment: style.alignment.rawValue)
         let size = style.wrapsLines ? style.size : AuthoredTextFit.fittedSize(text: normalized, size: style.size,
-            safeWidth: AuthoredTextFit.safeWidth(canvasWidth: Double(canvas.width))) { points in
+            safeWidth: authoredWidth) { points in
                 let font = NativeFontIdentity.font(graphics, size: points, variations: style.fontVariations)
                 return [NSAttributedString.Key(kCTFontAttributeName as String): font, NSAttributedString.Key(kCTKernAttributeName as String): style.letterSpacing * points]
             }
         let font = NativeFontIdentity.font(graphics, size: size, variations: style.fontVariations)
         let attributes: [NSAttributedString.Key: Any] = [NSAttributedString.Key(kCTFontAttributeName as String): font, NSAttributedString.Key(kCTKernAttributeName as String): style.letterSpacing * size]
-        let wrapWidth = style.wrapsLines ? Double(canvas.width) * style.widthFraction : AuthoredTextFit.safeWidth(canvasWidth: Double(canvas.width))
+        let wrapWidth = style.wrapsLines ? Double(canvas.width) * style.widthFraction : authoredWidth
         var values: [String] = []
         for paragraph in normalized.components(separatedBy: "\n") {
             if paragraph.isEmpty || (!style.wrapsLines && AuthoredTextFit.width(paragraph, attributes: attributes) <= wrapWidth) {
@@ -298,6 +300,20 @@ public enum AuthoredTextFit {
 
     public static func safeWidth(canvasWidth: Double) -> Double { canvasWidth * safeWidthFraction }
 
+    /// The room an authored line has from its anchor to the safe margins (5% of the width each side), the same
+    /// rule as cloud `text_fit.authored_safe_width`: a centred line at x = 0.7 gets 2 x (0.95 - 0.7) of the
+    /// width; a left/right anchor gets the distance to the far margin. Never less than a tenth of the width.
+    public static func safeWidth(canvasWidth: Double, xFraction: Double, alignment: String) -> Double {
+        let margin = canvasWidth * (1 - safeWidthFraction) / 2
+        let cx = canvasWidth * Swift.min(1, Swift.max(0, xFraction.isFinite ? xFraction : 0.5))
+        let room: Double = switch alignment {
+        case "left": canvasWidth - margin - cx
+        case "right": cx - margin
+        default: 2 * Swift.min(cx - margin, canvasWidth - margin - cx)
+        }
+        return Swift.max(canvasWidth * 0.1, Swift.min(safeWidth(canvasWidth: canvasWidth), room))
+    }
+
     static func width(_ text: String, attributes: [NSAttributedString.Key: Any]) -> Double {
         CTLineGetTypographicBounds(CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attributes)), nil, nil, nil)
     }
@@ -320,14 +336,14 @@ public enum AuthoredTextFit {
     }
 
     /// The size the text draws at: `size` unless one word is wider than `safeWidth` at it.
-    public static func fittedSize(text: String, size: Double, safeWidth: Double,
+    public static func fittedSize(text: String, size: Double, safeWidth: Double, minimum: Double = minimumSize,
                                   attributes: (Double) -> [NSAttributedString.Key: Any]) -> Double {
         let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
         func widest(_ points: Double) -> Double {
             let attrs = attributes(points)
             return words.map { width($0, attributes: attrs) }.max() ?? 0
         }
-        let floor = Swift.min(size, minimumSize)
+        let floor = Swift.min(size, minimum)
         var fitted = size
         while fitted > floor && widest(fitted) > safeWidth {
             fitted = Swift.max(floor, Swift.min(fitted - 1, (fitted * 0.9).rounded(.down)))

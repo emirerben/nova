@@ -64,6 +64,17 @@ final class AuthoredTextFitTests: XCTestCase {
         }
     }
 
+    /// 7. Text dragged off-centre or edge-anchored wraps to the full 0.9 x W and runs past the frame edge.
+    /// The widths are cloud `text_fit.authored_safe_width` values (`test_authored_safe_width_matches_ios`).
+    func testOffCentreAuthoredTextGetsOnlyTheRoomToTheSafeMargins() {
+        let cases: [(Double, String, Double)] = [(0.5, "center", 972), (0.7, "center", 540), (0.3, "left", 702),
+                                                 (0.8, "right", 810), (0.15, "center", 216), (0.99, "center", 108)]
+        for (x, alignment, expected) in cases {
+            XCTAssertEqual(AuthoredTextFit.safeWidth(canvasWidth: 1080, xFraction: x, alignment: alignment),
+                           expected, accuracy: 0.001, "\(x) \(alignment)")
+        }
+    }
+
     func testWrappingTextKeepsItsOwnBoxAndSize() throws {
         let font = repo.appendingPathComponent("src/apps/api/assets/fonts/Inter-Bold.ttf")
         let text = "chimichurri + salsa criolla ve Julio’s 🔥 asado akşam yemeği"

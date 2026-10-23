@@ -3819,6 +3819,46 @@ def test_both_renderers_honor_authored_line_fit(canvas_size, text, size, expect)
         assert len(phone) == 1 and 24 <= drawn < size
 
 
+@pytest.mark.parametrize(
+    ("x_frac", "anchor"), [(0.7, "center"), (0.3, "left"), (0.8, "right"), (0.15, "center")]
+)
+def test_both_renderers_honor_authored_line_fit_off_centre(x_frac, anchor):
+    """Parity guard (KRI-826): authored text dragged off-centre or edge-anchored wraps to
+    the room between its anchor and the safe margins (`text_fit.authored_safe_width`),
+    in the cloud burn and the phone compile alike, so no row runs past the frame."""
+    from unittest.mock import patch
+
+    from app.pipeline.canvas import Canvas
+    from app.pipeline.portable_text_layout import compile_text_overlay
+
+    canvas = Canvas(1080, 1920)
+    overlay = {
+        "text": "İstanbul'da sabahları kahvaltı ve çay keyfi harika bir gün olur",
+        "start_s": 0,
+        "end_s": 2,
+        "font_family": "Inter",
+        "text_size_px": 72,
+        "position_x_frac": x_frac,
+        "text_anchor": anchor,
+        "wrap_lines": False,
+        "shadow_enabled": False,
+    }
+    layer, _ = compile_text_overlay(overlay, layer_id="manual", canvas=canvas)
+    with patch.object(tos, "_draw_line_with_layers") as draw:
+        tos._draw_overlay_on_canvas(
+            skia.Surface(1080, 1920).getCanvas(), overlay, 1, 2, render_canvas=canvas
+        )
+    cloud = [(c.args[1], c.args[2], c.args[4].getSize()) for c in draw.call_args_list]
+    cloud = [row for row in cloud if row[0]]
+    phone = [(r.text, r.x, r.font_size) for r in layer.runs]
+    assert [(t, s) for t, _x, s in cloud] == [(t, s) for t, _x, s in phone]
+    face = tos._typeface_for_overlay(overlay)
+    margin = 0.05 * canvas.width
+    for text, x, size in phone:
+        width = tos._measure_line(skia.Font(face, size), text)
+        assert x >= margin - 0.5 and x + width <= canvas.width - margin + 0.5, (text, x)
+
+
 def test_authored_line_fit_matches_the_recorded_cross_platform_rows():
     """The rows the iOS `AuthoredTextFit` tests assert are the cloud Skia rows (KRI-826).
 
@@ -3847,3 +3887,19 @@ def test_authored_line_fit_matches_the_recorded_cross_platform_rows():
         assert (rows, size) == (case["rows"], case["fitted_size_px"])
         checked += 1
     assert checked >= 3
+
+
+def test_authored_safe_width_matches_ios():
+    """The same numbers iOS `AuthoredTextFitTests.testOffCentreAuthoredText...` asserts."""
+    from app.pipeline.text_fit import authored_safe_width
+
+    cases = [
+        (0.5, "center", 972),
+        (0.7, "center", 540),
+        (0.3, "left", 702),
+        (0.8, "right", 810),
+        (0.15, "center", 216),
+        (0.99, "center", 108),
+    ]
+    for x, anchor, expected in cases:
+        assert authored_safe_width(1080, x, anchor) == pytest.approx(expected)

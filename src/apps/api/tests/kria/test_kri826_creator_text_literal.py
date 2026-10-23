@@ -202,6 +202,48 @@ def test_turkish_letters_and_emoji_sequences_are_kept_byte_for_byte() -> None:
     assert ClipAssignment.model_validate_json(stored.model_dump_json()).value == TURKISH
 
 
+def test_an_emoji_newer_than_the_servers_unicode_tables_still_prints(monkeypatch) -> None:
+    """Prod runs Python 3.11 (Unicode 14): "🩷" (Unicode 15) reads as unassigned there."""
+    import unicodedata
+
+    from app.schemas import clip_intents
+
+    real = unicodedata.category
+
+    class _Unicode14:
+        def __getattr__(self, name):
+            return getattr(unicodedata, name)
+
+        @staticmethod
+        def category(char: str) -> str:
+            return "Cn" if char in "\U0001fa77\U0001fae8" else real(char)
+
+    monkeypatch.setattr(clip_intents, "unicodedata", _Unicode14())
+    assert clean_creator_label_text("pink \U0001fa77 bakery") == "pink \U0001fa77 bakery"
+    assert clean_creator_caption_text("shook \U0001fae8") == "shook \U0001fae8"
+    assert clean_creator_label_text("\U0001fa77") == "\U0001fa77"
+
+
+@pytest.mark.parametrize(
+    ("resolver_phrase", "printed"),
+    [
+        # The resolver dropped the creator's "+": the creator's span prints.
+        ("Chimichurri salsa criolla", "chimichurri + salsa criolla"),
+        # Casing only: the resolver's caption casing is kept.
+        ("Chimichurri + Salsa Criolla", "Chimichurri + Salsa Criolla"),
+    ],
+)
+def test_a_resolver_caption_never_strips_the_creators_symbols(resolver_phrase, printed) -> None:
+    caption = ground_caption(
+        value=resolver_phrase,
+        confidence=0.9,
+        creator_request="put a text on the sauce chapter: chimichurri + salsa criolla",
+        records=[],
+    )
+    assert caption is not None
+    assert (caption.text, caption.grounding) == (printed, "creator_text")
+
+
 # 7: an honest limit, never a cut ---------------------------------------------------------
 
 

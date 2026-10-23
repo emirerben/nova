@@ -146,7 +146,11 @@ _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 def _kept_char(char: str) -> bool:
     category = unicodedata.category(char)
-    if category in {"Cc", "Cs", "Co", "Cn"}:
+    # Only controls and lone surrogates are dropped. "Cn" (unassigned) and "Co" stay:
+    # the prod image's Python 3.11 has Unicode 14 tables, so every newer emoji (🩷 🫨,
+    # Unicode 15+) reads as unassigned there, and dropping it would strip the
+    # creator's emoji from the printed text (KRI-826).
+    if category in {"Cc", "Cs"}:
         return char == "\n"
     if category == "Cf":
         code = ord(char)
@@ -183,7 +187,10 @@ def _has_control(text: str) -> bool:
 
 
 def _has_printable(text: str) -> bool:
-    return any(c.isalnum() or unicodedata.category(c) in {"So", "Sm", "Sc"} for c in text)
+    # "Cn"/"Co": an emoji newer than this Python's Unicode tables still shows (KRI-826).
+    return any(
+        c.isalnum() or unicodedata.category(c) in {"So", "Sm", "Sc", "Cn", "Co"} for c in text
+    )
 
 
 def clean_creator_literal_text(value: object, *, limit: int) -> str | None:
@@ -474,6 +481,11 @@ def _extend(text: str, at: int, symbols: list[str], *, step: int) -> int | None:
     ):
         index += 1
     return index
+
+
+def _same_but_case(a: str, b: str) -> bool:
+    """True when ``a`` and ``b`` differ only in letter case and spacing (KRI-826)."""
+    return " ".join(a.split()).casefold() == " ".join(b.split()).casefold()
 
 
 def creator_span(haystack: str, phrase: str) -> str | None:
@@ -864,17 +876,33 @@ def ground_caption(
                 text=copy, grounding="creator_text", confidence=1.0, intent_id=intent_id
             )
     text = clean_caption_text(value)
+    # A resolver phrase with the creator's "+" or emoji fails the caption charset but
+    # may still be the creator's own words (KRI-826).
+    # It still has to hold the caption's short-phrase shape.
+    candidate = text
+    if candidate is None and isinstance(value, str):
+        shaped = clean_caption_text(_CAPTION_ALLOWED.sub("x", " ".join(value.split())))
+        candidate = clean_creator_caption_text(value) if shaped is not None else None
+    if candidate is None:
+        return None
+    span = (
+        creator_literal_span(creator_request, candidate)
+        if _contains_phrase(creator_request or "", candidate)
+        else None
+    )
+    if span is not None:
+        # A phrase the resolver made of the creator's words keeps its caption casing
+        # ("The Pub" for "the pub"). KRI-826: anything else it changed, a dropped "+",
+        # emoji or diacritic, a straightened "’", prints the creator's own span, since
+        # creator_text authority means the creator's bytes. A symbol the creator never
+        # wrote finds no span and falls through to the footage checks below.
+        printed = candidate if _same_but_case(candidate, span) else clean_creator_caption_text(span)
+        if printed is not None:
+            return GroundedCaption(
+                text=printed, grounding="creator_text", confidence=1.0, intent_id=intent_id
+            )
     if text is None:
         return None
-    if _contains_phrase(creator_request or "", text):
-        # A phrase the resolver made of the creator's words ("The Pub" for "the pub")
-        # keeps its caption shape; KRI-826: a symbol the creator never wrote grounds
-        # nothing.
-        if creator_literal_span(creator_request, text) is None:
-            return None
-        return GroundedCaption(
-            text=text, grounding="creator_text", confidence=1.0, intent_id=intent_id
-        )
     words = _tokens(text)
     if not words:
         return None

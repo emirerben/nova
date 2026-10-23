@@ -30,6 +30,34 @@ LABEL_BAR_CANVAS_WIDTH = 1080
 _FALLBACK_LINE_CHARS = 28
 
 
+# KRI-826: hand-authored lines (`wrap_lines=False`) must stay inside the frame's safe
+# area: 0.9 of the width, i.e. a 5% margin on each side. Every renderer (cloud Skia,
+# Pillow/libass, the phone compile, iOS `AuthoredTextFit.safeWidth`) uses this rule.
+AUTHORED_SAFE_WIDTH_FRAC = 0.9
+AUTHORED_MIN_WIDTH_FRAC = 0.1
+
+
+def authored_safe_width(canvas_width: float, x_frac: float | None, anchor: str | None) -> float:
+    """Widest row an authored line may draw at, given where it is anchored (KRI-826).
+
+    The line is placed relative to ``x_frac`` (its centre, or its left/right edge for a
+    "left"/"right" anchor), so its room is the distance from that point to the safe
+    margins: a centred line at x=0.7 has 2 x (0.95 - 0.7) of the width, not 0.9. A
+    point dragged onto or past a margin keeps a tenth of the width (it cannot fit
+    there; its words wrap one a row and shrink to the floor instead of vanishing).
+    """
+    width = float(canvas_width)
+    margin = width * (1.0 - AUTHORED_SAFE_WIDTH_FRAC) / 2.0
+    cx = width * (0.5 if x_frac is None else min(1.0, max(0.0, float(x_frac))))
+    if anchor == "left":
+        room = width - margin - cx
+    elif anchor == "right":
+        room = cx - margin
+    else:
+        room = 2.0 * min(cx - margin, width - margin - cx)
+    return max(width * AUTHORED_MIN_WIDTH_FRAC, min(width * AUTHORED_SAFE_WIDTH_FRAC, room))
+
+
 def _fallback_lines(text: str) -> int:
     return sum(max(1, math.ceil(len(line) / _FALLBACK_LINE_CHARS)) for line in text.split("\n"))
 
