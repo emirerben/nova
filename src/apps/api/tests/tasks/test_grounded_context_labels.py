@@ -302,8 +302,8 @@ def test_creator_text_label_renders():
     )
     assert rows[0]["grounding"] == "creator_text"
     assert rows[0]["confidence"] == 1.0
-    # KRI-826: the creator's own spelling prints, never the model's recasing of it.
-    assert rows[0]["sport"] == "sunset beach"
+    # KRI-826: a stored value that differs only in case keeps its casing on regen.
+    assert rows[0]["sport"] == "Sunset Beach"
 
 
 def test_classic_lane_cached_vision_answer_grounds_only_above_threshold():

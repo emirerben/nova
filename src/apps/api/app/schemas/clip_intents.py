@@ -181,6 +181,16 @@ def _clean_literal(value: object, limit: int) -> str:
     return _BLANK_LINES_RE.sub("\n\n", "\n".join(lines)).strip("\n ")[:limit].strip("\n ")
 
 
+def _clean_stored(value: object, limit: int) -> str:
+    """The row validators' clean: a one-line value is exactly ``_clean`` (format marks
+    such as U+200B or an RTL mark included), so every row stored before KRI-826
+    re-validates and re-dumps byte-identically. New creator input is cleaned by
+    ``clean_creator_literal_text`` before it is stored."""
+    if isinstance(value, str) and "\n" not in value and "\r" not in value:
+        return _clean(value, limit)
+    return _clean_literal(value, limit)
+
+
 def _has_control(text: str) -> bool:
     """A control character (not whitespace) is never typed copy: something broke it."""
     return any(unicodedata.category(c) == "Cc" and not c.isspace() for c in text)
@@ -302,7 +312,7 @@ class ClipIntent(BaseModel):
     @classmethod
     def _creator_text(cls, v: object) -> str | None:
         # KRI-826: the creator's line breaks survive (``_clean_literal``).
-        return _clean_literal(v, CREATOR_CAPTION_MAX_CHARS) or None
+        return _clean_stored(v, CREATOR_CAPTION_MAX_CHARS) or None
 
     @field_validator("caption_attribute", mode="before")
     @classmethod
@@ -323,7 +333,7 @@ class ClipAssignment(BaseModel):
     @field_validator("value", mode="before")
     @classmethod
     def _value(cls, v: object) -> str | None:
-        return _clean_literal(v, CREATOR_LABEL_STORAGE_MAX) or None
+        return _clean_stored(v, CREATOR_LABEL_STORAGE_MAX) or None
 
     @field_validator("evidence", mode="before")
     @classmethod
@@ -388,7 +398,13 @@ _RAW_WORD_RE = regex.compile(r"[\p{L}\p{N}_][\p{L}\p{N}\p{M}_]*")
 # Quotes around a label are the chat's punctuation, not the label's.
 _OUTER_QUOTES = '"“”«»„'
 # The same apostrophe, typed by different keyboards (iOS smart punctuation types ’).
-_APOSTROPHES = str.maketrans({"’": "'", "‘": "'", "ʼ": "'", "`": "'"})
+# Dashes and double quotes fold as the planner fence folds them (`_QUOTE_TABLE`), so a
+# creator_text the planner accepts is one the label fence can ground.
+_APOSTROPHES = str.maketrans(
+    {"’": "'", "‘": "'", "ʼ": "'", "`": "'", "‚": "'", "‛": "'", "′": "'"}
+    | {"“": '"', "”": '"', "„": '"', "‟": '"', "«": '"', "»": '"'}
+    | {"–": "-", "—": "-", "−": "-"}
+)
 
 
 def _is_word_char(char: str) -> bool:
@@ -484,8 +500,26 @@ def _extend(text: str, at: int, symbols: list[str], *, step: int) -> int | None:
 
 
 def _same_but_case(a: str, b: str) -> bool:
-    """True when ``a`` and ``b`` differ only in letter case and spacing (KRI-826)."""
-    return " ".join(a.split()).casefold() == " ".join(b.split()).casefold()
+    """True when ``a`` and ``b`` differ only in letter case and spacing (KRI-826).
+
+    A line break the creator typed is not spacing, and a dropped accent or a dotted i
+    for a dotless ı is not case: both are real changes. Turkish pairs ı/I and i/İ.
+    """
+
+    def lines(text: str) -> list[str]:
+        return [" ".join(line.split()) for line in text.strip().split("\n")]
+
+    def same(x: str, y: str) -> bool:
+        return x == y or x.casefold() == y.casefold() or {x, y} in _TURKISH_CASE_PAIRS
+
+    left, right = lines(a), lines(b)
+    return len(left) == len(right) and all(
+        len(x) == len(y) and all(same(c, d) for c, d in zip(x, y, strict=True))
+        for x, y in zip(left, right, strict=True)
+    )
+
+
+_TURKISH_CASE_PAIRS = ({"ı", "I"}, {"i", "İ"})
 
 
 def creator_span(haystack: str, phrase: str) -> str | None:
@@ -740,7 +774,14 @@ def ground_label(
     """
     span = creator_span(creator_request or "", value if isinstance(value, str) else "")
     if span is not None:
-        creator_text = clean_creator_label_text(span)
+        # The planner's stored value keeps its casing when only case or spacing differs
+        # (same rule as ``ground_caption``): a regen from persisted intents re-grounds
+        # against the chat request, and an accepted label must not change text after an
+        # unrelated edit (KRI-824 scoped edits). A dropped "+", emoji or diacritic still
+        # prints the creator's own span.
+        stored = value.strip().strip(_OUTER_QUOTES).strip() if isinstance(value, str) else ""
+        printed = stored if stored and _same_but_case(stored, span) else span
+        creator_text = clean_creator_label_text(printed)
         if creator_text is not None:
             return GroundedLabel(
                 media_id=media_id,

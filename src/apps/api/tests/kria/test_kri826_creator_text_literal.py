@@ -12,9 +12,9 @@ Ways this can fail, written down before the code:
 
  1. "chimichurri + salsa criolla" is refused for its "+" instead of printing on the bowls.
  2. "chimichurri & salsa criolla" asks "which clip" or says too long.
- 3. The model turns "+" into "and", adds "!" or "🔥", or recases the words, and THAT
-    prints: the printed text must be the creator's own span; an invented symbol grounds
-    nothing.
+ 3. The model turns "+" into "and", adds "!" or "🔥", or drops a symbol, and THAT
+    prints: the printed text must be the creator's own span (a casing-only difference
+    keeps the stored value, as captions do); an invented symbol grounds nothing.
  4. Model, vision or record copy gets the creator's freedom ("+", a 4th word).
  5. The right words on the wrong clip, or a rendered text missing the "+", passes the
     verifier (wrong-source and stripped-text controls).
@@ -138,7 +138,9 @@ def test_wrong_clip_or_altered_words_fail_the_verifier(media_ids, printed) -> No
     ("model_value", "printed"),
     [
         (PLUS, PLUS),
-        ("Chimichurri + Salsa Criolla", PLUS),  # the model's casing never prints
+        # Casing only: the stored value keeps its casing, as captions do, so a regen
+        # from persisted intents never changes an accepted label (KRI-824).
+        ("Chimichurri + Salsa Criolla", "Chimichurri + Salsa Criolla"),
         ("chimichurri salsa criolla", PLUS),  # a dropped "+" is the creator's: it prints
         ('"chimichurri + salsa criolla"', PLUS),  # the chat's quotes are not the label
         ("chimichurri and salsa criolla", None),  # "+" -> "and": a different word list
@@ -151,6 +153,10 @@ def test_only_the_creators_own_characters_print(model_value, printed) -> None:
     assert (label.text if label else None) == printed
     if label is not None:
         assert label.grounding == "creator_text"
+
+
+def test_a_smart_dash_the_planner_folds_still_grounds_as_the_creators_span() -> None:
+    assert _label("Paris - Rome", "label the drive Paris – Rome").text == "Paris – Rome"
 
 
 def test_a_symbol_next_to_the_words_prints_only_where_the_creator_wrote_it() -> None:
@@ -200,6 +206,9 @@ def test_turkish_letters_and_emoji_sequences_are_kept_byte_for_byte() -> None:
     assert clean_creator_label_text("Kadıköy​’de") == "Kadıköy’de"
     stored = ClipAssignment(media_id=BOWLS, value=TURKISH, grounding="creator_text")
     assert ClipAssignment.model_validate_json(stored.model_dump_json()).value == TURKISH
+    # A row stored before KRI-826 with a format mark re-dumps byte-identically.
+    legacy = ClipAssignment(media_id=BOWLS, value="a\u200bb\u200e", grounding="creator_text")
+    assert legacy.value == "a\u200bb\u200e"
 
 
 def test_an_emoji_newer_than_the_servers_unicode_tables_still_prints(monkeypatch) -> None:
