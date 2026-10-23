@@ -885,6 +885,21 @@ jobs:
           set -o pipefail
           python3 -m pytest tests/pipeline/test_phone_talking_cutaways.py tests/tasks/test_phone_subtitled_narrated_dispatch.py -q \
             | tee ../../../test-results/kri-559/talking-multi-clip-api-tests.log
+      - name: Verify a phone Talking edit ends on the requested video with its own sound
+        if: contains(needs.changes.outputs.journey_ids, 'kri-841-talking-ending-clip')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/tasks/test_kri841_talking_ending_clip.py \
+            tests/kria/test_kri841_ending_clip_ask.py \
+            tests/pipeline/test_phone_subtitled_plan.py \
+            tests/services/test_phone_subtitled_editor.py \
+            tests/routes/test_admin_plan_item_phone_lanes.py -q \
+            | tee ../../../test-results/kri-559/talking-ending-clip-api-tests.log
       - name: Verify a re-sent copy of a message is answered, not planned, and labels are cut at words
         if: contains(needs.changes.outputs.journey_ids, 'kri-552-duplicate-resend')
         working-directory: src/apps/api
