@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.59.0] - 2026-10-23
+
+### Changed
+- test(ios): use readable media for upload preparation guard (#1774) <!-- release-pr: 1774 -->
+
 ## [0.81.58.0] - 2026-10-23
 
 ### Changed
