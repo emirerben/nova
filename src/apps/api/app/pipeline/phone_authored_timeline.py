@@ -61,6 +61,14 @@ def compile_phone_authored_timeline(
         raise ValueError("authored phone timeline cannot carry a creator's own song")
     if not isinstance(previous, EditRecipeV2):
         raise ValueError("authored phone restore requires immutable source receipts")
+    if variant.get("speech_timing_unresolved"):
+        from app.pipeline.editor_render_window import RenderWindowUnavailable
+
+        raise RenderWindowUnavailable(
+            "Caption timing for the newly exposed speech is unavailable. "
+            "Your edit is saved; add your captions, turn captions off, "
+            "or restore the previous range before exporting."
+        )
     catalog = (phone_editor_source_revision(job, variant) or {})["sources"]
     assembly = job.assembly_plan or {}
     bindings = tuple(

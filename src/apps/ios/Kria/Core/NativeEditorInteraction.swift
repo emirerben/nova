@@ -291,16 +291,25 @@ enum NativeEditorInteraction {
         slots: [EditorTimelineSlot],
         carousel: [String: JSONValue]?
     ) -> NativeEditorTimelineProjection {
+        let speech = slots.contains { $0.id?.hasPrefix("native-phone-talking-source") == true }
         var baseWindows: [NativeEditorClipWindow] = []
         var cursor: TimeInterval = 0
         var previous: (slot: EditorTimelineSlot, duration: TimeInterval)?
         for (index, slot) in slots.enumerated() where !slot.removed {
-            let duration = max(0.1, slot.durationS ?? 0.1)
-            let overlap = previous.map {
-                transitionOverlap(left: $0.slot, leftDuration: $0.duration, rightDuration: duration)
+            let minimum = slot.id?.hasPrefix("native-phone-talking-source") == true ? 0.001 : 0.1
+            let duration = max(minimum, slot.durationS ?? minimum)
+            let overlap = previous.map { prior -> Double in
+                if speech {
+                    guard prior.slot.transitionAfter != "cut" else { return 0 }
+                    let raw = min(0.3, prior.slot.transitionDurationS ?? 0.3, prior.duration * 0.3, duration * 0.3)
+                    return raw >= 0.1 ? raw : 0
+                }
+                return transitionOverlap(left: prior.slot, leftDuration: prior.duration, rightDuration: duration)
             } ?? 0
-            let start = roundedMillis(cursor - overlap)
-            let end = roundedMillis(start + duration)
+            // Source-backed speech must use the same continuous source clock
+            // as its recipe; rounding each segment accumulates caption drift.
+            let start = speech ? cursor - overlap : roundedMillis(cursor - overlap)
+            let end = speech ? start + duration : roundedMillis(start + duration)
             baseWindows.append(
                 NativeEditorClipWindow(
                     sourceIndex: index,

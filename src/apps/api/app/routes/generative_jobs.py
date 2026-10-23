@@ -2283,6 +2283,18 @@ def _variants_for_response(job: Job) -> list[dict]:
     public_plan = projection.value
     public_variants = public_plan.get("variants") if isinstance(public_plan, dict) else None
     for v in public_variants if isinstance(public_variants, list) else []:
+        if (
+            v.get("render_destination") == "device"
+            and v.get("resolved_archetype") == "subtitled"
+            and (v.get("render_status") == "ready" or v.get("editor_timeline_mode") == "authored")
+        ):
+            rows = editor_deletion_timeline(job, v)
+            if any(
+                str(row.get("slot_id")).startswith("native-phone-talking-source") for row in rows
+            ):
+                from app.services.authored_editor import speech_timing_basis_for_job
+
+                v = {**v, "speech_timing_basis": speech_timing_basis_for_job(job, v, rows)}
         if v.get("editor_state") == "empty":
             from app.services.editor_empty_drafts import (
                 public_empty_editor_variant,  # noqa: PLC0415
@@ -10360,6 +10372,20 @@ def prepare_editor_commit(
             if adds_visual or adds_imported_source:
                 raise HTTPException(422, detail={"code": "phone_editor_media_unavailable"})
 
+        if (
+            variant.get("editor_timeline_mode") == "authored"
+            and variant.get("resolved_archetype") == "subtitled"
+        ):
+            from app.services.authored_editor import prepare_authored_editor_commit
+
+            return prepare_authored_editor_commit(
+                job,
+                variant_id,
+                payload,
+                validation_arguments=arguments,
+                phone_sfx_catalog_paths=phone_sfx_catalog_paths,
+                creator_brief_binding=creator_brief_binding,
+            )
         return prepare_phone_editor_commit(
             job,
             variant_id,

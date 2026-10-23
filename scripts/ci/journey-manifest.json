@@ -909,7 +909,7 @@
         "KriaTests/NativeEditorSessionTests/testEveryEdgeDragStaysWithinTheServerBound",
         "KriaTests/NativeEditorSessionTests/testTrailingDragAtDoubleSpeedStopsAtTheFootageEnd",
         "KriaTests/NativeEditorSessionTests/testTrailingDragWithUnknownSourceLengthCannotGrow",
-        "KriaTests/NativeEditorSessionTests/testTalkingSourceClipHasNoTrimGesture"
+        "KriaTests/NativeEditorSessionTests/testTalkingSourceClipHasOneUndoableTrimGesture"
       ],
       "paths": [
         "src/apps/api/app/agents/_schemas/text_element.py",
@@ -1325,6 +1325,33 @@
         "src/apps/api/app/agents/overlay_examples.py",
         "src/apps/api/tests/agents/test_market_research_banks.py",
         "src/apps/api/tests/agents/test_overlay_examples_slop_guard.py"
+      ]
+    },
+    {
+      "id": "kri-852-speech-editor",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_editor_save_contract_matrix.py tests/integration/test_durable_editor_save.py tests/pipeline/test_speech_cut_state.py tests/routes/test_editor_save_code_catalog.py",
+      "xctests": [
+        "KriaTests/NativeSpeechTimelineTests/testDeleteTrimSlideReorderKeepsWordsAndLanesOnTheirSource",
+        "KriaTests/NativeSpeechTimelineTests/testFractionalOverlapAndRepeatedSourceFixtureMatchesTheRenderer",
+        "KriaTests/NativeSpeechTimelineTests/testMissingSourceWordsRetainTheRangeUntilCaptionRecovery",
+        "KriaTests/NativeEditorSessionTests/testTalkingSourceClipHasOneUndoableTrimGesture",
+        "KriaTests/NativeSpeechTimelineTests/testSharedSourcePoolSurvivesReopenWithoutCaptionMirrors"
+      ],
+      "paths": [
+        "src/apps/api/app/pipeline/speech_cut_state.py",
+        "src/apps/api/app/services/authored_editor.py",
+        "src/apps/api/app/pipeline/phone_authored_timeline.py",
+        "src/apps/api/app/services/editor_empty_drafts.py",
+        "src/apps/api/app/kria/drafts.py",
+        "src/apps/api/app/routes/generative_jobs.py",
+        "src/apps/ios/Kria/Core/NativeSpeechTimelineProjection.swift",
+        "src/apps/ios/Kria/Core/NativeEditorDocument.swift",
+        "src/apps/ios/Kria/Core/NativeEditorInteraction.swift",
+        "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift",
+        "src/apps/ios/Kria/Features/NativeEditorSession.swift",
+        "src/apps/ios/Tests/Fixtures/speech_editor_projection.json",
+        "src/apps/ios/Tests/KriaTests/NativeSpeechTimelineTests.swift"
       ]
     }
   ]

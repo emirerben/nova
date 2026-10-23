@@ -436,6 +436,8 @@ struct EditorDocument: Equatable, Sendable {
     var opaqueRecords: [EditorSection: [EditorOpaqueRecord]]
     /// KRI-282 read-only speech-excerpt lane (see `EditorClipAudio`).
     var clipAudio: [EditorClipAudio] = []
+    /// Source anchors retain temporarily trimmed lane content across Save/reopen.
+    var speechTimingBasis: [String: JSONValue] = [:]
     /// Rows of `clip_audio` that did not parse. The renderer refuses these
     /// rather than silently rendering without the excerpt.
     var unreadableClipAudio = 0
@@ -538,6 +540,7 @@ struct EditorDocument: Equatable, Sendable {
         document.clips = decodeSlots(array(sections["timeline_slots"] ?? object(snapshot["user_timeline"])?["slots"]) ?? []) .filter { !$0.removed }
         document.tombstones = decodeSlots(array(sections["timeline_slots"] ?? object(snapshot["user_timeline"])?["slots"]) ?? []) .filter(\.removed)
         document.textElements = decodeText(array(sections["text_elements"] ?? snapshot["text_elements"]) ?? [])
+        document.speechTimingBasis = object(sections["speech_timing_basis"] ?? snapshot["speech_timing_basis"]) ?? [:]
         document.captionCues = decodeCaptions(array(sections["caption_cues"] ?? snapshot["caption_cues"]) ?? [])
         document.soundEffects = decodeEffects(array(sections["sound_effects"] ?? snapshot["sound_effects"]) ?? [])
         document.mediaOverlays = decodeEffects(array(sections["media_overlays"] ?? snapshot["media_overlays"]) ?? [])
@@ -568,6 +571,7 @@ struct EditorDocument: Equatable, Sendable {
         if isNew { root = ["schema_version": .number(Double(schemaVersion)), "kind": .string(kind), "edit_format": .string(editFormat)] }
         var payload = Self.object(root["editor_payload"]) ?? [:]
         var sections = canonical ? (Self.object(payload["sections"]) ?? rawSections) : rawSections
+        if !speechTimingBasis.isEmpty { sections["speech_timing_basis"] = .object(speechTimingBasis) }
         writeSection(&sections, .timeline, values: clips + tombstones, original: Self.array(rawSections[EditorSection.timeline.wireKey]), encode: encodeSlot, id: { Self.string($0["slot_id"]) }, nonEmpty: !(clips + tombstones).isEmpty)
         writeSection(&sections, .text, values: textElements, original: Self.array(rawSections[EditorSection.text.wireKey]), encode: encodeText, id: { Self.string($0["id"]) }, nonEmpty: !textElements.isEmpty)
         writeSection(&sections, .captions, values: captionCues, original: Self.array(rawSections[EditorSection.captions.wireKey]), encode: encodeCaption, id: { Self.number($0["start_s"]) != nil && Self.number($0["end_s"]) != nil ? "caption" : nil }, nonEmpty: !captionCues.isEmpty)

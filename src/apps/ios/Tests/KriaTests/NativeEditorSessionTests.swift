@@ -3335,7 +3335,7 @@ final class NativeEditorSessionTests: XCTestCase {
             if let slotID { next.clips[0].id = slotID }
             session.replaceDocumentForTesting(next)
         }
-        return (session, clip.id)
+        return (session, session.timelineClips.first?.id ?? clip.id)
     }
 
     /// The Troya vector: a trailing drag to the 0.1 s minimum encoded `(in + 0.1) - in`, e.g.
@@ -3404,14 +3404,17 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.document.clips[0].durationS ?? 0, 2.0, accuracy: 1e-9)
     }
 
-    /// The server pins a talking-source slot to its approved cut (409 TIMELINE_STALE on any change).
-    func testTalkingSourceClipHasNoTrimGesture() {
+    /// KRI-852: creator speech windows create an authored revision and remain trimmable.
+    func testTalkingSourceClipHasOneUndoableTrimGesture() {
         let (session, id) = trimSession(inS: 0, duration: 3.0, sourceDuration: 10.0, slotID: "native-phone-talking-source-0")
         session.beginTrim(clipID: id, edge: .trailing)
         session.updateTrim(by: -2)
         session.endTrim()
+        XCTAssertEqual(session.document.clips[0].durationS ?? 0, 1.0, accuracy: 1e-9)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        session.undo()
         XCTAssertEqual(session.document.clips[0].durationS ?? 0, 3.0, accuracy: 1e-9)
-        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertFalse(session.canUndo)
     }
 
     func testLeadingTrimAdvancesSourceWithoutLeavingTimelineGap() {

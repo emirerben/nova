@@ -17,6 +17,64 @@
   ],
   "gates": [
     {
+      "id": "kri-852-speech-editor",
+      "tickets": [
+        "KRI-852",
+        "KRI-771"
+      ],
+      "symptom": "After deleting a cleaned Talking segment, source-window edits return TIMELINE_STALE and reorder leaves captions on the wrong source occurrence.",
+      "boundary": "persistence",
+      "status": "open_pr",
+      "owner": "KRI-852",
+      "journey": "kri-852-speech-editor",
+      "paths": [
+        "src/apps/api/app/pipeline/speech_cut_state.py",
+        "src/apps/api/app/services/authored_editor.py",
+        "src/apps/api/app/pipeline/phone_authored_timeline.py",
+        "src/apps/api/app/services/editor_empty_drafts.py",
+        "src/apps/api/app/kria/drafts.py",
+        "src/apps/api/app/routes/generative_jobs.py",
+        "src/apps/ios/Kria/Core/NativeSpeechTimelineProjection.swift",
+        "src/apps/ios/Kria/Core/NativeEditorDocument.swift",
+        "src/apps/ios/Kria/Core/NativeEditorInteraction.swift",
+        "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift",
+        "src/apps/ios/Kria/Features/NativeEditorSession.swift",
+        "src/apps/ios/Tests/Fixtures/speech_editor_projection.json",
+        "src/apps/ios/Tests/KriaTests/NativeSpeechTimelineTests.swift"
+      ],
+      "regression_tests": [
+        "tests/routes/test_editor_save_contract_matrix.py",
+        "tests/integration/test_durable_editor_save.py",
+        "tests/pipeline/test_speech_cut_state.py",
+        "tests/routes/test_editor_save_code_catalog.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Real authored Save/compiler plus scratch Postgres Save/reopen, source/generation/owner/bounds and simultaneous Save controls. Initial source guard and wrong-caption failures retained at baseline 49edd1c34.",
+        "live_model": "Not run. No new provider calls, prompts, flags or credentials.",
+        "native_output": "Paired source-occurrence/fractional fixtures, native undo/save/source/compiler tests and inspected current-engine macOS exports of a constructed cleaned state from retained synthetic Talking media. docs/reviews/kri-852-speech-editor.md records commands/hashes/limits.",
+        "production": "Not deployed; physical original iPhone draft untouched."
+      },
+      "neighbours_covered": [
+        "trim/slide/reorder and combined sequence",
+        "trim/extend and slide/back after serialized reopen",
+        "newly exposed words require matching full-source transcript generation",
+        "missing transcript saves exact draft with recoverable render prerequisite; creator captions/disabled captions recover",
+        "stale generation, foreign owner/slot/source generation, invalid source bounds, simultaneous Save",
+        "repeated source occurrences, crossing intervals, right-biased points in overlap and fractional renderer parity"
+      ],
+      "neighbours_gap": [
+        "Physical original Talking Save/reopen/export acceptance remains KRI-771; no original phone-draft mutation authorized.",
+        "KRI-724/#1760 precise phrase planning, processed audio and noise work remain separate."
+      ],
+      "follow_ups": [
+        "KRI-771",
+        "KRI-724"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-802-question-batch",
       "tickets": [
         "KRI-802"

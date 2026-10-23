@@ -141,6 +141,8 @@ targets:
         buildPhase: resources
       - path: Tests/Fixtures/editor_save_codes.json
         buildPhase: resources
+      - path: Tests/Fixtures/speech_editor_projection.json
+        buildPhase: resources
     dependencies:
       - target: Kria
     settings:
