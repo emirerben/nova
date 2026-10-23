@@ -124,9 +124,11 @@ then falls back to the job `language`. Both fallbacks record a
 in the creator's own words ("captions in English", "altyazılar Türkçe olsun"). The
 override is parsed in `build_generative_job` into `all_candidates["caption_language_request"]`
 and passed to whisper as the language hint, the same as the D5 re-transcribe
-chip. A prompt merely *written* in a language never changes it. Known gap: Kria
-runtime-v2 dispatches with an LLM summary instead of the creator's text, so that
-path does not pick up requests yet.
+chip. Phone Talking is the exception: it transcribes the spoken language first
+(reaction beats, overlay grounding and spoken-text asks read that), and the request
+drives a second, caption-only pass (KRI-839). A prompt merely *written* in a
+language never changes it. Known gap: Kria runtime-v2 dispatches with an LLM
+summary instead of the creator's text, so that path does not pick up requests yet.
 
 **Smart Captions (server-only flag):** set `SMART_CAPTIONS_ENABLED=true` on Fly
 and restart the API/workers. There is deliberately no `NEXT_PUBLIC` twin. A

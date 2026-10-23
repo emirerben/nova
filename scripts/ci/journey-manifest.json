@@ -1332,6 +1332,16 @@
         "src/apps/api/tests/agents/test_market_research_banks.py",
         "src/apps/api/tests/agents/test_overlay_examples_slop_guard.py"
       ]
+    },
+    {
+      "id": "kri-839-beats-spoken-words",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri839_beats_spoken_words.py tests/tasks/test_subtitled_caption_language.py",
+      "paths": [
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/services/phone_reaction_grounding.py",
+        "src/apps/api/tests/fixtures/kri839_cafe_t2/t2_01_words.json"
+      ]
     }
   ]
 }

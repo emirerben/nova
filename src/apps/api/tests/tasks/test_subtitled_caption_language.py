@@ -782,19 +782,82 @@ def test_phone_keeps_whisper_when_gemini_agrees(monkeypatch):
     assert job.assembly_plan["variants"][0]["caption_language"] == "en"
 
 
-def test_phone_explicit_request_skips_the_crosscheck(monkeypatch):
+def test_phone_explicit_request_crosschecks_the_spoken_pass_only(monkeypatch):
+    """KRI-839: the spoken pass is always auto-language, so it is cross-checked even when
+    the creator asked for another caption language (a misdetected accented take must not
+    push the beats back onto a translation); the requested-language caption pass never is."""
     job, _snapshot, _session, binding = _setup_subtitled(monkeypatch)
     job.all_candidates["caption_language_request"] = "tr"
     _gemini_heard(monkeypatch, binding, _GEMINI_EN)
     mock = _whisper_by_language(
         monkeypatch,
-        {"tr": Transcript(words=_words(("Üçüncü", 0.0, 0.5)), language="tr", full_text="Üçüncü")},
+        {
+            None: Transcript(
+                words=_words(("Üçüncü?", 5.76, 6.3)), language="tr", full_text=_WHISPER_TR_TEXT
+            ),
+            "en": Transcript(
+                words=_words(("Number", 5.76, 6.0), ("three.", 6.0, 6.3)),
+                language="en",
+                full_text="Number three.",
+            ),
+            "tr": Transcript(
+                words=_words(("Üçüncü", 5.76, 6.3)), language="tr", full_text="Üçüncü"
+            ),
+        },
     )
+    events = _phone_events(monkeypatch)
 
     gb._run_generative_job(str(job.id))
 
-    assert [c.kwargs.get("language") for c in mock.call_args_list] == ["tr"]
+    assert [c.kwargs.get("language") for c in mock.call_args_list] == [None, "en", "tr"]
     assert job.assembly_plan["variants"][0]["caption_language"] == "tr"
+    assert [
+        p["reference_language"] for p in _event_payloads(events, "caption_language_crosscheck")
+    ] == ["en"]
+    assert _event_payloads(events, "caption_language_requested") == [
+        {"variant_id": "subtitled", "requested": "tr", "spoken": "en"}
+    ]
+
+
+def test_phone_explicit_request_for_the_spoken_language_costs_no_second_pass(monkeypatch):
+    job, _snapshot, _session, _binding = _setup_subtitled(monkeypatch)
+    job.all_candidates["caption_language_request"] = "en"
+    mock = _whisper_by_language(
+        monkeypatch,
+        {None: Transcript(words=_words(("Hello", 0.0, 0.5)), language="en", full_text="Hello")},
+    )
+    events = _phone_events(monkeypatch)
+
+    gb._run_generative_job(str(job.id))
+
+    assert [c.kwargs.get("language") for c in mock.call_args_list] == [None]
+    assert job.assembly_plan["variants"][0]["caption_language"] == "en"
+    assert _event_payloads(events, "caption_language_requested") == [
+        {"variant_id": "subtitled", "requested": "en", "spoken": "en"}
+    ]
+
+
+def test_phone_explicit_request_keeps_spoken_captions_when_the_pass_is_empty(monkeypatch):
+    """A requested-language pass that hears nothing never blanks the captions (no cleanup)."""
+    job, _snapshot, _session, _binding = _setup_subtitled(monkeypatch)
+    job.all_candidates["caption_language_request"] = "tr"
+    mock = _whisper_by_language(
+        monkeypatch,
+        {
+            None: Transcript(words=_words(("Hello", 0.0, 0.5)), language="en", full_text="Hello"),
+            "tr": Transcript(words=[], language="tr", full_text=""),
+        },
+    )
+    events = _phone_events(monkeypatch)
+
+    gb._run_generative_job(str(job.id))
+
+    assert [c.kwargs.get("language") for c in mock.call_args_list] == [None, "tr"]
+    assert job.assembly_plan["variants"][0]["caption_language"] == "en"
+    assert _event_payloads(events, "caption_language_request_empty") == [
+        {"variant_id": "subtitled", "requested": "tr", "spoken": "en"}
+    ]
+    assert _event_payloads(events, "caption_language_requested") == []
 
 
 def test_phone_keeps_first_pass_when_the_retranscribe_is_empty(monkeypatch):

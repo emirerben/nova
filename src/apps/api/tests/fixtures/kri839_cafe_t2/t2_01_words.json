@@ -1,0 +1,373 @@
+{
+ "source": "KRI-839. Clip: ~/Downloads/kria-ecuador-test/upload/T2_turkish_subs_talking/T2_01_footage.mp4 (cafe kit T2, 24.6 s, Caro's intro + ingredient list = source 0:11.8-0:36.4 of the T1 take). `spoken`: REAL local whisper.cpp output, model ggml-medium.bin, from `ffmpeg -i T2_01_footage.mp4 -ar 16000 -ac 1 t2_01.wav` then `whisper-cli -m ggml-medium.bin -f t2_01.wav -l en -ml 1 -sow -ojf` (word per entry, whisper's own punctuation kept, leading space stripped). `-l auto -dl` detects en (p=0.856). \"Ecuador\" 1.43-2.00 s, \"That's it.\" 23.76-24.48 s; independent cross-check: tests/tasks/test_kri791_spoken_text_trigger.py has \"That's it.\" at 35.74 s of the T1 take = 23.94 s here. `caption_tr`: NOT a recording. whisper.cpp with `-l tr` transcribes English audio as English (it never translates), whereas the production whisper-1 API forced to `tr` writes a Turkish translation (ticket KRI-839: the beats saw ['Ben', \"Ekvador'danim\"]). So these are hand-written Turkish words laid over the spoken pass's own timings (each stretch's words share its time span in proportion to their length) - it stands for what the forced pass returns, and deliberately has neither 'Ecuador' nor \"That's it\".",
+ "spoken": {
+  "language": "en",
+  "words": [
+   {
+    "text": "Hi,",
+    "start_s": 0.0,
+    "end_s": 0.3
+   },
+   {
+    "text": "I'm",
+    "start_s": 0.3,
+    "end_s": 0.52
+   },
+   {
+    "text": "Carolina",
+    "start_s": 0.52,
+    "end_s": 1.13
+   },
+   {
+    "text": "from",
+    "start_s": 1.13,
+    "end_s": 1.43
+   },
+   {
+    "text": "Ecuador",
+    "start_s": 1.43,
+    "end_s": 2.0
+   },
+   {
+    "text": "and",
+    "start_s": 2.0,
+    "end_s": 2.5
+   },
+   {
+    "text": "this",
+    "start_s": 2.5,
+    "end_s": 3.14
+   },
+   {
+    "text": "is",
+    "start_s": 3.14,
+    "end_s": 3.48
+   },
+   {
+    "text": "the",
+    "start_s": 3.48,
+    "end_s": 3.78
+   },
+   {
+    "text": "Oblaya",
+    "start_s": 3.78,
+    "end_s": 4.38
+   },
+   {
+    "text": "de",
+    "start_s": 4.38,
+    "end_s": 4.58
+   },
+   {
+    "text": "la",
+    "start_s": 4.58,
+    "end_s": 4.78
+   },
+   {
+    "text": "Casa.",
+    "start_s": 4.78,
+    "end_s": 5.28
+   },
+   {
+    "text": "It's",
+    "start_s": 5.28,
+    "end_s": 5.74
+   },
+   {
+    "text": "a",
+    "start_s": 5.74,
+    "end_s": 5.85
+   },
+   {
+    "text": "traditional",
+    "start_s": 5.85,
+    "end_s": 7.14
+   },
+   {
+    "text": "Colombian",
+    "start_s": 7.14,
+    "end_s": 8.19
+   },
+   {
+    "text": "dessert.",
+    "start_s": 8.19,
+    "end_s": 9.04
+   },
+   {
+    "text": "It's",
+    "start_s": 9.04,
+    "end_s": 9.45
+   },
+   {
+    "text": "waffle",
+    "start_s": 9.45,
+    "end_s": 10.07
+   },
+   {
+    "text": "cookie",
+    "start_s": 10.07,
+    "end_s": 10.72
+   },
+   {
+    "text": "with",
+    "start_s": 10.72,
+    "end_s": 11.65
+   },
+   {
+    "text": "bread,",
+    "start_s": 11.65,
+    "end_s": 13.28
+   },
+   {
+    "text": "no,",
+    "start_s": 13.28,
+    "end_s": 13.62
+   },
+   {
+    "text": "with",
+    "start_s": 13.62,
+    "end_s": 13.96
+   },
+   {
+    "text": "blackberry",
+    "start_s": 13.96,
+    "end_s": 14.83
+   },
+   {
+    "text": "jam,",
+    "start_s": 14.83,
+    "end_s": 15.44
+   },
+   {
+    "text": "cheese,",
+    "start_s": 15.44,
+    "end_s": 16.25
+   },
+   {
+    "text": "dulce",
+    "start_s": 16.25,
+    "end_s": 16.71
+   },
+   {
+    "text": "de",
+    "start_s": 16.71,
+    "end_s": 16.89
+   },
+   {
+    "text": "leche,",
+    "start_s": 16.89,
+    "end_s": 17.62
+   },
+   {
+    "text": "leche",
+    "start_s": 17.62,
+    "end_s": 18.27
+   },
+   {
+    "text": "condensada,",
+    "start_s": 18.27,
+    "end_s": 19.98
+   },
+   {
+    "text": "and",
+    "start_s": 19.98,
+    "end_s": 20.56
+   },
+   {
+    "text": "whipped",
+    "start_s": 20.56,
+    "end_s": 21.64
+   },
+   {
+    "text": "cream.",
+    "start_s": 21.64,
+    "end_s": 22.88
+   },
+   {
+    "text": "Nice,",
+    "start_s": 22.88,
+    "end_s": 23.16
+   },
+   {
+    "text": "delicious.",
+    "start_s": 23.16,
+    "end_s": 23.76
+   },
+   {
+    "text": "That's",
+    "start_s": 23.76,
+    "end_s": 24.15
+   },
+   {
+    "text": "it.",
+    "start_s": 24.15,
+    "end_s": 24.48
+   }
+  ]
+ },
+ "caption_tr": {
+  "language": "tr",
+  "words": [
+   {
+    "text": "Merhaba,",
+    "start_s": 0.0,
+    "end_s": 0.48
+   },
+   {
+    "text": "ben",
+    "start_s": 0.48,
+    "end_s": 0.67
+   },
+   {
+    "text": "Carolina,",
+    "start_s": 0.67,
+    "end_s": 1.21
+   },
+   {
+    "text": "Ekvador'danım",
+    "start_s": 1.21,
+    "end_s": 2.0
+   },
+   {
+    "text": "ve",
+    "start_s": 2.0,
+    "end_s": 2.36
+   },
+   {
+    "text": "bu",
+    "start_s": 2.36,
+    "end_s": 2.73
+   },
+   {
+    "text": "Oblea",
+    "start_s": 2.73,
+    "end_s": 3.64
+   },
+   {
+    "text": "de",
+    "start_s": 3.64,
+    "end_s": 4.0
+   },
+   {
+    "text": "la",
+    "start_s": 4.0,
+    "end_s": 4.37
+   },
+   {
+    "text": "Casa.",
+    "start_s": 4.37,
+    "end_s": 5.28
+   },
+   {
+    "text": "Geleneksel",
+    "start_s": 5.28,
+    "end_s": 6.53
+   },
+   {
+    "text": "bir",
+    "start_s": 6.53,
+    "end_s": 6.91
+   },
+   {
+    "text": "Kolombiya",
+    "start_s": 6.91,
+    "end_s": 8.04
+   },
+   {
+    "text": "tatlısı.",
+    "start_s": 8.04,
+    "end_s": 9.04
+   },
+   {
+    "text": "Gofret",
+    "start_s": 9.04,
+    "end_s": 9.98
+   },
+   {
+    "text": "kurabiyesi,",
+    "start_s": 9.98,
+    "end_s": 11.71
+   },
+   {
+    "text": "ekmek,",
+    "start_s": 11.71,
+    "end_s": 12.66
+   },
+   {
+    "text": "hayır,",
+    "start_s": 12.66,
+    "end_s": 13.6
+   },
+   {
+    "text": "böğürtlen",
+    "start_s": 13.6,
+    "end_s": 15.02
+   },
+   {
+    "text": "reçeli,",
+    "start_s": 15.02,
+    "end_s": 16.12
+   },
+   {
+    "text": "peynir,",
+    "start_s": 16.12,
+    "end_s": 17.22
+   },
+   {
+    "text": "dulce",
+    "start_s": 17.22,
+    "end_s": 18.0
+   },
+   {
+    "text": "de",
+    "start_s": 18.0,
+    "end_s": 18.32
+   },
+   {
+    "text": "leche,",
+    "start_s": 18.32,
+    "end_s": 19.26
+   },
+   {
+    "text": "leche",
+    "start_s": 19.26,
+    "end_s": 20.05
+   },
+   {
+    "text": "condensada",
+    "start_s": 20.05,
+    "end_s": 21.62
+   },
+   {
+    "text": "ve",
+    "start_s": 21.62,
+    "end_s": 21.94
+   },
+   {
+    "text": "krema.",
+    "start_s": 21.94,
+    "end_s": 22.88
+   },
+   {
+    "text": "Güzel,",
+    "start_s": 22.88,
+    "end_s": 23.23
+   },
+   {
+    "text": "lezzetli.",
+    "start_s": 23.23,
+    "end_s": 23.76
+   },
+   {
+    "text": "Hepsi",
+    "start_s": 23.76,
+    "end_s": 24.21
+   },
+   {
+    "text": "bu.",
+    "start_s": 24.21,
+    "end_s": 24.48
+   }
+  ]
+ }
+}

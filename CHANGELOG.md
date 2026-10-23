@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.55.0] - 2026-10-23
+
+### Changed
+- fix(kria): a Talking edit with photo beats keeps the creator's title (KRI-851) (#1763) <!-- release-pr: 1763 -->
+
+## [0.81.54.0] - 2026-10-23
+
+### Fixed
+- fix(captions): word-timed cards and sounds land on the spoken words when Talking captions are in another language (KRI-839) (#1764) <!-- release-pr: 1764 -->
+
 ## [0.81.53.0] - 2026-10-23
 
 ### Changed
