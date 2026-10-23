@@ -29,6 +29,7 @@ from sqlalchemy import and_, case, or_, select, text
 
 from app.database import sync_session
 from app.models import Job, PlanItem, PlanItemAsset
+from app.services import pool_analysis_deadline as pool_deadline
 from app.services.durable_attempt_cleanup import (
     job_render_not_quiescent,
     jobs_with_storage_attempt_cleanup_receipts,
@@ -44,10 +45,9 @@ from app.worker import celery_app
 
 log = structlog.get_logger()
 
-# A full 20-file batch can legitimately wait behind ten waves at concurrency 2;
-# each task has a 5-minute hard limit. Do not invalidate healthy broker backlog.
-_POOL_QUEUED_STALE_AFTER = timedelta(minutes=60)
-_POOL_ANALYZING_STALE_AFTER = timedelta(minutes=10)
+# `uploaded` rows were never dispatched (the route crashed between commit and
+# publish); they get a fresh deadline-bearing attempt, at most this many times.
+_POOL_UNDISPATCHED_AFTER = timedelta(minutes=60)
 _POOL_MAX_ATTEMPTS = 3
 _POOL_HEIF_DECODER_RECOVERY_MAX_ATTEMPTS = 2
 _POOL_RECONCILE_BATCH = 100
@@ -137,7 +137,7 @@ def _preview_backfill_predicate():
 
 
 def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
-    """Requeue unclaimed analyses and terminalize exhausted/stuck attempts.
+    """Terminalize analyses past their declared deadline; requeue undispatched rows.
 
     A fresh token fences a late worker from overwriting the retry. Publication
     happens after commit so a worker can always observe and atomically claim its
@@ -147,9 +147,13 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
     from app.tasks.autoplace import analyze_pool_asset  # noqa: PLC0415
 
     current = now or datetime.now(UTC)
-    queued_cutoff = current - _POOL_QUEUED_STALE_AFTER
-    analyzing_cutoff = current - _POOL_ANALYZING_STALE_AFTER
-    to_publish: list[tuple[str, str, str | None]] = []
+    undispatched_cutoff = current - _POOL_UNDISPATCHED_AFTER
+    # Pre-0125 in-flight rows carry no deadline; select any old enough to have
+    # one derived (services/pool_analysis_deadline.effective_deadline), then
+    # decide per row in Python.
+    legacy_cutoff = current - min(pool_deadline.run_window(kind) for kind in ("image", "video"))
+    to_publish: list[tuple[str, str, str | None, datetime | None]] = []
+    timed_out = 0
     expired_reservations: list[
         tuple[
             uuid.UUID,
@@ -182,29 +186,20 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
                             ),
                         ),
                         PlanItemAsset.status == "cleanup_pending",
+                        # KRI-820: in flight past the declared deadline
+                        # (idx_plan_item_assets_in_flight_deadline).
                         and_(
-                            PlanItemAsset.status == "queued",
-                            or_(
-                                PlanItemAsset.analysis_last_dispatched_at <= queued_cutoff,
-                                and_(
-                                    PlanItemAsset.analysis_last_dispatched_at.is_(None),
-                                    PlanItemAsset.created_at <= queued_cutoff,
-                                ),
-                            ),
+                            PlanItemAsset.status.in_(pool_deadline.IN_FLIGHT_STATUSES),
+                            PlanItemAsset.analysis_deadline_at <= current,
+                        ),
+                        and_(
+                            PlanItemAsset.status.in_(pool_deadline.IN_FLIGHT_STATUSES),
+                            PlanItemAsset.analysis_deadline_at.is_(None),
+                            PlanItemAsset.created_at <= legacy_cutoff,
                         ),
                         and_(
                             PlanItemAsset.status == "uploaded",
-                            PlanItemAsset.created_at <= queued_cutoff,
-                        ),
-                        and_(
-                            PlanItemAsset.status == "analyzing",
-                            or_(
-                                PlanItemAsset.analysis_started_at <= analyzing_cutoff,
-                                and_(
-                                    PlanItemAsset.analysis_started_at.is_(None),
-                                    PlanItemAsset.created_at <= analyzing_cutoff,
-                                ),
-                            ),
+                            PlanItemAsset.created_at <= undispatched_cutoff,
                         ),
                         # HEIC/HEIF pool analysis shipped without registering
                         # Pillow's decoder, so every valid iPhone photo was
@@ -232,12 +227,19 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
             .scalars()
             .all()
         )
+        queue_ahead: int | None = None
         for asset in rows:
             if asset.status == "deduped":
                 # The uploaded duplicate bytes were deleted synchronously at
                 # registration time. The row is only a bounded idempotency
                 # receipt and has no render/pool-path references of its own.
                 db.delete(asset)
+                continue
+            if asset.status in pool_deadline.IN_FLIGHT_STATUSES and not pool_deadline.is_expired(
+                asset, current
+            ):
+                # A pre-0125 row selected by the legacy superset whose derived
+                # deadline has not passed yet: leave it to its worker.
                 continue
             touched += 1
             if asset.status in {"preparing", "promoting", "cleanup_pending"}:
@@ -279,24 +281,37 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
                     )
                 )
                 continue
+            if asset.status in pool_deadline.IN_FLIGHT_STATUSES:
+                # KRI-820: the bound is total, never per attempt. A row past its
+                # deadline becomes one retryable failure (token rotated so the
+                # late worker cannot write). Never requeued: the creator
+                # chooses Retry (new attempt) or Remove.
+                pool_deadline.mark_timed_out(asset)
+                timed_out += 1
+                continue
             attempts = int(asset.analysis_attempt_count or 0)
             if attempts >= _POOL_MAX_ATTEMPTS:
-                asset.status = "failed"
-                asset.error_code = "analysis_timed_out"
-                asset.error_detail = "Kria couldn't finish analyzing this file. Try again."
-                asset.error_retryable = True
-                asset.analysis_started_at = None
+                pool_deadline.mark_timed_out(asset)
+                timed_out += 1
                 continue
-            token = uuid.uuid4().hex
-            asset.status = "queued"
-            asset.analysis_attempt_token = token
-            asset.analysis_attempt_count = attempts + 1
-            asset.analysis_last_dispatched_at = current
-            asset.analysis_started_at = None
-            asset.error_code = None
-            asset.error_detail = None
-            asset.error_retryable = False
-            to_publish.append((str(asset.id), token, getattr(asset, "correlation_id", None)))
+            if queue_ahead is None:
+                # KRI-820: size the claim window by the shared queue's backlog
+                # (one count per sweep; each requeue joins the line behind it).
+                queue_ahead = int(
+                    db.execute(pool_deadline.queue_backlog_stmt(current)).scalar() or 0
+                )
+            token = pool_deadline.begin_attempt(
+                asset, now=current, attempt_count=attempts + 1, queue_ahead=queue_ahead
+            )
+            queue_ahead += 1
+            to_publish.append(
+                (
+                    str(asset.id),
+                    token,
+                    getattr(asset, "correlation_id", None),
+                    asset.analysis_deadline_at,
+                )
+            )
         db.commit()
 
     expired_cleaned = 0
@@ -377,7 +392,7 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
                 db.commit()
                 expired_cleaned += 1
 
-    for asset_id, token, correlation_id in to_publish:
+    for asset_id, token, correlation_id, deadline in to_publish:
         try:
             task_headers = {"pool_asset_attempt_token": token}
             if correlation_id:
@@ -386,6 +401,7 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
                 args=[asset_id, False],
                 queue=settings.pool_asset_visuals_queue,
                 headers=task_headers,
+                expires=deadline,
             )
         except Exception as exc:  # noqa: BLE001
             with sync_session() as db:
@@ -406,6 +422,7 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
             "pool_asset_reconciled",
             count=touched,
             republished=len(to_publish),
+            timed_out=timed_out,
             expired_reservations=expired_cleaned,
         )
 

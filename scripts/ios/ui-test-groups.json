@@ -70,6 +70,8 @@
       "KriaUITests/DeviceRenderUITests/testPhoneRenderReachesReadyWithPlaySaveAndShare",
       "KriaUITests/DeviceRenderUITests/testUnsupportedRecipeAsksForANewEditWithoutRetry",
       "KriaUITests/DeviceRenderUITests/testTimedOutRenderRetriesToReady",
+      "KriaUITests/DeviceRenderUITests/testDrawerFollowsDeviceDeliveryFailureThroughRelaunchRetryAndReady",
+      "KriaUITests/DeviceRenderUITests/testRecordOnlyEditFailureShowsNeedsAttentionWithoutTheGenericFailure",
       "KriaUITests/AttachmentFlowUITests/testNarratedAttachmentsSwipeAndRequireExplicitAudioChoice",
       "KriaUITests/AttachmentFlowUITests/testImportedVoiceoverReviewsTimingAndPlaybackBeforeUpload",
       "KriaUITests/AttachmentFlowUITests/testExistingVoiceoverKeepsItsCapacityAndContinueChoice",

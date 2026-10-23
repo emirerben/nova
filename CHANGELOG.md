@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.75.0] - 2026-10-23
+
+### Changed
+- feat(kria): pin prepared execution snapshots to the approval, sources and attempt (KRI-722) (#1790) <!-- release-pr: 1790 -->
+
+## [0.81.74.0] - 2026-10-23
+
+### Changed
+- fix(research): keep Talking footage for sourced research and recover the Historical Journey plan (KRI-816) (#1794) <!-- release-pr: 1794 -->
+
+## [0.81.73.0] - 2026-10-23
+
+### Changed
+- fix(visuals): bound stalled pool-asset analysis; ready assets stay usable (KRI-820) (#1778) <!-- release-pr: 1778 -->
+
+## [0.81.72.0] - 2026-10-23
+
+### Changed
+- fix(kria): drawer shows the current device delivery failure, not stale Rendering (KRI-823) (#1777) <!-- release-pr: 1777 -->
+
+## [0.81.71.0] - 2026-10-23
+
+### Changed
+- fix(slides): compound reorder + text edits bind to stable slides (KRI-818) (#1775) <!-- release-pr: 1775 -->
+
+## [0.81.70.0] - 2026-10-23
+
+### Changed
+- feat(kria): creator-owned per-photo holds with per-decision authority (KRI-824) (#1773) <!-- release-pr: 1773 -->
+
 ## [0.81.69.0] - 2026-10-23
 
 ### Changed

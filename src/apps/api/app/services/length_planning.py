@@ -63,8 +63,10 @@ def _sources(
     strategy: Mapping[str, Any],
     spoken_moments: Mapping[str, tuple[float, float]] | None = None,
     quiet_moments: Mapping[str, tuple[float, float]] | None = None,
+    still_holds: Mapping[str, float] | None = None,
 ) -> list[dict[str, Any]]:
     selected = set(selected_ids)
+    still_holds = still_holds or {}
     rows = snapshot.get("clip_assignments")
     if not isinstance(rows, list):
         return []
@@ -101,7 +103,12 @@ def _sources(
             duration_s = proxy.original.duration_s
         analysis = row.get("analysis")
         analysis = dict(analysis) if isinstance(analysis, Mapping) else {}
-        bounds = mixed_media_hold_bounds(kind, profile) if timing_bounds_apply else None
+        held_s = still_holds.get(row["media_id"]) if kind == "image" else None
+        bounds = (
+            mixed_media_hold_bounds(kind, profile, held_s)
+            if timing_bounds_apply or held_s is not None
+            else None
+        )
         if kind == "image":
             # Photos are rendered as synthetic holds.  Seed the selector with
             # the normal 1.2s montage hold, while retaining 3s of capacity for
@@ -230,8 +237,12 @@ def build_length_plan(
     quiet_moments: Mapping[str, tuple[float, float]] | None = None,
     spoken_order: Mapping[str, Any] | None = None,
     named_lines: Sequence[Mapping[str, Any]] | None = None,
+    still_holds: Mapping[str, float] | None = None,
 ) -> dict[str, Any]:
     """Build the approved, serializable source-window plan.
+
+    KRI-824: ``still_holds`` (media id -> seconds, ``asset_holds.asset_holds``) are photos
+    the creator gave their own length; each one's window is exactly that long.
 
     Only ``creator_target_s`` supplied by a trusted boundary becomes a hard
     target. Strategy fields are intentionally never treated as proof here.
@@ -257,7 +268,9 @@ def build_length_plan(
 
     natural_owner = natural_length_owner(strategy)
     owner = length_owner(strategy, creator_duration_proven=creator_target_s is not None)
-    sources = _sources(media_snapshot, selected_ids, strategy, spoken_moments, quiet_moments)
+    sources = _sources(
+        media_snapshot, selected_ids, strategy, spoken_moments, quiet_moments, still_holds
+    )
     by_id = {source["media_id"]: source for source in sources}
     if len(by_id) != len(sources):
         raise ValueError("duplicate length plan source")
