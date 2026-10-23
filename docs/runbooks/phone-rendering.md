@@ -3296,25 +3296,36 @@ The existing Fly Deploy workflow checks all managed process groups, including st
 
 - **Reading the ask.** `kria.freeze_ask.freeze_spec` needs the requirement to be a freeze ask
   (`freeze_frame` fact or the creator's words) AND its approved words to read as one; a model
-  fact on other words ("hold on the sunset for 2 seconds") never freezes. Seconds: the typed
-  `duration_s` when the words name seconds, else 1 s, bounded to 0.2-3 s.
+  fact on other words ("hold on the sunset for 2 seconds") never freezes. Seconds: read from
+  the creator's own words (`_stated_seconds`, decimals included: "1.5 seconds", "1,5 saniye");
+  the model's typed `duration_s` is never read. Unstated => 1 s. A stated length outside
+  0.2-10 s holds the nearest bound and the receipt says `partial` with the asked number.
 - **Where.** `unified_montage._ground_freeze` matches the creator's words for the moment to
   the clips' analysed `best_moments[].description` (time only, never text) and freezes at that
   moment's midpoint. The nearest cut of that clip is re-anchored to END on the frame (same
   length of motion, never overlapping another cut of the take). No match or a tie =>
   `not_grounded`: no hold, receipt "I couldn't tell which moment to freeze". Frame-exact action
   grounding is KRI-723.
-- **Timing.** The hold adds its seconds on top of the approved moments (M2: 6 x 2 s + photo +
-  1 s). `times_one_moment` keeps the 1 s from ever becoming the video's length (KRI-777).
+- **Timing.** Without a creator length the hold adds its seconds on top of the moments. With
+  one (`target_s`), `_reserve_freeze_hold` takes the overshoot out of the ends of the other
+  plain video cuts, then (only as far as the 10 % length tolerance needs) out of the motion
+  before the frozen frame; photos, chosen windows and held spoken lines never shrink (M2:
+  "about 14 s" has room, so 6 x 2 s + photo + 1 s). `times_one_moment` keeps the 1 s from ever
+  becoming the video's length (KRI-777).
 - **Plan -> recipe.** `FastMontageCut.freeze_hold_s` -> `GuidedStoryMoment.freeze_hold_s`
   (`duration_s` = source span + hold) -> phone recipe main-track clip at rate 1 with
-  `hold_duration` = hold (capability `freezeFrame`, never `editorMedia`). A freeze next to a
-  transition, at another speed or under a lip-sync song is refused (`UnsupportedPhonePlan`).
+  `hold_duration` = hold (capability `freezeFrame`, never `editorMedia`). A transition on
+  either side is kept (the outgoing one dissolves out of the held frame). A freeze at another
+  speed or under a lip-sync song is refused (`UnsupportedPhonePlan`).
 - **Audio.** The clip's own sound plays under the moving part and is silent under the hold
   (engine `Composition.swift`; cloud mixes the source window only). Music beds keep playing.
 - **Cloud.** `_render_moments` clones the last frame (`tpad=stop_mode=clone`) for the hold.
-- **Editor.** Revisions carry `freeze_hold_s` per segment; a plain Save or a trim of another
-  moment keeps the hold at 1x; the iOS editor compiler never derives a slow rate for it.
+- **Editor.** Revisions carry `freeze_hold_s` per segment and slot rows add `freeze_frame_s`
+  (the frozen frame). The frame never moves: trimming the slot's end shortens the hold,
+  trimming its start shortens the motion, a slot that no longer reaches the frame (leading half
+  of a split, a trim through the whole hold) plays with no hold. Server Save
+  (`build_guided_segments`) and the iOS preview (`NativeEditorRenderCompiler`) apply the same
+  rule; neither derives a slow rate for it.
 - **Receipt.** `met` only when the plan record's `freeze_frame.status == "held"` (and, on a
   finished video, its timeline still carries a hold); otherwise KRI-777's "Couldn't".
 - **Rollout (dark).** Planned only when `freezeFrame` is in `PHONE_RENDER_VERIFIED_FEATURES`

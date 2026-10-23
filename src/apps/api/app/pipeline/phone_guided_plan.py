@@ -406,16 +406,12 @@ def compile_phone_guided_plan(
         source_duration = moment.source_end_s - moment.source_start_s
         # KRI-828: the creator's freeze holds the moment's last source frame after it plays.
         freeze_hold = float(moment.freeze_hold_s or 0.0)
-        if freeze_hold and (
-            still
-            or rate != 1
-            or moment.media_id in lipsync_takes
-            or (index and boundaries[index - 1] not in {"none", "cut"})
-            or (index < len(boundaries) and boundaries[index] not in {"none", "cut"})
-        ):
-            # The engine holds a plain clip's last frame on a hard cut; a hold inside a
-            # crossfade, at another speed or under a lip-synced song is a different program.
-            raise UnsupportedPhonePlan("a freeze frame needs a plain cut at normal speed")
+        if freeze_hold and (still or rate != 1 or moment.media_id in lipsync_takes):
+            # The engine holds a moving clip's last frame at 1x. A transition on either side
+            # needs nothing extra: the incoming overlap rides the motion like any clip's, and
+            # an outgoing one dissolves out of the held frame (the slot's own duration owns
+            # both). A hold at another speed or under a lip-synced song is a different program.
+            raise UnsupportedPhonePlan("a freeze frame needs a moving clip at normal speed")
         moving_duration = moment.duration_s - freeze_hold
         incoming = None
         expected_start = cursor

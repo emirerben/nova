@@ -1980,6 +1980,18 @@ def plan_unified_montage(
     freeze_record: dict[str, Any] = {}
     if freeze_frames and view.freeze is not None and song_duration_s is None:
         spans, holds, freeze_record = _ground_freeze(view.freeze, spans, ordered)
+        if holds and target_s:
+            # A creator-stated length already sized the cuts: the hold comes out of it.
+            shrinkable = [
+                not approved
+                and not labelled[slots[k][0]]
+                and slots[k][1].kind == "video"
+                and k not in holds
+                for k, (_media, _start, _end, approved) in enumerate(spans)
+            ]
+            spans, freeze_record = _reserve_freeze_hold(
+                spans, holds, shrinkable, float(target_s), freeze_record
+            )
     cuts = [
         FastMontageCut(
             cut_id=f"unified-cut-{index + 1}",
@@ -2130,6 +2142,65 @@ def plan_unified_montage(
     )
 
 
+def _reserve_freeze_hold(
+    spans: list[tuple[str, float, float, bool]],
+    holds: Mapping[int, float],
+    shrinkable: Sequence[bool],
+    target_s: float,
+    record: dict[str, Any],
+) -> tuple[list[tuple[str, float, float, bool]], dict[str, Any]]:
+    """KRI-828: make room for the hold inside the creator's stated length.
+
+    Cuts were sized to ``target_s`` before the freeze was placed, so the hold would push
+    the video past the length the creator asked for. The overshoot comes, whole frames at a
+    time, first out of the ends of the other plain video cuts (never below the shortest a
+    cut can be; never a photo, a chosen window or a held spoken line), then, only as far
+    as the length check's tolerance requires, out of the motion before the frozen frame
+    (the frame itself never moves). What still does not fit is recorded as
+    ``length_over_s``.
+    """
+    total = sum(end - start for _media, start, end, _approved in spans) + sum(holds.values())
+    excess = int(math.ceil((total - target_s) * FPS - 1e-6))
+    if excess <= 0:
+        return spans, record
+    spans = [*spans]
+    floor = int(math.ceil(MIN_VIDEO_CUT_S * FPS))
+    room = {
+        k: max(0, int(math.floor((end - start) * FPS + 1e-6)) - floor)
+        for k, (_media, start, end, _approved) in enumerate(spans)
+        if shrinkable[k]
+    }
+    taken = dict.fromkeys(room, 0)
+    while excess and any(room[k] > taken[k] for k in room):
+        # One frame at a time from the cut with the most room left: an even trim.
+        k = max(room, key=lambda key: (room[key] - taken[key], -key))
+        taken[k] += 1
+        excess -= 1
+    for k, frames in taken.items():
+        if frames:
+            media, start, end, approved = spans[k]
+            spans[k] = (media, start, round(end - frames / FPS, 3), approved)
+    # The chosen moment's own lead-in is the creator's too: it only gives what is still
+    # needed for the length to read as asked (within the receipt's tolerance, a frame
+    # inside it), never down to the exact target.
+    excess = max(0, excess - int(math.floor(target_s * _LENGTH_TOLERANCE * FPS)) + 1)
+    for k in holds:
+        if not excess:
+            break
+        media, start, end, approved = spans[k]
+        motion_room = max(0, int(math.floor((end - start - _FREEZE_MIN_MOTION_S) * FPS + 1e-6)))
+        frames = min(excess, motion_room)
+        if frames:
+            spans[k] = (media, round(start + frames / FPS, 3), end, approved)
+            excess -= frames
+    if excess:
+        record = {**record, "length_over_s": round(excess / FPS, 3)}
+    return spans, record
+
+
+# KRI-828: how far a creator's stated length may stretch and still read as asked; the
+# same share the brief's length check allows (``brief_checks.DURATION_TOLERANCE``).
+_LENGTH_TOLERANCE = 0.10
 # KRI-828: a freeze's grounding. Words this short or this generic never pick a moment.
 _FREEZE_MATCH_MIN_LEN = 3
 _FREEZE_PREFIX_LEN = 4
@@ -2173,6 +2244,9 @@ def _ground_freeze(
         "requirement_id": spec.requirement_id,
         "hold_s": spec.hold_s,
         "hold_stated": spec.hold_stated,
+        **(
+            {"hold_requested_s": spec.hold_requested_s} if spec.hold_requested_s is not None else {}
+        ),
     }
     target = {word for word in spec.target_words if len(word) >= _FREEZE_MATCH_MIN_LEN}
     by_id = {clip.media_id: clip for clip in clips}

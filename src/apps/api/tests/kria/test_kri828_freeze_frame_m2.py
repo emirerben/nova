@@ -211,11 +211,15 @@ async def test_m2_bite_is_held_for_one_second_on_the_phone_recipe(
         assert "you asked for 1s" not in str(row.get("reason")), row
 
     # 7. the photo's label stays on the photo's own window (text shifted with the hold)
-    texts = execution.text_overlays if hasattr(execution, "text_overlays") else []
-    for element in texts:
-        if "Ecuador" in str(element.get("text", "")):
-            assert element["start_s"] >= photo.output_start_s - 0.05
-            assert element["end_s"] <= photo.output_end_s + 0.05
+    # (M2's held bite is the last moment, so nothing plays after the hold here; the editor
+    # test in test_kri828_freeze_review_fixes moves it before the photo.)
+    label = next(
+        e
+        for e in [*execution.text_elements, *execution.context_label_text_elements]
+        if "Ecuador" in e.text and e.start_s > 0
+    )
+    assert label.start_s == pytest.approx(photo.output_start_s, abs=0.05)
+    assert label.end_s == pytest.approx(photo.output_end_s, abs=0.05)
 
 
 # -- 8: without the verified feature the hold is never shipped, the receipt stays honest ------

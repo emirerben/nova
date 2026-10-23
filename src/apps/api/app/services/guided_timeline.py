@@ -126,29 +126,29 @@ def build_guided_segments(
         # that effective rate instead of silently reverting it to 1x on an
         # otherwise conventional Save.  An explicit null is the clear/reset
         # operation and deliberately returns to 1x.
-        # KRI-828: a creator's freeze stays on its occurrence (and a split child of it): the
-        # slot's last frame keeps holding for the same seconds, at 1x. A slot too short to
-        # play anything before the hold drops it rather than freezing a different moment.
-        freeze_hold = (
+        # KRI-828: a creator's freeze stays on its occurrence (and a split child of it) and
+        # on its frame: the saved ``source_end_s`` of a held segment IS the frozen frame. The
+        # slot plays from ``in_s`` up to that frame at 1x and holds it for the rest of its
+        # duration, so trimming the slot's end shortens (or lengthens) the hold and trimming
+        # its start shortens the motion before it -- the frame never moves. The editor's
+        # preview reads the same frame (``freeze_frame_s`` on the slot row). A slot that no
+        # longer reaches the frame with room to move (the leading half of a split, a trim
+        # into the hold's whole length) plays its own footage with no hold.
+        inherited_hold_s = (
             float(inherited_segment.get("freeze_hold_s") or 0.0)
             if isinstance(inherited_segment, dict) and source.get("kind") == "video"
             else 0.0
         )
         # An occurrence that carried a hold plays at 1x whether or not it keeps it: its
         # source span is shorter than its slot by the hold, which is not a slow retime.
-        inherited_hold = bool(freeze_hold)
-        if freeze_hold and below_editor_minimum(duration - freeze_hold):
-            freeze_hold = 0.0
-        if freeze_hold:
-            # Only the occurrence that still ENDS on the frozen frame keeps the hold. A split
-            # puts the parent's id on both halves; the leading half ends earlier and would
-            # freeze a frame the creator never chose, so it plays its whole length instead.
+        inherited_hold = bool(inherited_hold_s)
+        freeze_hold = 0.0
+        if inherited_hold:
             held_frame = float(inherited_segment.get("source_end_s") or 0.0)
-            if (
-                abs(float(slot.in_s) + (duration - freeze_hold) - held_frame)
-                > 1 / GUIDED_FPS + 1e-6
-            ):
-                freeze_hold = 0.0
+            motion = held_frame - float(slot.in_s)
+            hold = round(round((duration - motion) * GUIDED_FPS) / GUIDED_FPS, 6)
+            if not below_editor_minimum(motion) and hold >= 1 / GUIDED_FPS - 1e-6:
+                freeze_hold = hold
         playback_rate_set = "playback_rate" in slot.model_fields_set
         if playback_rate_set:
             playback_rate = float(slot.playback_rate or 1.0)
@@ -196,7 +196,7 @@ def build_guided_segments(
             if slot.in_s < 0 or (
                 float(selected_end)
                 if preserve_window
-                else slot.in_s + (duration - freeze_hold) * playback_rate
+                else (held_frame if freeze_hold else slot.in_s + duration * playback_rate)
             ) > float(source_duration) + (1e-6 if preserve_window else 0.05):
                 raise GuidedTimelineError("TIMELINE_SOURCE_BOUNDS")
         if order:
@@ -209,7 +209,9 @@ def build_guided_segments(
             "source_start_s": float(slot.in_s),
             "source_end_s": float(selected_end)
             if preserve_window
-            else float(slot.in_s) + (duration - freeze_hold) * playback_rate,
+            else held_frame
+            if freeze_hold
+            else float(slot.in_s) + duration * playback_rate,
             "duration_s": round(duration, 3),
             "transition_after": transition,
             "transition_duration_s": transition_duration,

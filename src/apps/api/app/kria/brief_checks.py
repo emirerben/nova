@@ -3196,7 +3196,7 @@ _NO_FREEZE_FRAME = "I can't freeze a frame in this edit yet, so that moment play
 # words for it (or two do), so no frame is guessed.
 _FREEZE_NOT_GROUNDED = (
     "I couldn't tell which moment to freeze, so that moment plays normally. "
-    "Tell me the clip and second to hold"
+    "Tell me what happens in the moment to hold, like who is in it and what they do"
 )
 
 # KRI-705: what a phone Talking edit says, before approval and after render, about an ask
@@ -6998,6 +6998,23 @@ def _check_freeze(req: BriefRequirement, freeze: Mapping[str, Any]) -> Requireme
                     "süre söylemediğin için bir saniye tuttum"
                 ),
             )
+        requested = _finite_number(freeze.get("hold_requested_s"))
+        if requested is not None and abs(requested - hold) > 0.001:
+            # The creator's number was outside what a freeze can hold: say so, never "met"
+            # for a different length.
+            reason = say(
+                en=(
+                    f"Freezes the frame for {seconds}s on that moment ({at}s into the clip), "
+                    f"not the {requested:g}s you asked for: a freeze holds "
+                    f"{'at most' if requested > hold else 'at least'} {seconds}s"
+                ),
+                tr=(
+                    f"O anda kare {seconds} sn donuyor (klibin {at}. saniyesi), istediğin "
+                    f"{requested:g} sn değil: bir donma en "
+                    f"{'fazla' if requested > hold else 'az'} {seconds} sn sürebiliyor"
+                ),
+            )
+            return _receipt(req, "partial", reason, verification="checked")
         return _receipt(req, "met", reason, verification="checked")
     if status == "not_grounded":
         return _receipt(req, "not_possible", _FREEZE_NOT_GROUNDED)

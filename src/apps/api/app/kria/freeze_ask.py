@@ -160,11 +160,12 @@ def times_one_moment(req: BriefRequirement) -> bool:
 
 
 # KRI-828: how long a freeze holds. The creator's own seconds win when the approved words
-# name a number; otherwise one second (the receipt says so). Bounded to what a held frame
-# can carry in a short-form edit without reading as a broken video.
+# name a number; otherwise one second (the receipt says so). A stated length outside these
+# bounds is held at the nearest bound and the receipt says so (``hold_requested_s``): never
+# a silently different length reported as met.
 DEFAULT_FREEZE_HOLD_S = 1.0
 MIN_FREEZE_HOLD_S = 0.2
-MAX_FREEZE_HOLD_S = 3.0
+MAX_FREEZE_HOLD_S = 10.0
 _NUMBER_WORDS = {
     "one": 1.0,
     "a": 1.0,
@@ -194,13 +195,15 @@ class FreezeSpec:
     ``target_words`` are the creator's words for the moment ("atakan", "bite"): they only
     choose WHERE the frame is (matched against the clip record's analysed moments), never
     on-screen text. ``hold_s`` is how long the frame holds; ``hold_stated`` says whether the
-    creator named those seconds.
+    creator named those seconds, and ``hold_requested_s`` is the number they named (it
+    differs from ``hold_s`` only when it was outside what a freeze can hold).
     """
 
     requirement_id: str
     target_words: tuple[str, ...]
     hold_s: float
     hold_stated: bool
+    hold_requested_s: float | None = None
 
 
 # Words that make a number-of-seconds the HOLD's length ("for 2 seconds", "freeze 2s",
@@ -208,6 +211,39 @@ class FreezeSpec:
 # ("a 15 second video").
 _HOLD_LEAD_WORDS = frozenset({"for", "lasting"}) | _FREEZE_WORDS
 _TR_HOLD_TAIL_WORDS = frozenset({"boyunca", "kadar"})
+
+
+def _number_tokens(text: str) -> list[str]:
+    """`_tokens`, but "1.5" / "1,5" / "2.5s" stay one token (a decimal is one number)."""
+    folded = loose_text(text)
+    chars = []
+    for index, ch in enumerate(folded):
+        decimal_mark = (
+            ch in ".,"
+            and 0 < index < len(folded) - 1
+            and folded[index - 1].isdigit()
+            and folded[index + 1].isdigit()
+        )
+        chars.append("." if decimal_mark else ch if ch.isalnum() else " ")
+    return "".join(chars).split()
+
+
+def _as_number(token: str) -> float | None:
+    """A plain number token ("2", "1.5"), or None."""
+    head, dot, tail = token.partition(".")
+    if head.isdigit() and (not dot or tail.isdigit()):
+        return float(token)
+    return None
+
+
+def _unit_suffixed(token: str) -> float | None:
+    """ "2s", "1.5sec", "3seconds": the number before a glued unit, or None."""
+    for unit in (*_UNITS, _SHORT_UNIT):
+        if token.endswith(unit) and len(token) > len(unit):
+            value = _as_number(token[: -len(unit)])
+            if value is not None:
+                return value
+    return None
 
 
 def _stated_seconds(tokens: Sequence[str]) -> float | None:
@@ -218,21 +254,25 @@ def _stated_seconds(tokens: Sequence[str]) -> float | None:
     (a position, the total video length) never set the hold.
     """
     for index, token in enumerate(tokens):
-        if not (_is_unit(tokens, index) or token in _TR_UNITS):
+        glued = _unit_suffixed(token)
+        is_unit = token in _UNITS or token in _TR_UNITS or glued is not None
+        if token == _SHORT_UNIT and index > 0 and _as_number(tokens[index - 1]) is not None:
+            is_unit = True
+        if not is_unit:
             continue
-        value: float | None = None
+        value: float | None = glued
         number_at = index
-        digits = "".join(ch for ch in token if ch.isdigit())
-        if digits and digits != token:
-            value = float(digits)  # "2s", "3seconds"
-        elif index > 0:
+        if value is None and index > 0:
             previous = tokens[index - 1]
             number_at = index - 1
-            if previous.isdigit():
-                value = float(previous)
-            elif previous in {"a", "an"} and index > 1 and tokens[index - 2] == "half":
+            value = _as_number(previous)
+            if (
+                value is None
+                and previous in {"a", "an"}
+                and tokens[index - 2 : index - 1] == ["half"]
+            ):
                 value, number_at = 0.5, index - 2  # "half a second"
-            elif previous in _NUMBER_WORDS:
+            elif value is None and previous in _NUMBER_WORDS:
                 value = _NUMBER_WORDS[previous]
         if value is None:
             continue
@@ -264,12 +304,10 @@ def freeze_spec(req: BriefRequirement) -> FreezeSpec | None:
         or _turkish_freeze(tokens)
     ):
         return None
-    stated = _stated_seconds(tokens)
-    hold = DEFAULT_FREEZE_HOLD_S
-    if stated is not None:
-        # The creator's own number decides the hold; a typed `duration_s` (model output)
-        # never sets it.
-        hold = stated
+    # The creator's own number decides the hold; a typed `duration_s` (model output) never
+    # sets it.
+    stated = _stated_seconds(_number_tokens(req.description or ""))
+    hold = DEFAULT_FREEZE_HOLD_S if stated is None else stated
     hold = round(min(MAX_FREEZE_HOLD_S, max(MIN_FREEZE_HOLD_S, hold)), 3)
     words = tuple(
         token
@@ -290,11 +328,13 @@ def freeze_spec(req: BriefRequirement) -> FreezeSpec | None:
         target_words=words,
         hold_s=hold,
         hold_stated=stated is not None,
+        hold_requested_s=None if stated is None else round(stated, 3),
     )
 
 
 __all__ = [
     "DEFAULT_FREEZE_HOLD_S",
+    "MAX_FREEZE_HOLD_S",
     "FREEZE_ASK_KINDS",
     "FREEZE_FACT_KEYS",
     "FreezeSpec",

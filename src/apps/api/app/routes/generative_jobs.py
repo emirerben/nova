@@ -9049,8 +9049,14 @@ def _guided_v2_slot_rows(
                 ),
                 **({"muted": True} if segment.get("source_audio_muted") else {}),
                 # KRI-828: the slot's last frame holds for these seconds (inside duration_s).
+                # ``freeze_frame_s`` is that frame's source time: editor trims never rewrite
+                # it, so the preview holds the same frame Save keeps (the hold absorbs a trim
+                # of the slot's end).
                 **(
-                    {"freeze_hold_s": segment["freeze_hold_s"]}
+                    {
+                        "freeze_hold_s": segment["freeze_hold_s"],
+                        "freeze_frame_s": segment.get("source_end_s"),
+                    }
                     if segment.get("freeze_hold_s")
                     else {}
                 ),

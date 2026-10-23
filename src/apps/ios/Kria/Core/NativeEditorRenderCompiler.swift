@@ -179,7 +179,17 @@ enum NativeEditorRenderError: Error, Equatable {
             // KRI-828: a creator's freeze frame. The slot's window plays at 1x and its last
             // frame holds for `freeze_hold_s` (inside the slot's duration); never a slow rate
             // derived from a source span shorter than the slot.
-            let freezeHold = authoredSlot?.raw["freeze_hold_s"]?.numberValue ?? 0
+            // `freeze_frame_s` is the frozen frame's source time, which editor trims never
+            // rewrite: a trim of the slot's end shortens the hold on the same frame and a
+            // trim of its start shortens the motion before it, exactly like the server's
+            // Save (`build_guided_segments`). A slot that no longer reaches that frame with
+            // room to move (the leading half of a split) plays with no hold.
+            var freezeHold = authoredSlot?.raw["freeze_hold_s"]?.numberValue ?? 0
+            if freezeHold > 0, let frame = authoredSlot?.raw["freeze_frame_s"]?.numberValue, frame.isFinite {
+                let motion = frame - sourceStart
+                let hold = ((authoredMovingDuration - motion) * 30).rounded() / 30
+                freezeHold = motion >= 0.1 - 0.000_001 && hold >= 1.0 / 30 - 0.000_001 ? hold : 0
+            }
             let freezes = explicitRate == nil && freezeHold.isFinite && freezeHold > 0
                 && authoredMovingDuration - freezeHold > 0
             if freezes {
