@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.74.0] - 2026-10-23
+
+### Changed
+- fix(research): keep Talking footage for sourced research and recover the Historical Journey plan (KRI-816) (#1794) <!-- release-pr: 1794 -->
+
 ## [0.81.73.0] - 2026-10-23
 
 ### Changed
