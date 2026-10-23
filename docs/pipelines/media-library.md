@@ -78,6 +78,34 @@ Finalization downloads the pinned generation, verifies the full uploaded hash
 and length, and checks the actual media. Device declarations never prove the
 uploaded-byte identity. No automatic video-original backup is added.
 
+A creator can explicitly give a device-only video its full original (KRI-822):
+adding it to Visuals, or restoring it from Files for Visuals, uploads the
+original on that iPhone. The request sets `attach_original: true` with the
+owned `repair_asset_id`, `purpose: cloud_render_source` and no proxy
+(`video/mp4` or `video/quicktime`, up to 4 GB). Reserve rejects a byte count
+that differs from the asset's `original_byte_count`; finalize rejects any
+sha256 other than `original_declared_sha256`. Only then is a new `original`
+source added. The asset keeps `original_availability: device_only` and its
+stored proxy contract, so proxy repair and phone Footage behave as before; the
+available `original` row is what makes it usable in Visuals. The analysis proxy
+row is never read as, or turned into, the original. Finalize streams the
+pinned generation through sha256 and probes it with ranged reads, so a multi-GB
+original is never staged on the API machine's RAM-backed `/tmp`.
+Attaching an original never resets the asset to `pending` and never dispatches
+library analysis: a device-only video's status, facts and analysis stay on its
+`analysis_proxy` (analysis and catalogue facts prefer that role), and the list
+serializes the proxy before the original so older clients still bind it for
+Footage.
+
+A retry with the same `client_upload_id` (`ios-original-<asset>-<sha>`) returns
+the same source. That identity is fixed, so reserve re-opens it with a fresh
+target when its old target was cleaned up, or when its finalized original is no
+longer in storage (the stale source is marked `missing`); iOS then uploads and
+attaches the fresh copy. Phone Footage binds only the analysis proxy of a
+device-only video; Visuals bind the original (`project_library_visual` prefers
+it when no source id is given). Only the "Cloud copy is unavailable" 409 sends
+iOS to repair; other 409s show the server's message.
+
 Saved uploads keeps the newest 500 active catalogue assets per creator. A verified,
 unique import atomically archives the oldest active entry by upload/admission time
 (`created_at`, then `id` for ties). Reusing an old upload does not reset its age.

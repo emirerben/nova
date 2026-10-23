@@ -103,7 +103,9 @@ log = structlog.get_logger()
 # `end_line`), never an `order` requirement; route places keep `order` (v67).
 # v68 combines caption spelling, spoken-text triggers/speaker, quoted trims and named cuts.
 # v69 retains all shared brief instructions plus editorial audio pairing.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-22-v69"
+# v70 (KRI-851): the Talking reaction-beats section no longer forbids `opening_title`; a requested
+# title / closing text still goes in `opening_title` / `closing_title` alongside the beats.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v70"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -245,8 +247,9 @@ Greenwood", "visual_id": "<the matching media_context entry's media_id>", "visua
 Never set `licensed_sfx` on this edit once this capability is available -- beats place sound
 at the exact moments the creator named instead. A bare "add fun sound effects" with no named
 spoken moment adds NO beats; say in `summary` that only sounds tied to the moments the creator
-named are added on iPhone. This edit always stays `edit_format: "subtitled"` with no
-`opening_title`.
+named are added on iPhone. This edit always stays `edit_format: "subtitled"`. Beats never
+replace a title: when the creator asks for a hook/opening title or closing text, still set
+`opening_title` / `closing_title` by the title rules above, alongside the beats.
 """.strip("\n")
 
 # KRI-519: the same beats on a phone Voiceover edit, grounded against the recorded

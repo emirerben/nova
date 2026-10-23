@@ -13,8 +13,9 @@ Ways the re-filing could go wrong, each pinned below:
    read: the phone would not cut, or the gate would still ask;
 3. several videos, or a video plus a photo: the start / end may name clips, so the model's
    `order` must stand;
-4. unquoted words (a place, "from Arnavutköy to Eminönü"), a one-word quote, a first / last
-   clip pin or a route fact: about clips or places, never re-filed;
+4. unquoted words (a place, "from Arnavutköy to Eminönü"), a one-word place pair with a key
+   (KRI-837: a key-less one-word quote like "Cheers!" IS a line), a first / last clip pin or a
+   route fact: about clips or places, never re-filed;
 5. only a start line: no invented end line;
 6. a `change` of an existing requirement loses its target id / version when re-filed.
 """
@@ -127,6 +128,18 @@ def _one_word(agent_input: dict, raw: dict) -> None:
     _order_update(raw)["facts"]["end"] = "week"
 
 
+def _one_word_places_with_key(agent_input: dict, raw: dict) -> None:
+    message = agent_input["user_message"]
+    message = message.replace(f'"{START}"', '"Arnavutköy"').replace(f'"{END}"', '"Eminönü"')
+    agent_input["user_message"] = message
+    _order_update(raw)["facts"].update(key="capture_time", start="Arnavutköy", end="Eminönü")
+
+
+def _one_word_end_with_key(agent_input: dict, raw: dict) -> None:
+    _one_word(agent_input, raw)
+    _order_update(raw)["facts"]["key"] = "capture_time"
+
+
 def _pin(agent_input: dict, raw: dict) -> None:
     _order_update(raw)["facts"]["first_clip"] = "the video where she waves"
 
@@ -135,7 +148,11 @@ def _route(agent_input: dict, raw: dict) -> None:
     _order_update(raw)["facts"]["distance_km"] = 5
 
 
-@pytest.mark.parametrize("change", [_unquoted, _one_word, _pin, _route], ids=lambda f: f.__name__)
+@pytest.mark.parametrize(
+    "change",
+    [_unquoted, _one_word_places_with_key, _one_word_end_with_key, _pin, _route],
+    ids=lambda f: f.__name__,
+)
 def test_anything_but_quoted_lines_keeps_the_models_order(change) -> None:
     agent_input, raw = _case()
     change(agent_input, raw)
@@ -145,6 +162,17 @@ def test_anything_but_quoted_lines_keeps_the_models_order(change) -> None:
 
     assert kept.kind == "order"
     assert kept.facts == want
+
+
+def test_a_quoted_one_word_end_without_a_key_is_a_line_too() -> None:
+    """KRI-837: "end right after the "Cheers!"" is a line; only a key makes it a place."""
+    agent_input, raw = _case()
+    _one_word(agent_input, raw)
+
+    (trim,) = _start_end_updates(_parse(agent_input, raw))
+
+    assert trim.kind == "timing"
+    assert trim.facts == {"start_line": START, "end_line": "week"}
 
 
 def test_a_start_line_alone_invents_no_end() -> None:

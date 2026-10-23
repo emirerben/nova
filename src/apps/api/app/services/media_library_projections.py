@@ -23,7 +23,11 @@ async def project_library_visual(
     source_id: uuid.UUID | None = None,
     maximum: int = 100,
 ) -> PlanItemAsset:
-    asset, source = await resolve_library_source(db, owner_id, asset_id, source_id)
+    # A video can hold both its analysis proxy and its full original (KRI-822);
+    # Visuals always want the original.
+    asset, source = await resolve_library_source(
+        db, owner_id, asset_id, source_id, prefer_role="original"
+    )
     if asset.kind not in {"image", "video"} or source.role != "original":
         raise HTTPException(
             422, "Select videos as footage to preserve their local original binding"

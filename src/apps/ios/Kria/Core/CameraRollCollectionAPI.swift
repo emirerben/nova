@@ -17,7 +17,8 @@ extension KriaAPI {
         struct Member: Encodable { let asset_id: UUID; let source_id: UUID; let group: String }
         struct Body: Encodable { let name: String; let expected_revision: Int; let members: [Member] }
         let members = try collection.entries.map { entry in
-            guard let asset = entry.savedAsset, let source = asset.source else { throw APIError.invalidResponse }
+            // Stories bind phone Footage: pin the proxy, never a full original added for Visuals.
+            guard let asset = entry.savedAsset, let source = asset.kind == "video" ? asset.bindableSource(for: .clip, destination: .phone) : asset.source else { throw APIError.invalidResponse }
             return Member(asset_id: asset.id, source_id: source.id, group: collection.group(for: entry.id))
         }
         return try await request(path: "me/media-collections/\(collection.id)", method: "PUT",

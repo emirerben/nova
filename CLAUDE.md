@@ -4,6 +4,10 @@ Nova transforms raw real-life videos into viral short-form content (TikTok, Reel
 
 Start: [code/tests](docs/README.md), [request-to-output standard](docs/runbooks/request-to-output-standard.md) (required before implementation, review or PR), [runtime evidence/handoffs](docs/runbooks/agent-navigation.md).
 
+## Kria product scope
+
+iPhone app/native output and iOS-required backend only. Web-editor implementation or browser investigation/repair requires explicit request. Preserve mandatory checks; report web-only blockers. Carry in handoffs.
+
 ## Codex agent routing
 
 Routine delegation is explicitly authorized: use bounded subagents for independent work. Parent default: Astra Low; parent owns architecture, integration, and high-risk review. Choose Luna Medium (`default`/`cheap_worker`: mechanical edits; `explorer`: read-only), Terra Medium (`implementer`: normal multi-file work), or Astra Medium (`debugger`: ambiguous/risky analysis).
@@ -20,11 +24,11 @@ Keep inline: invariants, guard-test names, run commands, file pointers. Move out
 
 ## Session workflow: isolate in a worktree
 
-The primary checkout at `/Users/emirerben/Projects/nova` is shared across sessions. Before non-trivial implementation (including autoship intake), automatically create an isolated worktree from the freshly fetched `origin/main`, within granted filesystem permissions, using a `codex/<topic>` branch and that worktree as the explicit working directory for every subsequent tool. Preserve all staged, unstaged, and untracked files in the shared checkout; do not commit, stash, pull, rebase, or reset it to make room. Diverged `main` also uses a fresh worktree.
+Shared checkout: `/Users/emirerben/Projects/nova`. Before non-trivial implementation (including autoship intake), fetch `origin/main` and create an isolated `codex/<topic>` worktree in a permitted path. Use that path for every tool. Preserve shared staged, unstaged and untracked files; never commit, stash, pull, rebase or reset them to prepare. Diverged `main` needs a fresh worktree.
 
 In Plan Mode, inspect `origin/main` read-only, defer worktree creation until execution, and do not treat dirty or divergent `main` as a blocker. For execution, use `git fetch origin main` followed by `git worktree add -b codex/<topic> <path> origin/main`; then use `<path>` explicitly. For manual setup, `nova-fresh <topic>` (or `bash scripts/new-session.sh <topic>`) creates and bootstraps one with its helper-default `feat/<topic>-<date>` branch; then `cd` to the printed path. Bootstrap symlinks `.env`/`.venv`/`node_modules` and runs migrations. Re-run `bash scripts/worktree-setup.sh` if needed.
 
-The `SessionStart` hook (`.claude/settings.json` → `scripts/session-check.sh`) fetches `origin/main`, auto fast-forwards only a clean `main`, and prints fresh-worktree guidance for dirty, divergent, or stale checkouts.
+`SessionStart` (`.claude/settings.json` → `scripts/session-check.sh`): fetch `origin/main`; fast-forward only clean `main`; guide dirty/divergent/stale checkouts to fresh worktrees.
 
 Rules:
 - Run all edits, tests, and commits from the worktree path — never from `/Users/emirerben/Projects/nova` directly.

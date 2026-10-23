@@ -1048,7 +1048,8 @@
       "regression_tests": [
         "tests/pipeline/test_phone_take_window.py",
         "tests/pipeline/test_phone_opening_cut.py",
-        "tests/tasks/test_phone_opening_cut_cleanup_off.py"
+        "tests/tasks/test_phone_opening_cut_cleanup_off.py",
+        "tests/kria/test_kri837_one_word_end_line.py"
       ],
       "harness": "real_compiler",
       "kill_switch": null,
@@ -2587,6 +2588,51 @@
       ],
       "follow_ups": [
         "M1 phone re-send after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-839-beats-spoken-words",
+      "tickets": [
+        "KRI-839",
+        "KRI-829"
+      ],
+      "symptom": "Phone Talking with captions asked in another language and cleanup declined (cafe T2: English speech, Turkish subtitles): the Cotopaxi card at \"Ecuador\" and the ding at \"That's it\" never appeared. The no-cleanup branch forced whisper to the caption language, so reaction beats, overlay grounding, spoken-text asks and the persisted overlay_transcript read a Turkish translation and every English trigger was never_heard.",
+      "boundary": "compiler",
+      "status": "open_pr",
+      "owner": "KRI-839",
+      "paths": [
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/services/phone_reaction_grounding.py",
+        "src/apps/api/tests/fixtures/kri839_cafe_t2/t2_01_words.json"
+      ],
+      "regression_tests": [
+        "tests/tasks/test_kri839_beats_spoken_words.py",
+        "tests/tasks/test_subtitled_caption_language.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Real whisper.cpp (ggml-medium, local, free) word timings of the cafe T2_01 clip through _run_generative_job with the real ground_phone_reaction_beats and the compiled phone recipe: card at 1.43 s on 'Ecuador' (1.43 s), ding at 23.76 s on \"That's it\" (23.76 s), a KRI-707 'ECUADOR' spoken-text ask placed on 'Ecuador', whisper calls [None, 'tr'], captions Turkish. Red on main: card, ding, receipt, overlay_transcript and spoken-text cases fail (never_heard / not_heard). The Turkish forced pass is a hand-written stand-in (whisper.cpp does not translate).",
+        "live_model": "Not run; no paid calls. No prompt change.",
+        "native_output": "unknown; no phone export yet.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "no caption-language request: one language=None whisper call, byte-identical (differential trace of calls, events, cues, persisted fields)",
+        "request equal to the spoken language: no second pass",
+        "accented take misdetected as the requested language: the Gemini crosscheck now runs on the spoken pass, never on the caption pass",
+        "requested-language pass hears nothing: spoken captions kept + caption_language_request_empty",
+        "cleanup branch: same calls, events and payloads through the shared helper",
+        "negative control: a take that says 'Peru' never shows the Cotopaxi card"
+      ],
+      "neighbours_gap": [
+        "KRI-719 several speakers: _classify_phone_talking_clips still transcribes extra speakers in the caption language, so their words reach spoken-text asks translated (KRI-838 hinted call sites / KRI-843).",
+        "Turkish caption text still comes from whisper forced to tr; real translation is KRI-838.",
+        "A spoken-language misdetection that the Gemini crosscheck cannot resolve still grounds on a translation (KRI-843)."
+      ],
+      "follow_ups": [
+        "Cafe T2 phone re-send after deploy (Turkish captions, cleanup declined)"
       ],
       "red_control": "not_applicable"
     }

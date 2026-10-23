@@ -10,21 +10,25 @@ by the phone planner ten seconds after approval: "This draft is about 4.7s; you 
 ``tests/fixtures/kri775_merope_m2_turns.json`` holds both renders' approved brief, strategy
 and media snapshot (the 68 s take's clip record: duration, timed speech, best moments,
 answers) exactly as prod pinned them, plus prod's own length plan and refusal. The first
-two tests prove the replay is faithful: the real gate rebuilds prod's length plan and the
-real phone worker refuses it on prod's own "about 4.7s; you asked for 14s" (on 857ab6738 its
-whole message and every receipt match prod word for word). Everything after that is the
-outcome the creator should have had, owned by the sibling tickets and marked
-``xfail(strict=True)`` with the owning ticket: the owning PR turns its test into XPASS and
-strict mode makes it delete the marker.
+two tests replay prod's recorded brief and reproduce prod's failure: the real gate rebuilds
+prod's length plan and the real phone worker refuses it on prod's own "about 4.7s; you asked
+for 14s" (on 857ab6738 its whole message and every receipt match prod word for word).
+
+The six-windows and buildable tests replay the same turns with the creator's messages run
+through ``carry_moment_ask`` the way the planner does since KRI-776 (#1711). The freeze test
+judges prod's own recorded draft: its outcome does not depend on the moment ask. Together
+they pin what the creator should have had:
 
 - KRI-776 ("six moments, about 2 seconds each" reaches the brief): six ~2 s windows, in order.
 - KRI-777 (freeze): an honest "Couldn't" for the freeze, never "you asked for 1s".
-- Both, plus the photo seated between the take's moments: the draft is buildable, so the
-  approval card is offered and the worker renders it.
+- Both, plus the photo seated between the take's moments: the draft is buildable (no
+  blockers), so the approval card is offered and the worker renders it.
+
+If the moment ask is dropped again, the six-windows and buildable tests go red while the
+recorded-brief tests stay green.
 
 What none of these need is a guess at where each moment sits in the take: that is KRI-779's
-(and the moment-window step's) call. ``m2_brief`` is the one place the brief enters the
-replay; a fix that writes the moment ask upstream of the persisted brief routes it there.
+(and the moment-window step's) call.
 """
 
 from __future__ import annotations
@@ -44,12 +48,13 @@ import pytest
 from app.agents._schemas.creator_agent import CreatorMediaRef, ResolvedCreatorManifest
 from app.config import settings
 from app.kria import planner
-from app.kria.brief import CreativeBrief
+from app.kria.brief import CreativeBrief, apply_updates
 from app.kria.brief_binding import BriefBinding
 from app.kria.brief_checks import is_format_limit, needs_creator_choice
 from app.kria.contracts import KriaToolIntent, KriaTurnPlan
 from app.kria.media_sources import OriginalMediaDescriptor
 from app.kria.planner import PlannedKriaTurn
+from app.kria.style_asks import carry_moment_ask
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.unified_montage import UnifiedClip
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
@@ -68,14 +73,39 @@ CREATOR_ID = uuid.UUID("7b56dd6f-6b9a-4634-89c8-ce91bb50a50d")
 THREAD_ID = uuid.UUID("ee7b4dca-b2e9-44f9-a073-c7a6a2e60e62")
 
 
-def m2_brief(render: dict) -> CreativeBrief:
-    """The brief approval pinned for ``render`` (see the module docstring).
+# How many of FIXTURE["creator_messages"] each render's turn had seen. The fixture has no
+# explicit field, so this is an inference from the brief version and the draft reply: brief
+# v1 with the freeze still live ("freeze the frame on the bite") fits the first prompt plus
+# the short second message (likely a picker answer); brief v2 with r3 superseded ("I'll skip
+# the freeze frame") fits the recovery message too. Only whether message 0 or 2 is carried
+# changes the result: any subset with either gives six windows, message 1 alone or none
+# gives one.
+MESSAGES_SEEN = {
+    "417eecd4-681b-4c7f-8075-4a1dddfe6e85": 2,
+    "50f67a06-2c78-4691-831c-5754e3bf9f74": 3,
+}
 
-    KRI-776 writes the creator's moment ask while the turn's brief updates are collected
-    (from ``FIXTURE["creator_messages"]``), which this recorded brief predates: its PR
-    routes these requirements and that message through the same step here.
+
+def m2_brief(render: dict) -> CreativeBrief:
+    """The brief approval pinned for ``render``, exactly as prod stored it: no moment ask.
+
+    The faithfulness tests (and ``test_kri775_phone_montage_preflight``) judge prod's own
+    draft with it.
     """
     return CreativeBrief.model_validate(copy.deepcopy(render["brief"]))
+
+
+def m2_brief_with_moment_ask(render: dict) -> CreativeBrief:
+    """``m2_brief`` as the turns store it since KRI-776 (#1711).
+
+    The planner runs the creator's message through ``carry_moment_ask`` on each turn's brief
+    updates before applying them. Here there are no model updates, only the creator's
+    messages the render's turn had seen, in order.
+    """
+    brief = m2_brief(render)
+    for message in FIXTURE["creator_messages"][: MESSAGES_SEEN[render["job_id"]]]:
+        brief = apply_updates(brief, carry_moment_ask(brief, (), message), source_turn_id=None)
+    return brief
 
 
 def m2_visual() -> UnifiedClip:
@@ -337,20 +367,17 @@ def _windows(result: PlannedKriaTurn) -> list[dict]:
     return [w for w in gate_media(result)["length_plan"]["windows"] if w["media_id"] == TAKE]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="KRI-776: 'six moments, about 2 seconds each' never reaches the brief",
-)
 @pytest.mark.parametrize("index", [0, 1], ids=["job-417eecd4", "job-50f67a06"])
 async def test_six_moments_get_six_two_second_windows_in_order(
     monkeypatch: pytest.MonkeyPatch, index: int
 ) -> None:
-    result = await run_gate(monkeypatch, RENDERS[index])
+    render = RENDERS[index]
+    result = await run_gate(monkeypatch, render, brief=m2_brief_with_moment_ask(render))
     windows = _windows(result)
     assert len(windows) == 6, windows
     for window in windows:
-        assert 1.5 <= window["source_end_s"] - window["source_start_s"] <= 2.5, window
+        length = window["source_end_s"] - window["source_start_s"]
+        assert length == pytest.approx(2.0, abs=0.05), window
         assert 0.0 <= window["source_start_s"] < window["source_end_s"] <= TAKE_S
     # The asked order is the order the moments happen in the take (tray, hello wave, plate,
     # bite, thumbs-up, bye-bye wave), so each window starts after the previous one ends.
@@ -370,21 +397,14 @@ def test_the_freeze_is_an_honest_couldnt_never_a_total_length(
     assert is_format_limit(freeze["reason"]) and "freez" in freeze["reason"].lower(), freeze
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "KRI-776 + KRI-777 + the photo-between-moments order follow-up (KRI-776 notes): "
-        "the M2 draft only becomes buildable once all three land"
-    ),
-)
+@pytest.mark.parametrize("index", [0, 1], ids=["job-417eecd4", "job-50f67a06"])
 async def test_the_m2_draft_is_buildable_so_approval_is_offered(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, index: int
 ) -> None:
     from app.services.phone_montage_preflight import montage_blockers  # noqa: PLC0415
 
-    render = RENDERS[0]
-    brief = m2_brief(render)
+    render = RENDERS[index]
+    brief = m2_brief_with_moment_ask(render)
     result = await run_gate(monkeypatch, render, brief=brief)
     media, strategy = gate_media(result), gate_strategy(result)
     blockers = montage_blockers(
