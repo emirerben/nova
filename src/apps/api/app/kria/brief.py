@@ -876,7 +876,7 @@ def _structural_reqs_editable(
     text = message or ""
     for req in reqs:
         if req.kind == "order":
-            if not req.facts.get("key") or _asks_move(text):
+            if not req.facts.get("key") or _asks_move(text) or is_current_order_requirement(req):
                 continue
             return False
         if req.kind == "select":
@@ -891,6 +891,9 @@ def _structural_reqs_editable(
 
 
 _CAPTURE_ORDER_KEYS = {"capture_time", "chronological", "time"}
+# Re-sequencing the clips already in the edit ("reverse the order", "swap clip 2 and 5"):
+# the editor's `reorder_clips_by` custom order does it in place, so it never re-plans.
+_CURRENT_ORDER_KEYS = {"current_order"}
 _ORDER_ONLY_FACTS = {"key", "by", "direction", "order"}
 
 
@@ -901,6 +904,14 @@ def is_capture_order_requirement(req: BriefRequirement | BriefUpdate) -> bool:
     facts = req.facts or {}
     key = str(facts.get("key") or facts.get("by") or "").casefold()
     return key in _CAPTURE_ORDER_KEYS and set(facts) <= _ORDER_ONLY_FACTS
+
+
+def is_current_order_requirement(req: BriefRequirement | BriefUpdate) -> bool:
+    """An order requirement that re-sequences the clips already in the current edit."""
+    if req.kind != "order":
+        return False
+    key = str((req.facts or {}).get("key") or "").casefold()
+    return key in _CURRENT_ORDER_KEYS
 
 
 def is_filming_time_label_requirement(req: BriefRequirement | BriefUpdate) -> bool:

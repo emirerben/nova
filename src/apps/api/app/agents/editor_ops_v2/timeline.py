@@ -199,8 +199,8 @@ _ORDER_DIRECTIONS = ("asc", "desc")
 def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
     """Resolve ``reorder_clips_by`` into a concrete slot permutation.
 
-    The order comes from the capture-time facts the SERVER put on each slot,
-    never from anything the model wrote. Clips with no capture time keep their
+    For ``capture_time`` the order comes from the capture-time facts the SERVER
+    put on each slot, never from anything the model wrote. Clips with no capture time keep their
     slot (``order_by_capture_time`` semantics) and are reported in the reply;
     ties keep their current relative order. ``custom`` takes the model's
     ``order`` (current slot indexes in their new sequence) for asks no server
@@ -255,7 +255,6 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
             return None
         return {
             "criterion": criterion,
-            "direction": "asc",
             "permutation": permutation,
             "media_ids": [str(s.get("media_id") or "") for s in slots],
         }

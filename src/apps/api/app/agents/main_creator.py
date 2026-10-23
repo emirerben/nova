@@ -110,7 +110,8 @@ log = structlog.get_logger()
 # v72 (KRI-814): earlier creator lines never read into the brief are read with the current one.
 # v74 combines delegation v72 with subtitle-semantics v73, retaining all instructions.
 # v75 adds N2 fullscreen photo-then-original sequences to the complete v74 union.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v75"
+# v76: brief order facts key "current_order" for re-sequencing the clips already in the edit.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v76"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -388,9 +389,10 @@ requirement use `operation`: "add" and include `kind`, `scope`, `literal`, `desc
 null", "description": "what is wanted in the creator's own framing, or null", "facts": {}}.
 `literal` is ONLY text the creator wrote out; described text ("the landmark on each clip") goes
 in `description` with `literal` null. Put structured details in `facts` (for order: {"key":
-"capture_time"}; for timing: {"duration_s": 20}; for a route or distance: {"distance_km": 20,
-"start": "...", "end": "..."}). Keep the creator's language and spelling (Turkish stays
-Turkish).
+"capture_time"}; for re-sequencing the clips ALREADY in the current edit -- reverse it, swap two
+clips, a new sequence of them: {"key": "current_order"}; for timing: {"duration_s": 20}; for a
+route or distance: {"distance_km": 20, "start": "...", "end": "..."}). Keep the creator's
+language and spelling (Turkish stays Turkish).
 
 The brief stores creator INSTRUCTIONS, not incidental descriptions of the footage. A sentence
 such as "I took the sunset pictures walking to the bus and the night ones cycling home" supplies
