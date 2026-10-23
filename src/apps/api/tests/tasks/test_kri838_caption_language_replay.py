@@ -84,6 +84,11 @@ def _transcript(words: list[Word], language: str) -> Transcript:
 # whisper-1 reports the hinted language as the transcript's language -- the label lies too.
 CARO_FORCED_TR = _transcript(_words("caro_t2_forced_tr_words.json"), "tr")
 LUCAS_FORCED_ES = _transcript(_words("lucas_t3_forced_es_words.json"), "es")
+# KRI-839: the phone Talking job always runs a SPOKEN (auto-language) pass first; the hinted
+# pass is a second call. Caro auto-detects as English; Lucas's auto pass is whisper.cpp's real
+# Finnish-looking hallucination (the mixed take: an English question, then Spanish).
+CARO_SPOKEN_EN = _transcript(_words("caro_t2_auto_en_words.json"), "en")
+LUCAS_SPOKEN_FI = _transcript(_words("lucas_t3_auto_words.json"), "fi")
 
 # Authored stub of a Turkish translator answer for Caro's six caption sentences, keyed by the
 # English line it must receive (so the test also pins the sentence chunking and that the
@@ -195,10 +200,11 @@ def test_a_cafe_t2_turkish_ask_on_english_speech_is_translated_and_met(
     _job, variant, whisper = _render(
         monkeypatch,
         prompt=CAFE_T2_PROMPT,
-        by_hint={"tr": CARO_FORCED_TR},
+        by_hint={None: CARO_SPOKEN_EN, "tr": CARO_FORCED_TR},
     )
 
-    assert [call.kwargs.get("language") for call in whisper.call_args_list] == ["tr"]
+    # the spoken pass, then the Turkish-hinted one (which wrote English again)
+    assert [call.kwargs.get("language") for call in whisper.call_args_list] == [None, "tr"]
     texts = _cue_texts(variant)
     joined = " ".join(texts)
     # the captions on screen are Turkish -- the label was never the evidence
@@ -274,7 +280,9 @@ def test_b_when_the_translation_does_not_happen_the_variant_says_english_and_the
         translator.side_effect = RuntimeError("provider down")
 
     _job, variant, _whisper = _render(
-        monkeypatch, prompt=CAFE_T2_PROMPT, by_hint={"tr": CARO_FORCED_TR}
+        monkeypatch,
+        prompt=CAFE_T2_PROMPT,
+        by_hint={None: CARO_SPOKEN_EN, "tr": CARO_FORCED_TR},
     )
 
     joined = " ".join(_cue_texts(variant))
@@ -337,13 +345,18 @@ def test_c_don_julio_t3_spanish_ask_is_heard_confirmed_and_met_without_a_transla
     translator.side_effect = AssertionError("Spanish captions need no translator")
 
     _job, variant, whisper = _render(
-        monkeypatch, prompt=DONJULIO_T3_PROMPT, by_hint={"es": LUCAS_FORCED_ES}
+        monkeypatch,
+        prompt=DONJULIO_T3_PROMPT,
+        by_hint={None: LUCAS_SPOKEN_FI, "es": LUCAS_FORCED_ES},
     )
 
-    assert [call.kwargs.get("language") for call in whisper.call_args_list] == ["es"]
+    assert [call.kwargs.get("language") for call in whisper.call_args_list] == [None, "es"]
     joined = " ".join(_cue_texts(variant))
     assert "Acá tenemos salsas tradicionales argentinas" in joined
+    assert "Tupana" not in joined  # the Finnish-looking spoken pass never reaches the captions
     assert variant["caption_language"] == "es"
+    [requested] = _event(events, "caption_language_requested")
+    assert requested["requested"] == "es" and requested["spoken"] == "fi"
     translator.assert_not_called()
     assert _event(events, "caption_translation") == []
     assert _event(events, "caption_language_request_unmet") == []
@@ -367,7 +380,9 @@ def test_c2_a_spanish_ask_on_english_speech_is_translated_when_the_switch_is_on(
         for line in lines
     ]
     _job, variant, _whisper = _render(
-        monkeypatch, prompt="Spanish subtitles please", by_hint={"es": CARO_FORCED_TR}
+        monkeypatch,
+        prompt="Spanish subtitles please",
+        by_hint={None: CARO_SPOKEN_EN, "es": CARO_FORCED_TR},
     )
 
     assert variant["caption_language"] == "es"
@@ -492,31 +507,83 @@ def test_e_voiceover_with_no_translation_returns_the_english_stamped_english(
 # ----------------------------------------------------- [f] no independent evidence, no stamp
 
 
-_WOW = _transcript(
-    [
-        Word(text="Wow.", start_s=0.0, end_s=0.5, confidence=1.0),
-        Word(text="That", start_s=0.7, end_s=1.0, confidence=1.0),
-        Word(text="was", start_s=1.0, end_s=1.3, confidence=1.0),
-        Word(text="amazing.", start_s=1.3, end_s=2.0, confidence=1.0),
-    ],
-    "tr",  # a hinted pass reports the language it was told to write
-)
+_WOW_WORDS = [
+    Word(text="Wow.", start_s=0.0, end_s=0.5, confidence=1.0),
+    Word(text="Amazing.", start_s=0.7, end_s=1.4, confidence=1.0),
+]
+# A hinted pass reports the language it was told to write, whatever it wrote.
+_WOW_HINTED = _transcript(_WOW_WORDS, "tr")
+# Ambiguous text: no function words to read a language from.
+_AMBIGUOUS_TEXT = "Wow. Amazing."
+_GEMINI_HEARD_EN = "Wow. That was amazing. I really love this place and the people here."
 
 
-def test_f_ambiguous_hinted_text_and_a_failed_translator_never_get_the_requests_label(
+def test_f_a_detected_spoken_pass_is_the_stamp_for_ambiguous_unmet_text(
     monkeypatch, translator, events
 ):
-    """Review reproduction: "Wow. That was amazing." under a Turkish hint, translator down,
-    nothing else known about the clip -> the variant is stamped "" (unknown), the review says
-    it cannot check, never "The captions are in Turkish"."""
+    """Ambiguous hinted text, translator down: the spoken pass heard English, so that is the
+    stamp -- not the request, not the job language."""
+    translator.side_effect = RuntimeError("provider down")
+
+    _job, variant, whisper = _render(
+        monkeypatch,
+        prompt="altyazılar Türkçe olsun",
+        by_hint={None: _transcript(_WOW_WORDS, "en"), "tr": _WOW_HINTED},
+    )
+
+    assert [call.kwargs.get("language") for call in whisper.call_args_list] == [None, "tr"]
+    assert " ".join(_cue_texts(variant)) == _AMBIGUOUS_TEXT
+    assert variant["caption_language"] == "en"  # the spoken pass, not "tr"
+    assert _event(events, "caption_language_request_unmet")[0]["stamped"] == "en"
+    receipt = _review(variant, "altyazılar Türkçe olsun")
+    assert receipt.status == "partial"
+    assert receipt.reason == "The captions are in English, not Turkish."
+
+
+def test_f_gemini_read_is_used_only_when_the_spoken_pass_fell_back(monkeypatch, translator, events):
+    """The spoken pass reported no language and its text says none (the job language is the
+    only thing left, and that is a guess): Gemini's independent read is the stamp."""
     translator.side_effect = RuntimeError("provider down")
 
     _job, variant, _whisper = _render(
-        monkeypatch, prompt="altyazılar Türkçe olsun", by_hint={"tr": _WOW}
+        monkeypatch,
+        prompt="altyazılar Türkçe olsun",
+        by_hint={None: _transcript(_WOW_WORDS, ""), "tr": _WOW_HINTED},
+        gemini_transcript=_GEMINI_HEARD_EN,
     )
 
-    assert variant["caption_language"] == ""  # not "tr"
-    assert " ".join(_cue_texts(variant)) == "Wow. That was amazing."
+    assert _event(events, "caption_language_fallback")  # the spoken pass did fall back
+    assert variant["caption_language"] == "en"  # Gemini heard English
+    receipt = _review(variant, "altyazılar Türkçe olsun")
+    assert receipt.reason == "The captions are in English, not Turkish."
+
+    # ...and a spoken pass that DID detect a language outranks Gemini's read (Spanish text, so
+    # the EN/TR crosscheck of the spoken pass stays quiet and cannot re-transcribe it).
+    translator.side_effect = RuntimeError("provider down")
+    _job, other, _whisper = _render(
+        monkeypatch,
+        prompt="altyazılar Türkçe olsun",
+        by_hint={None: _transcript(_WOW_WORDS, "de"), "tr": _WOW_HINTED},
+        gemini_transcript="Wow. Qué increíble, me encanta este lugar y la gente de aquí.",
+    )
+    assert other["caption_language"] == "de"
+
+
+def test_f_with_no_independent_evidence_the_stamp_is_empty_never_the_requests_label(
+    monkeypatch, translator, events
+):
+    """Neither a detected spoken pass nor Gemini: "" (unknown). Not "tr" (the request) and not
+    "en" (the job language the fallback chain ends on); the review says it cannot check."""
+    translator.side_effect = RuntimeError("provider down")
+
+    _job, variant, _whisper = _render(
+        monkeypatch,
+        prompt="altyazılar Türkçe olsun",
+        by_hint={None: _transcript(_WOW_WORDS, ""), "tr": _WOW_HINTED},
+    )
+
+    assert variant["caption_language"] == ""
+    assert " ".join(_cue_texts(variant)) == _AMBIGUOUS_TEXT
     assert _event(events, "caption_language_request_unmet")[0]["stamped"] == ""
     receipt = _review(variant, "altyazılar Türkçe olsun")
     assert receipt.status == "partial"
@@ -524,22 +591,25 @@ def test_f_ambiguous_hinted_text_and_a_failed_translator_never_get_the_requests_
     assert receipt.reason.startswith("I couldn't check which language the captions are in.")
 
 
-def test_f_gemini_transcript_is_the_independent_fallback_when_it_exists(
+def test_f_an_empty_hinted_pass_is_translated_from_the_spoken_words(
     monkeypatch, translator, events
 ):
-    translator.side_effect = RuntimeError("provider down")
+    """KRI-839's helper keeps the spoken words when the hinted pass hears nothing; the
+    verification then reads them against the ask and translates (Turkish was asked)."""
+    translator.side_effect = lambda lines, **_kw: (
+        ["Merhaba dostlar, bugün çok güzel bir gün."] * len(lines)
+    )
 
     _job, variant, _whisper = _render(
         monkeypatch,
         prompt="altyazılar Türkçe olsun",
-        by_hint={"tr": _WOW},
-        gemini_transcript="Wow. That was amazing. I really love this place and the people.",
+        by_hint={None: CARO_SPOKEN_EN, "tr": Transcript(words=[], language="tr", full_text="")},
     )
 
-    assert variant["caption_language"] == "en"  # Gemini heard English
-    receipt = _review(variant, "altyazılar Türkçe olsun")
-    assert receipt.status == "partial"
-    assert receipt.reason == "The captions are in English, not Turkish."
+    assert _event(events, "caption_language_request_empty")
+    assert _event(events, "caption_translation")
+    assert variant["caption_language"] == "tr"
+    assert infer_language_from_text(" ".join(_cue_texts(variant))) == "tr"
 
 
 # ------------------------------------------------- [g] translation off = the legacy en/tr world

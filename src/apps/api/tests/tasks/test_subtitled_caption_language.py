@@ -689,22 +689,31 @@ def test_phone_explicit_request_overrides_hint_and_persists(monkeypatch):
     # KRI-838: the stubbed hinted pass writes Turkish, as whisper does for Turkish speech. It
     # used to return an English "Hello" here and the test expected "tr" -- it pinned the label
     # being stamped whatever came back (see test_kri838_caption_language_replay.py).
-    mock = Mock(
-        return_value=Transcript(
-            words=_words(
-                *((token, i * 0.5, i * 0.5 + 0.5) for i, token in enumerate(_TR_SENTENCE.split()))
+    # KRI-839: the spoken (auto-language) pass runs first and is English here.
+    spoken_text = "Hello there, this is plain English text."
+    mock = _whisper_by_language(
+        monkeypatch,
+        {
+            None: Transcript(
+                words=_words(
+                    *(
+                        (token, i * 0.5, i * 0.5 + 0.5)
+                        for i, token in enumerate(spoken_text.split())
+                    )
+                ),
+                language="en",
+                full_text=spoken_text,
             ),
-            language="tr",
-            full_text=_TR_SENTENCE,
-        )
+            "tr": _hinted_turkish(),
+        },
     )
-    monkeypatch.setattr("app.pipeline.transcribe.transcribe_whisper_cached", mock)
 
     gb._run_generative_job(str(job.id))
 
     variant = job.assembly_plan["variants"][0]
     assert variant["caption_language"] == "tr"
-    assert mock.call_args.kwargs.get("language") == "tr"
+    assert [c.kwargs.get("language") for c in mock.call_args_list] == [None, "tr"]
+    assert " ".join(c["text"] for c in variant["caption_cues"]).startswith("Üçüncü sırada kim var")
 
 
 def test_phone_empty_detection_infers_from_transcript_text(monkeypatch):

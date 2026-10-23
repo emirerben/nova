@@ -2819,7 +2819,7 @@
       "harness": "real_compiler",
       "kill_switch": "caption_translation_enabled",
       "evidence": {
-        "offline_replay": "Real kit prompts (caf\u00e9 T2 Turkish, Don Julio T3 English) through the real dispatcher parser, the real phone Talking job (no-cleanup and cleanup branches), the real cue builder and the real brief checks; whisper replayed from local whisper.cpp medium output of the two incident clips, the translator an authored stub. Red on main (only the config field and a stub provider function shimmed): 16 of 18 replay tests fail (English cues stamped 'tr' and 'met'; 'es' dropped; Spanish promised); green with the fix.",
+        "offline_replay": "Real kit prompts (caf\u00e9 T2 Turkish, Don Julio T3 English) through the real dispatcher parser, the real phone Talking job (no-cleanup and cleanup branches), the real cue builder and the real brief checks; whisper replayed from local whisper.cpp medium output of the two incident clips, the translator an authored stub. Red on main (only the config field and a stub provider function shimmed): 18 of 20 replay tests fail (English cues stamped 'tr' and 'met'; 'es' dropped; Spanish promised); green with the fix.",
         "live_model": "Not run; no paid calls. The translator prompt is exercised through a fake provider client only.",
         "native_output": "Pending: iPhone re-run of caf\u00e9 T2 and Don Julio T3 after deploy (Yasin).",
         "production": "not merged"

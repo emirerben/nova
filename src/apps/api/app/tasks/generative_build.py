@@ -7490,11 +7490,12 @@ def _run_phone_subtitled_job(
                     # Cleanup cut the fillers out of the audio; an opening cut alone left them in.
                     if opening_cut_only or not is_filler_token(item["text"])
                 ]
-                if caption_words is not words:
+                if caption_language_req is not None:
                     # KRI-838: the hinted pass is no proof (a whisper language hint does
-                    # not reliably translate). Read the text; translate when it is not in
-                    # the requested language. Done on the kept words so a cut sentence is
-                    # never translated whole. The cut and the lanes stay on the spoken words.
+                    # not reliably translate), and an empty one leaves the spoken words.
+                    # Read the text; translate when it is not in the requested language.
+                    # Done on the kept words so a cut sentence is never translated whole.
+                    # The cut and the lanes stay on the spoken words.
                     ensured = _ensure_requested_caption_language(
                         cut_words,
                         requested=caption_language_req,
