@@ -4160,6 +4160,10 @@ async def update_item_edit_proposal(
                 "text_composition": current.draft.text_composition,
                 # KRI-569: the song's lyric track is server-authored too.
                 "song_captions": current.draft.song_captions,
+                # KRI-824: per-photo holds are stamped server-side from the brief. A
+                # Save can neither drop them (old clients never send the field) nor
+                # forge one for another photo or length.
+                "creator_still_holds": current.draft.creator_still_holds,
             }
         )
         if (

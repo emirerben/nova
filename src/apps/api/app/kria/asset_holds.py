@@ -89,9 +89,9 @@ def stamp_authority(
     - ``explicit`` when the creator's own turn said those seconds as a length (a number and
       a seconds unit; a bare number such as "3 photos" or "1000 followers" never does).
     - A change to a hold the creator already owns, on the same asset, keeps that ownership
-      when it keeps the value, or when it comes from the creator's own turn ("make it two
-      seconds", "a bit longer"): the creator re-decided their own decision and the
-      extractor read the amount. It never falls back to the AI default.
+      when it keeps the value, or when the creator's own turn asked for that direction ("a
+      bit longer" and the hold grew): the creator re-decided their own decision and the
+      extractor read the amount. A turn about something else never carries a new number.
     - Anything else is ``None``: a model's number on a decision nobody owns is a proposal.
     """
     value = hold_seconds(req)
@@ -107,9 +107,31 @@ def stamp_authority(
         return None
     if getattr(prior, "scope", None) != getattr(req, "scope", None):
         return None
-    if abs(prior_value - value) <= 1e-6 or creator_text:
+    if abs(prior_value - value) <= 1e-6:
+        return prior_authority
+    # A changed amount the creator did not type stays theirs only when their own turn
+    # asked for that direction ("a bit longer" and the hold grew). Any other turn ("change
+    # the title", "make the video 20 seconds") cannot carry a model's new number in as
+    # creator intent.
+    direction = relative_length(creator_text or "")
+    if (direction == "longer" and value > prior_value) or (
+        direction == "shorter" and value < prior_value
+    ):
         return prior_authority
     return None
+
+
+def relative_length(text: str) -> Literal["longer", "shorter"] | None:
+    """The one length direction the creator's turn asks for, EN or TR; None if not one.
+
+    The editor receipts' own length reader (KRI-558), so a "longer" reads the same there
+    and here; no second word list.
+    """
+    from app.kria.editor_receipts import _LONGER, _SHORTER, _single_direction  # noqa: PLC0415
+    from app.kria.style_asks import words  # noqa: PLC0415
+
+    direction = _single_direction(_LONGER, _SHORTER, words(text))
+    return None if direction is None else "longer" if direction > 0 else "shorter"
 
 
 def resolve_clip_scope(token: str, media_ids: Iterable[str]) -> str | None:
@@ -236,6 +258,7 @@ __all__ = [
     "held_visual_seconds",
     "hold_requirements",
     "hold_seconds",
+    "relative_length",
     "holds_from_requirements",
     "resolve_clip_scope",
     "stamp_authority",

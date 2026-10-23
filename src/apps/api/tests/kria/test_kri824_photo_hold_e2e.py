@@ -31,6 +31,12 @@ Ways this can fail, each pinned below (written before the fix):
     the edit's own pacing").
 16. A hold on a Visual that is not placed (removed, ambiguous tail, named twice) takes
     seconds off the creator's total.
+17. A later turn about something else ("change the title") carries a model's new number
+    for the creator's photo in as creator intent, or a "longer" ask that shrank it.
+18. A manual Save drops the stamped hold (old clients never send it) or forges one.
+19. One photo's seconds ("the beach photo 0.5 seconds") become every photo's cadence.
+20. A Visual named by a unique tail is ambiguous in the worker (ref id and media id share
+    it) while the planner budgets it.
 
 Artifact: ``.dev/kri824/report.json`` (request, stamped brief, binding digest, source ids,
 per-cut seconds in the cloud execution plan and the phone recipe, and each photo's frame
@@ -674,3 +680,165 @@ def test_only_placed_visual_holds_come_off_the_creator_total() -> None:
         "t1",
     )
     assert held_visual_seconds(ambiguous, clip_ids, twins) == 0.0
+
+
+# -- review round 2: model numbers on unrelated turns, Save, one-photo asks, Visual tails --
+
+
+@pytest.mark.parametrize(
+    ("message", "seconds"),
+    [
+        ("change the title to Summer", 0.5),
+        ("make the whole video 20 seconds", 2.5),
+        ("change the music", 2),
+        # The creator asked for longer; a model that shrank the hold is not them.
+        ("a bit longer", 0.5),
+        ("biraz daha kısa", 2),
+    ],
+)
+def test_a_model_number_on_a_turn_about_something_else_never_becomes_the_creators(
+    message, seconds
+) -> None:
+    # 17: the extractor re-emits the creator's photo with a number they never said.
+    first = _turn(
+        None,
+        [_hold_update(BEACH, 1, "beach photo 1 second")],
+        "keep the beach photo on screen for 1 second",
+        "t1",
+    )
+    target = _req(first, BEACH)
+    second = _turn(
+        first,
+        [
+            BriefUpdate(
+                operation="change",
+                target_requirement_id=target.id,
+                expected_version=first.version,
+                facts={"duration_s": seconds},
+            )
+        ],
+        message,
+        "t2",
+    )
+    _never_applied(second)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("client", ["old_client_omits", "forged"])
+async def test_a_manual_save_keeps_the_server_stamped_hold(monkeypatch, client) -> None:
+    # 18: Save rebuilds the snapshot from the client body; the hold is server-owned.
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    import app.routes.plan_items as plan_items  # noqa: PLC0415
+    from app.schemas.edit_proposal import (  # noqa: PLC0415
+        EditProposal,
+        ProposalBrief,
+        canonical_media_digest,
+        parse_edit_proposal,
+    )
+    from tests.routes.test_edit_proposal_routes import _patch_route_dependencies  # noqa: PLC0415
+
+    brief = _turn(
+        None,
+        [_hold_update(BEACH, 1, "beach photo 1 second")],
+        "keep the beach photo on screen for 1 second",
+        "t1",
+    )
+    rendered = _render(brief, _strategy())
+    draft = rendered["plan"].snapshot
+    assert [h.media_id for h in draft.creator_still_holds] == [BEACH.media_id]
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        clip_assignments=[],
+        edit_proposal=EditProposal(
+            proposal_version=2,
+            generation_attempt_id="attempt-1",
+            media_digest=canonical_media_digest(draft.media, draft.narration),
+            status="draft",
+            brief=ProposalBrief(),
+            draft=draft,
+        ).model_dump(mode="json"),
+    )
+    db = _patch_route_dependencies(monkeypatch, item, media_current=True)
+    monkeypatch.setattr(plan_items, "_require_guided_edit_applicable", lambda _item: None)
+    # A forgery the snapshot validator itself accepts: the cafe photo claimed as
+    # creator-held at its current cut length (with no brief requirement behind it).
+    cafe_s = next(c.output_duration_s for c in draft.fast_cuts if c.media_id == CAFE.media_id)
+    holds = (
+        []
+        if client == "old_client_omits"
+        else [{"media_id": CAFE.media_id, "hold_s": cafe_s, "requirement_id": "forged"}]
+    )
+    body_snapshot = EditProposalSnapshot.model_validate(
+        {
+            **draft.model_dump(mode="json"),
+            "title": "Summer",
+            "creator_still_holds": holds,
+        }
+    )
+    await plan_items.update_item_edit_proposal(
+        str(item.id),
+        plan_items.UpdateEditProposalBody(expected_proposal_version=2, snapshot=body_snapshot),
+        SimpleNamespace(id=uuid.uuid4()),
+        db,
+    )
+    saved = parse_edit_proposal(item.edit_proposal)
+    assert saved is not None and saved.draft is not None
+    assert saved.draft.title == "Summer"
+    assert saved.draft.creator_still_holds == draft.creator_still_holds
+    # Reopen + render the saved draft: the beach photo still plays its 30 frames.
+    guided = {
+        **rendered["plan"].guided_edit(),
+        "approved_proposal": saved.draft.model_dump(mode="json"),
+    }
+    execution = compile_execution_plan(guided, track=None)
+    still = {
+        row["media_id"]: round(row["output_end_s"] - row["output_start_s"], 4)
+        for row in execution["story_timeline"]
+        if row.get("lane") == "asset"
+    }
+    assert still[BEACH.media_id] == pytest.approx(1.0, abs=1e-6)
+    assert still[CAFE.media_id] == pytest.approx(rendered["cloud_still_s"][CAFE.media_id])
+
+
+@pytest.mark.parametrize(
+    ("message", "global_hold_s"),
+    [
+        ("keep the beach photo 0.5 seconds and the clips longer", None),
+        ("this photo 0.3 seconds, let the videos breathe", None),
+        # A group ask still sets every photo's cadence, as before.
+        ("Use photos at 0.3 seconds and let the videos hold longer", 0.3),
+        ("make every photo 0.2 seconds among the clips", 0.2),
+    ],
+)
+def test_one_photos_seconds_never_become_every_photos_cadence(message, global_hold_s) -> None:
+    # 19: the legacy global parse pins all stills only for an ask about the photos.
+    from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+    from app.routes.creator_agent import _apply_explicit_render_intent  # noqa: PLC0415
+
+    parsed = _apply_explicit_render_intent(CreativeStrategy(), message)
+    timing = parsed.mixed_media_timing
+    hold = timing.image_hold_s if timing is not None else None
+    assert hold == (pytest.approx(global_hold_s) if global_hold_s else None)
+
+
+def test_a_visual_named_by_a_unique_tail_holds_in_the_worker_plan() -> None:
+    # 20: a Visual's ref id ("asset-<uuid>") and its media id share every tail.
+    tail = BEACH.manifest_id[-12:]
+    assert BEACH.manifest_id.endswith(BEACH.media_id)
+    brief = _turn(
+        None,
+        [
+            BriefUpdate(
+                kind="timing",
+                scope=f"clip:{tail}",
+                description="beach photo 2 seconds",
+                facts={"duration_s": 2},
+            )
+        ],
+        "keep the beach photo 2 seconds",
+        "t1",
+    )
+    rendered = _render(brief, _strategy())
+    assert rendered["cloud_still_s"][BEACH.media_id] == pytest.approx(2.0, abs=1e-6)
+    assert rendered["phone_still_s"][BEACH.media_id] == pytest.approx(2.0, abs=1e-6)

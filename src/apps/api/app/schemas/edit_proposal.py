@@ -386,6 +386,19 @@ def _recognized_frame_aligned_cadence(value: float) -> float | None:
 # klip -> klibi: the final p softens to b before a vowel suffix.
 _TR_MEDIA = r"(?:video\w*|kli[pb]\w*|cekim\w*|goruntu\w*)"
 _TR_PHOTO = r"(?:foto\w*|resim\w*|resm\w*|gorsel\w*)"
+# KRI-824: an exact still length sets every photo's cadence only when the creator speaks
+# about the photos as a group ("photos 0.3 s", "every photo", "fotoğraflar 0,3 saniye").
+# One named photo ("the beach photo 0.5 seconds", "plaj fotoğrafı") is that photo's own
+# stamped hold (``app.kria.asset_holds``), never a profile pinning every other still.
+PHOTO_GROUP_PATTERN = (
+    r"(?:\b(?:photos|images|stills|pictures)\b"
+    r"|\b(?:every|each|all)\s+(?:(?:the|of|my|these|those)\s+){0,2}"
+    r"(?:photo|image|still|picture)s?\b)"
+)
+_TR_PHOTO_GROUP = (
+    r"(?:\b(?:foto|resim|resm|gorsel)\w*l[ae]r\w*"
+    r"|\b(?:her|tum|butun)\s+(?:foto|resim|resm|gorsel)\w*)"
+)
 _TR_PHOTO_FAST = r"(?:hizl\w*|cabuk\w*|kisa\s+sure\w*|kisacik)"
 _TR_VIDEO_LONG = (
     r"(?:daha\s+uzun\b|\buzun\b|uzun\s+sure\w*|daha\s+yavas\w*|\byavas\w*|"
@@ -912,7 +925,7 @@ def recognize_mixed_media_timing(text: str) -> MixedMediaTimingProfile | None:
     # and an exact value does not lose the value.
     numeric_matches = list(
         re.finditer(
-            rf"\b{photo}\b.{{0,80}}?\b(0?\.[0-9]+|[1-9][0-9]{{0,2}})\s*(?:s|sec(?:ond)?s?|ms|milliseconds?)\b",
+            rf"{PHOTO_GROUP_PATTERN}.{{0,80}}?\b(0?\.[0-9]+|[1-9][0-9]{{0,2}})\s*(?:s|sec(?:ond)?s?|ms|milliseconds?)\b",
             normalized,
         )
     )
@@ -994,7 +1007,7 @@ def _recognize_turkish_mixed_media_timing(
     # An exact still length ("fotoğraflar 0,3 saniye"), like the English numeric path.
     numeric: list[tuple[float, str]] = []
     for match in re.finditer(
-        rf"\b{_TR_PHOTO}\b(?:(?!\b{_TR_MEDIA})[^!?;]){{0,80}}?{_TR_NUMBER}\s*"
+        rf"{_TR_PHOTO_GROUP}\b(?:(?!\b{_TR_MEDIA})[^!?;]){{0,80}}?{_TR_NUMBER}\s*"
         rf"(?P<unit>ms\b|milisaniye\w*|saniye\w*|sn\b)(?P<tail>{_TR_CLAUSE_TAIL})",
         loose,
     ):

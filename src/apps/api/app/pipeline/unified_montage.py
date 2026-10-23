@@ -1688,7 +1688,15 @@ def plan_unified_montage(
     # KRI-824: a photo the creator gave its own seconds plays exactly that, whatever the
     # AI's photo pacing; only the item's own photos resolve, by brief scope id.
     still_media = {clip.ref_id: clip.media_id for clip in ordered if clip.kind == "image"}
-    still_media.update({clip.media_id: clip.media_id for clip in ordered if clip.kind == "image"})
+    # A media id its own ref id already ends with ("asset-<uuid>") resolves through the ref;
+    # listing both would make every tail of that one photo look ambiguous.
+    still_media.update(
+        {
+            clip.media_id: clip.media_id
+            for clip in ordered
+            if clip.kind == "image" and not clip.ref_id.endswith(clip.media_id)
+        }
+    )
     holds: dict[str, AssetHold] = {
         still_media[ref]: hold
         for ref, hold in holds_from_requirements(view.hold_requirements, still_media).items()

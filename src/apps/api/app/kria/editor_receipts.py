@@ -175,8 +175,8 @@ _SMALL_POS = re.compile(r"\b(small|tiny|kucuk(?! harf))\b")
 _BIG_POS = re.compile(r"\b(big|large|huge|buyuk(?! harf))\b")
 _LOUDER = re.compile(r"\b(louder|higher|raise\w*|turn(?:ed)? up|artir\w*|yuksel\w*)\b")
 _QUIETER = re.compile(r"\b(quieter|softer|lower|turn(?:ed)? down|azalt\w*|alcalt\w*)\b")
-_LONGER = re.compile(r"\b(longer|lengthen\w*|extend\w*|uzat\w*)\b")
-_SHORTER = re.compile(r"\b(shorter|shorten\w*|trim\w*|cut down|kisalt\w*)\b")
+_LONGER = re.compile(r"\b(longer|lengthen\w*|extend\w*|uzat\w*|daha uzun)\b")
+_SHORTER = re.compile(r"\b(shorter|shorten\w*|trim\w*|cut down|kisalt\w*|daha kisa)\b")
 _QUANTIFIER = re.compile(r"\b(all|both|every|each|everything|tum\w*|butun\w*|hepsi\w*)\b")
 _DESTINATION = re.compile(
     r"\b(left|right|top|bottom|center|centre|middle|sola|saga|yukari|asagi)\b"

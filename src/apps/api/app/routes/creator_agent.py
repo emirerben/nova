@@ -119,6 +119,7 @@ from app.routes.generative_jobs import (
 from app.schemas.clip_intents import ResolvedClipIntent
 from app.schemas.edit_proposal import (
     MAX_PROPOSAL_DURATION_S,
+    PHOTO_GROUP_PATTERN,
     MixedMediaTimingProfile,
     MontageCadenceConstraint,
     PinnedText,
@@ -1495,16 +1496,20 @@ def _apply_explicit_render_intent(
         # valid pool images outside the guided proposal while the assistant
         # still promised a photo sequence. Promote only an affirmative,
         # sub-second photo request that explicitly places photos among videos.
+        # KRI-824: only an ask about the photos as a group ("photos", "every photo")
+        # sets this cadence for every still. One named photo ("the beach photo 0.5
+        # seconds") is that photo's own stamped hold (``app.kria.asset_holds``), never
+        # a profile that would pin every other photo to the same length.
         normalized = request.casefold()
         photo_subsecond = bool(
             re.search(
-                r"\b(?:photos?|images?|stills?|pictures?)\b.{0,80}"
+                PHOTO_GROUP_PATTERN + r".{0,80}"
                 # "0,3 s": a decimal comma, as Turkish and most of Europe type it.
                 r"(?:\b0?\.[0-9]+|(?<![\d.,])0,[0-9]+)\s*(?:s|sec(?:ond)?s?)\b",
                 normalized,
             )
             or re.search(
-                r"\b(?:photos?|images?|stills?|pictures?)\b.{0,80}"
+                PHOTO_GROUP_PATTERN + r".{0,80}"
                 r"\b[1-9][0-9]{0,2}\s*(?:ms|milliseconds?)\b",
                 normalized,
             )
@@ -1519,7 +1524,7 @@ def _apply_explicit_render_intent(
         )
         if photo_subsecond and has_video_context and not timing_negated:
             numeric_match = re.search(
-                r"\b(?:photos?|images?|stills?|pictures?)\b.{0,80}?"
+                PHOTO_GROUP_PATTERN + r".{0,80}?"
                 r"(\b0?\.[0-9]+|(?<![\d.,])0,[0-9]+|\b[1-9][0-9]{0,2})\s*"
                 r"(?:s|sec(?:ond)?s?|ms|milliseconds?)\b",
                 normalized,
