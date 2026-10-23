@@ -33,12 +33,13 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
+import app.tasks.kria_runtime as kria_runtime
 from app.agents._schemas.creator_agent import CreativeStrategy, ProposeStrategy
 from app.config import settings
 from app.database import AsyncSessionLocal, sync_session
 from app.database import engine as async_engine
 from app.kria.api_schemas import ApprovalDecisionBody
-from app.kria.brief import BriefUpdate, load_latest_brief_sync
+from app.kria.brief import BriefUpdate, CreativeBrief, load_latest_brief_sync
 from app.kria.brief_binding import BriefBinding
 from app.kria.contracts import KriaTurnPlan
 from app.kria.device_render import make_device_request
@@ -49,6 +50,7 @@ from app.kria.runtime import approval_fingerprint, decide_approval
 from app.models import (
     CreationThread,
     CreationThreadEvent,
+    CreativeBriefVersion,
     CreatorAgentApproval,
     CreatorAgentSession,
     CreatorEditDraft,
@@ -72,6 +74,7 @@ from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
 from app.tasks.kria_runtime import _claim_approval_dispatch, run_kria_turn
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project, _submit
 
+_REAL_AUTOMATIC_OMISSION_IDS = kria_runtime._automatic_omission_ids
 _SUMMARY = "a summary of the match day event"
 _ASK = "Should I try a different approach, or make this simpler version?"
 
@@ -485,8 +488,7 @@ async def test_agreed_omissions_survive_a_following_unresolved_choice(monkeypatc
         assert not brief.live()
 
 
-@pytest.mark.asyncio
-async def test_simpler_approval_compiles_and_pins_while_full_request_still_refuses(monkeypatch):
+async def _exercise_phone_approval_journey(monkeypatch, *, automatic: bool = False):
     """Real DB -> approval -> dispatch claim -> phone compiler -> device/publication guard.
 
     The replay supplies the planner output; the model is not under test here.
@@ -494,6 +496,11 @@ async def test_simpler_approval_compiles_and_pins_while_full_request_still_refus
     pinned recipe for the existing production AVFoundation exporter harness.
     """
     user_id, thread_id, session_id = _seed_runtime_project()
+    if automatic:
+        monkeypatch.setattr(kria_runtime, "_automatic_omission_ids", _REAL_AUTOMATIC_OMISSION_IDS)
+    else:
+        # Replay an already offered historical choice through the same native journey.
+        monkeypatch.setattr(kria_runtime, "_automatic_omission_ids", lambda *_a, **_kw: ())
     export_dir = (
         Path(os.environ["KRIA_SIMPLER_EXPORT_DIR"])
         if os.environ.get("KRIA_SIMPLER_EXPORT_DIR")
@@ -548,7 +555,7 @@ async def test_simpler_approval_compiles_and_pins_while_full_request_still_refus
             ),
         )
     )
-    await _run_turns(
+    first_replies = await _run_turns(
         monkeypatch,
         user_id,
         thread_id,
@@ -566,14 +573,33 @@ async def test_simpler_approval_compiles_and_pins_while_full_request_still_refus
     )
     with sync_session() as db:
         full_brief = load_latest_brief_sync(db, thread_id)
-    [reply] = await _run_turns(
-        monkeypatch,
-        user_id,
-        thread_id,
-        [
-            ("Make this simpler version", _planned(plan)),
-        ],
-    )
+    if automatic:
+        # Use the immutable original ledger entry for the negative control, not
+        # expectations reconstructed from the simplified result.
+        with sync_session() as db:
+            original = db.execute(
+                select(CreativeBriefVersion)
+                .where(CreativeBriefVersion.thread_id == thread_id)
+                .order_by(CreativeBriefVersion.version)
+                .limit(1)
+            ).scalar_one()
+            full_brief = CreativeBrief(version=original.version, requirements=original.requirements)
+    if automatic:
+        reply = first_replies[0]
+        assert reply[0] == "awaiting_approval"
+        assert reply[1] == "draft_applied"
+        assert 'Left out: "1 · leave before 11"' in reply[2]
+        assert 'Left out: "2 · you\'re all amigos"' in reply[2]
+        assert "Should I" not in reply[2]
+    else:
+        [reply] = await _run_turns(
+            monkeypatch,
+            user_id,
+            thread_id,
+            [
+                ("Make this simpler version", _planned(plan)),
+            ],
+        )
     assert reply[0] == "awaiting_approval"
     approval_id = await _decide(user_id, thread_id, "approve")
     claim = await asyncio.to_thread(_claim_approval_dispatch, approval_id)
@@ -670,3 +696,9 @@ async def test_simpler_approval_compiles_and_pins_while_full_request_still_refus
                 indent=2,
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_simpler_approval_compiles_and_pins_while_full_request_still_refuses(monkeypatch):
+    """An explicit simpler-version answer reaches the real native recipe boundary."""
+    await _exercise_phone_approval_journey(monkeypatch)

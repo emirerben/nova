@@ -124,9 +124,11 @@ then falls back to the job `language`. Both fallbacks record a
 in the creator's own words ("captions in English", "altyazılar Türkçe olsun"). The
 override is parsed in `build_generative_job` into `all_candidates["caption_language_request"]`
 and passed to whisper as the language hint, the same as the D5 re-transcribe
-chip. A prompt merely *written* in a language never changes it. Known gap: Kria
-runtime-v2 dispatches with an LLM summary instead of the creator's text, so that
-path does not pick up requests yet.
+chip. Phone Talking is the exception: it transcribes the spoken language first
+(reaction beats, overlay grounding and spoken-text asks read that), and the request
+drives a second, caption-only pass (KRI-839). A prompt merely *written* in a
+language never changes it. Known gap: Kria runtime-v2 dispatches with an LLM
+summary instead of the creator's text, so that path does not pick up requests yet.
 
 **Smart Captions (server-only flag):** set `SMART_CAPTIONS_ENABLED=true` on Fly
 and restart the API/workers. There is deliberately no `NEXT_PUBLIC` twin. A
@@ -600,12 +602,16 @@ For a `narrated` / `subtitled` variant `plan_facts_from_phone_variant` sets
 "word" → karaoke; a device render with no cues → none) and `speech_cleanup_outcome`
 (`silence_cut_outcome` applied / no_change; a device render without one → not_run). The
 captions and cleanup checkers judge those when `rendered_variant` is set; a real editor
-turn still answers "can't check". Cleanup never cuts a named line or retake ("the restart
-of the kilometer thirty sentence"), so such an ask stays "Partly" with the editor note. A
-cloud variant whose fields are not filled yet stays unknown. KRI-551: `_approved_generation_review`
-also appends `speech_cleanup_review_note(variant)` (counts read from `silence_cut.removed`, plus
-"a sentence you restarted stays in" unless a retake cut could have run), independent of the brief
-binding, so a render whose binding was lost still says what cleanup did not cut. Guards:
+turn still answers "can't check". Cleanup does not verify a named-line request from the
+brief, so that request stays "Partly" with the editor note even when an eligible retake
+is removed. KRI-551 can remove a detector-backed retake only after explicit retake-aware
+consent, with both rollout flags enabled; otherwise a restarted sentence stays in. A cloud
+variant whose fields are not filled yet stays unknown. `_approved_generation_review` also
+appends `speech_cleanup_review_note(variant)` (counts read from `silence_cut.removed`, plus
+"a sentence you restarted stays in" unless a retake cut could have run), independent of the
+brief binding, so a render whose binding was lost still says what cleanup did not cut. See the
+[bounded KRI-551 consent evidence](../reviews/kri-551-consented-retakes.md); original-output
+and device acceptance remain in the [KRI-829 ledger](../reviews/kri-829-original-output-acceptance.md). Guards:
 `tests/kria/test_brief_rendered_speech_facts.py`, the KRI-541 cases in
 `tests/tasks/test_marathon_render_ready_review.py`, `tests/tasks/test_kri551_cleanup_review_note.py`.
 

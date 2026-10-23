@@ -68,8 +68,20 @@ def current_detector_policy() -> str:
             # policy identity: flipping the operator switch must invalidate
             # every analysis produced under the previous value.
             f"max-removal-frac={settings.speech_cleanup_max_removal_frac_required:g}",
+            # Retake detection changes an explicit-consent cut list. Its
+            # switch must therefore retire ready analyses and request consent
+            # again instead of silently reusing a pause/filler-only snapshot.
+            f"retakes={'enabled' if _speech_cleanup_retakes_enabled() else 'disabled'}",
         )
     )
+
+
+def _speech_cleanup_retakes_enabled() -> bool:
+    """Keep consented preflight retakes fenced from legacy auto-cut rollout."""
+
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(settings.retake_cut_enabled and settings.speech_cleanup_retakes_enabled)
 
 
 @dataclass(frozen=True)

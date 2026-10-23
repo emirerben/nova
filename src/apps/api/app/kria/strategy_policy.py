@@ -9,7 +9,9 @@ strategy straight to ``draft.apply_strategy``, so none of that ran and a phone
 render silently dropped whatever it could not draw while the reply said "Done"
 (KRI-142). This module is the v2 boundary: it returns either the repaired
 strategy plus plain-language notices, or a question telling the creator what
-can't be made and asking how to proceed.
+can't be made and asking how to proceed. The runtime planner opts into
+``simplify_unsupported``: known unavailable text and SFX fields are omitted with
+an exact notice and the supported strategy is compiled again before approval.
 
 Runtime-v2 also has no guided-proposal step, so ``dispatch_item_render_for``
 (always called with ``bypass_guided_edit_gate=True``) refuses every
@@ -264,6 +266,7 @@ _USER_SONG_REFUSALS = {
 class CheckedStrategy:
     strategy: CreativeStrategy
     notices: tuple[str, ...]
+    omitted_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -927,12 +930,48 @@ def _pin_range_refusal(strategy: CreativeStrategy) -> RefusedStrategy | None:
     return None
 
 
+# These decorate a playable edit. Media selection, source audio, timing conflicts
+# and unknown validation errors are deliberately outside this recovery boundary.
+_OPTIONAL_RENDER_FIELDS = frozenset(
+    {"opening_title", "closing_title", "shot_labels", "pinned_texts", "licensed_sfx"}
+)
+
+
+def _unsupported_field(exc: ValueError) -> str | None:
+    if isinstance(exc, CreatorSfxUnavailableError):
+        return "licensed_sfx"
+    if isinstance(exc, CreatorStrategyError) and exc.code == "unsupported_treatment":
+        field = str(exc).split(" ", 1)[0]
+        # Overlong/too-many pins need a different repair; don't erase valid pins.
+        if field in _OPTIONAL_RENDER_FIELDS:
+            return field
+    return None
+
+
+def _omission_notice(field: str, strategy: CreativeStrategy) -> str:
+    name = say(en=_LOST_FIELD_WORDS[field][0], tr=_LOST_FIELD_WORDS[field][1])
+    value = getattr(strategy, field)
+    if field == "licensed_sfx":
+        detail = value.effect_id
+    elif field == "pinned_texts":
+        detail = "; ".join(pin.text for pin in value)
+    elif isinstance(value, list):
+        detail = "; ".join(value)
+    else:
+        detail = str(value)
+    return say(
+        en=f'This edit cannot render {name}, so I left it out: "{detail}".',
+        tr=f'Bu düzenlemede {name} gösterilemiyor, o yüzden çıkardım: "{detail}".',
+    )
+
+
 def check_strategy_for_runtime_v2(
     manifest: ResolvedCreatorManifest,
     strategy: CreativeStrategy,
     *,
     ask_before_simplifying: bool = False,
     ask_about_stated_settings: bool = False,
+    simplify_unsupported: bool = False,
     creator_text: str = "",
     requested_media: Mapping[str, str] | None = None,
 ) -> CheckedStrategy | RefusedStrategy:
@@ -1011,22 +1050,44 @@ def check_strategy_for_runtime_v2(
     pin_refusal = _pin_range_refusal(strategy)
     if pin_refusal is not None:
         return pin_refusal
-    try:
-        edit_plan = compile_strategy_to_plan(manifest, strategy)
-    except ValueError as exc:
-        return _refusal_question(exc, strategy)
+    omitted_fields: set[str] = set()
+    # Each failed compile must remove one known optional field. No model retry,
+    # no catch-all fallback, and no loop once the edit reaches a fixed point.
+    while True:
+        try:
+            edit_plan = compile_strategy_to_plan(manifest, strategy)
+            break
+        except ValueError as exc:
+            field = _unsupported_field(exc) if simplify_unsupported else None
+            if field is None or field in omitted_fields or not getattr(strategy, field):
+                return _refusal_question(exc, strategy)
+            notices.append(_omission_notice(field, strategy))
+            omitted_fields.add(field)
+            update = {field: None}
+            if field == "opening_title":
+                update["opening_title_duration_s"] = None
+                omitted_fields.add("opening_title_duration_s")
+            strategy = strategy.model_copy(update=update)
     checked = edit_plan.strategy
     if checked.render_program == "guided":
         # `compile_strategy_to_plan` widens a guided strategy's selection to the
         # whole manifest for the guided specialist. Runtime-v2 dispatches without
         # that specialist, so keep the selection the model boundary normalized.
         checked = checked.model_copy(update={"selected_media_ids": strategy.selected_media_ids})
+    # Some compiler paths already repair an unavailable optional treatment. Keep
+    # their notices and apply the same first-turn policy as a typed refusal.
+    if simplify_unsupported:
+        for field in sorted(_OPTIONAL_RENDER_FIELDS - omitted_fields):
+            if getattr(baseline, field) and getattr(checked, field) is None:
+                notices.append(_omission_notice(field, baseline))
+                omitted_fields.add(field)
     all_notices = (*notices, *(localize_known_message(n) for n in edit_plan.notices))
     dropped = (
         _dropped_fields(baseline, checked, stated_settings=ask_about_stated_settings)
         if ask_before_simplifying
         else ()
     )
+    dropped = tuple(field for field in dropped if field not in omitted_fields)
     left_out_media = bool(lost_asks or clips_left_out or visuals_left_out)
     if ask_before_simplifying and (left_out_media or dropped):
         # The creator-stated setting that was dropped comes first: a notice alone (e.g.
@@ -1063,7 +1124,9 @@ def check_strategy_for_runtime_v2(
             fields=(*dropped, *(("left_out_media",) if left_out_media else ())),
             agreed=agreed,
         )
-    return CheckedStrategy(strategy=checked, notices=all_notices)
+    return CheckedStrategy(
+        strategy=checked, notices=all_notices, omitted_fields=tuple(sorted(omitted_fields))
+    )
 
 
 __all__ = [

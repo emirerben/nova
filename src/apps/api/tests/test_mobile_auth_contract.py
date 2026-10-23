@@ -163,6 +163,48 @@ def test_temporary_upload_cleanup_schema_and_schedule_are_registered() -> None:
 
 
 @pytest.mark.parametrize(
+    ("issued_offset", "expiry_offset", "accepted"),
+    [(60, 900, True), (61, 900, False), (-60, 1, True), (-60, 0, False)],
+    ids=["future-limit", "future-one-over", "expiry-one-after", "expiry-at-now"],
+)
+def test_access_token_validation_clock_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+    issued_offset: int,
+    expiry_offset: int,
+    accepted: bool,
+) -> None:
+    now = 1_700_000_000
+    monkeypatch.setattr(settings, "mobile_jwt_secret", "unit-test-mobile-secret")
+    monkeypatch.setattr(mobile_auth, "time", SimpleNamespace(time=lambda: now))
+    user_id, session_id, token_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    payload = {
+        "sub": str(user_id),
+        "sid": str(session_id),
+        "jti": str(token_id),
+        "token_version": 1,
+        "iss": mobile_auth.JWT_ISSUER,
+        "aud": mobile_auth.JWT_AUDIENCE,
+        "typ": "access",
+        "iat": now + issued_offset,
+        "exp": now + expiry_offset,
+    }
+    token = mobile_auth._sign(payload)
+    if accepted:
+        claims = mobile_auth.decode_access_token(token)
+        assert (claims.user_id, claims.session_id, claims.token_id) == (
+            user_id,
+            session_id,
+            token_id,
+        )
+        assert claims.issued_at == payload["iat"]
+        assert claims.expires_at == payload["exp"]
+    else:
+        with pytest.raises(mobile_auth.MobileAuthError) as raised:
+            mobile_auth.decode_access_token(token)
+        assert raised.value.code == "invalid_access_token"
+
+
+@pytest.mark.parametrize(
     "overrides",
     [
         {"typ": "refresh"},
@@ -170,7 +212,7 @@ def test_temporary_upload_cleanup_schema_and_schedule_are_registered() -> None:
         {"aud": "other-client"},
         {"exp": 0},
         {"iat": "future"},
-        {"iat": int(time.time()), "exp": int(time.time())},
+        {"iat": "now", "exp": "now"},
         {"sub": ""},
         {"sub": "not-a-uuid"},
         {"sid": "not-a-uuid"},
@@ -180,7 +222,8 @@ def test_temporary_upload_cleanup_schema_and_schedule_are_registered() -> None:
 )
 def test_access_token_rejects_invalid_claim_boundaries(monkeypatch, overrides) -> None:
     monkeypatch.setattr(settings, "mobile_jwt_secret", "unit-test-mobile-secret")
-    now = int(time.time())
+    now = 1_700_000_000
+    monkeypatch.setattr(mobile_auth, "time", SimpleNamespace(time=lambda: now))
     payload = {
         "sub": str(uuid.uuid4()),
         "sid": str(uuid.uuid4()),
@@ -195,6 +238,9 @@ def test_access_token_rejects_invalid_claim_boundaries(monkeypatch, overrides) -
     overrides = dict(overrides)
     if overrides.get("iat") == "future":
         overrides["iat"] = now + 61
+    for key in ("iat", "exp"):
+        if overrides.get(key) == "now":
+            overrides[key] = now
     payload.update(overrides)
 
     with pytest.raises(mobile_auth.MobileAuthError) as raised:

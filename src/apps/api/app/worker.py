@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 
 from celery import VERSION as CELERY_VERSION
 from celery import Celery
@@ -579,6 +580,11 @@ _RENDER_WAKE_DEBOUNCE_KEY = (
     if CELERY_QUEUE_NAMESPACE
     else "render_worker:wake_debounce"
 )
+RENDER_WORKER_LAST_DISPATCH_KEY = (
+    f"nova-dev:{CELERY_QUEUE_NAMESPACE}:render_worker:last_dispatch"
+    if CELERY_QUEUE_NAMESPACE
+    else "render_worker:last_dispatch"
+)
 
 _wake_redis_lock = threading.Lock()
 _wake_redis_client = None
@@ -632,6 +638,11 @@ def _maybe_start_render_worker() -> None:
     from app.services.fly_machines import start_render_worker  # noqa: PLC0415
 
     redis_client = _get_wake_redis()
+    if redis_client is not None:
+        try:
+            redis_client.set(RENDER_WORKER_LAST_DISPATCH_KEY, str(time.time()), ex=24 * 60 * 60)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[render-worker-wake] dispatch stamp failed (non-fatal): {exc!r}")
     acquired = True
     if redis_client is not None:
         try:
@@ -652,7 +663,7 @@ def _maybe_start_render_worker() -> None:
     if not acquired:
         return
 
-    start_render_worker()
+    start_render_worker(wait_s=settings.RENDER_START_WAIT_S)
 
 
 @before_task_publish.connect

@@ -62,10 +62,8 @@ from app.kria.reply_language import reply_language_for
 _FIXTURE = json.loads(
     (Path(__file__).parents[1] / "fixtures" / "kri792_t1_phrase_cuts.json").read_text()
 )
-_EDITOR_NOTE = "a retake or a specific line isn't cut automatically yet, so trim that in the editor"
-_EDITOR_NOTE_TR = (
-    "tekrar çekim ya da belirli bir cümle henüz otomatik kesilmiyor, onu editörde kırp"
-)
+_EDITOR_NOTE = "I have not confirmed that exact spoken line was removed; check it in the editor"
+_EDITOR_NOTE_TR = "o belirli konuşulan cümlenin kaldırıldığını doğrulamadım; editörde kontrol et"
 _SLIP = "Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam'"
 _HALF_QUESTION = "Cut the half question 'how are you gonna'"
 

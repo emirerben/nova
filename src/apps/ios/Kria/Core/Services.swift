@@ -125,6 +125,7 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func indexCameraRollCollection(id: UUID, revision: Int, offset: Int) async throws -> CameraRollIndexPass
     func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool) async throws -> CameraRollStories
     func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool, researchTopic: String?) async throws -> CameraRollStories
+    func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool, researchTopic: String?, allowPartialAnalysis: Bool) async throws -> CameraRollStories
     func recordCameraRollStoryExposure(collectionID: UUID, story: CameraRollStory, collectionRevision: Int) async throws
     func correctCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, index: Int, momentID: UUID, eventID: String) async throws -> CameraRollStory
     func rejectCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, eventID: String) async throws -> CameraRollStory
@@ -132,8 +133,10 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func createCameraRollStoryThread(id: UUID, revision: Int) async throws -> CreationThread
     func inspectCameraRollMoment(collectionID: UUID, revision: Int, momentID: UUID, question: String, cacheOnly: Bool) async throws -> CameraRollInspection
     func importCollectionMedia(file: URL, kind: String) async throws -> SavedMediaAsset
+    func cameraRollCollection(id: UUID) async throws -> SavedCameraRollCollection
     func saveCameraRollCollection(_ collection: CameraRollCollection, revision: Int) async throws -> SavedCameraRollCollection
     func repairSavedMedia(asset: SavedMediaAsset, file: URL) async throws -> SavedMediaAsset
+    func uploadSavedMediaOriginal(asset: SavedMediaAsset, file: URL) async throws -> SavedMediaAsset
     var mediaLibraryOwner: String? { get }
     func savedMedia(query: String, kind: String?, cursor: String?) async throws -> SavedMediaPage
     func savedMediaAsset(id: UUID) async throws -> SavedMediaAsset
@@ -263,6 +266,7 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     /// thread offered a `render_shape` -- the API rejects unknown keys and a
     /// choice nothing offered -- and are encoded absent, never null, when nil.
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?, automaticRepairAttempts: Int) async throws
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupRetakesAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?, automaticRepairAttempts: Int) async throws
     func playbackURL(jobID: UUID) async throws -> URL
     /// KRI-200: best-effort report of an editor player item that failed on this phone.
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws
@@ -316,6 +320,9 @@ struct DictationTranscriptResponse: Decodable, Equatable, Sendable {
 }
 
 extension KriaAPIClient {
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupRetakesAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?, automaticRepairAttempts: Int) async throws {
+        try await decideApproval(threadID: threadID, approvalID: approvalID, decision: decision, expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice, outputOrientation: outputOrientation, landscapeFit: landscapeFit, automaticRepairAttempts: automaticRepairAttempts)
+    }
     func retryApprovedRender(threadID: UUID, executionID: UUID, expectedRevision: Int) async throws -> RenderRetryAccepted { throw APIError.unsupported }
     /// Substitutes that only know the whole library: everything as the first page, nothing after it.
     func libraryPage(cursor: String?, limit: Int) async throws -> LibraryPage {
@@ -1461,7 +1468,13 @@ struct KriaAPI: KriaAPIClient {
             bodyData: JSONSerialization.data(withJSONObject: ["execution_id": executionID.uuidString,
                 "expected_thread_revision": expectedRevision]), decode: RenderRetryAccepted.self)
     }
-    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?, automaticRepairAttempts: Int) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice, outputOrientation: outputOrientation, landscapeFit: landscapeFit, automaticRepairAttempts: automaticRepairAttempts > 0 ? automaticRepairAttempts : nil)), decode: ApprovalResponse.self) }
+    /// Compatibility requirement for test substitutes and callers built before
+    /// restarted-sentence consent existed. Concrete production calls use the
+    /// newer overload below; false remains omitted from the wire body.
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?, automaticRepairAttempts: Int) async throws {
+        try await decideApproval(threadID: threadID, approvalID: approvalID, decision: decision, expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupRetakesAware: false, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice, outputOrientation: outputOrientation, landscapeFit: landscapeFit, automaticRepairAttempts: automaticRepairAttempts)
+    }
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupRetakesAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?, automaticRepairAttempts: Int) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupRetakesAware: speechCleanupRetakesAware ? true : nil, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice, outputOrientation: outputOrientation, landscapeFit: landscapeFit, automaticRepairAttempts: automaticRepairAttempts > 0 ? automaticRepairAttempts : nil)), decode: ApprovalResponse.self) }
     func playbackURL(jobID: UUID) async throws -> URL { let response = try await request(path: "me/jobs/\(jobID.uuidString)/playback-url", method: "GET", bodyData: nil, decode: PlaybackResponse.self); guard let url = URL(string: response.videoURL) else { throw APIError.invalidResponse }; return url }
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws {
         _ = try await request(path: "me/jobs/\(jobID.uuidString)/playback-diagnostics", method: "POST", bodyData: try JSONEncoder().encode(report), decode: EmptyProjectResponse.self)
@@ -2105,6 +2118,10 @@ private struct ApprovalDecisionRequest: Encodable {
     let expectedDraftRevision: Int
     let fingerprint: String
     let speechCleanupAware: Bool
+    /// Omitted unless the updated disclosure for a detected restart was shown.
+    /// An older strict API rejects unknown fields, so false must retain the
+    /// exact request shape it accepted before this addition.
+    let speechCleanupRetakesAware: Bool?
     let speechCleanupAnalysisID: String?
     let speechCleanupChoice: String?
     let outputOrientation: String?
@@ -2115,6 +2132,7 @@ private struct ApprovalDecisionRequest: Encodable {
         case expectedDraftRevision = "expected_draft_revision"
         case fingerprint = "expected_approval_fingerprint"
         case speechCleanupAware = "speech_cleanup_aware"
+        case speechCleanupRetakesAware = "speech_cleanup_retakes_aware"
         case speechCleanupAnalysisID = "speech_cleanup_analysis_id"
         case speechCleanupChoice = "speech_cleanup_choice"
         case outputOrientation = "output_orientation"

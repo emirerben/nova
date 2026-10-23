@@ -80,7 +80,20 @@ class DeviceRenderStatus(_DeviceModel):
     published_generation: str | None = None
 
 
+class DeviceRenderRequestOut(DeviceRenderRequest):
+    # Response only: never persist new keys into the strict v1 request.
+    max_export_duration_s: float | None = Field(default=None, gt=0)
+
+    @model_serializer(mode="wrap")
+    def serialize_request(self, handler):
+        data = super().serialize_request(handler)
+        if data.get("max_export_duration_s") is None:
+            data.pop("max_export_duration_s", None)
+        return data
+
+
 class DeviceRenderStatusOut(DeviceRenderStatus):
+    request: DeviceRenderRequestOut
     # Read-time hint only. The persisted status stays readable by previous
     # workers throughout a rolling deploy.
     # A runtime-approved program needs fresh consent; a newer manual Save

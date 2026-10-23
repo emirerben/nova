@@ -78,6 +78,34 @@ Finalization downloads the pinned generation, verifies the full uploaded hash
 and length, and checks the actual media. Device declarations never prove the
 uploaded-byte identity. No automatic video-original backup is added.
 
+A creator can explicitly give a device-only video its full original (KRI-822):
+adding it to Visuals, or restoring it from Files for Visuals, uploads the
+original on that iPhone. The request sets `attach_original: true` with the
+owned `repair_asset_id`, `purpose: cloud_render_source` and no proxy
+(`video/mp4` or `video/quicktime`, up to 4 GB). Reserve rejects a byte count
+that differs from the asset's `original_byte_count`; finalize rejects any
+sha256 other than `original_declared_sha256`. Only then is a new `original`
+source added. The asset keeps `original_availability: device_only` and its
+stored proxy contract, so proxy repair and phone Footage behave as before; the
+available `original` row is what makes it usable in Visuals. The analysis proxy
+row is never read as, or turned into, the original. Finalize streams the
+pinned generation through sha256 and probes it with ranged reads, so a multi-GB
+original is never staged on the API machine's RAM-backed `/tmp`.
+Attaching an original never resets the asset to `pending` and never dispatches
+library analysis: a device-only video's status, facts and analysis stay on its
+`analysis_proxy` (analysis and catalogue facts prefer that role), and the list
+serializes the proxy before the original so older clients still bind it for
+Footage.
+
+A retry with the same `client_upload_id` (`ios-original-<asset>-<sha>`) returns
+the same source. That identity is fixed, so reserve re-opens it with a fresh
+target when its old target was cleaned up, or when its finalized original is no
+longer in storage (the stale source is marked `missing`); iOS then uploads and
+attaches the fresh copy. Phone Footage binds only the analysis proxy of a
+device-only video; Visuals bind the original (`project_library_visual` prefers
+it when no source id is given). Only the "Cloud copy is unavailable" 409 sends
+iOS to repair; other 409s show the server's message.
+
 Saved uploads keeps the newest 500 active catalogue assets per creator. A verified,
 unique import atomically archives the oldest active entry by upload/admission time
 (`created_at`, then `id` for ties). Reusing an old upload does not reset its age.
@@ -148,6 +176,24 @@ Candidate selection considers all collection sources, round-robin by each source
 100 intervals enter a model call. Exact interval selection/approval is checked independently
 of that candidate projection. Availability requests run in batches of ten, up to 50 sources.
 Partial coverage and uncertainty remain explicit. Still images have no invented video timing.
+
+Unchanged canonical collection saves are no-ops, including identical stale snapshots;
+actual competing edits still require the current revision. Collection failures carry
+scoped codes (`collection_changed`, `collection_media_unavailable`,
+`collection_analysis_unavailable`, `collection_analysis_pending`) so native discovery
+never mistakes an unavailable cached analysis for an editor change.
+
+The native collection keeps footage review before idea selection (KRI-853). Optional
+direction/research/grouping live in options. Account-scoped snapshots retain the exact
+selection, query, explicit partial-analysis choice and last reviewed result;
+**View saved ideas** revalidates the selection,
+source availability and cached response without new model work. Selection/name/source
+changes invalidate the local shortcut. Opening a genuinely newer server collection is
+explicit and retains the previous local state as a separate collection. Legacy local
+snapshots without saved-idea context remain readable.
+Partial-consent reuse requires the same excluded-video IDs, not merely the same count;
+changed coverage offers a fresh ready-video choice. Catalogue capacity remains 500;
+selected-story rendering keeps its separate bound.
 
 Stories support review, exact-interval replacement/order/removal, original/muted audio,
 rejection and selection. Selection prepares the common revisioned draft, with a server-owned
