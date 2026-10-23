@@ -1405,10 +1405,16 @@ private struct NativeAdjustInspector: View {
     var body: some View {
         Form {
             Section("Selected clip") {
-                Button("Move earlier") { session.moveSelected(by: -0.1) }
-                Button("Move later") { session.moveSelected(by: 0.1) }
-                Button("Slide source earlier") { session.slideSourceWindow(by: -0.1) }
-                Button("Slide source later") { session.slideSourceWindow(by: 0.1) }
+                // KRI-852: a talking clip keeps its approved cut and place; it can only be deleted.
+                let locked = session.clipMoveBlockedReason(for: session.selection)
+                Group {
+                    Button("Move earlier") { session.moveSelected(by: -0.1) }
+                    Button("Move later") { session.moveSelected(by: 0.1) }
+                    Button("Slide source earlier") { session.slideSourceWindow(by: -0.1) }
+                    Button("Slide source later") { session.slideSourceWindow(by: 0.1) }
+                }
+                .disabled(locked != nil)
+                if let locked { Text(locked).font(.footnote).foregroundStyle(.secondary) }
             }
             .disabled(!session.canEditTimeline)
             Section { Text("Trim handles appear in the timeline as soon as a clip is selected. These small nudge controls keep the adjustment reversible and precise.").font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc) }

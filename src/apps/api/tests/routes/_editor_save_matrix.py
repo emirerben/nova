@@ -612,3 +612,112 @@ def archetype_save(monkeypatch, archetype: str) -> Outcome:
     except Exception as exc:  # noqa: BLE001
         outcome.error = exc
     return outcome
+
+
+# --- phone Talking speech segments after the first Delete (KRI-852) -----------------------
+
+TALKING_VARIANT = "subtitled"
+# A 10 s take with two pauses cut: segments [0, 2), [3, 6), [7, 10) of the original.
+TALKING_REMOVED = ((2.0, 3.0), (6.0, 7.0))
+TALKING_CUES = (
+    {"text": "one", "start_s": 0.0, "end_s": 1.5},
+    {"text": "two", "start_s": 2.0, "end_s": 4.5},
+    {"text": "three", "start_s": 5.0, "end_s": 7.5},
+)
+
+
+def talking_cut_job(monkeypatch):
+    """A phone Talking variant with a pinned speech cleanup: three ``native-phone-talking-source*``
+    rows in ``editor_deletion_timeline``."""
+    from app.kria.device_render import make_device_request
+    from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
+    from app.pipeline.silence_cut import CutPlan, Removal
+    from app.services.phone_sources import PHONE_VISUALS_FIELD
+    from tests.pipeline.test_phone_subtitled_plan import _binding
+    from tests.routes.test_phone_subtitled_editor_commit import _enable_subtitled_editor
+
+    _enable_subtitled_editor(monkeypatch)
+    monkeypatch.setattr(gj.settings, "phone_sfx_speech_duck_enabled", False)
+    binding = _binding(duration_s=SOURCE_S)
+    cut_plan = CutPlan(
+        keep_segments=[(0.0, 2.0), (3.0, 6.0), (7.0, 10.0)],
+        removed=[Removal(start_s=s, end_s=e, reason="pause") for s, e in TALKING_REMOVED],
+        time_saved_s=2.0,
+    )
+    cues = [dict(cue) for cue in TALKING_CUES]
+    recipe = compile_phone_subtitled_plan((binding,), caption_cues=cues, cut_plan=cut_plan)
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        status="awaiting_device",
+        current_phase=None,
+        all_candidates={"clip_paths": [binding.proxy_path]},
+        assembly_plan={
+            PHONE_SOURCES_FIELD: [binding.model_dump(mode="json")],
+            PHONE_VISUALS_FIELD: [],
+            "variants": [
+                {
+                    "variant_id": TALKING_VARIANT,
+                    "resolved_archetype": "subtitled",
+                    "render_destination": "device",
+                    "render_status": "awaiting_device",
+                    "render_generation_id": "first",
+                    "duration_s": recipe.duration,
+                    "caption_cues": cues,
+                    "voiceover_caption_style": "sentence",
+                    "silence_cut": {
+                        "removed": [{"start_s": s, "end_s": e} for s, e in TALKING_REMOVED]
+                    },
+                }
+            ],
+        },
+    )
+    pin_device_request(
+        job,
+        make_device_request(job_id=job.id, variant_id=TALKING_VARIANT, revision=1, recipe=recipe),
+        base_generation="first",
+    )
+    return job
+
+
+def talking_segment_save(monkeypatch, change: str) -> Outcome:
+    """Delete the middle speech segment, then ``change`` the others, through the route's
+    authored sequence (a clip delete on a Talking edit is not a phone Voiceover cut).
+
+    ``change``: ``"none"`` (the Delete alone), ``"range"`` (a new window on the last segment,
+    what the Range sheet writes) or ``"reorder"`` (the two kept segments swapped).
+    """
+    job = talking_cut_job(monkeypatch)
+    variant = job.assembly_plan["variants"][0]
+    rows = gj.editor_deletion_timeline(job, variant)
+    assert [r["slot_id"] for r in rows] == [
+        "native-phone-talking-source",
+        "native-phone-talking-source-1",
+        "native-phone-talking-source-2",
+    ]
+    slots = [_slot(r) for r in rows]
+    if change == "range":
+        slots[2] = _slot(
+            rows[2], in_s=rows[2]["in_s"] + 0.5, duration_s=rows[2]["duration_s"] - 0.5
+        )
+    elif change == "reorder":
+        slots = [slots[2], slots[1], slots[0]]
+    elif change != "none":
+        raise AssertionError(f"unknown change {change!r}")
+    baseline = stage_initial_authored_baseline(job, TALKING_VARIANT, rows)
+    body = gj.EditorCommitRequest(
+        base_generation=gj.variant_render_baseline(variant),
+        editor_state_version=1,
+        deletions=[{"kind": "clip", "id": rows[1]["slot_id"]}],
+        timeline_slots=slots,
+    )
+    outcome = Outcome(job=baseline, value={"variant_id": TALKING_VARIANT})
+    try:
+        body = gj.normalize_editor_deletion_request(baseline, TALKING_VARIANT, body)
+        gj.require_guided_story_editor_commit(baseline, TALKING_VARIANT, body)
+        outcome.prep = prepare_authored_editor_commit(
+            baseline, TALKING_VARIANT, body, validation_arguments={}
+        )
+    except Exception as exc:  # noqa: BLE001
+        outcome.error = exc
+    return outcome

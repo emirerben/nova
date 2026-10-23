@@ -179,6 +179,45 @@ Only the exact shape the server minted (`^cs-[A-Za-z0-9_-]{1,12}-\d+$`) is read 
 any other unknown id stays stale. The app drops the id of a staged-draft clip that matches no saved
 clip. `editor_commit_stale_slot` logs the offending id.
 
+## 12. Window or order changes on a Talking speech segment (KRI-852)
+
+A phone Talking edit with a speech cleanup shows one clip per kept segment
+(`native-phone-talking-source*`, `editor_deletion_timeline`). The first whole-segment Delete stages
+an authored timeline; from then on the timeline is editable, but `prepare_authored_editor_commit`
+pins every segment to its approved window. KRI-770 stopped only the trim edge drag. Failure modes,
+written before the fix:
+
+1. **Range sheet** (`setSourceWindow`) writes a new `in_s`/`duration_s` on a segment: Save 409
+   `TIMELINE_STALE`, and "Reload and keep my edits" re-applies the same window.
+2. **"Slide source earlier/later"** (`slideSourceWindow`) writes `in_s` alone: same 409.
+3. **`setClipTiming` / `setClipSourceWindow` / `updateClipSourceWindow`**: any timing write is a
+   window change: same 409 (no UI caller today; guarded at the mutation so none can appear).
+4. **Drag to reorder a segment** (`moveClip`): the server accepts it, but caption cues stay on the
+   pre-move clock, so the words play over the wrong picture.
+5. **"Move earlier/later"** (Adjust and Clip inspectors, VoiceOver actions → `moveSelected`): same as 4.
+6. **Moving a non-speech clip** across a segment keeps the segments' own order and windows: allowed,
+   same as a Delete before a segment (see the caption note below).
+7. **Whole-segment Delete** must stay available and save.
+8. **The KRI-770 trim test was vacuous**: renaming the slot after the session was built minted a new
+   clip id, so `beginTrim` returned at its unknown-clip guard, not the talking-source guard.
+9. **A blocked control must say why** (Range hint / footnote, inspector footnotes), not just do nothing.
+
+| Row id | Shape | Outcome | Red before |
+| --- | --- | --- | --- |
+| `talking-segment-delete-saves` | delete the middle of three segments | ok, the two kept segments keep their pinned windows | green (control) |
+| `talking-segment-range-change-is-stale` | delete one segment, then a new window on another | 409 `TIMELINE_STALE` | green: this is the server pin the phone must not cross |
+| `talking-segment-reorder-keeps-old-caption-clock` | delete one segment, then swap the other two | ok, but `caption_cues` unchanged | green: current server behavior, the reason the phone refuses it |
+
+Phone side (`NativeEditorSessionTests`, red on `origin/main` except the controls): on a session
+whose slots are the server's talking-source rows, Range is blocked with a reason and writes nothing,
+slide / timing / move write nothing, a non-speech clip still moves, Delete still removes a segment,
+and the trim test now targets the real clip id.
+
+Not fixed here (follow-ups): caption cues after a segment Delete stay on the pre-delete clock
+(`authored_text_fit` exempts caption cues; in the repro, deleting the middle segment leaves cue
+"two" at 2.0-4.5 s over the third segment and drops cue "three"); chat edit ops that stage a window
+on a talking-source slot were not checked. Phrase cutting is KRI-724.
+
 ## Not covered here on purpose
 
 * Cloud-rendered (non-device) Save: separate contract, separate tests (`test_editor_commit.py`).

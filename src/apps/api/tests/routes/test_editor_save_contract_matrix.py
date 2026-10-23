@@ -46,6 +46,7 @@ from tests.routes._editor_save_matrix import (
     NULL_ROLE_TEXT_ID,
     ORDER,
     SOURCE_S,
+    TALKING_CUES,
     TITLE,
     VARIANT,
     Edit,
@@ -60,6 +61,7 @@ from tests.routes._editor_save_matrix import (
     phone_retimed_lane,
     requirements,
     run_save,
+    talking_segment_save,
     title_edit_lane,
 )
 
@@ -267,6 +269,28 @@ def _slides_untouched(outcome: Outcome) -> None:
     variant = outcome.job.assembly_plan["variants"][0]
     assert variant["render_status"] == "ready"
     assert "text_elements" not in variant
+
+
+def _saved_talking_windows(outcome: Outcome) -> list[tuple[str, float, float]]:
+    slots = outcome.variant["user_timeline"]["slots"]
+    return [(s["slot_id"], s["in_s"], s["duration_s"]) for s in slots if not s.get("removed")]
+
+
+def _talking_kept_pinned(outcome: Outcome) -> None:
+    assert _saved_talking_windows(outcome) == [
+        ("native-phone-talking-source", 0.0, 2.0),
+        ("native-phone-talking-source-2", 7.0, 3.0),
+    ]
+
+
+def _talking_captions_not_remapped(outcome: Outcome) -> None:
+    # The swap is saved, yet every cue keeps its pre-move time: "one" (said in the first
+    # segment) now plays over the third. This is why the phone refuses the move (KRI-852).
+    assert [s[0] for s in _saved_talking_windows(outcome)] == [
+        "native-phone-talking-source-2",
+        "native-phone-talking-source",
+    ]
+    assert outcome.variant["caption_cues"] == list(TALKING_CUES)
 
 
 # --- pure-helper rows (the seam a Save leans on, pinned where it can be decided) --------------
@@ -876,6 +900,27 @@ ROWS: list[Row] = [
         "slides",
         # The capability map closes every lane for a slide post; Save agrees (KRI-750 fix).
         Expect(ok=False, status=422, code="slide_post_edit_unsupported", check=_slides_untouched),
+    ),
+    # 12. a phone Talking speech segment after the first Delete (KRI-852) -------------------------
+    # The Delete makes the timeline authored and editable, but every segment stays pinned to its
+    # approved window. The phone must not offer a Range/slide/move on one (NativeEditorSession).
+    Row(
+        "talking-segment-delete-saves",
+        "talking_authored",
+        Expect(ok=True, authored=True, check=_talking_kept_pinned),
+        run=lambda monkeypatch: talking_segment_save(monkeypatch, "none"),
+    ),
+    Row(
+        "talking-segment-range-change-is-stale",
+        "talking_authored",
+        Expect(ok=False, status=409, code="TIMELINE_STALE"),
+        run=lambda monkeypatch: talking_segment_save(monkeypatch, "range"),
+    ),
+    Row(
+        "talking-segment-reorder-keeps-old-caption-clock",
+        "talking_authored",
+        Expect(ok=True, check=_talking_captions_not_remapped),
+        run=lambda monkeypatch: talking_segment_save(monkeypatch, "reorder"),
     ),
 ]
 

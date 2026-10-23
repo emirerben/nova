@@ -1928,7 +1928,7 @@ struct NativeMiniStrip: View {
                     frame: displayClipFrame(clip, index: index, playheadX: playheadX),
                     isSelected: session.selectedClipID == clip.id,
                     isLifted: clipReorder?.clipID == clip.id,
-                    canReorder: session.canReorderClips,
+                    canReorder: session.canReorderClip(clip.id),
                     pixelsPerSecond: pixelsPerSecond,
                     onSelect: { select(clip) },
                     onReorderStart: { beginClipReorder(clip, index: index, viewportGlobalRange: viewportGlobalRange) },
@@ -2438,7 +2438,7 @@ struct NativeMiniStrip: View {
     }
 
     private func beginClipReorder(_ clip: EditorClip, index: Int, viewportGlobalRange: ClosedRange<CGFloat>) {
-        guard session.canReorderClips, clipReorder == nil, !session.isTimingGestureActive, !isPinching,
+        guard session.canReorderClip(clip.id), clipReorder == nil, !session.isTimingGestureActive, !isPinching,
               panStartTime == nil, clips.indices.contains(index) else { return }
         session.pausePlayback()
         session.selectClip(clip.id)

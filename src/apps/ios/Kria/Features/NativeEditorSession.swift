@@ -3479,7 +3479,8 @@ struct NativeEditorTemporaryVideo {
     }
 
     #if DEBUG
-    /// Test seam (KRI-770): stage slot fields (`playback_rate`, a talking-source id) that a bare draft cannot carry.
+    /// Test seam (KRI-770): stage slot fields (`playback_rate`) that a bare draft cannot carry. Not a slot id:
+    /// renaming a slot here mints a new clip id, so stage ids through the draft's server snapshot.
     func replaceDocumentForTesting(_ value: EditorDocument) { document = value }
     #endif
 
@@ -3495,6 +3496,11 @@ struct NativeEditorTemporaryVideo {
         slot.id?.hasPrefix("native-phone-talking-source") == true
     }
 
+    /// KRI-852: why a talking-source segment keeps its window and place. A new window is refused on Save (409
+    /// TIMELINE_STALE), and a moved segment saves with its captions left where they were, so the words play over
+    /// the wrong picture. Deleting a whole segment stays open.
+    static let talkingSegmentLockedReason = "Talking clips keep the cut Kria made from your speech. You can delete one, but not move it or change its range."
+
     func endTrim() {
         activeTrim = nil
         flushDeferredSourcePreviewUpdate()
@@ -3503,6 +3509,16 @@ struct NativeEditorTemporaryVideo {
     /// Dragging or nudging a clip to a new place. The server offers it as `clips.reorder`; a variant that lists
     /// no such capability falls back to the timeline section's editability.
     var canReorderClips: Bool { canEditTimeline && canEditOperation(["clips.reorder"], section: .timeline) }
+
+    /// Why the selected clip can't move, or nil when it can (KRI-852).
+    func clipMoveBlockedReason(for selection: EditorSelection?) -> String? {
+        guard let found = sourceWindowSlot(for: selection), Self.isTalkingSourceSlot(found.slot) else { return nil }
+        return Self.talkingSegmentLockedReason
+    }
+
+    func canReorderClip(_ id: UUID) -> Bool {
+        canReorderClips && clipMoveBlockedReason(for: EditorSelection(kind: .clip, id: id.uuidString)) == nil
+    }
 
     func moveSelected(by offset: TimeInterval) {
         guard canReorderClips, let id = selectedClipID, abs(offset) > 0.000001 else { return }
@@ -3514,7 +3530,7 @@ struct NativeEditorTemporaryVideo {
     /// Puts a clip at `toIndex` among the clips as the timeline draws them. One undo step; the length is unchanged
     /// because each cut stays at its position (`NativeEditorInteraction.reorderedSlots`).
     func moveClip(id: UUID, toIndex: Int) {
-        guard canReorderClips else { return }
+        guard canReorderClip(id) else { return }
         let ordered = timelineClips
         guard ordered.indices.contains(toIndex),
               let from = clipSlotIndex(id.uuidString),
@@ -3525,6 +3541,7 @@ struct NativeEditorTemporaryVideo {
     func slideSourceWindow(by offset: TimeInterval) {
         guard canEditTimeline, let id = selectedClipID, let index = clipSlotIndex(id.uuidString), document.clips.indices.contains(index) else { return }
         let slot = document.clips[index]
+        guard !Self.isTalkingSourceSlot(slot) else { return } // KRI-852: `talkingSegmentLockedReason`
         let length = max(minimumClipDuration, slot.durationS ?? minimumClipDuration)
         // The source span is the length times the real rate, or the slide could write a window the server refuses.
         let found = sourceWindowSlot(for: EditorSelection(kind: .clip, id: id.uuidString))
@@ -3597,6 +3614,8 @@ struct NativeEditorTemporaryVideo {
         }
     }
     func setClipTiming(clipID: String, inS: Double? = nil, durationS: Double? = nil, durationBeats: Int? = nil) {
+        // KRI-852: any timing write on a talking-source segment is a window the server refuses.
+        if let index = clipSlotIndex(clipID), Self.isTalkingSourceSlot(document.clips[index]) { return }
         mutateClip(clipID: clipID) { slot in
             if let inS { slot.inS = max(0, inS) }
             if let durationS { slot.durationS = max(minimumClipDuration, durationS) }
@@ -5923,6 +5942,7 @@ struct NativeEditorTemporaryVideo {
     func sourceWindowBlockedReason(for selection: EditorSelection?) -> String? {
         guard let found = sourceWindowSlot(for: selection) else { return "Select a clip to choose its range." }
         if !canEditTimeline || !canEdit(.timeline) { return "Clip edits are locked for this render." }
+        if Self.isTalkingSourceSlot(found.slot) { return Self.talkingSegmentLockedReason }
         let kind = found.slot.raw["media_kind"]?.stringValue ?? found.slot.raw["kind"]?.stringValue
         if kind == "image" { return "Photos have no range to choose." }
         if let url = found.clip.sourceClipIndex.flatMap({ resolvedSources?[$0] })?.url, isStill(url) { return "Photos have no range to choose." }

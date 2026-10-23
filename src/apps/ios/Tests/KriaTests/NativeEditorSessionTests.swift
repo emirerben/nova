@@ -3326,13 +3326,12 @@ final class NativeEditorSessionTests: XCTestCase {
 
     // MARK: KRI-770 — every window an edge drag can produce is a window the server accepts
 
-    private func trimSession(inS: Double, duration: Double, sourceDuration: Double?, rate: Double? = nil, slotID: String? = nil) -> (NativeEditorSession, UUID) {
+    private func trimSession(inS: Double, duration: Double, sourceDuration: Double?, rate: Double? = nil) -> (NativeEditorSession, UUID) {
         let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: duration, trimIn: inS, trimOut: inS + duration, sourceDuration: sourceDuration)
         let session = NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: [clip], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
-        if rate != nil || slotID != nil {
+        if let rate {
             var next = session.document
-            if let rate { next.clips[0].raw["playback_rate"] = .number(rate) }
-            if let slotID { next.clips[0].id = slotID }
+            next.clips[0].raw["playback_rate"] = .number(rate)
             session.replaceDocumentForTesting(next)
         }
         return (session, clip.id)
@@ -3406,12 +3405,87 @@ final class NativeEditorSessionTests: XCTestCase {
 
     /// The server pins a talking-source slot to its approved cut (409 TIMELINE_STALE on any change).
     func testTalkingSourceClipHasNoTrimGesture() {
-        let (session, id) = trimSession(inS: 0, duration: 3.0, sourceDuration: 10.0, slotID: "native-phone-talking-source-0")
-        session.beginTrim(clipID: id, edge: .trailing)
-        session.updateTrim(by: -2)
+        let (session, first, _, _) = talkingSegmentSession()
+        session.beginTrim(clipID: first, edge: .trailing)
+        session.updateTrim(by: -1)
         session.endTrim()
-        XCTAssertEqual(session.document.clips[0].durationS ?? 0, 3.0, accuracy: 1e-9)
+        XCTAssertEqual(session.document.clips[0].durationS ?? 0, 2.0, accuracy: 1e-9)
         XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
+    // MARK: KRI-852 — a Talking speech segment keeps its approved window and place
+
+    /// The server's rows for a 10 s take cut at two pauses after the first Delete removed the middle segment
+    /// (`editor_deletion_timeline` -> `stage_initial_authored_baseline`), plus a clip the creator added. The slot ids
+    /// come from the snapshot, as on a real load: renaming a slot later mints a new clip id.
+    private func talkingSegmentSession() -> (NativeEditorSession, first: UUID, last: UUID, added: UUID) {
+        let rows: [(id: String, index: Int, inS: Double, duration: Double, source: Double)] = [
+            ("native-phone-talking-source", 0, 0, 2, 10),
+            ("native-phone-talking-source-2", 0, 7, 3, 10),
+            ("added-broll", 1, 0, 2, 4),
+        ]
+        var start = 0.0
+        let clips = rows.map { row -> EditorClip in
+            defer { start += row.duration }
+            return EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: row.index, start: start, end: start + row.duration, trimIn: row.inS, trimOut: row.inS + row.duration, sourceDuration: row.source, slotID: row.id)
+        }
+        let slots = rows.map { row -> JSONValue in
+            .object(["slot_id": .string(row.id), "clip_index": .number(Double(row.index)), "in_s": .number(row.inS),
+                     "duration_s": .number(row.duration), "source_duration_s": .number(row.source), "transition_after": .string("cut")])
+        }
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["sections": .object(["timeline_slots": .array(slots)])])]
+        let session = NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: clips, text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0, serverSnapshot: snapshot))
+        let ids = session.timelineClips.map(\.id)
+        XCTAssertEqual(session.document.clips.map(\.id), rows.map(\.id))
+        return (session, ids[0], ids[1], ids[2])
+    }
+
+    /// Range on a segment would write a window the server answers with 409 TIMELINE_STALE: it is greyed out with
+    /// the reason and writes nothing.
+    func testTalkingSegmentRangeIsBlockedWithAReasonAndWritesNothing() {
+        let (session, first, _, added) = talkingSegmentSession()
+        let selection = EditorSelection(kind: .clip, id: first.uuidString)
+        let before = session.document
+        XCTAssertEqual(session.sourceWindowBlockedReason(for: selection), NativeEditorSession.talkingSegmentLockedReason)
+        XCTAssertFalse(session.setSourceWindow(for: selection, .init(start: 0.5, length: 1.5), rate: 1, sourceDuration: 10))
+        XCTAssertEqual(session.document, before)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertNil(session.sourceWindowBlockedReason(for: EditorSelection(kind: .clip, id: added.uuidString)), "an added clip keeps its Range")
+    }
+
+    func testTalkingSegmentSlideAndTimingWriteNothing() {
+        let (session, first, last, _) = talkingSegmentSession()
+        let before = session.document
+        session.selectClip(first); session.slideSourceWindow(by: 0.5)
+        session.selectClip(last); session.slideSourceWindow(by: -0.5)
+        session.setClipTiming(clipID: first, inS: 0.5, durationS: 1.5)
+        session.setClipTiming(clipID: last, durationS: 2)
+        session.setClipSourceWindow(clipID: last, startS: 7.5, endS: 9)
+        session.updateClipSourceWindow(clipID: last.uuidString, startS: 7.2, durationS: 2)
+        XCTAssertEqual(session.document, before)
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
+    /// A moved segment saves, but its captions stay where they were (the words play over the wrong picture), so a
+    /// segment does not move. A clip the creator added still moves, and a whole segment still deletes.
+    func testTalkingSegmentDoesNotMoveButAnAddedClipMovesAndASegmentDeletes() {
+        let (session, first, last, added) = talkingSegmentSession()
+        let order = session.document.clips.map(\.id)
+        XCTAssertEqual(session.clipMoveBlockedReason(for: EditorSelection(kind: .clip, id: first.uuidString)), NativeEditorSession.talkingSegmentLockedReason)
+        XCTAssertFalse(session.canReorderClip(first))
+        session.moveClip(id: last, toIndex: 0)
+        session.selectClip(first); session.moveSelected(by: 0.1)
+        XCTAssertEqual(session.document.clips.map(\.id), order)
+        XCTAssertFalse(session.hasUnsavedChanges)
+
+        XCTAssertNil(session.clipMoveBlockedReason(for: EditorSelection(kind: .clip, id: added.uuidString)))
+        XCTAssertTrue(session.canReorderClip(added))
+        session.moveClip(id: added, toIndex: 0)
+        XCTAssertEqual(session.document.clips.map(\.id), ["added-broll", "native-phone-talking-source", "native-phone-talking-source-2"])
+
+        XCTAssertTrue(session.deleteSelection(EditorSelection(kind: .clip, id: last.uuidString)))
+        XCTAssertEqual(session.document.clips.map(\.id), ["added-broll", "native-phone-talking-source"])
+        XCTAssertTrue(session.document.deletions.contains(EditorDeletion(kind: "clip", id: "native-phone-talking-source-2")))
     }
 
     func testLeadingTrimAdvancesSourceWithoutLeavingTimelineGap() {

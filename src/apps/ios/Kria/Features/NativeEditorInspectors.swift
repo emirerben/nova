@@ -405,8 +405,10 @@ private struct NativeSelectedClipInspector: View {
                 }
             }
             Section("Order and source window") {
-                Button("Move earlier") { session.moveSelected(by: -0.1) }
-                Button("Move later") { session.moveSelected(by: 0.1) }
+                // KRI-852: a talking clip can't move either; the Range footnote below gives the reason.
+                let moveLocked = session.clipMoveBlockedReason(for: selection) != nil
+                Button("Move earlier") { session.moveSelected(by: -0.1) }.disabled(moveLocked)
+                Button("Move later") { session.moveSelected(by: 0.1) }.disabled(moveLocked)
                 if clip != nil {
                     let blocked = session.sourceWindowBlockedReason(for: selection)
                     Button { showRange = true } label: {
