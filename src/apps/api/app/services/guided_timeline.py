@@ -126,9 +126,21 @@ def build_guided_segments(
         # that effective rate instead of silently reverting it to 1x on an
         # otherwise conventional Save.  An explicit null is the clear/reset
         # operation and deliberately returns to 1x.
+        # KRI-828: a creator's freeze stays on its occurrence (and a split child of it): the
+        # slot's last frame keeps holding for the same seconds, at 1x. A slot too short to
+        # play anything before the hold drops it rather than freezing a different moment.
+        freeze_hold = (
+            float(inherited_segment.get("freeze_hold_s") or 0.0)
+            if isinstance(inherited_segment, dict) and source.get("kind") == "video"
+            else 0.0
+        )
+        if freeze_hold and below_editor_minimum(duration - freeze_hold):
+            freeze_hold = 0.0
         playback_rate_set = "playback_rate" in slot.model_fields_set
         if playback_rate_set:
             playback_rate = float(slot.playback_rate or 1.0)
+        elif freeze_hold:
+            playback_rate = 1.0
         elif isinstance(inherited_segment, dict):
             inherited_duration = float(inherited_segment.get("duration_s") or 0.0)
             inherited_span = float(inherited_segment.get("source_end_s") or 0.0) - float(
@@ -169,7 +181,9 @@ def build_guided_segments(
             duration = round(round(exact_duration * GUIDED_FPS) / GUIDED_FPS, 6)
         if source.get("kind") == "video" and source_duration is not None:
             if slot.in_s < 0 or (
-                float(selected_end) if preserve_window else slot.in_s + duration * playback_rate
+                float(selected_end)
+                if preserve_window
+                else slot.in_s + (duration - freeze_hold) * playback_rate
             ) > float(source_duration) + (1e-6 if preserve_window else 0.05):
                 raise GuidedTimelineError("TIMELINE_SOURCE_BOUNDS")
         if order:
@@ -182,7 +196,7 @@ def build_guided_segments(
             "source_start_s": float(slot.in_s),
             "source_end_s": float(selected_end)
             if preserve_window
-            else float(slot.in_s) + duration * playback_rate,
+            else float(slot.in_s) + (duration - freeze_hold) * playback_rate,
             "duration_s": round(duration, 3),
             "transition_after": transition,
             "transition_duration_s": transition_duration,
@@ -218,6 +232,12 @@ def build_guided_segments(
             )
         if muted:
             segment["source_audio_muted"] = True
+        if freeze_hold and playback_rate == 1.0 and not preserve_window:
+            segment["freeze_hold_s"] = freeze_hold
+        elif freeze_hold:
+            # A speed change or a pinned source window on a held slot is a new program: the
+            # hold no longer applies, so the slot plays its whole length.
+            segment["source_end_s"] = float(slot.in_s) + duration * playback_rate
         # New clients send the occurrence's canonical fit. Older clients omit
         # it; preserve a layout already stored on this segment (including its
         # parent when a split child is being written) and otherwise retain the

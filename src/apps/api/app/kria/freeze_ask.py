@@ -23,6 +23,7 @@ length the phone can do). Delete the fallback once the model records ``freeze_fr
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from app.kria.brief_route import loose_text
@@ -158,4 +159,122 @@ def times_one_moment(req: BriefRequirement) -> bool:
     return _names_a_moment(_tokens(req.description or ""))
 
 
-__all__ = ["FREEZE_ASK_KINDS", "FREEZE_FACT_KEYS", "asks_freeze_frame", "times_one_moment"]
+# KRI-828: how long a freeze holds. The creator's own seconds win when the approved words
+# name a number; otherwise one second (the receipt says so). Bounded to what a held frame
+# can carry in a short-form edit without reading as a broken video.
+DEFAULT_FREEZE_HOLD_S = 1.0
+MIN_FREEZE_HOLD_S = 0.2
+MAX_FREEZE_HOLD_S = 3.0
+_NUMBER_WORDS = {
+    "one": 1.0,
+    "a": 1.0,
+    "an": 1.0,
+    "two": 2.0,
+    "three": 3.0,
+    "half": 0.5,
+    "bir": 1.0,
+    "iki": 2.0,
+    "uc": 3.0,
+    "yarim": 0.5,
+}
+# Words of the ask itself, never of the moment it names.
+_ASK_WORDS = frozenset(
+    {"frame", "frames", "still", "hold", "pause", "video", "clip", "picture", "shot", "image"}
+    | {"for", "on", "at", "during", "when", "while", "in", "of", "and", "then", "it", "s"}
+    | {"kare", "kareyi", "karede", "goruntu", "goruntuyu", "video", "videoyu", "sahne"}
+    | {"donmus", "donuk", "sabit", "aninda", "uzerinde", "sirasinda", "esnasinda"}
+    | {"please", "lutfen", "just", "right", "exactly", "moment", "seconds", "second"}
+)
+
+
+@dataclass(frozen=True)
+class FreezeSpec:
+    """A creator's freeze ask, read from the approved requirement (KRI-828).
+
+    ``target_words`` are the creator's words for the moment ("atakan", "bite"): they only
+    choose WHERE the frame is (matched against the clip record's analysed moments), never
+    on-screen text. ``hold_s`` is how long the frame holds; ``hold_stated`` says whether the
+    creator named those seconds.
+    """
+
+    requirement_id: str
+    target_words: tuple[str, ...]
+    hold_s: float
+    hold_stated: bool
+
+
+def _stated_seconds(tokens: Sequence[str]) -> float | None:
+    for index, token in enumerate(tokens):
+        if not (_is_unit(tokens, index) or token in _TR_UNITS):
+            continue
+        digits = "".join(ch for ch in token if ch.isdigit())
+        if digits and digits != token:
+            return float(digits)  # "2s", "3seconds"
+        if index > 0:
+            previous = tokens[index - 1]
+            if previous.isdigit():
+                return float(previous)
+            if previous in _NUMBER_WORDS:
+                return _NUMBER_WORDS[previous]
+    return None
+
+
+def freeze_spec(req: BriefRequirement) -> FreezeSpec | None:
+    """The freeze ``req`` asks for, or None.
+
+    Both must hold: the requirement is a freeze ask (`asks_freeze_frame`: a recorded fact
+    or the creator's words) AND the approved words themselves read as one. A model's
+    ``freeze_frame`` fact on words that ask nothing of the kind ("hold on the sunset for 2
+    seconds", "about 14 seconds") never freezes a frame (KRI-821's corroboration rule).
+    """
+    if not asks_freeze_frame(req):
+        return None
+    tokens = _tokens(req.description or "")
+    if not (
+        _FREEZE_WORDS.intersection(tokens)
+        or _has_phrase(tokens, _FREEZE_PHRASES)
+        or _turkish_freeze(tokens)
+    ):
+        return None
+    stated = _stated_seconds(tokens)
+    typed = req.facts.get("duration_s")
+    hold = DEFAULT_FREEZE_HOLD_S
+    if stated is not None:
+        # The typed value only counts when the creator's words name seconds too.
+        hold = (
+            float(typed)
+            if isinstance(typed, (int, float)) and not isinstance(typed, bool) and typed > 0
+            else stated
+        )
+    hold = round(min(MAX_FREEZE_HOLD_S, max(MIN_FREEZE_HOLD_S, hold)), 3)
+    words = tuple(
+        token
+        for token in tokens
+        if len(token) > 1
+        and not token.isdigit()
+        and token not in _FREEZE_WORDS
+        and token not in _ASK_WORDS
+        and token not in _ARTICLES
+        and token not in _NUMBER_WORDS
+        and token not in _TR_UNITS
+        and not token.startswith((_TR_FREEZE_STEM, _TR_STOP_STEM))
+        and not any(token.startswith(unit) for unit in _UNITS)
+        and not (token[:-1].isdigit() and token.endswith("s"))
+    )
+    return FreezeSpec(
+        requirement_id=req.id,
+        target_words=words,
+        hold_s=hold,
+        hold_stated=stated is not None,
+    )
+
+
+__all__ = [
+    "DEFAULT_FREEZE_HOLD_S",
+    "FREEZE_ASK_KINDS",
+    "FREEZE_FACT_KEYS",
+    "FreezeSpec",
+    "asks_freeze_frame",
+    "freeze_spec",
+    "times_one_moment",
+]

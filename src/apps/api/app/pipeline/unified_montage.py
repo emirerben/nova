@@ -52,10 +52,11 @@ from app.kria.brief_route import (
     chapter_list,
     first_text,
     fold_text,
+    loose_text,
     wants_filming_time_text,
     wants_hour_only_text,
 )
-from app.kria.freeze_ask import times_one_moment
+from app.kria.freeze_ask import FreezeSpec, freeze_spec, times_one_moment
 from app.pipeline.best_parts import BestPart, BestPartsResult, select_best_parts
 from app.pipeline.pinned_text import drawable_pins, pins_from_strategy
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
@@ -215,6 +216,8 @@ class BriefView:
     title_animation: str | None = None
     label_position: str | None = None
     placeholder_labels: bool = False
+    # KRI-828: the creator's freeze ask (corroborated by their words), if any.
+    freeze: FreezeSpec | None = None
 
 
 def brief_view(brief: Any) -> BriefView:
@@ -235,7 +238,10 @@ def brief_view(brief: Any) -> BriefView:
     title_animation: str | None = None
     label_position: str | None = None
     placeholder_labels = False
+    freeze: FreezeSpec | None = None
     for req in brief.live():
+        if freeze is None:
+            freeze = freeze_spec(req)
         for key, value in (req.facts or {}).items():
             if value not in (None, "") and key not in facts:
                 facts[str(key)] = value
@@ -299,6 +305,7 @@ def brief_view(brief: Any) -> BriefView:
         title_animation=title_animation,
         label_position=label_position,
         placeholder_labels=placeholder_labels,
+        freeze=freeze,
     )
 
 
@@ -483,6 +490,10 @@ class UnifiedMontagePlan:
     # ("held" / "not_held" / "ambiguous" / "not_found"), media_id, source_start_s,
     # source_end_s}. Empty without such an ask, so every earlier record is unchanged.
     named_lines: list[dict[str, Any]] = field(default_factory=list)
+    # KRI-828: the creator's freeze as planned: {requirement_id, status ("held" /
+    # "not_grounded"), media_id, cut_id, frame_source_s, hold_s, grounding}. Empty without
+    # a freeze ask (or when the route cannot draw one), so every earlier record is unchanged.
+    freeze_frame: dict[str, Any] = field(default_factory=dict)
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
@@ -510,6 +521,7 @@ class UnifiedMontagePlan:
         speech = {"closing_speech": dict(self.closing_speech)} if self.closing_speech else {}
         quote = {"closing_quote": dict(self.closing_quote)} if self.closing_quote else {}
         named = {"named_lines": [dict(row) for row in self.named_lines]} if self.named_lines else {}
+        freeze = {"freeze_frame": dict(self.freeze_frame)} if self.freeze_frame else {}
         best_parts = (
             {"best_parts": list(self.best_parts_receipt)} if self.best_parts_receipt else {}
         )
@@ -573,6 +585,7 @@ class UnifiedMontagePlan:
             **choice,
             **zone,
             **named,
+            **freeze,
             **song,
             **speech,
             **quote,
@@ -1311,6 +1324,7 @@ def plan_unified_montage(
     creator_duration_proven: bool = False,
     approved_length_plan: Mapping[str, Any] | None = None,
     speech_order: bool = False,
+    freeze_frames: bool = False,
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan for ``clips`` (attachment order).
 
@@ -1350,6 +1364,11 @@ def plan_unified_montage(
     is held whole and a creator-pinned closing clip that only introduces someone ends on
     a quiet stretch of that clip; an approved length plan already chose those windows.
     Off (the default), or with no spoken role in any clip, the plan is byte-identical.
+
+    ``freeze_frames`` (KRI-828) says the renderer that will draw this plan can hold a frame
+    (``freezeFrame`` verified). Then the creator's freeze ask (``view.freeze``) is grounded
+    to one cut (see ``_ground_freeze``): that cut's window ends on the frozen frame and holds
+    it. Off, or with no freeze ask, the plan is byte-identical.
     """
     view = view or BriefView()
     strategy = strategy or {}
@@ -1957,19 +1976,28 @@ def plan_unified_montage(
                 content_hash=clip.content_hash,
             )
         )
+    holds: dict[int, float] = {}
+    freeze_record: dict[str, Any] = {}
+    if freeze_frames and view.freeze is not None and song_duration_s is None:
+        spans, holds, freeze_record = _ground_freeze(view.freeze, spans, ordered)
     cuts = [
         FastMontageCut(
             cut_id=f"unified-cut-{index + 1}",
             media_id=media_id,
             source_start_s=start,
             source_end_s=end,
-            output_duration_s=(end - start) if approved else round(end - start, 3),
+            output_duration_s=(
+                ((end - start) if approved else round(end - start, 3)) + holds.get(index, 0.0)
+            ),
             role="hook" if index == 0 else "payoff" if index == len(spans) - 1 else "build",
             transition="none",
             beat_align=False,
+            **({"freeze_hold_s": holds[index]} if index in holds else {}),
         )
         for index, (media_id, start, end, approved) in enumerate(spans)
     ]
+    if freeze_record.get("status") == "held":
+        freeze_record["cut_id"] = cuts[freeze_record.pop("cut_index")].cut_id
     repeats = any(len(windows) > 1 for windows in windows_by_id.values())
     spoken_roles, opening_speech, closing_quiet = _spoken_records(ordered, cuts, seats)
     closing_speech, closing_quote = _closing_records(
@@ -2098,6 +2126,112 @@ def plan_unified_montage(
         opening_speech=opening_speech,
         closing_quiet=closing_quiet,
         named_lines=named_lines,
+        freeze_frame=freeze_record,
+    )
+
+
+# KRI-828: a freeze's grounding. Words this short or this generic never pick a moment.
+_FREEZE_MATCH_MIN_LEN = 3
+_FREEZE_PREFIX_LEN = 4
+_FREEZE_MIN_MOTION_S = 0.3
+
+
+def _freeze_words(text: str) -> set[str]:
+    folded = loose_text(str(text))
+    return {
+        word
+        for word in "".join(ch if ch.isalnum() else " " for ch in folded).split()
+        if len(word) >= _FREEZE_MATCH_MIN_LEN
+    }
+
+
+def _same_word(a: str, b: str) -> bool:
+    if a == b:
+        return True
+    shorter, longer = sorted((a, b), key=len)
+    return len(shorter) >= _FREEZE_PREFIX_LEN and longer.startswith(shorter)
+
+
+def _ground_freeze(
+    spec: FreezeSpec,
+    spans: list[tuple[str, float, float, bool]],
+    clips: Sequence[UnifiedClip],
+) -> tuple[list[tuple[str, float, float, bool]], dict[int, float], dict[str, Any]]:
+    """Where the creator's freeze lands: one cut whose window ends on the frozen frame.
+
+    The creator's words for the moment ("Atakan's bite") are matched against the analysed
+    moments of the clips in the edit (``analysis.best_moments[].description``, e.g. "man
+    takes first bite of dessert"). Those descriptions only choose a TIME; they never become
+    text. Exactly one best-matching moment grounds the freeze at its midpoint; the cut of
+    that clip nearest to it is re-anchored to end there (same length of motion, never
+    overlapping another cut of the same take), and holds for ``spec.hold_s``.
+
+    No match, or a tie between different moments, is ``not_grounded``: no frame is
+    guessed, and the receipt says so.
+    """
+    record: dict[str, Any] = {
+        "requirement_id": spec.requirement_id,
+        "hold_s": spec.hold_s,
+        "hold_stated": spec.hold_stated,
+    }
+    target = {word for word in spec.target_words if len(word) >= _FREEZE_MATCH_MIN_LEN}
+    by_id = {clip.media_id: clip for clip in clips}
+    candidates: list[tuple[int, str, float, float]] = []  # score, media id, start, end
+    for media_id in dict.fromkeys(media for media, *_rest in spans):
+        clip = by_id.get(media_id)
+        if clip is None or clip.kind != "video" or not isinstance(clip.analysis, Mapping):
+            continue
+        for row in clip.analysis.get("best_moments") or ():
+            if not isinstance(row, Mapping):
+                continue
+            try:
+                start, end = float(row["start_s"]), float(row["end_s"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not (math.isfinite(start) and math.isfinite(end) and end > start >= 0):
+                continue
+            words = _freeze_words(str(row.get("description") or ""))
+            score = sum(1 for word in target if any(_same_word(word, other) for other in words))
+            if score:
+                candidates.append((score, media_id, start, end))
+    best = max((row[0] for row in candidates), default=0)
+    top = {(media, start, end) for score, media, start, end in candidates if score == best}
+    if best == 0 or len(top) != 1:
+        return spans, {}, {**record, "status": "not_grounded"}
+    media_id, moment_start, moment_end = next(iter(top))
+    clip = by_id[media_id]
+    frame = round((moment_start + moment_end) / 2, 3)
+    frame = min(frame, math.floor((clip.duration_s - 0.05) * 1000) / 1000)
+    owned = [
+        (index, start, end)
+        for index, (media, start, end, _approved) in enumerate(spans)
+        if media == media_id
+    ]
+    if not owned or frame <= 0:
+        return spans, {}, {**record, "status": "not_grounded"}
+    index, start, end = min(owned, key=lambda row: abs((row[1] + row[2]) / 2 - frame))
+    earlier = [e for i, s, e in owned if i != index and s < frame]
+    if any(s < frame < e for i, s, e in owned if i != index):
+        # Another cut of the take already plays that frame: holding it here would repeat it.
+        return spans, {}, {**record, "status": "not_grounded"}
+    new_start = round(max(0.0, frame - (end - start), *earlier), 3)
+    if frame - new_start < _FREEZE_MIN_MOTION_S:
+        return spans, {}, {**record, "status": "not_grounded"}
+    approved = spans[index][3]
+    spans = [*spans]
+    spans[index] = (media_id, new_start, frame, approved)
+    return (
+        spans,
+        {index: spec.hold_s},
+        {
+            **record,
+            "status": "held",
+            "media_id": media_id,
+            "cut_index": index,
+            "frame_source_s": frame,
+            "grounding": "analysed_moment",
+            "moment_source_s": [round(moment_start, 3), round(moment_end, 3)],
+        },
     )
 
 

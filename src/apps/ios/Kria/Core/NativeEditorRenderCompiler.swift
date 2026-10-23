@@ -176,6 +176,16 @@ enum NativeEditorRenderError: Error, Equatable {
             }
             let authoredMovingDuration = max(0, authoredSlot?.durationS ?? outputDuration)
             var requestedRate = explicitRate ?? sourceSpan / authoredMovingDuration
+            // KRI-828: a creator's freeze frame. The slot's window plays at 1x and its last
+            // frame holds for `freeze_hold_s` (inside the slot's duration); never a slow rate
+            // derived from a source span shorter than the slot.
+            let freezeHold = authoredSlot?.raw["freeze_hold_s"]?.numberValue ?? 0
+            let freezes = explicitRate == nil && freezeHold.isFinite && freezeHold > 0
+                && authoredMovingDuration - freezeHold > 0
+            if freezes {
+                requestedRate = 1
+                sourceSpan = authoredMovingDuration - freezeHold
+            }
             // Narration and legacy projections can intentionally carry a
             // shorter moving span plus a hold. Only an unchanged authored
             // source window uses the duration-preserving render projection.
@@ -183,7 +193,7 @@ enum NativeEditorRenderError: Error, Equatable {
                 && authoredSlot?.raw["source_end_s"] == nil
                 && abs(outputDuration - authoredMovingDuration) < 0.000_001
                 && abs(sourceStart - (authoredSlot?.inS ?? sourceStart)) < 0.000_001
-            if isAuthoredWindow, let authoredSlot,
+            if isAuthoredWindow, !freezes, let authoredSlot,
                let available = source.asset.duration ?? clip.sourceDuration {
                 let authoredRate = explicitRate ?? 1
                 let requestedSpan = authoredMovingDuration * authoredRate

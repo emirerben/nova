@@ -9048,6 +9048,12 @@ def _guided_v2_slot_rows(
                     else {}
                 ),
                 **({"muted": True} if segment.get("source_audio_muted") else {}),
+                # KRI-828: the slot's last frame holds for these seconds (inside duration_s).
+                **(
+                    {"freeze_hold_s": segment["freeze_hold_s"]}
+                    if segment.get("freeze_hold_s")
+                    else {}
+                ),
                 "duration_beats": None,
                 "output_start_s": segment.get("output_start_s"),
                 "output_end_s": segment.get("output_end_s"),

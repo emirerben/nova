@@ -721,6 +721,14 @@ class Settings(BaseSettings):
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,
     # so they never receive the key (the row would open at a wrong level).
     voiceover_original_audio_min_client_protocol: int = 15
+    # KRI-828: a creator's freeze frame on a phone montage moment (a main-track
+    # `hold_duration` longer than one frame, capability `freezeFrame`). Planned only when
+    # `freezeFrame` is in PHONE_RENDER_VERIFIED_FEATURES (device parity, set after a
+    # physical-device preview + export check) and, inside an HTTP request, the app build
+    # declares `X-Kria-Client-Protocol` >= this. Without it the plan carries no hold and the
+    # receipt keeps KRI-777's honest "Couldn't". An older build that still receives a hold
+    # recipe cannot decode `freezeFrame` and fails the recipe instead of dropping the hold.
+    freeze_frame_min_client_protocol: int = 16
     # KRI-742: voice dictation in the chat composers. `POST /dictation/transcribe` (Whisper) and
     # the `voice_dictation` capability the iOS mic button reads. Default TRUE; this is the kill
     # switch only. False: the route 404s and the capability is not advertised, so the app hides

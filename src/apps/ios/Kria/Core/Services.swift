@@ -1072,7 +1072,10 @@ enum KriaClientProtocolContract {
     /// answer waits for the second). The server asks those two together only to this protocol.
     /// 15 (KRI-821): opens Sounds > Original audio on a phone Voiceover edit (narrated or montage `voiceover`) at
     /// the variant's saved `original_audio_level`. The server advertises `original_audio` there only to this protocol.
-    static let version = 15
+    /// 16 (KRI-828): decodes the `freezeFrame` recipe capability (a creator's freeze frame: a main-track
+    /// `holdDuration` longer than one frame, the clip's last frame held). The server plans a freeze only for
+    /// this protocol inside an HTTP request; older builds cannot decode the case and fail the recipe.
+    static let version = 16
     static let header = "X-Kria-Client-Protocol"
 }
 

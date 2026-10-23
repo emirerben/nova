@@ -316,7 +316,10 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         )
     if any(
         clip.overlay_dissolve_seed is not None
-        or clip.hold_duration is not None
+        or (
+            clip.hold_duration is not None
+            and not _main_track_freeze(clip, track, recipe.frame_rate)
+        )
         or clip.overlay_above_text is not None
         or clip.overlay_pop_in is not None
         or clip.overlay_preserve_alpha is not None
@@ -324,6 +327,16 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         for clip in track.clips
     ):
         raise ValueError("Editor media await native parity and device qualification")
+    # KRI-828: a creator's freeze (a main-video hold) is admitted only on a verified device.
+    if any(
+        _main_track_freeze(clip, track, recipe.frame_rate)
+        for track in recipe.tracks
+        for clip in track.clips
+    ) and "freezeFrame" not in set(settings.phone_render_verified_features):
+        raise PhoneCapabilityUnavailable(
+            "Freeze frames await native parity and device qualification",
+            capability="freezeFrame",
+        )
     if recipe.motion_scenes is not None:
         raise ValueError("Motion scenes await native parity and device qualification")
     if recipe.camera_pulses:
@@ -470,6 +483,37 @@ def freehand_drawing_supported(*, require_client: bool | None = None) -> bool:
         settings.freehand_drawing_enabled
         and "freehandDrawing" in set(settings.phone_render_verified_features)
         and freehand_drawing_client_supported(require_client=require_client)
+    )
+
+
+def freeze_frame_supported(*, require_client: bool | None = None) -> bool:
+    """May a phone montage plan hold a frame for the creator's freeze (KRI-828)?
+
+    True iff ``freezeFrame`` is in ``phone_render_verified_features`` (device parity) and,
+    when an app build is asking (inside an HTTP request unless ``require_client`` says
+    otherwise), it declares at least ``freeze_frame_min_client_protocol``.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if "freezeFrame" not in set(settings.phone_render_verified_features):
+        return False
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.freeze_frame_min_client_protocol
+
+
+def _main_track_freeze(clip: Any, track: Any, frame_rate: float) -> bool:
+    """A main-video hold longer than one frame: the creator's freeze (KRI-828)."""
+    return (
+        track.kind == "video"
+        and clip.hold_duration is not None
+        and clip.hold_duration > 1 / frame_rate + 1e-6
     )
 
 

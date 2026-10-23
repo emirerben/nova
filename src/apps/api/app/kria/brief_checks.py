@@ -37,7 +37,7 @@ from app.kria.brief_route import (
     wants_hour_only_text,
 )
 from app.kria.contracts import InferredLabel, RequirementReceipt
-from app.kria.freeze_ask import asks_freeze_frame, times_one_moment
+from app.kria.freeze_ask import asks_freeze_frame, freeze_spec, times_one_moment
 from app.kria.reply_language import current_reply_language, say
 from app.kria.speed_ask import asks_clip_speed
 from app.kria.spoken_text_ask import SPOKEN_TEXT_CUE_KEYS
@@ -436,6 +436,10 @@ class PlanFacts:
     # together (`plan_facts_from_rendered_montage`). Only there do the closing-line and
     # duplicate-video checks below judge anything; every other plan keeps today's answers.
     rendered_montage: bool = False
+    # KRI-828: the creator's freeze as the plan carries it, per requirement id:
+    # {status ("held" / "not_grounded" / "dropped"), hold_s, hold_stated, frame_source_s}.
+    # Empty when no plan could carry a freeze (the KRI-777 "Couldn't" stands).
+    freeze_frames: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     # The closing clip's whole spoken line, held by the plan and confirmed on the finished
     # timeline. None = no line was held (or the render does not show it held).
     closing_speech: ClosingSpeechFact | None = None
@@ -844,8 +848,33 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         source_durations_s=_source_durations(record.get("clip_durations_s")),
         song_bed=bool(record.get("user_song")),
         speed_unsupported=True,
+        freeze_frames=_freeze_facts(record.get("freeze_frame")),
         **_montage_caption_facts(record.get("captions")),
     )
+
+
+def _freeze_facts(row: object) -> dict[str, Mapping[str, Any]]:
+    """KRI-828: the plan record's freeze row, keyed by its requirement id."""
+    if not isinstance(row, Mapping) or not isinstance(row.get("requirement_id"), str):
+        return {}
+    return {str(row["requirement_id"]): dict(row)}
+
+
+def _rendered_freezes(
+    planned: Mapping[str, Mapping[str, Any]], variant: Mapping[str, Any]
+) -> dict[str, Mapping[str, Any]]:
+    """A planned hold counts on a finished video only when its timeline still carries one."""
+    rows = variant.get("story_timeline")
+    if not isinstance(rows, list):
+        return dict(planned)
+    held = any(
+        isinstance(row, Mapping) and (_finite_number(row.get("freeze_hold_s")) or 0) > 0
+        for row in rows
+    )
+    return {
+        key: (value if value.get("status") != "held" or held else {**value, "status": "dropped"})
+        for key, value in planned.items()
+    }
 
 
 def _named_line_facts(raw: object) -> tuple[NamedLineFact, ...] | None:
@@ -1731,6 +1760,7 @@ def plan_facts_from_rendered_montage(
         source_durations_s=plan.source_durations_s,
         song_bed=plan.song_bed,
         speed_unsupported=plan.speed_unsupported,
+        freeze_frames=_rendered_freezes(plan.freeze_frames, variant),
         source_audio_kept=kept if isinstance(kept, bool) else None,
         source_clip_ids=tuple(prints),
         duplicate_clip_positions=_same_file_positions(clip_ids, prints) if prints else None,
@@ -3162,6 +3192,12 @@ _LIGHT_UNAVAILABLE = (
 # KRI-777: no edit can hold a frame (see `kria.freeze_ask`). Said on the draft, before the
 # approval card, and again on the finished video's receipt.
 _NO_FREEZE_FRAME = "I can't freeze a frame in this edit yet, so that moment plays normally"
+# KRI-828: the freeze is planned, but no analysed moment of the clips matches the creator's
+# words for it (or two do), so no frame is guessed.
+_FREEZE_NOT_GROUNDED = (
+    "I couldn't tell which moment to freeze, so that moment plays normally. "
+    "Tell me the clip and second to hold"
+)
 
 # KRI-705: what a phone Talking edit says, before approval and after render, about an ask
 # outside what it can draw. Static strings: `is_judged` / `is_format_limit` read them by prefix.
@@ -3258,6 +3294,10 @@ _REASON_TR: dict[str, str] = {
     ),
     _NO_FREEZE_FRAME: (
         "Bu düzenlemede henüz bir kareyi donduramıyorum, o yüzden o an normal akıyor"
+    ),
+    _FREEZE_NOT_GROUNDED: (
+        "Hangi anı donduracağımı anlayamadım, o yüzden o an normal akıyor. "
+        "Hangi klipte kaçıncı saniyeyi tutayım, yaz"
     ),
     _BED_STILL_PLAYS: "Çekim sesi hâlâ çalıyor",
     _CLEANUP_PLANNED: "Konuşma temizliği uzun duraklamaları keser",
@@ -3372,6 +3412,7 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _BED_STILL_PLAYS,
     _NO_CLIP_SPEED,
     _NO_FREEZE_FRAME,
+    _FREEZE_NOT_GROUNDED,
     _LIGHT_UNAVAILABLE,
     *_TALKING_HONEST_EN,
 )
@@ -6932,6 +6973,37 @@ def _has_checker(req: BriefRequirement) -> bool:
     return req.kind == "order"
 
 
+def _check_freeze(req: BriefRequirement, freeze: Mapping[str, Any]) -> RequirementReceipt:
+    """KRI-828: "met" only when the plan holds a frame for this ask (``status == "held"``,
+    read off the compiled plan record and, on a finished video, its timeline)."""
+    status = freeze.get("status")
+    hold = _finite_number(freeze.get("hold_s"))
+    frame = _finite_number(freeze.get("frame_source_s"))
+    if status == "held" and hold is not None and frame is not None:
+        seconds = f"{hold:g}"
+        at = f"{frame:.1f}"
+        if freeze.get("hold_stated"):
+            reason = say(
+                en=f"Freezes the frame for {seconds}s on that moment ({at}s into the clip)",
+                tr=f"O anda kare {seconds} sn donuyor (klibin {at}. saniyesi)",
+            )
+        else:
+            reason = say(
+                en=(
+                    f"Freezes the frame for {seconds}s on that moment ({at}s into the clip); "
+                    "you didn't say how long, so I held it for one second"
+                ),
+                tr=(
+                    f"O anda kare {seconds} sn donuyor (klibin {at}. saniyesi); "
+                    "süre söylemediğin için bir saniye tuttum"
+                ),
+            )
+        return _receipt(req, "met", reason, verification="checked")
+    if status == "not_grounded":
+        return _receipt(req, "not_possible", _FREEZE_NOT_GROUNDED)
+    return _receipt(req, "not_possible", _NO_FREEZE_FRAME)
+
+
 def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if _wants_opening_cut(req) and facts.edit_format in {"subtitled", "talking_head"}:
         # "Cut the intro, start the video at '...'": a quoted start line owns the sentence
@@ -6948,6 +7020,13 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_speech_cleanup(req, facts)
     if _wants_speaker_framing(req):
         return _check_speaker_framing(req, facts)
+    if (
+        asks_freeze_frame(req)
+        and req.id in facts.freeze_frames
+        and (facts.rendered_variant or not facts.editor)
+    ):
+        # KRI-828: the plan carried this freeze (or says why it could not place it).
+        return _check_freeze(req, facts.freeze_frames[req.id])
     if asks_freeze_frame(req) and (facts.rendered_variant or not facts.editor):
         # KRI-777: a draft or a finished render never holds a frame, so the draft's reply and
         # approval card say "Couldn't" instead of the model's summary promising it (KRI-700's
@@ -7155,9 +7234,9 @@ def requirements_to_check_at_draft(
     order, clip-timing and caption-language asks to the render's record (KRI-533).
     A phone Talking draft keeps its caption-language / name-spelling asks: the render
     judges them (KRI-549), and the draft says what it will do (KRI-793,
-    `PlanFacts.caption_words_at_render`). A freeze-frame ask stays: no plan can carry it,
-    so its "Couldn't" belongs before approval (KRI-777). Otherwise this is the unchanged,
-    full list.
+    `PlanFacts.caption_words_at_render`). A freeze-frame ask stays unless the phone montage
+    can carry it (`freeze_plannable`, KRI-828): otherwise its "Couldn't" belongs before
+    approval (KRI-777). Otherwise this is the unchanged, full list.
     """
     strategy = strategy or {}
     clip_paths = list(clip_paths or ())
@@ -7177,9 +7256,30 @@ def requirements_to_check_at_draft(
     return [
         req
         for req in requirements
-        if not (defers and req.kind in UNIFIED_SETTLED_KINDS and not asks_freeze_frame(req))
+        if not (
+            defers
+            and req.kind in UNIFIED_SETTLED_KINDS
+            and (not asks_freeze_frame(req) or freeze_plannable(req, strategy))
+        )
         and not (narrated and _settled_by_narrated_render(req, strategy))
     ]
+
+
+def freeze_plannable(req: BriefRequirement, strategy: Mapping[str, Any] | None) -> bool:
+    """KRI-828: will the phone montage plan carry this freeze ask?
+
+    Only a corroborated freeze ask (`freeze_spec`), on a montage with no creator song, where
+    the phone can hold a frame (`freeze_frame_supported`). The render then settles it (met,
+    or which moment it could not find); everywhere else KRI-777's "Couldn't" stays on the
+    draft.
+    """
+    from app.services.phone_rollout import freeze_frame_supported  # noqa: PLC0415
+
+    return (
+        freeze_spec(req) is not None
+        and str((strategy or {}).get("audio_strategy") or "") != "user_song"
+        and freeze_frame_supported()
+    )
 
 
 def clip_speed_notice(

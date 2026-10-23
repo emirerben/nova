@@ -49,8 +49,11 @@ final class CapabilitiesTests: XCTestCase {
         var recipe = recipe()
         recipe.tracks[0].clips[0].holdDuration = 1 / recipe.frameRate
         XCTAssertFalse(recipe.effectiveCapabilities.contains(.editorMedia))
+        XCTAssertFalse(recipe.effectiveCapabilities.contains(.freezeFrame))
+        // KRI-828: a longer main-video hold is the creator's freeze frame, not editor media.
         recipe.tracks[0].clips[0].holdDuration = 1
-        XCTAssertTrue(recipe.effectiveCapabilities.contains(.editorMedia))
+        XCTAssertTrue(recipe.effectiveCapabilities.contains(.freezeFrame))
+        XCTAssertFalse(recipe.effectiveCapabilities.contains(.editorMedia))
     }
 
     func testEstimatedOutputScalesWithDurationNotSourceSize() {
