@@ -32,5 +32,7 @@ class BriefExtractionOutput(BaseModel):
     brief_updates: list[BriefUpdate] = Field(default_factory=list)
     # KRI-814: typed "the current message states no requirement and delegates every choice".
     delegates_all_choices: bool = False
+    # KRI-816: typed "start fresh": the server withdraws every saved requirement.
+    starts_fresh: bool = False
     request_scope: Literal["edit", "rebuild", "clarify"] | None = None
     clarification: str | None = Field(default=None, max_length=1_000)
