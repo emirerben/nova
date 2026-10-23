@@ -331,7 +331,7 @@ async def test_prod_the_length_line_judges_the_whole_take(monkeypatch: pytest.Mo
 async def test_prod_named_cuts_get_the_pause_line_then_done(
     monkeypatch: pytest.MonkeyPatch, cleanup_chosen: bool, sequence: int
 ) -> None:
-    """Both original drafts now disclose that named phrase cuts need the editor."""
+    """Both original drafts disclose that the exact named cut remains unverified."""
     chat = await _chat_until_approval(monkeypatch, cleanup_chosen=cleanup_chosen)
     for rid in ("r3", "r4"):
         historical = _prod_receipts(sequence)[rid]
@@ -339,7 +339,10 @@ async def test_prod_named_cuts_get_the_pause_line_then_done(
             assert historical["status"] == "met"  # Original false completion retained.
         receipt = _receipts(chat.approved_draft)[rid]
         assert receipt["status"] == "partial" and receipt["verification"] == "checked"
-        assert "trim that in the editor" in receipt["reason"]
+        assert (
+            "I have not confirmed that exact spoken line was removed; check it in the editor"
+            in receipt["reason"]
+        )
         assert receipt["reason"] != historical["reason"]
 
 

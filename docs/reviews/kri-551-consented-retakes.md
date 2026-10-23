@@ -274,3 +274,20 @@ Exact-source hosted CI's14 failures reproduced locally (376 other cases passed).
 Additive expectations retain retakes:0, default speech_cleanup_retakes_aware:false, the new sixth EN/TR consent-required message and the explicit v5 detector guard. Every previous assertion remains represented; stale-policy retirement, malformed snapshot, consent and downstream failure guards are unchanged. No production implementation changes are part of this correction.
 
 After correction,441 existing affected and neighboring hydration/policy/consent/localization tests pass. The complete make verify-editor-timeline gate also passes:209 web tests,28 desktop browser tests,42 mobile-viewport browser tests and583 backend tests. Browser execution used one worker and a fresh isolated test server; the temporary harness options were restored, no assertion, retry or timeout was changed, and the config is not committed. Browser result bundles and raw logs remain task-local; this is not physical-iPhone output or live detector accuracy. New current-head hosted checks remain required before merge.
+
+## Hosted original-case wording regression — root review
+
+Whole CI on source3b19cb7ae caught two KRI-787 original-case assertions still
+expecting the former trim-in-editor wording. Both failures reproduced locally
+before correction. The existing tests now require the full exact-cut-unverified
+message while retaining partial/checked status, the historical false-completion
+record and the changed-reason assertion. Their module is added to this incident's
+early journey/reliability mapping; no runtime logic or assertion is removed.
+
+Current main through4267c5eac is integrated additively. Its strict whole-export
+duration uncertainty and this PR's named-cut uncertainty are both retained in
+English and Turkish. The original-case, receipt, cleanup and strict-publication
+focused union passes184 tests against the isolated migrated database, without
+skips. The expanded full mapped retake journey passes1,001 tests with no skips.
+Mandatory preship and fresh exact-head CI are required before landing this
+revision; original physical/live acceptance stays open.

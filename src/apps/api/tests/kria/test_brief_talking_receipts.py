@@ -290,13 +290,15 @@ def test_keep_my_whole_take_still_goes_to_the_whole_take_check():
     assert receipt.status == "met"
 
 
-def test_a_plain_creator_length_on_a_talking_edit_is_met_when_the_take_matches():
+def test_a_strict_creator_length_on_a_talking_edit_requires_a_measured_shorter_file():
     req = _req("timing", "keep it under 45 seconds", duration_s=45)
 
-    receipt = check_requirement(req, _talking(duration_s=45))
+    receipt = check_requirement(req, _talking(duration_s=43, measured_export_duration_s=44.6))
 
     assert receipt.status == "met"
-    [bound] = build_receipts([req], _talking(duration_s=45), include_unchecked=True)
+    [bound] = build_receipts(
+        [req], _talking(duration_s=43, measured_export_duration_s=44.6), include_unchecked=True
+    )
     assert bound.verification == "checked"
     assert not needs_creator_choice(bound)
 

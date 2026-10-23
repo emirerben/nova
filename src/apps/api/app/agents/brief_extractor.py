@@ -31,7 +31,9 @@ from app.pipeline.prompt_loader import load_prompt
 # v14 (KRI-792): named spoken cuts carry cut_lines as well as caption spellings.
 # v15 (KRI-789): shared brief records quoted start / end lines as a `timing` trim.
 # v16 shares the complete caption/spoken-trigger/quoted-trim/named-cut instruction union.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-22-v16"
+# v19: shared brief separates speech captions from authored-text restrictions.
+# v17/v18 are reserved by the independent KRI-814 PR.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-23-v19"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")

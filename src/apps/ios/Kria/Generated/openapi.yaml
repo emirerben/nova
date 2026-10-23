@@ -2374,6 +2374,51 @@
         "title": "DeviceRenderRequest",
         "type": "object"
       },
+      "DeviceRenderRequestOut": {
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/DeviceRenderIdentity"
+          },
+          "max_export_duration_s": {
+            "default": null,
+            "exclusiveMinimum": true,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Max Export Duration S",
+            "type": "number"
+          },
+          "recipe": {
+            "discriminator": {
+              "mapping": {
+                "1": "#/components/schemas/EditRecipeV1",
+                "2": "#/components/schemas/EditRecipeV2"
+              },
+              "propertyName": "schema_version"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EditRecipeV1"
+              },
+              {
+                "$ref": "#/components/schemas/EditRecipeV2"
+              }
+            ],
+            "title": "Recipe"
+          },
+          "recovery": {
+            "$ref": "#/components/schemas/DeviceRepairInstruction",
+            "default": null,
+            "nullable": true
+          }
+        },
+        "required": [
+          "identity",
+          "recipe"
+        ],
+        "title": "DeviceRenderRequestOut",
+        "type": "object"
+      },
       "DeviceRenderStatus": {
         "additionalProperties": false,
         "properties": {
@@ -2465,7 +2510,7 @@
             "type": "string"
           },
           "request": {
-            "$ref": "#/components/schemas/DeviceRenderRequest"
+            "$ref": "#/components/schemas/DeviceRenderRequestOut"
           },
           "retry_requires_approval": {
             "default": false,

@@ -2,7 +2,34 @@ import Foundation
 import XCTest
 @testable import KriaMediaEngine
 
+#if canImport(AVFoundation)
+@preconcurrency import AVFoundation
+import CoreGraphics
+#endif
+
 final class DeviceRenderCoordinatorTests: XCTestCase {
+    func testOptionalDurationLimitKeepsLegacyPayloadAndDecodesServerSnakeCase() throws {
+        let legacy = request()
+        let legacyJSON = try JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(legacy)) as? [String: Any]
+        XCTAssertNil(legacyJSON?["max_export_duration_s"], "nil must preserve the old request wire form")
+
+        let limited = request(maxExportDurationS: 59.5)
+        let encoded = try RecipeJSON.encoder().encode(limited)
+        let serverJSON = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        XCTAssertEqual(serverJSON?["max_export_duration_s"] as? Double, 59.5)
+        XCTAssertEqual(try RecipeJSON.decoder().decode(DeviceRenderRequest.self, from: encoded).maxExportDurationS, 59.5)
+    }
+
+    func testDurationLimitFailureReportsExportFailedAndFormatsTurkishWithoutNonfiniteDuration() {
+        let invalidOutput = DeviceExportDurationLimitError(limitS: 40, durationS: .infinity, isMeasuredOutput: true)
+        XCTAssertEqual(DeviceRenderFailureReasonCode.forRenderFailure(invalidOutput), .exportFailed)
+        let turkish = invalidOutput.message(locale: Locale(identifier: "tr_TR"))
+        XCTAssertTrue(turkish.contains("süresi okunamadı"))
+        XCTAssertTrue(turkish.contains("Düzenlemeyi kısaltın"))
+        XCTAssertFalse(turkish.localizedCaseInsensitiveContains("infinity"))
+        XCTAssertFalse(turkish.localizedCaseInsensitiveContains("nan"))
+    }
+
     func testRetrySyncAfterRestartDoesNotEncodeAgain() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -227,8 +254,99 @@ final class DeviceRenderCoordinatorTests: XCTestCase {
         XCTAssertEqual(calls.first?.reasonCode, .unsupportedRecipe)
     }
 
-    private func request(revision: Int = 1) -> DeviceRenderRequest {
-        DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: UUID(), variantID: "original_text", recipeRevision: revision, recipeDigest: "digest-\(revision)"), recipe: MediaEngineFixtures.recipe())
+    /// A strict server limit is exclusive: allowing an edit whose predicted
+    /// length equals the limit lets the branding/encoder rounding turn it into
+    /// a server rejection. This must stop before source resolution or export,
+    /// not trim the video or drop its branding to make it fit.
+    func testBoundAtRecipeDurationRejectsBeforeExport() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let exporter = RecordingExporter(), publisher = RecordingPublisher()
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(), publisher: publisher)
+        let limited = request(maxExportDurationS: 2)
+
+        try await coordinator.start(limited, decision: CapabilityDecision(route: .local))
+        await coordinator.waitUntilIdle()
+
+        let receipt = await coordinator.snapshot()
+        let exports = await exporter.count
+        let published = await publisher.published
+        XCTAssertEqual(receipt?.phase, .needsAttention)
+        XCTAssertEqual(exports, 0)
+        XCTAssertTrue(published.isEmpty)
+        XCTAssertTrue(
+            receipt?.error?.contains("Shorten the edit or select less speech") == true ||
+            receipt?.error?.contains("Düzenlemeyi kısaltın") == true,
+            "the stored limit error must remain actionable in the device locale"
+        )
+    }
+
+    /// A standard-branded export has a real outro after the recipe timeline.
+    /// The preflight must measure that current bundled tail rather than assume
+    /// the timeline alone fits and discover the over-limit file after encoding.
+    func testBoundIncludesCurrentStandardBrandingTailBeforeExport() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let exporter = RecordingExporter(brandTail: "standard"), publisher = RecordingPublisher()
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(), publisher: publisher)
+
+        try await coordinator.start(request(maxExportDurationS: 2.01), decision: CapabilityDecision(route: .local))
+        await coordinator.waitUntilIdle()
+
+        let receipt = await coordinator.snapshot()
+        let exports = await exporter.count
+        XCTAssertEqual(receipt?.phase, .needsAttention)
+        XCTAssertEqual(exports, 0)
+    }
+
+    #if canImport(AVFoundation)
+    /// The recipe estimate can be under the limit while the actual media is
+    /// exactly on it (for example after an outro or encoder frame rounding).
+    /// Measure the file before `.localReady`; otherwise an offline retry after
+    /// app relaunch could publish the already-invalid cached output.
+    @MainActor func testMeasuredOutputAtBoundRejectsAndCachedRetryCannotPublish() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let media = try await SolidVideoFixture.make(directory: directory, name: "two-seconds", color: CGColor(red: 1, green: 0, blue: 0, alpha: 1), seconds: 2)
+        let exporter = MediaFixtureExporter(media: media), publisher = RecordingPublisher()
+        let limited = request(clipDuration: 1, maxExportDurationS: 2)
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(), publisher: publisher)
+
+        try await coordinator.start(limited, decision: CapabilityDecision(route: .local))
+        await coordinator.waitUntilIdle()
+
+        let first = await coordinator.snapshot()
+        let firstExports = await exporter.count
+        let firstPublished = await publisher.published
+        XCTAssertEqual(first?.phase, .needsAttention)
+        XCTAssertNil(first?.outputURL, "a fresh invalid file must not enter .localReady")
+        XCTAssertEqual(firstExports, 1)
+        XCTAssertTrue(firstPublished.isEmpty)
+
+        // A receipt written by an interrupted older build can already contain
+        // a fingerprinted file. Recovery must measure that real file too,
+        // before it retries publication.
+        let cachedOutput = directory.appendingPathComponent("\(try XCTUnwrap(first?.attemptID).uuidString).mp4")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cachedOutput.path))
+        let cached = DeviceRenderReceipt(request: limited, attemptID: try XCTUnwrap(first?.attemptID), phase: .localReady,
+                                         outputURL: cachedOutput, outputFingerprint: try SHA256Fingerprinter().fingerprint(file: cachedOutput))
+        try JSONEncoder().encode(cached).write(to: directory.appendingPathComponent("device-render.json"), options: .atomic)
+        let restored = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(), publisher: publisher)
+        try await restored.retrySync()
+        await restored.waitUntilIdle()
+
+        let final = await restored.snapshot()
+        let finalExports = await exporter.count
+        let finalPublished = await publisher.published
+        XCTAssertEqual(final?.phase, .needsAttention)
+        XCTAssertEqual(finalExports, 1, "a cached output must be measured, not re-encoded")
+        XCTAssertTrue(finalPublished.isEmpty, "an equality-bound cached file must never reach publish")
+    }
+    #endif
+
+    private func request(revision: Int = 1, clipDuration: Double = 2, maxExportDurationS: Double? = nil) -> DeviceRenderRequest {
+        DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: UUID(), variantID: "original_text", recipeRevision: revision, recipeDigest: "digest-\(revision)"), recipe: MediaEngineFixtures.recipe(clipDuration: clipDuration), maxExportDurationS: maxExportDurationS)
     }
 }
 
@@ -280,6 +398,20 @@ private actor RecordingExporter: LocalExporting {
         return ExportCheckpoint(exportID: exportID, status: .completed, progress: 1, outputURL: outputURL)
     }
 }
+
+#if canImport(AVFoundation)
+private actor MediaFixtureExporter: LocalExporting {
+    let media: URL
+    var count = 0
+    nonisolated let brandTail = "none"
+    init(media: URL) { self.media = media }
+    func export(recipe: EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String, progress: (@Sendable (Double) -> Void)?) async throws -> ExportCheckpoint {
+        count += 1
+        try FileManager.default.copyItem(at: media, to: outputURL)
+        return ExportCheckpoint(exportID: exportID, status: .completed, progress: 1, outputURL: outputURL)
+    }
+}
+#endif
 private actor RecordingPublisher: DeviceRenderPublishing {
     var failure = false
     var published: [DeviceRenderIdentity] = []
