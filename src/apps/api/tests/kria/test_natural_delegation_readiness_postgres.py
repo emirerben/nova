@@ -7,8 +7,9 @@ carried the first natural line. Only a fresh stock-only chat passed (KRI-774).
 
 Failure modes written before the fix (plan: .dev/plan.md, F1-F17):
 - F1/F2/F12  natural delegating first request (EN/TR, 5 and 28 clips) is held.
-- F3         same-chat "Suggest an edit" (or natural wording) after a held turn is held again.
-- F4         extraction that failed/never declared is treated as delegation (accidental approval).
+- F3         same-chat "Suggest an edit" (or natural wording) after the first offer is held.
+- F4         extraction that failed/never declared is treated as delegation (accidental approval),
+             including a later turn's delegation standing in for an unread earlier line.
 - F5         model summary/strategy prose ("you left every choice to me") counts as delegation.
 - F6/F13     an unchanged explicit turn-1 requirement drops when a delegated turn 2 arrives.
 - F7         a requirement removed by stable id reappears in readiness or the pinned binding.
@@ -153,10 +154,12 @@ async def test_natural_delegating_first_request_reaches_approval(monkeypatch, la
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["en", "tr"])
 @pytest.mark.parametrize("recovery", ["stock", "natural"])
-async def test_same_chat_recovery_after_a_held_natural_request(monkeypatch, language, recovery):
+async def test_same_chat_recovery_after_a_delegated_natural_request(
+    monkeypatch, language, recovery
+):
+    """F3: a later "Suggest an edit" in the same chat reaches approval again."""
     seed = _seed_runtime_project()
-    # Turn 1 as the old contract produced it: no declaration, so it is (correctly) held.
-    _, thread_id, approvals, events = await prepare(
+    user_id, thread_id, approvals, _ = await prepare(
         monkeypatch,
         seed=seed,
         language=language,
@@ -164,10 +167,11 @@ async def test_same_chat_recovery_after_a_held_natural_request(monkeypatch, lang
         updates_override=[],
         no_title=True,
         clips=5,
+        output_extra=_DELEGATED,
     )
-    assert not approvals
-    assert _GENERIC_HOLD[language] in events[-1].content
-    assert _brief_rows(thread_id) == []
+    assert len(approvals) == 1
+    denied, _, _ = await _approve(monkeypatch, user_id, thread_id, approvals[0], "deny")
+    assert denied.status_code == 200, denied.text
     # Turn 2 in the same chat: the pinned request now holds BOTH lines.
     user_id, thread_id, approvals, events = await prepare(
         monkeypatch,
@@ -180,7 +184,45 @@ async def test_same_chat_recovery_after_a_held_natural_request(monkeypatch, lang
         output_extra=_DELEGATED,
     )
     await _assert_delegated_offer_approves(monkeypatch, user_id, thread_id, approvals, events)
-    assert len(_brief_rows(thread_id)) == 1
+    assert [(row.version, row.requirements) for row in _brief_rows(thread_id)] == [(1, [])]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "tr"])
+async def test_delegation_never_speaks_for_an_unread_earlier_line(monkeypatch, language):
+    """F4/F6: turn 1 never reached the brief, so turn 2's delegation cannot erase it."""
+    seed = _seed_runtime_project()
+    first_line = {
+        "en": 'Make a Troya video titled "Troya 2026" and skip the beach clip',
+        "tr": '"Troya 2026" başlıklı bir Troya videosu yap ve plaj klibini atla',
+    }[language]
+    # Turn 1: the extraction produced nothing usable (no update, no declaration).
+    _, thread_id, approvals, events = await prepare(
+        monkeypatch,
+        seed=seed,
+        language=language,
+        message=first_line,
+        updates_override=[],
+        no_title=True,
+        clips=5,
+    )
+    assert not approvals
+    assert _GENERIC_HOLD[language] in events[-1].content
+    assert _brief_rows(thread_id) == []
+    # Turn 2 declares delegation for ITS OWN message only: still held, no empty brief.
+    _, thread_id, approvals, events = await prepare(
+        monkeypatch,
+        seed=seed,
+        language=language,
+        message=_RECOVERY[language],
+        updates_override=[],
+        no_title=True,
+        clips=5,
+        output_extra=_DELEGATED,
+    )
+    assert not approvals
+    assert _coverage(events).get("reason") == "approval_requirements_not_ready"
+    assert _brief_rows(thread_id) == []
 
 
 @pytest.mark.asyncio
