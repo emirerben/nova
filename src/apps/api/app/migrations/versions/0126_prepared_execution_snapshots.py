@@ -1,15 +1,15 @@
 """Prepared execution snapshots pinned to an approval (KRI-722).
 
-Revision ID: 0125
-Revises: 0124
+Revision ID: 0126
+Revises: 0125
 """
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql as pg
 
-revision = "0125"
-down_revision = "0124"
+revision = "0126"
+down_revision = "0125"
 branch_labels = None
 depends_on = None
 
