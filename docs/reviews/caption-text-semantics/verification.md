@@ -14,7 +14,7 @@ The independent expected behavior is recorded in
 
 ## Implementation boundary
 
-Main Creator v71 (retaining main's KRI-851 v70 title-with-beats fix), Brief Extractor v17 and
+Main Creator v73 (retaining main's KRI-851 v70 title-with-beats fix), Brief Extractor v19 and
 Edit Copilot v86 teach this distinction.
 No renderer, client build, schema, database migration, or feature flag changes.
 The subtitle requirement gets its own focused description, separate from source
@@ -64,3 +64,12 @@ Live-model interpretation, full N1 footage/cue fulfillment, native export and
 production rollout are separate evidence stages. Keep KRI-598 open until its full
 acceptance is verified. No paid call or native render is claimed by the offline
 results above.
+
+## Current-main integration — 23 October 2026
+
+Main Creator v71/v72 and Brief Extractor v17/v18 are already used by the independent
+KRI-814 PR #1771. This branch uses fresh v73/v19 identities for its different prompt
+content; it does not include the unmerged delegation implementation. Main v70
+Talking title-with-beats wording and the full shared brief instruction union remain
+intact. Main after #1747/#1752 is integrated additively; all previous source commits
+are retained. Fresh exact-head CI remains required before merge.

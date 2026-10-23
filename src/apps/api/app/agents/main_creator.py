@@ -105,9 +105,9 @@ log = structlog.get_logger()
 # v69 retains all shared brief instructions plus editorial audio pairing.
 # v70 (KRI-851): the Talking reaction-beats section no longer forbids `opening_title`; a requested
 # title / closing text still goes in `opening_title` / `closing_title` alongside the beats.
-# v71 keeps v70 and makes captions/subtitles the speech lane, independent of restrictions
-# on authored text.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v71"
+# v73 keeps v70 and makes captions/subtitles the speech lane, independent of restrictions
+# on authored text. v71/v72 are reserved by the independent KRI-814 PR.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v73"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
