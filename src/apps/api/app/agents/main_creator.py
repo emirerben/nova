@@ -862,11 +862,11 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         reaction_beats=len(strategy.reaction_beats or ()),
                     )
                     strategy = strategy.model_copy(update={"execution_contract": None})
-                strategy = _repair_unavailable_format(
+                strategy = _repair_unrecorded_voiceover(
                     input.capability_manifest,
                     strategy,
                     source_audio_stated=input.brief_enabled
-                    and _states_source_audio(data.get("brief_updates")),
+                    and _states_source_audio(data.get("brief_updates"), input.creator_request),
                 )
                 strategy = normalize_creator_strategy_media(
                     input.capability_manifest,
@@ -1309,27 +1309,43 @@ def _schema_error_class(exc: ValidationError) -> str:
     return _clean_error_class(",".join(parts) or "validation_error")
 
 
-def _states_source_audio(brief_updates: object) -> bool:
-    """This turn's own brief records "keep the original camera sound" (a typed fact)."""
+# A saved audio requirement as the server renders it (`brief._render_requirement`):
+# `- [rN] [audio/<scope>] <text> facts={...}`, facts last with sorted keys.
+_SAVED_AUDIO_PATTERN = r"^- \[r\d+\] \[audio/[^\]]+\] .* facts=\{(?P<facts>[^{}]*)\}$"
+_SAVED_AUDIO_LINE = re.compile(_SAVED_AUDIO_PATTERN)  # kri667: server-rendered typed facts
+
+
+def _states_source_audio(brief_updates: object, creator_request: str = "") -> bool:
+    """The creator's brief records "keep the original camera sound" (a typed fact).
+
+    This turn's own audio updates win; with none, the saved brief's live audio
+    requirement still holds (KRI-816 T06 already had it as r4, so the model had no
+    reason to re-emit it).
+    """
     try:
         updates = parse_brief_updates(brief_updates)
     except Exception:  # noqa: BLE001 - an unreadable batch is refused by the parse below
         return False
-    return any(
-        update.kind == "audio" and update.facts.get("audio_intent") == "source_unchanged"
-        for update in updates
+    audio = [update for update in updates if update.kind == "audio"]
+    if audio:
+        return any(update.facts.get("audio_intent") == "source_unchanged" for update in audio)
+    saved = [
+        match.group("facts")
+        for line in creator_request.splitlines()
+        if (match := _SAVED_AUDIO_LINE.match(line.strip()))
+    ]
+    return bool(saved) and all(
+        "audio_intent: source_unchanged" in facts.split("; ") for facts in saved
     )
 
 
-def _repair_unavailable_format(manifest, strategy, *, source_audio_stated: bool):
-    """Repair a model-chosen strategy this edit cannot render back to the creator's own.
+def _repair_unrecorded_voiceover(manifest, strategy, *, source_audio_stated: bool):
+    """Drop a model-invented voiceover when nothing is recorded (KRI-816, T06).
 
-    Each policy refusal spends one of three attempts, and a model that keeps reaching
-    for an "explainer" format the iPhone cannot render (Talking with 28 clips, slides)
-    ends the turn with no plan (KRI-816, T06). The item's format is the one the creator
-    chose; the model's substitute is not creator intent. Likewise a voiceover with
-    nothing recorded is dropped only when this turn's own brief records that the creator
-    asked for their original camera sound (a typed fact, never a word match).
+    Only when the creator's brief records that they asked for their original camera
+    sound (a typed fact, never a word match). A format the model chose is never
+    swapped here: an unavailable format stays a named policy refusal (KRI-129, no
+    silent overrides).
     """
     from app.agents._schemas.edit_format import coerce_edit_format  # noqa: PLC0415
 
@@ -1341,22 +1357,7 @@ def _repair_unavailable_format(manifest, strategy, *, source_audio_stated: bool)
     ):
         log.info("main_creator_unrecorded_voiceover_repaired")
         strategy = strategy.model_copy(update={"audio_strategy": "original_audio"})
-    chosen = coerce_edit_format(strategy.edit_format)
-    own = coerce_edit_format(manifest.edit_format)
-    if chosen == own or chosen in NARRATED_EDIT_FORMATS:
-        return strategy
-
-    def renders(edit_format: str) -> bool:
-        for key in (f"edit_format:{edit_format}", f"phone_format:{edit_format}"):
-            capability = manifest.capabilities.get(key)
-            if capability is not None and not capability.available:
-                return False
-        return manifest.capabilities.get(f"edit_format:{edit_format}") is not None
-
-    if renders(chosen) or not renders(own):
-        return strategy
-    log.info("main_creator_unavailable_format_repaired", chosen=chosen, restored=own)
-    return strategy.model_copy(update={"edit_format": own})
+    return strategy
 
 
 # Closed, value-free tags for server policy refusals (KRI-816): the old catch-all

@@ -1071,6 +1071,10 @@ def build_editor_snapshot(
         "text_bars": text_bars,
         "total_duration_s": duration,
     }
+    if variant.get("resolved_archetype") in {"subtitled", "talking_head"}:
+        # KRI-816: the recorded speech is the edit's primary track, so research
+        # places sourced text only in its pauses (narrated/voiceover cues do not).
+        snapshot["spoken_edit"] = True
     brief = clip_context.get("brief")
     if isinstance(brief, str) and brief.strip():
         from app.kria.brief import BriefCoverageError  # noqa: PLC0415

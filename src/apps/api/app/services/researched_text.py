@@ -407,11 +407,17 @@ _MIN_WINDOW_S = 2.0
 
 
 def _speech_lines(snapshot: dict) -> list[dict]:
-    """Spoken lines (caption cues) in output time, sorted. Empty for footage-only edits.
+    """Spoken lines (caption cues) of a Talking edit in output time, sorted.
+
+    Empty unless the snapshot is a spoken edit (``spoken_edit``: Talking/talking
+    head). Narrated, voiceover and smart-caption montages keep their footage
+    windows: their cues are not the edit's primary recorded track.
 
     Cues live in ``snapshot["captions"]["cues"]``; served caption mirrors may also
     appear as ``caption_cue`` text bars. Both are the recorded speech.
     """
+    if not snapshot.get("spoken_edit"):
+        return []
     rows = list((snapshot.get("captions") or {}).get("cues") or [])
     rows += [bar for bar in snapshot.get("text_bars") or [] if bar.get("caption_cue")]
     lines: dict[tuple[float, float], str] = {}
@@ -611,7 +617,8 @@ def research_operations(
             a, b = float(bar.get("start_s", 0)), float(bar.get("end_s", 0))
             if start < b and end > a:
                 if (
-                    bar.get("id") in (snapshot.get("copy_constraints") or {})
+                    speech  # a Talking edit's text in a pause is the creator's own
+                    or bar.get("id") in (snapshot.get("copy_constraints") or {})
                     or a < start
                     or b > end
                     or (

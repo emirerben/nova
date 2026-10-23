@@ -17,6 +17,9 @@ Failure modes written before the fix:
 7. The projected slots leak into the applier and the Save writes a timeline.
 8. No readable pause gives a generic refusal instead of a precise limit.
 9. A stale source generation is trusted as "what is shown".
+10. Narrated/voiceover/smart-caption montages (cues present, not Talking) lose their
+    footage windows to the pause-only rule, or get the "spoken words" refusal.
+11. A creator's own text bar inside the chosen pause is removed by the researched add.
 
 Artifact: ``.dev/kri-816/talking-report.json`` (repo root) with the request,
 projected slots, research windows, the staged operation and the recipe text.
@@ -401,3 +404,56 @@ def test_t05_stale_source_generation_is_not_trusted_as_what_is_shown(monkeypatch
     result = _turn(snapshot)
     assert result.ops == []
     assert "pictured subject could not be confirmed" in result.reply
+
+
+def test_cues_on_a_non_talking_edit_keep_footage_windows_and_allow_overlap():
+    from app.services.researched_text import research_windows
+
+    snapshot = {
+        "slots": [
+            {"media_id": "m0", "output_start_s": 0.0, "output_end_s": 4.0, "seen": {"text": "a"}},
+            {"media_id": "m1", "output_start_s": 4.0, "output_end_s": 9.0, "seen": {"text": "b"}},
+        ],
+        "text_bars": [],
+        "captions": {
+            "cues": [
+                {"text": "Narration one", "start_s": 0.2, "end_s": 4.5},
+                {"text": "Narration two", "start_s": 4.7, "end_s": 8.9},
+            ]
+        },
+        "total_duration_s": 9.0,
+    }
+
+    windows = research_windows(snapshot)
+
+    assert [(row["start_s"], row["end_s"]) for row in windows] == [(0.0, 4.0), (4.0, 9.0)]
+    assert all("after_spoken_line" not in row for row in windows)
+
+
+def test_t05_creator_text_inside_the_pause_is_protected_not_replaced(monkeypatch):
+    job, assignments = talking_job(monkeypatch)
+    snapshot = _snapshot(job, assignments)
+    from app.services.researched_text import (
+        ResearchUnavailable,
+        research_operations,
+        research_windows,
+    )
+
+    window = next(row for row in research_windows(snapshot) if row["after_spoken_line"] == 1)
+    mid = (window["start_s"] + window["end_s"]) / 2
+    snapshot["text_bars"] = [
+        *snapshot.get("text_bars", []),
+        {"id": "creator-day-1", "text": "Day 1", "start_s": mid - 0.2, "end_s": mid + 0.2},
+    ]
+    caption = {
+        "text": "Troy: Nine settlement layers",
+        "context_label": "Troy",
+        "media_ids": window["media_ids"],
+        "evidence_ids": ["fact-0"],
+        "visual_quote": "excavated stone walls of Troy",
+        "scope": "context",
+        "window_id": window["id"],
+    }
+
+    with pytest.raises(ResearchUnavailable, match="protected text"):
+        research_operations([caption], evidence_from_response(_grounding()), snapshot, REQUEST)
