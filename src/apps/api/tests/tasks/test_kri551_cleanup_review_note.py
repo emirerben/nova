@@ -28,6 +28,7 @@ import pytest
 
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_binding import BriefBinding
+from app.kria.brief_checks import check_requirement, plan_facts_from_phone_variant
 from app.kria.reply_language import bind_reply_language, release_reply_language
 from app.tasks import kria_runtime
 
@@ -162,13 +163,43 @@ def test_the_n3_reply_speaks_turkish_in_a_turkish_chat():
     assert _RESTART_LIMIT_EN not in text
 
 
-def test_a_bound_brief_that_already_reports_the_restart_limit_is_not_told_twice():
-    text = _review(_n3_variant(), brief=_marathon_brief())
+def test_a_bound_n3_brief_with_a_recorded_retake_reports_it_but_keeps_the_line_partial():
+    variant = _n3_variant()
+    variant["silence_cut"]["removed"].append({"start_s": 14.06, "end_s": 20.15, "reason": "retake"})
 
-    assert text.count("isn't cut automatically yet") == 1
+    receipt = check_requirement(
+        _marathon_brief().requirements[0], plan_facts_from_phone_variant(variant)
+    )
+    text = _review(variant, brief=_marathon_brief())
+
+    assert receipt.status == "partial"
+    assert "I have not confirmed that exact spoken line was removed" in (receipt.reason or "")
+    assert "1 restarted sentence" in text
+    assert "isn't cut automatically yet" not in text
     assert _RESTART_LIMIT_EN not in text
-    # The counts are new information, so they stay.
-    assert "Speech cleanup cut 14 long pauses and 1 filler sound" in text
+    # A retake count does not prove this brief's kilometer-thirty line was the one removed.
+    assert "I have not confirmed that exact spoken line was removed" in text
+    assert "Speech cleanup cut 14 long pauses, 1 filler sound and 1 restarted sentence" in text
+
+
+def test_an_unrelated_recorded_retake_never_marks_a_requested_line_done():
+    req = BriefRequirement(
+        id="r-unrelated",
+        kind="audio",
+        scope="global",
+        description="cut the part where I say 'I almost didn't start'",
+        facts={},
+    )
+    variant = _n3_variant()
+    variant["silence_cut"]["removed"].append({"start_s": 14.06, "end_s": 20.15, "reason": "retake"})
+
+    receipt = check_requirement(req, plan_facts_from_phone_variant(variant))
+
+    assert receipt.status == "partial"
+    assert receipt.reason == (
+        "Speech cleanup cut the long pauses; I have not confirmed that exact spoken line was "
+        "removed; check it in the editor"
+    )
 
 
 def test_counts_come_only_from_the_cut_record():

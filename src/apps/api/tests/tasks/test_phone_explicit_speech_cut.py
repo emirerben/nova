@@ -26,19 +26,19 @@ from tests.tasks.test_kri707_talking_spoken_text import (
 )
 from tests.tasks.test_phone_subtitled_narrated_dispatch import _setup_subtitled
 
-# T1's brief as Main Creator v70 records it (KRI-667): the phrase cut and the engine-noise
+# T1's brief as Main Creator v75 records it (KRI-667): the phrase cut and the engine-noise
 # ask carry structured facts. Prod's stored v1 rows carry none, so they authorize no cut.
-_V70_FACTS = {
+_BRIEF_FACTS = {
     "r2": {"speech_remove": {"quote": "Neredesin", "occurrence": 2}},
     "r5": {"noise_reduction": "engine"},
 }
 
 
-def _v70_job(monkeypatch):
+def _facts_job(monkeypatch):
     brief = _t1_brief(
         *(
-            req.model_copy(update={"facts": {**req.facts, **_V70_FACTS[req.id]}})
-            if req.id in _V70_FACTS
+            req.model_copy(update={"facts": {**req.facts, **_BRIEF_FACTS[req.id]}})
+            if req.id in _BRIEF_FACTS
             else req
             for req in T1_REQUIREMENTS
         )
@@ -58,7 +58,7 @@ def _assert_only_second_removed(recipe):
 @pytest.mark.parametrize("preflight", [True, False])
 def test_original_request_removes_second_only_and_remaps_text(monkeypatch, preflight):
     _faces(monkeypatch)
-    job, snapshot = _v70_job(monkeypatch)
+    job, snapshot = _facts_job(monkeypatch)
     if not preflight:
         snapshot.pop("_speech_cleanup_internal")
         job.assembly_plan.pop("_speech_cleanup_internal")
@@ -135,7 +135,7 @@ def test_noise_replacement_uses_same_cut_segments_and_pins_private_receipt(monke
     from app.services import phone_noise_reduction as noise
 
     _faces(monkeypatch)
-    job, snapshot = _v70_job(monkeypatch)
+    job, snapshot = _facts_job(monkeypatch)
     monkeypatch.setattr(noise.settings, "phone_engine_noise_reduction_enabled", True)
     monkeypatch.setattr(noise.settings, "phone_engine_noise_model_path", "/configured/model.rnnn")
     monkeypatch.setattr(noise.settings, "phone_engine_noise_model_sha256", "a" * 64)
@@ -177,7 +177,7 @@ def test_failed_noise_processing_keeps_original_and_word_cut(monkeypatch):
     from app.services import phone_noise_reduction as noise
 
     _faces(monkeypatch)
-    job, snapshot = _v70_job(monkeypatch)
+    job, snapshot = _facts_job(monkeypatch)
     monkeypatch.setattr(noise, "engine_noise_reduction_available", lambda: True)
 
     def fail(*args, **kwargs):

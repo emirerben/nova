@@ -1,16 +1,126 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from types import SimpleNamespace
+
 import pytest
 
 from app.routes import generative_jobs as gj
 from app.services.creator_render_contract import (
     CONTRACT_FIELD,
     REQUIREMENT_VERSION_FIELD,
+    CreatorRenderContract,
+    CreatorRenderContractError,
     build_render_contract,
     read_render_contract,
 )
 from app.services.device_render import CONTRACT_REVISIONS_FIELD, device_record, device_status
 from tests.routes.test_phone_editor_commit import phone_job, save
+
+
+def _binding_digest(binding: dict) -> str:
+    encoded = json.dumps(
+        binding["brief"], sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _strict_binding(seconds: int) -> dict:
+    return {
+        "brief": {
+            "requirements": [
+                {
+                    "id": "length",
+                    "kind": "timing",
+                    "scope": "global",
+                    "description": f"Keep it under {seconds} seconds",
+                    "facts": {"duration_s": seconds},
+                }
+            ]
+        }
+    }
+
+
+def test_second_manual_edit_inherits_the_prior_generation_brief_binding() -> None:
+    from app.services.phone_editor import _rebind_editor_render_contract, _StagedJob
+
+    inherited = _strict_binding(40)
+    contract = CreatorRenderContract(
+        generation_id="B", brief_digest=_binding_digest(inherited)
+    ).rebind()
+    job = SimpleNamespace(
+        assembly_plan={
+            "variants": [{"variant_id": "v"}],
+            CONTRACT_REVISIONS_FIELD: {"v": contract.model_dump(mode="json")},
+            "creator_brief_bindings": {"B": inherited},
+        },
+        all_candidates={},
+    )
+
+    staged = _StagedJob(job)
+    _rebind_editor_render_contract(
+        staged, "v", {"generation": "C", "sections": {}}, previous_variant={}
+    )
+
+    bindings = staged.assembly_plan["creator_brief_bindings"]
+    assert bindings["C"] == inherited
+    revised = read_render_contract(
+        {CONTRACT_FIELD: staged.assembly_plan[CONTRACT_REVISIONS_FIELD]["v"]}
+    )
+    assert revised is not None and revised.generation_id == "C"
+    assert revised.brief_digest == _binding_digest(bindings["C"])
+
+
+def test_explicit_manual_brief_replacement_overrides_the_inherited_binding() -> None:
+    from app.services.phone_editor import _rebind_editor_render_contract, _StagedJob
+
+    inherited, replacement = _strict_binding(40), _strict_binding(30)
+    contract = CreatorRenderContract(
+        generation_id="B", brief_digest=_binding_digest(inherited)
+    ).rebind()
+    job = SimpleNamespace(
+        assembly_plan={
+            "variants": [{"variant_id": "v"}],
+            CONTRACT_REVISIONS_FIELD: {"v": contract.model_dump(mode="json")},
+            "creator_brief_bindings": {"B": inherited},
+        },
+        all_candidates={},
+    )
+
+    staged = _StagedJob(job)
+    _rebind_editor_render_contract(
+        staged,
+        "v",
+        {"generation": "C", "sections": {}},
+        brief_binding=replacement,
+        previous_variant={},
+    )
+
+    assert staged.assembly_plan["creator_brief_bindings"]["C"] == replacement
+
+
+def test_tampered_prior_generation_binding_fails_instead_of_falling_back_to_root() -> None:
+    from app.services.phone_editor import _rebind_editor_render_contract, _StagedJob
+
+    root, tampered = _strict_binding(40), _strict_binding(30)
+    contract = CreatorRenderContract(generation_id="B", brief_digest=_binding_digest(root)).rebind()
+    staged = _StagedJob(
+        SimpleNamespace(
+            assembly_plan={
+                "variants": [{"variant_id": "v"}],
+                CONTRACT_REVISIONS_FIELD: {"v": contract.model_dump(mode="json")},
+                "creator_brief_binding": root,
+                "creator_brief_bindings": {"B": tampered},
+            },
+            all_candidates={},
+        )
+    )
+
+    with pytest.raises(CreatorRenderContractError, match="approved brief"):
+        _rebind_editor_render_contract(
+            staged, "v", {"generation": "C", "sections": {}}, previous_variant={}
+        )
 
 
 def test_phone_title_save_rebinds_only_its_variant_contract(monkeypatch) -> None:

@@ -196,4 +196,17 @@ def test_debounce_key_uses_configured_ttl(mock_get_redis: MagicMock, mock_start:
         mock_settings.RENDER_WAKE_DEBOUNCE_S = 60
         _maybe_start_render_worker()
 
-    client.set.assert_called_once_with(_RENDER_WAKE_DEBOUNCE_KEY, "1", nx=True, ex=60)
+    client.set.assert_any_call(_RENDER_WAKE_DEBOUNCE_KEY, "1", nx=True, ex=60)
+
+
+@patch("app.services.fly_machines.start_render_worker")
+@patch("app.worker._get_wake_redis")
+def test_debounced_dispatch_still_stamps_activity(mock_get_redis: MagicMock, mock_start: MagicMock):
+    from app.worker import RENDER_WORKER_LAST_DISPATCH_KEY, _maybe_start_render_worker
+
+    client = _redis_client(set_return=False)
+    mock_get_redis.return_value = client
+    with patch("app.worker.time.time", return_value=123.0):
+        _maybe_start_render_worker()
+    client.set.assert_any_call(RENDER_WORKER_LAST_DISPATCH_KEY, "123.0", ex=86400)
+    mock_start.assert_not_called()

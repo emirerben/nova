@@ -7,6 +7,9 @@ set -euo pipefail
 # over to archive.ubuntu.com. Each network phase therefore runs under a hard
 # `timeout` and is retried. Downloading is split from installing so a kill
 # never interrupts dpkg, and finished .debs stay cached for the next attempt.
+# CI needs the requested tools and their dependencies, not recommended desktop
+# drivers or the 27 MB pocketsphinx speech model pulled in by FFmpeg. Keep this
+# policy identical in both phases so offline installation needs no extra fetch.
 #
 # Usage: sudo bash scripts/ci/apt-install.sh <package>...
 
@@ -50,5 +53,5 @@ retry() {
 
 retry "apt-get update" "$update_timeout" apt-get "${acquire[@]}" update
 retry "apt-get download" "$download_timeout" \
-  apt-get "${acquire[@]}" install -y --download-only "$@"
-apt-get install -y --no-download "$@"
+  apt-get "${acquire[@]}" install -y --no-install-recommends --download-only "$@"
+apt-get install -y --no-install-recommends --no-download "$@"

@@ -1946,6 +1946,8 @@ def verify_phone_recipe(
     source_audio: Mapping[str, bool] | None = None,
     composition: CompositionCommitments | None = None,
     length_policy: Any = None,
+    max_export_duration_s: float | None = None,
+    brand_tail_s: float | None = None,
 ) -> list[dict[str, Any]]:
     """Check a compiled phone recipe against the pinned contract.
 
@@ -1958,7 +1960,18 @@ def verify_phone_recipe(
         raise unresolved_decline(contract.unresolved[0])
     manifest = {asset.id: asset for asset in recipe.asset_manifest.assets}
     receipts: list[dict[str, Any]] = []
-    if length_policy is not None:
+    if max_export_duration_s is not None:
+        from app.kria.device_render import BRAND_TAIL_SECONDS  # noqa: PLC0415
+        from app.services.export_duration_policy import check_export_maximum  # noqa: PLC0415
+
+        # Reserve the standard ending before the phone does expensive work.
+        # Publication independently checks the actual bytes, without this estimate.
+        check_export_maximum(
+            recipe.duration
+            + (BRAND_TAIL_SECONDS["standard"] if brand_tail_s is None else brand_tail_s),
+            max_export_duration_s,
+        )
+    elif length_policy is not None:
         from app.services.length_policy_state import check_creator_duration  # noqa: PLC0415
 
         try:

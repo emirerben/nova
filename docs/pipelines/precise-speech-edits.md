@@ -25,7 +25,7 @@ failed or unsupported requests visible to brief checks rather than claiming succ
 ## Request contract
 
 The server acts only on structured brief facts (KRI-667 language policy: no
-regex reading of the creator's words). Main Creator v70 / Brief Extractor v17
+regex reading of the creator's words). Main Creator v75 / Brief Extractor v21
 record them:
 
 - `{"speech_remove":{"quote":"Neredesin","occurrence":2}}` on the named-cut row
@@ -41,7 +41,7 @@ with descriptions only) authorizes no source cut or filter; it keeps the KRI-705
 "A Talking video can't do this" receipt. Re-send the request after deploy. The
 draft-time receipts ("Will locate the requested occurrence ...", the noise plan
 and the noise limits) are format limits, so they never hold a first draft behind
-"a simpler version?" (guard: the `v70-facts` case of
+"a simpler version?" (guard: the `brief-facts` case of
 `test_kri705_phone_talking_t1_brief_names_all_seven_asks_and_promises_no_cut`).
 
 Prompt for the planner:

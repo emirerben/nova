@@ -519,6 +519,20 @@ jobs:
     if: needs.changes.outputs.journey == 'true' && needs.journey-mapping.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: nova_journey_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - name: Prepare journey result directory
@@ -601,6 +615,43 @@ jobs:
           set -o pipefail
           python3 scripts/reliability-gates.py run --all --python python3 \
             --log test-results/kri-559/reliability-gates.log
+      - name: Verify KRI-798 render-worker restart guard
+        if: contains(needs.changes.outputs.journey_ids, 'kri-798-render-worker-restart')
+        working-directory: src/apps/api
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_journey_test
+          STORAGE_BUCKET: nova-test
+          STORAGE_PROVIDER: gcs
+          INTERNAL_API_KEY: test
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY_TEST }}
+        run: |
+          set -o pipefail
+          python -m alembic upgrade head
+          python -m pytest tests/services/test_fly_machines.py \
+            tests/tasks/test_render_worker_lifecycle.py \
+            tests/tasks/test_render_worker_activity_sql.py \
+            tests/test_render_worker_wake.py -q \
+            | tee ../../../test-results/kri-559/kri-798-render-worker-restart.log
+      - name: Verify original named-cut receipts before native allocation
+        if: contains(needs.changes.outputs.journey_ids, 'kri-551-consented-retakes')
+        working-directory: src/apps/api
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_journey_test
+          STORAGE_BUCKET: nova-test
+          NOVA_EVAL_MODE: replay
+          GEMINI_API_KEY: ci-noop
+          OPENAI_API_KEY: ci-noop
+        run: |
+          set -o pipefail
+          python -m alembic upgrade head
+          python -m pytest tests/kria/test_kri787_merope_t1_runtime_postgres.py -q \
+            --junitxml=../../../test-results/kri-559/retake-original-case.xml
+          python - <<'PY'
+          from xml.etree import ElementTree
+          cases = ElementTree.parse("../../../test-results/kri-559/retake-original-case.xml").findall(".//testcase")
+          if len(cases) < 14 or any(case.find("skipped") is not None for case in cases):
+              raise SystemExit("Original named-cut regression must execute all 14 cases without skips")
+          PY
       - name: Verify watermark-aware caption compile and its device fixture
         if: contains(needs.changes.outputs.journey_ids, 'kri-548-caption-watermark')
         working-directory: src/apps/api
@@ -797,7 +848,8 @@ jobs:
         run: |
           set -o pipefail
           python3 -m pytest tests/pipeline/test_phone_opening_cut.py \
-            tests/pipeline/test_phone_take_window.py -q \
+            tests/pipeline/test_phone_take_window.py \
+            tests/kria/test_kri837_one_word_end_line.py -q \
             | tee ../../../test-results/kri-559/opening-cut-api-tests.log
       - name: Verify caption correction keeps spoken order and word timing
         if: contains(needs.changes.outputs.journey_ids, 'kri-708-caption-correction')
@@ -963,6 +1015,25 @@ jobs:
           mkdir -p ../../../test-results/kri-559/kri-215
           python3 -m pytest tests/incidents/test_request_following_loop.py tests/incidents/test_request_following_private_review.py -q \
             --junitxml=../../../test-results/kri-559/kri-215/api-tests.xml
+      - name: Verify retake-aware speech cleanup and consent recovery
+        if: contains(needs.changes.outputs.journey_ids, 'kri-551-consented-retakes')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/agents/test_retake_detector.py \
+            tests/services/test_speech_cleanup_preflight.py tests/services/test_speech_cleanup_retakes_consent.py \
+            tests/services/test_speech_cleanup_decision.py tests/tasks/test_speech_cleanup_analysis.py \
+            tests/routes/test_creation_threads_speech_cleanup.py tests/kria/test_runtime_v2.py \
+            tests/kria/test_runtime_speech_cleanup_approval.py \
+            tests/kria/test_kri520_receipts.py tests/kria/test_brief_talking_receipts.py \
+            tests/kria/test_brief_marathon_receipts.py tests/tasks/test_kri551_cleanup_review_note.py \
+            tests/routes/test_creator_agent.py tests/tasks/test_marathon_render_ready_review.py \
+            tests/kria/test_brief_rendered_speech_facts.py tests/kria/test_runtime_talking_first_draft.py -q \
+            | tee ../../../test-results/kri-559/consented-retakes-api-tests.log
       - name: Seal portable fixture inputs for this exact workflow attempt
         if: needs.changes.outputs.journey_needs_native == 'true'
         run: python3 scripts/ci/journey-gate.py seal-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
@@ -1234,6 +1305,40 @@ jobs:
         run: |
           python3 scripts/ci/journey-gate.py record-native --fixture test-results/kri-559/fixture --head "$KRIA_JOURNEY_HEAD_SHA" --xcresult test-results/kri-559/native.xcresult --test-results test-results/kri-559/native-test-results.json --render test-results/kri-559/fixture/frames/creation_words_retimed.mp4 --app-build test-results/kri-559/app-build.txt --output test-results/kri-559/journey-evidence.json
           python3 scripts/ci/journey-gate.py validate --evidence test-results/kri-559/journey-evidence.json --head "$KRIA_JOURNEY_HEAD_SHA"
+      - name: Verify camera-roll partial consent and independent idea screens
+        if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-729-camera-roll-recommendations')
+        working-directory: src/apps/ios
+        run: |
+          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
+            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
+            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/ios/simulator-id.txt)" \
+            -parallel-testing-enabled NO \
+            -only-testing:KriaUITests/CameraRollCollectionUITests/testPartiallyIndexedCollectionWaitsForExplicitPartialChoice \
+            -only-testing:KriaUITests/CameraRollStoriesUITests/testThreeIdeasRemainIndependentWhenOneIsRejected \
+            -resultBundlePath ../../../test-results/kri-559/camera-roll-ui.xcresult test-without-building
+          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/camera-roll-ui.xcresult \
+            > ../../../test-results/kri-559/camera-roll-ui-tests.json
+          python3 ../../../scripts/ci/journey-gate.py verify-tests \
+            --test-results ../../../test-results/kri-559/camera-roll-ui-tests.json \
+            --xctest CameraRollCollectionUITests/testPartiallyIndexedCollectionWaitsForExplicitPartialChoice \
+            --xctest CameraRollStoriesUITests/testThreeIdeasRemainIndependentWhenOneIsRejected
+      - name: Verify saved originals can finish adding to Visuals
+        if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-384-ios-library')
+        working-directory: src/apps/ios
+        run: |
+          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
+            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
+            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/ios/simulator-id.txt)" \
+            -parallel-testing-enabled NO \
+            -only-testing:KriaUITests/SavedUploadsUITests/testDeviceOnlyVideoAddsToVisualsFromLocalOriginal \
+            -only-testing:KriaUITests/SavedUploadsUITests/testRelinkedOriginalFinishesTheVisualsAdd \
+            -resultBundlePath ../../../test-results/kri-559/saved-originals-ui.xcresult test-without-building
+          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/saved-originals-ui.xcresult \
+            > ../../../test-results/kri-559/saved-originals-ui-tests.json
+          python3 ../../../scripts/ci/journey-gate.py verify-tests \
+            --test-results ../../../test-results/kri-559/saved-originals-ui-tests.json \
+            --xctest SavedUploadsUITests/testDeviceOnlyVideoAddsToVisualsFromLocalOriginal \
+            --xctest SavedUploadsUITests/testRelinkedOriginalFinishesTheVisualsAdd
       - name: Verify selected named native unit journeys
         if: needs.changes.outputs.journey_needs_native == 'true'
         env:

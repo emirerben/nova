@@ -24,6 +24,7 @@ from app.services.creator_render_contract import (
     read_render_contract,
     verify_phone_recipe,
 )
+from app.services.export_duration_policy import approved_export_maximum
 from app.services.phone_editor_sources import editor_source_bindings
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
 
@@ -385,7 +386,11 @@ def _verify_processed_audio_identity(
 
 
 def _verify_contract_pin(
-    job: Any, request: DeviceRenderRequest, base_generation: str
+    job: Any,
+    request: DeviceRenderRequest,
+    base_generation: str,
+    *,
+    reserve_standard_ending: bool = True,
 ) -> tuple[str, list[dict]] | None:
     """Validate a new v2 request against its immutable creator requirements."""
     assembly = job.assembly_plan or {}
@@ -416,6 +421,8 @@ def _verify_contract_pin(
         request.recipe,
         source_audio=source_audio,
         length_policy=read_length_policy(assembly, contract),
+        max_export_duration_s=approved_export_maximum(assembly, contract),
+        brand_tail_s=None if reserve_standard_ending else 0.0,
     )
 
 
@@ -439,7 +446,10 @@ def verify_device_record_contract(job: Any, record: dict, status: DeviceRenderSt
         raise CreatorRenderContractError("This edit belongs to a different approved revision.")
     if record.get("recipe_digest") != _recipe_digest(status.request.recipe):
         raise CreatorRenderContractError("This approved recipe changed; please try again.")
-    _verify_contract_pin(job, status.request, generation)
+    # A stored request may belong to an older client that exported with no ending.
+    # Reserve the standard ending only at new pin time. Publication verifies the
+    # actual declared tail and complete file independently in `_verify_export`.
+    _verify_contract_pin(job, status.request, generation, reserve_standard_ending=False)
 
 
 def pin_device_request(
@@ -557,6 +567,12 @@ def pin_device_request(
         record,
     )
     return True
+
+
+def device_export_maximum(job: Any, variant_id: str) -> float | None:
+    """Read the same immutable authority at delivery and again at publication."""
+    assembly = job.assembly_plan or {}
+    return approved_export_maximum(assembly, _contract_for_variant(assembly, variant_id))
 
 
 def mark_device_failed(

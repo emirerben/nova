@@ -303,6 +303,8 @@ class PlanFacts:
     # Seconds the phone appended after the edit (the Kria outro) when the record says so;
     # never in the plan's own length: a 28.0s plan is a ~29.6s file (KRI-210). 0 = unknown.
     outro_s: float = 0.0
+    # Measured complete exported file, not the recipe's edit duration plus an estimate.
+    measured_export_duration_s: float | None = None
     # KRI-190: clips whose label is on a cut shorter than its reading time (the
     # clip itself is too short). A label the viewer cannot read is not "met".
     unreadable_label_clip_ids: tuple[str, ...] = ()
@@ -1477,6 +1479,17 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     changes = _phone_receipt_facts(
         variant.get("phone_beat_receipt"), timed=variant.get("resolved_archetype") == "narrated"
     )
+    measured = _finite_number(variant.get("measured_export_duration_s"))
+    if (
+        measured is not None
+        and measured > 0
+        and variant.get("ok") is True
+        and variant.get("render_status") == "ready"
+        and variant.get("measured_export_generation_id")
+        and variant.get("measured_export_generation_id") == variant.get("render_generation_id")
+    ):
+        changes["measured_export_duration_s"] = measured
+    changes["outro_s"] = _declared_outro_s(variant)
     bed = _finite_number(variant.get("voiceover_bed_level"))
     if bed is not None:
         changes["voiceover_bed_level"] = max(0.0, bed)
@@ -2478,7 +2491,7 @@ _CLEANUP_VERB_RE = re.compile(
     r"|\bkes|\bçikar|\bsil\b|\bolmasin|\bolmadan"
 )
 # A specific stretch of speech named for removal ("the part where I say ...", a retake,
-# a quoted line): speech cleanup cuts pauses and non-word sounds, never spoken words.
+# a quoted line): a generic cleanup record cannot confirm that this exact spoken line was removed.
 # KRI-792: a slip, stumble, mistake or half-finished question the creator says to cut names
 # spoken words too. Only right after the cut verb (Turkish: right before it), so "captions
 # with no spelling mistakes" stays a captions ask. The fallback for a brief without
@@ -3144,7 +3157,7 @@ _CLEANUP_IF_OFFERED = (
 )
 _CLEANUP_UNAVAILABLE = "Speech cleanup isn't available for this project yet, so the pauses stay"
 _NAMED_CUTS_NEED_EDITOR = (
-    "a retake or a specific line isn't cut automatically yet, so trim that in the editor"
+    "I have not confirmed that exact spoken line was removed; check it in the editor"
 )
 _CAPTIONS_WORD_BY_WORD = "words light up as you say them"
 # KRI-541: what speech cleanup did on a finished render.
@@ -3285,7 +3298,7 @@ _REASON_TR: dict[str, str] = {
         "Konuşma temizliği bu proje için henüz yok, o yüzden duraklamalar kalıyor"
     ),
     _NAMED_CUTS_NEED_EDITOR: (
-        "tekrar çekim ya da belirli bir cümle henüz otomatik kesilmiyor, onu editörde kırp"
+        "o belirli konuşulan cümlenin kaldırıldığını doğrulamadım; editörde kontrol et"
     ),
     _CAPTIONS_WORD_BY_WORD: "kelimeler sen söylerken yanıyor",
     _CLEANUP_DONE: "Konuşma temizliği uzun duraklamaları kesti",
@@ -3922,8 +3935,9 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     """Pauses, retakes and filler the creator asked to cut, against the draft.
 
     Speech cleanup (the preflight check the creator confirms at approval) cuts long
-    pauses and non-word sounds out of a Talking or voiceover edit; it never cuts a
-    spoken line, so a retake or "the bit where I say X" is reported as editor work.
+    pauses and non-word sounds out of a Talking or voiceover edit. A retake count or
+    other generic cleanup record cannot confirm that a requested spoken line was removed,
+    so a retake or "the bit where I say X" stays partial for editor verification.
     A length the same sentence names ("keep it under 45 s") follows the cut take.
     Every honest outcome here is a limit of the format, not a simplification.
     """
@@ -3964,7 +3978,7 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
         return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
     notes = [_loc(lead)]
     if _wants_named_cuts(req):
-        # The cut removes pauses and filler sounds; a named line or retake stays.
+        # The generic cut record cannot prove that this requested line was the removed span.
         notes.append(_loc(_NAMED_CUTS_NEED_EDITOR))
         status = "partial"
     if status == "met" and outcome == "applied":
@@ -4010,10 +4024,11 @@ def speech_cleanup_review_note(
     Read off the variant's own cut record, never off a brief, so the reply is honest even when
     the render's brief binding was lost (prod thread ddc6e71b: the creator asked to cut "the part
     where I restart the kilometer thirty sentence", the cleanup cut 14 silences and a filler,
-    the restart stayed, and no receipt said so). Consented cleanup cuts long pauses and filler
-    sounds only; it never detects a retake, so the limit is stated unless a retake cut really
-    could have run (``retake_cut_possible``) or the record shows one. ``text`` is the reply built
-    so far: a requirement receipt that already reports the limit is not repeated.
+    the restart stayed, and no receipt said so). A generic cleanup count cannot prove whether a
+    requested spoken line was removed, so that remains a partial receipt even when it records a
+    retake. The unbound-review limit is stated unless a retake cut really could have run
+    (``retake_cut_possible``) or the record shows one. ``text`` is the reply built so far: a
+    requirement receipt that already reports the limit is not repeated.
     ``None`` for a variant that is not a speech edit or whose cleanup did not run.
     """
     if variant.get("resolved_archetype") not in _RENDERED_EDIT_FORMATS:
@@ -4082,7 +4097,7 @@ def _merge_cleanup_timing(
     if timing.status == "met":
         return cleanup
     if cleanup.status == "met" or not cleanup.reason:
-        return _receipt(req, "partial", timing.reason)
+        return _receipt(req, "partial", timing.reason, verification=timing.verification)
     if not timing.reason or timing.reason == cleanup.reason:
         return cleanup
     return _receipt(req, "partial", f"{cleanup.reason}; {timing.reason}")
@@ -4915,7 +4930,13 @@ def _end_cut_miss(reason: str | None, quote: str | None) -> str:
 
 
 def _check_opening_cut(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    from app.kria.opening_cut_ask import unread_line_sides  # noqa: PLC0415
+
     start_line, end_line = _take_window_lines(req)
+    # KRI-837: a stored line with no words in it cannot be cut at, but it is still asked: that
+    # side stays unchecked, so the other side's cut never certifies the whole ask.
+    unread_start, unread_end = unread_line_sides(req)
+    ends_asked = bool(end_line) or unread_end
     if not facts.rendered_variant:
         return _receipt(
             req,
@@ -4924,7 +4945,7 @@ def _check_opening_cut(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
                 en="I'll check where the video starts and ends on the finished video.",
                 tr="Videonun nerede başlayıp bittiğini video hazır olunca kontrol edeceğim.",
             )
-            if end_line
+            if ends_asked
             else say(
                 en="I'll check where the video starts on the finished video.",
                 tr="Videonun nereden başladığını video hazır olunca kontrol edeceğim.",
@@ -4940,7 +4961,7 @@ def _check_opening_cut(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         else None,
     ]
     asked = [side for side in sides if side is not None]
-    if any(status is None for status, *_rest in asked):
+    if unread_start or unread_end or any(status is None for status, *_rest in asked):
         return _receipt(
             req,
             "partial",
@@ -4948,7 +4969,7 @@ def _check_opening_cut(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
                 en="This video didn't record where it starts, so I can't check it.",
                 tr="Bu video nereden başladığını kaydetmedi, o yüzden kontrol edemiyorum.",
             )
-            if not end_line
+            if not ends_asked
             else say(
                 en="This video didn't record where it starts and ends, so I can't check it.",
                 tr="Bu video nerede başlayıp bittiğini kaydetmedi, o yüzden kontrol edemiyorum.",
@@ -4969,6 +4990,36 @@ def _check_opening_cut(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
 
 
 def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    from app.services.length_policy import (  # noqa: PLC0415
+        strict_duration_limit_s,
+        strict_duration_matches,
+    )
+
+    maximum = strict_duration_limit_s(req)
+    if maximum is not None:
+        measured = facts.measured_export_duration_s
+        if measured is None:
+            return _receipt(
+                req,
+                "partial",
+                say(
+                    en="I'll check the full video length, including its ending, after export.",
+                    tr="Kapanış dahil tam video süresini dışa aktardıktan sonra kontrol edeceğim.",
+                ),
+                verification="unchecked",
+            )
+        if strict_duration_matches(measured, maximum):
+            return _receipt(req, "met", None)
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"The finished video is {_round_s(measured)}s including its ending; "
+                f"you asked for under {_round_s(maximum)}s.",
+                tr=f"Kapanışı dahil bitmiş video {_round_s(measured)} saniye; "
+                f"{_round_s(maximum)} saniyenin altında istemiştin.",
+            ),
+        )
     if clip_length_ask(req) is not None:
         # KRI-558: a per-clip length is judged on the clips, never against the total length.
         return _check_clip_lengths(req, facts)

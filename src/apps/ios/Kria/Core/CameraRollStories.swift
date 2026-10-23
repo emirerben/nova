@@ -60,10 +60,10 @@ struct CameraRollStoryResearch: Codable, Sendable {
         let url: String
     }
 }
-struct CameraRollStories: Decodable, Sendable {
+struct CameraRollStories: Codable, Sendable {
     let stories: [CameraRollStory]
     let coverage: Coverage
-    struct Coverage: Decodable, Sendable {
+    struct Coverage: Codable, Sendable {
         let moments: [CameraRollMoment]
         let incompleteSpeech: [UUID]
         let unindexed: [UUID]
@@ -87,6 +87,10 @@ extension KriaAPIClient {
     func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool, researchTopic: String?) async throws -> CameraRollStories {
         guard researchTopic == nil else { throw APIError.unsupported }
         return try await cameraRollStories(id: id, revision: revision, query: query, cacheOnly: cacheOnly)
+    }
+    func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool, researchTopic: String?, allowPartialAnalysis: Bool) async throws -> CameraRollStories {
+        guard !allowPartialAnalysis else { throw APIError.unsupported }
+        return try await cameraRollStories(id: id, revision: revision, query: query, cacheOnly: cacheOnly, researchTopic: researchTopic)
     }
     func recordCameraRollStoryExposure(collectionID: UUID, story: CameraRollStory, collectionRevision: Int) async throws { throw APIError.unsupported }
     func correctCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, index: Int, momentID: UUID, eventID: String) async throws -> CameraRollStory { throw APIError.unsupported }
@@ -116,7 +120,10 @@ extension KriaAPI {
         try await cameraRollStories(id: id, revision: revision, query: query, cacheOnly: cacheOnly, researchTopic: nil)
     }
     func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool, researchTopic: String?) async throws -> CameraRollStories {
-        var body: [String: JSONValue] = ["expected_revision": .number(Double(revision)), "query": .string(String(query.prefix(500))), "cache_only": .bool(cacheOnly)]
+        try await cameraRollStories(id: id, revision: revision, query: query, cacheOnly: cacheOnly, researchTopic: researchTopic, allowPartialAnalysis: false)
+    }
+    func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool, researchTopic: String?, allowPartialAnalysis: Bool) async throws -> CameraRollStories {
+        var body: [String: JSONValue] = ["expected_revision": .number(Double(revision)), "query": .string(String(query.prefix(500))), "cache_only": .bool(cacheOnly), "allow_partial_analysis": .bool(allowPartialAnalysis)]
         if let researchTopic { body["research_topic"] = .string(String(researchTopic.prefix(200))) }
         return try await request(path: "me/media-collections/\(id)/stories", method: "POST", bodyData: JSONEncoder().encode(body), decode: CameraRollStories.self, timeoutInterval: researchTopic == nil ? 90 : 130)
     }

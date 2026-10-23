@@ -88,15 +88,37 @@ async def candidate_evidence(db, owner, identifier, revision, query="", *, momen
         for asset, source in eligible.values()
         if asset.kind == "video" and source.role == "analysis_proxy"
     }
+    supported_assets = {
+        asset.id
+        for asset, source in eligible.values()
+        if asset.kind == "video" and source.role == "analysis_proxy"
+    }
     # Only offer the hardware-verified adapter. Other catalogue sources remain
     # searchable, but cannot be advertised as executable phone stories.
     return evidence.model_copy(
-        update={"moments": [value for value in evidence.moments if value.source_id in supported]}
+        update={
+            "moments": [value for value in evidence.moments if value.source_id in supported],
+            "unindexed_asset_ids": [
+                value for value in evidence.unindexed_asset_ids if value in supported_assets
+            ],
+        }
     )
+
+
+def require_requested_coverage(evidence, body):
+    if evidence.unindexed_asset_ids and not body.allow_partial_analysis:
+        count = len(evidence.unindexed_asset_ids)
+        subject = "video still needs" if count == 1 else "videos still need"
+        raise HTTPException(
+            409,
+            f"{count} {subject} usable analysis. "
+            "Wait for analysis or retry those uploads, then find ideas again.",
+        )
 
 
 async def generate_stories(db, owner, identifier, body):
     evidence = await candidate_evidence(db, owner, identifier, body.expected_revision, body.query)
+    require_requested_coverage(evidence, body)
     candidates = [value for value in evidence.moments if 1 <= value.end_s - value.start_s <= 20]
     if not candidates:
         return CollectionStoriesOut(revision=body.expected_revision, stories=[], coverage=evidence)
@@ -131,6 +153,7 @@ async def generate_stories(db, owner, identifier, body):
                 input.model_dump(),
                 [value.evidence.get("index_spec") for value in candidates],
                 body.expected_revision,
+                body.allow_partial_analysis,
                 [research_topic, research_spec_identity()] if research_topic else None,
             ],
             sort_keys=True,
@@ -174,7 +197,11 @@ async def generate_stories(db, owner, identifier, body):
             raise
     else:
         raise HTTPException(
-            409 if claim.status == "busy" else 503, "Stories are pending; retry shortly"
+            409 if claim.status == "busy" else 503,
+            {
+                "code": "collection_analysis_pending",
+                "message": "Stories are pending; retry shortly",
+            },
         )
     await media_collections.lock_library_owner(db, owner)
     # Serialize the final check with pause, Forget, profile changes and feedback.
@@ -183,6 +210,7 @@ async def generate_stories(db, owner, identifier, body):
     if taste != await creator_editorial_taste.generation_context(db, owner, taste_query):
         raise HTTPException(409, "Personalization changed; request ideas again")
     fresh = await candidate_evidence(db, owner, identifier, body.expected_revision, body.query)
+    require_requested_coverage(fresh, body)
     by_id = {str(value.id): value for value in fresh.moments}
     accepted = []
     seen = set()
@@ -192,7 +220,13 @@ async def generate_stories(db, owner, identifier, body):
             continue
         moments = [by_id[value] for value in ids]
         duration = sum(value.end_s - value.start_s for value in moments)
-        identity = frozenset(ids)
+        # Multiple editorial ideas may reuse the same footage. Renaming a card
+        # or changing its rationale/source IDs does not make repeated copy new.
+        plan = idea.content_plan
+        identity = tuple(
+            " ".join(text.casefold().split())
+            for text in (plan.opening_text, plan.closing_text or "", plan.caption)
+        )
         if not 1 <= duration <= 60 or identity in seen:
             continue
         seen.add(identity)

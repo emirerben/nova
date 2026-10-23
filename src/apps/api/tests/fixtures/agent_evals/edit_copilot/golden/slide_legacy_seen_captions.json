@@ -1,0 +1,250 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-10-19-v85",
+  "input": {
+    "utterance": "write a short caption on each slide explaining what it shows",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "surface": "slide_post",
+      "allowed_op_families": [
+        "text",
+        "clip",
+        "timeline",
+        "slides"
+      ],
+      "base_generation": "slide-post-v2",
+      "has_narrated_captions": false,
+      "max_duration_s": 5.0,
+      "remaining_duration_s": 0.0,
+      "slots": [
+        {
+          "key": "s0",
+          "slot_id": "s0",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 0.0,
+          "output_end_s": 1.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "s0",
+          "seen": {
+            "text": "An iced matcha latte in a clear cup on a wooden cafe table",
+            "provenance": "vision"
+          },
+          "is_cover": true
+        },
+        {
+          "key": "s1",
+          "slot_id": "s1",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 1.0,
+          "output_end_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "s1",
+          "seen": {
+            "text": "A golden retriever lying on a striped beach towel in the sun",
+            "provenance": "vision"
+          },
+          "is_cover": false
+        },
+        {
+          "key": "s2",
+          "slot_id": "s2",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 2.0,
+          "output_end_s": 3.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "s2",
+          "seen": {
+            "text": "Orange sunset over the Bosphorus with a ferry crossing",
+            "provenance": "vision"
+          },
+          "is_cover": false
+        },
+        {
+          "key": "s3",
+          "slot_id": "s3",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 3.0,
+          "output_end_s": 4.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "s3",
+          "seen": {
+            "text": "Second-hand bookshop shelves",
+            "provenance": "vision"
+          },
+          "is_cover": false
+        },
+        {
+          "key": "s4",
+          "slot_id": "s4",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 4.0,
+          "output_end_s": 5.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "s4",
+          "seen": {
+            "text": "Two friends laughing over a table of meze plates",
+            "provenance": "vision"
+          },
+          "is_cover": false
+        }
+      ],
+      "text_bars": [],
+      "total_duration_s": 5.0,
+      "post": {
+        "caption": "",
+        "cover_index": 0,
+        "platform_profile": "tiktok_photo"
+      },
+      "editor_ops_version": 2
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"add_text\", \"text\": \"Iced matcha, slow start\", \"start_s\": 0.0, \"end_s\": 1.0, \"clip_id\": \"s0\"}, {\"op\": \"add_text\", \"text\": \"Golden retriever beach nap\", \"start_s\": 1.0, \"end_s\": 2.0, \"clip_id\": \"s1\"}, {\"op\": \"add_text\", \"text\": \"Bosphorus sunset ferry\", \"start_s\": 2.0, \"end_s\": 3.0, \"clip_id\": \"s2\"}, {\"op\": \"add_text\", \"text\": \"Lost in bookshop shelves\", \"start_s\": 3.0, \"end_s\": 4.0, \"clip_id\": \"s3\"}, {\"op\": \"add_text\", \"text\": \"Meze and laughing friends\", \"start_s\": 4.0, \"end_s\": 5.0, \"clip_id\": \"s4\"}], \"confidence\": 0.9, \"reply\": \"Added a caption on each slide from what's in the photos.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "add_text",
+        "text": "Iced matcha, slow start",
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "clip_id": "s0",
+        "style_from": "labels"
+      },
+      {
+        "op": "add_text",
+        "text": "Golden retriever beach nap",
+        "start_s": 1.0,
+        "end_s": 2.0,
+        "clip_id": "s1",
+        "style_from": "labels"
+      },
+      {
+        "op": "add_text",
+        "text": "Bosphorus sunset ferry",
+        "start_s": 2.0,
+        "end_s": 3.0,
+        "clip_id": "s2",
+        "style_from": "labels"
+      },
+      {
+        "op": "add_text",
+        "text": "Lost in bookshop shelves",
+        "start_s": 3.0,
+        "end_s": 4.0,
+        "clip_id": "s3",
+        "style_from": "labels"
+      },
+      {
+        "op": "add_text",
+        "text": "Meze and laughing friends",
+        "start_s": 4.0,
+        "end_s": 5.0,
+        "clip_id": "s4",
+        "style_from": "labels"
+      }
+    ],
+    "confidence": 0.9,
+    "reply": "Added a caption on each slide from what's in the photos. I wrote these from what I saw in each clip, so tell me if any is wrong: clip 1: Iced matcha, slow start; clip 2: Golden retriever beach nap; clip 3: Bosphorus sunset ferry; clip 4: Lost in bookshop shelves; clip 5: Meze and laughing friends.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "proposed",
+    "rejection_reasons": [],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": [],
+    "reply_notes": "I wrote these from what I saw in each clip, so tell me if any is wrong: clip 1: Iced matcha, slow start; clip 2: Golden retriever beach nap; clip 3: Bosphorus sunset ferry; clip 4: Lost in bookshop shelves; clip 5: Meze and laughing friends.",
+    "claimed_ops": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "lane": "kri-817-slide-legacy-seen",
+    "case": "KRI-817 T09: five ready slides with only legacy description/subject get grounded captions",
+    "exact_edit_ops": [
+      {
+        "op": "add_text",
+        "text": "Iced matcha, slow start",
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "clip_id": "s0",
+        "style_from": "labels"
+      },
+      {
+        "op": "add_text",
+        "text": "Golden retriever beach nap",
+        "start_s": 1.0,
+        "end_s": 2.0,
+        "clip_id": "s1",
+        "style_from": "labels"
+      },
+      {
+        "op": "add_text",
+        "text": "Bosphorus sunset ferry",
+        "start_s": 2.0,
+        "end_s": 3.0,
+        "clip_id": "s2",
+        "style_from": "labels"
+      },
+      {
+        "op": "add_text",
+        "text": "Lost in bookshop shelves",
+        "start_s": 3.0,
+        "end_s": 4.0,
+        "clip_id": "s3",
+        "style_from": "labels"
+      },
+      {
+        "op": "add_text",
+        "text": "Meze and laughing friends",
+        "start_s": 4.0,
+        "end_s": 5.0,
+        "clip_id": "s4",
+        "style_from": "labels"
+      }
+    ]
+  }
+}

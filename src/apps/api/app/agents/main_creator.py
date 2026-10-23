@@ -103,10 +103,17 @@ log = structlog.get_logger()
 # `end_line`), never an `order` requirement; route places keep `order` (v67).
 # v68 combines caption spelling, spoken-text triggers/speaker, quoted trims and named cuts.
 # v69 retains all shared brief instructions plus editorial audio pairing.
+# v70 (KRI-851): the Talking reaction-beats section no longer forbids `opening_title`; a requested
+# title / closing text still goes in `opening_title` / `closing_title` alongside the beats.
+# KRI-814: a typed `delegates_all_choices` declaration for a message that states no requirement
+# and hands every choice to Kria, so readiness need not match the stock sentence (v71).
+# v72 (KRI-814): earlier creator lines never read into the brief are read with the current one.
+# v74 combines delegation v72 with subtitle-semantics v73, retaining all instructions.
 # KRI-724: the Nth time a quoted phrase is said carries `speech_remove` {quote, occurrence}
 # beside its cut_lines, and an engine/motor noise ask carries `noise_reduction: "engine"`, so
-# the phone Talking worker cuts / filters from facts, never from the words (KRI-667) (v70).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v70"
+# the phone Talking worker cuts / filters from facts, never from the words (KRI-667) (v75,
+# on top of v74).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v75"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -248,8 +255,9 @@ Greenwood", "visual_id": "<the matching media_context entry's media_id>", "visua
 Never set `licensed_sfx` on this edit once this capability is available -- beats place sound
 at the exact moments the creator named instead. A bare "add fun sound effects" with no named
 spoken moment adds NO beats; say in `summary` that only sounds tied to the moments the creator
-named are added on iPhone. This edit always stays `edit_format: "subtitled"` with no
-`opening_title`.
+named are added on iPhone. This edit always stays `edit_format: "subtitled"`. Beats never
+replace a title: when the creator asks for a hook/opening title or closing text, still set
+`opening_title` / `closing_title` by the title rules above, alongside the beats.
 """.strip("\n")
 
 # KRI-519: the same beats on a phone Voiceover edit, grounded against the recorded
@@ -392,6 +400,22 @@ style or timing requirement as well. Never shorten a compound request to the one
 strategy happens to expose. Descriptions may retain behavior requiring composition of operations.
 Do not duplicate an opening hook as a per-clip caption unless the creator requests both.
 
+Captions and subtitles are the speech lane (Turkish: "altyazı"); titles, labels, callouts
+and decorative words are separate authored text. Record speech subtitles as a `style`
+requirement with `facts.captions` and, when requested, `facts.caption_language`, never as
+literal text to print. Keep its description about subtitles; record source-audio and
+visual-cue instructions as separate requirements. "English subtitles; title X; no text
+except the title" and
+"İngilizce altyazı; başlık X; başlık dışında başka yazı olmasın" keep BOTH that subtitle
+requirement and the title. Record the added-text restriction separately as a `style`
+requirement with its complete description and null literal; the restriction itself is
+not on-screen copy. Do not infer `captions: "off"`, remove/change a caption requirement,
+or ask a contradiction question because added text is restricted. This also applies to
+follow-up requests to remove extra text: preserve existing subtitle language and style.
+Only an explicit request to remove captions/subtitles, or all writing INCLUDING
+subtitles, turns off that speech-caption requirement. A named smaller heading under a
+title remains authored text. Keep explicit wording, scope and later corrections intact.
+
 When a real requirement is present, ALWAYS record the structured facts that belong to it, even
 when the same words also sit in a title or sentence: a distance, activity, start point, or end
 point ("I ran 20K from Arnavutköy to Eminönü") go in `facts` as {"distance_km": 20,
@@ -504,6 +528,18 @@ picks one of the alternatives you offered in your previous question, their origi
 changed to that alternative: record the superseded requirements with `change` or `remove`
 (exact `target_requirement_id` and `expected_version` from the contract) and plan the chosen
 alternative using the original request's exact words.
+Also return a top-level boolean `delegates_all_choices`. Set it to true ONLY when the CURRENT
+USER MESSAGE states no requirement at all and hands every creative choice to you ("Make
+something great from my Troya trip", "Suggest an edit", "you decide", "Troya gezimden harika bir
+şey yap", "Bana bir düzenleme öner"); `brief_updates` is then empty. Set it to false whenever the
+message asks for anything specific (a title or other text, a length, an order, clips to use or
+skip, music or sound, a look), even when it also says "suggest an edit" or "you decide the
+rest", and whenever you are unsure. It never withdraws a requirement already in the contract.
+When the contract is "Creative brief v0 (nothing recorded yet)" and lists earlier creator
+messages, those messages were never read into the brief: treat them as part of the CURRENT USER
+MESSAGE. Record every requirement any of them states as an `add`, and set
+`delegates_all_choices` to true only when neither they nor the current message state any
+requirement.
 """.strip("\n")
 
 
@@ -535,6 +571,10 @@ class MainCreatorOutput(BaseModel):
     # KRI-188: requirements newly stated/changed by the current message. Empty
     # (and omitted from dumps) unless the brief is enabled for this creator.
     brief_updates: list[BriefUpdate] = Field(default_factory=list, exclude_if=lambda v: not v)
+    # KRI-814: the extraction step's typed declaration that the current message states no
+    # requirement and delegates every choice. Only ever True with no `brief_updates`; the
+    # server, never the strategy or summary prose, turns it into an empty brief version.
+    delegates_all_choices: bool = Field(default=False, exclude_if=lambda v: not v)
     creative_decision: CreativeCopyDecision | None = Field(
         default=None, exclude_if=lambda v: v is None
     )
@@ -843,6 +883,11 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         )
                         strategy = strategy.model_copy(update={"editorial_plan": None})
                 action = action.model_copy(update={"strategy": strategy})
+            brief_updates = (
+                _refile_take_trims(parse_brief_updates(data.get("brief_updates")), input)
+                if input.brief_enabled
+                else []
+            )
             return MainCreatorOutput(
                 action=action,
                 creative_decision=(
@@ -850,11 +895,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     if data.get("creative_decision") is not None
                     else None
                 ),
-                brief_updates=(
-                    _refile_take_trims(parse_brief_updates(data.get("brief_updates")), input)
-                    if input.brief_enabled
-                    else []
-                ),
+                brief_updates=brief_updates,
+                # KRI-814: a declaration beside stated requirements contradicts itself; fail
+                # closed (the requirements stand, nothing is recorded as delegated).
+                delegates_all_choices=input.brief_enabled
+                and data.get("delegates_all_choices") is True
+                and not brief_updates,
             )
         except ValidationError as exc:
             # Tell the retry which contract fields failed, without echoing

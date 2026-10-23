@@ -1296,7 +1296,8 @@ def public_projection(
         error = _public_error(row.failure_code)
         raw_counts = row.category_counts if isinstance(row.category_counts, dict) else {}
         category_counts = {
-            key: _public_count(raw_counts.get(key)) for key in ("filler_sounds", "long_pauses")
+            key: _public_count(raw_counts.get(key))
+            for key in ("filler_sounds", "long_pauses", "retakes")
         }
         # Consent copy states the outcome, not only the delta, so the creator
         # sees how long the edit becomes before accepting it. Both stay

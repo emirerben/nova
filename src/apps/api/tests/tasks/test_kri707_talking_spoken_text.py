@@ -149,7 +149,18 @@ T1_REQUIREMENTS = [
         scope="title",
         literal="Gece 11, tekneyle Tigre'ye",
     ),
-    _req("r7", "timing", "20 saniyenin altında olsun", facts={"duration_s": 20}),
+    # Prod's r7 was "20 saniyenin altında olsun" (duration_s 20). Since KRI-629 that is an
+    # exclusive cap on the whole export, ending included, and this take runs ~25 s after the
+    # opening cut, so the device pin refuses it unless the creator keeps the take's length.
+    # Approval now asks that first (length vs. take: 28 s + the 1.6 s ending); this replay is
+    # the creator choosing "Mevcut 29.6 saniyeyi kullan", which rewrites r7 as below
+    # (`answered_brief`), so the render still reaches the phone as the prod T1 one did.
+    _req(
+        "r7",
+        "timing",
+        "29.6 saniye olsun (20 saniye yerine, eldeki çekimlerin uzunluğu)",
+        facts={"duration_s": 29.6},
+    ),
 ]
 # The approved strategy (job 8e35335a `creator_strategy`), trimmed to what is read.
 T1_STRATEGY = {
@@ -253,7 +264,7 @@ def _t1_job(monkeypatch, *, brief: CreativeBrief | None = None, lanes: bool = Tr
             CONTRACT_FIELD: contract.model_dump(mode="json"),
         }
     )
-    # As prod stamped it: "under 20 s" on a 28 s take is logged, not enforced.
+    # As prod stamped it: the KRI-492 length check is logged, not enforced.
     snapshot.update(stamp_length_policy({}, T1_STRATEGY, contract, mode="log_only"))
     for key in (
         "speech_cleanup_contract",

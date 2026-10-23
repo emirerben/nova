@@ -471,7 +471,9 @@ async def test_the_chat_planner_passes_the_brief_ask_to_clip_planning(monkeypatc
     monkeypatch.setattr(
         planner,
         "check_strategy_for_runtime_v2",
-        lambda _manifest, strategy: CheckedStrategy(strategy=strategy, notices=()),
+        lambda _manifest, strategy, *, simplify_unsupported=False: CheckedStrategy(
+            strategy=strategy, notices=()
+        ),
     )
 
     await planner._plan_from_creator_output(

@@ -34,7 +34,13 @@ def claim_collection_analysis(key, *, cache_only=False, **kwargs):
     if cached is not None:
         return MediaAssetFactClaim(status="ready", result_json=cached)
     if cache_only or settings.media_collection_cache_only:
-        raise HTTPException(409, "No eligible cached result; new model calls are disabled")
+        raise HTTPException(
+            409,
+            {
+                "code": "collection_analysis_unavailable",
+                "message": "No eligible cached result; new model calls are disabled",
+            },
+        )
     return claim_media_asset_fact(_request_key(key), **kwargs)
 
 

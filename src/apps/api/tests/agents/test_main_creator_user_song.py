@@ -40,17 +40,18 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # renders remain unchanged. Re-pin brief-on hashes only after reviewing both additions.
 # v67 preserves those instructions and adds quoted start_line/end_line trim facts.
 # v68 combines caption spellings, spoken triggers/speaker, quoted trims and named cuts.
-# Only brief-on hashes change after reviewing the complete instruction union.
 # v69 retains editorial pairing with caption/spoken-text/quoted-trim/named-cut facts.
-# Brief-off hashes remain the reviewed editorial baseline; only brief-on hashes
-# change for the cumulative shared brief instructions.
-# v70 (KRI-724) adds the `speech_remove` and `noise_reduction` brief facts: only the two
-# brief-on renders change.
+# v70 (KRI-851) edits only the Talking reaction-beats section, which these no-beats
+# montage renders never include: all four hashes are unchanged.
+# v71 (KRI-814) adds the typed `delegates_all_choices` declaration: brief-on hashes only.
+# v72 (KRI-814) re-reads unrecorded earlier creator lines: brief-on hashes only.
+# v74 combines subtitle semantics and delegation; brief-off matches subtitle v73 exactly.
+# v75 (KRI-724) adds the `speech_remove` and `noise_reduction` brief facts: brief-on only.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, False): "ba2f0743754b875c49e3a94f5112cbb9595e786d9328f557fb0e30777b89e725",
-    (True, True): "d3f4f22f0ad70cf9b36a777cf3a06fcc597d4a56a0ec28df444e3124376b25fb",
-    (False, False): "b49f8c15b28a37d5ef66dbc9e1d1c3a8c724482d91f2e609aad4f6abd0b6d13a",
-    (False, True): "fc59abd7ed86049e15ed327c9e3264df648cc6c79b1a326ffb6bd38aee688554",
+    (True, True): "abf3023e7cd3381ecc5222377e5ff002f417cfe7cd516bdccf1883bb66e6d3d5",
+    (True, False): "e33c7b44e601b95b61036b2806cc2111d8aa20204994881bf8fe128534b5cf3c",
+    (False, True): "8f288911184ea1d461455e1c75790510a07c7a12063414e7cede795039dc2870",
+    (False, False): "6e32911313c9667767209df7d6d929db36873990e5dceb2d27549ba179569c1d",
 }
 
 
@@ -120,7 +121,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-23-v70"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-23-v75"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

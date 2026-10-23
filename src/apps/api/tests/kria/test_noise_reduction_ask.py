@@ -19,7 +19,7 @@ def test_engine_noise_fact_on_an_audio_ask_authorizes_the_filter():
 @pytest.mark.parametrize(
     ("kind", "description", "facts"),
     [
-        # KRI-667: the words alone (a brief stored before v70, prod T1's r5) never authorize it.
+        # KRI-667: the words alone (a brief stored before v75, prod T1's r5) never authorize it.
         ("audio", "Motor sesini biraz kıs, sesim öne çıksın", {}),
         ("audio", "Reduce engine noise separately from speech", {}),
         ("audio", "Reduce wind noise", {"noise_reduction": "wind"}),
