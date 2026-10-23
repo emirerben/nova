@@ -1,7 +1,9 @@
 """Real draft save/reopen/undo for inert comparison outputs; no model/broker mocks."""
 
 import json
+import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
@@ -32,7 +34,7 @@ def test_persistence_refuses_live_or_nonlocal_database(url):
 
 
 @pytest.mark.asyncio
-async def test_main_output_commits_reopens_rejects_stale_and_undoes():
+async def test_main_output_commits_reopens_rejects_stale_and_undoes(monkeypatch):
     from app.agents.main_creator import MainCreatorAgent
 
     fixture = json.loads(
@@ -54,8 +56,16 @@ async def test_main_output_commits_reopens_rejects_stale_and_undoes():
         "source_kind": "synthetic_control",
     }
     case["input_sha256"] = digest(case["input"])
-    async with AsyncSessionLocal() as db:
-        before = await db.scalar(select(func.count()).select_from(User))
+    # xdist workers share one test database, so a global User count races with any
+    # concurrent test that adds a user (CI: 265 != 258). Track the scratch ids this
+    # call mints and require that none of them survives.
+    minted: list[uuid.UUID] = []
+
+    def _uuid4() -> uuid.UUID:
+        minted.append(uuid.uuid4())
+        return minted[-1]
+
+    monkeypatch.setattr(persistence, "uuid", SimpleNamespace(uuid4=_uuid4))
     result = await persistence.verify_saved_candidate(case, output)
     assert result["status"] == "verified"
     assert result["checks"] == {
@@ -66,8 +76,10 @@ async def test_main_output_commits_reopens_rejects_stale_and_undoes():
         "scratch_rows_removed": True,
     }
     assert result["rendered"] is False and result["source_kind"] == "synthetic_control"
+    assert minted
     async with AsyncSessionLocal() as db:
-        assert await db.scalar(select(func.count()).select_from(User)) == before
+        leaked = await db.scalar(select(func.count()).select_from(User).where(User.id.in_(minted)))
+    assert leaked == 0
 
 
 @pytest.mark.asyncio

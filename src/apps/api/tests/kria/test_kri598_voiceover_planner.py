@@ -253,14 +253,33 @@ def _drafted(planned) -> dict[str, Any]:
 # 1 + 2 -----------------------------------------------------------------------
 
 
-def test_runtime_v2_voiceover_manifest_closes_only_the_guided_contract(prod_profile) -> None:
+def test_runtime_v2_voiceover_manifest_closes_only_the_guided_contract(
+    prod_profile, monkeypatch
+) -> None:
+    # Preserve the recorded production manifest as historical evidence with the
+    # new Voiceover fullscreen lane disabled.
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_fullscreen_overlays_enabled", False)
+    historical_v1 = _manifest(runs_guided_voiceover=True)
+    historical_v2 = _manifest(runs_guided_voiceover=False)
+    assert {
+        name: cap.model_dump(mode="json") for name, cap in historical_v1.capabilities.items()
+    } == CASE["recorded_capabilities"]
+
+    # With the existing fullscreen flag on, N2 adds only its declared
+    # capability. The old guided-contract behavior and every other capability
+    # remain byte-for-byte equivalent to the historical manifest.
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_fullscreen_overlays_enabled", True)
     v1 = _manifest(runs_guided_voiceover=True)
     v2 = _manifest(runs_guided_voiceover=False)
-
-    # The fixture reproduces the manifest the prod model saw (catalog aside).
-    assert {name: cap.model_dump(mode="json") for name, cap in v1.capabilities.items()} == CASE[
-        "recorded_capabilities"
-    ]
+    fullscreen = capabilities.CAPABILITY_MEDIA_OVERLAY_FULLSCREEN
+    assert v1.capabilities[fullscreen].available is True
+    assert v2.capabilities[fullscreen].available is True
+    assert {name: cap for name, cap in v1.capabilities.items() if name != fullscreen} == {
+        name: cap for name, cap in historical_v1.capabilities.items() if name != fullscreen
+    }
+    assert {name: cap for name, cap in v2.capabilities.items() if name != fullscreen} == {
+        name: cap for name, cap in historical_v2.capabilities.items() if name != fullscreen
+    }
     assert v1.capabilities[CAPABILITY_GUIDED_VOICEOVER].available is True
 
     closed = v2.capabilities[CAPABILITY_GUIDED_VOICEOVER]

@@ -82,6 +82,7 @@ OCCURRENCE_CAP_REASON = "occurrence_cap"
 
 _PHOTO_HOLD_S_DEFAULT = 3.0
 _STICKER_HOLD_S_DEFAULT = 2.5
+_FULLSCREEN_FOLLOWING_HOLD_S_DEFAULT = 1.5
 # KRI-521: a video beat plays its own length by default, capped so a long clip
 # doesn't sit in the corner for half the take.
 _VIDEO_HOLD_S_MAX = 6.0
@@ -449,10 +450,12 @@ class _CardCandidate:
     beat_id: str
     n: int
     trigger: str
-    slot: str  # "photo" | "sticker"
+    slot: str  # "photo" | "sticker" | "fullscreen"
     start_s: float
     end_s: float
     asset: dict
+    display_mode: str = "pip"
+    following_clip_id: str | None = None
 
 
 @dataclass
@@ -530,6 +533,7 @@ def ground_phone_reaction_beats(
     duration_s: float,
     clip_path: str | None,
     video_supported: bool = False,
+    allow_fullscreen: bool = False,
     face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
 ) -> GroundedReactionBeats:
     """Ground creator-authored reaction beats + closing media against the
@@ -600,6 +604,16 @@ def ground_phone_reaction_beats(
             slot = "photo" if visual_role == "photo" else "sticker"
             sound_request = raw_beat.get("sound")
             hold_s = raw_beat.get("hold_s")
+            display_mode = "fullscreen" if raw_beat.get("display_mode") == "fullscreen" else "pip"
+            following_clip_id = (
+                str(raw_beat["following_clip_id"])
+                if display_mode == "fullscreen" and raw_beat.get("following_clip_id")
+                else None
+            )
+
+            if display_mode == "fullscreen" and not allow_fullscreen:
+                _record_beat_failure(beat_id, trigger, "fullscreen_not_enabled")
+                continue
 
             if not visual_id and not sound_request:
                 _record_beat_failure(beat_id, trigger, "error: beat has neither visual nor sound")
@@ -617,6 +631,10 @@ def ground_phone_reaction_beats(
             if is_video:
                 # A video is a picture-in-picture clip, never a sticker badge.
                 slot = "photo"
+            if display_mode == "fullscreen":
+                # Full-frame cards are a separate sequential picture lane.
+                # They neither use PiP slots nor face/caption-safe geometry.
+                slot = "fullscreen"
 
             match = _match_trigger(stream, trigger, after, str(occurrence_mode))
             if match.reason:
@@ -638,12 +656,18 @@ def ground_phone_reaction_beats(
             windows = match.windows[:keep]
 
             hold = _coerce_float(hold_s, 0.0) if hold_s is not None else None
-            if is_video and asset is not None:
+            if following_clip_id is not None and hold is None:
+                hold = _FULLSCREEN_FOLLOWING_HOLD_S_DEFAULT
+            elif is_video and asset is not None:
                 video_s = _coerce_float(asset.get("duration_s"), 0.0)
                 natural = video_s if video_s > 0 else _VIDEO_HOLD_S_MAX
                 hold = min(hold if hold is not None else _VIDEO_HOLD_S_MAX, natural)
             elif hold is None:
-                hold = _PHOTO_HOLD_S_DEFAULT if slot == "photo" else _STICKER_HOLD_S_DEFAULT
+                hold = (
+                    _PHOTO_HOLD_S_DEFAULT
+                    if display_mode == "fullscreen" or slot == "photo"
+                    else _STICKER_HOLD_S_DEFAULT
+                )
 
             any_success = False
             for occurrence_index, (match_start_s, match_end_s) in enumerate(windows, start=1):
@@ -679,6 +703,8 @@ def ground_phone_reaction_beats(
                                 start_s=win_start,
                                 end_s=win_end,
                                 asset=asset,
+                                display_mode=display_mode,
+                                following_clip_id=following_clip_id,
                             )
                         )
                         occ.card_id = card_id
@@ -866,6 +892,8 @@ def ground_phone_reaction_beats(
     overlays_for_arbitration: list[dict[str, Any]] = []
     footprints_by_id: dict[str, MediaFootprint] = {}
     for card_id, card in cards_by_id.items():
+        if card.display_mode == "fullscreen":
+            continue
         defaults = _slot_defaults(card.slot)
         aspect = float(card.asset["aspect"]) if card.asset.get("aspect") else 1.0
         footprints_by_id[card_id] = MediaFootprint(aspect_ratio=aspect)
@@ -883,16 +911,41 @@ def ground_phone_reaction_beats(
             }
         )
 
-    resolved_by_id, geometry_reason_by_id, face_sampling = resolve_phone_card_geometry(
-        overlays_for_arbitration,
-        clip_path=clip_path,
-        job_id=job_id,
-        footprints_by_id=footprints_by_id,
-        **({"face_box_to_canvas": face_box_to_canvas} if face_box_to_canvas is not None else {}),
-    )
+    if overlays_for_arbitration:
+        resolved_by_id, geometry_reason_by_id, face_sampling = resolve_phone_card_geometry(
+            overlays_for_arbitration,
+            clip_path=clip_path,
+            job_id=job_id,
+            footprints_by_id=footprints_by_id,
+            **(
+                {"face_box_to_canvas": face_box_to_canvas} if face_box_to_canvas is not None else {}
+            ),
+        )
+    else:
+        resolved_by_id, geometry_reason_by_id, face_sampling = {}, {}, "skipped"
 
     cards: list[SubtitledOverlayCard] = []
     for card_id, card in cards_by_id.items():
+        if card.display_mode == "fullscreen":
+            cards.append(
+                SubtitledOverlayCard(
+                    id=card_id,
+                    media_id=str(card.asset["id"]),
+                    gcs_path=card.asset["gcs_path"],
+                    generation=str(card.asset.get("gcs_generation")),
+                    start_s=card.start_s,
+                    end_s=card.end_s,
+                    x_frac=0.5,
+                    y_frac=0.5,
+                    scale=1.0,
+                    fade=False,
+                    z=0,
+                    kind="video" if card.asset.get("kind") == "video" else "image",
+                    source_start_s=0.0,
+                    display_mode="fullscreen",
+                )
+            )
+            continue
         resolved = resolved_by_id.get(card_id)
         if resolved is None:
             reason = geometry_reason_by_id.get(card_id, "no_safe_spot")
@@ -974,6 +1027,13 @@ def ground_phone_reaction_beats(
                 entry["at_s"] = round(card.start_s, 3)
                 entry["end_s"] = round(card.end_s, 3)
                 entry["visual_label"] = _label_for_asset(card.asset)
+                if card.display_mode == "fullscreen":
+                    entry["card_id"] = card.id
+                    entry["display_mode"] = "fullscreen"
+                    if card.following_clip_id is not None:
+                        # The sequence resolver owns evidence of whether this
+                        # requested clip actually ran.
+                        entry["following_clip_id"] = card.following_clip_id
             else:
                 entry["at_s"] = round(occ.match_start_s, 3)
                 entry["end_s"] = round(occ.match_end_s, 3)
