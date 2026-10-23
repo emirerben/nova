@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.53.0] - 2026-10-23
+
+### Changed
+- fix(kria): a quoted one-word start/end line cuts a Talking take, and an uncut end is never "met" (KRI-837) (#1766) <!-- release-pr: 1766 -->
+
+## [0.81.52.0] - 2026-10-23
+
+### Changed
+- docs: persist iPhone-only product scope for agent sessions (#1768) <!-- release-pr: 1768 -->
+
+## [0.81.51.0] - 2026-10-23
+
+### Changed
+- test(kria): Merope M2 replay runs through carry_moment_ask, stale xfails retired (KRI-850) (#1767) <!-- release-pr: 1767 -->
+
+## [0.81.50.0] - 2026-10-23
+
+### Changed
+- fix(library): add a device-only saved video to Visuals from its verified original (KRI-822) (#1750) <!-- release-pr: 1750 -->
+
 ## [0.81.49.0] - 2026-10-23
 
 ### Changed

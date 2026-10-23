@@ -4746,7 +4746,13 @@ def _end_cut_miss(reason: str | None, quote: str | None) -> str:
 
 
 def _check_opening_cut(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    from app.kria.opening_cut_ask import unread_line_sides  # noqa: PLC0415
+
     start_line, end_line = _take_window_lines(req)
+    # KRI-837: a stored line with no words in it cannot be cut at, but it is still asked: that
+    # side stays unchecked, so the other side's cut never certifies the whole ask.
+    unread_start, unread_end = unread_line_sides(req)
+    ends_asked = bool(end_line) or unread_end
     if not facts.rendered_variant:
         return _receipt(
             req,
@@ -4755,7 +4761,7 @@ def _check_opening_cut(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
                 en="I'll check where the video starts and ends on the finished video.",
                 tr="Videonun nerede başlayıp bittiğini video hazır olunca kontrol edeceğim.",
             )
-            if end_line
+            if ends_asked
             else say(
                 en="I'll check where the video starts on the finished video.",
                 tr="Videonun nereden başladığını video hazır olunca kontrol edeceğim.",
@@ -4771,7 +4777,7 @@ def _check_opening_cut(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         else None,
     ]
     asked = [side for side in sides if side is not None]
-    if any(status is None for status, *_rest in asked):
+    if unread_start or unread_end or any(status is None for status, *_rest in asked):
         return _receipt(
             req,
             "partial",
@@ -4779,7 +4785,7 @@ def _check_opening_cut(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
                 en="This video didn't record where it starts, so I can't check it.",
                 tr="Bu video nereden başladığını kaydetmedi, o yüzden kontrol edemiyorum.",
             )
-            if not end_line
+            if not ends_asked
             else say(
                 en="This video didn't record where it starts and ends, so I can't check it.",
                 tr="Bu video nerede başlayıp bittiğini kaydetmedi, o yüzden kontrol edemiyorum.",
