@@ -516,7 +516,17 @@ def test_exact_retry_keeps_the_snapshot_with_a_new_attempt(client, monkeypatch):
         assert attempt["attempt_id"] != "first-attempt"
         assert attempt["retry_of_attempt_id"] == "first-attempt"
         job = db.get(Job, case.job_id)
-        assert job.assembly_plan[prepared.STAMP_FIELD]["attempt_id"] == attempt["attempt_id"]
+        assert (
+            prepared.variant_stamp(job.assembly_plan, "first")["attempt_id"]
+            == (attempt["attempt_id"])
+        )
+        # Only the retried variant moved: the Job stamp and any sibling variant keep
+        # the attempt their in-flight device records were pinned under.
+        assert job.assembly_plan[prepared.STAMP_FIELD]["attempt_id"] == "first-attempt"
+        assert prepared.variant_fence(job.assembly_plan, "sibling") == {
+            "id": str(row.id),
+            "attempt_id": "first-attempt",
+        }
         current = device_record(job, "first")
         assert current["prepared_execution"] == {
             "id": str(row.id),
@@ -542,6 +552,44 @@ def test_exact_retry_keeps_the_snapshot_with_a_new_attempt(client, monkeypatch):
             retry_attempt=attempt["attempt_id"],
             job=case.job_id,
         )
+    publish.assert_called_once()
+
+
+def test_refused_retry_does_not_commit_a_moved_stamp(client, monkeypatch):  # noqa: F811
+    """A pin failure after the attempt moved must leave the Job exactly as it was."""
+    http, publish = client
+    case = seed_failed()
+    _stamp_failed_device_attempt(case)
+    from app.kria import render_retry
+
+    def _refuse(*_args, **_kwargs):
+        raise ValueError("device render is not awaiting a retry")
+
+    monkeypatch.setattr(render_retry, "retry_device_render", _refuse)
+    with sync_session() as db:
+        job = db.get(Job, case.job_id)
+        before = (copy.deepcopy(job.all_candidates), copy.deepcopy(job.assembly_plan))
+    accepted = recover(http, case).json()
+    snap = http.get(
+        f"/creation-threads/{case.thread_id}/approvals/{accepted['approval_id']}"
+    ).json()
+    decision = http.post(
+        f"/creation-threads/{case.thread_id}/approvals/{accepted['approval_id']}/approve",
+        json={
+            "expected_thread_revision": accepted["thread_revision"],
+            "expected_draft_revision": 1,
+            "expected_approval_fingerprint": snap["approval_fingerprint"],
+        },
+    )
+    assert decision.status_code == 200, decision.text
+    execute_kria_approval.run(accepted["approval_id"])
+    with sync_session() as db:
+        retry_approval = db.get(CreatorAgentApproval, uuid.UUID(accepted["approval_id"]))
+        assert retry_approval.status == "cancelled"
+        job = db.get(Job, case.job_id)
+        assert (job.all_candidates, job.assembly_plan) == before
+        record = device_record(job, "first")
+        assert record["prepared_execution"] == prepared.variant_fence(job.assembly_plan, "first")
     publish.assert_called_once()
 
 

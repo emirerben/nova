@@ -7,6 +7,7 @@ The failed receipt stays immutable; one new approval/receipt belongs to it.
 
 from __future__ import annotations
 
+import copy
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -557,7 +558,7 @@ async def prepare_render_retry(
     return result
 
 
-def _next_prepared_attempt(db, approval, draft, item, job):  # noqa: ANN001, ANN202
+def _next_prepared_attempt(db, approval, draft, item, job, variant_id):  # noqa: ANN001, ANN202
     """KRI-722: same snapshot, new attempt id; the Job's stamp moves to the new attempt.
 
     Re-verifies the snapshot against the live draft, sources and capabilities first.
@@ -571,7 +572,7 @@ def _next_prepared_attempt(db, approval, draft, item, job):  # noqa: ANN001, ANN
     row = db.get(CreatorPreparedExecution, approval.prepared_execution_id)
     if row is None or row.creator_id != approval.creator_id:
         raise prepared.PreparedExecutionError(prepared.STALE, "The prepared edit is missing.")
-    stamp = prepared.read_stamp(job.assembly_plan)
+    stamp = prepared.variant_stamp(job.assembly_plan, variant_id)
     if stamp is None or stamp.get("id") != str(row.id):
         raise prepared.PreparedExecutionError(
             prepared.STALE, "This render no longer belongs to the approved edit."
@@ -593,6 +594,8 @@ def _next_prepared_attempt(db, approval, draft, item, job):  # noqa: ANN001, ANN
         "attempt_id": prepared.new_attempt_id(),
         "approval_id": str(approval.id),
         "retry_of_attempt_id": stamp.get("attempt_id"),
+        # Only the retried variant moves to the new attempt; siblings keep theirs.
+        "variant_id": variant_id,
     }
     prepared.stamp_job(job, record)
     return record
@@ -651,6 +654,8 @@ def claim_render_retry(approval_id: uuid.UUID):  # noqa: ANN201
             .limit(1)
         ).scalar_one_or_none()
         if execution.status == "awaiting_approval":
+            # A refused retry must not commit a moved stamp with no recipe under it.
+            job_before = (copy.deepcopy(job.all_candidates), copy.deepcopy(job.assembly_plan))
             try:
                 _validate(
                     rows,
@@ -665,10 +670,13 @@ def claim_render_retry(approval_id: uuid.UUID):  # noqa: ANN201
                     )
                 if approval.draft_id != draft.id or approval.draft_revision != draft.draft_revision:
                     raise _failure("render_retry_target_stale", "The approved draft changed.")
-                prepared_record = _next_prepared_attempt(db, approval, draft, item, job)
+                prepared_record = _next_prepared_attempt(
+                    db, approval, draft, item, job, execution.target_variant_id
+                )
                 status = retry_device_render(job, execution.target_variant_id)
                 apply_retry_variant_reset(job, execution.target_variant_id)
             except (RuntimeFailure, ValueError) as exc:
+                job.all_candidates, job.assembly_plan = job_before
                 execution.status = "failed"
                 execution.error = {
                     "code": getattr(exc, "code", "render_retry_requires_change"),

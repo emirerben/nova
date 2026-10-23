@@ -31,6 +31,9 @@ SCHEMA_VERSION = 1
 COMPILER_VERSION = 1
 
 STAMP_FIELD = "creator_prepared_execution"
+# Per-variant authority: an editor approval or exact retry re-pins ONE variant, so it
+# fences only that variant and never overwrites its siblings' (or the Job's) stamp.
+VARIANT_STAMPS_FIELD = "creator_prepared_execution_variants"
 RESULT_FIELD = "prepared_execution"
 
 STALE = "prepared_execution_stale"
@@ -511,24 +514,57 @@ def read_stamp(container: Mapping[str, Any] | None) -> dict[str, Any] | None:
     return stamp if isinstance(stamp, dict) and stamp.get("id") else None
 
 
-def variant_fence(assembly: Mapping[str, Any] | None, variant_id: str) -> dict[str, str] | None:
-    """The (snapshot, attempt) a variant's device record must carry, or None (legacy).
+def variant_stamp(assembly: Mapping[str, Any] | None, variant_id: str) -> dict[str, Any] | None:
+    """The full stamp record that authorizes ``variant_id``, or None (legacy).
 
-    A strategy stamp covers every variant of its Job; an editor stamp names its variant.
+    A per-variant stamp (editor approval / exact retry) wins; otherwise the Job-level
+    strategy stamp covers every variant of its Job.
     """
+    per_variant = (assembly or {}).get(VARIANT_STAMPS_FIELD)
+    if isinstance(per_variant, dict):
+        stamp = per_variant.get(variant_id)
+        if isinstance(stamp, dict) and stamp.get("id"):
+            return stamp
     stamp = read_stamp(assembly)
     if stamp is None or stamp.get("variant_id") not in (None, variant_id):
+        return None
+    return stamp
+
+
+def variant_fence(assembly: Mapping[str, Any] | None, variant_id: str) -> dict[str, str] | None:
+    """The (snapshot, attempt) a variant's device record must carry, or None (legacy)."""
+    stamp = variant_stamp(assembly, variant_id)
+    if stamp is None:
         return None
     return {"id": str(stamp["id"]), "attempt_id": str(stamp.get("attempt_id") or "")}
 
 
 def stamp_job(job: Any, record: Mapping[str, Any]) -> None:
-    """Plain JSON sibling of the plan-authority stamp; absent = legacy Job."""
-    job.all_candidates = {
-        **(job.all_candidates or {}),
-        STAMP_FIELD: {k: record[k] for k in ("id", "digest", "schema_version")},
-    }
-    job.assembly_plan = {**(job.assembly_plan or {}), STAMP_FIELD: dict(record)}
+    """Plain JSON sibling of the plan-authority stamp; absent = legacy Job.
+
+    A record naming ``variant_id`` is stored under that variant only, so sibling
+    variants keep the authority their in-flight device records were pinned under.
+    """
+    ids = {k: record[k] for k in ("id", "digest", "schema_version")}
+    variant_id = record.get("variant_id")
+    candidates = dict(job.all_candidates or {})
+    assembly = dict(job.assembly_plan or {})
+    if variant_id is None:
+        candidates[STAMP_FIELD] = ids
+        assembly[STAMP_FIELD] = dict(record)
+    else:
+        key = str(variant_id)
+        candidates.setdefault(STAMP_FIELD, ids)
+        candidates[VARIANT_STAMPS_FIELD] = {
+            **(candidates.get(VARIANT_STAMPS_FIELD) or {}),
+            key: ids,
+        }
+        assembly[VARIANT_STAMPS_FIELD] = {
+            **(assembly.get(VARIANT_STAMPS_FIELD) or {}),
+            key: dict(record),
+        }
+    job.all_candidates = candidates
+    job.assembly_plan = assembly
 
 
 def pinned_brief_for_job(db: Any, job: Any, thread_id: Any) -> tuple[bool, Any]:
