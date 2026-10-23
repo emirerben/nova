@@ -32,7 +32,8 @@ from app.pipeline.prompt_loader import load_prompt
 # v15 (KRI-789): shared brief records quoted start / end lines as a `timing` trim.
 # v16 shares the complete caption/spoken-trigger/quoted-trim/named-cut instruction union.
 # v17 (KRI-814): shared brief section teaches the typed `delegates_all_choices` declaration.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-23-v17"
+# v18 (KRI-814): earlier creator lines never read into the brief are read with the current one.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-23-v18"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")

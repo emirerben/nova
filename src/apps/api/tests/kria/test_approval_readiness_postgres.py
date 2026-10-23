@@ -67,6 +67,8 @@ async def prepare(
     clips=1,
     output_extra=None,
     summary=None,
+    action=None,
+    prompts=None,
 ):
     user_id, thread_id, _ = seed or _seed_runtime_project()
     with sync_session() as db:
@@ -178,11 +180,15 @@ async def prepare(
     }
     if no_title:
         output["action"]["strategy"].pop("opening_title")
+    if action is not None:
+        output["action"] = action
     calls = []
 
     class Transport:
         def invoke(self, **kwargs):
             calls.append(kwargs["model"])
+            if prompts is not None:
+                prompts.append(kwargs["prompt"])
             return ModelInvocation(raw_text=json.dumps(output))
 
     monkeypatch.setattr("app.kria.planner.default_client", lambda: Transport())

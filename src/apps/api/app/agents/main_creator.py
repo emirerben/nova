@@ -107,7 +107,8 @@ log = structlog.get_logger()
 # title / closing text still goes in `opening_title` / `closing_title` alongside the beats.
 # KRI-814: a typed `delegates_all_choices` declaration for a message that states no requirement
 # and hands every choice to Kria, so readiness need not match the stock sentence (v71).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v71"
+# v72 (KRI-814): earlier creator lines never read into the brief are read with the current one.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v72"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -507,6 +508,11 @@ something great from my Troya trip", "Suggest an edit", "you decide", "Troya gez
 message asks for anything specific (a title or other text, a length, an order, clips to use or
 skip, music or sound, a look), even when it also says "suggest an edit" or "you decide the
 rest", and whenever you are unsure. It never withdraws a requirement already in the contract.
+When the contract is "Creative brief v0 (nothing recorded yet)" and lists earlier creator
+messages, those messages were never read into the brief: treat them as part of the CURRENT USER
+MESSAGE. Record every requirement any of them states as an `add`, and set
+`delegates_all_choices` to true only when neither they nor the current message state any
+requirement.
 """.strip("\n")
 
 

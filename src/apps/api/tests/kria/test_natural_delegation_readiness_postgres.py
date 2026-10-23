@@ -17,6 +17,13 @@ Failure modes written before the fix (plan: .dev/plan.md, F1-F17):
              double-dispatches.
 - F11        "suggest an edit" inside prose that states real requirements counts as delegation.
 - F14        the clip set changes after the offer and the approval still dispatches.
+- F18        a delegating turn 1 that ends in a question (or any non-draft reply) records no
+             evidence, so every later turn in that chat is held.
+- F19        a held natural turn 1 with no evidence (pre-deploy thread, undeclared) can never
+             recover in the same chat, even though turn 2 re-reads the whole request.
+- F20        turn 2's reading re-reads an unrecorded turn-1 line with real asks, but those asks
+             are dropped instead of recorded (delegation erasing real instructions).
+- F21        a line the turn-2 reading never received is still covered by its delegation.
 
 Only the provider transport and broker publication are substituted: the real planner,
 runtime, brief ledger, readiness gate, binding and HTTP approval route all run on Postgres.
@@ -56,6 +63,11 @@ _NATURAL = {
 }
 _RECOVERY = {"en": "Suggest an edit", "tr": "Bana bir düzenleme öner"}
 _DELEGATED = {"delegates_all_choices": True}
+
+
+def _contract(prompt):
+    """The FULL CREATOR REQUEST CONTRACT section the server rendered for the reading."""
+    return prompt.split("FULL CREATOR REQUEST CONTRACT", 1)[1].split("CURRENT USER", 1)[0]
 
 
 def _coverage(events):
@@ -187,14 +199,90 @@ async def test_same_chat_recovery_after_a_delegated_natural_request(
     assert [(row.version, row.requirements) for row in _brief_rows(thread_id)] == [(1, [])]
 
 
+_QUESTION = {
+    "kind": "ask_user",
+    "question": "Should it feel calm or energetic?",
+    "reason_code": "vibe",
+    "options": ["Calm", "Energetic"],
+}
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["en", "tr"])
-async def test_delegation_never_speaks_for_an_unread_earlier_line(monkeypatch, language):
-    """F4/F6: turn 1 never reached the brief, so turn 2's delegation cannot erase it."""
+async def test_delegating_turn_answered_with_a_question_recovers(monkeypatch, language):
+    """F18: a question reply still records the delegation, so turn 2 reaches approval."""
+    seed = _seed_runtime_project()
+    _, thread_id, approvals, _ = await prepare(
+        monkeypatch,
+        seed=seed,
+        language=language,
+        message=_NATURAL[language],
+        updates_override=[],
+        clips=28,
+        output_extra=_DELEGATED,
+        action=_QUESTION,
+    )
+    assert not approvals
+    assert [(row.version, row.requirements) for row in _brief_rows(thread_id)] == [(1, [])]
+    user_id, thread_id, approvals, events = await prepare(
+        monkeypatch,
+        seed=seed,
+        language=language,
+        message=_RECOVERY[language],
+        updates_override=[],
+        no_title=True,
+        clips=28,
+        output_extra=_DELEGATED,
+    )
+    await _assert_delegated_offer_approves(monkeypatch, user_id, thread_id, approvals, events)
+    assert [(row.version, row.requirements) for row in _brief_rows(thread_id)] == [(1, [])]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "tr"])
+@pytest.mark.parametrize("clips", [5, 28])
+async def test_held_natural_chat_recovers_in_the_same_chat(monkeypatch, language, clips):
+    """F19: the retained Troya shape. Turn 1 left no evidence (pre-deploy / undeclared)."""
+    seed = _seed_runtime_project()
+    _, thread_id, approvals, events = await prepare(
+        monkeypatch,
+        seed=seed,
+        language=language,
+        message=_NATURAL[language],
+        updates_override=[],
+        no_title=True,
+        clips=clips,
+    )
+    assert not approvals
+    assert _GENERIC_HOLD[language] in events[-1].content
+    assert _brief_rows(thread_id) == []
+    prompts: list[str] = []
+    user_id, thread_id, approvals, events = await prepare(
+        monkeypatch,
+        seed=seed,
+        language=language,
+        message=_RECOVERY[language],
+        updates_override=[],
+        no_title=True,
+        clips=clips,
+        output_extra=_DELEGATED,
+        prompts=prompts,
+    )
+    # The server fed the unrecorded turn-1 line to this turn's reading.
+    contract = _contract(prompts[0])
+    assert "nothing recorded yet" in contract and _NATURAL[language] in contract
+    await _assert_delegated_offer_approves(monkeypatch, user_id, thread_id, approvals, events)
+    assert [(row.version, row.requirements) for row in _brief_rows(thread_id)] == [(1, [])]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "tr"])
+async def test_reread_earlier_line_keeps_its_requirements(monkeypatch, language):
+    """F6/F20: turn 1's unrecorded asks are recorded by turn 2's reading and stay live."""
     seed = _seed_runtime_project()
     first_line = {
-        "en": 'Make a Troya video titled "Troya 2026" and skip the beach clip',
-        "tr": '"Troya 2026" başlıklı bir Troya videosu yap ve plaj klibini atla',
+        "en": 'Make a Troya video titled "Gameday." and make it 6 seconds',
+        "tr": '"Gameday." başlıklı bir Troya videosu yap ve 6 saniye olsun',
     }[language]
     # Turn 1: the extraction produced nothing usable (no update, no declaration).
     _, thread_id, approvals, events = await prepare(
@@ -204,17 +292,47 @@ async def test_delegation_never_speaks_for_an_unread_earlier_line(monkeypatch, l
         message=first_line,
         updates_override=[],
         no_title=True,
-        clips=5,
     )
     assert not approvals
     assert _GENERIC_HOLD[language] in events[-1].content
     assert _brief_rows(thread_id) == []
-    # Turn 2 declares delegation for ITS OWN message only: still held, no empty brief.
+    # Turn 2 re-reads turn 1 and records its asks; nothing is delegated away.
+    prompts: list[str] = []
     _, thread_id, approvals, events = await prepare(
         monkeypatch,
         seed=seed,
         language=language,
         message=_RECOVERY[language],
+        prompts=prompts,
+    )
+    assert first_line in _contract(prompts[0])
+    assert len(approvals) == 1, events[-1].content
+    with sync_session() as db:
+        snapshot = db.get(CreatorEditDraft, approvals[0].draft_id).snapshot_json
+    readiness = snapshot["brief_coverage"]["approval_readiness"]
+    assert {row["requirement_id"] for row in readiness["requirements"]} == {"r1", "r2"}
+    assert [len(row.requirements) for row in _brief_rows(thread_id)] == [2]
+
+
+@pytest.mark.asyncio
+async def test_delegation_never_speaks_for_an_unread_earlier_line(monkeypatch):
+    """F4/F21: a line the reading never received keeps the hold (e.g. over the bound)."""
+    seed = _seed_runtime_project()
+    _, thread_id, approvals, _ = await prepare(
+        monkeypatch,
+        seed=seed,
+        message='Make a Troya video titled "Troya 2026" and skip the beach clip',
+        updates_override=[],
+        no_title=True,
+        clips=5,
+    )
+    assert not approvals
+    # Simulate an earlier request too long to re-read: the reading sees only turn 2.
+    monkeypatch.setattr("app.kria.planner.render_unrecorded_request", lambda *_a: None)
+    _, thread_id, approvals, events = await prepare(
+        monkeypatch,
+        seed=seed,
+        message=_RECOVERY["en"],
         updates_override=[],
         no_title=True,
         clips=5,
