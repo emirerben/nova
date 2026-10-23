@@ -103,17 +103,23 @@ def strict_duration_limit_s(requirement: BriefRequirement) -> float | None:
     # A timing requirement may store the creator's words in `literal` alone.
     # When it has a description, that is the instruction; its literal is copy.
     text = _unquoted_duration_text(requirement.description or requirement.literal or "")
-    match = _EN_STRICT_DURATION.search(text) or _TR_STRICT_DURATION.search(text)
-    if match is None:
-        return None
-    if _duration_clause_is_negated_or_scoped(text, match):
-        return None
-    if _TITLE_COPY_AFTER_DURATION.match(text[match.end() :]):
-        return None
-    if _TR_NEGATED_DURATION_AFTER.match(text[match.end() :]):
-        return None
-    stated = float(match.group("seconds").replace(",", "."))
-    return limit if math.isclose(stated, limit, rel_tol=0.0, abs_tol=1e-9) else None
+    matches = sorted(
+        [*_EN_STRICT_DURATION.finditer(text), *_TR_STRICT_DURATION.finditer(text)],
+        key=lambda match: match.start(),
+    )
+    for match in matches:
+        # A rejected or piece-scoped clause is not the whole-export instruction.
+        # Keep looking for the current positive clause, while retaining the
+        # existing fact-match check for the first eligible whole-export limit.
+        if _duration_clause_is_negated_or_scoped(text, match):
+            continue
+        if _TITLE_COPY_AFTER_DURATION.match(text[match.end() :]):
+            continue
+        if _TR_NEGATED_DURATION_AFTER.match(text[match.end() :]):
+            continue
+        stated = float(match.group("seconds").replace(",", "."))
+        return limit if math.isclose(stated, limit, rel_tol=0.0, abs_tol=1e-9) else None
+    return None
 
 
 def creator_max_export_duration_s(*, brief: CreativeBrief | None) -> float | None:

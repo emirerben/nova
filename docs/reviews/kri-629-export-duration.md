@@ -22,6 +22,15 @@ Evidence source: KRI-633 and the local run
 Media, private transcripts, signed URLs and job payloads are not committed.
 The unrelated opening-line and spelling issues remain outside this change.
 
+### Corrected duration clauses
+
+A global timing requirement can retain a rejected earlier duration before its
+current limit: "Do not keep it under 20 seconds; keep the video under 40 seconds"
+or "20 saniyenin altında olmasın; 40 saniyenin altında olsun". The recorded
+`duration_s: 40` must still yield a strict 40-second whole-export maximum. Ignore
+only the negated clause; preserve the later matching positive clause. The
+approved-brief digest and final-file equality refusal must remain enforced.
+
 ## Timeline decisions
 
 1. Duration source: the compiled recipe owns edit duration; the measured exported

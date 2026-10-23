@@ -71,6 +71,22 @@ def test_original_t1_request_survives_contract_roundtrip():
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        "Do not keep it under 20 seconds; keep the video under 40 seconds",
+        "20 saniyenin altında olmasın; 40 saniyenin altında olsun",
+    ],
+)
+def test_approved_export_keeps_the_positive_limit_after_a_rejected_earlier_limit(text):
+    value = contract(text)
+    maximum = approved_export_maximum(assembly_for(value, text), value)
+    assert maximum == 40
+    check_export_maximum(39.5, maximum)
+    with pytest.raises(CreatorRenderContractError, match="under 40"):
+        check_export_maximum(40, maximum)
+
+
+@pytest.mark.parametrize(
     "edit_s,passes", [(20, True), (38.3, True), (38.4, False), (38.5, False), (42, False)]
 )
 def test_recipe_budget_includes_the_standard_ending(edit_s, passes):
