@@ -1,0 +1,39 @@
+{
+  "pinned_recipe_sha256": "4fbb37895251c25e87731ad0fda6169abe4af9e12a0910614a5774c5a5808d55",
+  "export_sha256": "c2fa1d98f08daa526f309af8a9ff7e5f6dde3c29ff3ed488542fdfe39e2c0dc0",
+  "checks": {
+    "six_second_narration_length": true,
+    "clip_order_and_all_three_clips": true,
+    "title_visible_in_approved_window": true,
+    "title_ends_when_approved": true,
+    "missing_title_negative_control_detected": true,
+    "narration_throughout": true,
+    "h264_aac": true
+  },
+  "title_frame_difference": [
+    5.4771821952160495,
+    3.08641975308642e-05,
+    0.0
+  ],
+  "clip_color_errors": [
+    6.0,
+    7.0,
+    12.0
+  ],
+  "narration_peak_hz": [
+    650.0,
+    650.0451420237517,
+    650.0451420237517
+  ],
+  "narration_rms": [
+    0.1250658482313156,
+    0.12511776387691498,
+    0.12497144192457199
+  ],
+  "evidence": "Synthetic media; real persisted approval, compiler and macOS native exporter. No live model, production deployment or physical iPhone claim.",
+  "run_date": "2026-10-22",
+  "mode": "automatic first-turn supported-version fallback",
+  "engine": "KriaMediaEngine AVFoundation on macOS arm64, shared with iOS",
+  "expected_fixture": "scripts/ios/kri-698-simpler-version.py",
+  "approval_journey": "src/apps/api/tests/kria/test_runtime_automatic_simplification.py::test_first_turn_automatic_omission_reaches_native_phone_recipe"
+}
