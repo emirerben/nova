@@ -730,6 +730,16 @@
       ]
     },
     {
+      "id": "kri-841-talking-ending-clip",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri841_talking_ending_clip.py tests/kria/test_kri841_ending_clip_ask.py tests/pipeline/test_phone_subtitled_plan.py tests/services/test_phone_subtitled_editor.py tests/routes/test_admin_plan_item_phone_lanes.py",
+      "paths": [
+        "src/apps/api/app/pipeline/phone_subtitled_lanes.py",
+        "src/apps/api/tests/kria/test_kri841_ending_clip_ask.py",
+        "src/apps/api/tests/tasks/test_kri841_talking_ending_clip.py"
+      ]
+    },
+    {
       "id": "kri-788-order-answer-dispatch",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri788_order_answer_dispatch.py",

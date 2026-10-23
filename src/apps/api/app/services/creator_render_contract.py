@@ -478,6 +478,18 @@ FIELD_MATRIX: dict[str, FieldRule] = {
     ),
     **_rules(
         "upstream_resolved",
+        "ending_clip_repair",
+        "ending_clip",
+        "ending_clip.media_id",
+        "ending_clip.keep_audio",
+        note=(
+            "KRI-841: kept or dropped by creator_capabilities.repair_creator_ending_clip; the "
+            "phone Talking worker appends it and records variant['phone_ending_clip'], which "
+            "the brief receipts judge. The contract itself does not verify it"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
         "choice_questions",
         "choice_answers[]",
         *(
@@ -1937,6 +1949,53 @@ def source_group_text_matches(
     return bounded
 
 
+def check_recipe_duration(
+    contract: CreatorRenderContract,
+    duration_s: float,
+    *,
+    length_policy: Any = None,
+    max_export_duration_s: float | None = None,
+    brand_tail_s: float | None = None,
+    exact_tolerance_s: float | None = None,
+    emit_observation: bool = True,
+) -> dict[str, Any] | None:
+    """The length promise `verify_phone_recipe` checks, for an edit of ``duration_s``.
+
+    Raises the typed refusal a pin would raise; returns the length-policy observation (or
+    ``None``). Split out so a worker can ask "would adding this clip break the length the
+    creator approved?" before it compiles (KRI-841), with the very same rule: an exclusive
+    "under N seconds" cap counts the standard ending (``brand_tail_s``), a proven creator
+    length is checked as the policy state says, and a legacy stated length drifts by 10 %
+    (``exact_tolerance_s`` replaces that for a composer plan's exact shots). A what-if probe
+    passes ``emit_observation=False`` so it adds nothing to the fleet length-check proof.
+    """
+    if max_export_duration_s is not None:
+        from app.kria.device_render import BRAND_TAIL_SECONDS  # noqa: PLC0415
+        from app.services.export_duration_policy import check_export_maximum  # noqa: PLC0415
+
+        # Reserve the standard ending before the phone does expensive work.
+        # Publication independently checks the actual bytes, without this estimate.
+        check_export_maximum(
+            duration_s + (BRAND_TAIL_SECONDS["standard"] if brand_tail_s is None else brand_tail_s),
+            max_export_duration_s,
+        )
+    elif length_policy is not None:
+        from app.services.length_policy_state import check_creator_duration  # noqa: PLC0415
+
+        try:
+            return check_creator_duration(
+                contract, duration_s, state=length_policy, emit_observation=emit_observation
+            )
+        except CreatorRenderContractError as exc:
+            raise _phone_decline("duration_s", str(exc)) from exc
+    elif contract.duration_s is not None:
+        drift = abs(duration_s - contract.duration_s)
+        allowed = exact_tolerance_s if exact_tolerance_s is not None else contract.duration_s * 0.1
+        if drift > allowed + 1e-9:
+            raise _phone_decline("duration_s", "This edit couldn't keep the confirmed length.")
+    return None
+
+
 def verify_phone_recipe(
     contract: CreatorRenderContract,
     recipe: EditRecipeV2,
@@ -1958,35 +2017,16 @@ def verify_phone_recipe(
         raise unresolved_decline(contract.unresolved[0])
     manifest = {asset.id: asset for asset in recipe.asset_manifest.assets}
     receipts: list[dict[str, Any]] = []
-    if max_export_duration_s is not None:
-        from app.kria.device_render import BRAND_TAIL_SECONDS  # noqa: PLC0415
-        from app.services.export_duration_policy import check_export_maximum  # noqa: PLC0415
-
-        # Reserve the standard ending before the phone does expensive work.
-        # Publication independently checks the actual bytes, without this estimate.
-        check_export_maximum(
-            recipe.duration
-            + (BRAND_TAIL_SECONDS["standard"] if brand_tail_s is None else brand_tail_s),
-            max_export_duration_s,
-        )
-    elif length_policy is not None:
-        from app.services.length_policy_state import check_creator_duration  # noqa: PLC0415
-
-        try:
-            observation = check_creator_duration(contract, recipe.duration, state=length_policy)
-        except CreatorRenderContractError as exc:
-            raise _phone_decline("duration_s", str(exc)) from exc
-        if observation is not None:
-            receipts.append(observation)
-    elif contract.duration_s is not None:
-        drift = abs(recipe.duration - contract.duration_s)
-        allowed = (
-            max(0.1, 1 / recipe.frame_rate)
-            if composition is not None
-            else contract.duration_s * 0.1
-        )
-        if drift > allowed + 1e-9:
-            raise _phone_decline("duration_s", "This edit couldn't keep the confirmed length.")
+    observation = check_recipe_duration(
+        contract,
+        recipe.duration,
+        length_policy=length_policy,
+        max_export_duration_s=max_export_duration_s,
+        brand_tail_s=brand_tail_s,
+        exact_tolerance_s=max(0.1, 1 / recipe.frame_rate) if composition is not None else None,
+    )
+    if observation is not None:
+        receipts.append(observation)
 
     def audible(track, clip) -> bool:
         return _clip_audible(recipe, track, clip)

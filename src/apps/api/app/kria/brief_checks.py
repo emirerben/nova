@@ -232,6 +232,24 @@ class NamedLineFact:
 
 
 @dataclass(frozen=True)
+class EndingClipFact:
+    """The video a phone Talking edit ends on, with its own sound (KRI-841).
+
+    ``status`` is "planned" (a draft whose repaired strategy keeps it), "applied" (the finished
+    video really ends on it: ``volume`` is read back from the compiled recipe) or "dropped"
+    (the server repair or the phone worker could not append it; ``reason`` is a machine code).
+    """
+
+    status: str
+    keep_audio: bool = True
+    volume: float | None = None
+    reason: str | None = None
+    # Whether the ending's source has an audio track at all (the worker's `has_audio`):
+    # False means "its own sound" is silence; None = the render did not say.
+    has_audio: bool | None = None
+
+
+@dataclass(frozen=True)
 class PlanFacts:
     """What a drafted plan verifiably contains. Missing facts stay None/empty."""
 
@@ -465,6 +483,12 @@ class PlanFacts:
     # clip at its natural speed (the phone recipe has no retime for story footage). A
     # clip-speed ask is then a known miss; any other plan claims nothing about speed.
     speed_unsupported: bool = False
+    # KRI-841: a video appended after the talk. ``ending_clip_known`` is True where the facts
+    # can speak to the ending at all (a draft read against its manifest, or a finished Talking
+    # render); only then does None mean "the edit does not end on a video". The draft reads
+    # the REPAIRED strategy, the render its own `phone_ending_clip` receipt, never the strategy.
+    ending_clip: EndingClipFact | None = None
+    ending_clip_known: bool = False
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -490,6 +514,8 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
     from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
     from app.services.creator_capabilities import (  # noqa: PLC0415
         CAPABILITY_REACTION_BEATS,
+        ending_clip_problem,
+        repair_creator_ending_clip,
         repair_creator_reaction_beats,
     )
 
@@ -500,8 +526,17 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
     except ValueError:
         return {"reaction_beats_available": available}
     repaired, _notices = repair_creator_reaction_beats(manifest, parsed)
+    # A beat the creator named but the beats repair dropped (its photo didn't resolve).
+    kept_ids = {beat.beat_id for beat in repaired.reaction_beats or []}
+    # KRI-841: the ending video is repaired after the beats (and takes its own video out of
+    # them), exactly as `compile_strategy_to_plan` orders it.
+    repaired, _ending_notices = repair_creator_ending_clip(manifest, repaired)
+    ending: EndingClipFact | None = None
+    if repaired.ending_clip is not None:
+        ending = EndingClipFact("planned", keep_audio=repaired.ending_clip.keep_audio)
+    elif parsed.ending_clip is not None:
+        ending = EndingClipFact("dropped", reason=ending_clip_problem(manifest, parsed))
     kept = list(repaired.reaction_beats or [])
-    kept_ids = {beat.beat_id for beat in kept}
     raw_closing = parsed.closing_media
     closing = repaired.closing_media
     return {
@@ -525,6 +560,8 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
         "closing_visual_id": closing.visual_id if closing is not None else None,
         "closing_badge_requested": bool(raw_closing and raw_closing.badge_visual_id),
         "closing_badge_id": closing.badge_visual_id if closing is not None else None,
+        "ending_clip": ending,
+        "ending_clip_known": True,
     }
 
 
@@ -1455,6 +1492,27 @@ def _phone_receipt_facts(receipt: object, *, timed: bool) -> dict[str, Any]:
     return facts
 
 
+def _ending_clip_receipt_fact(receipt: object) -> EndingClipFact | None:
+    """The worker's ``phone_ending_clip`` receipt as a fact, or None when there is no usable one.
+
+    "applied" is written only from the COMPILED recipe (the last main-track clip really is that
+    media, at the volume the recipe holds), never copied from the strategy.
+    """
+    if not isinstance(receipt, Mapping):
+        return None
+    status = receipt.get("status")
+    if status not in ("applied", "dropped"):
+        return None
+    reason = receipt.get("reason")
+    return EndingClipFact(
+        status,
+        keep_audio=receipt.get("keep_audio") is not False,
+        volume=_finite_number(receipt.get("volume")),
+        reason=reason if isinstance(reason, str) and reason else None,
+        has_audio=receipt["has_audio"] if isinstance(receipt.get("has_audio"), bool) else None,
+    )
+
+
 def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFacts:
     """Facts off a rendered phone variant (KRI-537).
 
@@ -1499,6 +1557,9 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
         changes["clip_output_durations"] = rendered
     if changes.get("edit_format") == "subtitled":
         changes["phone_talking"] = True  # KRI-705
+        # KRI-841: a finished Talking render says whether it really ended on the video.
+        changes["ending_clip_known"] = True
+        changes["ending_clip"] = _ending_clip_receipt_fact(variant.get("phone_ending_clip"))
     return dataclasses.replace(base, **changes) if changes else base
 
 
@@ -2842,6 +2903,222 @@ def _closing_photo_ask(req: BriefRequirement, facts: PlanFacts) -> bool:
     if req.facts.get("closing") or _ending_names_picture(req):
         return True
     return facts.reaction_beats_available is not False and not req.facts.get("last_clip")
+
+
+# KRI-841: "At the very end, add the cheers video with its own sound". The Main Creator's
+# `ending_clip` strategy field carries it; the brief extractor records it as the requirement's
+# `ending_clip` fact (the creator's words for the video) and `keep_audio` (false only when the
+# video should be silent). No wording is read here (KRI-667): the fact routes the ask, and the
+# older shape of the same ask (`order` + `last_clip`) is claimed only where the PLAN has an
+# ending video to judge.
+_TALKING_FORMATS = frozenset({"subtitled", "talking_head"})
+
+
+def _ending_clip_fact(req: BriefRequirement) -> bool:
+    return bool(req.facts.get("ending_clip"))
+
+
+def _asks_ending_clip(req: BriefRequirement, facts: PlanFacts) -> bool:
+    if facts.edit_format not in _TALKING_FORMATS:
+        return False  # a montage "end on clip X" is an ordering ask: `_check_order` owns it
+    if _ending_clip_fact(req):
+        return True
+    # The old shape of the ask (an `order` requirement whose `last_clip` names the video) is
+    # judged against the ending video only when the plan (or the render) carries one. Without
+    # it the ask may be about the talk itself ("end on me saying thank you"), so it keeps its
+    # old verdict. A `closing` ask (a photo held over the last seconds) is never claimed here:
+    # `_closing_photo_ask` owns it, and the extractor records video endings as `ending_clip`.
+    return bool(
+        facts.ending_clip_known
+        and facts.ending_clip is not None
+        and req.kind == "order"
+        and req.facts.get("last_clip")
+        and not (req.facts.get("first_clip") or req.facts.get("key") or req.facts.get("by"))
+    )
+
+
+# Why the video could not be put at the end, in the creator's words. The keys are the server
+# repair's codes (`creator_capabilities.ENDING_CLIP_NOTICES`) and the phone worker's receipt.
+def _ending_clip_why(code: str | None) -> str:
+    if code == "not_talking":
+        return say(
+            en="Only a talking-to-camera edit on your iPhone can end on another video",
+            tr="Başka bir videoyla yalnızca iPhone'daki konuşmalı düzenleme bitebilir",
+        )
+    if code == "not_found":
+        return say(
+            en="I couldn't find that video among your clips and Visuals",
+            tr="O videoyu kliplerin ve Visuals arasında bulamadım",
+        )
+    if code == "not_video":
+        return say(
+            en="That is a photo, not a video, so it has no sound of its own",
+            tr="Bu bir fotoğraf, video değil; kendi sesi yok",
+        )
+    if code in ("visual_videos_off", "visual_videos_not_verified"):
+        return say(
+            en="This iPhone can't play videos from Visuals yet",
+            tr="Bu iPhone Visuals'taki videoları henüz oynatamıyor",
+        )
+    if code == "only_clip":
+        return say(
+            en="It is the only clip in this edit",
+            tr="Bu düzenlemedeki tek klip bu",
+        )
+    if code in ("multi_clip_off", "talking_multi_off"):
+        return say(
+            en=(
+                "Ending on another of your clips needs a Talking edit with several clips, "
+                "which isn't available yet"
+            ),
+            tr=(
+                "Başka bir klibinle bitirmek için birden çok klipli konuşmalı düzenleme "
+                "gerekiyor, o da henüz yok"
+            ),
+        )
+    if code == "media_lanes_disabled":
+        return say(
+            en="This iPhone render can't place pictures and videos around your talk yet",
+            tr="Bu iPhone oluşturması konuşmanın çevresine resim ve video koyamıyor henüz",
+        )
+    if code == "audio_mix_not_verified":
+        return say(
+            en="This iPhone can't mix its sound into the video yet",
+            tr="Bu iPhone sesini videoya karıştıramıyor henüz",
+        )
+    if code == "muted_footage_ending_unsupported":
+        return say(
+            en="One of your own clips can only end the video with its own sound, not silent",
+            tr="Kendi kliplerinden biri videoyu ancak kendi sesiyle bitirebilir, sessiz değil",
+        )
+    if code == "not_selected":
+        return say(
+            en="You asked to leave that clip out of the edit",
+            tr="O klibi düzenlemeden çıkarmamı istemiştin",
+        )
+    if code == "over_length_limit":
+        return say(
+            en="Adding it would make the video longer than the length you asked for",
+            tr="Eklersem video istediğin süreden uzun olur",
+        )
+    if code == "not_a_video":
+        return say(
+            en="That isn't a video, so it has no sound of its own",
+            tr="Bu bir video değil, kendi sesi yok",
+        )
+    if code == "too_long":
+        return say(
+            en="That clip is too long to add at the end",
+            tr="Bu klip sona eklemek için çok uzun",
+        )
+    if code == "is_speaker":
+        return say(
+            en="That is the clip you speak in, so it can't also be added at the end",
+            tr="Konuştuğun klip bu, o yüzden sona ayrıca eklenemez",
+        )
+    if code == "lane_request_ending_wins":
+        return say(
+            en="Another request for the end of the video took its place",
+            tr="Videonun sonu için başka bir istek onun yerini aldı",
+        )
+    if code == "bind_failed":
+        return say(
+            en="I couldn't prepare that video on your iPhone",
+            tr="O videoyu iPhone'unda hazırlayamadım",
+        )
+    return say(en="I couldn't add it at the end", tr="Sona ekleyemedim")
+
+
+# The volume under which a video that is "at the end" is still muted (the recipe holds 0.0).
+_MUTED_VOLUME = 0.01
+
+
+def _check_ending_clip(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """Does the edit end on the video the creator named, with (or without) its own sound?
+
+    A draft judges the repaired strategy, the finished video its own `phone_ending_clip`
+    receipt; "Done" is never read off the strategy once a render exists.
+    """
+    if not facts.ending_clip_known:
+        return _receipt(req, "partial", _NO_CHECKER)
+    flag = _fact_flag(req, "keep_audio")
+    wants_sound = True if flag is None else flag
+    ending = facts.ending_clip
+    rendered = facts.rendered_variant
+    if ending is None:
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en=(
+                    "The finished video doesn't end on that video"
+                    if rendered
+                    else "This draft doesn't end on that video"
+                ),
+                tr=(
+                    "Biten video o videoyla bitmiyor"
+                    if rendered
+                    else "Bu taslak o videoyla bitmiyor"
+                ),
+            )
+            + ".",
+        )
+    if ending.status == "dropped":
+        return _receipt(req, "not_possible", _ending_clip_why(ending.reason) + ".")
+    if ending.status == "planned":
+        if ending.keep_audio == wants_sound:
+            return _receipt(req, "met", None)
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en=(
+                    "This draft ends on that video but muted, not with its own sound"
+                    if wants_sound
+                    else "This draft ends on that video with its own sound, not muted"
+                ),
+                tr=(
+                    "Bu taslak o videoyla bitiyor ama sessiz, kendi sesiyle değil"
+                    if wants_sound
+                    else "Bu taslak o videoyla kendi sesiyle bitiyor, sessiz değil"
+                ),
+            )
+            + ".",
+        )
+    # applied: the compiled recipe ends on the video; judge the volume it holds.
+    if wants_sound and ending.has_audio is False:
+        # The recipe plays the clip at full volume, but its file has no audio track.
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en="The finished video ends on that video, but that video has no sound of its own",
+                tr="Biten video o videoyla bitiyor ama o videonun kendi sesi yok",
+            )
+            + ".",
+        )
+    audible = ending.volume is not None and ending.volume > _MUTED_VOLUME
+    if wants_sound and not audible:
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en="The finished video ends on that video but plays muted, without its own sound",
+                tr="Biten video o videoyla bitiyor ama sessiz çalıyor, kendi sesi yok",
+            )
+            + ".",
+        )
+    if not wants_sound and audible:
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en="The finished video ends on that video with its own sound, not muted",
+                tr="Biten video o videoyla kendi sesiyle bitiyor, sessiz değil",
+            )
+            + ".",
+        )
+    return _receipt(req, "met", None)
 
 
 def _wants_cleanup(req: BriefRequirement) -> bool:
@@ -6691,6 +6968,8 @@ def _has_checker(req: BriefRequirement) -> bool:
     """True when ``check_requirement`` can actually verify this requirement."""
     if _wants_speaker_framing(req) or wants_light_change(req) or asks_freeze_frame(req):
         return True
+    if _ending_clip_fact(req):
+        return True  # KRI-841: judged against the plan's / render's ending video
     if asks_clip_speed(req):
         # KRI-689: judged wherever the plan knows it cannot retime (the phone montage); a plan
         # that does not say gets the neutral `_NO_CHECKER`, which `is_judged` treats as unjudged.
@@ -6748,6 +7027,16 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_speech_cleanup(req, facts)
     if _wants_speaker_framing(req):
         return _check_speaker_framing(req, facts)
+    if _asks_ending_clip(req, facts):
+        # KRI-841: "add the X video at the very end with its own sound" is judged against the
+        # ending video the plan (or the finished render) holds, before the order or
+        # closing-photo checks can mistake it for either.
+        return _check_ending_clip(req, facts)
+    if _ending_clip_fact(req) and req.kind != "order":
+        # An ending video exists only on a Talking edit (claimed above). `_has_checker` says
+        # yes to the fact, so every other format answers neutral here instead of lending the
+        # ask to the closing-photo check.
+        return _receipt(req, "partial", _NO_CHECKER)
     if asks_freeze_frame(req) and (facts.rendered_variant or not facts.editor):
         # KRI-777: a draft or a finished render never holds a frame, so the draft's reply and
         # approval card say "Couldn't" instead of the model's summary promising it (KRI-700's
@@ -7371,6 +7660,7 @@ __all__ = [
     "UNIFIED_SETTLED_KINDS",
     "BeatFact",
     "ClosingSpeechFact",
+    "EndingClipFact",
     "NO_TITLE_REASON",
     "NARRATED_ALIGNMENT_RECOVERY",
     "RenderBlockRecovery",

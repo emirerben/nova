@@ -2789,6 +2789,56 @@
         "Cafe T2 phone re-send after deploy (Turkish captions, cleanup declined)"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-841-talking-ending-clip",
+      "tickets": [
+        "KRI-841",
+        "KRI-829"
+      ],
+      "symptom": "Phone Talking: \"add the X video at the very end with its own sound\" was silently dropped. No plan path appended an audible clip (the admin-lane ending clip was hard-coded muted), the cafe T2 bite (a Visuals video) was grounded as a muted mid-talk card/insert, and the Don Julio T3 one-word cheers clip became a muted footage cutaway inside the talk. The draft never said so.",
+      "boundary": "compiler",
+      "status": "open_pr",
+      "owner": "KRI-841",
+      "paths": [
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/pipeline/phone_subtitled_plan.py",
+        "src/apps/api/app/pipeline/phone_subtitled_lanes.py",
+        "src/apps/api/app/services/creator_capabilities.py",
+        "src/apps/api/app/kria/brief_checks.py"
+      ],
+      "regression_tests": [
+        "tests/tasks/test_kri841_talking_ending_clip.py",
+        "tests/kria/test_kri841_ending_clip_ask.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Kit word timings (cafe T2 Caro 24.6 s + 6.4 s bite; Don Julio T3 Lucas 12.9 s + 3.4 s cheers) through the real repair -> _run_generative_job -> _run_phone_subtitled_job -> compile_phone_subtitled_plan -> plan_facts_from_phone_variant receipts: ends on the bite 24.6-31.0 s / cheers 12.9-16.3 s at volume 1, that clip in no other track, draft and render-ready met. Red on the pre-fix parent: kit replays fail (clip muted mid-talk, nothing appended, no receipt).",
+        "live_model": "Not run; no paid calls. Main Creator v76 / brief extractor v21 emission of ending_clip is covered by a hand-authored replay golden only.",
+        "native_output": "unknown; no phone export yet (iOS engine plays main-track clip.volume, read from code only).",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "Turkish (cafe) and English (Don Julio) asks; new ending_clip fact and the old last_clip shape",
+        "multi-clip Talking on (footage ending moved last, captioned, not a cutaway) and off (refused before approval; cheers as a Visual works like the cafe)",
+        "every overlay layout (pip, fullscreen, fullscreen_images, fullscreen_videos), reaction beats and closing shots naming the ending video",
+        "gates mirrored at draft: media lanes kill switch, visualVideos, audioMix, multi-clip, only clip, muted footage ending, footage outside the selection",
+        "several real speakers, a talkative ending uploaded first, a hand-authored admin lane ending (wins, stays muted)",
+        "stated length or under-N cap: only the ending is dropped (over_length_limit), the render goes ahead; the what-if probe emits no fleet length observation",
+        "editor Save keeps the ending audible; strategies, lane requests and recipes without an ending are byte-identical",
+        "negative controls: a recipe with the bite muted mid-talk, appended at volume 0, or cheers as a mid-talk cutaway is rejected; render-ready never met from the strategy alone"
+      ],
+      "neighbours_gap": [
+        "A stated length that the ending would break is only said at render-ready (Couldn't after approval); the draft does not know the contract.",
+        "Visuals pool rows record no audio fact, so has_audio is unknown for a Visuals ending.",
+        "If the Main Creator omits ending_clip, the Visuals video can still be grounded mid-talk; the brief check then says Couldn't before approval.",
+        "The iPhone editor's live preview does not hydrate a Visuals ending clip (the export does)."
+      ],
+      "follow_ups": [
+        "Cafe T2 and Don Julio T3 iPhone re-send after deploy (T3 needs TALKING_MULTI_CLIP_ENABLED on)"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }
