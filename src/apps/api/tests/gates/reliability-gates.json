@@ -910,14 +910,23 @@
         "src/apps/api/app/services/phone_reaction_grounding.py",
         "src/apps/api/app/services/nova_steps.py",
         "src/apps/api/app/services/sfx_catalog.py",
-        "src/apps/api/app/services/creator_capabilities.py"
+        "src/apps/api/app/services/creator_capabilities.py",
+        "src/apps/api/app/pipeline/narrated_photo_sequence.py",
+        "src/apps/api/app/pipeline/phone_narrated_plan.py",
+        "src/apps/api/app/services/phone_editor.py"
       ],
       "regression_tests": [
         "tests/services/test_phone_reaction_grounding.py",
         "tests/test_nova_steps.py",
         "tests/kria/test_brief_reaction_beats.py",
         "tests/services/test_sfx_catalog.py",
-        "tests/services/test_creator_capabilities.py"
+        "tests/services/test_creator_capabilities.py",
+        "tests/agents/test_n2_fullscreen_contract.py",
+        "tests/pipeline/test_phone_narrated_fullscreen.py",
+        "tests/services/test_n2_fullscreen_grounding.py",
+        "tests/routes/test_phone_narrated_editor_commit.py",
+        "tests/kria/test_brief_marathon_receipts.py",
+        "tests/tasks/test_n2_fullscreen_dispatch.py"
       ],
       "harness": "real_compiler",
       "kill_switch": "phone_voiceover_reaction_beats_enabled",
@@ -931,7 +940,8 @@
         "photo beat",
         "video beat",
         "every-time beats past the cap",
-        "TR sound names"
+        "TR sound names",
+        "Cabin N2 fullscreen photo then original-video restart; explicit PiP unchanged; unsafe placement recovery; caption save preserves sequence"
       ],
       "neighbours_gap": [
         "cap overflow is reported, not placed beyond the cap by design"
@@ -2146,7 +2156,8 @@
       "tickets": [
         "KRI-721",
         "KRI-705",
-        "KRI-700"
+        "KRI-700",
+        "KRI-814"
       ],
       "symptom": "Approval omitted unchecked requirements, accepted unsupported limits, or prepared a preview-tail window that became shorter than the montage minimum on the original.",
       "boundary": "contract",
@@ -2162,15 +2173,23 @@
         "src/apps/api/app/tasks/kria_runtime.py",
         "src/apps/api/app/config.py",
         "src/apps/api/tests/kria/test_approval_readiness_postgres.py",
+        "src/apps/api/tests/kria/test_automatic_strategy_fallback.py",
+        "src/apps/api/tests/kria/test_runtime_automatic_simplification.py",
         "src/apps/api/app/services/length_planning.py",
-        "src/apps/api/tests/services/test_length_planning.py"
+        "src/apps/api/tests/services/test_length_planning.py",
+        "src/apps/api/prompts/brief_extractor.txt",
+        "src/apps/api/app/kria/brief.py",
+        "src/apps/api/tests/kria/test_natural_delegation_readiness_postgres.py"
       ],
       "regression_tests": [
         "tests/kria/test_approval_readiness_postgres.py",
+        "tests/kria/test_automatic_strategy_fallback.py",
+        "tests/kria/test_runtime_automatic_simplification.py",
         "tests/kria/test_runtime_simpler_version_loop.py",
         "tests/kria/test_render_retry_postgres.py",
         "tests/kria/test_plan_review.py",
-        "tests/services/test_length_planning.py"
+        "tests/services/test_length_planning.py",
+        "tests/kria/test_natural_delegation_readiness_postgres.py"
       ],
       "harness": "real_with_db",
       "kill_switch": "kria_approval_readiness_enabled",
@@ -2216,11 +2235,12 @@
         "KRI-729",
         "KRI-730",
         "KRI-731",
-        "KRI-732"
+        "KRI-732",
+        "KRI-853"
       ],
       "status": "open_pr",
       "owner": "KRI-731",
-      "symptom": "A recommendation can exclude added assets, change source windows after review, or confuse selection with render approval.",
+      "symptom": "A recommendation can exclude added assets, change source windows after review, or confuse selection with render approval. Returning to an unchanged collection can advance its revision, lose cached ideas, and mislabel an unavailable-analysis response as an editor conflict.",
       "boundary": "dispatch",
       "journey": "kri-729-camera-roll-recommendations",
       "paths": [
@@ -2489,6 +2509,55 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-798-render-worker-restart",
+      "tickets": [
+        "KRI-798",
+        "KRI-829"
+      ],
+      "symptom": "Merope T1 job 0701fcc9-748b-4ac9-a640-130c125c0c17 stopped its render worker at 13:25:23.121; dispatch followed at 13:25:23.956, Fly start/412 at 13:25:24.031, and the periodic backstop only at 13:27:24.8. A first render could arrive while the worker was stopping.",
+      "boundary": "dispatch",
+      "status": "open_pr",
+      "owner": "KRI-798",
+      "journey": "kri-798-render-worker-restart",
+      "paths": [
+        "src/apps/api/app/config.py",
+        "src/apps/api/app/services/fly_machines.py",
+        "src/apps/api/app/tasks/maintenance.py",
+        "src/apps/api/app/worker.py"
+      ],
+      "regression_tests": [
+        "tests/services/test_fly_machines.py",
+        "tests/tasks/test_render_worker_lifecycle.py",
+        "tests/tasks/test_render_worker_activity_sql.py",
+        "tests/test_render_worker_wake.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": "RENDER_AUTOSTOP_ENABLED",
+      "evidence": {
+        "offline_replay": "The saved 2026-09-23 worker-lifecycle race fix is replayed with real HTTP state transitions, lifecycle decisions, dispatch wake behavior, and PostgreSQL activity SQL. The Fly client transport is stubbed; no Fly API call is made.",
+        "live_model": "not_applicable; no model call is involved.",
+        "native_output": "not_applicable; this is worker availability rather than a device output assertion.",
+        "production": "No deployment or flag action. RENDER_AUTOSTOP_ENABLED remains false by default; live idle-stop and first-render observation are pending."
+      },
+      "neighbours_covered": [
+        "missing Fly token and HTTP failure fail soft",
+        "one worker only; ambiguous resolution never acts",
+        "stopping-to-stopped wait uses Fly instance_id and a bounded timeout",
+        "412 start race retries within the configured budget",
+        "autostop disabled is a complete no-op",
+        "recent dispatch and runtime-v2 awaiting approval defer an otherwise due stop",
+        "stale activity does not defer indefinitely",
+        "wake filtering and Redis debounce fail open",
+        "current stop signal and Celery soft shutdown remain unchanged"
+      ],
+      "neighbours_gap": [
+        "real Fly Machine stop/start observation",
+        "real first render after an idle stop",
+        "production queue latency and cost after enabling the separate default-off autostop flag"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-806-editorial-plan-pairing",
       "tickets": [
         "KRI-806",
@@ -2530,6 +2599,91 @@
       ],
       "follow_ups": [
         "Don Julio M1 re-send after deploy (needs KRI-803/KRI-805 for a video)"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-551-consented-retakes",
+      "tickets": [
+        "KRI-551",
+        "KRI-829"
+      ],
+      "symptom": "Consented voiceover preflight never called the existing retake detector, retaining the N3 abandoned kilometer-30 delivery.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-551",
+      "journey": "kri-551-consented-retakes",
+      "paths": [
+        "src/apps/api/app/agents/retake_detector.py",
+        "src/apps/api/app/pipeline/speech_cleanup_analysis.py",
+        "src/apps/api/app/tasks/speech_cleanup_analysis.py",
+        "src/apps/api/app/services/plan_item_media.py",
+        "src/apps/api/app/services/speech_cleanup_selection.py",
+        "src/apps/api/app/services/speech_cleanup_preflight.py",
+        "src/apps/api/app/services/speech_cleanup_decision.py",
+        "src/apps/api/app/kria/api_schemas.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/routes/creation_threads.py",
+        "src/apps/ios/Kria/Features/SpeechCleanupOffer.swift",
+        "src/apps/ios/Kria/Features/CreationConfirmationStage.swift",
+        "src/apps/ios/Kria/Features/ChatWorkspaceView.swift",
+        "src/apps/ios/Kria/Core/Services.swift",
+        "src/apps/api/app/config.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/tests/kria/test_kri520_receipts.py",
+        "src/apps/api/tests/kria/test_brief_talking_receipts.py",
+        "src/apps/api/tests/kria/test_brief_marathon_receipts.py",
+        "src/apps/api/tests/tasks/test_kri551_cleanup_review_note.py",
+        "src/apps/api/app/routes/creator_agent.py",
+        "src/apps/api/tests/routes/test_creator_agent.py",
+        "src/apps/api/tests/tasks/test_marathon_render_ready_review.py",
+        "src/apps/api/tests/kria/test_brief_rendered_speech_facts.py",
+        "src/apps/api/tests/kria/test_runtime_talking_first_draft.py",
+        "src/apps/api/tests/kria/test_kri787_merope_t1_runtime_postgres.py"
+      ],
+      "regression_tests": [
+        "tests/agents/test_retake_detector.py",
+        "tests/services/test_speech_cleanup_preflight.py",
+        "tests/services/test_speech_cleanup_retakes_consent.py",
+        "tests/services/test_speech_cleanup_decision.py",
+        "tests/tasks/test_speech_cleanup_analysis.py",
+        "tests/routes/test_creation_threads_speech_cleanup.py",
+        "tests/kria/test_runtime_v2.py",
+        "tests/kria/test_runtime_speech_cleanup_approval.py",
+        "tests/kria/test_kri520_receipts.py",
+        "tests/kria/test_brief_talking_receipts.py",
+        "tests/kria/test_brief_marathon_receipts.py",
+        "tests/tasks/test_kri551_cleanup_review_note.py",
+        "tests/routes/test_creator_agent.py",
+        "tests/tasks/test_marathon_render_ready_review.py",
+        "tests/kria/test_brief_rendered_speech_facts.py",
+        "tests/kria/test_runtime_talking_first_draft.py",
+        "tests/kria/test_kri787_merope_t1_runtime_postgres.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": "speech_cleanup_retakes_enabled",
+      "evidence": {
+        "offline_replay": "Engine, consent and retry controls; actual N3 audio cut/remap with original immutable production words and explicitly injected reviewed detector answer. Replacement-ASR diagnostics were superseded. See docs/reviews/kri-551-consented-retakes.md.",
+        "live_model": "Not run; detector precision on original production ASR remains pending.",
+        "native_output": "Original N3 iPhone export remains pending.",
+        "production": "Not deployed; new preflight retake gate defaults off."
+      },
+      "neighbours_covered": [
+        "disabled gate",
+        "malformed detector positions",
+        "detector failure",
+        "EN/TR repetition",
+        "legacy client refusal",
+        "keep original",
+        "same-analysis reapproval",
+        "policy invalidation"
+      ],
+      "neighbours_gap": [
+        "Full original N3 pictures, caption rendering, audio mix, Save/reopen and physical export are not established by these checks."
+      ],
+      "follow_ups": [
+        "KRI-551",
+        "KRI-829"
       ],
       "red_control": "not_applicable"
     },
@@ -2646,6 +2800,51 @@
       ],
       "follow_ups": [
         "M1 phone re-send after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-839-beats-spoken-words",
+      "tickets": [
+        "KRI-839",
+        "KRI-829"
+      ],
+      "symptom": "Phone Talking with captions asked in another language and cleanup declined (cafe T2: English speech, Turkish subtitles): the Cotopaxi card at \"Ecuador\" and the ding at \"That's it\" never appeared. The no-cleanup branch forced whisper to the caption language, so reaction beats, overlay grounding, spoken-text asks and the persisted overlay_transcript read a Turkish translation and every English trigger was never_heard.",
+      "boundary": "compiler",
+      "status": "open_pr",
+      "owner": "KRI-839",
+      "paths": [
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/services/phone_reaction_grounding.py",
+        "src/apps/api/tests/fixtures/kri839_cafe_t2/t2_01_words.json"
+      ],
+      "regression_tests": [
+        "tests/tasks/test_kri839_beats_spoken_words.py",
+        "tests/tasks/test_subtitled_caption_language.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Real whisper.cpp (ggml-medium, local, free) word timings of the cafe T2_01 clip through _run_generative_job with the real ground_phone_reaction_beats and the compiled phone recipe: card at 1.43 s on 'Ecuador' (1.43 s), ding at 23.76 s on \"That's it\" (23.76 s), a KRI-707 'ECUADOR' spoken-text ask placed on 'Ecuador', whisper calls [None, 'tr'], captions Turkish. Red on main: card, ding, receipt, overlay_transcript and spoken-text cases fail (never_heard / not_heard). The Turkish forced pass is a hand-written stand-in (whisper.cpp does not translate).",
+        "live_model": "Not run; no paid calls. No prompt change.",
+        "native_output": "unknown; no phone export yet.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "no caption-language request: one language=None whisper call, byte-identical (differential trace of calls, events, cues, persisted fields)",
+        "request equal to the spoken language: no second pass",
+        "accented take misdetected as the requested language: the Gemini crosscheck now runs on the spoken pass, never on the caption pass",
+        "requested-language pass hears nothing: spoken captions kept + caption_language_request_empty",
+        "cleanup branch: same calls, events and payloads through the shared helper",
+        "negative control: a take that says 'Peru' never shows the Cotopaxi card"
+      ],
+      "neighbours_gap": [
+        "KRI-719 several speakers: _classify_phone_talking_clips still transcribes extra speakers in the caption language, so their words reach spoken-text asks translated (KRI-838 hinted call sites / KRI-843).",
+        "Turkish caption text still comes from whisper forced to tr; real translation is KRI-838.",
+        "A spoken-language misdetection that the Gemini crosscheck cannot resolve still grounds on a translation (KRI-843)."
+      ],
+      "follow_ups": [
+        "Cafe T2 phone re-send after deploy (Turkish captions, cleanup declined)"
       ],
       "red_control": "not_applicable"
     }

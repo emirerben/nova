@@ -195,26 +195,63 @@ def test_cleanup_that_did_not_run_is_an_honest_partial():
         "cut the pauses and the retake",
     ],
 )
-def test_a_named_retake_is_left_for_the_editor(description):
+def test_a_named_retake_stays_partial_until_the_exact_line_is_verified(description):
     receipt = check_requirement(
         _req("audio", description), plan_facts_from_phone_variant(_variant())
     )
     assert receipt.status == "partial"
     assert receipt.reason.startswith("Speech cleanup cut the long pauses")
-    assert "trim that in the editor" in receipt.reason
+    assert (
+        "I can't cut out one exact line yet or confirm it's gone, so it may still be in your video"
+        in receipt.reason
+    )
 
 
 def test_a_length_in_the_cleanup_ask_is_met_when_the_rendered_take_matches():
     req = _req("timing", "cut the long pauses and keep it under 24 s", duration_s=24)
-    receipt = check_requirement(req, plan_facts_from_phone_variant(_variant(duration_s=24)))
+    receipt = check_requirement(
+        req,
+        plan_facts_from_phone_variant(
+            _variant(
+                duration_s=23.6,
+                measured_export_duration_s=23.6,
+                ok=True,
+                render_status="ready",
+                render_generation_id="output",
+                measured_export_generation_id="output",
+            )
+        ),
+    )
     assert receipt.status == "met"
 
 
 def test_a_length_in_the_cleanup_ask_reports_a_rendered_mismatch():
     req = _req("timing", "cut the long pauses and keep it under 24 s", duration_s=24)
-    receipt = check_requirement(req, plan_facts_from_phone_variant(_variant(duration_s=30)))
+    receipt = check_requirement(
+        req,
+        plan_facts_from_phone_variant(
+            _variant(
+                duration_s=30,
+                measured_export_duration_s=30,
+                ok=True,
+                render_status="ready",
+                render_generation_id="output",
+                measured_export_generation_id="output",
+            )
+        ),
+    )
     assert receipt.status == "partial"
-    assert "This draft is about 30s; you asked for 24s." in receipt.reason
+    assert (
+        "The finished video is 30s including its ending; you asked for under 24s." in receipt.reason
+    )
+
+
+def test_cleanup_cannot_turn_an_unmeasured_strict_duration_into_checked_evidence():
+    req = _req("timing", "cut the long pauses and keep it under 24 s", duration_s=24)
+    receipt = check_requirement(req, plan_facts_from_phone_variant(_variant(duration_s=23)))
+    assert receipt.status == "partial"
+    assert receipt.verification == "unchecked"
+    assert not is_judged(req, receipt)
 
 
 def test_unknown_cleanup_outcome_stays_unchecked():

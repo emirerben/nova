@@ -146,6 +146,74 @@ def _assert_only_captions_moved(old, new):
     assert [a for a in new.asset_manifest.assets if not a.id.startswith("font-")] == non_font
 
 
+def test_n2_fullscreen_sequence_caption_save_preserves_photo_and_video_restart(monkeypatch):
+    from app.pipeline.narrated_photo_sequence import compile_narrated_photo_sequences
+    from app.pipeline.phone_narrated_plan import replace_editor_lanes
+    from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes
+    from app.services.phone_sources import PHONE_VISUALS_FIELD
+    from app.services.phone_subtitled_editor import lanes_from_recipe
+    from app.services.phone_voiceover_timeline import narrated_timings_and_assignments
+    from tests.pipeline.test_phone_narrated_fullscreen import _card, _visual
+
+    job = phone_job(monkeypatch, title="3 things we loved")
+    photo = _visual("river-photo")
+    lane = _card("beat-river-1", photo.media_id, 4, 5.5).model_copy(update={"fade": False})
+    lanes = PhoneSubtitledLanes(overlays=[lane])
+    recipe = replace_editor_lanes(
+        device_status(job, "narrated").request.recipe, lanes=lanes, visuals=(photo,)
+    )
+    recipe, evidence = compile_narrated_photo_sequences(
+        recipe,
+        bindings=_bindings(),
+        beats=[
+            {
+                "beat_id": "river",
+                "trigger": "the river",
+                "display_mode": "fullscreen",
+                "following_clip_id": "c1",
+                "visual_id": photo.media_id,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        gj.settings, "phone_render_verified_features", sorted(recipe.required_capabilities)
+    )
+    job.assembly_plan[PHONE_VISUALS_FIELD] = [photo.model_dump(mode="json")]
+    receipt = {
+        "placed": [
+            {
+                "beat_id": "river",
+                "card_id": "beat-river-1",
+                "at_s": 4.0,
+                "end_s": 5.5,
+                "display_mode": "fullscreen",
+                **evidence["river"],
+            }
+        ]
+    }
+    job.assembly_plan["variants"][0]["phone_beat_receipt"] = receipt
+    pin_device_request(
+        job,
+        make_device_request(job_id=job.id, variant_id="narrated", revision=2, recipe=recipe),
+        base_generation="first",
+    )
+    save(job, caption_cues=[dict(_CUES[0], text="Three things we loved"), _CUES[1]])
+    saved = device_status(job, "narrated").request.recipe
+    assert job.assembly_plan["variants"][0]["phone_beat_receipt"] == receipt
+    _assert_only_captions_moved(recipe, saved)
+    extracted = lanes_from_recipe(saved, visuals=(photo,))
+    assert extracted.overlays[0].display_mode == "fullscreen"
+    assert (extracted.overlays[0].start_s, extracted.overlays[0].end_s) == (4, 5.5)
+    projected = narrated_timings_and_assignments(
+        saved, list(_bindings()), [b.proxy_path for b in _bindings()]
+    )
+    assert projected is not None
+    assert len({row["step_id"] for row in projected[0]}) == 4
+    assert projected[0][2]["start_s"] == 5.5
+    assert projected[1][2]["source_start_s"] == 0
+    assert projected[0][-1]["start_s"] == 8  # The pinned ending stays put.
+
+
 # --- opening title (KRI-455) --------------------------------------------------------
 
 

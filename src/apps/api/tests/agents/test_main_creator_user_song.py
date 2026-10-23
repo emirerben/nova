@@ -40,15 +40,17 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # renders remain unchanged. Re-pin brief-on hashes only after reviewing both additions.
 # v67 preserves those instructions and adds quoted start_line/end_line trim facts.
 # v68 combines caption spellings, spoken triggers/speaker, quoted trims and named cuts.
-# Only brief-on hashes change after reviewing the complete instruction union.
 # v69 retains editorial pairing with caption/spoken-text/quoted-trim/named-cut facts.
-# Brief-off hashes remain the reviewed editorial baseline; only brief-on hashes
-# change for the cumulative shared brief instructions.
+# v70 (KRI-851) edits only the Talking reaction-beats section, which these no-beats
+# montage renders never include: all four hashes are unchanged.
+# v71 (KRI-814) adds the typed `delegates_all_choices` declaration: brief-on hashes only.
+# v72 (KRI-814) re-reads unrecorded earlier creator lines: brief-on hashes only.
+# v74 combines subtitle semantics and delegation; brief-off matches subtitle v73 exactly.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, False): "ba2f0743754b875c49e3a94f5112cbb9595e786d9328f557fb0e30777b89e725",
-    (True, True): "7c449a08adc5d93dedf655ba7fbc430dd36cd559d1cff2b99e3e67702cabcc88",
-    (False, False): "b49f8c15b28a37d5ef66dbc9e1d1c3a8c724482d91f2e609aad4f6abd0b6d13a",
-    (False, True): "034970573dafdbb0383838c5cb6e14bffbb2749454cabb3ec7c0bf860146fd14",
+    (True, True): "bf51b31e7238e2286a68be7275ec9a502085f667f4885053353116f9c9ea1b12",
+    (True, False): "e33c7b44e601b95b61036b2806cc2111d8aa20204994881bf8fe128534b5cf3c",
+    (False, True): "d004dd784a572ce4d5dea3fd98fd9f5e17688271bafc14b2627ed3c1b96b57c4",
+    (False, False): "6e32911313c9667767209df7d6d929db36873990e5dceb2d27549ba179569c1d",
 }
 
 
@@ -118,7 +120,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-22-v69"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-23-v75"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

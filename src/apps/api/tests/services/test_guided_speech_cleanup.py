@@ -95,6 +95,8 @@ def analysis_row(item: SimpleNamespace, fixture: dict, **overrides) -> SimpleNam
     analysis = copy.deepcopy(fixture["snapshot"]["analysis"])
     # The payload binds to the fingerprint of the source it analyzed.
     analysis["source_fingerprint"] = source.source_policy_fingerprint
+    # Synthetic current-positive row; retain the historical v4 fixture bytes.
+    analysis["detector_version"] = DETECTOR_VERSION
     values = {
         "id": uuid.UUID(fixture["snapshot"]["analysis_id"]),
         "plan_item_id": item.id,
@@ -180,7 +182,8 @@ def test_fixture_is_the_mixed_gap_structure_of_the_reported_voiceover() -> None:
 
     from app.services.speech_cleanup_selection import DETECTOR_VERSION
 
-    assert snapshot.detector_version == DETECTOR_VERSION
+    assert snapshot.detector_version == "mixed-gap-v4"
+    assert snapshot.detector_version != DETECTOR_VERSION
     assert len(keep) == fixture["expected"]["keep_segment_count"] == 9
     assert sum(end - start for start, end in keep) == pytest.approx(41.59, abs=1e-3)
     assert len(snapshot.transcript(apply_cut=True).words) == 91

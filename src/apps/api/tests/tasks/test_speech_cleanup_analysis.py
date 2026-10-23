@@ -796,6 +796,75 @@ def test_engine_input_is_stamped_with_the_claimed_detector_label(monkeypatch) ->
     assert captured and captured[0].detector_version == DETECTOR_VERSION
 
 
+def test_retake_hook_runs_only_when_the_flag_is_enabled(monkeypatch) -> None:
+    captured = []
+    detector = Mock(return_value=((1, 2),))
+    monkeypatch.setattr(task_module.settings, "retake_cut_enabled", True)
+    monkeypatch.setattr(task_module.settings, "speech_cleanup_retakes_enabled", True)
+    monkeypatch.setattr(task_module, "_retake_spans_for_timed_words", detector)
+    monkeypatch.setattr(
+        task_module,
+        "run_speech_cleanup_engine",
+        lambda _input, *, retake_detect_fn: captured.append(retake_detect_fn) or _result(),
+    )
+
+    work = _work()
+    task_module._run_engine(work, Path("narration.wav"))
+
+    assert len(captured) == 1
+    words = (SimpleNamespace(text="one", start_s=0.0, end_s=0.2),)
+    assert captured[0](words, "tr") == ((1, 2),)
+    detector.assert_called_once_with(words, language="tr", work=work)
+
+
+def test_retake_detector_uses_preflight_owner_context_not_analysis_as_job(monkeypatch) -> None:
+    from app.agents import retake_detector
+
+    calls = []
+
+    def run(_agent, agent_input, *, ctx):
+        calls.append((agent_input, ctx))
+        return retake_detector.RetakeDetectorOutput(
+            retakes=[retake_detector.RetakeSpan(start_word=0, end_word=0, reason="restart")]
+        )
+
+    monkeypatch.setattr(retake_detector.RetakeDetectorAgent, "run", run)
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: object())
+    work = _work(plan_item_id=uuid.uuid4(), creator_id=str(uuid.uuid4()))
+    words = tuple(
+        SimpleNamespace(text=f"word-{index}", start_s=index * 0.2, end_s=index * 0.2 + 0.1)
+        for index in range(4)
+    )
+
+    assert task_module._retake_spans_for_timed_words(words, language="tr", work=work) == ((0, 0),)
+
+    agent_input, ctx = calls[0]
+    assert [(word.i, word.text) for word in agent_input.words] == [
+        (0, "word-0"),
+        (1, "word-1"),
+        (2, "word-2"),
+        (3, "word-3"),
+    ]
+    assert ctx.job_id is None
+    assert (ctx.creator_id, ctx.plan_item_id) == (work.creator_id, str(work.plan_item_id))
+    assert ctx.request_id == f"speech-cleanup-retakes:{work.claim.analysis_id}"
+    assert ctx.usage_purpose == "optional_background"
+
+
+def test_legacy_retake_flag_does_not_activate_consented_preflight(monkeypatch) -> None:
+    """Old clients promise a restart stays; the compatibility fence is default-off."""
+
+    monkeypatch.setattr(task_module.settings, "retake_cut_enabled", True)
+    monkeypatch.setattr(task_module.settings, "speech_cleanup_retakes_enabled", False)
+    engine = Mock(return_value=_result())
+    monkeypatch.setattr(task_module, "run_speech_cleanup_engine", engine)
+
+    task_module._run_engine(_work(), Path("narration.wav"))
+
+    engine.assert_called_once()
+    assert engine.call_args.kwargs == {}
+
+
 def test_validate_work_fails_closed_on_a_detector_label_the_engine_will_not_produce() -> None:
     """Any unclaimed/foreign label must never reach the persisted plan."""
 

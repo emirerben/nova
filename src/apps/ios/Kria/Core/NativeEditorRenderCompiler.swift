@@ -162,7 +162,10 @@ enum NativeEditorRenderError: Error, Equatable {
             }
             let explicitRate = authoredSlot?.raw["playback_rate"]?.numberValue
             if let explicitRate {
-                guard explicitRate.isFinite, (0.25...4).contains(explicitRate) else { throw RecipeError.invalidTimeline }
+                guard NarratedRateGate.acceptsExplicit(explicitRate, slot: authoredSlot) else {
+                    NarratedRateGate.reject("explicit-rate", index: index, rate: explicitRate, slot: authoredSlot)
+                    throw RecipeError.invalidTimeline
+                }
             }
             let outputDuration = clip.end - clip.start
             // Playback rate consumes a different source span while the slot's
@@ -193,8 +196,11 @@ enum NativeEditorRenderError: Error, Equatable {
                     sourceStart = available - requestedSpan
                 }
             }
-            guard requestedRate.isFinite, (0.25...4).contains(requestedRate),
-                  outputDuration > 0, sourceSpan > 0 else { throw RecipeError.invalidTimeline }
+            guard NarratedRateGate.acceptsDerived(requestedRate, sourceSpan: sourceSpan, slot: authoredSlot),
+                  outputDuration > 0, sourceSpan > 0 else {
+                NarratedRateGate.reject("derived-rate", index: index, rate: requestedRate, slot: authoredSlot, sourceSpan: sourceSpan)
+                throw RecipeError.invalidTimeline
+            }
             // The timeline owns output duration. At slow rates consume only
             // the source span that fits that clock, then hold the last frame.
             let consumedSourceDuration = min(sourceSpan, outputDuration * requestedRate)
@@ -1116,5 +1122,55 @@ enum KriaTextCase {
         case "title": title(text, language: language)
         default: text
         }
+    }
+}
+
+/// KRI-813: which playback rates the editor preview accepts for a video slot.
+///
+/// The creator-facing range is 0.25...4 (retime control, explicit `playback_rate`, cards, shots). A phone
+/// narrated edit is different: the server's `phone_narrated_plan._fit_step_window` slows short footage to
+/// fill each voiceover step with no rate floor (the C7 museum sculpture plays at ~0.165x), and the export
+/// engine plays exactly that. The preview must match it exactly -- clamping would freeze-hold the picture
+/// and drift it from the narration -- so only narrated-derived rates may go below 0.25x, down to the
+/// server's own minimum of `minimumSourceSpanS` source seconds over the step.
+enum NarratedRateGate {
+    static let creatorRange: ClosedRange<Double> = 0.25...4
+    /// Mirrors the server's `_MIN_USABLE_S` / `_EOF_GUARD_S` (phone_narrated_plan.py).
+    static let minimumSourceSpanS = 0.05
+
+    /// Only the two narrated hydrations (`NativeNarratedSourceTiming.hydrate`, `NativePhoneNarratedSource.hydrate`)
+    /// write `native_source_span_s`, and both run only for `resolved_archetype == "narrated"`.
+    /// `native_composite_source` alone is NOT narrated: talking and composite-base seeds set it too.
+    static func narratedSpan(_ slot: EditorTimelineSlot?) -> Double? {
+        slot?.raw["native_source_span_s"]?.numberValue
+    }
+
+    /// An explicit rate keeps the creator range, unless it is a device-recipe narrated seed's own derived
+    /// rate (`span / duration`), never a creator-authored value.
+    static func acceptsExplicit(_ rate: Double, slot: EditorTimelineSlot?) -> Bool {
+        guard rate.isFinite, rate > 0 else { return false }
+        if creatorRange.contains(rate) { return true }
+        guard rate < creatorRange.lowerBound, slot?.raw["native_composite_source"] == .bool(true),
+              let span = narratedSpan(slot), span.isFinite, span >= minimumSourceSpanS - 1e-9,
+              let duration = slot?.durationS, duration.isFinite, duration > 0 else { return false }
+        // The seed's rate is the server recipe's own. The compiler consumes min(span, duration * rate) source
+        // seconds, so device/server duration skew or a creator-lengthened slot holds the last frame (as at 0.25x+).
+        return true
+    }
+
+    /// The rate the compiler derives from the slot's source window.
+    static func acceptsDerived(_ rate: Double, sourceSpan: Double, slot: EditorTimelineSlot?) -> Bool {
+        guard rate.isFinite, rate > 0 else { return false }
+        if creatorRange.contains(rate) { return true }
+        guard rate < creatorRange.lowerBound, narratedSpan(slot) != nil else { return false }
+        return sourceSpan.isFinite && sourceSpan >= minimumSourceSpanS - 1e-9
+    }
+
+    /// Names the guard that refused a slot so a preview failure says which check fired (KRI-813).
+    static func reject(_ guardID: String, index: Int, rate: Double, slot: EditorTimelineSlot?, sourceSpan: Double? = nil) {
+        var fields = ["guard": guardID, "index": String(index), "rate": String(rate),
+                      "narrated": String(narratedSpan(slot) != nil), "duration": String(slot?.durationS ?? -1)]
+        if let sourceSpan { fields["sourceSpan"] = String(sourceSpan) }
+        NativePreviewDiagnostics.record("rate-guard", fields: fields)
     }
 }

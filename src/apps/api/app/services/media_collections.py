@@ -23,7 +23,13 @@ async def owned_collection(
     if row is None or row.user_id != owner:
         raise HTTPException(404, "Collection not found")
     if revision is not None and row.revision != revision:
-        raise HTTPException(409, "This collection changed. Refresh before continuing.")
+        raise HTTPException(
+            409,
+            {
+                "code": "collection_changed",
+                "message": "This collection changed. Refresh before continuing.",
+            },
+        )
     return row
 
 
@@ -132,8 +138,6 @@ async def write_collection(
     ).hexdigest()
     if row is not None and (row.selection_json or {}).get("request_digest") == digest:
         return collection_out(row, await eligible_sources(db, owner, members(row)))
-    if (row.revision if row is not None else 0) != body.expected_revision:
-        raise HTTPException(409, "This collection changed. Refresh before continuing.")
     sources = await eligible_sources(db, owner, body.members)
     if len(sources) != len(body.members):
         owned_ids = set(
@@ -149,9 +153,33 @@ async def write_collection(
         if any(member.asset_id not in owned_ids for member in body.members):
             raise HTTPException(404, "Media asset not found")
         raise HTTPException(
-            409, "Selected media is unavailable or its source changed. Remove or repair it."
+            409,
+            {
+                "code": "collection_media_unavailable",
+                "message": (
+                    "Selected media is unavailable or its source changed. Remove or repair it."
+                ),
+            },
         )
     grouped = _group(body.members, sources, members(row) if row else [])
+    # Opening the native collection saves its current selection again. Compare the
+    # effective content, not the request digest (which contains expected_revision).
+    # A stale identical snapshot is safe to acknowledge; it cannot overwrite data.
+    if (
+        row is not None
+        and body.expected_revision <= row.revision
+        and row.name == body.name.strip()
+        and members(row) == grouped
+    ):
+        return collection_out(row, sources)
+    if (row.revision if row is not None else 0) != body.expected_revision:
+        raise HTTPException(
+            409,
+            {
+                "code": "collection_changed",
+                "message": "This collection changed. Refresh before continuing.",
+            },
+        )
     if row is None:
         row = MediaCollection(id=identifier, user_id=owner, name=body.name, revision=0)
         db.add(row)

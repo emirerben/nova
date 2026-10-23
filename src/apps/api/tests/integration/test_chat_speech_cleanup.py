@@ -397,7 +397,7 @@ def _dispatch(
         "detector_version": DETECTOR_VERSION,
         "has_findings": True,
         "candidate_count": preflight.result.public_receipt.candidate_count,
-        "category_counts": {"filler_sounds": 2, "long_pauses": 3},
+        "category_counts": {"filler_sounds": 2, "long_pauses": 3, "retakes": 0},
         "estimated_removed_ms": preflight.result.public_receipt.estimated_removed_ms,
         # The column-derived projection must agree with the payload receipt.
         "source_duration_ms": preflight.result.public_receipt.source_duration_ms,

@@ -7359,6 +7359,54 @@ def _run_phone_subtitled_job(
                     _closing if isinstance(_closing, dict) else None,
                 )
 
+            def _requested_language_caption_words(
+                spoken_words: list[Any], spoken_lang: str
+            ) -> tuple[list[Any], str]:
+                """The caption words + caption language for the creator's explicit
+                caption-language ask (KRI-177), mirroring the cloud
+                `_resolve_verbatim_caption_language`.
+
+                No ask, or the ask is the language already spoken: the spoken words are
+                the captions. Otherwise the ORIGINAL clip is transcribed once more with
+                the ask as the whisper hint and those words feed the captions ONLY --
+                beats, overlay grounding, spoken-text asks and the persisted transcript
+                stay on the spoken words (KRI-839). A pass that hears nothing keeps the
+                spoken-language captions rather than ship none.
+                """
+                if caption_language_req is None or caption_language_req == spoken_lang:
+                    return spoken_words, spoken_lang
+                requested_transcript = transcribe_whisper_cached(
+                    clip_path, language=caption_language_req, verbatim_prompt=vocabulary_prompt
+                )
+                if not requested_transcript.words:
+                    record_pipeline_event(
+                        "captions",
+                        "caption_language_request_empty",
+                        {
+                            "variant_id": "subtitled",
+                            "requested": caption_language_req,
+                            "spoken": spoken_lang,
+                        },
+                    )
+                    log.warning(
+                        "caption_language_request_empty",
+                        job_id=job_id,
+                        variant_id="subtitled",
+                        requested=caption_language_req,
+                        spoken=spoken_lang,
+                    )
+                    return spoken_words, spoken_lang
+                record_pipeline_event(
+                    "captions",
+                    "caption_language_requested",
+                    {
+                        "variant_id": "subtitled",
+                        "requested": caption_language_req,
+                        "spoken": spoken_lang,
+                    },
+                )
+                return requested_transcript.words, caption_language_req
+
             if cleanup_required or opening_cut_only:
                 # Reuse the preflight analysis's own verbatim words -- the
                 # SAME transcription the CutPlan was computed from, never a
@@ -7422,42 +7470,9 @@ def _run_phone_subtitled_job(
                         }
                         for word in words
                     ]
-                caption_words = words
-                if caption_language_req is not None and caption_language_req != detected_lang:
-                    requested_transcript = transcribe_whisper_cached(
-                        clip_path, language=caption_language_req, verbatim_prompt=vocabulary_prompt
-                    )
-                    if requested_transcript.words:
-                        record_pipeline_event(
-                            "captions",
-                            "caption_language_requested",
-                            {
-                                "variant_id": "subtitled",
-                                "requested": caption_language_req,
-                                "spoken": detected_lang,
-                            },
-                        )
-                        caption_words = requested_transcript.words
-                        detected_lang = caption_language_req
-                    else:
-                        # Nothing heard in the requested language: keep the
-                        # spoken-language captions rather than ship none.
-                        record_pipeline_event(
-                            "captions",
-                            "caption_language_request_empty",
-                            {
-                                "variant_id": "subtitled",
-                                "requested": caption_language_req,
-                                "spoken": detected_lang,
-                            },
-                        )
-                        log.warning(
-                            "caption_language_request_empty",
-                            job_id=job_id,
-                            variant_id="subtitled",
-                            requested=caption_language_req,
-                            spoken=detected_lang,
-                        )
+                caption_words, detected_lang = _requested_language_caption_words(
+                    words, detected_lang
+                )
                 # Raw float mapping, no frame grid: the phone recipe plays
                 # each keep segment at its exact float offsets.
                 cut_words = [
@@ -7476,37 +7491,42 @@ def _run_phone_subtitled_job(
                     # KRI-707: the SPOKEN words (never a requested caption language), cut.
                     timeline_words = remap_words(words, cut_plan)
             else:
+                # KRI-839: `transcript` is the SPOKEN pass -- always auto-language, even
+                # when the creator asked for captions in another language. Reaction
+                # beats, overlay grounding, spoken-text asks and the persisted
+                # transcript read it (`raw_words` / `timeline_words`); a requested
+                # caption language only changes the caption words below. Forcing this
+                # pass to the request matched "Ecuador" / "That's it" against a Turkish
+                # translation and dropped the photo card and the ding.
                 transcript = transcribe_whisper_cached(
-                    clip_path, language=caption_language_req, verbatim_prompt=vocabulary_prompt
+                    clip_path, language=None, verbatim_prompt=vocabulary_prompt
                 )
-                if caption_language_req is None:
-                    # whisper-1 misdetects accented speech (Turkish-accented English
-                    # -> "tr") and then writes a translation, so the captions and every
-                    # spoken trigger go wrong. Gemini's transcript of the same clip is
-                    # an independent listener: on a clear disagreement, transcribe
-                    # again in the language Gemini actually heard.
-                    clip_meta = next(
-                        (m for m in clip_metas if str(m.clip_id) == str(clip_id)), None
+                # whisper-1 misdetects accented speech (Turkish-accented English
+                # -> "tr") and then writes a translation, so the captions and every
+                # spoken trigger go wrong. Gemini's transcript of the same clip is
+                # an independent listener: on a clear disagreement, transcribe
+                # again in the language Gemini actually heard. Only this spoken pass
+                # is checked, never the requested-language caption pass.
+                clip_meta = next((m for m in clip_metas if str(m.clip_id) == str(clip_id)), None)
+                heard_lang = crosscheck_detected_language(
+                    transcript.language, reference_text=getattr(clip_meta, "transcript", None)
+                )
+                if heard_lang is not None:
+                    retranscribed = transcribe_whisper_cached(
+                        clip_path, language=heard_lang, verbatim_prompt=vocabulary_prompt
                     )
-                    heard_lang = crosscheck_detected_language(
-                        transcript.language, reference_text=getattr(clip_meta, "transcript", None)
+                    record_pipeline_event(
+                        "captions",
+                        "caption_language_crosscheck",
+                        {
+                            "variant_id": "subtitled",
+                            "whisper_language": transcript.language,
+                            "reference_language": heard_lang,
+                            "applied": bool(retranscribed.words),
+                        },
                     )
-                    if heard_lang is not None:
-                        retranscribed = transcribe_whisper_cached(
-                            clip_path, language=heard_lang, verbatim_prompt=vocabulary_prompt
-                        )
-                        record_pipeline_event(
-                            "captions",
-                            "caption_language_crosscheck",
-                            {
-                                "variant_id": "subtitled",
-                                "whisper_language": transcript.language,
-                                "reference_language": heard_lang,
-                                "applied": bool(retranscribed.words),
-                            },
-                        )
-                        if retranscribed.words:
-                            transcript = retranscribed
+                    if retranscribed.words:
+                        transcript = retranscribed
                 _spoken_lang, _lang_source = resolve_spoken_caption_language(
                     transcript.language,
                     transcript_text=getattr(transcript, "full_text", None),
@@ -7531,7 +7551,12 @@ def _run_phone_subtitled_job(
                         language=_spoken_lang,
                         job_language=language,
                     )
-                if caption_language_req is not None:
+                caption_words, detected_lang = _requested_language_caption_words(
+                    transcript.words, _spoken_lang
+                )
+                if caption_language_req is not None and caption_language_req == _spoken_lang:
+                    # Asked for the language already spoken: the spoken words are the
+                    # captions, no second pass.
                     record_pipeline_event(
                         "captions",
                         "caption_language_requested",
@@ -7541,13 +7566,11 @@ def _run_phone_subtitled_job(
                             "spoken": _spoken_lang,
                         },
                     )
-                    detected_lang = caption_language_req
-                else:
-                    detected_lang = _spoken_lang
                 if media_lanes_enabled:
-                    # Captured before caption correction touches the cues built
-                    # from these same words -- the persisted receipt is exactly
-                    # what Whisper heard, never the LLM-corrected spelling.
+                    # Captured before caption correction touches the cues -- the
+                    # persisted receipt is exactly what Whisper heard in the SPOKEN
+                    # language, never the LLM-corrected spelling or the requested-
+                    # language caption words.
                     raw_words = [
                         {
                             "text": word.text,
@@ -7557,9 +7580,7 @@ def _run_phone_subtitled_job(
                         }
                         for word in transcript.words
                     ]
-                cues = build_plain_cues(
-                    transcript.words, attach_words=True, budget=PHONE_CUE_BUDGET
-                )
+                cues = build_plain_cues(caption_words, attach_words=True, budget=PHONE_CUE_BUDGET)
                 if spoken_text_asks:
                     timeline_words = list(transcript.words)
                 # KRI-719: each extra speaker's own words, shifted to where it
@@ -9054,6 +9075,7 @@ def _phone_narrated_reaction_lanes(
             words=words,
             duration_s=duration_s,
             clip_path=None,
+            allow_fullscreen=bool(settings.phone_subtitled_fullscreen_overlays_enabled),
         )
     except OperationalError:
         raise  # transient DB -> Celery autoretry, never a lane drop
@@ -9852,6 +9874,36 @@ def _run_phone_narrated_job(
                         reason="compile_dropped",
                     )
                     lanes = dropped if dropped.overlays or dropped.sound_effects else None
+            # An explicit photo-then-original sequence is atomic. Only the final
+            # surviving full-screen photo may restart its aligned video. A lost
+            # photo or unsafe timing requires recovery rather than a false success.
+            from app.pipeline.narrated_photo_sequence import (  # noqa: PLC0415
+                PhotoSequenceUnavailable,
+                compile_narrated_photo_sequences,
+            )
+
+            try:
+                recipe, photo_sequences = compile_narrated_photo_sequences(
+                    recipe, beats=beats, bindings=bindings
+                )
+            except PhotoSequenceUnavailable as exc:
+                record_pipeline_event(
+                    "narrated",
+                    "photo_sequence_unavailable",
+                    {"trigger": exc.trigger, "reason": exc.reason},
+                )
+                if not _save_request_recovery(
+                    job_id,
+                    snapshot,
+                    ownership_epoch=ownership_epoch,
+                    message=str(exc),
+                ):
+                    return None
+                raise
+            if beat_receipt is not None and photo_sequences:
+                beat_receipt = copy.deepcopy(beat_receipt)
+                for placed in beat_receipt.get("placed") or []:
+                    placed.update(photo_sequences.get(placed.get("beat_id"), {}))
             if lanes is not None:
                 referenced = {card.media_id for card in lanes.overlays}
                 visuals = tuple(visual for visual in visuals if visual.media_id in referenced)
@@ -25061,6 +25113,16 @@ def _narrated_creator_clip_labels(
             media_id = assignment.get("media_id") if isinstance(assignment, Mapping) else None
             if media_id and attribute not in labels_by_media.setdefault(str(media_id), []):
                 labels_by_media[str(media_id)].append(attribute)
+    # The typed photo -> original relation gives the alignment agent the same
+    # exact spoken cue even if no redundant include intent survived planning.
+    for beat in strategy.get("reaction_beats") or []:
+        if not isinstance(beat, Mapping) or beat.get("display_mode") != "fullscreen":
+            continue
+        following = beat.get("following_clip_id")
+        trigger = " ".join(str(beat.get("trigger") or "").split())
+        if following and trigger:
+            cue_label = f'Show at the spoken cue "{trigger}"; a photo covers the opening'
+            labels_by_media.setdefault(str(following), []).append(cue_label)
     labels: dict[str, str] = {}
     clip_by_media: dict[str, str] = {}
     for clip_id, gcs_path in clip_id_to_gcs.items():

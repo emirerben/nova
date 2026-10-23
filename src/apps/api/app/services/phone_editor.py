@@ -435,6 +435,32 @@ def _rebind_editor_render_contract(
         bindings = dict(assembly.get("creator_brief_bindings") or {})
         bindings[generation] = copy.deepcopy(brief_binding)
         assembly["creator_brief_bindings"] = bindings
+    elif contract.brief_digest is not None:
+        # A second manual Save has no newly supplied binding, but its previous
+        # editor revision is still bound to an immutable creator brief. Carry
+        # that exact authority to the new generation; never fall back to an
+        # unrelated root binding when the prior generation is missing/tampered.
+        raw_bindings = assembly.get("creator_brief_bindings") or {}
+        if not isinstance(raw_bindings, dict):
+            raise CreatorRenderContractError("I couldn't verify this edit's approved brief.")
+        inherited = raw_bindings.get(contract.generation_id)
+        if inherited is None and contract.generation_id not in raw_bindings:
+            inherited = assembly.get("creator_brief_binding")
+        if not isinstance(inherited, dict):
+            raise CreatorRenderContractError("I couldn't verify this edit's approved brief.")
+        inherited_brief = inherited.get("brief")
+        if not isinstance(inherited_brief, dict):
+            raise CreatorRenderContractError("I couldn't verify this edit's approved brief.")
+        inherited_digest = hashlib.sha256(
+            json.dumps(
+                inherited_brief, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            ).encode()
+        ).hexdigest()
+        if inherited_digest != contract.brief_digest:
+            raise CreatorRenderContractError("I couldn't verify this edit's approved brief.")
+        bindings = dict(raw_bindings)
+        bindings[generation] = copy.deepcopy(inherited)
+        assembly["creator_brief_bindings"] = bindings
     if sections.get("text_elements"):
         # The staged variant is the accepted editor state.  Do not inspect the
         # generated recipe here: compiler output is proof, not edit authority.
@@ -1325,7 +1351,8 @@ def _voiceover_allows_editor_media(recipe: EditRecipeV2) -> bool:
     qualified compilers: Visuals cards (``subtitled-overlays``) or added media
     (``editor-media``). Pinned layers carry forward on any later Save."""
     return any(
-        track.id in {"subtitled-overlays", EDITOR_MEDIA_TRACK_ID} and track.clips
+        track.id in {"subtitled-overlays", "subtitled-fullscreen", EDITOR_MEDIA_TRACK_ID}
+        and track.clips
         for track in recipe.tracks
     )
 
@@ -1451,6 +1478,14 @@ def _compile_narrated_editor_commit(
         row["render_status"] = "awaiting_device"
         row["render_destination"] = "device"
         row["duration_s"] = recipe.duration
+        if row.get("phone_beat_receipt"):
+            from app.pipeline.narrated_photo_sequence import (  # noqa: PLC0415
+                refresh_narrated_sequence_receipt,
+            )
+
+            row["phone_beat_receipt"] = refresh_narrated_sequence_receipt(
+                recipe, row["phone_beat_receipt"]
+            )
         if caption_cues_overridden:
             row["caption_cues"] = caption_cues
         if text_active:

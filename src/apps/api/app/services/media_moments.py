@@ -33,7 +33,7 @@ from app.services.clip_understanding import clip_record
 from app.services.media_collections import eligible_sources, members, owned_collection
 from app.services.media_library_ingest import lock_library_owner
 
-INDEX_VERSION = "source-intervals-v2"
+INDEX_VERSION = "source-intervals-v3"
 MAX_SOURCE_MOMENTS = 2000
 SOURCE_CHECK_BATCH_SIZE = 10
 
@@ -76,6 +76,11 @@ def source_intervals(analysis: dict, transcript: dict, duration: float) -> tuple
     def add(kind, start, end, text, uncertain):
         start, end = _number(start), _number(end)
         text = _clean_text(text, 2000)
+        # Visual analysis timestamps are approximate. Preserve the portion that
+        # actually exists instead of dropping a short clip for an overlong end.
+        # Speech stays exact: shortening a word or sentence would change it.
+        if kind == "visual" and end is not None:
+            end = min(end, duration)
         if start is None or end is None or not (0 <= start < end <= duration) or not text:
             return
         key = (kind, start, end, text)
@@ -91,6 +96,7 @@ def source_intervals(analysis: dict, transcript: dict, duration: float) -> tuple
     for value in [
         *(understanding.get("notable_moments") or []),
         *(analysis.get("important_moments") or []),
+        *(analysis.get("best_moments") or []),
     ]:
         if isinstance(value, dict):
             add(
