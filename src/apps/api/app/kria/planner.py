@@ -204,6 +204,28 @@ from app.services.spoken_roles import SpokenSeats
 log = structlog.get_logger()
 
 
+def _held_visual_pool(manifest: Any, strategy: Mapping[str, Any]) -> tuple[str, ...] | None:
+    """KRI-824: the Visual stills (``asset-*`` pool photos) a unified montage places.
+
+    Only the montage family without a recorded voiceover places Visuals beside the
+    footage (``_run_phone_unified_montage_job``), narrowed to an explicit ``selected``
+    scope as the worker narrows it. None for every other format: no Visual plays there,
+    so no held seconds come off the creator's total.
+    """
+    from app.pipeline.unified_montage import selected_visual_ids  # noqa: PLC0415
+
+    if strategy.get("edit_format") != "montage" or strategy.get("audio_strategy") == "voiceover":
+        return None
+    selected = selected_visual_ids(strategy)
+    return tuple(
+        media.media_id
+        for media in getattr(manifest, "media", None) or ()
+        if media.kind == "image"
+        and media.media_id.startswith("asset-")
+        and (selected is None or media.media_id in selected)
+    )
+
+
 def _enrich_best_parts_snapshot(
     strategy: Mapping[str, Any],
     media_snapshot: dict | None,
@@ -212,6 +234,7 @@ def _enrich_best_parts_snapshot(
     closing_quote: Mapping[str, Any] | None = None,
     named_lines: Sequence[Mapping[str, Any]] | None = None,
     camera_sound: bool = False,
+    visual_photo_ids: Sequence[str] | None = None,
 ) -> dict | None:
     """Attach source-bounded footage capacity before the choice collector runs.
 
@@ -224,6 +247,8 @@ def _enrich_best_parts_snapshot(
     ``camera_sound`` (``narration_notes.keeps_camera_sound``, KRI-585): every clip's own
     sound plays, so a welcome the clips' words move forward keeps its line and a pinned
     closing clip that only introduces someone plays its stretch without words.
+    ``visual_photo_ids`` (``_held_visual_pool``, KRI-824): the pool stills this format
+    places beside the footage; a creator-held one is budgeted off the creator's total.
     """
     if not isinstance(media_snapshot, dict):
         return media_snapshot
@@ -282,7 +307,9 @@ def _enrich_best_parts_snapshot(
             brief, [str(row.get("media_id")) for row in clip_rows if row.get("kind") == "image"]
         ).items()
     }
-    held_visual_s = held_visual_seconds(brief, [str(row.get("media_id")) for row in clip_rows])
+    held_visual_s = held_visual_seconds(
+        brief, [str(row.get("media_id")) for row in clip_rows], visual_photo_ids
+    )
     if creator_target_s is not None and held_visual_s and creator_target_s > held_visual_s:
         creator_target_s -= held_visual_s
 
@@ -4027,6 +4054,7 @@ async def _gate_unresolved_choices(
         closing_quote=closing_quote,
         named_lines=named_lines,
         camera_sound=camera_sound,
+        visual_photo_ids=_held_visual_pool(planned.brief_manifest, strategy),
     )
     if enriched_snapshot is not planned.media_snapshot:
         planned = replace(planned, media_snapshot=enriched_snapshot)
@@ -4164,6 +4192,7 @@ async def _gate_unresolved_choices(
         closing_quote=closing_quote,
         named_lines=named_lines,
         camera_sound=camera_sound,
+        visual_photo_ids=_held_visual_pool(planned.brief_manifest, resolution.strategy),
     )
     return _with_narration_note(
         replace(

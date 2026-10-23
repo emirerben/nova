@@ -32,6 +32,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +41,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.agents._schemas.creator_agent import CreatorMediaRef, ResolvedCreatorManifest
 from app.config import settings
 from app.kria import planner
 from app.kria.brief import CreativeBrief
@@ -239,6 +241,24 @@ def planned_turn(render: dict) -> PlannedKriaTurn:
         manifest_hash="a" * 64,
         context_hash="b" * 64,
         media_snapshot=copy.deepcopy(render["media_snapshot"]),
+        brief_manifest=_manifest(render),
+    )
+
+
+def _manifest(render: dict) -> ResolvedCreatorManifest:
+    """The item's media as prod's manifest lists it: the take(s) and the Visual photo(s)."""
+    visuals = sorted(set(re.findall(r"asset-[0-9a-f-]{36}", json.dumps(render))))
+    takes = [row["media_id"] for row in render["media_snapshot"]["clip_assignments"]]
+    return ResolvedCreatorManifest(
+        item_id="item-m2",
+        edit_format="montage",
+        render_program="guided",
+        media=[
+            *(CreatorMediaRef(media_id=media_id, kind="video") for media_id in takes),
+            *(CreatorMediaRef(media_id=media_id, kind="image") for media_id in visuals),
+        ],
+        context_hash="b" * 64,
+        manifest_hash="a" * 64,
     )
 
 

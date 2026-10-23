@@ -16,13 +16,21 @@ Ways this can fail, each pinned below (written before the fix):
    ``authority`` key in the model's update) is applied as creator intent.
 5. A correction for photo A changes photo B, or loses A's earlier hold.
 6. A removed hold comes back from the older turn.
-7. Turkish and English read differently ("1,5 saniye" vs "1.5 seconds"), or a length in
-   words ("bir saniye", "one second") is guessed from the words instead of left unconfirmed.
+7. Turkish and English read differently ("1,5 saniye" vs "1.5 seconds", "bir saniye" vs
+   "one second"), or a photo ask with no stated length ("short") is applied as creator
+   intent.
 8. Exact retry of the approved binding re-plans to different values.
 9. Rounding to frames makes an exact 1.0 s verify as failed (30 frames at 30 fps).
 10. The creator's total length takes time from the held photo instead of default cuts.
 11. A scope naming a photo by an ambiguous tail attaches the hold to the wrong photo.
 12. The receipt says "met" for a hold that did not render, or "not met" for one that did.
+13. A number that is not a length ("3 photos", "1000 followers") stamps a model's hold.
+14. A correction typed without digits ("make it two seconds", "iki saniye olsun", "a bit
+    longer") drops the creator's photo back to the AI default.
+15. A creator-stamped length on a VIDEO clip is judged as a photo hold ("This photo kept
+    the edit's own pacing").
+16. A hold on a Visual that is not placed (removed, ambiguous tail, named twice) takes
+    seconds off the creator's total.
 
 Artifact: ``.dev/kri824/report.json`` (request, stamped brief, binding digest, source ids,
 per-cut seconds in the cloud execution plan and the phone recipe, and each photo's frame
@@ -127,7 +135,9 @@ def _turn(prior: CreativeBrief | None, updates, message: str, turn: str) -> Crea
 
 def _render(brief: CreativeBrief, strategy: dict, *, verify: bool = True) -> dict:
     """Approve, plan, compile for cloud and phone; return what each would play."""
-    snapshot = _enrich_best_parts_snapshot(strategy, _media_snapshot(), brief)
+    snapshot = _enrich_best_parts_snapshot(
+        strategy, _media_snapshot(), brief, visual_photo_ids=[p.manifest_id for p in PHOTOS]
+    )
     binding = BriefBinding.create(THREAD, brief, latest_message="Continue", media_snapshot=snapshot)
     resolved = binding.resolve()
     plan = plan_unified_montage(
@@ -394,7 +404,8 @@ def test_a_correction_changes_only_its_photo_and_keeps_the_rest() -> None:
         ("keep the beach photo for 1,5 seconds", 1.5),
         ("Plaj fotoğrafını 1.5 sn göster", 1.5),
         ("keep the beach photo up for 1.5 seconds", 1.5),
-        ("beach photo: 1500ms please", 1.5),
+        ("plaj fotoğrafı bir buçuk saniye kalsın", 1.5),
+        ("keep the beach photo for one and a half seconds", 1.5),
         ("plaj fotoğrafı 2 saniye", 2.0),
     ],
 )
@@ -411,19 +422,19 @@ def test_turkish_and_english_phrasings_hold_the_same_photo(message: str, seconds
 @pytest.mark.parametrize(
     "message", ["plaj fotoğrafı bir saniye kalsın", "keep the beach photo for one second"]
 )
-def test_a_length_in_words_is_not_guessed_and_is_never_applied_as_creator_intent(
-    message: str,
-) -> None:
-    # Words are the model's to read (KRI-667); the server confirms only typed numbers, so a
-    # worded length is never applied from the model alone, in either language. (Its legacy
-    # reading as a whole-video length is the KRI-775 follow-up's, unchanged here.)
-    from app.kria.asset_holds import asset_holds  # noqa: PLC0415
-
+def test_a_length_in_words_holds_the_same_as_digits(message: str) -> None:
+    # 7: "one second" / "bir saniye" is the same stated length as "1 second", in EN and TR.
     brief = _turn(None, [_hold_update(BEACH, 1, message)], message, "t1")
-    assert _req(brief, BEACH).authority is None
-    assert asset_holds(brief, [p.manifest_id for p in PHOTOS]) == {}
-    plan = plan_unified_montage(CLIPS, brief_view(brief), strategy=_strategy(), visuals=PHOTOS)
-    assert plan.record().get("asset_holds") is None
+    assert _req(brief, BEACH).authority == "explicit"
+    rendered = _render(brief, _strategy())
+    assert rendered["cloud_still_s"][BEACH.media_id] == pytest.approx(1.0, abs=1e-6)
+    assert rendered["phone_still_s"][BEACH.media_id] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_a_photo_ask_with_no_stated_length_is_never_applied_as_creator_intent() -> None:
+    # The model's number for "short" is a proposal: the photo keeps the AI pacing.
+    message = "keep the beach photo short"
+    _never_applied(_turn(None, [_hold_update(BEACH, 1, "beach photo short")], message, "t1"))
 
 
 def test_exact_retry_of_the_approved_binding_plays_the_same_cuts() -> None:
@@ -534,3 +545,132 @@ def test_an_ambiguous_scope_attaches_to_no_photo() -> None:
         "t1",
     )
     assert asset_holds(brief, [twin_a.manifest_id, twin_b.manifest_id]) == {}
+
+
+# -- review fixes: numbers that are not lengths, worded corrections, videos, budgets ----
+
+
+@pytest.mark.parametrize(
+    ("message", "seconds"),
+    [
+        ("Use these 3 photos, keep the beach one short", 3),
+        ("we hit 1000 followers! beach photo quick", 1),
+        ("make it 15 seconds with my 3 favourite photos", 3),
+    ],
+)
+def test_a_number_that_is_not_a_length_never_stamps_a_model_hold(message, seconds) -> None:
+    # 13: only digits followed by a time unit confirm the extractor's seconds.
+    _never_applied(_turn(None, [_hold_update(BEACH, seconds, "beach photo short")], message, "t1"))
+
+
+@pytest.mark.parametrize(
+    ("message", "seconds"),
+    [
+        ("make it two seconds", 2),
+        ("iki saniye olsun", 2),
+        ("a bit longer", 1.5),
+        ("biraz daha kısa", 0.5),
+    ],
+)
+def test_a_worded_correction_keeps_the_photo_creator_owned(message, seconds) -> None:
+    # 14: the creator re-decided their own photo's time; it never returns to AI pacing.
+    first = _turn(
+        None,
+        [_hold_update(BEACH, 1, "beach photo 1 second")],
+        "keep the beach photo on screen for 1 second",
+        "t1",
+    )
+    target = _req(first, BEACH)
+    second = _turn(
+        first,
+        [
+            BriefUpdate(
+                operation="change",
+                target_requirement_id=target.id,
+                expected_version=first.version,
+                facts={"duration_s": seconds},
+            )
+        ],
+        message,
+        "t2",
+    )
+    assert _req(second, BEACH).authority == "explicit"
+    rendered = _render(second, _strategy())
+    assert rendered["cloud_still_s"][BEACH.media_id] == pytest.approx(seconds, abs=1 / 60)
+    assert rendered["phone_still_s"][BEACH.media_id] == pytest.approx(seconds, abs=1 / 60)
+    assert check_requirement(_req(second, BEACH), rendered["facts"]).status == "met"
+
+
+@pytest.mark.parametrize("fact", ["duration_s", "clip_duration_s"])
+def test_a_stamped_video_clip_length_is_not_judged_as_a_photo(fact) -> None:
+    # 15: holds are photos only; a video clip's length keeps the clip paths.
+    video = CLIPS[0]
+    message = "make the surf clip 2 seconds"
+    brief = _turn(
+        None,
+        [
+            BriefUpdate(
+                kind="timing",
+                scope=f"clip:{video.media_id}",
+                description="surf clip 2 seconds",
+                facts={fact: 2},
+            )
+        ],
+        message,
+        "t1",
+    )
+    req = next(r for r in brief.live() if r.scope == f"clip:{video.media_id}")
+    # Never the video's total, whatever the medium.
+    assert creator_duration_s(brief=brief) is None
+    rendered = _render(brief, _strategy(), verify=False)
+    assert not rendered["plan"].record().get("asset_holds")
+    receipt = check_requirement(req, rendered["facts"])
+    assert "photo" not in (receipt.reason or "").casefold()
+    assert "fotoğraf" not in (receipt.reason or "").casefold()
+
+
+def test_only_placed_visual_holds_come_off_the_creator_total() -> None:
+    # 16: a removed photo, an ambiguous tail and a doubly-named photo cost nothing extra.
+    from app.kria.asset_holds import held_visual_seconds  # noqa: PLC0415
+
+    clip_ids = [c.media_id for c in CLIPS]
+    pool = [p.manifest_id for p in PHOTOS]
+    removed = "asset-00000000-0000-4000-8000-000000000099"
+    brief = _turn(
+        None,
+        [
+            _hold_update(BEACH, 2, "beach photo 2 seconds"),
+            BriefUpdate(
+                kind="timing",
+                scope=f"clip:{BEACH.manifest_id[-12:]}",
+                description="beach photo 2 seconds",
+                facts={"duration_s": 2},
+            ),
+            BriefUpdate(
+                kind="timing",
+                scope=f"clip:{removed}",
+                description="old photo 2 seconds",
+                facts={"duration_s": 2},
+            ),
+        ],
+        "keep the beach photo 2 seconds and the old one 2 seconds",
+        "t1",
+    )
+    assert held_visual_seconds(brief, clip_ids, pool) == pytest.approx(2.0)
+    # A format that places no Visuals subtracts nothing.
+    assert held_visual_seconds(brief, clip_ids, None) == 0.0
+    twins = ["asset-aaaa-sharedtail", "asset-bbbb-sharedtail"]
+    ambiguous = _turn(
+        None,
+        [
+            BriefUpdate(
+                kind="timing",
+                scope="clip:sharedtail",
+                description="that photo 1 second",
+                facts={"duration_s": 1},
+            )
+        ],
+        "keep that photo 1 second",
+        "t1",
+    )
+    assert held_visual_seconds(ambiguous, clip_ids, twins) == 0.0

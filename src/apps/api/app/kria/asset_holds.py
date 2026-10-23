@@ -5,8 +5,11 @@ extractor (a model) records it as a ``timing`` requirement scoped ``clip:<media_
 ``facts.duration_s``. The model owns understanding (which photo, what the number is for;
 the KRI-667 language policy), but its numbers are not creator intent: the server stamps
 ``BriefRequirement.authority = "explicit"`` only when the creator's own stored turn typed
-those seconds (``stamp_authority``, digits only, so English and Turkish read alike). A
-length written in words is left unstamped for Kria to confirm. Everything downstream reads
+those seconds as a length (``stamp_authority``: a number, digits or EN/TR words, followed
+by a seconds unit, so English and Turkish read alike). A first ask with no stated length
+("keep the beach photo short") stays unstamped and the photo keeps the AI pacing; a later
+correction of a hold the creator already owns keeps it creator-owned. Everything
+downstream reads
 ``asset_holds``, which returns only stamped holds on the item's own photos; an unstamped,
 unresolvable or out-of-range hold is never applied (the receipt reports it unmet), and an
 AI cadence (``MixedMediaTimingProfile``) never overrides a stamped one.
@@ -34,46 +37,38 @@ HOLD_FPS = 30
 HOLD_TOLERANCE_S = 1.0 / HOLD_FPS + 1e-3
 
 
-def stated_numbers(text: str) -> tuple[float, ...]:
-    """Every number the creator typed in digits ("1", "1.5", "1,5", "1500").
+def stated_seconds(text: str) -> tuple[float, ...]:
+    """Every length the creator wrote as seconds ("1 second", "1,5 sn", "iki saniye").
 
-    Language-neutral by construction (KRI-667 language policy): digits read the same in
-    every language, and no word is interpreted. What the number is *for* is the brief
-    extractor's call, recorded in ``facts``; this only confirms the creator typed it.
+    The planner's own seconds reader (``_stated_holds``: a number, in digits or EN/TR
+    words, followed by a seconds unit), so a count ("3 photos"), a caption number or "1000
+    followers" is never a length. What the length is *for* stays the brief extractor's
+    call (KRI-667), recorded in ``facts``; this only confirms the creator said it.
     """
-    numbers: list[float] = []
-    raw = str(text or "")
-    index = 0
-    while index < len(raw):
-        if not raw[index].isdigit() or (index and raw[index - 1] in ".,"):
-            index += 1
-            continue
-        end = index
-        while end < len(raw) and raw[end].isdigit():
-            end += 1
-        if end + 1 < len(raw) and raw[end] in ".," and raw[end + 1].isdigit():
-            end += 1
-            while end < len(raw) and raw[end].isdigit():
-                end += 1
-        token = raw[index:end].replace(",", ".")
-        numbers.append(float(token))
-        index = end
-    return tuple(dict.fromkeys(numbers))
+    from app.kria.planner import _hold_key, _stated_holds  # noqa: PLC0415 - import cycle
+
+    return tuple(dict.fromkeys(value for _, _, value in _stated_holds(_hold_key(text or ""))))
 
 
 def _creator_typed(seconds: float, creator_text: str) -> bool:
-    """The creator typed these seconds (or the same length in milliseconds)."""
-    return any(
-        abs(number - seconds) <= 1e-6 or abs(number - seconds * 1000.0) <= 1e-3
-        for number in stated_numbers(creator_text)
-    )
+    """The creator said these seconds as a length (a number and a seconds unit)."""
+    return any(abs(number - seconds) <= 1e-6 for number in stated_seconds(creator_text))
 
 
 def hold_seconds(req: Any) -> float | None:
-    """The seconds a ``timing`` / ``clip:<id>`` requirement asks one asset to stay."""
+    """The seconds a ``timing`` / ``clip:<id>`` requirement asks one asset to stay.
+
+    Not a freeze or a speed change on that clip (their seconds are an effect's). Whether
+    the asset is a photo is the reader's to resolve: only the item's own stills ever hold.
+    """
     if getattr(req, "kind", None) != "timing" or not str(
         getattr(req, "scope", "") or ""
     ).startswith("clip:"):
+        return None
+    from app.kria.freeze_ask import asks_freeze_frame  # noqa: PLC0415 - import cycle
+    from app.kria.speed_ask import asks_clip_speed  # noqa: PLC0415
+
+    if asks_freeze_frame(req) or asks_clip_speed(req):
         return None
     facts = getattr(req, "facts", None) or {}
     for key in HOLD_FACT_KEYS:
@@ -91,18 +86,28 @@ def stamp_authority(
 ) -> Authority | None:
     """The server's verdict on who chose ``req``'s hold. Never read from model output.
 
-    ``explicit`` only when the creator's own turn typed the same seconds (or ms); a
-    partial change that keeps the value keeps the target's authority. Anything else is
-    ``None``: the model's number is a proposal, not the creator's decision.
+    - ``explicit`` when the creator's own turn said those seconds as a length (a number and
+      a seconds unit; a bare number such as "3 photos" or "1000 followers" never does).
+    - A change to a hold the creator already owns, on the same asset, keeps that ownership
+      when it keeps the value, or when it comes from the creator's own turn ("make it two
+      seconds", "a bit longer"): the creator re-decided their own decision and the
+      extractor read the amount. It never falls back to the AI default.
+    - Anything else is ``None``: a model's number on a decision nobody owns is a proposal.
     """
     value = hold_seconds(req)
     if value is None:
         return None
-    prior_value = hold_seconds(prior) if prior is not None else None
-    prior_authority = getattr(prior, "authority", None) if prior is not None else None
     if creator_text and _creator_typed(value, creator_text):
         return "explicit"
-    if prior_authority is not None and prior_value is not None and abs(prior_value - value) <= 1e-6:
+    if prior is None:
+        return None
+    prior_value = hold_seconds(prior)
+    prior_authority = getattr(prior, "authority", None)
+    if prior_authority not in {"explicit", "accepted"} or prior_value is None:
+        return None
+    if getattr(prior, "scope", None) != getattr(req, "scope", None):
+        return None
+    if abs(prior_value - value) <= 1e-6 or creator_text:
         return prior_authority
     return None
 
@@ -183,27 +188,25 @@ def holds_from_requirements(
     return holds
 
 
-def held_visual_seconds(brief: Any, clip_ids: Iterable[str]) -> float:
-    """Seconds the creator-held photos outside ``clip_ids`` (Visuals) will take.
+def held_visual_seconds(
+    brief: Any, clip_ids: Iterable[str], visual_photo_ids: Iterable[str] | None
+) -> float:
+    """Seconds the creator-held Visual photos (pool stills outside ``clip_ids``) will take.
 
     The approved length plan sizes only the clip record's footage; a held Visual plays its
-    own length beside it, so a creator total must leave that much room.
+    own length beside it, so a creator total must leave that much room. Only a hold that
+    ``holds_from_requirements`` would apply counts: resolved (never an ambiguous tail)
+    against every medium of the item, to a still ``visual_photo_ids`` lists (the Visuals
+    this format places), once per photo. ``None`` (the format places no Visuals, or the
+    pool is unknown) subtracts nothing.
     """
+    if brief is None or not visual_photo_ids:
+        return 0.0
     clips = list(dict.fromkeys(str(media_id) for media_id in clip_ids))
-    total = 0.0
-    held: dict[str, float] = {}
-    for req in hold_requirements(brief):
-        token = req.scope.split(":", 1)[1]
-        if resolve_clip_scope(token, clips) is not None:
-            continue
-        authority = getattr(req, "authority", None)
-        if authority == "cleared":
-            held.pop(token, None)
-        elif authority in {"explicit", "accepted"}:
-            held[token] = round(hold_seconds(req) or 0.0, 3)
-    for seconds in held.values():
-        total += max(1, int(round(seconds * HOLD_FPS))) / HOLD_FPS
-    return round(total, 3)
+    visuals = [m for m in dict.fromkeys(str(v) for v in visual_photo_ids) if m not in clips]
+    holds = holds_from_requirements(hold_requirements(brief), [*clips, *visuals])
+    total = sum(hold.frames for media_id, hold in holds.items() if media_id in visuals)
+    return round(total / HOLD_FPS, 3)
 
 
 def hold_outcomes(
@@ -236,5 +239,5 @@ __all__ = [
     "holds_from_requirements",
     "resolve_clip_scope",
     "stamp_authority",
-    "stated_numbers",
+    "stated_seconds",
 ]

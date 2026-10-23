@@ -4832,21 +4832,16 @@ def _check_opening_cut(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
     return _receipt(req, "met", None)
 
 
-def _check_asset_hold(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+def _hold_row(req: BriefRequirement, facts: PlanFacts) -> Mapping[str, Any] | None:
+    """KRI-824: the plan's applied-hold row for ``req``; only the item's photos have one."""
+    if req.authority is None or hold_seconds(req) is None or not facts.asset_holds:
+        return None
+    return next((r for r in facts.asset_holds if r.get("requirement_id") == req.id), None)
+
+
+def _check_asset_hold(req: BriefRequirement, row: Mapping[str, Any]) -> RequirementReceipt:
     """KRI-824: "keep the beach photo on screen for 1 second", judged on that photo."""
-    asked = hold_seconds(req)
-    if facts.asset_holds is None or asked is None:
-        return _receipt(req, "partial", _CANT_CHECK_TIMING)
-    row = next((r for r in facts.asset_holds if r.get("requirement_id") == req.id), None)
-    if row is None:
-        return _receipt(
-            req,
-            "partial",
-            say(
-                en=f"This photo kept the edit's own pacing, not the {asked:g}s you asked for.",
-                tr=f"Bu fotoğraf istediğin {asked:g} saniye yerine kurgunun temposunda kaldı.",
-            ),
-        )
+    asked = hold_seconds(req) or 0.0
     rendered = _finite_number(row.get("rendered_s"))
     if rendered is None:
         return _receipt(
@@ -4867,10 +4862,11 @@ def _check_asset_hold(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
 
 
 def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
-    if req.authority is not None and hold_seconds(req) is not None:
-        # A creator-stamped photo length (KRI-824); an unstamped one is a model's number
-        # and keeps the neutral clip-timing path below.
-        return _check_asset_hold(req, facts)
+    hold_row = _hold_row(req, facts)
+    if hold_row is not None:
+        # A creator-stamped photo length the plan applied (KRI-824). Any other clip-scoped
+        # length (a video clip, an unstamped model number) keeps the clip paths below.
+        return _check_asset_hold(req, hold_row)
     if clip_length_ask(req) is not None:
         # KRI-558: a per-clip length is judged on the clips, never against the total length.
         return _check_clip_lengths(req, facts)

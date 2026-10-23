@@ -612,6 +612,14 @@
       ]
     },
     {
+      "id": "kri-824-photo-hold-authority",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri824_photo_hold_e2e.py tests/kria/test_kri824_authority_postgres.py tests/kria/test_kri775_merope_m2_replay.py",
+      "paths": [
+        "src/apps/api/app/kria/asset_holds.py"
+      ]
+    },
+    {
       "id": "kri-777-freeze-frame",
       "needs_native": false,
       "api_tests": "tests/kria/test_kri777_freeze_frame_ask.py tests/kria/test_kri777_freeze_frame_postgres.py tests/tasks/test_kri777_freeze_render.py",

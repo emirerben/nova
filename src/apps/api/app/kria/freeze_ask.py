@@ -157,8 +157,9 @@ def times_one_moment(req: BriefRequirement) -> bool:
     if asks_freeze_frame(req) or asks_clip_speed(req):
         return True
     if getattr(req, "authority", None) is not None and hold_seconds(req) is not None:
-        # KRI-824: a creator-stamped "keep the beach photo on screen for 1 second" is that
-        # photo's time. (An unstamped clip-scoped length keeps its legacy reading.)
+        # KRI-824: creator-stamped seconds on one clip ("keep the beach photo on screen for
+        # 1 second", "make the surf clip 2 seconds") are that clip's time, never the
+        # video's total. (An unstamped clip-scoped length keeps its legacy reading.)
         return True
     return _names_a_moment(_tokens(req.description or ""))
 
