@@ -10,6 +10,7 @@ struct SpeechCleanupStats: Equatable {
     let estimatedRemovedMs: Int?
     let fillerSounds: Int?
     let longPauses: Int?
+    let retakes: Int?
 
     init(analysis: [String: JSONValue]) {
         candidateCount = analysis["candidate_count"]?.numberValue.map(Int.init)
@@ -17,22 +18,45 @@ struct SpeechCleanupStats: Equatable {
         let counts = analysis["category_counts"]?.objectValue
         fillerSounds = counts?["filler_sounds"]?.numberValue.map(Int.init)
         longPauses = counts?["long_pauses"]?.numberValue.map(Int.init)
+        retakes = counts?["retakes"]?.numberValue.map(Int.init)
     }
 
-    init(candidateCount: Int? = nil, estimatedRemovedMs: Int? = nil, fillerSounds: Int? = nil, longPauses: Int? = nil) {
+    init(candidateCount: Int? = nil, estimatedRemovedMs: Int? = nil, fillerSounds: Int? = nil, longPauses: Int? = nil, retakes: Int? = nil) {
         self.candidateCount = candidateCount
         self.estimatedRemovedMs = estimatedRemovedMs
         self.fillerSounds = fillerSounds
         self.longPauses = longPauses
+        self.retakes = retakes
+    }
+
+    var removesRetakes: Bool { (retakes ?? 0) > 0 }
+
+    var cleanupConsentSentence: String {
+        if removesRetakes {
+            return "Clean up speech also removes the detected restarted sentence\(retakes == 1 ? "" : "s")."
+        }
+        return "Choose whether to remove the detected pauses and filler sounds. A sentence you restarted stays in."
     }
 
     /// e.g. "Found 3 pauses and filler sounds (2 filler sounds, 1 long pause) — about 4.2s shorter."
     var summarySentence: String? {
         var sentence = ""
         if let candidateCount, candidateCount > 0 {
-            sentence += "Found \(candidateCount) \(candidateCount == 1 ? "pause or filler sound" : "pauses and filler sounds")"
+            if removesRetakes {
+                sentence += "Found \(candidateCount) speech cleanup \(candidateCount == 1 ? "point" : "points")"
+            } else {
+                sentence += "Found \(candidateCount) \(candidateCount == 1 ? "pause or filler sound" : "pauses and filler sounds")"
+            }
+            var categories: [String] = []
             if let fillerSounds, let longPauses, fillerSounds + longPauses > 0 {
-                sentence += " (\(fillerSounds) filler \(fillerSounds == 1 ? "sound" : "sounds"), \(longPauses) long \(longPauses == 1 ? "pause" : "pauses"))"
+                categories.append("\(fillerSounds) filler \(fillerSounds == 1 ? "sound" : "sounds")")
+                categories.append("\(longPauses) long \(longPauses == 1 ? "pause" : "pauses")")
+            }
+            if let retakes, retakes > 0 {
+                categories.append("\(retakes) restarted \(retakes == 1 ? "sentence" : "sentences")")
+            }
+            if !categories.isEmpty {
+                sentence += " (\(categories.joined(separator: ", ")))"
             }
         }
         if let estimatedRemovedMs, estimatedRemovedMs > 0 {
@@ -56,7 +80,7 @@ struct SpeechCleanupChoiceButtons: View {
 
     var body: some View {
         Group {
-            Text("Choose whether to remove the detected pauses and filler sounds. A sentence you restarted stays in.")
+            Text(stats.cleanupConsentSentence)
                 .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
             if let summary = stats.summarySentence {
                 Text(summary)

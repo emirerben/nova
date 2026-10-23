@@ -126,12 +126,21 @@
       "KriaUITests/SavedUploadsUITests/testReuseAcrossTwoPostsWithoutAnotherUpload",
       "KriaUITests/SavedUploadsUITests/testSearchPaginationAndRetry",
       "KriaUITests/SavedUploadsUITests/testPhotoReuseAcrossPosts",
+      "KriaUITests/SavedUploadsUITests/testDeviceOnlyVideoAddsToVisualsFromLocalOriginal",
+      "KriaUITests/SavedUploadsUITests/testRelinkedOriginalFinishesTheVisualsAdd",
+      "KriaUITests/SavedUploadsUITests/testPhotoOnlyVisualsSendVideosToFootage",
+      "KriaUITests/SavedUploadsUITests/testPhoneFootageAttachesProxyWithoutUploadingTheOriginal",
       "KriaUITests/CameraRollBenchmarkUITests/testMetadataBenchmarkStartsWithNoAuthorizedAssets",
       "KriaUITests/CameraRollCollectionUITests/testReviewCorrectionRemovalAndResumeDoNotUpload",
       "KriaUITests/CameraRollStoriesUITests/testReviewReplaceAndRejectWithoutRendering",
+      "KriaUITests/CameraRollStoriesUITests/testThreeIdeasRemainIndependentWhenOneIsRejected",
       "KriaUITests/CameraRollStoriesUITests/testConfirmExamplesRateIdeaAndForget",
       "KriaUITests/CameraRollStoriesUITests/testResearchFactsAndSourcesStayBehindTheIdea",
-      "KriaUITests/CameraRollCollectionUITests/testPartiallyIndexedCollectionStillOffersStories"
+      "KriaUITests/CameraRollCollectionUITests/testPartiallyIndexedCollectionWaitsForExplicitPartialChoice",
+      "KriaUITests/CameraRollCollectionUITests/testSavedIdeasSurviveRelaunchWithoutReselectingFootage",
+      "KriaUITests/CameraRollCollectionUITests/testSavedPartialIdeasRequireNewChoiceWhenCoverageChanges",
+      "KriaUITests/CameraRollCollectionUITests/testUnavailableAnalysisIsNotAnEditConflict",
+      "KriaUITests/CameraRollCollectionUITests/testRealConflictCanOpenLatestWithoutLosingLocalCollection"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",

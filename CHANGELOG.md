@@ -2,6 +2,86 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.65.0] - 2026-10-23
+
+### Fixed
+- fix(speech): require explicit consent for preflight retake removal (KRI-551) (#1753) <!-- release-pr: 1753 -->
+
+## [0.81.64.0] - 2026-10-23
+
+### Changed
+- fix(kria): natural delegating requests reach approval and recover in the same chat (KRI-814) (#1771) <!-- release-pr: 1771 -->
+
+## [0.81.63.0] - 2026-10-23
+
+### Fixed
+- fix(ios): preserve camera-roll ideas on resume and simplify review (KRI-853) (#1772) <!-- release-pr: 1772 -->
+
+## [0.81.62.0] - 2026-10-23
+
+### Fixed
+- fix(worker): retry stopping workers and protect active creation (KRI-798) (#1754) <!-- release-pr: 1754 -->
+
+## [0.81.61.0] - 2026-10-23
+
+### Fixed
+- fix(ios): enforce strict exported duration from approved brief (KRI-629) (#1757) <!-- release-pr: 1757 -->
+
+## [0.81.60.0] - 2026-10-23
+
+### Fixed
+- fix: preserve speech subtitles when extra text is restricted (#1755) <!-- release-pr: 1755 -->
+
+## [0.81.59.0] - 2026-10-23
+
+### Changed
+- test(ios): use readable media for upload preparation guard (#1774) <!-- release-pr: 1774 -->
+
+## [0.81.58.0] - 2026-10-23
+
+### Changed
+- fix(slides): give the slide copilot what each ready photo shows (KRI-817) (#1769) <!-- release-pr: 1769 -->
+
+## [0.81.57.0] - 2026-10-23
+
+### Fixed
+- fix(kria): render supported edits when optional requests are unavailable (#1752) <!-- release-pr: 1752 -->
+
+## [0.81.56.0] - 2026-10-23
+
+### Fixed
+- fix(camera-roll): support 500 uploads and distinct content ideas (KRI-731) (#1747) <!-- release-pr: 1747 -->
+
+## [0.81.55.0] - 2026-10-23
+
+### Changed
+- fix(kria): a Talking edit with photo beats keeps the creator's title (KRI-851) (#1763) <!-- release-pr: 1763 -->
+
+## [0.81.54.0] - 2026-10-23
+
+### Fixed
+- fix(captions): word-timed cards and sounds land on the spoken words when Talking captions are in another language (KRI-839) (#1764) <!-- release-pr: 1764 -->
+
+## [0.81.53.0] - 2026-10-23
+
+### Changed
+- fix(kria): a quoted one-word start/end line cuts a Talking take, and an uncut end is never "met" (KRI-837) (#1766) <!-- release-pr: 1766 -->
+
+## [0.81.52.0] - 2026-10-23
+
+### Changed
+- docs: persist iPhone-only product scope for agent sessions (#1768) <!-- release-pr: 1768 -->
+
+## [0.81.51.0] - 2026-10-23
+
+### Changed
+- test(kria): Merope M2 replay runs through carry_moment_ask, stale xfails retired (KRI-850) (#1767) <!-- release-pr: 1767 -->
+
+## [0.81.50.0] - 2026-10-23
+
+### Changed
+- fix(library): add a device-only saved video to Visuals from its verified original (KRI-822) (#1750) <!-- release-pr: 1750 -->
+
 ## [0.81.49.0] - 2026-10-23
 
 ### Changed

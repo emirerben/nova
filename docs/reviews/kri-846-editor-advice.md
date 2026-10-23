@@ -27,10 +27,16 @@ overlaps KRI-724 (Emir) / draft #1760, which already adds exact spoken-phrase re
 
 ## Change
 
-Copy only: `_NAMED_CUTS_STAY` ("a retake or a specific line can't be cut out yet, so it stays
-in your video", TR "tekrar çekim ya da belirli bir cümle henüz kesilemiyor, o yüzden videoda
-kalıyor"), the review-note footer without the editor tail, and the iOS cleanup card without
-"trim it in the editor". Status stays `partial`; the cleanup lead stays first.
+Copy only: `_NAMED_CUTS_STAY` ("I can't cut out one exact line yet or confirm it's gone, so it
+may still be in your video", TR "belirli bir cümleyi henüz tam olarak kesemiyorum ve
+çıkarıldığını doğrulayamıyorum, o yüzden videoda kalmış olabilir"), the review-note footer
+without the editor tail, and the iOS cleanup card without "trim it in the editor". Status stays
+`partial`; the cleanup lead stays first.
+
+After merging main (KRI-551 consented retake cleanup, #1753) the line says "may still be", not
+"stays": a consented retake cut may have removed the line and a generic cleanup record cannot
+prove which span it was. The footer and the iOS card still say a restarted sentence "stays in"
+because they only say so when no retake was cut and none could have been.
 
 ## Evidence (offline replay)
 
@@ -52,20 +58,20 @@ kalıyor"), the review-note footer without the editor tail, and the iOS cleanup 
 
 - Draft bubble / approval card: the long reply is compacted to ~70 characters per reason, so
   both phrase rows read "Partly: … (Choose Clean up speech when you approve and the long
-  pauses are cut;…)" or, with cleanup chosen, "(Speech cleanup cuts the long pauses; a retake
-  or a specific line can…)". No editor action is suggested. The old line was cut at the same
+  pauses are cut;…)" or, with cleanup chosen, "(Speech cleanup cuts the long pauses; I can't
+  cut out one exact line yet…)". No editor action is suggested. The old line was cut at the same
   point, so this is not a regression.
 - Cleanup choice card: "Choose whether to remove the detected pauses and filler sounds. A
   sentence you restarted stays in." (needs a new iOS build; older TestFlight builds still show
   the old text).
-- Finished video reply: "Partly: Cut her slip … (Speech cleanup cut the long pauses; a retake
-  or a specific line can't be cut out yet, so it stays in your video)", the same for the half
-  question, and no editor tail on the cleanup note.
+- Finished video reply: "Partly: Cut her slip … (Speech cleanup cut the long pauses; I can't cut
+  out one exact line yet or confirm it's gone, so it may still be in your video)", the same for
+  the half question, and no editor tail on the cleanup note.
 
 ## Gaps (not fixed here)
 
 - The phrases are still not removed: KRI-724.
-- On the draft card the compacted reason hides the stays-in clause.
+- On the draft card the compacted reason hides the "may still be in your video" clause.
 - After a first segment Delete makes a Talking edit authored, Range (`setSourceWindow`) on a
   talking slot is not blocked on iOS and ends in 409; `moveClip`/`slideSourceWindow`/
   `setClipTiming` are unguarded. Whole-segment Delete on Talking has no test.

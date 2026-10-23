@@ -44,8 +44,13 @@ Draft-time checkers added for Talking / voiceover asks (thread 17f666cb, 2026-10
 "keep my pauses" ask or a pop-in trigger; only on a speech-spined format, elsewhere
 the sentence takes its kind's usual path; met once `speech_cleanup_enabled`, else
 "choose Clean up speech when you approve" only when the cohort check says it will
-be offered, hedged when unknown; a named line or retake is editor work; a length in
-the same sentence follows the cut take) and `_check_captions` (on / off /
+be offered, hedged when unknown; exact named-line and named-retake fulfillment
+remain partial. The separately gated, detector-backed path can remove a retake
+after explicit retake-aware consent, but its count does not verify the requested
+line (see the
+[KRI-551 consent evidence](../reviews/kri-551-consented-retakes.md) and
+[KRI-829 acceptance ledger](../reviews/kri-829-original-output-acceptance.md)); a length
+in the same sentence follows the cut take) and `_check_captions` (on / off /
 word-by-word against the strategy's `caption_style`; karaoke and kinetic are
 word-by-word; `auto`, or an ask about a caption's look, place or language, stays
 "can't check"). Patterns match `fold_text` output (ı folded to i). Both read `PlanFacts.caption_style` /

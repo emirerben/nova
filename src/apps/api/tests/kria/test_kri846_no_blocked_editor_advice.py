@@ -11,8 +11,8 @@ server pins every talking-source window (`authored_editor.py`: 409 TIMELINE_STAL
 the whole kept segment also deletes wanted words. On Narrated the editor trims picture clips,
 not the recorded voice. So the advice was false on every speech format.
 
-Decision: copy only. Say plainly the line can't be cut yet and stays in. The real phrase cut
-is KRI-724.
+Decision: copy only. Say plainly the line can't be cut out or confirmed gone yet, so it may
+still be in the video. The real phrase cut is KRI-724.
 
 Failure modes, written before the fix:
 1. One static string serves every speech format (Talking, cloud Talking, Narrated): any claim
@@ -28,7 +28,7 @@ Failure modes, written before the fix:
 6. A promise of a future feature ("soon", "coming"): nothing here is scheduled.
 7. The line is built from the creator's phrase: `_loc` translates exact static keys only, so a
    Turkish chat would read English. One static EN string, one TR twin.
-8. The copy stops saying "stays in" or flips the status to "met": the KRI-792 false "Done"
+8. The copy stops stating the limit or flips the status to "met": the KRI-792 false "Done"
    returns. It must stay "partial", the cleanup lead stays FIRST (`is_format_limit` matches the
    lead, so the honest Partly still never asks "simpler version?").
 9. The iOS approval card (`SpeechCleanupOffer.swift`) has hard-coded English that no server fix
@@ -36,6 +36,10 @@ Failure modes, written before the fix:
 10. The copy outlives the refusal that justified it. The guard at the bottom pins the server's
     window pin and fails on purpose when talking-source windows become editable (KRI-724), so
     the copy is reconsidered then.
+11. The copy says a named line "stays" in the video: after KRI-551 a consented retake cut may
+    have removed it, and a generic cleanup record cannot prove which span it was. The named-line
+    copy says "may still be", never "stays". Only the review-note footer says "stays in", and
+    it appears only when no retake was cut and none could have been.
 """
 
 from __future__ import annotations
@@ -70,8 +74,9 @@ from tests.tasks.test_kri551_cleanup_review_note import _n3_variant, _review
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 _SWIFT_OFFER = _REPO_ROOT / "src/apps/ios/Kria/Features/SpeechCleanupOffer.swift"
 
-# English "stays in" / Turkish "stays in the video": what the creator must still be told.
-_STAYS = {"en": "stays in your video", "tr": "videoda kalıyor"}
+# English "may still be in your video" / Turkish "may have stayed in the video": the limit the
+# creator must still be told about a named line (KRI-551: it may have been cut, so never "stays").
+_STAYS = {"en": "may still be in your video", "tr": "videoda kalmış olabilir"}
 _PHRASES = {"r3": _SLIP, "r4": _HALF_QUESTION}
 
 
@@ -119,7 +124,7 @@ def _rendered_variant(outcome: str) -> dict:
     return variant
 
 
-def _assert_stays_in(receipt, lead: str, language: str) -> None:
+def _assert_may_still_be_in(receipt, lead: str, language: str) -> None:
     reason = receipt.reason or ""
     _no_editor_advice(reason)
     assert _STAYS[language] in reason, reason
@@ -135,13 +140,13 @@ def _assert_stays_in(receipt, lead: str, language: str) -> None:
 @pytest.mark.parametrize("language", ["en", "tr"])
 @pytest.mark.parametrize("state", list(_DRAFT_STATES))
 @pytest.mark.parametrize("requirement_id", ["r3", "r4"])
-def test_the_draft_receipt_says_the_line_stays_in_not_to_use_the_editor(
+def test_the_draft_receipt_says_the_line_may_still_be_in_not_to_use_the_editor(
     requirement_id, state, language
 ):
     cleanup, lead = _DRAFT_STATES[state]
     with reply_language_for(language):
         receipt = _by_id(_prod_brief(), _draft_facts(**cleanup))[requirement_id]
-        _assert_stays_in(receipt, _lead(lead, language), language)
+        _assert_may_still_be_in(receipt, _lead(lead, language), language)
 
 
 @pytest.mark.parametrize("language", ["en", "tr"])
@@ -171,7 +176,7 @@ def test_every_speech_format_gets_the_same_plain_line(edit_format):
     )
     facts = PlanFacts(edit_format=edit_format, caption_style="karaoke", speech_cleanup_enabled=True)
     receipt = check_requirement(req, facts)
-    _assert_stays_in(receipt, brief_checks._CLEANUP_PLANNED, "en")
+    _assert_may_still_be_in(receipt, brief_checks._CLEANUP_PLANNED, "en")
 
 
 # The kit's own wording, double quotes and all (the brief rows above hold the model's
@@ -195,7 +200,7 @@ def test_the_creators_own_double_quoted_wording_gets_the_same_line(description, 
     facts = _draft_facts(speech_cleanup_enabled=True, speech_cleanup_offered=True)
     with reply_language_for(language):
         receipt = check_requirement(req, facts)
-        _assert_stays_in(receipt, _lead("_CLEANUP_PLANNED", language), language)
+        _assert_may_still_be_in(receipt, _lead("_CLEANUP_PLANNED", language), language)
 
 
 # --- c: the finished-video receipt -------------------------------------------------------------
@@ -204,14 +209,14 @@ def test_the_creators_own_double_quoted_wording_gets_the_same_line(description, 
 @pytest.mark.parametrize("language", ["en", "tr"])
 @pytest.mark.parametrize("outcome", list(_RENDERED_STATES))
 @pytest.mark.parametrize("requirement_id", ["r3", "r4"])
-def test_the_finished_receipt_says_the_line_stays_in_not_to_use_the_editor(
+def test_the_finished_receipt_says_the_line_may_still_be_in_not_to_use_the_editor(
     requirement_id, outcome, language
 ):
     lead = _lead(_RENDERED_STATES[outcome], language)
     with reply_language_for(language):
         facts = plan_facts_from_phone_variant(_rendered_variant(outcome))
         receipt = _by_id(_prod_brief(), facts)[requirement_id]
-        _assert_stays_in(receipt, lead, language)
+        _assert_may_still_be_in(receipt, lead, language)
 
 
 @pytest.mark.parametrize("language", ["en", "tr"])

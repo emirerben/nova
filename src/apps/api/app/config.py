@@ -1390,6 +1390,13 @@ class Settings(BaseSettings):
         "Kill switch: `fly secrets set RETAKE_CUT_ENABLED=false --app nova-video` "
         "+ worker restart.",
     )
+    speech_cleanup_retakes_enabled: bool = Field(
+        default=False,
+        description="Explicit-consent preflight retake detection. This remains off until every "
+        "client can present retake-aware consent; effective only with RETAKE_CUT_ENABLED. "
+        "Kill switch: `fly secrets set SPEECH_CLEANUP_RETAKES_ENABLED=false --app "
+        "nova-video` + worker restart.",
+    )
 
     # "Get a transcript" helper for narrated-walkthrough voiceovers. When False,
     # the transcript routes (POST/GET /plan-items/{id}/transcript/*) return 404 and
@@ -1727,6 +1734,18 @@ class Settings(BaseSettings):
         "an optimization: if the debounce key is stale or Redis is briefly "
         "unavailable, worst case is one redundant (harmless) start call, not a "
         "missed wake — Fly's start-a-started-machine call is a no-op.",
+    )
+
+    RENDER_START_WAIT_S: int = Field(
+        default=300,
+        ge=0,
+        le=600,
+        description="Retry-window seconds for a render worker caught in Fly state stopping.",
+    )
+
+    RENDER_AUTOSTOP_ACTIVITY_GUARD_ENABLED: bool = Field(
+        default=True,
+        description="Defer idle autostop for recent render dispatches or active creator work.",
     )
 
     FLY_API_TOKEN: str = Field(

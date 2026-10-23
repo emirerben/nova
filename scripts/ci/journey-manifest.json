@@ -4,7 +4,7 @@
     {
       "id": "kri-384-library-ingest",
       "needs_native": false,
-      "api_tests": "tests/integration/test_media_library_ingest.py tests/integration/test_media_library_analysis.py tests/integration/test_media_library_reuse.py tests/pipeline/test_library_transcription_cost.py tests/routes/test_media_assets.py tests/routes/test_media_library_attachments.py tests/services/test_media_library_source_verification.py tests/integration/test_media_library_backfill.py",
+      "api_tests": "tests/integration/test_media_library_ingest.py tests/integration/test_media_library_analysis.py tests/integration/test_media_library_reuse.py tests/integration/test_media_library_original_upgrade.py tests/pipeline/test_library_transcription_cost.py tests/routes/test_media_assets.py tests/routes/test_media_library_attachments.py tests/services/test_media_library_source_verification.py tests/integration/test_media_library_backfill.py",
       "paths": [
         "src/apps/api/app/pipeline/clip_cache.py",
         "src/apps/api/app/pipeline/transcribe.py",
@@ -19,6 +19,7 @@
         "src/apps/api/tests/integration/test_media_library_ingest.py",
         "src/apps/api/tests/integration/test_media_library_analysis.py",
         "src/apps/api/tests/integration/test_media_library_reuse.py",
+        "src/apps/api/tests/integration/test_media_library_original_upgrade.py",
         "src/apps/api/tests/pipeline/test_library_transcription_cost.py",
         "src/apps/api/tests/routes/test_media_assets.py",
         "src/apps/api/tests/routes/test_media_library_attachments.py",
@@ -35,16 +36,20 @@
     {
       "id": "kri-384-ios-library",
       "needs_native": true,
-      "api_tests": "tests/routes/test_media_assets.py tests/integration/test_media_library_reuse.py",
+      "api_tests": "tests/routes/test_media_assets.py tests/integration/test_media_library_reuse.py tests/integration/test_media_library_original_upgrade.py",
       "xctests": [
         "KriaTests/MediaLibraryOriginalsTests/testReuseSurvivesFirstPostDeletionAndStoreRecreation",
         "KriaTests/MediaLibraryOriginalsTests/testChangedFileAndWrongFingerprintCannotBeUsedAsAnOriginal",
-        "KriaTests/MediaLibraryExportJourneyTests/testReusedVideoExportsAfterDeletingItsFirstPost"
+        "KriaTests/MediaLibraryExportJourneyTests/testReusedVideoExportsAfterDeletingItsFirstPost",
+        "KriaUITests/SavedUploadsUITests/testDeviceOnlyVideoAddsToVisualsFromLocalOriginal",
+        "KriaUITests/SavedUploadsUITests/testRelinkedOriginalFinishesTheVisualsAdd"
       ],
       "paths": [
         "src/apps/ios/Kria/Core/MediaLibrary.swift",
         "src/apps/ios/Kria/Core/SavedMediaReuse.swift",
         "src/apps/ios/Kria/Features/SavedUploadsView.swift",
+        "src/apps/ios/Kria/Features/SavedUploadsUITestFixture.swift",
+        "src/apps/ios/Tests/KriaUITests/SavedUploadsUITests.swift",
         "src/apps/ios/Tests/KriaTests/MediaLibraryOriginalsTests.swift",
         "src/apps/ios/Tests/KriaTests/MediaLibraryExportJourneyTests.swift"
       ]
@@ -52,7 +57,7 @@
     {
       "id": "kri-492-length-ownership",
       "needs_native": true,
-      "api_tests": "tests/services/test_length_policy_state.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_brief_binding.py tests/kria/test_request_binding_journey.py tests/kria/test_render_retry_postgres.py tests/agents/test_main_creator_voice_mode.py tests/kria/test_voice_flag_gating.py tests/services/test_phone_speech_montage_job.py tests/services/test_render_route.py tests/services/test_render_route_invariance.py tests/tasks/test_route_shadow_dispatch.py tests/tasks/test_unified_montage_dispatch.py tests/tasks/test_voice_behind_footage_dispatch.py tests/integration/test_actual_export_verification.py tests/integration/test_actual_export_completion.py tests/routes/test_actual_export_publication.py tests/integration/test_media_collections.py tests/integration/test_camera_roll_execution.py",
+      "api_tests": "tests/services/test_length_policy_state.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_brief_binding.py tests/kria/test_request_binding_journey.py tests/kria/test_render_retry_postgres.py tests/agents/test_main_creator_voice_mode.py tests/kria/test_voice_flag_gating.py tests/services/test_phone_speech_montage_job.py tests/services/test_render_route.py tests/services/test_render_route_invariance.py tests/tasks/test_route_shadow_dispatch.py tests/tasks/test_unified_montage_dispatch.py tests/tasks/test_voice_behind_footage_dispatch.py tests/integration/test_actual_export_verification.py tests/integration/test_actual_export_completion.py tests/routes/test_actual_export_publication.py tests/integration/test_media_collections.py tests/integration/test_camera_roll_execution.py tests/services/test_strict_export_duration.py tests/routes/test_strict_export_duration.py tests/services/test_length_policy.py tests/services/test_length_owner_choices.py tests/services/test_phone_editor_render_contract.py",
       "paths": [
         "src/apps/api/app/services/length_policy.py",
         "src/apps/api/app/services/length_policy_state.py",
@@ -108,7 +113,14 @@
         "src/apps/api/app/cli/benchmark_device_export.py",
         "src/apps/api/tests/integration/test_actual_export_verification.py",
         "src/apps/api/tests/integration/test_actual_export_completion.py",
-        "src/apps/api/tests/routes/test_actual_export_publication.py"
+        "src/apps/api/tests/routes/test_actual_export_publication.py",
+        "src/apps/api/app/services/export_duration_policy.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/tests/services/test_strict_export_duration.py",
+        "src/apps/api/tests/routes/test_strict_export_duration.py",
+        "src/apps/api/tests/services/test_length_policy.py",
+        "src/apps/api/tests/services/test_length_owner_choices.py",
+        "src/apps/api/tests/services/test_phone_editor_render_contract.py"
       ]
     },
     {
@@ -249,7 +261,7 @@
     {
       "id": "slide-post-binding-recovery",
       "needs_native": true,
-      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/routes/test_slide_post_binding_save_postgres.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/evals/test_edit_copilot_evals.py",
+      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/routes/test_slide_post_binding_save_postgres.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/routes/test_slide_post_chat_edit_route.py tests/evals/test_edit_copilot_evals.py",
       "xctests": [
         "KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave",
         "KriaTests/SlidePostFramingTests/testEncodingAlwaysWritesTheFramingKeySoAClearIsNeverMistakenForAnOlderApp",
@@ -291,6 +303,9 @@
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_aspect_square.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_aspect_ig_9x16_refused.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_fit_all_blur.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_legacy_seen_captions.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_legacy_seen_captions_tr.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_legacy_seen_ideas.json",
         "src/apps/api/tests/evals/test_edit_copilot_evals.py"
       ]
     },
@@ -649,7 +664,7 @@
     {
       "id": "kri-628-opening-cut",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_phone_opening_cut.py tests/pipeline/test_phone_take_window.py",
+      "api_tests": "tests/pipeline/test_phone_opening_cut.py tests/pipeline/test_phone_take_window.py tests/kria/test_kri837_one_word_end_line.py",
       "paths": [
         "src/apps/api/app/kria/opening_cut_ask.py",
         "src/apps/api/app/pipeline/phone_opening_cut.py",
@@ -657,7 +672,8 @@
         "src/apps/api/app/services/speech_segments.py",
         "src/apps/api/app/cli/verify_take_window.py",
         "src/apps/api/tests/fixtures/kri790_merope_t1_take.json",
-        "src/apps/api/tests/pipeline/test_phone_take_window.py"
+        "src/apps/api/tests/pipeline/test_phone_take_window.py",
+        "src/apps/api/tests/kria/test_kri837_one_word_end_line.py"
       ]
     },
     {
@@ -977,7 +993,7 @@
     {
       "id": "kri-721-approval-readiness",
       "needs_native": false,
-      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py",
+      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py",
       "paths": [
         "src/apps/api/app/kria/approval_readiness.py",
         "src/apps/api/app/kria/planner.py",
@@ -986,7 +1002,12 @@
         "src/apps/api/app/kria/render_retry.py",
         "src/apps/api/app/tasks/kria_runtime.py",
         "src/apps/api/app/config.py",
-        "src/apps/api/tests/kria/test_approval_readiness_postgres.py"
+        "src/apps/api/tests/kria/test_approval_readiness_postgres.py",
+        "src/apps/api/tests/kria/test_automatic_strategy_fallback.py",
+        "src/apps/api/tests/kria/test_runtime_automatic_simplification.py",
+        "src/apps/api/app/kria/brief.py",
+        "src/apps/api/prompts/brief_extractor.txt",
+        "src/apps/api/tests/kria/test_natural_delegation_readiness_postgres.py"
       ]
     },
     {
@@ -1175,7 +1196,10 @@
         "KriaTests/CameraRollCollectionTests/testSelectionResumeCorrectionsAndRemoval",
         "KriaTests/CameraRollCollectionTests/testMissingMetadataRevocationAndPrivacySwitch",
         "KriaTests/CameraRollCollectionTests/testBoundedSelectionAndUnselectedMetadata",
-        "KriaTests/CameraRollCollectionTests/testTimeGroupsAndExplicitCorrectionSurviveMetadataRefresh"
+        "KriaTests/CameraRollCollectionTests/testTimeGroupsAndExplicitCorrectionSurviveMetadataRefresh",
+        "KriaTests/CameraRollCollectionTests/testFiveHundredItemsSurviveResume",
+        "KriaUITests/CameraRollCollectionUITests/testPartiallyIndexedCollectionWaitsForExplicitPartialChoice",
+        "KriaUITests/CameraRollStoriesUITests/testThreeIdeasRemainIndependentWhenOneIsRejected"
       ],
       "paths": [
         "src/apps/api/app/agents/camera_roll_stories.py",
@@ -1308,6 +1332,54 @@
       ]
     },
     {
+      "id": "kri-551-consented-retakes",
+      "needs_native": true,
+      "api_tests": "tests/agents/test_retake_detector.py tests/services/test_speech_cleanup_preflight.py tests/services/test_speech_cleanup_retakes_consent.py tests/services/test_speech_cleanup_decision.py tests/tasks/test_speech_cleanup_analysis.py tests/routes/test_creation_threads_speech_cleanup.py tests/kria/test_runtime_v2.py tests/kria/test_runtime_speech_cleanup_approval.py tests/kria/test_kri520_receipts.py tests/kria/test_brief_talking_receipts.py tests/kria/test_brief_marathon_receipts.py tests/tasks/test_kri551_cleanup_review_note.py tests/routes/test_creator_agent.py tests/tasks/test_marathon_render_ready_review.py tests/kria/test_brief_rendered_speech_facts.py tests/kria/test_runtime_talking_first_draft.py tests/kria/test_kri787_merope_t1_runtime_postgres.py",
+      "xctests": [
+        "KriaTests/SpeechCleanupOfferTests/testLegacyStatsWithoutRetakesKeepTheOriginalDisclosure",
+        "KriaTests/SpeechCleanupOfferTests/testSummarySentenceNamesRestartedSentencesWhenTheyAreIncludedInTheCount",
+        "KriaTests/ApprovalDecisionRequestTests/testCleanAfterRestartDisclosureSerializesRetakesAwareness"
+      ],
+      "paths": [
+        "src/apps/api/app/agents/retake_detector.py",
+        "src/apps/api/app/pipeline/speech_cleanup_analysis.py",
+        "src/apps/api/app/tasks/speech_cleanup_analysis.py",
+        "src/apps/api/app/services/plan_item_media.py",
+        "src/apps/api/app/services/speech_cleanup_selection.py",
+        "src/apps/api/app/services/speech_cleanup_preflight.py",
+        "src/apps/api/app/services/speech_cleanup_decision.py",
+        "src/apps/api/app/kria/api_schemas.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/routes/creation_threads.py",
+        "src/apps/ios/Kria/Features/SpeechCleanupOffer.swift",
+        "src/apps/ios/Kria/Features/CreationConfirmationStage.swift",
+        "src/apps/ios/Kria/Features/ChatWorkspaceView.swift",
+        "src/apps/ios/Kria/Core/Services.swift",
+        "src/apps/api/tests/agents/test_retake_detector.py",
+        "src/apps/api/tests/services/test_speech_cleanup_preflight.py",
+        "src/apps/api/tests/services/test_speech_cleanup_retakes_consent.py",
+        "src/apps/api/tests/services/test_speech_cleanup_decision.py",
+        "src/apps/api/tests/tasks/test_speech_cleanup_analysis.py",
+        "src/apps/api/tests/routes/test_creation_threads_speech_cleanup.py",
+        "src/apps/api/tests/kria/test_runtime_v2.py",
+        "src/apps/ios/Tests/KriaTests/SpeechCleanupOfferTests.swift",
+        "src/apps/ios/Tests/KriaTests/ApprovalDecisionRequestTests.swift",
+        "src/apps/api/tests/kria/test_runtime_speech_cleanup_approval.py",
+        "src/apps/api/app/config.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/tests/kria/test_kri520_receipts.py",
+        "src/apps/api/tests/kria/test_brief_talking_receipts.py",
+        "src/apps/api/tests/kria/test_brief_marathon_receipts.py",
+        "src/apps/api/tests/tasks/test_kri551_cleanup_review_note.py",
+        "src/apps/api/app/routes/creator_agent.py",
+        "src/apps/api/tests/routes/test_creator_agent.py",
+        "src/apps/api/tests/tasks/test_marathon_render_ready_review.py",
+        "src/apps/api/tests/kria/test_brief_rendered_speech_facts.py",
+        "src/apps/api/tests/kria/test_runtime_talking_first_draft.py",
+        "src/apps/api/tests/kria/test_kri787_merope_t1_runtime_postgres.py"
+      ]
+    },
+    {
       "id": "market-research-reference-banks",
       "needs_native": false,
       "api_tests": "tests/agents/test_market_research_banks.py tests/agents/test_overlay_examples_slop_guard.py tests/agents/test_persona_generator.py tests/agents/test_content_plan_generator.py tests/agents/test_intro_writer.py tests/agents/test_overlay_format_matcher.py tests/evals/test_persona_generator_evals.py tests/evals/test_content_plan_generator_evals.py tests/evals/test_intro_writer_evals.py tests/evals/test_overlay_format_matcher_evals.py",
@@ -1325,6 +1397,31 @@
         "src/apps/api/app/agents/overlay_examples.py",
         "src/apps/api/tests/agents/test_market_research_banks.py",
         "src/apps/api/tests/agents/test_overlay_examples_slop_guard.py"
+      ]
+    },
+    {
+      "id": "kri-839-beats-spoken-words",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri839_beats_spoken_words.py tests/tasks/test_subtitled_caption_language.py",
+      "paths": [
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/services/phone_reaction_grounding.py",
+        "src/apps/api/tests/fixtures/kri839_cafe_t2/t2_01_words.json"
+      ]
+    },
+    {
+      "id": "kri-798-render-worker-restart",
+      "needs_native": false,
+      "api_tests": "tests/services/test_fly_machines.py tests/tasks/test_render_worker_lifecycle.py tests/tasks/test_render_worker_activity_sql.py tests/test_render_worker_wake.py",
+      "paths": [
+        "src/apps/api/app/config.py",
+        "src/apps/api/app/services/fly_machines.py",
+        "src/apps/api/app/tasks/maintenance.py",
+        "src/apps/api/app/worker.py",
+        "src/apps/api/tests/services/test_fly_machines.py",
+        "src/apps/api/tests/tasks/test_render_worker_lifecycle.py",
+        "src/apps/api/tests/tasks/test_render_worker_activity_sql.py",
+        "src/apps/api/tests/test_render_worker_wake.py"
       ]
     }
   ]

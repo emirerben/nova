@@ -62,8 +62,13 @@ from app.kria.reply_language import reply_language_for
 _FIXTURE = json.loads(
     (Path(__file__).parents[1] / "fixtures" / "kri792_t1_phrase_cuts.json").read_text()
 )
-_STAYS_NOTE = "a retake or a specific line can't be cut out yet, so it stays in your video"
-_STAYS_NOTE_TR = "tekrar çekim ya da belirli bir cümle henüz kesilemiyor, o yüzden videoda kalıyor"
+_STAYS_NOTE = (
+    "I can't cut out one exact line yet or confirm it's gone, so it may still be in your video"
+)
+_STAYS_NOTE_TR = (
+    "belirli bir cümleyi henüz tam olarak kesemiyorum ve çıkarıldığını doğrulayamıyorum, "
+    "o yüzden videoda kalmış olabilir"
+)
 _SLIP = "Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam'"
 _HALF_QUESTION = "Cut the half question 'how are you gonna'"
 

@@ -82,6 +82,59 @@ def test_idle_exactly_at_grace_boundary_stops():
     assert action == "stop"
 
 
+def test_recent_dispatch_defers_an_otherwise_due_stop():
+    now = 10000.0
+    action, since = _decide_lifecycle_action(
+        idle=True,
+        idle_since=now - 11 * 60,
+        now=now,
+        grace_min=_GRACE_MIN,
+        last_activity_at=now - 10,
+    )
+    assert action == "grace"
+    assert since == now - 10
+
+
+def test_dispatch_older_than_grace_does_not_defer():
+    now = 10000.0
+    action, _ = _decide_lifecycle_action(
+        idle=True,
+        idle_since=now - 20 * 60,
+        now=now,
+        grace_min=_GRACE_MIN,
+        last_activity_at=now - 15 * 60,
+    )
+    assert action == "stop"
+
+
+@patch("app.tasks.maintenance._activity_guard_active", return_value=True)
+@patch("app.tasks.maintenance._get_lifecycle_redis")
+@patch("app.services.fly_machines.stop_render_worker")
+@patch("app.services.fly_machines.get_render_worker_state", return_value="started")
+@patch("app.services.queue_state.render_worker_idle", return_value=True)
+def test_stale_dispatch_still_checks_active_approval_before_stop(
+    _idle: MagicMock, _state: MagicMock, stop: MagicMock, redis_get: MagicMock, activity: MagicMock
+):
+    """A stale stamp is discarded, then the DB guard must still defer stop."""
+    from app.tasks.maintenance import _RENDER_WORKER_IDLE_SINCE_KEY, manage_render_worker_lifecycle
+
+    client = MagicMock()
+    now = 10000.0
+    client.get.side_effect = lambda key: (
+        str(now - 20 * 60) if key == _RENDER_WORKER_IDLE_SINCE_KEY else str(now - 15 * 60)
+    )
+    redis_get.return_value = client
+    with patch("app.config.settings") as settings, patch("app.tasks.maintenance.datetime") as clock:
+        settings.RENDER_AUTOSTOP_ENABLED = True
+        settings.RENDER_AUTOSTOP_ACTIVITY_GUARD_ENABLED = True
+        settings.RENDER_IDLE_GRACE_MIN = _GRACE_MIN
+        settings.RENDER_START_WAIT_S = 60
+        clock.now.return_value.timestamp.return_value = now
+        assert manage_render_worker_lifecycle() == "grace"
+    activity.assert_called_once()
+    stop.assert_not_called()
+
+
 # ── manage_render_worker_lifecycle (Celery task wiring) ─────────────────────
 
 
@@ -142,6 +195,8 @@ def test_unknown_state_never_calls_fly(
 
     with patch("app.config.settings") as mock_settings:
         mock_settings.RENDER_AUTOSTOP_ENABLED = True
+        mock_settings.RENDER_AUTOSTOP_ACTIVITY_GUARD_ENABLED = False
+        mock_settings.RENDER_START_WAIT_S = 60
         mock_settings.RENDER_IDLE_GRACE_MIN = _GRACE_MIN
         result = manage_render_worker_lifecycle()
 
@@ -171,6 +226,8 @@ def test_not_idle_and_machine_not_started_triggers_backstop_start(
 
     with patch("app.config.settings") as mock_settings:
         mock_settings.RENDER_AUTOSTOP_ENABLED = True
+        mock_settings.RENDER_AUTOSTOP_ACTIVITY_GUARD_ENABLED = False
+        mock_settings.RENDER_START_WAIT_S = 60
         mock_settings.RENDER_IDLE_GRACE_MIN = _GRACE_MIN
         result = manage_render_worker_lifecycle()
 
@@ -199,6 +256,8 @@ def test_not_idle_and_machine_already_started_does_not_redundantly_call_start(
 
     with patch("app.config.settings") as mock_settings:
         mock_settings.RENDER_AUTOSTOP_ENABLED = True
+        mock_settings.RENDER_AUTOSTOP_ACTIVITY_GUARD_ENABLED = False
+        mock_settings.RENDER_START_WAIT_S = 60
         mock_settings.RENDER_IDLE_GRACE_MIN = _GRACE_MIN
         result = manage_render_worker_lifecycle()
 
@@ -230,6 +289,8 @@ def test_idle_past_grace_stops_and_clears_redis_key(
         patch("app.tasks.maintenance.datetime") as mock_dt,
     ):
         mock_settings.RENDER_AUTOSTOP_ENABLED = True
+        mock_settings.RENDER_AUTOSTOP_ACTIVITY_GUARD_ENABLED = False
+        mock_settings.RENDER_START_WAIT_S = 60
         mock_settings.RENDER_IDLE_GRACE_MIN = _GRACE_MIN
         mock_dt.now.return_value.timestamp.return_value = 999_999_999.0
         result = manage_render_worker_lifecycle()
@@ -260,6 +321,8 @@ def test_idle_within_grace_neither_starts_nor_stops(
 
     with patch("app.config.settings") as mock_settings:
         mock_settings.RENDER_AUTOSTOP_ENABLED = True
+        mock_settings.RENDER_AUTOSTOP_ACTIVITY_GUARD_ENABLED = False
+        mock_settings.RENDER_START_WAIT_S = 60
         mock_settings.RENDER_IDLE_GRACE_MIN = _GRACE_MIN
         result = manage_render_worker_lifecycle()
 
@@ -291,6 +354,8 @@ def test_redis_unavailable_still_makes_a_safe_decision(
 
     with patch("app.config.settings") as mock_settings:
         mock_settings.RENDER_AUTOSTOP_ENABLED = True
+        mock_settings.RENDER_AUTOSTOP_ACTIVITY_GUARD_ENABLED = False
+        mock_settings.RENDER_START_WAIT_S = 60
         mock_settings.RENDER_IDLE_GRACE_MIN = _GRACE_MIN
         result = manage_render_worker_lifecycle()
 
@@ -342,6 +407,8 @@ def test_idle_and_machine_stopped_clears_stale_timer_and_calls_nothing(
         patch("app.tasks.maintenance.datetime") as mock_dt,
     ):
         mock_settings.RENDER_AUTOSTOP_ENABLED = True
+        mock_settings.RENDER_AUTOSTOP_ACTIVITY_GUARD_ENABLED = False
+        mock_settings.RENDER_START_WAIT_S = 60
         mock_settings.RENDER_IDLE_GRACE_MIN = _GRACE_MIN
         mock_dt.now.return_value.timestamp.return_value = 999_999_999.0
         result = manage_render_worker_lifecycle()
@@ -350,3 +417,47 @@ def test_idle_and_machine_stopped_clears_stale_timer_and_calls_nothing(
     mock_stop.assert_not_called()
     mock_start.assert_not_called()
     redis_client.delete.assert_called_once_with(_RENDER_WORKER_IDLE_SINCE_KEY)
+
+
+@pytest.mark.parametrize("failure_at", [2, 3])
+def test_unknown_dispatch_read_never_stops_worker(failure_at):
+    from types import SimpleNamespace
+
+    from app.tasks import maintenance
+    from app.worker import RENDER_WORKER_LAST_DISPATCH_KEY
+
+    client = MagicMock()
+    reads = [0]
+
+    def read(key):
+        reads[0] += 1
+        if reads[0] == failure_at:
+            raise ConnectionError("Redis read failed")
+        return None if key == RENDER_WORKER_LAST_DISPATCH_KEY else "8000"
+
+    client.get.side_effect = read
+    settings = SimpleNamespace(
+        RENDER_AUTOSTOP_ENABLED=True,
+        RENDER_AUTOSTOP_ACTIVITY_GUARD_ENABLED=True,
+        RENDER_IDLE_GRACE_MIN=10,
+        RENDER_START_WAIT_S=60,
+    )
+    with (
+        patch("app.config.settings", settings),
+        patch.object(maintenance, "datetime") as clock,
+        patch.object(maintenance, "_get_lifecycle_redis", return_value=client),
+        patch.object(maintenance, "_activity_guard_active", return_value=False),
+        patch("app.services.queue_state.render_worker_idle", return_value=True),
+        patch("app.services.fly_machines.get_render_worker_state", return_value="started"),
+        patch("app.services.fly_machines.stop_render_worker") as stop,
+    ):
+        clock.now.return_value.timestamp.return_value = 10000.0
+        assert maintenance.manage_render_worker_lifecycle() == "grace"
+    stop.assert_not_called()
+
+
+def test_database_failure_keeps_activity_guard_closed():
+    from app.tasks import maintenance
+
+    with patch.object(maintenance, "sync_session", side_effect=RuntimeError("DB unavailable")):
+        assert maintenance._activity_guard_active() is True

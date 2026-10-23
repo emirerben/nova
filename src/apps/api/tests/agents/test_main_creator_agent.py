@@ -122,7 +122,7 @@ def test_brief_prompt_requires_explicit_versioned_target_for_changes() -> None:
         _input().model_copy(update={"brief_enabled": True})
     )
 
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-22-v69"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-23-v74"
     assert '`operation`: "change"' in prompt
     assert "target_requirement_id" in prompt
     assert "expected_version" in prompt
@@ -598,6 +598,25 @@ def test_reaction_beats_prompt_section_present_when_capability_available() -> No
     assert "visual_id" in prompt
     assert "Never set `licensed_sfx`" in prompt
     assert 'edit_format: "subtitled"' in prompt
+
+
+def test_reaction_beats_prompt_keeps_the_creators_title() -> None:
+    """KRI-851: the beats section used to end "...stays `subtitled` with no
+    `opening_title`" (written in KRI-178, when the subtitled compiler refused every
+    title). Phone Talking titles work since KRI-467 / KRI-514, so on a Talking edit
+    with beats that line contradicted the title rules and the creator's title could be
+    dropped. Beats are added alongside a requested title, never instead of it."""
+    agent_input = _input().model_copy(
+        update={"capability_manifest": _manifest_with_reaction_beats_available()}
+    )
+    prompt = " ".join(
+        MainCreatorAgent(None).render_prompt(agent_input).split()  # type: ignore[arg-type]
+    )
+
+    assert "REACTION BEATS (iPhone Talking only)" in prompt
+    assert "with no `opening_title`" not in prompt
+    assert "Beats never replace a title" in prompt
+    assert "still set `opening_title` / `closing_title`" in prompt
 
 
 def test_voiceover_reaction_beats_prompt_section_is_worded_for_the_voiceover() -> None:

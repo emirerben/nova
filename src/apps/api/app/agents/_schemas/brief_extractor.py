@@ -30,5 +30,7 @@ class BriefExtractionOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     brief_updates: list[BriefUpdate] = Field(default_factory=list)
+    # KRI-814: typed "the current message states no requirement and delegates every choice".
+    delegates_all_choices: bool = False
     request_scope: Literal["edit", "rebuild", "clarify"] | None = None
     clarification: str | None = Field(default=None, max_length=1_000)

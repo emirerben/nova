@@ -64,6 +64,11 @@ async def prepare(
     updates_override=None,
     phone=False,
     no_title=False,
+    clips=1,
+    output_extra=None,
+    summary=None,
+    action=None,
+    prompts=None,
 ):
     user_id, thread_id, _ = seed or _seed_runtime_project()
     with sync_session() as db:
@@ -86,6 +91,19 @@ async def prepare(
                 "analysis": {"summary": "A stadium flag", "has_speech": False},
             }
         ]
+        if clips > 1:
+            # KRI-814: the Troya run had 5 and 28 ready clips.
+            item.clip_gcs_paths = [f"users/test/troya-{n}.mp4" for n in range(1, clips + 1)]
+            item.clip_assignments = [
+                {
+                    "media_id": f"clip-{n}",
+                    "gcs_path": f"users/test/troya-{n}.mp4",
+                    "kind": "video",
+                    "duration_s": 8,
+                    "analysis": {"summary": f"Troya ruins, shot {n}", "has_speech": False},
+                }
+                for n in range(1, clips + 1)
+            ]
         if phone:
             row = item.clip_assignments[0]
             item.clip_assignments = [
@@ -144,7 +162,7 @@ async def prepare(
     output = {
         "action": {
             "kind": "propose_strategy",
-            "summary": "A six-second Gameday edit.",
+            "summary": summary or "A six-second Gameday edit.",
             "strategy": {
                 "direction": "fast_montage" if phone else "guided_story",
                 "edit_format": "montage" if phone else "day_vlog",
@@ -152,20 +170,25 @@ async def prepare(
                 "pacing": "balanced",
                 "render_program": "guided",
                 "opening_title": "Gameday.",
-                "target_duration_s": 6,
-                "selected_media_ids": ["clip-1"],
+                "target_duration_s": 6 if clips == 1 else 30,
+                "selected_media_ids": [f"clip-{n}" for n in range(1, clips + 1)],
                 "rationale": "Use the stadium flag.",
             },
         },
         "brief_updates": updates,
+        **(output_extra or {}),
     }
     if no_title:
         output["action"]["strategy"].pop("opening_title")
+    if action is not None:
+        output["action"] = action
     calls = []
 
     class Transport:
         def invoke(self, **kwargs):
             calls.append(kwargs["model"])
+            if prompts is not None:
+                prompts.append(kwargs["prompt"])
             return ModelInvocation(raw_text=json.dumps(output))
 
     monkeypatch.setattr("app.kria.planner.default_client", lambda: Transport())
@@ -228,7 +251,9 @@ async def prepare(
         },
     ],
 )
-async def test_unproven_or_unsupported_request_has_no_approval(monkeypatch, language, extra, phone):
+async def test_unknown_requests_block_but_unsupported_style_gets_simpler_draft(
+    monkeypatch, language, extra, phone
+):
     if language == "tr":
         extra = {
             **extra,
@@ -241,6 +266,26 @@ async def test_unproven_or_unsupported_request_has_no_approval(monkeypatch, lang
     _, thread_id, approvals, events = await prepare(
         monkeypatch, language=language, extra=extra, phone=phone
     )
+    if extra["kind"] == "style":
+        assert len(approvals) == 1
+        reply = next(event for event in events if event.event_type == "draft_applied")
+        assert extra["description"] in reply.content
+        assert ("Left out:" if language == "en" else "Çıkarıldı:") in reply.content
+        assert "Should I" not in reply.content and "yapayım mı" not in reply.content
+        with sync_session() as db:
+            draft = db.scalars(
+                select(CreatorEditDraft).where(
+                    CreatorEditDraft.thread_id == thread_id, CreatorEditDraft.is_head.is_(True)
+                )
+            ).one()
+            snapshot = draft.snapshot_json
+            assert snapshot["strategy"]["opening_title"] == "Gameday."
+            assert snapshot["brief_coverage"]["automatic_omission_ids"] == ["r3"]
+            report = snapshot["brief_coverage"]["approval_readiness"]
+            assert report["ready"] is True
+            assert {r["requirement_id"] for r in report["requirements"]} == {"r1", "r2"}
+            assert approvals[0].consequence_summary.endswith(reply.content)
+        return
     assert not approvals, "An unproven requested change was offered for approval"
     response = events[-1]
     coverage = (response.payload or {}).get("brief_coverage") or {}
