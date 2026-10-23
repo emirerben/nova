@@ -1433,6 +1433,20 @@
         "src/apps/api/tests/tasks/test_render_worker_activity_sql.py",
         "src/apps/api/tests/test_render_worker_wake.py"
       ]
+    },
+    {
+      "id": "kri-842-narrated-clip-sound",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri842_narrated_clip_sound.py tests/kria/test_kri842_clip_sound_checks.py tests/pipeline/test_kri842_clip_sound_plan.py tests/routes/test_kri842_clip_sound_save.py tests/pipeline/test_phone_narrated_plan.py tests/pipeline/test_phone_voiceover_cut.py tests/routes/test_phone_narrated_editor_commit.py",
+      "paths": [
+        "src/apps/api/app/kria/narrated_clip_sound_ask.py",
+        "src/apps/api/app/pipeline/phone_clip_sound.py",
+        "src/apps/api/tests/fixtures/kri842_cafe_n1_narrated.json",
+        "src/apps/api/tests/tasks/test_kri842_narrated_clip_sound.py",
+        "src/apps/api/tests/kria/test_kri842_clip_sound_checks.py",
+        "src/apps/api/tests/pipeline/test_kri842_clip_sound_plan.py",
+        "src/apps/api/tests/routes/test_kri842_clip_sound_save.py"
+      ]
     }
   ]
 }

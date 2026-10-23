@@ -126,6 +126,7 @@ def _video_clips(
     assets: dict[str, Any],
     manifest: dict[str, Any],
     landscape_fit: str = "fill",
+    per_clip_sound: bool = False,
 ) -> list[TimelineClip]:
     by_id = {clip.id: clip for clip in previous}
     looks = {clip.look for clip in previous}
@@ -236,7 +237,36 @@ def _video_clips(
             else:
                 clips.append(TimelineClip(**update, transform=transform, look=default_look))
         cursor = timeline_start + source_duration / rate
+    if per_clip_sound:
+        clips = _keep_clip_sound(previous, clips, slots)
     return clips
+
+
+def _step_slot_id(clip: TimelineClip) -> str | None:
+    """The slot a narrated clip id (``step-<index>-<slot id>``) names."""
+    head, _, rest = clip.id.partition("-")
+    index, _, slot_id = rest.partition("-")
+    return slot_id if head == "step" and index.isdigit() and slot_id else None
+
+
+def _keep_clip_sound(
+    previous: Sequence[TimelineClip], clips: list[TimelineClip], slots: Sequence[dict]
+) -> list[TimelineClip]:
+    """``clips`` with each clip's own-sound gain kept by the slot it plays (KRI-842).
+
+    A recipe with per-clip sound (`compile_phone_narrated_plan`: ``original_volume`` 1.0 and
+    each clip's ``volume`` the gain) must not lose it when a cut moves a slot to another index
+    (the clip id carries the index), repoints it at other footage, or adds a slot: a gain is
+    the slot's only while it still plays the same footage; anything else is silent, exactly
+    like every clip the creator did not ask to hear.
+    """
+    prior = {slot_id: clip for clip in previous if (slot_id := _step_slot_id(clip)) is not None}
+    kept = []
+    for clip, slot in zip(clips, slots, strict=True):
+        before = prior.get(str(slot["slot_id"]))
+        same = before is not None and before.source_asset_id == clip.source_asset_id
+        kept.append(clip.model_copy(update={"volume": before.volume if same else 0.0}))
+    return kept
 
 
 def _fit_audio_clips(
@@ -366,6 +396,11 @@ def replace_voiceover_cut(
         assets=assets,
         manifest=manifest,
         landscape_fit=resolved_fit,
+        per_clip_sound=(
+            archetype == "narrated"
+            and recipe.audio.original_volume == 1.0
+            and any(clip.volume != 1 for clip in video.clips)
+        ),
     )
     old_end = timeline_end_s(video.clips)
     new_end = timeline_end_s(clips)

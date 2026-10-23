@@ -213,6 +213,26 @@ _MIN_USABLE_S = 0.05
 _EOF_GUARD_S = 0.05
 
 
+# KRI-842: the longest clip that may play on after the voice ends, and the bed level a
+# footage-sound ask falls back to when the item's own bed is 0 (the worker's default).
+MAX_VOICE_TAIL_S = 6.0
+DEFAULT_NARRATED_BED_LEVEL = 0.25
+
+
+class NarratedVoiceTail(BaseModel):
+    """The last clip playing on, with its own sound, after the voice ends (KRI-842).
+
+    ``source_start_s`` / ``duration_s`` are the clip's own seconds (it plays at rate 1);
+    the tail starts exactly where the narration ends. ``media_id`` is the last step's clip.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    media_id: str = Field(min_length=1, max_length=160)
+    source_start_s: float = Field(ge=0)
+    duration_s: float = Field(gt=0, le=MAX_VOICE_TAIL_S)
+
+
 class NarratedPhoneStep(BaseModel):
     """One narrated step: its bound clip and its window on the narration
     timeline (voiceover-absolute seconds, contiguous across the whole list --
@@ -700,6 +720,8 @@ def compile_phone_narrated_plan(
     visuals: tuple[PhoneVisualBinding, ...] = (),
     opening_title: str | None = None,
     opening_title_end_s: float | None = None,
+    under_voice_media_ids: frozenset[str] = frozenset(),
+    voice_tail: NarratedVoiceTail | None = None,
 ) -> EditRecipeV2:
     """See the module docstring for the full contract.
 
@@ -725,6 +747,18 @@ def compile_phone_narrated_plan(
     ``lanes`` / ``visuals`` (KRI-281): the editor's sound-effect and Visuals
     lanes, compiled by `replace_editor_lanes` -- the same swap a phone-editor
     Save uses, so a first compile and every later Save agree.
+
+    ``under_voice_media_ids`` / ``voice_tail`` (KRI-842): per-clip sound. Today every
+    clip's own sound is one bed under the voice (``AudioMixRecipe.original_volume``). With
+    either argument the bed level moves onto each clip's ``volume`` and
+    ``original_volume`` is 1.0 (the device plays a clip's own sound at ``original_volume
+    x clip.volume`` x the duck). ``under_voice_media_ids``: only the clips of these media
+    play softly under the voice (the bed gain, or the default bed when the item's is 0);
+    every other clip is silent under it. ``voice_tail``: one more clip, from the last
+    step's media, that starts where the voice ends and plays at full volume (the duck
+    releases once the voice is silent); with no ``under_voice_media_ids`` the clips under
+    the voice keep today's bed level. Both empty is the unchanged recipe, byte for byte.
+    The tail is outside the tiling contract above: the steps still tile the voiceover.
     """
     if not steps:
         raise ValueError("phone narrated plan has no steps")
@@ -753,6 +787,16 @@ def compile_phone_narrated_plan(
     if abs(expected_start - voiceover_duration_s) > TIMING_ROUNDING_TOLERANCE_S:
         raise UnsupportedPhonePlan("narrated steps must cover the full voiceover duration")
 
+    voice_mix = max(0.0, min(1.0, float(mix if mix is not None else 1.0)))
+    footage_bed_gain = max(0.0, 1.0 - voice_mix)
+    if duck_footage_bed:
+        footage_bed_gain *= NARRATED_FOOTAGE_BED_MAX_GAIN
+    per_clip_sound = bool(under_voice_media_ids) or voice_tail is not None
+    # An item whose bed is 0 still honours "keep this clip's sound under my voice".
+    faint_gain = footage_bed_gain or DEFAULT_NARRATED_BED_LEVEL * (
+        NARRATED_FOOTAGE_BED_MAX_GAIN if duck_footage_bed else 1.0
+    )
+
     assets: dict[str, MediaAsset] = {}
     manifest: dict[str, object] = {}
     clips: list[TimelineClip] = []
@@ -780,6 +824,15 @@ def compile_phone_narrated_plan(
             # analysis proxy for every binding reaching this compiler.
             is_proxy_available=True,
         )
+        # Per-clip sound (KRI-842) moves the bed level onto each clip's own gain; with
+        # neither ask the field is left to its default and the clip is as it always was.
+        gain: dict[str, float] = {}
+        if per_clip_sound:
+            gain["volume"] = (
+                (faint_gain if step.media_id in under_voice_media_ids else 0.0)
+                if under_voice_media_ids
+                else footage_bed_gain
+            )
         clips.append(
             TimelineClip(
                 id=f"step-{index}-{step.step_id}",
@@ -788,9 +841,34 @@ def compile_phone_narrated_plan(
                 source_duration=source_duration,
                 timeline_start=cursor,
                 rate=rate,
+                **gain,
             )
         )
         cursor += target_duration_s
+
+    audible_under_voice = (
+        any(clip.volume > 0 for clip in clips) if per_clip_sound else footage_bed_gain > 0
+    )
+    if voice_tail is not None:
+        tail_binding = bindings_by_media_id.get(voice_tail.media_id)
+        if tail_binding is None or tail_binding.render_asset().id not in assets:
+            raise UnsupportedPhonePlan("the clip that plays on after the voice isn't in the edit")
+        if (
+            voice_tail.source_start_s + voice_tail.duration_s
+            > float(tail_binding.original.duration_s) + TIMING_ROUNDING_TOLERANCE_S
+        ):
+            raise UnsupportedPhonePlan("the clip that plays on after the voice runs past its end")
+        clips.append(
+            TimelineClip(
+                id=f"step-{len(steps)}-{steps[-1].step_id}-tail",
+                source_asset_id=tail_binding.render_asset().id,
+                source_start=voice_tail.source_start_s,
+                source_duration=voice_tail.duration_s,
+                timeline_start=cursor,
+                rate=1.0,
+                volume=1.0,
+            )
+        )
 
     if len({clip.id for clip in clips}) != len(clips):
         raise ValueError("phone narrated clips must have unique identities")
@@ -810,10 +888,6 @@ def compile_phone_narrated_plan(
         ),
         duration=narration.duration_s,
     )
-    voice_mix = max(0.0, min(1.0, float(mix if mix is not None else 1.0)))
-    footage_bed_gain = max(0.0, 1.0 - voice_mix)
-    if duck_footage_bed:
-        footage_bed_gain *= NARRATED_FOOTAGE_BED_MAX_GAIN
     narration_duration_s = max(0.1, min(float(voiceover_duration_s), narration.duration_s))
 
     tracks = [
@@ -837,9 +911,9 @@ def compile_phone_narrated_plan(
     ]
     audio = AudioMixRecipe(
         narration_asset_id=narration_asset.id,
-        original_volume=footage_bed_gain,
-        # Nothing to duck when the bed is silent.
-        duck_original_during_music=duck_footage_bed and footage_bed_gain > 0,
+        original_volume=1.0 if per_clip_sound else footage_bed_gain,
+        # Nothing to duck when the clips under the voice are silent.
+        duck_original_during_music=duck_footage_bed and audible_under_voice,
         target_lufs=target_lufs,
     )
     required_capabilities = (

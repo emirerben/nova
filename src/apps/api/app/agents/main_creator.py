@@ -110,7 +110,8 @@ log = structlog.get_logger()
 # v72 (KRI-814): earlier creator lines never read into the brief are read with the current one.
 # v74 combines delegation v72 with subtitle-semantics v73, retaining all instructions.
 # v75 adds N2 fullscreen photo-then-original sequences to the complete v74 union.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v75"
+# v76 (KRI-842) adds the `clip_sound` fact: one clip's own sound under, or after, a voiceover.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v76"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -484,6 +485,17 @@ as a SEPARATE requirement with its complete description; never certify those cha
 `source_unchanged`. For "original camera audio, remove only the wind noise", record both the
 unchanged-source intent and a separate wind-removal requirement. After an explicit simpler
 choice drops wind removal, preserve the source-audio requirement and its typed intent.
+On a voiceover edit (the creator records their own voice over the clips), the creator may want
+ONE clip's own sound kept: that clip's sound faintly under the voice => an `audio` requirement
+scoped `clip:<media_id>` of THAT clip with {"clip_sound": "under_voice"} (only the named clips
+play their own sound under the voice; the rest stay silent under it); a clip that plays on with
+its own sound once the voice has ended, such as the last clip so a spoken line is heard =>
+{"clip_sound": "after_voice", "triggers": ["bye bye"]}, the line exactly as written, no
+`triggers` when none is named. Keep the creator's words in `description`; use these English keys
+and values whatever the language: "Seslendirme net duyulsun ama ısırık klibinin kendi sesi
+hafifçe altta kalsın" => scope clip:<the bite clip's media_id>, {"clip_sound": "under_voice"};
+"After my voiceover ends, let the last clip play so Caro's "bye bye" is heard" => scope
+clip:<the last clip's media_id>, {"clip_sound": "after_voice", "triggers": ["bye bye"]}.
 Merely narrating that footage was captured "from A to B", at sunset and then at night, or during
 two activities is not such an ask. Compatible requirements with the same kind and scope coexist.
 ALWAYS add a `timing` requirement ({"kind": "timing", "scope": "global", "facts": {"duration_s":

@@ -30,6 +30,7 @@ from app.pipeline.lipsync_montage import (
     resync_lipsync_moments,
 )
 from app.pipeline.phone_captions import caption_look_from_variant
+from app.pipeline.phone_clip_sound import reconcile_clip_sound
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
 from app.pipeline.phone_narrated_plan import (
     _EDITOR_LANE_TRACK_IDS,
@@ -554,6 +555,10 @@ def _compile_editor_commit(
         )
         variant["render_status"] = "awaiting_device"
         variant["duration_s"] = recipe.duration
+        if isinstance(variant.get("clip_sound"), dict):
+            variant["clip_sound"] = reconcile_clip_sound(
+                recipe, variant["clip_sound"], video_track_id="authored"
+            )
     elif is_phone_subtitled_editor_variant(variant):
         _compile_subtitled_editor_commit(
             staged,
@@ -1486,6 +1491,10 @@ def _compile_narrated_editor_commit(
             row["phone_beat_receipt"] = refresh_narrated_sequence_receipt(
                 recipe, row["phone_beat_receipt"]
             )
+        if isinstance(row.get("clip_sound"), dict):
+            # KRI-842: the receipt follows the recipe this Save pinned, never what the first
+            # render promised.
+            row["clip_sound"] = reconcile_clip_sound(recipe, row["clip_sound"])
         if caption_cues_overridden:
             row["caption_cues"] = caption_cues
         if text_active:
