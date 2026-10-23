@@ -427,14 +427,238 @@ _CLAUSE_MARKS = ".!?;,\n"
 # Negation is read this far into the clause: English before the seconds, Turkish after.
 _NEG_BEFORE_CHARS = 40
 _NEG_AFTER_CHARS = 28
-# A length that is not the photos' own: another medium or the whole video between the
-# photos and the seconds ("use my photos, make it 8 seconds"), or the video right after the
-# seconds ("photos in a 8 second video", "8 saniyelik video").
-_NOT_PHOTO_LENGTH = re.compile(
-    rf"\b(?:(?P<medium>videos?|clips?|footage|total|overall|whole|entire|it|{_TR_MEDIA}"
-    r"|toplam\w*|tum\s+video\w*)|(?P<length>long|edits?|reels?|montages?|tiktoks?|films?"
-    r"|uzunlu\w*))\b"
+# A conjunction that starts the next predicate ("don't crop it AND hold it 2 seconds"):
+# a negation before it is that other verb's, not the length's. Not when a noun phrase
+# follows ("don't hold the photos and videos 1 second" stays one negated predicate).
+_PREDICATE_JOINS = frozenset(
+    {
+        "and",
+        "but",
+        "then",
+        "or",
+        "so",
+        "while",
+        "plus",
+        "also",
+        "ve",
+        "ama",
+        "fakat",
+        "ancak",
+        "sonra",
+        "ise",
+    }
 )
+_NOUN_PHRASE_STARTS = frozenset(
+    {
+        "the",
+        "my",
+        "a",
+        "an",
+        "all",
+        "every",
+        "each",
+        "our",
+        "these",
+        "those",
+        "his",
+        "her",
+        "their",
+        "photo",
+        "photos",
+        "image",
+        "images",
+        "picture",
+        "pictures",
+        "still",
+        "stills",
+        "video",
+        "videos",
+        "clip",
+        "clips",
+        "footage",
+    }
+)
+# KRI-825: the only words that may stand between a photo-group mention and its length
+# ("every photo should stay on screen for 1 second", "her fotoğraf ekranda 1 saniye").
+# Anything else (another medium, "and", "then", "with", "in", "under", "montage of") means
+# the seconds belong to something else ("photos then 3 seconds of the beach video",
+# "photos with a 3 second title", "show all my photos in 9 seconds").
+_GROUP_GAP_WORDS = frozenset(
+    {
+        "each",
+        "every",
+        "one",
+        "my",
+        "the",
+        "these",
+        "those",
+        "our",
+        "all",
+        "should",
+        "must",
+        "be",
+        "are",
+        "is",
+        "will",
+        "would",
+        "to",
+        "for",
+        "at",
+        "last",
+        "lasts",
+        "stay",
+        "stays",
+        "on",
+        "screen",
+        "onscreen",
+        "show",
+        "shown",
+        "hold",
+        "held",
+        "keep",
+        "kept",
+        "display",
+        "displayed",
+        "appear",
+        "appears",
+        "play",
+        "played",
+        "just",
+        "only",
+        "about",
+        "around",
+        "roughly",
+        "approximately",
+        "exactly",
+        "precisely",
+        "max",
+        "maximum",
+        "most",
+        "least",
+        "take",
+        "takes",
+        "need",
+        "needs",
+        "please",
+        "flash",
+        "her",
+        "biri",
+        "tanesi",
+        "sadece",
+        "yalnizca",
+        "tam",
+        "olarak",
+        "yaklasik",
+        "en",
+        "fazla",
+        "az",
+        "ekranda",
+        "suresi",
+        "them",
+        "hepsi",
+        "hepsini",
+    }
+)
+# Words that may follow the length in the same clause ("photos 1 second each", "1 saniye
+# olsun"). A noun ("3 second title", "1 second crossfade"), "of" ("3 seconds of the beach
+# clip"), "for"/"in"/"total" mean the seconds are another thing's.
+_GROUP_TAIL_WORDS = frozenset(
+    {
+        "each",
+        "apiece",
+        "per",
+        "a",
+        "long",
+        "on",
+        "onscreen",
+        "and",
+        "but",
+        "then",
+        "please",
+        "max",
+        "maximum",
+        "tops",
+        "exactly",
+        "or",
+        "instead",
+        "only",
+        "olsun",
+        "kalsin",
+        "dursun",
+        "gorunsun",
+        "gozuksun",
+        "goster",
+        "gosterin",
+        "gostersin",
+        "gecsin",
+        "ekranda",
+        "boyunca",
+        "olacak",
+        "olmali",
+        "kalmali",
+        "kalacak",
+        "sursun",
+        "tut",
+        "tutun",
+        "tutsun",
+        "olarak",
+        "her",
+        "biri",
+        "ve",
+        "ama",
+        "yeter",
+        "lutfen",
+        "olmasin",
+        "kalmasin",
+        "gecmesin",
+        "gosterme",
+        "gostermeyin",
+        "durmasin",
+        "between",
+        "among",
+        "amongst",
+        "with",
+        "mixed",
+        "arasinda",
+        "aralarinda",
+    }
+)
+# "per"/"a" count only before a photo word or "piece" ("1 second per photo", "a piece").
+_GROUP_PER_NOUNS = frozenset(
+    {"photo", "image", "picture", "still", "pic", "piece", "foto", "fotograf", "resim"}
+)
+# One length for EACH photo, said so ("each", "every", "apiece", "her"): only then may a
+# group length run past the montage's own still ceiling. Without it, "use my photos for 8
+# seconds" or "a montage of my photos 10 seconds" is the video's length, not each photo's.
+_GROUP_DISTRIBUTIVE = frozenset({"each", "every", "apiece", "per", "her", "biri", "birer"})
+_GROUP_UNMARKED_MAX_S = 3.0
+# The photos are the subject of the length ("photos should be 5 seconds", "fotoğraflar 5
+# saniye olsun"), not the object of a whole-video ask ("use my photos for 8 seconds").
+_GROUP_PREDICATES = frozenset(
+    {
+        "be",
+        "are",
+        "is",
+        "stay",
+        "stays",
+        "last",
+        "lasts",
+        "olsun",
+        "kalsin",
+        "dursun",
+        "gorunsun",
+        "gozuksun",
+        "gecsin",
+        "olacak",
+        "olmali",
+        "kalmali",
+        "kalacak",
+        "sursun",
+        "tutsun",
+    }
+)
+_GROUP_JOINS = frozenset({"and", "ve"})
+_GROUP_REFERS = frozenset({"each", "every", "them", "her", "biri", "hepsi", "hepsini"})
 _GROUP_MILLISECONDS = re.compile(r"(?<![\d.,])(\d+)\s*(?:ms|milisaniye\w*|milliseconds?)\b")
 
 
@@ -475,26 +699,58 @@ def seconds_negated(
     from app.kria.brief_route import loose_text  # noqa: PLC0415 - app.kria imports this module
 
     lo, hi = clause_bounds(text, start, end)
-    before = text[max(lo, start - _NEG_BEFORE_CHARS) : start]
-    after = loose_text(text[end : min(hi, end + _NEG_AFTER_CHARS)])
+    before = _after_last_predicate_join(text[max(lo, start - _NEG_BEFORE_CHARS) : start])
+    # Turkish: only the verb right after the length negates it ("1 saniye kalmasın"), not
+    # a later predicate of the clause ("2 saniye kalsın yazı olmasın").
+    after_words = loose_text(text[end : min(hi, end + _NEG_AFTER_CHARS)]).split()
+    for index, word in enumerate(after_words):
+        if word in _PREDICATE_JOINS:
+            after_words = after_words[:index]
+            break
+    after = " ".join(after_words[:2])
     return bool(
         (english and re.search(rf"\b{_EN_NEG}\b", before))
         or (turkish and re.search(rf"\b{_TR_NEG}", after))
     )
 
 
-def _group_photo_seconds(text: str, group: str) -> list[tuple[int, int, float]]:
-    """Each length stated for the photos as a group, as (start, end, seconds) of the length.
+def _after_last_predicate_join(before: str) -> str:
+    """``before`` from its last conjunction that starts a new predicate (see
+    ``_PREDICATE_JOINS``), so another verb's negation is not the length's."""
+    words = before.split()
+    for index in range(len(words) - 1, -1, -1):
+        following = words[index + 1].strip(".,!?;:") if index + 1 < len(words) else ""
+        if words[index] in _PREDICATE_JOINS and following not in _NOUN_PHRASE_STARTS:
+            return " ".join(words[index + 1 :])
+    return before
+
+
+def _words_of(text: str) -> list[str]:
+    """Whitespace words with edge punctuation dropped ("screen:" -> "screen")."""
+    return [word for word in (w.strip(".,!?;:=~-\"'()") for w in text.split()) if word]
+
+
+def _group_photo_seconds(text: str, group: str) -> list[tuple[int, int, float, bool]]:
+    """Each length stated for the photos as a group: (start, end, seconds, own) of it.
 
     The seconds expression is the planner's own reader (``_stated_holds``: digits or
     EN/TR words, decimal comma, "and a half" / "buçuk"), so "photos one second" and
     "fotoğraflar 1,5 sn" read like "photos 1.5 s". Only the first length after a group
-    mention counts, inside the same clause and before any other medium; a length that is
-    the video's ("a 8 second video", "8 saniyelik video") is not the photos'.
+    mention, in the same clause (one creator turn never runs into the next), counts.
+
+    ``own`` (KRI-825 review): the length is unmistakably the photos' own. Only the words
+    of ``_GROUP_GAP_WORDS`` stand between the mention and it, the next word is one of
+    ``_GROUP_TAIL_WORDS``, and past the montage's still ceiling (3 s) the creator said
+    it is each photo's ("each", "every", "her") or made the photos the subject ("photos
+    should be 5 seconds", "fotoğraflar 5 saniye olsun"). So a per-photo hold, a total, a
+    title/transition/music length or a video's seconds after a photo mention never times
+    every photo. A length that is not ``own`` is kept only inside the AI's 0.1-0.8 s
+    band, where the pre-KRI-825 reader took it (with videos in the request, the caller's
+    rule), so a legacy quick-photo request reads byte-identically.
     """
     from app.kria.planner import _stated_holds  # noqa: PLC0415 - app.kria imports this module
 
-    found: list[tuple[int, int, float]] = []
+    found: list[tuple[int, int, float, bool]] = []
     for photos in re.finditer(group, text):
         origin = photos.end()
         _lo, clause_end = clause_bounds(text, origin, origin)
@@ -507,13 +763,39 @@ def _group_photo_seconds(text: str, group: str) -> list[tuple[int, int, float]]:
         if not stated:
             continue
         start, end, value = min(stated)
-        if any(m["medium"] for m in _NOT_PHOTO_LENGTH.finditer(window[:start])):
+        if not CREATOR_STILL_HOLD_MIN_S - 1e-9 <= value <= CREATOR_STILL_HOLD_MAX_S + 1e-9:
             continue
-        if _NOT_PHOTO_LENGTH.match(window[end:].lstrip(" -")):
-            continue
-        if CREATOR_STILL_HOLD_MIN_S - 1e-9 <= value <= CREATOR_STILL_HOLD_MAX_S + 1e-9:
-            found.append((origin + start, origin + end, value))
+        own = _photos_own_length(
+            _words_of(photos.group(0)),
+            _words_of(window[:start]),
+            _words_of(window[end:])[:2],
+            value,
+        )
+        if own or value <= MIXED_MEDIA_IMAGE_HOLD.maximum_s + 1e-9:
+            found.append((origin + start, origin + end, value, own))
     return found
+
+
+def _photos_own_length(mention: list[str], gap: list[str], tail: list[str], value: float) -> bool:
+    """See ``_group_photo_seconds``: the words around a length make it the photos' own."""
+    # "don't crop the photos and keep each 1 second": a second predicate counts only when
+    # it refers back to the photos ("each", "them") with nothing else in between.
+    joins = [index for index, word in enumerate(gap) if word in _GROUP_JOINS]
+    if joins and not any(word in _GROUP_REFERS for word in gap[joins[-1] + 1 :]):
+        return False
+    if any(word not in _GROUP_GAP_WORDS for index, word in enumerate(gap) if index not in joins):
+        return False
+    if tail and tail[0] not in _GROUP_TAIL_WORDS:
+        return False
+    if tail[:1] in (["per"], ["a"]) and (
+        len(tail) < 2 or tail[1].rstrip("s") not in _GROUP_PER_NOUNS
+    ):
+        return False
+    if value <= _GROUP_UNMARKED_MAX_S + 1e-9:
+        return True
+    return any(word in _GROUP_DISTRIBUTIVE for word in [*mention, *gap, *tail]) or any(
+        word in _GROUP_PREDICATES for word in [*gap, *tail[:1]]
+    )
 
 
 def loose_creator_text(text: object) -> str:
@@ -960,6 +1242,28 @@ def uses_quick_photo_long_video_timing(
     )
 
 
+def sets_photo_length_only(profile: MixedMediaTimingProfile | None) -> bool:
+    """The profile only gives the photos a length ("every photo 1 second", KRI-825).
+
+    It says nothing about the videos, their boundaries or any grouping, so it is not a
+    photo-and-video timing contract: it never asks for the guided voiceover contract, a
+    fast-montage direction, or a refusal when that contract is unavailable.
+    """
+    return bool(
+        profile is not None
+        and profile.image_hold_s is not None
+        and profile.video_hold == "standard"
+        and profile.boundary_style == "crossfade"
+        and profile.image_grouping == "scattered"
+        and profile.sequence_grouping == "none"
+    )
+
+
+def binds_mixed_media_timing(profile: MixedMediaTimingProfile | None) -> bool:
+    """The profile is an exact photo-and-video timing contract (not photos-only)."""
+    return profile is not None and not sets_photo_length_only(profile)
+
+
 def recognize_mixed_media_timing(text: str) -> MixedMediaTimingProfile | None:
     """Recognize an affirmative quick-photo/long-video request without trusting an LLM."""
 
@@ -1036,16 +1340,25 @@ def recognize_mixed_media_timing(text: str) -> MixedMediaTimingProfile | None:
     # form so a request containing both "very fast" and an exact value keeps the value.
     # KRI-825: any length the creator states for the photos (0.1-10 s, "1 second", "one
     # second", "1,5 s") is kept; the 0.5-0.8 s band is only the AI's default.
-    numeric_matches = _group_photo_seconds(normalized, PHOTO_GROUP_PATTERN)
+    # Each creator turn is its own clause: a length in a later message ("3 seconds for the
+    # sunset clip") never attaches to a photo mention that ended an earlier one.
+    by_turn = "\n".join(" ".join(line.split()) for line in str(text or "").casefold().splitlines())
+    has_video_context = bool(re.search(rf"\b{video}\b", normalized))
+    # A length that is not plainly the photos' own counts only as before KRI-825: in the
+    # 0.1-0.8 s band with videos in the request.
+    numeric_matches = [
+        (start, end, value)
+        for start, end, value, own in _group_photo_seconds(by_turn, PHOTO_GROUP_PATTERN)
+        if own or has_video_context
+    ]
     # Conversation history is passed oldest-to-newest. A correction such as
     # "make the images 0.2 seconds instead of 0.1" must override the earlier
     # 0.1-second request rather than silently reusing the first match.
     numeric_start, numeric_end, numeric_value = (
         numeric_matches[-1] if numeric_matches else (None, None, None)
     )
-    has_video_context = bool(re.search(rf"\b{video}\b", normalized))
     numeric_negated = numeric_start is not None and seconds_negated(
-        normalized, numeric_start, numeric_end, turkish=False
+        by_turn, numeric_start, numeric_end, turkish=False
     )
     if numeric_value is not None and not numeric_negated:
         if not has_video_context:
@@ -1105,15 +1418,22 @@ def _recognize_turkish_mixed_media_timing(
 
     # An exact still length ("fotoğraflar 0,3 saniye", "fotoğraflar 1,5 sn", "her fotoğraf
     # bir saniye"), like the English numeric path (KRI-825: any 0.1-10 s).
-    numeric = _group_photo_seconds(loose, _TR_PHOTO_GROUP)
+    from app.kria.brief_route import loose_text  # noqa: PLC0415 - app.kria imports this module
+
+    loose_turns = "\n".join(loose_text(line) for line in str(text or "").splitlines())
+    mentions_video = bool(re.search(rf"\b{_TR_MEDIA}", loose))
+    numeric = [
+        (start, end, value)
+        for start, end, value, own in _group_photo_seconds(loose_turns, _TR_PHOTO_GROUP)
+        if own or mentions_video
+    ]
     if numeric:
         start, end, value = numeric[-1]
-        if not seconds_negated(loose, start, end, english=False):
-            # The videos get longer only when the creator said so ("videolar daha uzun").
+        if not seconds_negated(loose_turns, start, end, english=False):
+            # Same contract as the English path: a video in the request makes it the
+            # quick-photo/long-video mix; photos-only leaves the videos alone.
             video_fields = (
-                {"video_hold": "longer", "boundary_style": "cut"}
-                if stated(_TR_MEDIA, video_gap, _TR_VIDEO_LONG)
-                else {}
+                {"video_hold": "longer", "boundary_style": "cut"} if mentions_video else {}
             )
             return MixedMediaTimingProfile(
                 image_hold="very_fast",

@@ -540,3 +540,76 @@ def test_the_v1_proposal_keeps_every_photo_at_the_creators_length(message, secon
 def test_the_videos_length_is_never_the_photos_length(message: str) -> None:
     profile = recognize_mixed_media_timing(message)
     assert profile is None or profile.image_hold_s is None
+
+
+# -- Review round 2: seconds that are not the photos' own (written before the fix) ------
+# 12. A per-photo hold, a total, a title/transition/music length, or a video's seconds
+#     after a photo mention became an exact hold for EVERY photo.
+# 13. A whole-video length right after the photos ("montage of my photos 10 seconds",
+#     "use my photos for 8 seconds") pinned every photo to it.
+# 14. Seconds in a later turn attached to a photo mention that ended an earlier turn.
+# 15. A negation of another verb in the clause ("don't crop ... and hold it 2 seconds",
+#     "2 saniye kalsın yazı olmasın") dropped a real hold.
+# 16. A photos-only length ("show every photo 1 second") on a voiceover item was refused
+#     or rerouted as if it were a photo-and-video timing contract.
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "use all my photos and hold the sunset photo for 2 seconds",
+        "photos should take 10 seconds in total",
+        "add the photos with a 3 second title at the start",
+        "photos with a 1 second crossfade",
+        "use my photos and add music for 5 seconds",
+        "fotoğrafları kullan ve 9 saniyelik müzik ekle",
+        "photos first then 2 seconds of the beach video",
+        "Show the photos then 3 seconds of the beach video",
+        "add all my photos and 2 seconds of the drone shot",
+        "put the photos first then 3 seconds of the beach clip",
+        "use all my photos\n3 seconds for the sunset clip at the end",
+        "make a montage of my photos 10 seconds",
+        "use my photos for 8 seconds",
+        "show all my photos in 9 seconds",
+        "a quick photo dump of my photos under 10 seconds",
+    ],
+)
+def test_seconds_that_belong_to_something_else_never_time_every_photo(message: str) -> None:
+    profile = recognize_mixed_media_timing(message)
+    assert profile is None or profile.image_hold_s is None
+
+
+@pytest.mark.parametrize(
+    ("message", "seconds"),
+    [
+        ("don't crop the photos and keep each 1 second", 1.0),
+        ("fotoğraflar 1 saniye olsun ama müzik olmasın", 1.0),
+        ("photos 4 seconds each", 4.0),
+        ("photos 1 second\nmake the photos 2 seconds", 2.0),
+    ],
+)
+def test_another_verbs_negation_keeps_the_photos_length(message: str, seconds: float) -> None:
+    profile = recognize_mixed_media_timing(message)
+    assert profile is not None and profile.image_hold_s == pytest.approx(seconds)
+
+
+@pytest.mark.parametrize(
+    ("message", "seconds"),
+    [
+        ("don't crop the beach photo and hold it 2 seconds", 2),
+        ("do not add text and keep the beach photo 3 seconds", 3),
+        ("plaj fotoğrafı 2 saniye kalsın yazı olmasın", 2),
+    ],
+)
+def test_another_verbs_negation_still_stamps_the_photo(message: str, seconds: int) -> None:
+    brief = _turn(None, [_hold_update(BEACH, seconds, message)], message, "t1")
+    assert kri824._req(brief, BEACH).authority == "explicit"
+
+
+def test_a_photos_only_length_is_not_a_photo_and_video_contract() -> None:
+    from app.schemas.edit_proposal import binds_mixed_media_timing  # noqa: PLC0415
+
+    photos_only = recognize_mixed_media_timing("show every photo 1 second")
+    mixed = recognize_mixed_media_timing("photos 1 second, videos longer")
+    assert photos_only is not None and not binds_mixed_media_timing(photos_only)
+    assert mixed is not None and binds_mixed_media_timing(mixed)
