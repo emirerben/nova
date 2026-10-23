@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.76.0] - 2026-10-23
+
+### Changed
+- fix(db): renumber prepared-execution migration to 0126 so main has one alembic head (#1801) <!-- release-pr: 1801 -->
+
 ## [0.81.75.0] - 2026-10-23
 
 ### Changed
