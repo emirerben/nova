@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.57.0] - 2026-10-23
+
+### Fixed
+- fix(kria): render supported edits when optional requests are unavailable (#1752) <!-- release-pr: 1752 -->
+
 ## [0.81.56.0] - 2026-10-23
 
 ### Fixed
