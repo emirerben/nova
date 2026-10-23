@@ -1,0 +1,167 @@
+{
+  "contract": "KRI-813: the iPhone editor's source preview of a phone narrated edit plays every step at exactly the server compiler's (source_start, source_duration, rate), including slow-to-fill rates under 0.25x",
+  "generator": "src/apps/api/tests/pipeline/test_kri813_narrated_preview_fixture.py",
+  "evidence": {
+    "job": "b9e4c530-fb74-42ce-abd0-c38665693807",
+    "generations": [
+      "aafe53ea-f84e-409f-9095-2dba96c6cc3c",
+      "ee703e65-ca25-4b32-8171-ebac4482be4c"
+    ]
+  },
+  "voiceover_s": 54.0,
+  "crop": {
+    "step_id": "seg_2",
+    "source_crop": {
+      "x": 0.6146287096,
+      "y": 0.0,
+      "width": 0.31640625,
+      "height": 1.0
+    }
+  },
+  "steps": [
+    {
+      "step_id": "seg_0",
+      "clip_index": 0,
+      "start_s": 0.0,
+      "end_s": 5.82,
+      "source_duration_s": 3.36,
+      "expected": {
+        "source_start": 0.0,
+        "source_duration": 3.31,
+        "rate": 0.568728522
+      }
+    },
+    {
+      "step_id": "seg_1",
+      "clip_index": 1,
+      "start_s": 5.82,
+      "end_s": 16.66,
+      "source_duration_s": 2.88,
+      "expected": {
+        "source_start": 0.0,
+        "source_duration": 2.83,
+        "rate": 0.261070111
+      }
+    },
+    {
+      "step_id": "seg_2",
+      "clip_index": 2,
+      "start_s": 16.66,
+      "end_s": 30.88,
+      "source_duration_s": 2.4,
+      "expected": {
+        "source_start": 0.0,
+        "source_duration": 2.35,
+        "rate": 0.165260197
+      }
+    },
+    {
+      "step_id": "seg_3",
+      "clip_index": 3,
+      "start_s": 30.88,
+      "end_s": 37.9,
+      "source_duration_s": 2.4,
+      "expected": {
+        "source_start": 0.0,
+        "source_duration": 2.35,
+        "rate": 0.334757835
+      }
+    },
+    {
+      "step_id": "seg_4",
+      "clip_index": 4,
+      "start_s": 37.9,
+      "end_s": 41.26,
+      "source_duration_s": 26.4,
+      "expected": {
+        "source_start": 0.0,
+        "source_duration": 3.36,
+        "rate": 1.0
+      }
+    },
+    {
+      "step_id": "seg_5",
+      "clip_index": 5,
+      "start_s": 41.26,
+      "end_s": 43.62,
+      "source_duration_s": 8.16,
+      "expected": {
+        "source_start": 0.0,
+        "source_duration": 2.36,
+        "rate": 1.0
+      }
+    },
+    {
+      "step_id": "seg_6",
+      "clip_index": 6,
+      "start_s": 43.62,
+      "end_s": 46.14,
+      "source_duration_s": 9.6,
+      "expected": {
+        "source_start": 0.0,
+        "source_duration": 2.52,
+        "rate": 1.0
+      }
+    },
+    {
+      "step_id": "seg_7",
+      "clip_index": 7,
+      "start_s": 46.14,
+      "end_s": 48.0,
+      "source_duration_s": 10.08,
+      "expected": {
+        "source_start": 0.0,
+        "source_duration": 1.86,
+        "rate": 1.0
+      }
+    },
+    {
+      "step_id": "seg_8",
+      "clip_index": 8,
+      "start_s": 48.0,
+      "end_s": 49.5,
+      "source_duration_s": 2.88,
+      "expected": {
+        "source_start": 0.0,
+        "source_duration": 1.5,
+        "rate": 1.0
+      }
+    },
+    {
+      "step_id": "seg_9",
+      "clip_index": 9,
+      "start_s": 49.5,
+      "end_s": 51.0,
+      "source_duration_s": 1.92,
+      "expected": {
+        "source_start": 0.0,
+        "source_duration": 1.5,
+        "rate": 1.0
+      }
+    },
+    {
+      "step_id": "seg_10",
+      "clip_index": 10,
+      "start_s": 51.0,
+      "end_s": 52.5,
+      "source_duration_s": 3.36,
+      "expected": {
+        "source_start": 0.0,
+        "source_duration": 1.5,
+        "rate": 1.0
+      }
+    },
+    {
+      "step_id": "seg_11",
+      "clip_index": 11,
+      "start_s": 52.5,
+      "end_s": 54.0,
+      "source_duration_s": 4.32,
+      "expected": {
+        "source_start": 0.0,
+        "source_duration": 1.5,
+        "rate": 1.0
+      }
+    }
+  ]
+}
