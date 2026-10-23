@@ -857,6 +857,16 @@ def _automatic_omission_reason(req: BriefRequirement, strategy: Mapping[str, Any
     ):
         return None
     if wants_light_change(req):
+        # A brightness fact can share a row with independently requested copy.
+        # Only the known, already-kept title has a safe partial fallback here;
+        # absent/other copy still needs repair or exact compiler-omission proof.
+        if req.literal and (
+            req.kind != "text"
+            or req.scope != "title"
+            or not isinstance(strategy.get("opening_title"), str)
+            or " ".join(strategy["opening_title"].split()) != " ".join(req.literal.split())
+        ):
+            return None
         return say(
             en="This edit cannot change the footage's brightness yet.",
             tr="Bu düzenleme henüz çekimin parlaklığını değiştiremiyor.",
@@ -1540,6 +1550,15 @@ def _complete_draft_turn(
             and apply_intent.tool_name == "draft.apply_strategy"
             and settings.brief_binding_for(thread.creator_id)
         )
+        retained_automatic_ids = {
+            req.id
+            for req in (brief.live() if brief is not None else ())
+            if automatic_omission
+            and req.id in automatic_omission_ids
+            and req.literal
+            and wants_light_change(req)
+            and _policy_text_omission_reason(req, planned.policy_omitted_texts) is None
+        }
         simpler_version_chosen = (
             bool(unmet_ids)
             and apply_intent.tool_name == "draft.apply_strategy"
@@ -1574,6 +1593,19 @@ def _complete_draft_turn(
                 )
             effective_brief_updates = tuple(
                 BriefUpdate(
+                    operation="change",
+                    target_requirement_id=req.id,
+                    expected_version=brief.version,
+                    kind=req.kind,
+                    scope=req.scope,
+                    literal=req.literal,
+                    description=req.description,
+                    facts={
+                        key: value for key, value in req.facts.items() if key != "footage_light"
+                    },
+                )
+                if req.id in retained_automatic_ids
+                else BriefUpdate(
                     operation="remove",
                     target_requirement_id=req.id,
                     expected_version=brief.version,
@@ -1603,7 +1635,24 @@ def _complete_draft_turn(
             requirement_receipts = [
                 r for r in requirement_receipts if r["requirement_id"] not in unmet_ids
             ]
-            checked = [req for req in checked if req.id not in unmet_ids]
+            live_by_id = {req.id: req for req in brief.live()}
+            checked = [
+                live_by_id.get(req.id, req)
+                for req in checked
+                if req.id not in unmet_ids or req.id in retained_automatic_ids
+            ]
+            if retained_automatic_ids:
+                # Recheck the retained title under its effective requirement,
+                # rather than retaining its old brightness failure or dropping it.
+                requirement_receipts.extend(
+                    receipt.model_dump(mode="json")
+                    for receipt in build_receipts(
+                        [req for req in checked if req.id in retained_automatic_ids],
+                        facts,
+                        include_unchecked=True,
+                        strict_order=True,
+                    )
+                )
             if readiness_required:
                 readiness_report = assess_readiness(
                     brief,
@@ -1624,15 +1673,23 @@ def _complete_draft_turn(
                 requirement_ids=unmet_ids,
             )
             lead = say(en="Here's the simpler version.", tr="İşte daha basit sürüm.")
+            omission_labels = {
+                req.id: say(en="the footage brightness change", tr="çekimin parlaklık değişikliği")
+                if req.id in retained_automatic_ids
+                else req.text()
+                for req in omitted
+            }
             omissions = "\n".join(
                 say(
                     en=(
-                        f"- Left out: {req.text()} ({omission_reasons.get(req.id, '')})"
+                        f"- Left out: {omission_labels[req.id]} "
+                        f"({omission_reasons.get(req.id, '')})"
                         if automatic_omission
                         else f"- Left out as agreed: {req.text()}"
                     ),
                     tr=(
-                        f"- Çıkarıldı: {req.text()} ({omission_reasons.get(req.id, '')})"
+                        f"- Çıkarıldı: {omission_labels[req.id]} "
+                        f"({omission_reasons.get(req.id, '')})"
                         if automatic_omission
                         else f"- Kararlaştırdığımız gibi çıkarıldı: {req.text()}"
                     ),
@@ -1875,12 +1932,19 @@ def _complete_draft_turn(
                     if req_id not in unmet_ids
                 ]
             if automatic_omission:
-                coverage["automatic_omission_ids"] = list(automatic_omission_ids)
+                fully_omitted_ids = set(automatic_omission_ids) - retained_automatic_ids
+                coverage["automatic_omission_ids"] = [
+                    req_id for req_id in automatic_omission_ids if req_id in fully_omitted_ids
+                ]
+                if retained_automatic_ids:
+                    coverage["automatic_omission_facets"] = {
+                        req_id: ["footage_light"] for req_id in sorted(retained_automatic_ids)
+                    }
                 coverage["applicable_ids"] = [req.id for req in brief.live()]
                 coverage["retrieved_ids"] = [
                     req_id
                     for req_id in coverage.get("retrieved_ids", [])
-                    if req_id not in automatic_omission_ids
+                    if req_id not in fully_omitted_ids
                 ]
             coverage["enforced_ids"] = [
                 r["requirement_id"]

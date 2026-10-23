@@ -101,6 +101,28 @@ TestFlight build is performed by this PR. A model that refuses without proposing
 strategy, unknown/unclassified optional capabilities, and failures discovered only
 after approval remain outside this bounded recovery path.
 
+## Compound title/brightness repair acceptance
+
+Before changing runtime code, the confirmed failure is a single text/title requirement
+containing the literal `Match day` and `footage_light: brighter`: the supported draft
+keeps the title, but automatic omission deletes its persistent requirement. Repair must
+keep the title live in the saved brief and approval binding, name only the brightness
+change as omitted, and keep the original compound request in immutable history.
+The persisted regression uses the existing `Gameday.` phone fixture through the real
+planner and readiness gate, replacing only provider transport. Both brighter and darker must behave alike. A draft missing the supported title must
+still stop before approval; source/audio, unknown-evidence and genuine-choice guards
+remain in force. Existing original-footage/native acceptance gaps remain open.
+
+The corrected provider-replay baseline fails all three new cases on the original
+runtime. With the repair, all three pass: the current brief and approval binding
+retain the title, only `footage_light` is omitted, the original compound row remains
+in the prior immutable version, and missing supported text still blocks approval.
+All 109 fallback/consent/choice/real-Postgres readiness and native-recipe controls
+pass. The initial synthetic-strategy probes lacked the relevant cohort/format
+setup and are not counted as end-to-end omission evidence. No provider call was
+made. This repair preserves copy; it does not add a brightness renderer or prove
+physical-device output.
+
 ## Current-main policy test-double correction
 
 Hosted run39771161500 failed24 API cases and one repeated KRI-612 offline journey case because narrow policy test doubles rejected the newly supplied simplify_unsupported keyword. The same24 failures reproduced locally before correction (104 other cases passed). Five test files now accept that explicit keyword with the real False default; the sixth affected suite imports the corrected shared helper. No broad catch-all, production fallback removal or assertion deletion was introduced. The existing kept-lipsync planner test also requires policy call modes [True, False]: simplify on initial compile, ordinary recheck for the kept strategy.

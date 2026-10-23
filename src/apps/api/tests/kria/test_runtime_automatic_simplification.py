@@ -19,7 +19,13 @@ from app.kria import planner
 from app.kria.brief import BriefRequirement, BriefUpdate, CreativeBrief, load_latest_brief_sync
 from app.kria.brief_checks import PlanFacts, build_receipts
 from app.kria.contracts import KriaTurnPlan
-from app.models import CreatorAgentApproval, CreatorAgentSession, CreatorEditDraft, PlanItem
+from app.models import (
+    CreativeBriefVersion,
+    CreatorAgentApproval,
+    CreatorAgentSession,
+    CreatorEditDraft,
+    PlanItem,
+)
 from app.tasks.kria_runtime import _automatic_omission_ids
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
 from tests.kria.test_runtime_simpler_version_loop import (
@@ -389,6 +395,94 @@ async def test_first_turn_auto_omits_unsupported_text_and_pins_supported_title(m
 async def test_first_turn_automatic_omission_reaches_native_phone_recipe(monkeypatch):
     """The no-follow-up recovery path uses the same approval and native recipe guards."""
     await _exercise_phone_approval_journey(monkeypatch, automatic=True)
+
+
+async def _compound_title_approval(monkeypatch, light, *, no_title=False):
+    # Reuse the provider-transport replay and real planner/capability/source
+    # setup. A synthetic strategy with an unavailable format cannot establish
+    # automatic omission on the enrolled approval-readiness path.
+    from tests.kria.test_approval_readiness_postgres import prepare
+
+    for name in (
+        "kria_approval_readiness_enabled",
+        "guided_edit_capability_enabled",
+        "edit_format_day_vlog_enabled",
+    ):
+        monkeypatch.setattr(settings, name, True)
+    monkeypatch.setattr(settings, "kria_clip_understanding_enabled", False)
+    monkeypatch.setattr(settings, "clip_intents_enabled", False)
+    monkeypatch.setattr(settings, "ios_device_only_mode", False)
+    return await prepare(
+        monkeypatch,
+        phone=True,
+        no_title=no_title,
+        message=f'Keep the title "Gameday." and make the footage {light}.',
+        updates_override=[
+            {
+                "kind": "text",
+                "scope": "title",
+                "literal": "Gameday.",
+                "description": f"Keep the title Gameday. and make the footage {light}",
+                "facts": {"footage_light": light},
+            }
+        ],
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("light", ["brighter", "darker"])
+async def test_compound_brightness_omission_keeps_supported_title_in_saved_approval(
+    monkeypatch, light
+):
+    _user, thread_id, approvals, events = await _compound_title_approval(monkeypatch, light)
+    assert len(approvals) == 1
+    with sync_session() as db:
+        brief = load_latest_brief_sync(db, thread_id)
+        assert [req.literal for req in brief.live()] == ["Gameday."]
+        assert "footage_light" not in brief.live()[0].facts
+        versions = (
+            db.execute(
+                select(CreativeBriefVersion)
+                .where(
+                    CreativeBriefVersion.thread_id == thread_id,
+                )
+                .order_by(CreativeBriefVersion.version)
+            )
+            .scalars()
+            .all()
+        )
+        assert versions[-2].requirements[0]["facts"]["footage_light"] == light
+        assert versions[-2].requirements[0]["literal"] == "Gameday."
+        draft = db.execute(
+            select(CreatorEditDraft).where(
+                CreatorEditDraft.thread_id == thread_id,
+                CreatorEditDraft.is_head.is_(True),
+            )
+        ).scalar_one()
+        bound = CreativeBrief.model_validate(draft.snapshot_json["brief_binding"]["brief"])
+        assert [req.literal for req in bound.live()] == ["Gameday."]
+        coverage = draft.snapshot_json["brief_coverage"]
+        assert brief.live()[0].id in coverage["enforced_ids"]
+        assert brief.live()[0].id not in coverage["automatic_omission_ids"]
+        assert coverage["automatic_omission_facets"] == {brief.live()[0].id: ["footage_light"]}
+    reply = next(event.content for event in reversed(events) if event.event_type == "draft_applied")
+    omission_lines = [line for line in reply.splitlines() if "Left out:" in line]
+    assert len(omission_lines) == 1
+    assert "brightness" in omission_lines[0]
+    assert "Gameday." not in omission_lines[0], "the supported title was not omitted"
+
+
+@pytest.mark.asyncio
+async def test_compound_brightness_cannot_waive_a_missing_supported_title(monkeypatch):
+    _user, thread_id, approvals, _events = await _compound_title_approval(
+        monkeypatch,
+        "brighter",
+        no_title=True,
+    )
+    assert approvals == []
+    with sync_session() as db:
+        brief = load_latest_brief_sync(db, thread_id)
+        assert [req.literal for req in brief.live()] == ["Gameday."]
 
 
 @pytest.mark.asyncio
