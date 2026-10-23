@@ -336,6 +336,14 @@ class _SilenceFn(Protocol):
     def __call__(self, path: str, *, min_silence_s: float) -> Any: ...
 
 
+class _RetakeDetectFn(Protocol):
+    """Map the exact normalized transcript words to abandoned-take indexes."""
+
+    def __call__(
+        self, words: Sequence[SpeechCleanupTimedWord], language: str
+    ) -> Sequence[tuple[int, int]]: ...
+
+
 def _default_transcribe(
     path: str,
     *,
@@ -390,6 +398,36 @@ def _timed_words(transcript: Any) -> tuple[SpeechCleanupTimedWord, ...]:
             )
         )
     return tuple(sorted(result, key=lambda word: (word.start_s, word.end_s)))
+
+
+def _valid_detected_retake_spans(
+    raw_spans: Sequence[tuple[int, int]], *, n_words: int
+) -> tuple[tuple[int, int], ...]:
+    """Keep only an all-valid detector result; ambiguous output cannot cut speech.
+
+    The agent already normalizes its own response. This second boundary protects
+    the pure engine's injectable seam, and makes a malformed integration fail
+    open instead of passing an unsafe word index to the cut planner.
+    """
+
+    spans: list[tuple[int, int]] = []
+    for span in raw_spans:
+        if (
+            not isinstance(span, tuple)
+            or len(span) != 2
+            or isinstance(span[0], bool)
+            or isinstance(span[1], bool)
+            or not isinstance(span[0], int)
+            or not isinstance(span[1], int)
+        ):
+            return ()
+        start, end = span
+        # A kept re-delivery must follow a discarded retake. Never permit a
+        # detector result to consume the transcript's final word.
+        if not (0 <= start <= end < n_words - 1):
+            return ()
+        spans.append((start, end))
+    return tuple(spans)
 
 
 def _category(reason: str) -> FindingCategory:
@@ -607,6 +645,7 @@ def analyze_speech_cleanup(
     *,
     transcribe_fn: _TranscriptFn | None = None,
     silence_detect_fn: _SilenceFn | None = None,
+    retake_detect_fn: _RetakeDetectFn | None = None,
 ) -> SpeechCleanupAnalysisResult:
     """Analyze one exact, already-bounded local narration artifact.
 
@@ -626,6 +665,15 @@ def analyze_speech_cleanup(
         transcript, analysis_input, transcribe
     )
     words = _timed_words(transcript)
+    detected_retakes: tuple[tuple[int, int], ...] = ()
+    if retake_detect_fn is not None:
+        try:
+            detected_retakes = _valid_detected_retake_spans(
+                retake_detect_fn(words, str(_value(transcript, "language") or "")),
+                n_words=len(words),
+            )
+        except Exception:  # Detector failures must never block base cleanup.
+            detected_retakes = ()
     silence_result = detect_silences(
         analysis_input.local_media_path,
         min_silence_s=0.1,
@@ -652,7 +700,7 @@ def analyze_speech_cleanup(
             words,
             silences,
             analysis_input.duration_s,
-            retake_spans=analysis_input.retake_spans,
+            retake_spans=(*analysis_input.retake_spans, *detected_retakes),
             forced_removals=forced,
             include_silence_and_fillers=analysis_input.include_silence_and_fillers,
             over_budget_policy=analysis_input.over_budget_policy,
@@ -664,7 +712,7 @@ def analyze_speech_cleanup(
             words,
             silences,
             analysis_input.duration_s,
-            retake_spans=analysis_input.retake_spans,
+            retake_spans=(*analysis_input.retake_spans, *detected_retakes),
             forced_removals=forced,
             include_silence_and_fillers=analysis_input.include_silence_and_fillers,
             over_budget_policy=analysis_input.over_budget_policy,

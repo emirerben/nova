@@ -140,6 +140,7 @@ def test_bounded_projection_hydrates_each_analysis_state(
         "category_counts": {
             "filler_sounds": count or 0,
             "long_pauses": 0,
+            "retakes": 0,
         },
         "estimated_removed_ms": 400 if count else 0,
         # Derived from the durable window columns, so the consent card can name
@@ -379,6 +380,7 @@ def test_failed_outcome_redacts_private_error_and_unknown_category_keys() -> Non
     assert projection["analysis"]["category_counts"] == {
         "filler_sounds": 1,
         "long_pauses": 2,
+        "retakes": 0,
     }
     assert projection["outcome"] == {
         "job_id": str(job_id),
@@ -1267,6 +1269,31 @@ async def test_speech_choice_reopens_exact_failed_planning_attempt(monkeypatch, 
     assert controller.await_args.kwargs["retry_target_job_id"] is None
     assert session.render_attempts == 1  # budget remains owned by the controller
     assert output.active_job_id is not None
+
+
+@pytest.mark.parametrize("action", ["generate", "confirm_generation"])
+async def test_v1_clean_with_retake_findings_requires_the_new_disclosure(
+    monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    row = _analysis(uuid.uuid4())
+    row.category_counts["retakes"] = 1
+    old_payload = {"speech_cleanup_analysis_id": str(row.id), "speech_cleanup_choice": "clean"}
+
+    with pytest.raises(HTTPException) as refused:
+        await _run_generate_action(monkeypatch, analysis=row, action=action, payload=old_payload)
+    assert (refused.value.status_code, refused.value.detail) == (
+        409,
+        "speech_cleanup_retakes_consent_required",
+    )
+
+    _output, controller = await _run_generate_action(
+        monkeypatch,
+        analysis=row,
+        action=action,
+        payload={**old_payload, "speech_cleanup_retakes_aware": True},
+    )
+    assert controller.await_args.args[1].speech_cleanup_choice == "clean"
+    assert controller.await_args.args[1].speech_cleanup_retakes_aware is True
 
 
 @pytest.mark.parametrize(

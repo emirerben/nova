@@ -2362,7 +2362,7 @@ _CLEANUP_VERB_RE = re.compile(
     r"|\bkes|\bçikar|\bsil\b|\bolmasin|\bolmadan"
 )
 # A specific stretch of speech named for removal ("the part where I say ...", a retake,
-# a quoted line): speech cleanup cuts pauses and non-word sounds, never spoken words.
+# a quoted line): a generic cleanup record cannot confirm that this exact spoken line was removed.
 # KRI-792: a slip, stumble, mistake or half-finished question the creator says to cut names
 # spoken words too. Only right after the cut verb (Turkish: right before it), so "captions
 # with no spelling mistakes" stays a captions ask. The fallback for a brief without
@@ -3028,7 +3028,7 @@ _CLEANUP_IF_OFFERED = (
 )
 _CLEANUP_UNAVAILABLE = "Speech cleanup isn't available for this project yet, so the pauses stay"
 _NAMED_CUTS_NEED_EDITOR = (
-    "a retake or a specific line isn't cut automatically yet, so trim that in the editor"
+    "I have not confirmed that exact spoken line was removed; check it in the editor"
 )
 _CAPTIONS_WORD_BY_WORD = "words light up as you say them"
 # KRI-541: what speech cleanup did on a finished render.
@@ -3151,7 +3151,7 @@ _REASON_TR: dict[str, str] = {
         "Konuşma temizliği bu proje için henüz yok, o yüzden duraklamalar kalıyor"
     ),
     _NAMED_CUTS_NEED_EDITOR: (
-        "tekrar çekim ya da belirli bir cümle henüz otomatik kesilmiyor, onu editörde kırp"
+        "o belirli konuşulan cümlenin kaldırıldığını doğrulamadım; editörde kontrol et"
     ),
     _CAPTIONS_WORD_BY_WORD: "kelimeler sen söylerken yanıyor",
     _CLEANUP_DONE: "Konuşma temizliği uzun duraklamaları kesti",
@@ -3766,8 +3766,9 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     """Pauses, retakes and filler the creator asked to cut, against the draft.
 
     Speech cleanup (the preflight check the creator confirms at approval) cuts long
-    pauses and non-word sounds out of a Talking or voiceover edit; it never cuts a
-    spoken line, so a retake or "the bit where I say X" is reported as editor work.
+    pauses and non-word sounds out of a Talking or voiceover edit. A retake count or
+    other generic cleanup record cannot confirm that a requested spoken line was removed,
+    so a retake or "the bit where I say X" stays partial for editor verification.
     A length the same sentence names ("keep it under 45 s") follows the cut take.
     Every honest outcome here is a limit of the format, not a simplification.
     """
@@ -3808,7 +3809,7 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
         return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
     notes = [_loc(lead)]
     if _wants_named_cuts(req):
-        # The cut removes pauses and filler sounds; a named line or retake stays.
+        # The generic cut record cannot prove that this requested line was the removed span.
         notes.append(_loc(_NAMED_CUTS_NEED_EDITOR))
         status = "partial"
     if status == "met" and outcome == "applied":
@@ -3854,10 +3855,11 @@ def speech_cleanup_review_note(
     Read off the variant's own cut record, never off a brief, so the reply is honest even when
     the render's brief binding was lost (prod thread ddc6e71b: the creator asked to cut "the part
     where I restart the kilometer thirty sentence", the cleanup cut 14 silences and a filler,
-    the restart stayed, and no receipt said so). Consented cleanup cuts long pauses and filler
-    sounds only; it never detects a retake, so the limit is stated unless a retake cut really
-    could have run (``retake_cut_possible``) or the record shows one. ``text`` is the reply built
-    so far: a requirement receipt that already reports the limit is not repeated.
+    the restart stayed, and no receipt said so). A generic cleanup count cannot prove whether a
+    requested spoken line was removed, so that remains a partial receipt even when it records a
+    retake. The unbound-review limit is stated unless a retake cut really could have run
+    (``retake_cut_possible``) or the record shows one. ``text`` is the reply built so far: a
+    requirement receipt that already reports the limit is not repeated.
     ``None`` for a variant that is not a speech edit or whose cleanup did not run.
     """
     if variant.get("resolved_archetype") not in _RENDERED_EDIT_FORMATS:

@@ -2535,6 +2535,91 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-551-consented-retakes",
+      "tickets": [
+        "KRI-551",
+        "KRI-829"
+      ],
+      "symptom": "Consented voiceover preflight never called the existing retake detector, retaining the N3 abandoned kilometer-30 delivery.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-551",
+      "journey": "kri-551-consented-retakes",
+      "paths": [
+        "src/apps/api/app/agents/retake_detector.py",
+        "src/apps/api/app/pipeline/speech_cleanup_analysis.py",
+        "src/apps/api/app/tasks/speech_cleanup_analysis.py",
+        "src/apps/api/app/services/plan_item_media.py",
+        "src/apps/api/app/services/speech_cleanup_selection.py",
+        "src/apps/api/app/services/speech_cleanup_preflight.py",
+        "src/apps/api/app/services/speech_cleanup_decision.py",
+        "src/apps/api/app/kria/api_schemas.py",
+        "src/apps/api/app/kria/runtime.py",
+        "src/apps/api/app/routes/creation_threads.py",
+        "src/apps/ios/Kria/Features/SpeechCleanupOffer.swift",
+        "src/apps/ios/Kria/Features/CreationConfirmationStage.swift",
+        "src/apps/ios/Kria/Features/ChatWorkspaceView.swift",
+        "src/apps/ios/Kria/Core/Services.swift",
+        "src/apps/api/app/config.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/tests/kria/test_kri520_receipts.py",
+        "src/apps/api/tests/kria/test_brief_talking_receipts.py",
+        "src/apps/api/tests/kria/test_brief_marathon_receipts.py",
+        "src/apps/api/tests/tasks/test_kri551_cleanup_review_note.py",
+        "src/apps/api/app/routes/creator_agent.py",
+        "src/apps/api/tests/routes/test_creator_agent.py",
+        "src/apps/api/tests/tasks/test_marathon_render_ready_review.py",
+        "src/apps/api/tests/kria/test_brief_rendered_speech_facts.py",
+        "src/apps/api/tests/kria/test_runtime_talking_first_draft.py",
+        "src/apps/api/tests/kria/test_kri787_merope_t1_runtime_postgres.py"
+      ],
+      "regression_tests": [
+        "tests/agents/test_retake_detector.py",
+        "tests/services/test_speech_cleanup_preflight.py",
+        "tests/services/test_speech_cleanup_retakes_consent.py",
+        "tests/services/test_speech_cleanup_decision.py",
+        "tests/tasks/test_speech_cleanup_analysis.py",
+        "tests/routes/test_creation_threads_speech_cleanup.py",
+        "tests/kria/test_runtime_v2.py",
+        "tests/kria/test_runtime_speech_cleanup_approval.py",
+        "tests/kria/test_kri520_receipts.py",
+        "tests/kria/test_brief_talking_receipts.py",
+        "tests/kria/test_brief_marathon_receipts.py",
+        "tests/tasks/test_kri551_cleanup_review_note.py",
+        "tests/routes/test_creator_agent.py",
+        "tests/tasks/test_marathon_render_ready_review.py",
+        "tests/kria/test_brief_rendered_speech_facts.py",
+        "tests/kria/test_runtime_talking_first_draft.py",
+        "tests/kria/test_kri787_merope_t1_runtime_postgres.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": "speech_cleanup_retakes_enabled",
+      "evidence": {
+        "offline_replay": "Engine, consent and retry controls; actual N3 audio cut/remap with original immutable production words and explicitly injected reviewed detector answer. Replacement-ASR diagnostics were superseded. See docs/reviews/kri-551-consented-retakes.md.",
+        "live_model": "Not run; detector precision on original production ASR remains pending.",
+        "native_output": "Original N3 iPhone export remains pending.",
+        "production": "Not deployed; new preflight retake gate defaults off."
+      },
+      "neighbours_covered": [
+        "disabled gate",
+        "malformed detector positions",
+        "detector failure",
+        "EN/TR repetition",
+        "legacy client refusal",
+        "keep original",
+        "same-analysis reapproval",
+        "policy invalidation"
+      ],
+      "neighbours_gap": [
+        "Full original N3 pictures, caption rendering, audio mix, Save/reopen and physical export are not established by these checks."
+      ],
+      "follow_ups": [
+        "KRI-551",
+        "KRI-829"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-804-label-text-reply",
       "tickets": [
         "KRI-804",
