@@ -603,17 +603,25 @@ For a `narrated` / `subtitled` variant `plan_facts_from_phone_variant` sets
 (`silence_cut_outcome` applied / no_change; a device render without one → not_run). The
 captions and cleanup checkers judge those when `rendered_variant` is set; a real editor
 turn still answers "can't check". Cleanup does not verify a named-line request from the
-brief, so that request stays "Partly" with the editor note even when an eligible retake
-is removed. KRI-551 can remove a detector-backed retake only after explicit retake-aware
-consent, with both rollout flags enabled; otherwise a restarted sentence stays in. A cloud
-variant whose fields are not filled yet stays unknown. `_approved_generation_review` also
-appends `speech_cleanup_review_note(variant)` (counts read from `silence_cut.removed`, plus
+brief (a generic cleanup record cannot prove the requested line was removed, even when an
+eligible retake is removed), so such an ask ("the restart of the kilometer thirty sentence")
+stays "Partly" and says "I can't cut out one exact line yet or confirm it's gone, so it may
+still be in your video" (`_NAMED_CUTS_STAY`, KRI-846 + KRI-551). It never points at the
+editor: no editor action cuts a spoken line (talking-source slots can't be trimmed or split,
+the server refuses any change to their windows with 409 `TIMELINE_STALE`, and the Narrated
+editor trims pictures, not the voice). It says "may still be", never "stays", because KRI-551
+can remove a detector-backed retake after explicit retake-aware consent, with both rollout
+flags enabled; otherwise a restarted sentence stays in. The real phrase cut is KRI-724. A
+cloud variant whose fields are not filled yet stays unknown. `_approved_generation_review`
+also appends `speech_cleanup_review_note(variant)` (counts read from `silence_cut.removed`, plus
 "a sentence you restarted stays in" unless a retake cut could have run), independent of the
 brief binding, so a render whose binding was lost still says what cleanup did not cut. See the
 [bounded KRI-551 consent evidence](../reviews/kri-551-consented-retakes.md); original-output
 and device acceptance remain in the [KRI-829 ledger](../reviews/kri-829-original-output-acceptance.md). Guards:
 `tests/kria/test_brief_rendered_speech_facts.py`, the KRI-541 cases in
-`tests/tasks/test_marathon_render_ready_review.py`, `tests/tasks/test_kri551_cleanup_review_note.py`.
+`tests/tasks/test_marathon_render_ready_review.py`, `tests/tasks/test_kri551_cleanup_review_note.py`,
+`tests/kria/test_kri846_no_blocked_editor_advice.py` (also pins the talking-source window refusal;
+it fails on purpose when KRI-724 makes those windows editable, so the copy is reconsidered).
 
 ### Phone Talking face-filled vertical crop (KRI-547, `PHONE_SPEAKER_FACE_FILL_ENABLED`)
 

@@ -87,7 +87,7 @@ final class SpeechCleanupOfferTests: XCTestCase {
         XCTAssertTrue(SpeechCleanupStats(retakes: 2).removesRetakes)
         XCTAssertEqual(
             SpeechCleanupStats(retakes: nil).cleanupConsentSentence,
-            "Choose whether to remove the detected pauses and filler sounds. A sentence you restarted stays in; trim it in the editor."
+            "Choose whether to remove the detected pauses and filler sounds. A sentence you restarted stays in."
         )
         XCTAssertEqual(
             SpeechCleanupStats(retakes: 1).cleanupConsentSentence,

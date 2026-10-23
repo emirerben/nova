@@ -918,7 +918,6 @@ def test_photo_output_window_must_still_match_the_approved_timeline(change):
         ("look_preset", "golden_hour"),
         ("look_preset", "warm"),
         ("look_adjustments", {"brightness": 0.1}),
-        ("playback_rate", 2),
     ],
 )
 def test_photo_treatments_the_native_still_path_cannot_draw_fail_closed(field, value):
@@ -1020,7 +1019,6 @@ def test_supporting_card_photo_compiles_to_a_still_card_clip(monkeypatch):
         ("look_preset", "warm"),
         ("look_adjustments", {"brightness": 0.1}),
         ("source_crop", {"x": 0, "y": 0, "width": 0.5, "height": 0.5}),
-        ("playback_rate", 2),
     ],
 )
 def test_supporting_card_still_rejects_treatments_the_card_cannot_draw(field, value):
@@ -1289,7 +1287,6 @@ def test_golden_hour_pool_video_compiles_only_exact_canvas_unrotated():
         ("image_motion", "subtle_zoom_in"),
         ("look_preset", "warm"),
         ("look_adjustments", {"brightness": 0.1}),
-        ("playback_rate", 2),
     ],
 )
 def test_pool_video_treatments_the_recipe_cannot_carry_fail_closed(field, value):
@@ -1309,7 +1306,9 @@ def test_bound_footage_retime_fails_closed_instead_of_silently_dropping():
     # Compiled before, rendering 1x footage the creator never approved.
     plan, bindings = fixture()
     plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={"playback_rate": 2})
-    with pytest.raises(UnsupportedPhonePlan, match="unsupported phone moment treatment"):
+    with pytest.raises(
+        UnsupportedPhonePlan, match="phone moment timing must preserve its exact source window"
+    ):
         compile_phone_guided_plan(plan, bindings)
 
 

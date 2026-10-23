@@ -337,7 +337,8 @@ def test_speech_cleanup_notes_are_turkish_and_stay_a_format_limit() -> None:
     # judged on the measured file after export, never on the draft.
     assert receipt.reason == (
         "Onaylarken \u201cKonuşmayı temizle\u201d seçeneğini seç, uzun duraklamalar kesilir; "
-        "o belirli konuşulan cümlenin kaldırıldığını doğrulamadım; editörde kontrol et; "
+        "belirli bir cümleyi henüz tam olarak kesemiyorum ve çıkarıldığını doğrulayamıyorum, "
+        "o yüzden videoda kalmış olabilir; "
         "Kapanış dahil tam video süresini dışa aktardıktan sonra kontrol edeceğim."
     )
     # A limit of the format in Turkish too: it never asks for a simpler version.
@@ -355,8 +356,8 @@ def test_english_speech_cleanup_reason_is_unchanged() -> None:
     facts = PlanFacts(edit_format="subtitled", caption_style="karaoke", speech_cleanup_offered=True)
     assert check_requirement(req, facts).reason == (
         "Choose Clean up speech when you approve and the long pauses are cut; "
-        "I have not confirmed that exact spoken line was removed; check it in the "
-        "editor; I'll check the full video length, including its ending, after export."
+        "I can't cut out one exact line yet or confirm it's gone, so it may still be in your "
+        "video; I'll check the full video length, including its ending, after export."
     )
 
 
@@ -372,7 +373,7 @@ def test_every_static_english_reason_has_a_turkish_twin() -> None:
         in {
             "_NO_CHECKER",
             "_NO_TITLE",
-            "_NAMED_CUTS_NEED_EDITOR",
+            "_NAMED_CUTS_STAY",
             "_CAPTIONS_WORD_BY_WORD",
             "_TALKING_KEEPS_WHOLE_TAKE",
             "_VOICEOVER_SETS_LENGTH",
