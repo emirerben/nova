@@ -1040,6 +1040,18 @@ def _duration_vs_count(
     )
 
 
+def _photo_length_only(profile: Mapping[str, Any]) -> bool:
+    from app.schemas.edit_proposal import (  # noqa: PLC0415
+        MixedMediaTimingProfile,
+        sets_photo_length_only,
+    )
+
+    try:
+        return sets_photo_length_only(MixedMediaTimingProfile.model_validate(dict(profile)))
+    except ValueError:
+        return False
+
+
 def _holds_vs_length(
     strategy: Mapping[str, Any],
     brief: Any,
@@ -1075,11 +1087,15 @@ def _holds_vs_length(
     group = _number(conflict.get("group_hold_s"))
     profile = strategy.get("mixed_media_timing")
     if group is not None and isinstance(profile, Mapping):
-        # The photos' group length lives on the timing profile: keeping the total drops
-        # only that number (the AI's photo pacing decides again).
-        keep_strategy["mixed_media_timing"] = {
-            key: value for key, value in profile.items() if key != "image_hold_s"
-        }
+        # The photos' group length lives on the timing profile. A photos-only profile
+        # ("every photo 3 seconds") is dropped whole: stripping just the number would leave
+        # a binding quick-photo cadence the creator never asked for. A quick-photo/long-
+        # video contract keeps its cadence and loses only the number (the AI picks again).
+        keep_strategy["mixed_media_timing"] = (
+            None
+            if _photo_length_only(profile)
+            else {key: value for key, value in profile.items() if key != "image_hold_s"}
+        )
     options = [
         _option(
             OPT_KEEP_LENGTH,

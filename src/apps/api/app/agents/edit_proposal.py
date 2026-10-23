@@ -6,7 +6,7 @@ import json
 import math
 import re
 from collections import defaultdict, deque
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import ClassVar, Literal
 
 import structlog
@@ -1973,6 +1973,7 @@ def _compile_fast_cuts(
     split_limit_s: float = 1.2,
     narrated: bool = False,
     single_appearance: bool = False,
+    image_split_limits: Mapping[str, float] | None = None,
 ) -> tuple[list[FastMontageCut], set[str], float]:
     """Compile a narrow provider timing violation into the persisted cut schema.
 
@@ -1995,7 +1996,13 @@ def _compile_fast_cuts(
     # >1.2s cuts when video_reuse_policy is unset, which a modern proposal
     # never leaves unset) -- the split loop below still normalizes it to the
     # active per-cut limit (KRI-129).
-    if all(cut.output_duration_s <= split_limit_s for cut in relaxed):
+    # KRI-825: a photo's creator-stated length raises only that photo's ceiling.
+    limits = image_split_limits or {}
+
+    def limit_of(cut: _RawFastMontageCut) -> float:
+        return max(split_limit_s, limits.get(cut.media_id, 0.0))
+
+    if all(cut.output_duration_s <= limit_of(cut) for cut in relaxed):
         return [_strict_fast_cut(cut) for cut in relaxed], set(), raw_total_s
 
     source_order: dict[str, int] = {}
@@ -2004,7 +2011,7 @@ def _compile_fast_cuts(
     expanded_count = 0
     for cut in relaxed:
         source_order.setdefault(cut.media_id, len(source_order))
-        part_count = math.ceil(cut.output_duration_s / split_limit_s)
+        part_count = math.ceil(cut.output_duration_s / limit_of(cut))
         part_duration_s = cut.output_duration_s / part_count
         if part_duration_s < 0.4 - _FAST_DURATION_EPSILON_S:
             raise SchemaError("edit_proposal: overlong fast cut cannot be split safely")
@@ -2188,12 +2195,17 @@ def _normalize_fast_montage_duration(
         else 1.2
     )
     # KRI-825: the photos' creator-stated length is exact, whatever the cut ceiling.
+    # Video cuts keep their own ceiling (the photos growing never retimes the videos).
     exact_photo_s = exact_photo_hold_s(input.mixed_media_timing)
-    if exact_photo_s is not None and input.montage_cadence is None:
-        split_limit_s = max(split_limit_s, exact_photo_s)
+    image_split_limits = (
+        {media.media_id: exact_photo_s for media in input.media if media.kind == "image"}
+        if exact_photo_s is not None and input.montage_cadence is None
+        else None
+    )
     cuts, repaired_cut_ids, raw_total_s = _compile_fast_cuts(
         raw_cuts,
         split_limit_s=split_limit_s,
+        image_split_limits=image_split_limits,
         narrated=input.narration_duration_s is not None,
         single_appearance=input.video_reuse_policy in {"once", "allow_repeat"},
     )

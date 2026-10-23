@@ -630,7 +630,7 @@ _GROUP_PER_NOUNS = frozenset(
 # One length for EACH photo, said so ("each", "every", "apiece", "her"): only then may a
 # group length run past the montage's own still ceiling. Without it, "use my photos for 8
 # seconds" or "a montage of my photos 10 seconds" is the video's length, not each photo's.
-_GROUP_DISTRIBUTIVE = frozenset({"each", "every", "apiece", "per", "her", "biri", "birer"})
+_GROUP_DISTRIBUTIVE = frozenset({"each", "every", "apiece", "per", "her", "birer"})
 _GROUP_UNMARKED_MAX_S = 3.0
 # The photos are the subject of the length ("photos should be 5 seconds", "fotoğraflar 5
 # saniye olsun"), not the object of a whole-video ask ("use my photos for 8 seconds").
@@ -658,7 +658,7 @@ _GROUP_PREDICATES = frozenset(
     }
 )
 _GROUP_JOINS = frozenset({"and", "ve"})
-_GROUP_REFERS = frozenset({"each", "every", "them", "her", "biri", "hepsi", "hepsini"})
+_GROUP_REFERS = frozenset({"each", "every", "them", "her", "hepsi", "hepsini"})
 _GROUP_MILLISECONDS = re.compile(r"(?<![\d.,])(\d+)\s*(?:ms|milisaniye\w*|milliseconds?)\b")
 
 
@@ -752,6 +752,8 @@ def _group_photo_seconds(text: str, group: str) -> list[tuple[int, int, float, b
 
     found: list[tuple[int, int, float, bool]] = []
     for photos in re.finditer(group, text):
+        if _names_one_of_the_photos(text, photos.start(), photos.end()):
+            continue
         origin = photos.end()
         _lo, clause_end = clause_bounds(text, origin, origin)
         window = text[origin : min(clause_end, origin + _GROUP_SECONDS_WINDOW)]
@@ -774,6 +776,69 @@ def _group_photo_seconds(text: str, group: str) -> list[tuple[int, int, float, b
         if own or value <= MIXED_MEDIA_IMAGE_HOLD.maximum_s + 1e-9:
             found.append((origin + start, origin + end, value, own))
     return found
+
+
+# KRI-825 review: "one of the photos", "the first of my photos", "fotoğraflardan biri" name
+# ONE photo out of the group (``app.kria.asset_holds`` grounds that photo's own hold); its
+# length never times every photo. "all/each/both of the photos", "every one of my photos"
+# and "her biri" (each one of them) stay the group.
+_EN_GROUP_OF_HEADS = frozenset(
+    {
+        "all",
+        "each",
+        "both",
+        "montage",
+        "slideshow",
+        "sequence",
+        "sequences",
+        "series",
+        "set",
+        "sets",
+        "group",
+        "groups",
+        "run",
+        "runs",
+        "bunch",
+        "lot",
+        "lots",
+        "collection",
+    }
+)
+# Turkish words right after the group that pick some of it: "biri", "ilki", "ikisi".
+_TR_ONE_OF_PREFIXES = (
+    "biri",
+    "birisi",
+    "tanesi",
+    "ilk",
+    "sonuncu",
+    "ikinci",
+    "ucuncu",
+    "dorduncu",
+    "besinci",
+    "ikisi",
+    "ucu",
+    "dordu",
+    "besi",
+    "birkac",
+    "bazi",
+)
+_EN_OF_DETERMINERS = frozenset({"the", "my", "these", "those", "our", "your"})
+
+
+def _names_one_of_the_photos(text: str, start: int, end: int) -> bool:
+    """The group mention at ``text[start:end]`` picks some photos out of it (see above)."""
+    before = _words_of(text[max(0, start - 32) : start])
+    while before and before[-1] in _EN_OF_DETERMINERS:
+        before.pop()
+    if before and before[-1] == "of":
+        head = before[-2] if len(before) >= 2 else ""
+        if len(before) >= 3 and head == "one" and before[-3] in {"every", "each"}:
+            return False
+        return head not in _EN_GROUP_OF_HEADS
+    # Turkish partitive: the ablative ("fotoğraflardan", "resimlerin") then "biri", an
+    # ordinal or a count. "her biri" (each of them) is the group again.
+    after = _words_of(text[end : end + 24])
+    return bool(after) and after[0].startswith(_TR_ONE_OF_PREFIXES)
 
 
 def _photos_own_length(mention: list[str], gap: list[str], tail: list[str], value: float) -> bool:
@@ -1264,6 +1329,16 @@ def binds_mixed_media_timing(profile: MixedMediaTimingProfile | None) -> bool:
     return profile is not None and not sets_photo_length_only(profile)
 
 
+def _quick_photo_contract(seconds: float, has_video_context: bool, videos_longer: bool) -> bool:
+    """A photo length binds the quick-photo/long-video contract (longer videos, hard cuts,
+    fast montage) as before KRI-825 (a 0.1-0.8 s ask with videos in the request), or when
+    the creator also plainly asked for the videos to hold longer. A bare video word ("use
+    my clips too") never turns a longer photo length into that contract."""
+    if seconds <= MIXED_MEDIA_IMAGE_HOLD.maximum_s + 1e-9:
+        return has_video_context
+    return videos_longer
+
+
 def recognize_mixed_media_timing(text: str) -> MixedMediaTimingProfile | None:
     """Recognize an affirmative quick-photo/long-video request without trusting an LLM."""
 
@@ -1361,9 +1436,12 @@ def recognize_mixed_media_timing(text: str) -> MixedMediaTimingProfile | None:
         by_turn, numeric_start, numeric_end, turkish=False
     )
     if numeric_value is not None and not numeric_negated:
-        if not has_video_context:
+        videos_longer = paired(video, video_long) and not negated(video, video_long)
+        if not _quick_photo_contract(numeric_value, has_video_context, videos_longer):
             # KRI-825: "every photo 1 second" says nothing about the videos: the photos
-            # get their length and the videos keep their own pacing.
+            # get their length and the videos keep their own pacing. A video word in the
+            # request ("use my clips too") does not make a photo length a quick-photo /
+            # long-video contract; only the 0.1-0.8 s quick-photo ask among videos does.
             return MixedMediaTimingProfile(
                 image_hold="very_fast", image_hold_s=numeric_value, **sequence_fields
             )
@@ -1433,7 +1511,11 @@ def _recognize_turkish_mixed_media_timing(
             # Same contract as the English path: a video in the request makes it the
             # quick-photo/long-video mix; photos-only leaves the videos alone.
             video_fields = (
-                {"video_hold": "longer", "boundary_style": "cut"} if mentions_video else {}
+                {"video_hold": "longer", "boundary_style": "cut"}
+                if _quick_photo_contract(
+                    value, mentions_video, stated(_TR_MEDIA, video_gap, _TR_VIDEO_LONG)
+                )
+                else {}
             )
             return MixedMediaTimingProfile(
                 image_hold="very_fast",

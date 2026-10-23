@@ -118,8 +118,6 @@ from app.routes.generative_jobs import (
 )
 from app.schemas.clip_intents import ResolvedClipIntent
 from app.schemas.edit_proposal import (
-    CREATOR_STILL_HOLD_MAX_S,
-    CREATOR_STILL_HOLD_MIN_S,
     MAX_PROPOSAL_DURATION_S,
     PHOTO_GROUP_PATTERN,
     MixedMediaTimingProfile,
@@ -1540,7 +1538,10 @@ def _apply_explicit_render_intent(
                 image_hold_s = float(numeric_match.group(1).replace(",", "."))
                 if "ms" in numeric_match.group(0) or "millisecond" in numeric_match.group(0):
                     image_hold_s /= 1000
-                if not CREATOR_STILL_HOLD_MIN_S <= image_hold_s <= CREATOR_STILL_HOLD_MAX_S:
+                # KRI-825 review: this legacy fallback only reads the 0.1-0.8 s quick-photo
+                # band. A longer photo length is the recognizer's (own-length, negation and
+                # quote checks); a first number here may be a title's or a video's seconds.
+                if not 0.1 <= image_hold_s <= 0.8:
                     image_hold_s = None
             mixed_media_timing = MixedMediaTimingProfile(
                 image_hold="very_fast",
