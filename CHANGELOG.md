@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.49.0] - 2026-10-23
+
+### Changed
+- fix(ci): pin auth boundary clock and omit optional apt packages (KRI-342) (#1762) <!-- release-pr: 1762 -->
+
 ## [0.81.48.0] - 2026-10-22
 
 ### Changed
