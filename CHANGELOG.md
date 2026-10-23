@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.65.0] - 2026-10-23
+
+### Fixed
+- fix(speech): require explicit consent for preflight retake removal (KRI-551) (#1753) <!-- release-pr: 1753 -->
+
 ## [0.81.64.0] - 2026-10-23
 
 ### Changed
