@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.68.0] - 2026-10-23
+
+### Changed
+- fix(kria): a named line cut says it stays in, never "trim that in the editor" (KRI-846) (#1765) <!-- release-pr: 1765 -->
+
 ## [0.81.67.0] - 2026-10-23
 
 ### Changed
