@@ -20,6 +20,7 @@ slide with fresh ids.
 from __future__ import annotations
 
 import asyncio
+import copy
 import re
 import uuid
 from collections.abc import Mapping
@@ -470,6 +471,10 @@ def _slide_ids_for_bar(
     windows: dict[str, tuple[float, float]],
 ) -> list[str]:
     """Slides (in INITIAL order) a bar belongs to."""
+    target = row.get("_slide_id")
+    if isinstance(target, str):
+        # KRI-818: a one-slide text names its slide by id, never by position.
+        return [target]
     row_id = str(row.get("id"))
     start, end = row.get("start_s"), row.get("end_s")
     known = meta.get(row_id)
@@ -489,6 +494,71 @@ def _slide_ids_for_bar(
         if min(float(end), w_end) - max(float(start), w_start) >= 0.5 * (w_end - w_start)
     ]
     return hit
+
+
+def _refuse_renumbering_guesses(
+    draft: SlidePostDraft,
+    ops: list[dict],
+    windows: dict[str, tuple[float, float]],
+    new_order: list[str],
+) -> None:
+    """Fail closed when a bundle's slide numbers could mean the post before OR after
+    its own move (KRI-818, Troya T12).
+
+    Numbers and windows in ops mean the post BEFORE the turn. When a ``reorder_clip``
+    in the same bundle moves slides (a removal alone or a criterion sort does not count:
+    the model cannot have meant a numbering it did not write), the before and after
+    readings of a number can name different photos. A one-slide text or a cover change
+    that names no slide id, and whose two readings disagree, is refused rather than
+    guessed. A named slide id whose window matches neither reading is refused too.
+    Refusal only: nothing here ever decides what the creator meant.
+    """
+    survivors = set(new_order)
+    initial = [slide.id for slide in draft.slides if slide.id in survivors]
+    moved = new_order != initial and any(op.get("op") == "reorder_clip" for op in ops)
+    post_windows = {sid: (float(i), float(i + 1)) for i, sid in enumerate(new_order)}
+
+    def same(window: tuple[float, float] | None, start: float, end: float) -> bool:
+        return window is not None and abs(window[0] - start) + abs(window[1] - end) < 1e-6
+
+    for op in ops:
+        name = op.get("op")
+        if name == "add_text":
+            sid, start, end = op.get("slide_id"), op.get("start_s"), op.get("end_s")
+            numeric = isinstance(start, (int, float)) and isinstance(end, (int, float))
+            index = op.get("slide_positional_index")
+            if sid and moved and isinstance(index, int):
+                # A target given only by number: its before and after readings must
+                # name the same photo, exactly like a number-only cover change.
+                if index >= len(new_order) or new_order[index] != sid:
+                    raise KriaEditorOpError(
+                        f'Which slide should "{op.get("text")}" go on? The slides move in '
+                        "this same edit, so I didn't guess"
+                    )
+            if sid and numeric:
+                if not (
+                    same(windows.get(sid), float(start), float(end))
+                    or same(post_windows.get(sid), float(start), float(end))
+                ):
+                    raise KriaEditorOpError(
+                        f'Which slide should "{op.get("text")}" go on? Its slide number '
+                        "and photo don't match, so I didn't guess"
+                    )
+            elif not sid and moved:
+                row = {"id": "", "start_s": start, "end_s": end}
+                before = _slide_ids_for_bar(row, {}, windows)
+                if len(before) == 1 and _slide_ids_for_bar(row, {}, post_windows) != before:
+                    raise KriaEditorOpError(
+                        f'Which slide should "{op.get("text")}" go on? The slides move in '
+                        "this same edit, so I didn't guess"
+                    )
+        if name == "set_slide_cover" and moved and not op.get("slide_named"):
+            index, target = op.get("slide_index"), op.get("slide_id")
+            if isinstance(index, int) and (index >= len(new_order) or new_order[index] != target):
+                raise KriaEditorOpError(
+                    "Which photo should be the cover? The slides move in this same edit, "
+                    "so I didn't guess"
+                )
 
 
 def compile_slide_post_ops(
@@ -514,12 +584,26 @@ def compile_slide_post_ops(
     label_sources: dict[str, str] = {}
     label_ops: list[dict] = []
     before: dict[str, str] = {}
+    before_rows: dict[str, dict[str, Any]] = {}
+    # Bars some op actually changed (KRI-818 collateral guard): every other stored
+    # text must come out byte-identical on its own slide.
+    touched: set[str] = set()
 
     def hook(op: dict[str, Any], state: Any, phase: str) -> None:
         if phase == "before":
             before.clear()
             before.update({str(r.get("id")): str(r.get("text")) for r in state.text})
+            before_rows.clear()
+            before_rows.update({str(r.get("id")): copy.deepcopy(r) for r in state.text})
             return
+        after_ids = {str(r.get("id")) for r in state.text}
+        touched.update(set(before_rows) - after_ids)
+        for row in state.text:
+            row_id = str(row.get("id"))
+            if before_rows.get(row_id) != row:
+                touched.add(row_id)
+                if row_id not in before_rows and op.get("op") == "add_text" and op.get("slide_id"):
+                    row["_slide_id"] = str(op["slide_id"])
         is_label_op = op.get("op") == "label_each_clip"
         if is_label_op:
             label_ops.append(op)
@@ -541,6 +625,7 @@ def compile_slide_post_ops(
     surviving = [row for row in state.slots if not row.get("removed")]
     if not surviving:
         raise KriaEditorOpError("A post needs at least one slide")
+    _refuse_renumbering_guesses(draft, ops, windows, [str(r["media_id"]) for r in surviving])
     by_id = {slide.id: slide for slide in draft.slides}
     new_order = [str(row["media_id"]) for row in surviving]
     look_by_id = {str(row["media_id"]): row.get("look_preset", "none") for row in surviving}
@@ -564,9 +649,16 @@ def compile_slide_post_ops(
         targets = _slide_ids_for_bar(row, meta, windows)
         if not targets:
             raise KriaEditorOpError("That text doesn't land on any slide")
-        targets = [sid for sid in targets if sid in alive]
         row_id = str(row.get("id"))
         known = meta.get(row_id)
+        if known is None and not any(sid in alive for sid in targets):
+            # A NEW text whose slide is removed in the same edit: say so, never drop
+            # it silently or move it to a neighbour (KRI-818).
+            raise KriaEditorOpError(
+                f'the slide for "{row.get("text")}" is removed in the same edit, '
+                "so the text has nowhere to go"
+            )
+        targets = [sid for sid in targets if sid in alive]
         for sid in targets:
             base = known[1] if known is not None and known[0] == sid else None
             is_label = row_id == _label_bar_id(sid)
@@ -583,6 +675,11 @@ def compile_slide_post_ops(
                 else:
                     source = base.label_source if base else None
                     edited = bool(base.edited if base else False) or row_id in edited_ids
+            elif base is not None and base.role == "label":
+                # A second label on one slide (e.g. a duplicated location) has its own
+                # kria- bar id; an untouched one keeps its role and source (KRI-818).
+                role, source = "label", base.label_source
+                edited = bool(base.edited)
             else:
                 role, source = "text", None
                 edited = bool(base.edited) if base else False
@@ -596,6 +693,13 @@ def compile_slide_post_ops(
                     edited=edited,
                 )
             )
+
+    for bar_id, (sid, element) in meta.items():
+        if bar_id in touched or sid not in alive:
+            continue
+        kept = element.model_dump()
+        if not any(el.model_dump() == kept for el in per_slide[sid]):
+            raise KriaEditorOpError("That edit would change a text it didn't name")
 
     new_slides: list[SlideRef] = []
     text_changed: list[int] = []

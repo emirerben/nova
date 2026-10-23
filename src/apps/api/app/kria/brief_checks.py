@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
+from app.kria.asset_holds import HOLD_TOLERANCE_S, hold_seconds
 from app.kria.brief import BriefRequirement, CreativeBrief, normalize_style_intent
 from app.kria.brief_route import (
     END_KEYS,
@@ -474,6 +475,10 @@ class PlanFacts:
     # KRI-760: the lines the creator asked to hear whole, as the plan record holds them and the
     # finished timeline confirms. None = this plan recorded none (nothing is claimed).
     named_lines: tuple[NamedLineFact, ...] | None = None
+    # KRI-824: the photos the creator gave their own seconds, as the plan record holds them
+    # ({requirement_id, media_id, hold_s, rendered_s}); a finished timeline's own still
+    # lengths replace ``rendered_s``. None = no montage record to read (nothing is claimed).
+    asset_holds: tuple[Mapping[str, Any], ...] | None = None
     # KRI-689: True when the plan was laid out by the phone unified montage, which plays every
     # clip at its natural speed (the phone recipe has no retime for story footage). A
     # clip-speed ask is then a known miss; any other plan claims nothing about speed.
@@ -849,6 +854,9 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         song_bed=bool(record.get("user_song")),
         speed_unsupported=True,
         freeze_frames=_freeze_facts(record.get("freeze_frame")),
+        asset_holds=tuple(
+            row for row in record.get("asset_holds") or [] if isinstance(row, Mapping)
+        ),
         **_montage_caption_facts(record.get("captions")),
     )
 
@@ -1672,6 +1680,30 @@ def _rendered_clip_cuts(
     return [(media_id, start, end) for _at, _index, media_id, start, end in cuts]
 
 
+def _rendered_holds(
+    holds: tuple[Mapping[str, Any], ...] | None, variant: Mapping[str, Any]
+) -> tuple[Mapping[str, Any], ...] | None:
+    """KRI-824: each held photo's seconds as the finished timeline plays them."""
+    rows = variant.get("story_timeline")
+    if not holds or not isinstance(rows, list):
+        return holds
+    played: dict[str, float] = {}
+    for row in rows:
+        if not isinstance(row, Mapping) or row.get("kind") != "image":
+            continue
+        start = _finite_number(row.get("output_start_s"))
+        end = _finite_number(row.get("output_end_s"))
+        media_id = row.get("media_id")
+        if isinstance(media_id, str) and start is not None and end is not None and end > start:
+            played[media_id] = played.get(media_id, 0.0) + (end - start)
+    return tuple(
+        {**hold, "rendered_s": round(played[hold["media_id"]], 4)}
+        if hold.get("media_id") in played
+        else hold
+        for hold in holds
+    )
+
+
 def _same_file_positions(
     ids: Sequence[str], fingerprints: Mapping[str, str]
 ) -> tuple[tuple[int, ...], ...] | None:
@@ -1758,6 +1790,7 @@ def plan_facts_from_rendered_montage(
         or plan.cut_lengths_s,
         cut_clip_ids=tuple(media_id for media_id, _start, _end in cuts) or plan.cut_clip_ids,
         source_durations_s=plan.source_durations_s,
+        asset_holds=_rendered_holds(plan.asset_holds, variant),
         song_bed=plan.song_bed,
         speed_unsupported=plan.speed_unsupported,
         freeze_frames=_rendered_freezes(plan.freeze_frames, variant),
@@ -5096,7 +5129,41 @@ def _check_opening_cut(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
     return _receipt(req, "met", None)
 
 
+def _hold_row(req: BriefRequirement, facts: PlanFacts) -> Mapping[str, Any] | None:
+    """KRI-824: the plan's applied-hold row for ``req``; only the item's photos have one."""
+    if req.authority is None or hold_seconds(req) is None or not facts.asset_holds:
+        return None
+    return next((r for r in facts.asset_holds if r.get("requirement_id") == req.id), None)
+
+
+def _check_asset_hold(req: BriefRequirement, row: Mapping[str, Any]) -> RequirementReceipt:
+    """KRI-824: "keep the beach photo on screen for 1 second", judged on that photo."""
+    asked = hold_seconds(req) or 0.0
+    rendered = _finite_number(row.get("rendered_s"))
+    if rendered is None:
+        return _receipt(
+            req,
+            "partial",
+            say(en="This photo isn't in the video.", tr="Bu fotoğraf videoda yok."),
+        )
+    if abs(rendered - asked) <= HOLD_TOLERANCE_S:
+        return _receipt(req, "met", None)
+    return _receipt(
+        req,
+        "partial",
+        say(
+            en=f"This photo plays {_round_s(rendered)}s; you asked for {asked:g}s.",
+            tr=f"Bu fotoğraf {_round_s(rendered)} saniye görünüyor; sen {asked:g} saniye istedin.",
+        ),
+    )
+
+
 def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    hold_row = _hold_row(req, facts)
+    if hold_row is not None:
+        # A creator-stamped photo length the plan applied (KRI-824). Any other clip-scoped
+        # length (a video clip, an unstamped model number) keeps the clip paths below.
+        return _check_asset_hold(req, hold_row)
     from app.services.length_policy import (  # noqa: PLC0415
         strict_duration_limit_s,
         strict_duration_matches,

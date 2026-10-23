@@ -43,11 +43,13 @@ from app.services.researched_text import ResearchRequest
 
 log = structlog.get_logger()
 
+# v87 (KRI-818): slide numbers mean the post before the turn; one-slide text names its
+# slide by slide_id; "keep the cover" emits no cover op.
 # v82 (KRI-716): a group title is one add_text across the stretch, never one per clip.
 # v81 (KRI-667/KRI-669): keep claimed_ops honesty and measured heading placement together.
 # v86: removing added text preserves speech subtitles unless explicitly targeted.
-# v87 (KRI-821): the music redirect no longer points iOS creators at the web item page.
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-23-v87"
+# v88 (KRI-821): the music redirect no longer points iOS creators at the web item page.
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-24-v88"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).

@@ -616,7 +616,8 @@ struct CreationThread: Codable, Identifiable, Sendable {
             activeJobID: activeJobID.flatMap(UUID.init(uuidString:)),
             activePlanItemID: activePlanItemID,
             awaitsConfirmation: awaitsNewPlanConfirmation,
-            editFormat: state?["format"]?.stringValue ?? state?["edit_format"]?.stringValue
+            editFormat: state?["format"]?.stringValue ?? state?["edit_format"]?.stringValue,
+            deliveryNeedsAttention: deliveryNeedsAttention
         )
     }
 
@@ -647,6 +648,26 @@ struct CreationThread: Codable, Identifiable, Sendable {
         }
         return variants.first(where: \.isPlayable)
     }
+    /// The variant whose device delivery the project's status follows: the
+    /// server-selected one when present, else the first variant with an id
+    /// (a phone job only ever has one live variant).
+    private var deliveryVariant: CreationVariant? {
+        let variants = job?.variants ?? []
+        if let selectedID = state?["selected_variant_id"]?.stringValue,
+           let selected = variants.first(where: { $0.variantID == selectedID }) {
+            return selected
+        }
+        return variants.first { $0.variantID != nil }
+    }
+
+    /// KRI-823: the current device delivery needs the creator, even though the
+    /// job lifecycle still reads `awaiting_device`. The server fences
+    /// `delivery_phase` to the variant's current render generation, so a late
+    /// failure from an older generation never arrives here.
+    var deliveryNeedsAttention: Bool {
+        activeJobID != nil && deliveryVariant?.needsDeliveryAttention == true
+    }
+
     private var projectStatus: ProjectStatus {
         // Preparation belongs to the current request even when this project
         // already has a ready or failed job. Keep its progress visible after
@@ -670,6 +691,9 @@ struct CreationThread: Codable, Identifiable, Sendable {
             return .draft
         }
         guard let status = job?.status.lowercased() else { return .rendering }
+        // A device delivery failure never moves job.status off awaiting_device;
+        // the drawer must say what the detail card says (KRI-823).
+        if deliveryNeedsAttention { return .failed }
         if status == "ready" || status == "done" || status.contains("_ready") { return .ready }
         if status == "failed" || status == "cancelled" || status == "no_labeled_tracks" || status.contains("_failed") { return .failed }
         return .rendering
@@ -684,10 +708,20 @@ struct CreationVariant: Codable, Sendable {
     let posterURL: URL?
     let failureReason: String?
     var renderDestination: String? = nil
+    /// The device delivery phase of this variant's CURRENT generation
+    /// (`awaiting_device|syncing|published|needs_attention`), or nil for a
+    /// cloud job, an older generation, or an older server (KRI-823).
+    var deliveryPhase: String? = nil
 
+    var needsDeliveryAttention: Bool {
+        deliveryPhase == "needs_attention" || renderStatus?.lowercased() == "needs_attention"
+    }
+
+    /// Only a variant with media plays. A failed replacement keeps the last
+    /// accepted output on the variant, so it stays playable (KRI-823).
     var isPlayable: Bool {
         guard outputURL != nil, let status = renderStatus?.lowercased() else { return false }
-        return ["ready", "failed", "error", "render_failed"].contains(status)
+        return ["ready", "failed", "error", "render_failed"].contains(status) || needsDeliveryAttention
     }
 
     enum CodingKeys: String, CodingKey {
@@ -699,6 +733,7 @@ struct CreationVariant: Codable, Sendable {
         case posterURL = "poster_url"
         case failureReason = "failure_reason"
         case renderDestination = "render_destination"
+        case deliveryPhase = "delivery_phase"
     }
 }
 

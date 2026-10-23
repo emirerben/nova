@@ -26,6 +26,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from app.kria.asset_holds import hold_seconds
 from app.kria.brief_route import loose_text
 from app.kria.speed_ask import SPEED_ASK_KINDS, asks_clip_speed
 
@@ -155,6 +156,11 @@ def times_one_moment(req: BriefRequirement) -> bool:
     medal") all carry ``duration_s``; none of them is how long the video should be.
     """
     if asks_freeze_frame(req) or asks_clip_speed(req):
+        return True
+    if getattr(req, "authority", None) is not None and hold_seconds(req) is not None:
+        # KRI-824: creator-stamped seconds on one clip ("keep the beach photo on screen for
+        # 1 second", "make the surf clip 2 seconds") are that clip's time, never the
+        # video's total. (An unstamped clip-scoped length keeps its legacy reading.)
         return True
     return _names_a_moment(_tokens(req.description or ""))
 

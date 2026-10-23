@@ -38,6 +38,10 @@ struct ProjectSummary: Codable, Identifiable, Hashable, Sendable {
     var awaitsConfirmation: Bool = false
     var editFormat: String?
     var slideCount: Int?
+    /// KRI-823: the drawer row's failure is a device delivery failure (the last
+    /// accepted cut may still exist), so the detail must not open on the
+    /// generic "wasn't made" stage before the full thread loads.
+    var deliveryNeedsAttention: Bool? = nil
     var isSlidePost: Bool { editFormat == "slides" || outputVariantID == "slides" }
 
     init(
@@ -56,7 +60,8 @@ struct ProjectSummary: Codable, Identifiable, Hashable, Sendable {
         activePlanItemID: String? = nil,
         awaitsConfirmation: Bool = false,
         editFormat: String? = nil,
-        slideCount: Int? = nil
+        slideCount: Int? = nil,
+        deliveryNeedsAttention: Bool? = nil
     ) {
         self.id = id
         self.title = title
@@ -74,6 +79,7 @@ struct ProjectSummary: Codable, Identifiable, Hashable, Sendable {
         self.awaitsConfirmation = awaitsConfirmation
         self.editFormat = editFormat
         self.slideCount = slideCount
+        self.deliveryNeedsAttention = deliveryNeedsAttention
     }
 }
 

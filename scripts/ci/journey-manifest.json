@@ -264,7 +264,7 @@
     {
       "id": "slide-post-binding-recovery",
       "needs_native": true,
-      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/routes/test_slide_post_binding_save_postgres.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/routes/test_slide_post_chat_edit_route.py tests/evals/test_edit_copilot_evals.py",
+      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/routes/test_slide_post_binding_save_postgres.py tests/routes/test_slide_post_stable_target_postgres.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/routes/test_slide_post_chat_edit_route.py tests/evals/test_edit_copilot_evals.py",
       "xctests": [
         "KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave",
         "KriaTests/SlidePostFramingTests/testEncodingAlwaysWritesTheFramingKeySoAClearIsNeverMistakenForAnOlderApp",
@@ -309,6 +309,9 @@
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_legacy_seen_captions.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_legacy_seen_captions_tr.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_legacy_seen_ideas.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_reorder_then_text_on_moved.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_reorder_keep_cover.json",
+        "src/apps/api/tests/routes/test_slide_post_stable_target_postgres.py",
         "src/apps/api/tests/evals/test_edit_copilot_evals.py"
       ]
     },
@@ -663,6 +666,14 @@
         "KriaTests/NativeEditorInteractionTests/testRemovedMarkedSpeedSlotDoesNotPutLegacySurvivorsOnFrameClock",
         "KriaTests/GuidedLabelRebaseVectorTests/testSourceBoundTextUsesMarkedThirtyFPSWindowAfterHalfFrameSpeedRetime",
         "KriaUITests/NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector"
+      ]
+    },
+    {
+      "id": "kri-824-photo-hold-authority",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri824_photo_hold_e2e.py tests/kria/test_kri824_authority_postgres.py tests/kria/test_kri775_merope_m2_replay.py",
+      "paths": [
+        "src/apps/api/app/kria/asset_holds.py"
       ]
     },
     {
@@ -1047,6 +1058,15 @@
         "src/apps/api/app/kria/brief.py",
         "src/apps/api/prompts/brief_extractor.txt",
         "src/apps/api/tests/kria/test_natural_delegation_readiness_postgres.py"
+      ]
+    },
+    {
+      "id": "kri-722-prepared-execution",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_prepared_execution_postgres.py tests/kria/test_render_retry_postgres.py",
+      "paths": [
+        "src/apps/api/app/kria/prepared_execution.py",
+        "src/apps/api/tests/kria/test_prepared_execution_postgres.py"
       ]
     },
     {

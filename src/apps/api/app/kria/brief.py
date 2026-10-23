@@ -37,9 +37,11 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic.json_schema import SkipJsonSchema
 from sqlalchemy import func, select
 
 from app.agents._schemas.text_element import _ALLOWED_FONTS, _HEX_COLOR_RE
+from app.kria.asset_holds import Authority, resolve_clip_scope, stamp_authority
 from app.kria.brief_route import fold_text, loose_text, wants_filming_time_text
 from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.reply_language import detect_chat_language
@@ -273,6 +275,13 @@ class BriefRequirement(_BriefModel):
     facts: dict[str, Any] = Field(default_factory=dict)
     source_turn_id: str | None = None
     status: RequirementStatus = "open"
+    # KRI-824: who chose this decision, stamped by the server from the creator's own turn
+    # (``asset_holds.stamp_authority``); never model or client data. None (every
+    # requirement before this field, and every unstamped one) is omitted, so stored briefs
+    # and approval digests re-dump byte-identically; the AI default is "no stamp".
+    authority: SkipJsonSchema[Authority | None] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @property
     def live(self) -> bool:
@@ -374,6 +383,8 @@ def _repair_entry(item: object) -> object:
         entry["expected_version"] = _model_version(entry["expected_version"])
     if "facts" in entry and entry["facts"] is None:
         del entry["facts"]
+    # KRI-824: authority is server-owned; a model that writes one is ignored, never trusted.
+    entry.pop("authority", None)
     if entry.get("operation") == "remove":
         entry = {
             key: value
@@ -529,8 +540,13 @@ def apply_updates(
     updates: Iterable[BriefUpdate],
     *,
     source_turn_id: str | None,
+    creator_text: str | None = None,
 ) -> CreativeBrief:
-    """Server-assign ids and merge ``updates`` into ``prior`` (version is set on persist)."""
+    """Server-assign ids and merge ``updates`` into ``prior`` (version is set on persist).
+
+    ``creator_text`` is the creator's own message for this turn (KRI-824): each new or
+    changed requirement's ``authority`` is stamped from it, never from the update.
+    """
     prior = prior or CreativeBrief()
     updates = list(updates)
     live_by_id = {req.id: req for req in prior.live()}
@@ -570,17 +586,21 @@ def apply_updates(
                     "status": "open",
                 }
             )
-            continue
-        incoming.append(
-            BriefRequirement(
-                id=f"r{counter}",
-                kind=update.kind,
-                scope=update.scope,
-                literal=update.literal,
-                description=update.description,
-                facts=update.facts,
-                source_turn_id=source_turn_id,
+            changed[target.id] = changed[target.id].model_copy(
+                update={"authority": stamp_authority(changed[target.id], creator_text, target)}
             )
+            continue
+        added = BriefRequirement(
+            id=f"r{counter}",
+            kind=update.kind,
+            scope=update.scope,
+            literal=update.literal,
+            description=update.description,
+            facts=update.facts,
+            source_turn_id=source_turn_id,
+        )
+        incoming.append(
+            added.model_copy(update={"authority": stamp_authority(added, creator_text)})
         )
         counter += 1
     requirements = []
@@ -1189,11 +1209,7 @@ def requested_media(brief: CreativeBrief | None, media_ids: Iterable[str]) -> di
     for req in brief.live():
         if not req.scope.startswith("clip:"):
             continue
-        token = req.scope.split(":", 1)[1]
-        tails = (
-            [media_id for media_id in ids if media_id.endswith(token)] if len(token) >= 6 else []
-        )
-        media_id = token if token in ids else (tails[0] if len(tails) == 1 else None)
+        media_id = resolve_clip_scope(req.scope.split(":", 1)[1], ids)
         if media_id is None:
             continue
         words = req.text()
@@ -1477,6 +1493,23 @@ def load_latest_brief_sync(db: Any, thread_id: uuid.UUID) -> CreativeBrief | Non
     return _brief_from_row(row)
 
 
+def _creator_turn_text_sync(db: Any, thread_id: uuid.UUID, turn_id: uuid.UUID) -> str | None:
+    """The creator's own message a turn answers (KRI-824), read from the transcript.
+
+    Authority is stamped from this server-held text only. A turn id that is not a creator
+    turn of this thread (a system turn, a repair) yields None: nothing is stamped.
+    """
+    row = db.execute(
+        select(CreationThreadEvent.content, CreationThreadEvent.role)
+        .join(CreatorAgentTurn, CreatorAgentTurn.source_event_id == CreationThreadEvent.id)
+        .where(CreatorAgentTurn.id == turn_id, CreatorAgentTurn.thread_id == thread_id)
+        .where(CreationThreadEvent.thread_id == thread_id)
+    ).first()
+    if row is None or row.role != "user" or not isinstance(row.content, str):
+        return None
+    return row.content
+
+
 UNRECORDED_REQUEST_MAX_CHARS = 12_000
 
 
@@ -1575,7 +1608,12 @@ def persist_brief_version_sync(
         )
     ):
         return prior
-    merged = apply_updates(prior, updates, source_turn_id=str(turn_id))
+    merged = apply_updates(
+        prior,
+        updates,
+        source_turn_id=str(turn_id),
+        creator_text=_creator_turn_text_sync(db, thread_id, turn_id),
+    )
     next_version = (
         int(
             db.execute(

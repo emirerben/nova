@@ -532,8 +532,15 @@ def _quantize_quick_mixed_timeline(
     *,
     target_s: float,
     mixed_media_timing: MixedMediaTimingProfile | None = None,
+    still_holds: Mapping[str, float] | None = None,
 ) -> float:
-    """Compile quick mixed-media holds to an exact, source-safe frame budget."""
+    """Compile quick mixed-media holds to an exact, source-safe frame budget.
+
+    ``still_holds`` (KRI-824): photos the creator gave their own length keep exactly it;
+    the profile's cadence bounds only the others.
+    """
+
+    still_holds = still_holds or {}
 
     fps = int(round(1.0 / _FRAME_S))
     target_frames = max(1, int(round(float(target_s) * fps)))
@@ -545,7 +552,9 @@ def _quantize_quick_mixed_timeline(
     for index, moment in enumerate(moments):
         desired_frames = float(moment["duration_s"]) * fps
         frames = max(1, int(math.floor(desired_frames + 1e-6)))
-        if moment["kind"] == "image":
+        if moment["kind"] == "image" and moment.get("media_id") in still_holds:
+            frames = max(1, int(round(still_holds[moment["media_id"]] * fps)))
+        elif moment["kind"] == "image":
             bounds = mixed_media_hold_bounds("image", mixed_media_timing)
             minimum_frames = int(math.ceil(bounds.minimum_s * fps - 1e-6))
             maximum_frames = int(math.floor(bounds.maximum_s * fps + 1e-6))
@@ -2646,6 +2655,7 @@ def _compile_base_execution_plan_version(
                 beat_windows,
                 target_s=target_duration_s,
                 mixed_media_timing=mixed_timing,
+                still_holds={hold.media_id: hold.hold_s for hold in snapshot.creator_still_holds},
             )
         normalized_track = (
             _music_payload(track, duration_s=cursor) if compiler_version < 6 else None
@@ -2823,6 +2833,7 @@ def _compile_base_execution_plan_version(
             beat_windows,
             target_s=cursor,
             mixed_media_timing=mixed_timing,
+            still_holds={hold.media_id: hold.hold_s for hold in snapshot.creator_still_holds},
         )
 
     normalized_track = _music_payload(track, duration_s=cursor) if compiler_version < 6 else None
