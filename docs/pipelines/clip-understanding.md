@@ -548,7 +548,11 @@ Limits: nothing deterministic compares a skip with a first-clip pin. When the
 evidence is right the pin resolves to the tray clip and the skip to the other one;
 when the resolver reads the evidence onto the wrong clips, the code follows it
 (`test_known_limit_fully_swapped_evidence_is_followed_not_second_guessed`). A skip
-that names the same clip as a pin still asks (KRI-761). Blur comes from the model's
+that names the same clip as a pin still asks (KRI-761). A singular skip ("the blurry shot")
+that the resolver matches on two clips at 0.9 drops both without asking: there is no singular-ask rule
+(`test_known_limit_two_blurry_pans_for_a_singular_skip_both_go`). Label and caption grounding
+(`vision_evidence_text`) reads `props` and `actions` like the other model-written fields, never
+`visual_quality`. Blur comes from the model's
 judgment of the frames: no sharpness number separates Don Julio M1_04 (blurry) from
 M1_06 (sharp).
 

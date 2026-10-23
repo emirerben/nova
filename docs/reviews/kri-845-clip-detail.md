@@ -87,11 +87,18 @@ print(statistics.median(v))' clip.mp4
   `2026-10-23.1` for `clip_metadata` and `clip_request_resolver`; `CACHE_SCHEMA_VERSION` s4. `ANALYSIS_VERSION` is NOT
   bumped (that would re-run every stored video analysis, paid and prod-wide), so only clips analysed after the deploy
   carry the fields: re-attach the footage in a NEW chat.
+- Review fixes. The resolver prompt also says a named object belongs most to the clip whose `actions` use it (a
+  clip that only lists it in `props`, in the background or carried past, is weaker evidence), that `actions` beat a
+  `summary` that disagrees on direction (the prod café summaries were nearly inverted), and that `visual_quality`
+  is never label or caption text. `vision_evidence_text` (label / caption grounding) now includes `props` and
+  `actions`, because the resolver sees them and its labels reuse record words; never `visual_quality`. A record
+  without the keys grounds exactly as before.
 
 ## What is proven offline (no paid calls)
 
-`tests/kria/test_kri845_clip_detail_evidence.py` (33 cases; on main 21 fail and 12 pass, the 12 being the
-unchanged-behaviour sentinels, the pin check and the two negative controls) with the authored outputs in
+`tests/kria/test_kri845_clip_detail_evidence.py` (38 cases; on main 25 fail and 13 pass, the 13 being the
+unchanged-behaviour sentinels, the pin check, the legacy-grounding sentinel and the two negative controls) with the
+authored outputs in
 `tests/fixtures/kri845_m1_clip_detail.json` and the Don Julio prod records of `kri807_don_julio_m1_clips.json`:
 
 - the three fields survive `parse()`, the `analyze_clip` shim and the payload writer; junk values, comma strings,
@@ -109,6 +116,20 @@ unchanged-behaviour sentinels, the pin check and the two negative controls) with
   put-down are both read onto the wrong clips, the answer is self-consistent and the code drops M1_08 without asking
   (pinned by `test_known_limit_fully_swapped_evidence_is_followed_not_second_guessed`); the only guard is correct
   evidence.
+- the menus result is keyed on the creator's own word, not on a verb the creator never said: the stand-in answers 0.9
+  for a clip whose `actions` use a menu and 0.5 (under the 0.6 membership bar) for one that only lists a menu in
+  `props`, which models the resolver prompt's rule; `order_menus` then resolves to M1_09 only;
+- three equally good menu matches (a menu in the actions of M1_09, M1_01 and M1_06) are all included and nothing asks
+  (pinned: `test_three_equally_good_menu_matches_all_play_and_nothing_asks`). An order / include ask is membership: every
+  clip at or over the 0.6 bar is kept and none is preferred; only an exclude that clashes with a pin, or one that
+  matched several look-alikes under 0.9, asks (KRI-761). The separation has to come from the evidence;
+- KNOWN LIMIT, singular skip: if the analyzer calls BOTH fast pans blurry (the sharp M1_06 wrongly), "the blurry shot"
+  matches both at 0.9 and both leave the edit with no question and no notice. Neither the resolver prompt nor the
+  exclusion code has a singular-ask rule (KRI-758 only keeps a singular phrase out of the LENGTH groups). Pinned by
+  `test_known_limit_two_blurry_pans_for_a_singular_skip_both_go`; no exclusion code was changed here;
+- label grounding: a label or caption taken from a prop or action word grounds as a record span, a `visual_quality`
+  word never does, a record without the keys grounds exactly as before, and the KRI-612 description lines are unchanged;
+- the `clip_cache` round trip keeps the three fields and a pre-KRI-845 cache entry loads with the defaults;
 - four hand-authored replay goldens (2 `clip_request_resolver`, 2 `clip_metadata`) pass the free replay evals and
   satisfy the eval-input CI gate.
 
@@ -125,9 +146,27 @@ unchanged-behaviour sentinels, the pin check and the two negative controls) with
   2 calls x (6.5k in, about 1k out) = about $0.01; total about $0.10. If each clip cost the $0.03 that
   `kria_clip_understanding` documents as its ceiling, 21 clips would be about $0.63. Run it with
   `--max-cost-usd=1` and look at the written `props` / `actions` / `visual_quality` of M1_05, M1_08, Don Julio M1_04,
-  M1_06, M1_09 before judging the resolver.
+  M1_06, M1_09 before judging the resolver. Read M1_04 and M1_06 `visual_quality` FIRST: the prompt's example phrases
+  ("blurry, fast pan", "fast pan, stays sharp") equal the authored fixture values, so the offline test is circular on
+  that vocabulary and cannot show Gemini picks the right one for each pan.
+- Live-check pass criteria: `order_menus` resolves to M1_09 and NOT to M1_01 or M1_06; the café skip resolves to M1_05
+  only and M1_08 stays first; `exclude_blurry_table` resolves to M1_04 only. The authored M1_06 action ("camera tilts
+  down from a seated diner to the table") and M1_01 action ("walks past ... carrying a wooden board") treat a held or
+  carried-past board as scene, in `props` only, which is what the frames show. A real model may still write "holds a
+  menu" into the `actions` of M1_06 or M1_01: then M1_09, M1_01 and M1_06 are three equal matches, all three are
+  included and nothing asks (see above), and the answer is to fix the evidence (prompt wording), not to tune the
+  stand-in.
 - Then the iPhone check, in a fresh chat after the deploy: attach the café M1 clips and send the 2026-10-19 request
   ("Caro'nun elinde siyah tepsiyle geldiği klip ilk olsun ... eğilip tabağı masaya bıraktığı kısa klibi kullanma"):
   M1_08 first, M1_05 gone, no picker. Attach the Don Julio M1 clips and send "... the big wooden menus ... Skip the
   blurry shot of the empty table": the menus are M1_09, the table pan is left out without a picker. Old chats keep
   their old records: that is expected.
+
+## Rollback
+
+Safe to revert after deploy. `ClipUnderstanding` on `origin/main` (6453cbca6) has no `model_config`, so pydantic's
+default `extra="ignore"` applies: `clip_record` and `ClipUnderstanding.model_validate` load a record carrying `props` /
+`actions` / `visual_quality` and drop the keys (checked in a detached worktree at main). The `clip_cache` entries
+written under schema `s4` are never read by main (its key carries `s3`), and `generative_build._clip_meta_from_cache`
+ignores unknown keys. Records and cache entries written before the change are byte-identical, so nothing needs
+migrating either way.

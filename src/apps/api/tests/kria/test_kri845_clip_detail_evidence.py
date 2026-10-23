@@ -91,7 +91,15 @@ from app.config import settings
 from app.kria import planner
 from app.kria.clip_scope import excluded_clips
 from app.pipeline.prompt_loader import load_prompt
-from app.schemas.clip_intents import ClipAssignment, ClipIntent, ResolvedClipIntent
+from app.schemas.clip_intents import (
+    ClipAssignment,
+    ClipIntent,
+    ResolvedClipIntent,
+    footage_lines,
+    ground_caption,
+    ground_label,
+    vision_evidence_text,
+)
 from app.services import clip_intent_planning as planning
 from app.services import clip_intent_resolution as resolution
 from app.services.clip_intent_resolution import IntentClip
@@ -181,15 +189,19 @@ def _cafe_clips(
     ]
 
 
-def _dj_clips(*, authored: bool = True) -> list[IntentClip]:
+def _dj_clips(
+    *, authored: bool = True, outputs: dict[str, dict[str, Any]] | None = None
+) -> list[IntentClip]:
     """All nine Don Julio clips with their records exactly as prod stored them. With
     ``authored`` the three KRI-845 fields (parsed through the real analyzer parse, so the same
-    cleaning and caps apply) are layered onto the clips the fixture authors them for."""
+    cleaning and caps apply) are layered onto the clips the fixture authors them for;
+    ``outputs`` replaces the authored fields of the named clips (a wrong-evidence control)."""
     clips = []
     for name, clip in DJ.items():
         record = copy.deepcopy(clip["record"])
         if authored and name in DJ_AUTHORED:
-            parsed = _parse({**_BASE, **DJ_AUTHORED[name]["analyzer_output"]})
+            fields = (outputs or {}).get(name, DJ_AUTHORED[name]["analyzer_output"])
+            parsed = _parse({**_BASE, **fields})
             record.update(
                 props=parsed.props, actions=parsed.actions, visual_quality=parsed.visual_quality
             )
@@ -349,6 +361,12 @@ def test_the_resolver_prompt_tells_the_model_how_to_use_the_new_evidence() -> No
     # with none of the fields was not judged (KRI-680's rule for visibility, same here).
     assert "smear" in text and "does not match one that says the footage stays sharp" in text
     assert "was not judged" in text and "never read that absence as sharp" in text
+    # A named object belongs most to the clip whose actions use it; a props-only mention is
+    # weaker; actions beat a summary that disagrees on the direction; quality is never copy.
+    assert "belongs most to the clip whose `actions` use it" in text
+    assert "only lists it in `props`" in text and "weaker evidence" in text
+    assert "trust `actions`" in text
+    assert "never label or caption text" in text
 
 
 def test_the_analysis_prompt_asks_for_the_new_fields_and_the_versions_moved() -> None:
@@ -427,10 +445,16 @@ class _ReadingProvider:
     This is not Gemini. It only proves the pipeline delivers parseable evidence and handles what
     a resolver that reads it would answer; it cannot show that Gemini reads it that way. A
     record with none of the keys (a clip analysed before KRI-845) matches no rule.
+
+    A rule returns the confidence it answers with (0 = no match). ``_names_the_menus`` models the
+    resolver prompt's KRI-845 rule that a named object belongs most to the clip whose ``actions``
+    use it, and a clip that only lists it in ``props`` is weaker evidence (below the 0.8 bar).
+    No rule keys on a verb the creator did not say, and none models a singular-vs-several rule:
+    the prompt has none (see ``test_known_limit_two_blurry_pans_...``).
     """
 
     def __init__(
-        self, planner_intents: list[dict[str, Any]], rules: dict[str, Callable[[Record], bool]]
+        self, planner_intents: list[dict[str, Any]], rules: dict[str, Callable[[Record], float]]
     ) -> None:
         self.planner_intents, self.rules = planner_intents, rules
         self.calls: list[str] = []
@@ -451,9 +475,13 @@ class _ReadingProvider:
             {
                 "intent_id": intent_id,
                 "assignments": [
-                    {"media": alias, "confidence": 0.9, "evidence": f"{intent_id}: {record}"[:200]}
+                    {
+                        "media": alias,
+                        "confidence": confidence,
+                        "evidence": f"{intent_id}: {record}"[:200],
+                    }
                     for alias, record in rows.items()
-                    if rule(record)
+                    if (confidence := rule(record)) > 0
                 ],
                 "needs_vision": [],
             }
@@ -467,29 +495,40 @@ def _words(record: Record, key: str) -> list[str]:
     return [value.casefold()] if isinstance(value, str) else [str(v).casefold() for v in value]
 
 
-def _names_a_tray(record: Record) -> bool:
-    return any("tray" in prop for prop in _words(record, "props"))
+_SURE, _WEAK = 0.9, 0.5  # the bars: 0.6 for a membership (order / include), 0.8 for an exclude
 
 
-def _lowers_the_plate_down(record: Record) -> bool:
-    return any(
-        re.search(r"\b(lowers?|puts?|sets?)\b.*\bdown\b", a) for a in _words(record, "actions")
+def _sure(hit: bool) -> float:
+    return _SURE if hit else 0.0
+
+
+def _names_a_tray(record: Record) -> float:
+    return _sure(any("tray" in prop for prop in _words(record, "props")))
+
+
+def _lowers_the_plate_down(record: Record) -> float:
+    return _sure(
+        any(re.search(r"\b(lowers?|puts?|sets?)\b.*\bdown\b", a) for a in _words(record, "actions"))
     )
 
 
-def _leans_or_bends_forward(record: Record) -> bool:
-    return any("forward" in action for action in _words(record, "actions"))
+def _leans_or_bends_forward(record: Record) -> float:
+    return _sure(any("forward" in action for action in _words(record, "actions")))
 
 
-def _lifts_menu_boards(record: Record) -> bool:
-    return any(
-        re.search(r"\blifts?\b", action) and "menu board" in action
-        for action in _words(record, "actions")
-    )
+def _names_the_menus(record: Record) -> float:
+    """The creator said "the big wooden menus". The clip whose ACTIONS use a menu is the one;
+    a clip that only lists a menu in ``props`` (held in the background, carried past) is weaker
+    evidence and answers below the bar. Keyed on the creator's word, not on any verb."""
+    if any("menu" in action for action in _words(record, "actions")):
+        return _SURE
+    if any("menu" in prop for prop in _words(record, "props")):
+        return _WEAK
+    return 0.0
 
 
-def _reports_blur(record: Record) -> bool:
-    return "blur" in " ".join(_words(record, "visual_quality"))
+def _reports_blur(record: Record) -> float:
+    return _sure("blur" in " ".join(_words(record, "visual_quality")))
 
 
 _PIN = {
@@ -585,6 +624,10 @@ def _resolved(planned: Any) -> set[tuple[str, tuple[str, ...]]]:
         (i["op"], tuple(a["media_id"] for a in i["assignments"]))
         for i in strategy["resolved_clip_intents"]
     }
+
+
+def _intents(planned: Any) -> list[dict[str, Any]]:
+    return planned.plan.intents[0].arguments["strategy"]["resolved_clip_intents"]
 
 
 def _asked(planned: Any) -> list[tuple[str, str]]:
@@ -727,7 +770,7 @@ async def test_known_limit_fully_swapped_evidence_is_followed_not_second_guessed
 
 _DJ_MENUS = {
     "intent_id": "order_menus",
-    "op": "include",
+    "op": "order",
     "attribute": "the big wooden menus",
     "source_quote": "the big wooden menus",
 }
@@ -737,17 +780,23 @@ _DJ_SKIP = {
     "attribute": "the blurry shot of the empty table",
     "source_quote": "Skip the blurry shot of the empty table",
 }
-DJ_RULES = {"order_menus": _lifts_menu_boards, "exclude_blurry_table": _reports_blur}
+DJ_RULES = {"order_menus": _names_the_menus, "exclude_blurry_table": _reports_blur}
 DJ_DURATION = {c["media_id"]: c["duration_s"] for c in DON_JULIO["clips"]}
 DJ_NOTICE = "I couldn't tell which clips you asked me to leave out"
 
 
-async def _dj_turn(monkeypatch: pytest.MonkeyPatch, *, authored: bool) -> tuple[Any, Any]:
-    provider = _ReadingProvider([_DJ_MENUS, _DJ_SKIP], DJ_RULES)
+async def _dj_turn(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    authored: bool,
+    outputs: dict[str, dict[str, Any]] | None = None,
+    rules: dict[str, Callable[[Record], float]] | None = None,
+) -> tuple[Any, Any]:
+    provider = _ReadingProvider([_DJ_MENUS, _DJ_SKIP], rules or DJ_RULES)
     planned = await _turn(
         monkeypatch,
         provider,
-        clips=_dj_clips(authored=authored),
+        clips=_dj_clips(authored=authored, outputs=outputs),
         durations=DJ_DURATION,
         request=DON_JULIO["creator_request"],
     )
@@ -757,8 +806,10 @@ async def _dj_turn(monkeypatch: pytest.MonkeyPatch, *, authored: bool) -> tuple[
 async def test_dj_menus_resolve_to_m1_09_and_the_blurry_pan_goes_without_a_picker(
     prod_profile, monkeypatch, no_vision
 ) -> None:
-    # The recorded records plus the authored fields; the stand-in matches the blurry skip on a
-    # visual_quality that reports blur and the menus on an action that lifts menu boards.
+    # The recorded records plus the authored fields. The stand-in matches the blurry skip on a
+    # visual_quality that reports blur, and the menus on the creator's own word: a clip whose
+    # ACTIONS use a menu answers 0.9, a clip that only lists one in props (M1_06: a diner holds
+    # it in the background; M1_01: it is carried past) answers 0.5, under the 0.6 membership bar.
     provider, planned = await _dj_turn(monkeypatch, authored=True)
     assert provider.calls == ["planner", "resolver"]
     assert planned.plan.mode == "act", planned.plan.response
@@ -769,9 +820,12 @@ async def test_dj_menus_resolve_to_m1_09_and_the_blurry_pan_goes_without_a_picke
     assert DJ_ID["M1_06"] in played  # its sharp look-alike plays
     assert played == set(DJ_ALL) - {DJ_ID["M1_04"]}
     assert _resolved(planned) == {
-        ("include", (DJ_ID["M1_09"],)),  # the menus: the lifted boards, not the tray-like carry
+        ("order", (DJ_ID["M1_09"],)),  # the menus: M1_09 only, not M1_01 or M1_06
         ("exclude", (DJ_ID["M1_04"],)),
     }
+    [menus] = [i for i in _intents(planned) if i["intent_id"] == "order_menus"]
+    assigned = {a["media_id"] for a in menus["assignments"]}
+    assert DJ_ID["M1_01"] not in assigned and DJ_ID["M1_06"] not in assigned
     assert no_vision == [0]
 
 
@@ -784,9 +838,121 @@ async def test_dj_with_the_records_as_recorded_the_skip_is_unmatched_and_the_pic
     provider, planned = await _dj_turn(monkeypatch, authored=False)
     assert provider.calls == ["planner", "resolver"]
     _nothing_drafted(planned)
-    assert _asked(planned) == [("include", "order_menus"), ("exclude", "exclude_blurry_table")]
+    assert _asked(planned) == [("order", "order_menus"), ("exclude", "exclude_blurry_table")]
     assert "exclude_blurry_table:n=0" in " ".join(planned.plan.diagnostics["intent_stats"])
     for category in planned.plan.clip_question["categories"]:
         assert category["candidate_media_ids"] == DJ_ALL
         assert category["suggested_media_ids"] == []
     assert DJ_NOTICE not in planned.plan.response
+
+
+def _menu_ids(planned: Any) -> set[str]:
+    [menus] = [i for i in _intents(planned) if i["intent_id"] == "order_menus"]
+    return {a["media_id"] for a in menus["assignments"]}
+
+
+async def test_three_equally_good_menu_matches_all_play_and_nothing_asks(
+    prod_profile, monkeypatch, no_vision
+) -> None:
+    """What the product does when the evidence cannot separate three clips: nothing.
+
+    If the analyzer wrote a menu board into the ACTIONS of M1_01 (carried past) and M1_06 (held
+    by a diner) as well as M1_09 (lifted), the resolver has three equal matches for "the big
+    wooden menus". An order / include ask is membership: every clip at or over the 0.6 bar is
+    kept, none is preferred, and no picker asks (only an exclude that clashes with a pin, or one
+    that matched several look-alikes under 0.9, asks: KRI-761). So the separation has to be in
+    the evidence, which is why the resolver prompt says a named object belongs most to the clip
+    whose actions use it. The live check must confirm M1_01 and M1_06 do NOT get such actions.
+    """
+    outputs = {
+        "M1_01": {
+            **DJ_AUTHORED["M1_01"]["analyzer_output"],
+            "actions": ["walks past a seated diner carrying a wooden menu board on one palm"],
+        },
+        "M1_06": {
+            **DJ_AUTHORED["M1_06"]["analyzer_output"],
+            "actions": ["a seated diner holds up a menu board", "camera tilts down to the table"],
+        },
+    }
+    _provider, planned = await _dj_turn(monkeypatch, authored=True, outputs=outputs)
+    assert planned.plan.mode == "act" and _asked(planned) == []
+    assert _menu_ids(planned) == {DJ_ID["M1_09"], DJ_ID["M1_01"], DJ_ID["M1_06"]}
+    assert DJ_ID["M1_04"] not in _played(planned, DJ_ALL)  # the skip itself is unaffected
+
+
+async def test_known_limit_two_blurry_pans_for_a_singular_skip_both_go(
+    prod_profile, monkeypatch, no_vision
+) -> None:
+    """The singular "the blurry shot" is not enforced anywhere, by the prompt or by the code.
+
+    If the analyzer calls BOTH fast pans blurry (the sharp look-alike M1_06 wrongly: "blurry,
+    fast pan"), the stand-in matches both at 0.9. The resolver prompt has no rule that a
+    singular ask matches one clip, KRI-761 only asks when 2+ matches sit under 0.9, and
+    ``clip_scope`` (KRI-758) only keeps a singular phrase out of the LENGTH groups. So both
+    clips leave the edit with no question and no notice. Evidence is the only guard: the
+    ``visual_quality`` wording defines blur by smeared edges, and the live check must read
+    M1_04 AND M1_06 first. Not a behaviour to rely on: if the resolver prompt or the exclusion
+    code ever gets a singular-ask rule (two equal matches for one clip => ask), change this test.
+    """
+    outputs = {
+        "M1_06": {**DJ_AUTHORED["M1_06"]["analyzer_output"], "visual_quality": "blurry, fast pan"}
+    }
+    _provider, planned = await _dj_turn(monkeypatch, authored=True, outputs=outputs)
+    assert planned.plan.mode == "act" and _asked(planned) == []
+    assert not planned.policy_notices
+    assert _played(planned, DJ_ALL) == set(DJ_ALL) - {DJ_ID["M1_04"], DJ_ID["M1_06"]}
+
+
+# -- label grounding: the resolver now SEES props / actions, so a label may reuse their words ----
+# (the resolver prompt's hard rule is "reuse the exact words from that clip's record")
+
+
+def _cafe_record(monkeypatch: pytest.MonkeyPatch, name: str, output: dict | None) -> Any:
+    return clip_record(_stored_analysis(monkeypatch, _raw(name, output)))
+
+
+def _ground(record: Any, value: str, **extra: Any) -> Any:
+    return ground_label(
+        media_id="M1_08", value=value, confidence=0.9, creator_request="", record=record, **extra
+    )
+
+
+def test_a_label_taken_from_a_prop_or_an_action_grounds_as_a_record_span(monkeypatch) -> None:
+    record = _cafe_record(monkeypatch, "M1_08", CAFE_OUT["M1_08"])
+    for value in ("Black round tray", "Picks up plate", "Oblea"):  # labels are 3 words at most
+        grounded = _ground(record, value)
+        assert grounded is not None and grounded.grounding == "record_span", value
+    # A caption spans the chapter: the union of its clips' evidence now holds those words too.
+    other = _cafe_record(monkeypatch, "M1_05", CAFE_OUT["M1_05"])
+    caption = ground_caption(
+        value="Black round tray", confidence=0.9, creator_request="", records=[other, record]
+    )
+    assert caption is not None and caption.grounding == "record_span"
+
+
+def test_a_word_from_visual_quality_never_grounds_a_label_or_a_caption(monkeypatch) -> None:
+    record = clip_record(
+        {"understanding": {**DJ["M1_04"]["record"], **DJ_AUTHORED["M1_04"]["analyzer_output"]}}
+    )
+    assert record.visual_quality == "blurry, fast pan"
+    assert "blurry" not in vision_evidence_text(record).casefold()
+    assert _ground(record, "Blurry") is None and _ground(record, "Blurry fast pan") is None
+    assert (
+        ground_caption(value="Blurry", confidence=0.9, creator_request="", records=[record]) is None
+    )
+
+
+def test_a_record_without_props_or_actions_grounds_exactly_as_before(monkeypatch) -> None:
+    for name in sorted(DJ):
+        record = clip_record({"understanding": DJ[name]["record"]})
+        before = [
+            record.subject, record.summary, record.setting, record.activity, record.people.note,
+            *(m.description for m in record.notable_moments),
+        ]  # fmt: skip
+        assert vision_evidence_text(record) == " ".join(part for part in before if part), name
+    legacy = _cafe_record(monkeypatch, "M1_08", None)
+    assert _ground(legacy, "Black round tray") is None  # the words were never in its record
+    assert _ground(legacy, "Serving plate") is not None  # activity still grounds
+    # footage_lines (KRI-612 description labels) read activity / subject / moments only.
+    full = _cafe_record(monkeypatch, "M1_08", CAFE_OUT["M1_08"])
+    assert footage_lines(full) == footage_lines(legacy)

@@ -129,7 +129,7 @@
         "file_name": "M1_01_footage",
         "duration_s": 3.4,
         "role": "a second clip with the same wooden board (carried, not lifted)",
-        "observation": "At t=0.2 s the same waiter walks in profile carrying the same thick dark wooden board flat on one palm past the pastel-shirt diner, who already holds a menu board upright; then the diner raises a water glass and drinks. Sharp.",
+        "observation": "At t=0.2 s the same waiter walks in profile carrying the same thick dark wooden board flat on one palm past the pastel-shirt diner, who already holds a menu board upright; then the diner raises a water glass and drinks. Sharp. This is a genuine second candidate for 'the big wooden menus' (the same board, carried past behind the diner, not lifted); the authored `actions` call it 'a wooden board' while `props` name the menu board.",
         "measured": {
           "laplacian_var_540": 562.8,
           "laplacian_var_360": 1032.8,
@@ -146,7 +146,7 @@
         "file_name": "M1_06_footage",
         "duration_s": 2.0,
         "role": "the SHARP look-alike of the blurry table",
-        "observation": "A high-angle tilt-down (about 28 px/frame, similar to M1_04) from the pastel-shirt man holding a dark wooden menu board to the table: bread on a white napkin on a round wooden board, a plate with a bread chunk, steak knife, fork, spoon, a salad dish with green sauce and chopped tomato, a wooden sauce bowl, wine glasses. The subjects stay crisp; only the diner's moving hand and the fork tines smear a little. The menu board is held, not lifted.",
+        "observation": "A high-angle tilt-down (about 28 px/frame, similar to M1_04) from the pastel-shirt man holding a dark wooden menu board to the table: bread on a white napkin on a round wooden board, a plate with a bread chunk, steak knife, fork, spoon, a salad dish with green sauce and chopped tomato, a wooden sauce bowl, wine glasses. The subjects stay crisp; only the diner's moving hand and the fork tines smear a little. The menu board is a background prop the diner holds in the first frames: nobody lifts or carries it, so it belongs in `props` only.",
         "measured": {
           "laplacian_var_540": 59.9,
           "laplacian_var_360": 138.4,
@@ -155,7 +155,7 @@
         },
         "analyzer_output": {
           "props": ["bread on a white napkin", "salad dish", "wooden sauce bowl", "dark wooden menu board held by a diner"],
-          "actions": ["tilts down from a diner holding a menu board to the table"],
+          "actions": ["camera tilts down from a seated diner to the table"],
           "visual_quality": "fast pan, stays sharp"
         }
       },
