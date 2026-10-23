@@ -171,3 +171,83 @@ def test_no_named_line_leaves_the_render_exactly_as_before():
     assert _phone_opening_cut(
         {"creator_brief_binding": binding}, plan, WORDS, duration_s=DURATION
     ) == (plan, None)
+
+
+# Retakes (KRI-821 review). Failure modes, written before the fix:
+# N9   A retake transcribed differently each time (only fuzzy-matched) counts as said once,
+#      so the system picks which take to cut.
+# N10  "Cut the FIRST take of ..." can't be expressed, so the retake stays in the export.
+# N11  An ordinal the model recorded but the approved text never says picks the take.
+# N12  A copy already removed by an earlier cut makes a single remaining copy ambiguous.
+
+
+def test_the_creator_names_which_take_of_a_repeated_line_to_cut():
+    def which(word: str, value: str, rid: str) -> BriefRequirement:
+        return _req(
+            rid,
+            f"Cut the {word} time she says 'thank you Karo'",
+            ["thank you Karo"],
+        ).model_copy(
+            update={
+                "facts": {
+                    "speech_cleanup": True,
+                    "cut_lines": ["thank you Karo"],
+                    "cut_line_occurrences": {"thank you Karo": value},
+                }
+            }
+        )
+
+    occurrences = [
+        (w["start_s"], w["end_s"])
+        for i, w in enumerate(WORDS)
+        if w["text"].lower().startswith("thank")
+        and WORDS[i + 1]["text"].lower().startswith("you")
+        and WORDS[i + 2]["text"].lower().startswith("karo")
+    ]
+    assert len(occurrences) == 2
+
+    _, (plan, receipts) = _run(which("first", "first", "r20"))
+    first = receipts["named_cuts"][0]
+    assert first["status"] == "applied" and first["occurrence"] == 1  # N10
+    assert first["start_s"] <= occurrences[0][0] < first["end_s"]
+    assert first["occurrences_found"] == 2
+
+    _, (_, receipts) = _run(which("last", "last", "r21"))
+    last = receipts["named_cuts"][0]
+    assert last["status"] == "applied" and last["start_s"] <= occurrences[1][0] < last["end_s"]
+
+    # N11: the model says "first" but the approved text names no take: never guessed.
+    unapproved = which("", "first", "r22").model_copy(
+        update={"description": "Cut where she says 'thank you Karo'"}
+    )
+    _, (_, receipts) = _run(unapproved)
+    assert receipts["named_cuts"][0]["reason"] == "said_more_than_once"
+
+
+def test_a_retake_transcribed_differently_is_never_cut_at_a_guessed_take():
+    from app.pipeline.phone_opening_cut import apply_named_line_cuts, cut_span
+
+    def words(*spoken: tuple[str, float]):
+        return [{"text": t, "start_s": s, "end_s": s + 0.3} for t, s in spoken]
+
+    take = words(
+        ("so", 0.5), ("this", 1.0), ("is", 1.4),
+        ("with", 4.0), ("bread", 4.4), ("no", 4.8),
+        ("okay", 7.0), ("again", 7.5),
+        ("with", 12.0), ("the", 12.4), ("bread,", 12.8), ("no", 13.2),
+        ("and", 16.0), ("that's", 16.5), ("it", 17.0),
+    )  # fmt: skip
+    plan = no_op_plan(20.0)
+    cut, receipts = apply_named_line_cuts(
+        plan, take, [("with bread, no", ("r1",))], duration_s=20.0
+    )
+    assert receipts[0]["reason"] == "said_more_than_once"  # N9
+    assert cut == plan
+
+    # N12: the first copy already sits in a removed span; the one left in the video is cut.
+    trimmed = cut_span(plan, 3.8, 5.3, duration_s=20.0)
+    cut, receipts = apply_named_line_cuts(
+        trimmed, take, [("with bread, no", ("r1",))], duration_s=20.0
+    )
+    assert receipts[0]["status"] == "applied"
+    assert receipts[0]["start_s"] >= 11.5

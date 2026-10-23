@@ -285,6 +285,56 @@ def test_copilot_offers_the_footage_level_on_a_phone_voiceover_edit(monkeypatch)
     assert "music" in _allowed_families(job, row)
 
 
+# F12 (review): the family opens only for the footage level, yet the copilot is shown a
+#     music_level and emits set_mix{music_level} that Save always refuses.
+def test_copilot_cannot_stage_a_music_level_the_voiceover_save_refuses(monkeypatch):
+    from app.agents.edit_copilot import _ParseState
+    from app.agents.editor_ops_v2.audio import validate_set_mix
+    from app.services.kria_editor_ops import build_editor_snapshot
+
+    job = phone_job(monkeypatch)
+    job.all_candidates = None
+    row = job.assembly_plan["variants"][0]
+    row["original_audio_level"] = 0.25
+    snapshot = build_editor_snapshot(job, row)
+    assert "music_level" not in snapshot["mix"]
+    assert snapshot["mix"]["music_level_locked"] is True
+    assert snapshot["mix"]["original_level"] == 0.25
+    state = _ParseState(1.0)
+    assert validate_set_mix({"op": "set_mix", "music_level": 0.8}, snapshot, state) is None
+    ok = validate_set_mix({"op": "set_mix", "original_level": 0.0}, snapshot, _ParseState(1.0))
+    assert ok == {"op": "set_mix", "original_level": 0.0}
+
+
+# F13 (review): a typed source_muted whose approved description says "keep it lower"
+#     (no mute wording) must never silence the footage.
+def test_a_typed_mute_needs_mute_wording_in_the_approved_text():
+    mislabeled = BriefRequirement(
+        id="r5",
+        kind="audio",
+        scope="global",
+        description="Keep the crowd noise lower under the voice",
+        facts={"audio_intent": "source_muted"},
+    )
+    assert brief_footage_mute(_brief(mislabeled)) is None
+    assert approved_bed_level(_brief(mislabeled), 0.4) == 0.4
+    turkish = mislabeled.model_copy(update={"description": "Kamera sesini kapat"})
+    assert brief_footage_mute(_brief(turkish)) is not None
+
+
+# F14 (review): a variant rendered before the level was stamped gets no editable row
+#     (it would open at 100 % while the footage really plays at the 25 % bed).
+def test_unstamped_voiceover_variant_gets_no_original_audio_row(monkeypatch):
+    job = phone_job(monkeypatch)
+    row = dict(job.assembly_plan["variants"][0])
+    row.pop("original_audio_level", None)
+    assert gj._voiceover_original_audio_capability(row) == {
+        "editable": False,
+        "reason": "original_audio_level_unknown",
+    }
+    assert gj.original_audio_recovery(job, row) is None
+
+
 def test_montage_voiceover_receipt_reads_the_pinned_footage_level():
     row = {
         "variant_id": "voiceover_only",

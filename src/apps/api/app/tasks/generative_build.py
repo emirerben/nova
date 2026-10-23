@@ -8591,7 +8591,9 @@ def _phone_opening_cut(
         brief = BriefBinding.model_validate(raw_binding).resolve()
         ask = brief_take_window(brief)
         # KRI-821: lines the creator named to cut out of the middle of the take.
-        named = [(cut.quote, cut.requirement_ids) for cut in brief_named_cuts(brief)]
+        named = [
+            (cut.quote, cut.requirement_ids, cut.occurrence) for cut in brief_named_cuts(brief)
+        ]
     except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
         log.warning("phone_opening_cut.binding_unreadable", error=str(exc)[:200])
         return cut_plan, None
@@ -8620,7 +8622,7 @@ def _phone_opening_cut(
             field: _missed_line(quote, ids, reason) for field, quote, ids in lines if quote
         }
         if named:
-            missed["named_cuts"] = [_missed_line(quote, ids, reason) for quote, ids in named]
+            missed["named_cuts"] = [_missed_line(quote, ids, reason) for quote, ids, _ in named]
         return missed
 
     source_words = words if cut_plan is not None else off_words

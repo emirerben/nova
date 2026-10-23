@@ -112,7 +112,8 @@ log = structlog.get_logger()
 # v75 adds N2 fullscreen photo-then-original sequences to the complete v74 union.
 # v76 (KRI-816): a typed `starts_fresh` declaration withdraws the saved brief ("Start fresh").
 # v77 (KRI-821): "mute the camera / crowd sound" is a typed `source_muted` audio intent.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v77"
+# v78 (KRI-821): a named cut of a repeated line records which take (`cut_line_occurrences`).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v78"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -467,7 +468,10 @@ particular shot, photo or badge => {"closing": "<the creator's words for it>"}; 
 filler sounds or retakes from the speech => {"speech_cleanup": true}, keep them =>
 {"speech_cleanup": false}; cut out particular spoken words (a slip, a half question, a line, "the
 part where I say ...") => {"speech_cleanup": true, "cut_lines": ["with bread, no,"]}, one item per
-stretch in the creator's exact words, quoted or described, never translated. Quoted speech
+stretch in the creator's exact words, quoted or described, never translated; when they say
+which time a repeated line to cut ("cut the FIRST take of 'welcome to my channel'", "the last
+time I say ...") also add {"cut_line_occurrences": {"welcome to my channel": "first"}} with
+"first", "second", "third" or "last", and keep that word in the description. Quoted speech
 bounds use the timing requirement's "start_line"/"end_line", never a cut line; ordered clips
 or places still use the order requirement's "start"/"end". Captions =>
 {"captions": "on"}, {"captions": "off"} or {"captions":

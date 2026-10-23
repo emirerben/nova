@@ -3039,9 +3039,16 @@ def _wants_bed_muted(req: BriefRequirement) -> bool:
     if req.kind not in _BEAT_KINDS or _wants_beats(req) or _wants_cleanup(req):
         return False
     intent = _typed_audio_intent(req)
-    if intent is not None:
-        return req.kind == "audio" and intent == SOURCE_MUTED_INTENT
     text = _req_text(req)
+    if intent is not None:
+        # The typed fact is the model's reading; the requirement text is what the creator
+        # approved. A mute renders only when that approved text says mute/remove too, so a
+        # "keep it lower" requirement tagged source_muted never silences the footage.
+        return (
+            req.kind == "audio"
+            and intent == SOURCE_MUTED_INTENT
+            and bool(_BED_MUTE_RE.search(text))
+        )
     return bool(
         _BED_NAMED_RE.search(text) and _BED_MUTE_RE.search(text) and not _BED_QUIET_RE.search(text)
     )
@@ -3870,8 +3877,13 @@ def _check_speech_excerpts(req: BriefRequirement, facts: PlanFacts) -> Requireme
 _NAMED_CUT_MISSED = {
     "not_found": ("I couldn't find it in your take", "çekiminde bulamadım"),
     "said_more_than_once": (
-        "you say it more than once, so tell me which one to cut",
-        "bunu birden fazla kez söylüyorsun, hangisini keseyim söyle",
+        "you say it more than once, so tell me which one to cut: the first, second or last",
+        "bunu birden fazla kez söylüyorsun, hangisini keseyim söyle: ilkini, ikincisini ya da"
+        " sonuncusunu",
+    ),
+    "occurrence_not_found": (
+        "you don't say it that many times",
+        "bunu o kadar çok kez söylemiyorsun",
     ),
     "too_short": (
         "cutting it would leave too little video",

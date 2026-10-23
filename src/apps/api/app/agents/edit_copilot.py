@@ -1997,7 +1997,10 @@ def _format_snapshot(snapshot: dict) -> str:
     if isinstance(snapshot.get("mix"), dict):
         mix = snapshot["mix"]
         lines.append("\nMIX:")
-        lines.append(f"music_level={_fmt_round3(_first_number(mix, ('music_level',)))}")
+        if mix.get("music_level_locked") is True:
+            lines.append("music_level=(not editable on this edit)")
+        else:
+            lines.append(f"music_level={_fmt_round3(_first_number(mix, ('music_level',)))}")
         if snapshot.get("render_destination") == "device":
             lines.append(
                 "original_level="

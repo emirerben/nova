@@ -7363,7 +7363,7 @@ def original_audio_recovery(job: Job, variant: dict) -> str | None:
 
     if variant.get("resolved_archetype") not in _VOICEOVER_ORIGINAL_AUDIO_ARCHETYPES:
         return None
-    if variant.get("render_destination") != "device":
+    if variant.get("render_destination") != "device" or not _stamped_original_audio_level(variant):
         return None
     if in_http_request():
         try:
@@ -7373,6 +7373,11 @@ def original_audio_recovery(job: Job, variant: dict) -> str | None:
         if isinstance(capability, dict) and capability.get("editable") is True:
             return "editor"
     return "chat"
+
+
+def _stamped_original_audio_level(variant: dict) -> bool:
+    level = variant.get("original_audio_level")
+    return isinstance(level, (int, float)) and not isinstance(level, bool) and math.isfinite(level)
 
 
 def _voiceover_original_audio_capability(variant: dict) -> dict[str, Any] | None:
@@ -7394,6 +7399,9 @@ def _voiceover_original_audio_capability(variant: dict) -> dict[str, Any] | None
         return None
     if variant.get("render_destination") != "device":
         return {"editable": False, "reason": "original_audio_phone_only"}
+    if not _stamped_original_audio_level(variant):
+        # Rendered before the level was stamped: the row would open at a wrong level.
+        return {"editable": False, "reason": "original_audio_level_unknown"}
     if in_http_request():
         protocol = current_client_protocol()
         if protocol is None or protocol < settings.voiceover_original_audio_min_client_protocol:
