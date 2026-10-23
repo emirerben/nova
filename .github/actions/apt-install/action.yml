@@ -33,6 +33,10 @@ runs:
         PACKAGES: ${{ inputs.packages }}
         APT_ARCHIVES_DIR: ${{ steps.key.outputs.dir }}
       run: |
+        # Create the directory as the runner user first: when root creates it,
+        # ~/.cache ends up root-owned and setup-python's `pip cache dir` fails
+        # (first CI run of PR #1793).
+        mkdir -p "$APT_ARCHIVES_DIR/partial"
         # shellcheck disable=SC2086
         sudo env APT_ARCHIVES_DIR="$APT_ARCHIVES_DIR" bash scripts/ci/apt-install.sh $PACKAGES
         sudo chown -R "$(id -u):$(id -g)" "$APT_ARCHIVES_DIR"
