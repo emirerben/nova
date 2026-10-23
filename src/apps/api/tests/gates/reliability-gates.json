@@ -2088,7 +2088,8 @@
       "tickets": [
         "KRI-721",
         "KRI-705",
-        "KRI-700"
+        "KRI-700",
+        "KRI-814"
       ],
       "symptom": "Approval omitted unchecked requirements, accepted unsupported limits, or prepared a preview-tail window that became shorter than the montage minimum on the original.",
       "boundary": "contract",
@@ -2105,14 +2106,18 @@
         "src/apps/api/app/config.py",
         "src/apps/api/tests/kria/test_approval_readiness_postgres.py",
         "src/apps/api/app/services/length_planning.py",
-        "src/apps/api/tests/services/test_length_planning.py"
+        "src/apps/api/tests/services/test_length_planning.py",
+        "src/apps/api/prompts/brief_extractor.txt",
+        "src/apps/api/app/kria/brief.py",
+        "src/apps/api/tests/kria/test_natural_delegation_readiness_postgres.py"
       ],
       "regression_tests": [
         "tests/kria/test_approval_readiness_postgres.py",
         "tests/kria/test_runtime_simpler_version_loop.py",
         "tests/kria/test_render_retry_postgres.py",
         "tests/kria/test_plan_review.py",
-        "tests/services/test_length_planning.py"
+        "tests/services/test_length_planning.py",
+        "tests/kria/test_natural_delegation_readiness_postgres.py"
       ],
       "harness": "real_with_db",
       "kill_switch": "kria_approval_readiness_enabled",
