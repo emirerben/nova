@@ -1403,11 +1403,48 @@ def test_t12_reorder_then_text_binds_to_the_named_slide(window: tuple[int, int])
     _assert_t12(compiled, draft)
 
 
-def test_t12_slide_index_target_resolves_against_the_pre_edit_post() -> None:
+@pytest.mark.parametrize(
+    ("index", "window"), [(0, (0, 1)), (4, (4, 5)), (4, (0, 1))], ids=["post", "pre", "mixed"]
+)
+def test_t12_number_only_target_in_a_moving_bundle_fails_closed(
+    index: int, window: tuple[int, int]
+) -> None:
+    # F12: a slide NUMBER alone can mean the post before or after the move. Index 0 with
+    # window [0,1) once bound "Inside the Troy Museum" to the horse and reported success.
     draft, assets = _troy()
-    compiled, output = _edit(draft, assets, _move_museum_first(start_s=0, end_s=1, slide_index=4))
-    assert output.ops[1]["slide_id"] == "museum" and "slide_index" not in output.ops[1]
-    _assert_t12(compiled, draft)
+    snapshot = build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID)
+    output = _parse(
+        snapshot, _move_museum_first(start_s=window[0], end_s=window[1], slide_index=index)
+    )
+    assert len(output.ops) == 2
+    with pytest.raises(KriaEditorOpError, match="Which slide"):
+        compile_slide_post_ops(draft, output.ops)
+
+
+def test_number_only_target_without_a_move_binds_to_that_slide() -> None:
+    draft, assets = _troy()
+    compiled, output = _edit(
+        draft,
+        assets,
+        [{"op": "add_text", "text": MUSEUM_TEXT, "start_s": 4, "end_s": 5, "slide_index": 4}],
+    )
+    assert output.ops[0]["slide_id"] == "museum" and "slide_index" not in output.ops[0]
+    assert _texts_by_slide(compiled.draft)["museum"] == [MUSEUM_TEXT]
+
+
+def test_a_duplicated_label_survives_an_edit_that_never_names_it() -> None:
+    # F13: a slide with two location labels (iOS Duplicate keeps role="label"). An edit
+    # elsewhere must keep both labels byte-identical, not demote or refuse.
+    draft, assets = _troy()
+    labels = [
+        _text("lab-1", "Troy", role="label", label_source="place"),
+        _text("lab-2", "Turkey", role="label", label_source="place"),
+    ]
+    draft.slides[1].edits = SlideEdits(texts=labels)
+    before = draft.slides[1].model_dump()
+    compiled, _ = _edit(draft, assets, [{"op": "reorder_clip", "from_index": 4, "to_index": 0}])
+    by_id = {s.id: s for s in compiled.draft.slides}
+    assert by_id["video"].model_dump() == before
 
 
 def test_t12_untargeted_one_slide_text_in_a_moving_bundle_fails_closed() -> None:

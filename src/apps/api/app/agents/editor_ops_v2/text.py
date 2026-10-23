@@ -454,6 +454,10 @@ def coerce_add_text_extras(out: dict, snapshot: dict, state: Any) -> dict | None
         if slide_id is None:
             return None
         result["slide_id"] = slide_id
+        if out.get("slide_id") is None:
+            # Only a position was given: the compiler re-checks it against the
+            # post-move numbering when the same bundle reorders (KRI-818).
+            result["slide_positional_index"] = out["slide_index"]
     return result
 
 

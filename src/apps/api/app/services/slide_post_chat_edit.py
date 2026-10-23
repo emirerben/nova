@@ -526,6 +526,15 @@ def _refuse_renumbering_guesses(
         if name == "add_text":
             sid, start, end = op.get("slide_id"), op.get("start_s"), op.get("end_s")
             numeric = isinstance(start, (int, float)) and isinstance(end, (int, float))
+            index = op.get("slide_positional_index")
+            if sid and moved and isinstance(index, int):
+                # A target given only by number: its before and after readings must
+                # name the same photo, exactly like a number-only cover change.
+                if index >= len(new_order) or new_order[index] != sid:
+                    raise KriaEditorOpError(
+                        f'Which slide should "{op.get("text")}" go on? The slides move in '
+                        "this same edit, so I didn't guess"
+                    )
             if sid and numeric:
                 if not (
                     same(windows.get(sid), float(start), float(end))
@@ -666,6 +675,11 @@ def compile_slide_post_ops(
                 else:
                     source = base.label_source if base else None
                     edited = bool(base.edited if base else False) or row_id in edited_ids
+            elif base is not None and base.role == "label":
+                # A second label on one slide (e.g. a duplicated location) has its own
+                # kria- bar id; an untouched one keeps its role and source (KRI-818).
+                role, source = "label", base.label_source
+                edited = bool(base.edited)
             else:
                 role, source = "text", None
                 edited = bool(base.edited) if base else False
