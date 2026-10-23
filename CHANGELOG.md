@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.62.0] - 2026-10-23
+
+### Fixed
+- fix(worker): retry stopping workers and protect active creation (KRI-798) (#1754) <!-- release-pr: 1754 -->
+
 ## [0.81.61.0] - 2026-10-23
 
 ### Fixed
