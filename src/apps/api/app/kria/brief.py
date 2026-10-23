@@ -1459,12 +1459,19 @@ def persist_brief_version_sync(
     thread_id: uuid.UUID,
     turn_id: uuid.UUID,
     updates: Iterable[BriefUpdate],
+    record_empty: bool = False,
 ) -> CreativeBrief | None:
     """Append one version for ``turn_id``; idempotent per turn.
 
     Caller holds the thread row lock (the turn-completion transactions do), which
     serializes version numbering. Returns the effective brief, or None when there
     is neither a prior brief nor a new update (nothing to record).
+
+    ``record_empty`` (KRI-814): the extraction step typed that this turn states no
+    requirement and delegates every choice. With no prior brief, an empty version is
+    written as the evidence that the request was read, so approval readiness does not
+    mistake it for a missing extraction. A prior brief is returned unchanged: its live
+    requirements stay in force.
     """
     updates = list(updates)
     existing = db.execute(
@@ -1476,7 +1483,7 @@ def persist_brief_version_sync(
     if existing is not None:
         return _brief_from_row(existing)
     prior = load_latest_brief_sync(db, thread_id)
-    if not updates:
+    if not updates and not (record_empty and prior is None):
         return prior
     merged = apply_updates(prior, updates, source_turn_id=str(turn_id))
     next_version = (

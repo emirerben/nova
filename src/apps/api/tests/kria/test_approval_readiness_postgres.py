@@ -64,6 +64,9 @@ async def prepare(
     updates_override=None,
     phone=False,
     no_title=False,
+    clips=1,
+    output_extra=None,
+    summary=None,
 ):
     user_id, thread_id, _ = seed or _seed_runtime_project()
     with sync_session() as db:
@@ -86,6 +89,19 @@ async def prepare(
                 "analysis": {"summary": "A stadium flag", "has_speech": False},
             }
         ]
+        if clips > 1:
+            # KRI-814: the Troya run had 5 and 28 ready clips.
+            item.clip_gcs_paths = [f"users/test/troya-{n}.mp4" for n in range(1, clips + 1)]
+            item.clip_assignments = [
+                {
+                    "media_id": f"clip-{n}",
+                    "gcs_path": f"users/test/troya-{n}.mp4",
+                    "kind": "video",
+                    "duration_s": 8,
+                    "analysis": {"summary": f"Troya ruins, shot {n}", "has_speech": False},
+                }
+                for n in range(1, clips + 1)
+            ]
         if phone:
             row = item.clip_assignments[0]
             item.clip_assignments = [
@@ -144,7 +160,7 @@ async def prepare(
     output = {
         "action": {
             "kind": "propose_strategy",
-            "summary": "A six-second Gameday edit.",
+            "summary": summary or "A six-second Gameday edit.",
             "strategy": {
                 "direction": "fast_montage" if phone else "guided_story",
                 "edit_format": "montage" if phone else "day_vlog",
@@ -152,12 +168,13 @@ async def prepare(
                 "pacing": "balanced",
                 "render_program": "guided",
                 "opening_title": "Gameday.",
-                "target_duration_s": 6,
-                "selected_media_ids": ["clip-1"],
+                "target_duration_s": 6 if clips == 1 else 30,
+                "selected_media_ids": [f"clip-{n}" for n in range(1, clips + 1)],
                 "rationale": "Use the stadium flag.",
             },
         },
         "brief_updates": updates,
+        **(output_extra or {}),
     }
     if no_title:
         output["action"]["strategy"].pop("opening_title")
