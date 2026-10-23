@@ -51,6 +51,7 @@ from app.services.kria_editor_ops import (
     _CLIP_LABEL_MEDIA_PREFIX,
     KriaEditorOpError,
     _safe_slot,
+    _seen_text,
     _text_appearance_enabled,
     _text_appearance_inventory,
     apply_text_lane_ops,
@@ -119,6 +120,33 @@ def _slide_facts(asset: Any) -> list[dict[str, Any]]:
         return _prompt_facts(slide_asset_facts(asset))
     except Exception:  # noqa: BLE001 - facts are best-effort context, never a failure
         return []
+
+
+# Analysis sources whose `subject`/`description` were never seen by a model: the
+# keyless filename stub (`autoplace._stub_analysis`), the extracted-frame placeholder
+# (`autoplace._materialize_extracted_frames`) and probe-only metadata.
+_NON_VISION_SOURCES = frozenset({"stub", "extracted_frame", "probe_only"})
+_NON_VISION_FIELDS = ("subject", "description", "best_moments")
+
+
+def _slide_seen(asset: Any) -> str:
+    """What a ready slide's photo/video shows (KRI-817), or "" when nothing was seen.
+
+    The same sanitized, capped projection the video copilot uses (``_seen_text``), so a
+    legacy ``description``/``subject`` counts like an ``understanding`` block. Not gated
+    on CLIP_FACTS, like the video path. Placeholder text a model never produced is
+    dropped first, so a filename can't pass as visual evidence.
+    """
+    try:
+        analysis = getattr(asset, "analysis", None)
+        if not isinstance(analysis, dict) or not analysis:
+            return ""
+        if analysis.get("source") in _NON_VISION_SOURCES:
+            analysis = {k: v for k, v in analysis.items() if k not in _NON_VISION_FIELDS}
+        kind = "image" if getattr(asset, "kind", None) == "image" else "video"
+        return _seen_text(analysis, kind=kind)
+    except Exception:  # noqa: BLE001 - context is best-effort, never a failure
+        return ""
 
 
 def _prompt_facts(facts: Any) -> list[dict[str, Any]]:
@@ -265,8 +293,10 @@ def build_slide_post_snapshot(
     slots: list[dict[str, Any]] = []
     for index, row in enumerate(_slide_rows(draft)):
         slide = draft.slides[index]
-        facts = _slide_facts(assets_by_id.get(slide.asset_id)) if facts_on else []
-        slot = _safe_slot(row, index, facts=facts or None)
+        asset = assets_by_id.get(slide.asset_id)
+        facts = _slide_facts(asset) if facts_on else []
+        # Keyed by the stable slide id (`media_id`), so it follows the photo on reorder.
+        slot = _safe_slot(row, index, facts=facts or None, seen=_slide_seen(asset) or None)
         slot["is_cover"] = index == draft.cover_index
         if row.get("has_drawing"):
             slot["has_drawing"] = True

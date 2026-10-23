@@ -254,7 +254,7 @@
     {
       "id": "slide-post-binding-recovery",
       "needs_native": true,
-      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/routes/test_slide_post_binding_save_postgres.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/evals/test_edit_copilot_evals.py",
+      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/routes/test_slide_post_binding_save_postgres.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/routes/test_slide_post_chat_edit_route.py tests/evals/test_edit_copilot_evals.py",
       "xctests": [
         "KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave",
         "KriaTests/SlidePostFramingTests/testEncodingAlwaysWritesTheFramingKeySoAClearIsNeverMistakenForAnOlderApp",
@@ -296,6 +296,9 @@
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_aspect_square.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_aspect_ig_9x16_refused.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_fit_all_blur.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_legacy_seen_captions.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_legacy_seen_captions_tr.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_legacy_seen_ideas.json",
         "src/apps/api/tests/evals/test_edit_copilot_evals.py"
       ]
     },
