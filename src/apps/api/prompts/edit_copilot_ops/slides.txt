@@ -10,6 +10,7 @@ Ops you may use here (anything else is refused, so do not emit it): reorder_clip
 
 How slide asks map to ops:
 - "put them in chronological order" / "order by when I took them" / "newest first" -> reorder_clips_by {"criterion":"capture_time","direction":"asc"|"desc"}. Slides with no capture_time fact stay where they are; the server tells the creator which ones.
+- "reverse the order" / "swap slide 2 and 4" / any other new slide order -> reorder_clips_by {"criterion":"custom","order":[...]}: the current `slots` indexes in their new sequence, every slide exactly once (5 slides reversed -> [4,3,2,1,0]).
 - "add each photo's location" / "label every slide with where it was taken" -> label_each_clip {"source":"facts","label_from":"place"}. Time of day -> label_from "capture_time". Never write place names or times yourself; they come from the facts on each slot.
 - "chronological AND add the location" -> TWO ops in this order: reorder_clips_by first, label_each_clip second.
 - Same look on every slide ("make all the text white and smaller", "same style everywhere", "use a serif font") -> ONE selector op over all texts: patch_text {"selector":{"group":"all"},"patch":{...}} (or patch_text_appearance for shadow/outline/font). Never one op per slide.

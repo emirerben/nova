@@ -192,7 +192,7 @@ def _coerce_set_total_duration(name: str, payload: dict, snapshot: dict, state: 
     return {"target_s": target, "strategy": strategy}
 
 
-_ORDER_CRITERIA = ("capture_time",)
+_ORDER_CRITERIA = ("capture_time", "custom")
 _ORDER_DIRECTIONS = ("asc", "desc")
 
 
@@ -202,7 +202,10 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
     The order comes from the capture-time facts the SERVER put on each slot,
     never from anything the model wrote. Clips with no capture time keep their
     slot (``order_by_capture_time`` semantics) and are reported in the reply;
-    ties keep their current relative order.
+    ties keep their current relative order. ``custom`` takes the model's
+    ``order`` (current slot indexes in their new sequence) for asks no server
+    fact grounds ("reverse it", "swap 2 and 5"); it must name every clip still
+    in the edit exactly once, and removed slots keep their place.
     """
     from app.agents import edit_copilot as ec  # noqa: PLC0415
     from app.services.clip_facts import (  # noqa: PLC0415
@@ -221,6 +224,41 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
             op=name, reason="capability_unavailable", detail="there is only one clip to order"
         )
         return None
+    if criterion == "custom":
+        live = [index for index, slot in enumerate(slots) if not slot.get("removed")]
+        order = payload.get("order")
+        if (
+            not isinstance(order, list)
+            or any(isinstance(i, bool) or not isinstance(i, int) for i in order)
+            or sorted(order) != live
+        ):
+            state.invalid_value(
+                say(
+                    en="The new order has to list every clip in the edit exactly once.",
+                    tr="Yeni sıra, videodaki her klibi tam bir kez içermeli.",
+                )
+            )
+            return None
+        permutation = list(range(len(slots)))
+        for position, index in zip(live, order, strict=True):
+            permutation[position] = index
+        if permutation == list(range(len(slots))):
+            state.reorder_noop = True
+            state.reply_notes.append(
+                say(en="The clips are already in that order.", tr="Klipler zaten bu sırada.")
+            )
+            state.reject(
+                op=name,
+                reason="capability_unavailable",
+                detail="the clips are already in that order",
+            )
+            return None
+        return {
+            "criterion": criterion,
+            "direction": "asc",
+            "permutation": permutation,
+            "media_ids": [str(s.get("media_id") or "") for s in slots],
+        }
     times: dict[str, Any] = {}
     active: list[int] = []
     for index, slot in enumerate(slots):
@@ -307,7 +345,7 @@ SPECS: list[OpSpec] = [
     OpSpec(
         name="reorder_clips_by",
         required=frozenset({"criterion"}),
-        fields=frozenset({"criterion", "direction"}),
+        fields=frozenset({"criterion", "direction", "order"}),
         family=_FAMILY,
         coerce=_coerce_reorder_clips_by,
     ),
@@ -706,10 +744,14 @@ def _op_reorder_clips_by(state: Any, op: dict[str, Any]) -> None:
         raise _err("The timeline changed before this reorder could be drafted")
     if any(str(row.get("media_id") or "") != media_ids[i] for i, row in enumerate(rows)):
         raise _err("The timeline changed before this reorder could be drafted")
-    if op.get("criterion") != "capture_time":
+    criterion = op.get("criterion")
+    if criterion not in _ORDER_CRITERIA:
         raise _err("That ordering is not supported")
     state.slots[:] = [rows[i] for i in permutation]
     state.changed.add("timeline")
+    if criterion == "custom":
+        state.summary = "Reorder clips"
+        return
     state.summary = "Order clips by filming time" + (
         ", newest first" if op.get("direction") == "desc" else ""
     )
