@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.63.0] - 2026-10-23
+
+### Fixed
+- fix(ios): preserve camera-roll ideas on resume and simplify review (KRI-853) (#1772) <!-- release-pr: 1772 -->
+
 ## [0.81.62.0] - 2026-10-23
 
 ### Fixed
