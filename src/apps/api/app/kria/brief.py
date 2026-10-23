@@ -463,6 +463,29 @@ def bind_updates(
     return tuple(bound)
 
 
+def start_fresh_updates(
+    prior: CreativeBrief | None, updates: Iterable[BriefUpdate]
+) -> tuple[BriefUpdate, ...]:
+    """KRI-816: the creator asked to start fresh, so every saved requirement is withdrawn.
+
+    Driven only by the extraction step's typed ``starts_fresh`` declaration (never a word
+    match). This turn's own adds stand, and a change this turn already aimed at a saved
+    requirement keeps that target (it is not removed twice). Removals are bound to the
+    brief the prompt showed, like any other change/remove.
+    """
+    updates = tuple(updates)
+    shown = prior or CreativeBrief()
+    targeted = {update.target_requirement_id for update in updates if update.operation != "add"}
+    removals = tuple(
+        BriefUpdate(
+            operation="remove", target_requirement_id=req.id, expected_version=shown.version
+        )
+        for req in shown.live()
+        if req.id not in targeted
+    )
+    return (*removals, *updates)
+
+
 def _next_id_number(requirements: Iterable[BriefRequirement]) -> int:
     highest = 0
     for req in requirements:

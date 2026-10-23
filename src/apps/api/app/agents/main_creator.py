@@ -110,7 +110,8 @@ log = structlog.get_logger()
 # v72 (KRI-814): earlier creator lines never read into the brief are read with the current one.
 # v74 combines delegation v72 with subtitle-semantics v73, retaining all instructions.
 # v75 adds N2 fullscreen photo-then-original sequences to the complete v74 union.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v75"
+# v76 (KRI-816): a typed `starts_fresh` declaration withdraws the saved brief ("Start fresh").
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v76"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -541,6 +542,11 @@ messages, those messages were never read into the brief: treat them as part of t
 MESSAGE. Record every requirement any of them states as an `add`, and set
 `delegates_all_choices` to true only when neither they nor the current message state any
 requirement.
+Also return a top-level boolean `starts_fresh`. Set it to true ONLY when the CURRENT USER
+MESSAGE asks to start over and drop what it asked for before ("Start fresh", "start over from
+scratch", "forget my earlier instructions", "Baştan başla", "sıfırdan yap"). The server then
+withdraws every requirement in the contract, so record as an `add` each requirement the current
+message itself states, even one the contract already had. Otherwise set it to false.
 """.strip("\n")
 
 
@@ -576,6 +582,8 @@ class MainCreatorOutput(BaseModel):
     # requirement and delegates every choice. Only ever True with no `brief_updates`; the
     # server, never the strategy or summary prose, turns it into an empty brief version.
     delegates_all_choices: bool = Field(default=False, exclude_if=lambda v: not v)
+    # KRI-816: typed "start fresh": the planner withdraws every saved requirement.
+    starts_fresh: bool = Field(default=False, exclude_if=lambda v: not v)
     creative_decision: CreativeCopyDecision | None = Field(
         default=None, exclude_if=lambda v: v is None
     )
@@ -866,7 +874,11 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     input.capability_manifest,
                     strategy,
                     source_audio_stated=input.brief_enabled
-                    and _states_source_audio(data.get("brief_updates"), input.creator_request),
+                    and _states_source_audio(
+                        data.get("brief_updates"),
+                        input.creator_request,
+                        starts_fresh=data.get("starts_fresh") is True,
+                    ),
                 )
                 strategy = normalize_creator_strategy_media(
                     input.capability_manifest,
@@ -908,6 +920,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 delegates_all_choices=input.brief_enabled
                 and data.get("delegates_all_choices") is True
                 and not brief_updates,
+                starts_fresh=input.brief_enabled and data.get("starts_fresh") is True,
             )
         except ValidationError as exc:
             # Tell the retry which contract fields failed, without echoing
@@ -965,6 +978,14 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 # the rule so the retry can change course instead of repeating
                 # the same strategy blind (KRI-238).
                 self._schema_feedback = str(exc)[:300]
+                if _non_pydantic_error_class(exc) in _FORMAT_REFUSAL_CLASSES:
+                    # KRI-816 T06: name the formats that CAN render, so the retry picks
+                    # one instead of spending every attempt on the same refusal.
+                    renderable = _renderable_edit_formats(input.capability_manifest)
+                    if renderable:
+                        self._schema_feedback += (
+                            "; edit_format values that can render here: " + ", ".join(renderable)
+                        )
             raise _classed_schema_error(
                 f"main_creator: invalid output: {exc}", _non_pydantic_error_class(exc)
             ) from exc
@@ -1311,32 +1332,49 @@ def _schema_error_class(exc: ValidationError) -> str:
 
 # A saved audio requirement as the server renders it (`brief._render_requirement`):
 # `- [rN] [audio/<scope>] <text> facts={...}`, facts last with sorted keys.
-_SAVED_AUDIO_PATTERN = r"^- \[r\d+\] \[audio/[^\]]+\] .* facts=\{(?P<facts>[^{}]*)\}$"
+_SAVED_AUDIO_PATTERN = r"^- \[(?P<id>r\d+)\] \[audio/[^\]]+\] .* facts=\{(?P<facts>[^{}]*)\}$"
 _SAVED_AUDIO_LINE = re.compile(_SAVED_AUDIO_PATTERN)  # kri667: server-rendered typed facts
+_AUDIO_INTENT_FACT = re.compile(r"(?:^|; )audio_intent: (?P<intent>[^;]+)")  # kri667: typed facts
 
 
-def _states_source_audio(brief_updates: object, creator_request: str = "") -> bool:
+def _states_source_audio(
+    brief_updates: object, creator_request: str = "", *, starts_fresh: bool = False
+) -> bool:
     """The creator's brief records "keep the original camera sound" (a typed fact).
 
-    This turn's own audio updates win; with none, the saved brief's live audio
-    requirement still holds (KRI-816 T06 already had it as r4, so the model had no
-    reason to re-emit it).
+    This turn's own audio updates win, including a change or removal that targets a
+    saved audio requirement by id (kind may be omitted, KRI-805). With none, the saved
+    brief's live audio requirements still hold (KRI-816 T06 already had it as r4), unless
+    this turn starts fresh or a saved audio requirement asks for another audio intent.
     """
     try:
         updates = parse_brief_updates(brief_updates)
     except Exception:  # noqa: BLE001 - an unreadable batch is refused by the parse below
         return False
-    audio = [update for update in updates if update.kind == "audio"]
-    if audio:
-        return any(update.facts.get("audio_intent") == "source_unchanged" for update in audio)
-    saved = [
-        match.group("facts")
+    saved: dict[str, str] = {
+        match.group("id"): match.group("facts")
         for line in creator_request.splitlines()
         if (match := _SAVED_AUDIO_LINE.match(line.strip()))
+    }
+    audio = [
+        update
+        for update in updates
+        if update.kind == "audio"
+        or (update.operation != "add" and update.target_requirement_id in saved)
     ]
-    return bool(saved) and all(
-        "audio_intent: source_unchanged" in facts.split("; ") for facts in saved
-    )
+    if audio:
+        return any(
+            update.operation != "remove" and update.facts.get("audio_intent") == "source_unchanged"
+            for update in audio
+        )
+    if starts_fresh:
+        return False
+    intents = {
+        match.group("intent").strip()
+        for facts in saved.values()
+        if (match := _AUDIO_INTENT_FACT.search(facts))
+    }
+    return intents == {"source_unchanged"}
 
 
 def _repair_unrecorded_voiceover(manifest, strategy, *, source_audio_stated: bool):
@@ -1358,6 +1396,31 @@ def _repair_unrecorded_voiceover(manifest, strategy, *, source_audio_stated: boo
         log.info("main_creator_unrecorded_voiceover_repaired")
         strategy = strategy.model_copy(update={"audio_strategy": "original_audio"})
     return strategy
+
+
+_FORMAT_REFUSAL_CLASSES = frozenset(
+    {"policy_edit_format_unavailable", "policy_phone_format_unavailable"}
+)
+
+
+def _renderable_edit_formats(manifest: ResolvedCreatorManifest) -> list[str]:
+    """Edit formats this manifest can render now (the iPhone's when it is a phone edit)."""
+    capabilities = manifest.capabilities
+    prefix = (
+        "phone_format:"
+        if any(name.startswith("phone_format:") for name in capabilities)
+        else "edit_format:"
+    )
+    return sorted(
+        name.removeprefix(prefix)
+        for name, capability in capabilities.items()
+        if name.startswith(prefix)
+        and capability.available
+        and (
+            capabilities.get(f"edit_format:{name.removeprefix(prefix)}") is None
+            or capabilities[f"edit_format:{name.removeprefix(prefix)}"].available
+        )
+    )
 
 
 # Closed, value-free tags for server policy refusals (KRI-816): the old catch-all

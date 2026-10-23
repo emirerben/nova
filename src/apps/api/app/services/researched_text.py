@@ -486,6 +486,11 @@ def research_windows(snapshot: dict) -> list[dict]:
     slots = [slot for slot in snapshot.get("slots") or [] if not slot.get("removed")]
     if not slots:
         raise ResearchUnavailable("There is no footage to explain")
+    if snapshot.get("spoken_edit") and not _speech_lines(snapshot):
+        # Footage windows would cover the recorded words, so give the precise limit.
+        raise ResearchUnavailable(
+            "This edit has no speech timing, so an explanation cannot be placed in a pause"
+        )
     opener_end = _opening_end(snapshot, slots)
     candidates: list[tuple] = []
     if _speech_lines(snapshot):

@@ -430,6 +430,23 @@ def test_cues_on_a_non_talking_edit_keep_footage_windows_and_allow_overlap():
     assert all("after_spoken_line" not in row for row in windows)
 
 
+def test_a_talking_edit_without_speech_timing_gives_a_precise_limit_not_footage_windows():
+    from app.services.researched_text import ResearchUnavailable, research_windows
+
+    snapshot = {
+        "spoken_edit": True,
+        "slots": [
+            {"media_id": "m0", "output_start_s": 0.0, "output_end_s": 9.0, "seen": {"text": "a"}}
+        ],
+        "text_bars": [],
+        "captions": {"cues": []},
+        "total_duration_s": 9.0,
+    }
+
+    with pytest.raises(ResearchUnavailable, match="no speech timing"):
+        research_windows(snapshot)
+
+
 def test_t05_creator_text_inside_the_pause_is_protected_not_replaced(monkeypatch):
     job, assignments = talking_job(monkeypatch)
     snapshot = _snapshot(job, assignments)

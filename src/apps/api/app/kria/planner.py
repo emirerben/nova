@@ -68,6 +68,7 @@ from app.kria.brief import (
     render_unrecorded_request,
     requested_media,
     route_requirements,
+    start_fresh_updates,
     wants_clip_descriptions,
 )
 from app.kria.brief_checks import spoken_text_literals, whole_line_quotes
@@ -699,6 +700,17 @@ class PlannedKriaTurn:
     # "go ahead". Server-only: never reaches `KriaTurnPlan`, which forbids extra fields.
     continuable: bool = False
     prepared_collection_story: dict | None = None
+
+
+def _fresh_if_declared(prior, updates, outputs):  # noqa: ANN001, ANN202
+    """KRI-816: an extraction batch typed `starts_fresh`, so the saved brief is withdrawn.
+
+    The brief extractor expands its own declaration in parse; this covers the Main
+    Creator's brief updates when no separate extraction ran.
+    """
+    if any(getattr(output, "starts_fresh", False) is True for output in outputs):
+        return start_fresh_updates(prior, updates)
+    return tuple(updates)
 
 
 def _declares_delegation(outputs, updates) -> bool:  # noqa: ANN001
@@ -4986,8 +4998,12 @@ async def _plan_live_turn(
         for update in (
             pre_extracted_updates
             if extraction_complete
-            else bind_updates(
-                prior_brief, (update for result in outputs for update in result.brief_updates)
+            else _fresh_if_declared(
+                prior_brief,
+                bind_updates(
+                    prior_brief, (update for result in outputs for update in result.brief_updates)
+                ),
+                outputs,
             )
         )
     }
