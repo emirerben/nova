@@ -7077,6 +7077,10 @@ def _run_phone_subtitled_job(
     )
     spoken_text_rows: list[dict] = []
     spoken_text_receipt: dict[str, Any] | None = None
+    # KRI-827: what the creator asked to keep text off (None without such an ask).
+    protected_plan: Any = None
+    protected_caption_look: Any = None
+    protected_caption_receipt: dict[str, Any] | None = None
     # The take's words on the timeline the recipe plays, for `spoken_text_asks`.
     timeline_words: list[Any] = []
 
@@ -7636,6 +7640,23 @@ def _run_phone_subtitled_job(
                 if cut_plan is not None and cut_plan.removed
                 else [(0.0, float(binding.original.duration_s))]
             )
+            # KRI-827: "no text on her face or on the plate" -- the creator's marked
+            # object, tracked over the speaker's kept span; captions move off it first so
+            # every other text is placed against where the captions really are.
+            protected_plan, protected_caption_look, protected_caption_receipt = (
+                _phone_protected_plan(
+                    snapshot,
+                    binding=binding,
+                    clip_path=clip_path,
+                    keep_segments=speaker_keep_segments,
+                    landscape_fit=framed_fit,
+                    position_x=speaker_position_x or 0.0,
+                    cues=cues,
+                    caption_style=caption_style,
+                )
+            )
+            if protected_caption_look is not None:
+                framed_compile["caption_look"] = protected_caption_look
             if talking_title_text:
                 title_rows, title_receipt = _phone_talking_title_rows(
                     talking_title_text,
@@ -7646,6 +7667,7 @@ def _run_phone_subtitled_job(
                     keep_segments=speaker_keep_segments,
                     landscape_fit=framed_fit,
                     position_x=speaker_position_x or 0.0,
+                    protected=protected_plan,
                 )
 
             # KRI-719: the whole main track -- the first speaker's (cut) span
@@ -7666,6 +7688,8 @@ def _run_phone_subtitled_job(
                     keep_segments=speaker_keep_segments,
                     landscape_fit=framed_fit,
                     position_x=speaker_position_x or 0.0,
+                    protected=protected_plan,
+                    caption_look=protected_caption_look,
                 )
 
             def _closing_rows_for(photo_card: Any) -> tuple[list[dict], dict[str, Any] | None]:
@@ -7703,6 +7727,7 @@ def _run_phone_subtitled_job(
                     keep_segments=speaker_keep_segments,
                     landscape_fit=framed_fit,
                     position_x=speaker_position_x or 0.0,
+                    protected=protected_plan,
                 )
 
             def _schedule_talking_footage(blocked: list[tuple[float, float]]) -> tuple:
@@ -8451,6 +8476,40 @@ def _run_phone_subtitled_job(
             new_entry[SPOKEN_TEXT_FIELD] = spoken_text_receipt
         if closing_text_rows:
             new_entry["closing_title_placement"] = closing_text_receipt
+        if protected_caption_look is not None:
+            # KRI-827: the captions moved off the marked object; the saved geometry makes
+            # every later compile of this variant (the editor's Save/reopen,
+            # `caption_look_from_variant`) draw them in the same place.
+            caption_style_map = dict(new_entry.get("caption_editor_style") or {})
+            caption_style_map["position_y_frac"] = protected_caption_look.position_y_frac
+            new_entry["caption_editor_style"] = caption_style_map
+        if protected_plan is not None:
+            # KRI-827: per target, whether every text stayed off it (the brief receipt's
+            # evidence), with each mark's provenance (source, generation, seed) so a later
+            # crop / trim / swap re-places instead of trusting these numbers.
+            from app.kria.protected_targets import PROTECTED_TEXT_FIELD  # noqa: PLC0415
+            from app.pipeline.phone_protected_text import (  # noqa: PLC0415
+                protected_text_receipt,
+            )
+
+            new_entry[PROTECTED_TEXT_FIELD] = {
+                **protected_text_receipt(
+                    protected_plan,
+                    {
+                        "title": title_receipt if title_rows else None,
+                        "closing": closing_text_receipt if closing_text_rows else None,
+                        **{
+                            f"spoken:{row.get('requirement_id')}": row.get("placement")
+                            for row in (spoken_text_receipt or {}).get("rows", [])
+                            if row.get("status") == "placed"
+                        },
+                        "captions": protected_caption_receipt,
+                    },
+                ),
+                "keep_segments": [list(span) for span in speaker_keep_segments],
+                "speaker_position_x": speaker_position_x,
+                "landscape_fit": framed_fit,
+            }
         if talking_multi and talking_roles is not None:
             new_entry[PHONE_TALKING_MULTI_CLIP_FIELD] = {
                 "version": 1,
@@ -8703,6 +8762,86 @@ def _phone_face_box_mapper(binding: Any, position_x: float) -> Any:
     )
 
 
+def _protected_placement_kwargs(protected: Any) -> dict[str, Any]:
+    """KRI-827: the hard limits a protected plan adds to a text row's placement (none
+    without a plan, so the placement call is exactly what it was)."""
+    if protected is None or not protected.objects:
+        return {}
+    return {"objects": protected.objects, "protect_all_faces": protected.protect_all_faces}
+
+
+def _phone_protected_plan(
+    snapshot: dict,
+    *,
+    binding: Any,
+    clip_path: str | None,
+    keep_segments: list[tuple[float, float]],
+    landscape_fit: str,
+    position_x: float,
+    cues: list[dict],
+    caption_style: str,
+) -> tuple[Any, Any, dict[str, Any] | None]:
+    """KRI-827: what the creator asked to keep text off ("no text on her face or on the
+    plate"), tracked over the speaker's kept span, and the caption look that keeps the
+    caption lines off it. ``(None, None, None)`` without such an ask: nothing runs and the
+    render is unchanged."""
+    from app.pipeline import phone_subtitled_title as title_mod  # noqa: PLC0415
+    from app.pipeline.phone_protected_text import (  # noqa: PLC0415
+        choose_caption_look,
+        resolve_protected_plan,
+    )
+    from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+
+    kept = [(float(a), float(b)) for a, b in keep_segments if float(b) > float(a)]
+    if not kept:
+        return None, None, None
+    plan = resolve_protected_plan(
+        snapshot.get("creator_brief_binding"),
+        media_id=binding.media_id,
+        generation=getattr(binding, "generation", None),
+        clip_path=clip_path,
+        source_span=(kept[0][0], kept[-1][1]),
+    )
+    if plan is None:
+        return None, None, None
+    caption_receipt: dict[str, Any] | None = None
+    look = None
+    if plan.objects:
+        display_width, display_height = display_dims(binding.original)
+        scale = fit_transform(display_width, display_height, _STORY_CANVAS, landscape_fit).scale
+        timeline_s = sum(end - start for start, end in kept)
+        try:
+            faces, _ = title_mod._face_boxes(
+                clip_path,
+                window=(0.0, timeline_s),
+                keep_segments=kept,
+                display_width=display_width,
+                display_height=display_height,
+                canvas=_STORY_CANVAS,
+                scale=scale,
+                sample=title_mod.sample_face_regions,
+                position_x=position_x,
+                all_faces=plan.protect_all_faces,
+            )
+            look, caption_receipt = choose_caption_look(
+                cues,
+                caption_style=caption_style,
+                canvas=_STORY_CANVAS,
+                objects=plan.objects,
+                faces=faces,
+                keep_segments=kept,
+                display_width=display_width,
+                display_height=display_height,
+                scale=scale,
+                position_x=position_x,
+            )
+        except Exception as exc:  # noqa: BLE001 - captions stay put; the receipt says so
+            log.warning("phone_protected_text.captions_failed", error=str(exc)[:200])
+            caption_receipt = {"status": "error", "object_collision": True, "error": str(exc)[:200]}
+    return plan, look, caption_receipt
+
+
 def _phone_talking_title_rows(
     opening_title: str,
     *,
@@ -8713,6 +8852,7 @@ def _phone_talking_title_rows(
     keep_segments: list[tuple[float, float]],
     landscape_fit: str,
     position_x: float = 0.0,
+    protected: Any = None,
 ) -> tuple[list[dict], dict[str, Any] | None]:
     """The phone Talking edit's opening title row (KRI-467), placed off the
     speaker's face, plus its placement receipt; ``([], None)`` when the title
@@ -8747,6 +8887,7 @@ def _phone_talking_title_rows(
         canvas=_STORY_CANVAS,
         scale=fit_transform(display_width, display_height, _STORY_CANVAS, landscape_fit).scale,
         position_x=position_x,
+        **_protected_placement_kwargs(protected),
     )
     try:
         record_pipeline_event("phone", "subtitled_title_placement", receipt)
@@ -8765,6 +8906,7 @@ def _phone_talking_closing_rows(
     keep_segments: list[tuple[float, float]],
     landscape_fit: str,
     position_x: float = 0.0,
+    protected: Any = None,
 ) -> tuple[list[dict], dict[str, Any] | None]:
     """The phone Talking edit's closing text row (KRI-514) plus its placement
     receipt; ``([], None)`` when the text is empty or the clip has no time for
@@ -8806,6 +8948,7 @@ def _phone_talking_closing_rows(
             canvas=_STORY_CANVAS,
             scale=fit_transform(display_width, display_height, _STORY_CANVAS, landscape_fit).scale,
             position_x=position_x,
+            **_protected_placement_kwargs(protected),
         )
     try:
         record_pipeline_event("phone", "subtitled_closing_title_placement", receipt)
@@ -8895,6 +9038,8 @@ def _phone_talking_spoken_text_rows(
     keep_segments: list[tuple[float, float]],
     landscape_fit: str,
     position_x: float = 0.0,
+    protected: Any = None,
+    caption_look: Any = None,
 ) -> tuple[list[dict], dict[str, Any]]:
     """KRI-707: one text row per ``asks`` entry the take says, from the word's start
     (cut-timeline ``words``), placed off the speaker's face and clear of the
@@ -8922,6 +9067,7 @@ def _phone_talking_spoken_text_rows(
             scale=scale,
             position_x=position_x,
             avoid=avoid,
+            **_protected_placement_kwargs(protected),
         )
 
     rows, receipt = spoken_text_rows(
@@ -8933,6 +9079,7 @@ def _phone_talking_spoken_text_rows(
         canvas=_STORY_CANVAS,
         place=place,
         shown_rows=shown_rows,
+        caption_look=caption_look,
     )
     try:
         record_pipeline_event("phone", "subtitled_spoken_text", receipt)

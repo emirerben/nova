@@ -112,6 +112,17 @@ class SuggestionTapIn(_StrictBody):
     chip_id: str = Field(min_length=1, max_length=64)
 
 
+class ProtectedRegionIn(_StrictBody):
+    """KRI-827: the creator marks what to keep text off ("the plate"): a box on one frame of
+    one of their clips, normalized to the upright source frame. The server checks the clip
+    is this thread's and stamps its generation; old clients omit it."""
+
+    label: str = Field(min_length=1, max_length=60)
+    media_id: str = Field(min_length=1, max_length=160)
+    source_t_s: float = Field(ge=0.0, le=3600.0)
+    box: tuple[float, float, float, float]
+
+
 class SubmitTurnBody(_StrictBody):
     message: str = Field(min_length=1, max_length=4000)
     client_event_id: str = Field(min_length=1, max_length=160)
@@ -135,6 +146,8 @@ class SubmitTurnBody(_StrictBody):
     scope: list[str] | None = Field(default=None, max_length=32)
     # Deterministic edits (no model call); require `scope`, each covered by it.
     manual_edits: list[ManualEdit] | None = Field(default=None, max_length=12)
+    # KRI-827: the creator's mark of an object to keep text off; old clients omit it.
+    protected_region: ProtectedRegionIn | None = None
 
     @model_validator(mode="after")
     def _manual_edits_well_formed(self) -> SubmitTurnBody:

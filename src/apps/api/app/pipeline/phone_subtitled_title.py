@@ -49,6 +49,7 @@ from typing import Any, Protocol
 import structlog
 
 from app.pipeline.narrated_title import TITLE_Y_FRAC, narrated_title_placement
+from app.pipeline.object_track import ObjectTrack, object_canvas_boxes, object_collision
 from app.pipeline.phone_subtitled_lanes import CAPTION_BAND_TOP_FRAC
 from app.pipeline.render_geometry import (
     NormalizedBox,
@@ -340,8 +341,13 @@ def _face_boxes(
     scale: float,
     sample: FaceSampler,
     position_x: float = 0.0,
+    all_faces: bool = False,
 ) -> tuple[list[NormalizedBox], dict[str, Any]]:
     """The speaker's face over ``window`` (cut-timeline seconds), on the canvas.
+
+    ``all_faces`` (KRI-827, only when the creator named a face to keep clear) protects
+    every detected face, not only the dominant cluster: "her face" in a two-person take
+    may not be the biggest one.
 
     Returns the protected boxes and a receipt. Fail-safe: when the sampler
     did not confirm the frame (no clip, error, timeout, too few decoded
@@ -391,6 +397,10 @@ def _face_boxes(
         )
         is not None
     ]
+    if mapped and all_faces:
+        receipt["faces"] = "detected"
+        receipt["face_boxes"] = len(mapped)
+        return mapped, receipt
     if mapped:
         band = _union_box(_dominant_face_cluster(mapped))
         receipt["faces"] = "detected"
@@ -415,6 +425,8 @@ def place_talking_title(
     sample: FaceSampler | None = None,
     position_x: float = 0.0,
     avoid: Sequence[NormalizedBox] = (),
+    objects: Sequence[ObjectTrack] = (),
+    protect_all_faces: bool = False,
 ) -> tuple[dict, dict[str, Any]]:
     """``row`` moved off the speaker's face (and clear of the captions), plus
     a receipt for the job debug view. Never raises: anything that goes wrong
@@ -425,8 +437,31 @@ def place_talking_title(
 
     ``avoid`` (KRI-707) is other text on screen during the row (caption lines,
     the title): kept clear too when a spot clears both, else the face wins and
-    the receipt's ``text_overlap`` says the row touches that text."""
+    the receipt's ``text_overlap`` says the row touches that text.
+
+    ``objects`` (KRI-827) are the tracks of what the creator marked to keep text off ("no
+    text on the plate"). With any, the face AND every object are hard limits for the
+    row's whole window (`place_protected_title`): the row moves, then shrinks, and only
+    when nothing clears them is it left at the least-covering spot with
+    ``object_collision`` set -- a face never wins over the object. Without any, the
+    placement is exactly what it was. ``protect_all_faces`` keeps every detected face
+    clear, not only the dominant one (the creator named "her face")."""
     default_y = float(row.get("y_frac") or 0.15)
+    if objects:
+        return place_protected_title(
+            row,
+            clip_path=clip_path,
+            keep_segments=keep_segments,
+            display_width=display_width,
+            display_height=display_height,
+            canvas=canvas,
+            scale=scale,
+            sample=sample,
+            position_x=position_x,
+            avoid=avoid,
+            objects=objects,
+            protect_all_faces=protect_all_faces,
+        )
     try:
         faces, receipt = _face_boxes(
             clip_path,
@@ -455,6 +490,193 @@ def place_talking_title(
     placed = dict(row)
     placed["y_frac"] = round(chosen, _Y_FRAC_DECIMALS)
     return placed, {**receipt, **decision, "default_y_frac": default_y}
+
+
+# KRI-827: with a protected object the title may use any row in the band (every 0.02 of
+# the canvas), and then shrinks in these steps before admitting a collision.
+_PROTECTED_SCAN_Y = tuple(round(0.08 + 0.02 * index, 2) for index in range(40))
+_PROTECTED_SHRINK = (1.0, 0.85, 0.72, 0.6)
+
+
+def _object_boxes_for(
+    objects: Sequence[ObjectTrack],
+    *,
+    window: tuple[float, float],
+    keep_segments: Sequence[tuple[float, float]],
+    display_width: float,
+    display_height: float,
+    canvas: _Canvas,
+    scale: float,
+    position_x: float,
+) -> tuple[list[NormalizedBox], list[dict[str, Any]]]:
+    boxes: list[NormalizedBox] = []
+    receipts: list[dict[str, Any]] = []
+    for track in objects:
+        found, receipt = object_canvas_boxes(
+            track,
+            window=window,
+            keep_segments=keep_segments,
+            display_width=display_width,
+            display_height=display_height,
+            canvas=canvas,
+            scale=scale,
+            position_x=position_x,
+        )
+        boxes.extend(found)
+        receipts.append({**receipt, "track_status": track.status})
+    return boxes, receipts
+
+
+def choose_protected_y_frac(
+    probe_box: NormalizedBox,
+    default_y: float,
+    faces: Sequence[NormalizedBox],
+    objects: Sequence[NormalizedBox],
+    *,
+    caption_top_frac: float = CAPTION_BAND_TOP_FRAC,
+    avoid: Sequence[NormalizedBox] = (),
+) -> tuple[float, dict[str, Any]] | None:
+    """The first spot clear of every face and object (and, when one exists, of ``avoid``
+    text), or ``None`` when none is. Faces and objects are never traded for each other."""
+    candidates: list[tuple[float, float]] = []
+    for value in (default_y, *_FALLBACK_Y_FRACS, *_PROTECTED_SCAN_Y):
+        if all(abs(value - existing) > 0.005 for existing, _ in candidates):
+            candidates.append((value, caption_top_frac))
+    below = _below_face_y_frac(probe_box, faces)
+    if below is not None:
+        candidates.append((below, _BELOW_FACE_BOTTOM_MAX_FRAC))
+    for keep_text_clear in (True, False) if avoid else (True,):
+        for y_frac, bottom_limit in candidates:
+            box = _translate_centered_box_to_y(probe_box, y_frac)
+            if box.top < _TOP_MARGIN_FRAC - 1e-6 or box.bottom > bottom_limit + 1e-6:
+                continue
+            face = max((box.coverage_by(f) for f in faces), default=0.0)
+            obj = max((object_collision(box, o) for o in objects), default=0.0)
+            text = max((box.coverage_by(t) for t in avoid), default=0.0)
+            if face > _MAX_FACE_COVERAGE or obj > _MAX_FACE_COVERAGE:
+                continue
+            if keep_text_clear and text > _MAX_FACE_COVERAGE:
+                continue
+            return y_frac, {
+                "status": "preset" if abs(y_frac - default_y) < 1e-6 else "moved",
+                "chosen_y_frac": y_frac,
+                "coverage": round(face, 5),
+                "object_coverage": round(obj, 5),
+                "text_overlap": text > _MAX_FACE_COVERAGE,
+            }
+    return None
+
+
+def place_protected_title(
+    row: dict,
+    *,
+    clip_path: str | None,
+    keep_segments: Sequence[tuple[float, float]],
+    display_width: float,
+    display_height: float,
+    canvas: _Canvas,
+    objects: Sequence[ObjectTrack],
+    scale: float = 1.0,
+    sample: FaceSampler | None = None,
+    position_x: float = 0.0,
+    avoid: Sequence[NormalizedBox] = (),
+    protect_all_faces: bool = False,
+) -> tuple[dict, dict[str, Any]]:
+    """KRI-827: ``row`` kept off every face and every marked object for its whole window.
+
+    Ladder: the preset spot, the fallback rows, any row in the band, the row just under
+    the face -- then the same at smaller sizes (`_PROTECTED_SHRINK`). Only when nothing
+    clears them does the row stay at the spot covering the least object/face, and the
+    receipt says ``object_collision: true``. ``objects_verified`` is False whenever any
+    object sample was inferred or unknown (lost by the tracker, a timeout): the placement
+    then kept clear of where the object probably was, never claiming it saw it."""
+    default_y = float(row.get("y_frac") or 0.15)
+    window = (float(row["start_s"]), float(row["end_s"]))
+    try:
+        faces, receipt = _face_boxes(
+            clip_path,
+            window=window,
+            keep_segments=keep_segments,
+            display_width=display_width,
+            display_height=display_height,
+            canvas=canvas,
+            scale=scale,
+            sample=sample or sample_face_regions,
+            position_x=position_x,
+            all_faces=protect_all_faces,
+        )
+        object_boxes, object_receipts = _object_boxes_for(
+            objects,
+            window=window,
+            keep_segments=keep_segments,
+            display_width=display_width,
+            display_height=display_height,
+            canvas=canvas,
+            scale=scale,
+            position_x=position_x,
+        )
+        verified = bool(object_receipts) and all(
+            r["status"] == "seen" and r["track_status"] == "tracked" for r in object_receipts
+        )
+        base_size = row.get("size_px")
+        best: tuple[float, float, float, dict] | None = None
+        for factor in _PROTECTED_SHRINK if base_size else (1.0,):
+            trial = dict(row)
+            if base_size and factor != 1.0:
+                trial["size_px"] = max(1, round(float(base_size) * factor))
+            probe = _translate_centered_box_to_y(
+                _measure_title_box(trial, canvas=canvas), default_y
+            )
+            chosen = choose_protected_y_frac(probe, default_y, faces, object_boxes, avoid=avoid)
+            if chosen is not None:
+                y_frac, decision = chosen
+                placed = dict(trial)
+                placed["y_frac"] = round(y_frac, _Y_FRAC_DECIMALS)
+                if factor != 1.0:
+                    decision = {**decision, "status": "shrunk", "size_factor": factor}
+                return placed, {
+                    **receipt,
+                    **decision,
+                    "face_collision": False,
+                    "object_collision": False,
+                    "objects": object_receipts,
+                    "objects_verified": verified,
+                    "default_y_frac": default_y,
+                }
+            for y_frac in (default_y, *_FALLBACK_Y_FRACS, *_PROTECTED_SCAN_Y):
+                box = _translate_centered_box_to_y(probe, y_frac)
+                if box.top < _TOP_MARGIN_FRAC - 1e-6 or box.bottom > CAPTION_BAND_TOP_FRAC + 1e-6:
+                    continue
+                obj = max((object_collision(box, o) for o in object_boxes), default=0.0)
+                face = max((box.coverage_by(f) for f in faces), default=0.0)
+                if best is None or (obj + face, factor) < (best[1] + best[2], best[0]):
+                    best = (factor, obj, face, {"y_frac": y_frac, "size_px": trial.get("size_px")})
+    except Exception as exc:  # noqa: BLE001 - a placement nicety never blocks a render
+        log.warning("phone_subtitled_title.protected_placement_failed", error=str(exc)[:200])
+        return dict(row), {
+            "status": "error",
+            "error": str(exc)[:200],
+            "default_y_frac": default_y,
+            "object_collision": True,
+            "objects_verified": False,
+        }
+    placed = dict(row)
+    if best is not None:
+        placed["y_frac"] = round(best[3]["y_frac"], _Y_FRAC_DECIMALS)
+        if best[3]["size_px"] is not None:
+            placed["size_px"] = best[3]["size_px"]
+    return placed, {
+        **receipt,
+        "status": "best_effort",
+        "chosen_y_frac": placed.get("y_frac"),
+        "coverage": round(best[2], 5) if best else None,
+        "object_coverage": round(best[1], 5) if best else None,
+        "face_collision": bool(best and best[2] > _MAX_FACE_COVERAGE),
+        "object_collision": bool(best is None or best[1] > _MAX_FACE_COVERAGE),
+        "objects": object_receipts,
+        "objects_verified": verified,
+        "default_y_frac": default_y,
+    }
 
 
 @dataclass(frozen=True)

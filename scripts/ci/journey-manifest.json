@@ -772,6 +772,18 @@
       ]
     },
     {
+      "id": "kri-827-protected-text-regions",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_protected_object_text_e2e.py tests/tasks/test_kri827_protected_text_worker.py tests/kria/test_kri827_protected_targets.py tests/kria/test_kri827_protected_region_turn_postgres.py",
+      "paths": [
+        "src/apps/api/app/kria/protected_targets.py",
+        "src/apps/api/app/pipeline/object_track.py",
+        "src/apps/api/app/pipeline/object_track_worker.py",
+        "src/apps/api/app/pipeline/phone_protected_text.py",
+        "src/apps/api/app/cli/verify_protected_text.py"
+      ]
+    },
+    {
       "id": "kri-719-talking-multi-clip",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_phone_talking_cutaways.py tests/tasks/test_phone_subtitled_narrated_dispatch.py",

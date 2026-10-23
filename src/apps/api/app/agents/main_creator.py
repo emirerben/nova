@@ -110,7 +110,8 @@ log = structlog.get_logger()
 # v72 (KRI-814): earlier creator lines never read into the brief are read with the current one.
 # v74 combines delegation v72 with subtitle-semantics v73, retaining all instructions.
 # v75 adds N2 fullscreen photo-then-original sequences to the complete v74 union.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v75"
+# v76 (KRI-827): "no text on her face or on the plate" => `keep_text_off` facts.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v76"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -475,7 +476,11 @@ code) when they name the captions' language ("Türkçe altyazı" => "tr"), plus 
 captions, each exactly as the creator wrote it (never corrected or translated); brighten or darken
 the footage itself ("brighten the dark clips", "klipleri aydınlat") => a `style` requirement with
 {"footage_light": "brighter"} or {"footage_light": "darker"}; no edit can change the footage's
-light yet, so never say in `summary` that it is brightened or darkened.
+light yet, so never say in `summary` that it is brightened or darkened; keep text off something
+in the frame ("no text on her face or on the plate", "yüzüme ve tabağa yazı gelmesin") => a
+`style` requirement with {"keep_text_off": [{"kind": "face"}, {"kind": "object", "label":
+"plate"}]}, each object in the creator's own words, never translated (the app asks the creator to
+mark the object on a frame; never describe where it is yourself).
 Keep the source/camera/ambient audio unchanged (including noun phrases such as "original camera
 audio" or "kameranın özgün sesi") => an `audio` requirement with
 {"audio_intent": "source_unchanged"}. This fact describes ONLY unprocessed source sound.

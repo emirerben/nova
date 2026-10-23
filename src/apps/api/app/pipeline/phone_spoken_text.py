@@ -123,8 +123,10 @@ def caption_boxes(
     window: tuple[float, float],
     caption_style: str,
     canvas: _Canvas,
+    look: Any = None,
 ) -> list[NormalizedBox]:
-    """The ink of every caption line on screen during ``window``, on the canvas."""
+    """The ink of every caption line on screen during ``window``, on the canvas.
+    ``look`` is the `PhoneCaptionLook` the recipe draws (``None``: the default)."""
     from app.pipeline import text_overlay_skia as cloud  # noqa: PLC0415
     from app.pipeline.phone_captions import (  # noqa: PLC0415
         CAPTION_FONT_FAMILY,
@@ -136,7 +138,11 @@ def caption_boxes(
     if not shown:
         return []
     layers = compile_caption_layers(
-        shown, canvas_width=canvas.width, canvas_height=canvas.height, style=caption_style
+        shown,
+        canvas_width=canvas.width,
+        canvas_height=canvas.height,
+        style=caption_style,
+        look=look,
     )
     typeface = cloud._resolve_typeface_for_overlay({"font_family": CAPTION_FONT_FAMILY}).typeface
     boxes: list[NormalizedBox] = []
@@ -174,6 +180,7 @@ def spoken_text_rows(
     canvas: _Canvas,
     place: Placer,
     shown_rows: Sequence[dict] = (),
+    caption_look: Any = None,
 ) -> tuple[list[dict], dict[str, Any]]:
     """One placed row per ask the take says, plus the receipt of every ask.
 
@@ -209,7 +216,11 @@ def spoken_text_rows(
             avoid = [*_text_boxes([*shown_rows, *rows], window=window, canvas=canvas)]
             try:
                 avoid += caption_boxes(
-                    cues, window=window, caption_style=caption_style, canvas=canvas
+                    cues,
+                    window=window,
+                    caption_style=caption_style,
+                    canvas=canvas,
+                    look=caption_look,
                 )
             except Exception as exc:  # noqa: BLE001 - the captions are a nicety; the face is not
                 log.warning("phone_spoken_text.caption_boxes_failed", error=str(exc)[:200])
@@ -231,6 +242,13 @@ def spoken_text_rows(
                 # A placement that could not look ("error") is never called clear of the face.
                 "face_collision": placement.get("face_collision") is True
                 or placement.get("status") == "error",
+                # KRI-827: only with a marked object (absent otherwise, so receipts of
+                # renders that protect nothing extra are unchanged).
+                **(
+                    {"object_collision": placement["object_collision"] is True}
+                    if "object_collision" in placement
+                    else {}
+                ),
             }
         )
     return rows, {"version": 1, "rows": receipt_rows}

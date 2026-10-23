@@ -4568,7 +4568,12 @@ def _same_approval(a: BriefBinding, b: BriefBinding) -> bool:
     """Brief and frozen conflict answers are server-owned: they must not move."""
     brief_a = a.brief.model_dump(mode="json") if a.brief is not None else None
     brief_b = b.brief.model_dump(mode="json") if b.brief is not None else None
-    return a.state == b.state and brief_a == brief_b and a.choice_answers == b.choice_answers
+    return (
+        a.state == b.state
+        and brief_a == brief_b
+        and a.choice_answers == b.choice_answers
+        and a.protected_regions == b.protected_regions
+    )
 
 
 def _slide_post_binding_anchor(
@@ -4646,6 +4651,7 @@ def _rebind_slide_post(
     brief = previous.brief.model_copy(deep=True) if previous and previous.brief else None
     state = "pinned" if brief is not None else "none"
     choice_answers = copy.deepcopy(list(previous.choice_answers)) if previous else []
+    protected_regions = copy.deepcopy(list(previous.protected_regions)) if previous else []
     media_snapshot = _slide_post_media_snapshot(item, draft, owned_assets)
     return BriefBinding(
         thread_id=str(thread.id),
@@ -4654,8 +4660,15 @@ def _rebind_slide_post(
         creator_request=request,
         media_snapshot=media_snapshot,
         choice_answers=choice_answers,
+        protected_regions=protected_regions,
         digest=BriefBinding._digest(
-            str(thread.id), state, brief, request, media_snapshot, choice_answers
+            str(thread.id),
+            state,
+            brief,
+            request,
+            media_snapshot,
+            choice_answers,
+            protected_regions,
         ),
     )
 

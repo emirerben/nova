@@ -34,7 +34,8 @@ from app.pipeline.prompt_loader import load_prompt
 # v17 (KRI-814): shared brief section teaches the typed `delegates_all_choices` declaration.
 # v18 (KRI-814): earlier creator lines never read into the brief are read with the current one.
 # v20 combines delegation v18 with subtitle-semantics v19 in the shared brief.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-23-v20"
+# v21 (KRI-827): the shared brief section records `keep_text_off` facts.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-23-v21"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
