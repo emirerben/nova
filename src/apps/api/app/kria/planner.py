@@ -65,6 +65,7 @@ from app.kria.brief import (
     new_requirements,
     plan_shape_from_editor_snapshot,
     render_brief_request,
+    render_unrecorded_request,
     requested_media,
     route_requirements,
     wants_clip_descriptions,
@@ -665,6 +666,13 @@ class PlannedKriaTurn:
     # write a brief version).
     brief_updates: tuple[BriefUpdate, ...] = ()
     brief_route: Route | None = None
+    # KRI-814: every extraction batch typed `delegates_all_choices` and the turn has no
+    # update, so the turn-completion transaction records an empty brief version: the
+    # server-owned evidence that the request was read and asks for nothing specific.
+    brief_delegated: bool = False
+    # KRI-814: the earlier creator lines that delegation reading also read (see
+    # `_CreatorInputs.delegation_read_ids`); persistence checks them against the thread.
+    brief_delegation_read_ids: tuple[str, ...] = ()
     brief_clip_ids: tuple[str, ...] = ()
     # The manifest this turn planned against, so the receipt checks resolve
     # reaction beats (owned images, capability) exactly as approval will.
@@ -691,6 +699,19 @@ class PlannedKriaTurn:
     # "go ahead". Server-only: never reaches `KriaTurnPlan`, which forbids extra fields.
     continuable: bool = False
     prepared_collection_story: dict | None = None
+
+
+def _declares_delegation(outputs, updates) -> bool:  # noqa: ANN001
+    """KRI-814: every extraction batch declared delegation and the turn changes nothing.
+
+    Only the extraction step's typed field counts, never the strategy, the summary or the
+    chat text, and an update (including a moment ask the server carried) always wins.
+    """
+    return (
+        bool(outputs)
+        and not updates
+        and all(getattr(output, "delegates_all_choices", False) is True for output in outputs)
+    )
 
 
 def adapt_creator_action(
@@ -1879,6 +1900,40 @@ class _CreatorInputs:
     # intents from this (the brief is a paraphrase and loses "start with the blue
     # video" / "placeholder"). None when over the safe bound: the brief is used.
     raw_creator_request: str | None = None
+    # KRI-814: with no brief version yet, the ids of the earlier creator lines the server fed
+    # to this turn's brief reading (`render_unrecorded_request`). A delegation the reading
+    # declares covers exactly these lines and the current message, nothing else.
+    delegation_read_ids: tuple[str, ...] = ()
+
+
+async def _unrecorded_creator_lines(
+    db: AsyncSession, *, thread_id: uuid.UUID, user_message: str
+) -> list[CreationThreadEvent]:
+    """KRI-814: earlier creator lines (before the current message) in thread order."""
+    rows = list(
+        (
+            await db.execute(
+                select(CreationThreadEvent)
+                .where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.role == "user",
+                    CreationThreadEvent.content.is_not(None),
+                )
+                .order_by(CreationThreadEvent.sequence)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    rows = [
+        row
+        for row in rows
+        if str(row.content).strip() and not is_duplicate_answer(getattr(row, "payload", None))
+    ]
+    # Same rule as `_full_creator_request`: the newest line is the current message.
+    if rows and str(rows[-1].content).strip() == user_message.strip():
+        rows.pop()
+    return rows
 
 
 async def _load_creator_inputs(
@@ -1956,12 +2011,27 @@ async def _load_creator_inputs(
     creator_summary, item_summary = creator_context(persona, item)
     extra: dict = {}
     batches = ()
+    delegation_read_ids: tuple[str, ...] = ()
     if brief_on:
         extra["brief_enabled"] = True
         context = brief_context(prior_brief, latest_message=user_message, max_batches=3)
         batches = context.batches
         if batches:
             extra["creator_request"] = batches[0].text
+        elif prior_brief is None:
+            # KRI-814: no brief version means no earlier line was ever read into the brief
+            # (a held or pre-brief first turn). Read them now with the latest message, so
+            # their requirements are recorded and a delegation can speak for the whole chat.
+            earlier = await _unrecorded_creator_lines(
+                db, thread_id=thread_id, user_message=user_message
+            )
+            unrecorded = render_unrecorded_request(
+                (model_text(getattr(row, "payload", None), row.content) for row in earlier),
+                user_message,
+            )
+            if unrecorded is not None:
+                extra["creator_request"] = unrecorded
+                delegation_read_ids = tuple(str(row.id) for row in earlier)
     # Full event history is folded into a tiny state summary: a decision cannot
     # disappear merely because the model only receives its newest 40 turns.
     from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
@@ -2010,6 +2080,7 @@ async def _load_creator_inputs(
         creative_copy_state=decision_states,
         creative_copy_digest=creative_copy_digest,
         raw_creator_request=raw_creator_request,
+        delegation_read_ids=delegation_read_ids,
     )
 
 
@@ -4590,6 +4661,8 @@ async def _plan_live_turn(
     planning_brief = prior_brief
     extraction_complete = False
     pre_extracted_updates: tuple[BriefUpdate, ...] = ()
+    extracted_delegation = False
+    extracted_read_ids: tuple[str, ...] = ()
     pre_extracted_retrieved_ids: list[str] = []
     semantic_request_scope: str | None = None
     # A rendered followup only needs typed requirement extraction before routing.
@@ -4655,6 +4728,8 @@ async def _plan_live_turn(
             pre_extracted_updates = carry_moment_ask(
                 prior_brief, tuple(unique_extracted.values()), user_message
             )
+            extracted_delegation = _declares_delegation(extraction_outputs, pre_extracted_updates)
+            extracted_read_ids = extraction_inputs.delegation_read_ids
             effective = apply_updates(prior_brief, pre_extracted_updates, source_turn_id=None)
             extraction_complete = True
             fresh = new_requirements(prior_brief, effective)
@@ -4669,6 +4744,9 @@ async def _plan_live_turn(
                     context_hash=manifest.context_hash,
                     continuable=True,
                     brief_updates=pre_extracted_updates,
+                    # KRI-814: a delegating request paused on analysis is still read.
+                    brief_delegated=extracted_delegation,
+                    brief_delegation_read_ids=extracted_read_ids,
                     brief_expected_version=prior_brief.version if prior_brief else 0,
                     brief_coverage={
                         "applicable_ids": [req.id for req in effective.live()],
@@ -4725,6 +4803,8 @@ async def _plan_live_turn(
                         context_hash=manifest.context_hash,
                         brief_updates=pre_extracted_updates,
                         brief_route=route,
+                        brief_delegated=extracted_delegation,
+                        brief_delegation_read_ids=extracted_read_ids,
                         brief_clip_ids=tuple(str(media.media_id) for media in manifest.media),
                         brief_manifest=manifest,
                         brief_coverage={
@@ -4812,7 +4892,15 @@ async def _plan_live_turn(
             return inputs
         if extraction_complete:
             inputs = replace(
-                inputs, agent_input=inputs.agent_input.model_copy(update={"brief_enabled": False})
+                inputs,
+                agent_input=inputs.agent_input.model_copy(
+                    update={
+                        "brief_enabled": False,
+                        # KRI-814: the earlier lines were already read by the extraction;
+                        # a brief-off Main Creator keeps its original request contract.
+                        **({"creator_request": ""} if inputs.delegation_read_ids else {}),
+                    }
+                ),
             )
         outputs = []
         retrieved_ids = list(pre_extracted_retrieved_ids)
@@ -4906,6 +4994,10 @@ async def _plan_live_turn(
     # KRI-776: the creator's own moment numbers ride on the brief, whatever the Main
     # Creator's paraphrase kept ("six moments, about 2 seconds each" became a bare order list).
     updates = carry_moment_ask(prior_brief, tuple(unique_updates.values()), user_message)
+    delegated = (
+        extracted_delegation if extraction_complete else _declares_delegation(outputs, updates)
+    )
+    delegation_read_ids = extracted_read_ids if extraction_complete else inputs.delegation_read_ids
     try:
         effective = apply_updates(prior_brief, updates, source_turn_id=None)
     except BriefUpdateBatchError as exc:
@@ -5019,6 +5111,8 @@ async def _plan_live_turn(
                 context_hash=manifest.context_hash,
                 brief_updates=updates,
                 brief_route=route,
+                brief_delegated=delegated,
+                brief_delegation_read_ids=delegation_read_ids,
                 brief_clip_ids=clip_ids,
                 brief_manifest=manifest,
                 brief_coverage=coverage,
@@ -5056,6 +5150,8 @@ async def _plan_live_turn(
         # A re-plan that ended up asking a question or failing safe is not an
         # editor plan; only an act plan is held to the router's verdict.
         brief_route=route,
+        brief_delegated=delegated,
+        brief_delegation_read_ids=delegation_read_ids,
         brief_clip_ids=clip_ids,
         brief_manifest=manifest,
         brief_coverage=coverage,
