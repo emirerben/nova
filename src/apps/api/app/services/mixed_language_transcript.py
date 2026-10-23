@@ -376,13 +376,18 @@ def _best_set(candidates: list[_Group]) -> list[_Group]:
     return chosen[::-1]
 
 
-def _touches(group: _Group, other: _Group) -> bool:
-    """Do two stretches overlap, give or take the word-edge tolerance? (A zero-length word
-    at 2.0 s touches the stretches ending and starting there.)"""
-    return (
-        group.start_s < other.end_s + _OVERLAP_TOLERANCE_S
-        and other.start_s < group.end_s + _OVERLAP_TOLERANCE_S
-    )
+def _replaced_by(group: _Group, other: _Group) -> bool:
+    """Does the chosen extra-pass stretch ``other`` replace this first-pass stretch?
+
+    Only a real overlap does: an unconfirmed sentence that merely FOLLOWS a replaced one stays,
+    or the cleanup cut would find wordless sound there and remove it. A first-pass stretch with
+    (almost) no length -- whisper's translation of "What's your name?" put "Evet, adın ne?" at
+    2.0 s, all three words zero-length -- overlaps nothing, so it is replaced when it lies
+    inside the other stretch instead.
+    """
+    if group.end_s - group.start_s < _OVERLAP_TOLERANCE_S:
+        return other.start_s <= group.start_s and group.end_s <= other.end_s
+    return group.start_s < other.end_s and other.start_s < group.end_s
 
 
 def merge_passes(
@@ -397,7 +402,7 @@ def merge_passes(
 
     ``extras`` are passes in other languages over the same audio. The output is the stretches the
     reference confirms (``confirmed`` in ``segments``) plus every first-pass stretch that no
-    confirmed extra-pass stretch touches: the first pass stands wherever nothing replaces it.
+    confirmed extra-pass stretch overlaps: the first pass stands wherever nothing replaces it.
     ``covers_s`` is how much of the take the reference heard (None: all of it); no extra-pass
     stretch starting at or after it is a candidate. Returns None when no extra pass confirms
     anything the first pass does not (the caller then keeps the first pass as it is).
@@ -425,7 +430,8 @@ def merge_passes(
     kept_first = [
         group
         for group in first_groups
-        if id(group) not in chosen_ids and not any(_touches(group, other) for other in replacing)
+        if id(group) not in chosen_ids
+        and not any(_replaced_by(group, other) for other in replacing)
     ]
     groups = sorted([*chosen, *kept_first], key=lambda g: (g.start_s, g.end_s, g.pass_index))
 

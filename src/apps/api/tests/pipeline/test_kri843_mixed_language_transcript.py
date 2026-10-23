@@ -129,6 +129,7 @@ def _analyze(
     duration_s: float = DURATION_S,
     silences: list[list[float]] | None = None,
     errors: dict | None = None,
+    retake_detect_fn=None,
     **extra,
 ) -> tuple[SpeechCleanupAnalysisResult, _Replay]:
     replay = _Replay(passes, first=first, errors=errors)
@@ -143,6 +144,7 @@ def _analyze(
         ),
         transcribe_fn=replay,
         silence_detect_fn=_silences(T1["silence_spans"] if silences is None else silences),
+        retake_detect_fn=retake_detect_fn,
     )
     return result, replay
 
@@ -965,6 +967,68 @@ def test_a_short_reference_never_erases_the_speech_it_does_not_have() -> None:
     for removal in result.cut_plan.removed:  # the speech at 10.0-13.0 s and 14.0-15.2 s stays in
         assert removal.end_s <= 10.0 or removal.start_s >= 13.0, removal
         assert removal.end_s <= 14.0 or removal.start_s >= 15.2, removal
+
+
+@pytest.mark.parametrize("gap_s", [0.05, 0.15])
+def test_a_sentence_that_follows_a_replaced_one_is_kept_and_not_cut(gap_s) -> None:
+    """The next sentence starts a hair after the replaced "Halo gays." and Gemini's transcript
+    stops before it. It is not replaced by anything, so the words stay and the cleanup cut finds
+    speech there (wordless sound would be removed as a pause)."""
+    start = 2.4 + gap_s
+    passes = {
+        "tr": _spec(
+            "tr",
+            "Merhaba 0.0 0.6 | arkadaşlar. 0.6 1.5 | Halo 1.6 2.0 | gays. 2.0 2.4 "
+            f"| Bugün {start} {start + 0.4} | size {start + 0.4} {start + 0.8} "
+            f"| çok {start + 0.8} {start + 1.2} | güzel {start + 1.2} {start + 1.6} "
+            f"| yer. {start + 1.6} {start + 2.0}",
+        ),
+        "en": _spec("en", "Hello 1.6 2.0 | guys. 2.0 2.4"),
+    }
+
+    result, _replay = _analyze(
+        passes,
+        first="tr",
+        reference="Merhaba arkadaşlar. Hello guys.",
+        duration_s=20.0,
+        silences=[[1.5, 1.6], [start + 2.0, 20.0]],
+    )
+
+    assert result.diagnostics["language_crosscheck"]["applied"] is True
+    assert _texts(result) == [
+        "Merhaba",
+        "arkadaşlar.",
+        "Hello",
+        "guys.",
+        "Bugün",
+        "size",
+        "çok",
+        "güzel",
+        "yer.",
+    ]
+    for removal in result.cut_plan.removed:
+        assert removal.end_s <= start or removal.start_s >= start + 2.0, removal
+
+
+def test_a_retake_span_indexes_the_merged_words_not_the_first_pass() -> None:
+    """#1753 composition: the retake detector reads the stored words, so the span it returns
+    ("Tenemos ... Argentina,") is an index into the MERGED transcript, and the cut removes
+    exactly that stretch (about 4.0-6.3 s) as a retake."""
+    seen: list[list[str]] = []
+
+    def retakes(words, _language):
+        texts = [w.text for w in words]
+        seen.append(texts)
+        return ((texts.index("Tenemos"), texts.index("Argentina,")),)
+
+    result, _replay = _t1("tr", "R1", retake_detect_fn=retakes)
+
+    assert result.diagnostics["language_crosscheck"]["applied"] is True
+    assert seen and "Katenimo" not in seen[0] and "Tenemos" in seen[0]  # the merged words
+    removed = [r for r in result.cut_plan.removed if r.reason == "retake"]
+    assert len(removed) == 1
+    assert removed[0].start_s == pytest.approx(4.0, abs=0.15)
+    assert removed[0].end_s == pytest.approx(6.3, abs=0.15)
 
 
 def _long_take(rng: random.Random, tokens: int) -> list[str]:
