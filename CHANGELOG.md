@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.69.0] - 2026-10-23
+
+### Changed
+- feat(editor): preserve selected footage in iPhone speed edits (#1761) <!-- release-pr: 1761 -->
+
 ## [0.81.68.0] - 2026-10-23
 
 ### Changed
