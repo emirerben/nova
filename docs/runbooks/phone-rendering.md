@@ -2622,12 +2622,34 @@ word. No model or prompt is involved:
   if I find those lines") and the length line measures that part, not the whole
   take. After render: met only when every asked line was cut.
 
+- **A quote the take does not hold (KRI-844).** `ground_line` is same-language, so an
+  English quote of a Spanish take ("Here we have traditional Argentinian sauces" over
+  "Acá tenemos salsas tradicionales argentinas", Don Julio T2) is `not_found` and the
+  whole take used to ship. For a one-video phone Talking edit with timed speech, the
+  gate (`choice_questions._take_line`) now asks BEFORE approval which line of the
+  take to open on (`take_line_start`) and, once that is answered, which to end on
+  (`take_line_end`). Options are the take's own lines (`take_lines.take_lines`:
+  clause punctuation starts a line, and so does a Title-case word inside a run the
+  ASR left unpunctuated, so "Lucas Acá tenemos ..." is two lines), the ones most like
+  the quote when more than five, and a "none of these" answer. The pick is `ChoiceAnswer.value`; `answered_brief` copies it to
+  `facts.start_line_spoken` / `facts.end_line_spoken`, and `apply_take_window`
+  (`start_spoken` / `end_spoken`, draft estimate and worker alike) grounds it before
+  the quote. A pick is stored as the line plus the neighbouring words that make it name
+  one place in the take (grounding takes a text's first match, so a bare "Gracias" would
+  land inside "muchas gracias"); a line said twice is the first for a start, the last for
+  an end. Receipts keep the creator's quote (+ `spoken`). A found quote never asks;
+  "none of these" and a pick the worker's words don't hold leave today's honest
+  `not_found`. `length_vs_natural` still compares a length ask with the whole take,
+  not the part the lines keep.
+
 Gap: cleanup off with no checked preflight snapshot still reports `cleanup_off`.
 Verify on a real take (writes `report.json`, and with `--video` a `window.mp4` to
 watch): `cd src/apps/api && python -m app.cli.verify_take_window --take
 tests/fixtures/kri790_merope_t1_take.json --video <take.mp4>`.
 Tests: `tests/pipeline/test_phone_take_window.py`, `tests/pipeline/test_phone_opening_cut.py`,
-`tests/kria/test_kri837_one_word_end_line.py`.
+`tests/kria/test_kri837_one_word_end_line.py`,
+`tests/kria/test_kri844_take_line_ask.py`,
+`tests/kria/test_kri844_dj_t2_cross_language_replay.py` (fixture `kri844_dj_t2_take.json`).
 
 ### Text on a spoken word on phone Talking edits (KRI-707)
 

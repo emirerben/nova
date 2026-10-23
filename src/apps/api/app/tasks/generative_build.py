@@ -8616,6 +8616,8 @@ def _phone_opening_cut(
                 duration_s=duration_s,
                 start_ids=ask.start_ids,
                 end_ids=ask.end_ids,
+                start_spoken=ask.start_spoken,
+                end_spoken=ask.end_spoken,
             )
             # Cleanup off and nothing to cut (the take already is the window): no plan.
             cut_plan = plan if cut_plan is not None or plan.removed else None

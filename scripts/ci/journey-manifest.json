@@ -674,16 +674,20 @@
     {
       "id": "kri-628-opening-cut",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_phone_opening_cut.py tests/pipeline/test_phone_take_window.py tests/kria/test_kri837_one_word_end_line.py",
+      "api_tests": "tests/pipeline/test_phone_opening_cut.py tests/pipeline/test_phone_take_window.py tests/kria/test_kri837_one_word_end_line.py tests/kria/test_kri844_take_line_ask.py tests/kria/test_kri844_dj_t2_cross_language_replay.py",
       "paths": [
         "src/apps/api/app/kria/opening_cut_ask.py",
+        "src/apps/api/app/kria/take_lines.py",
         "src/apps/api/app/pipeline/phone_opening_cut.py",
         "src/apps/api/app/services/spoken_quotes.py",
         "src/apps/api/app/services/speech_segments.py",
         "src/apps/api/app/cli/verify_take_window.py",
         "src/apps/api/tests/fixtures/kri790_merope_t1_take.json",
+        "src/apps/api/tests/fixtures/kri844_dj_t2_take.json",
         "src/apps/api/tests/pipeline/test_phone_take_window.py",
-        "src/apps/api/tests/kria/test_kri837_one_word_end_line.py"
+        "src/apps/api/tests/kria/test_kri837_one_word_end_line.py",
+        "src/apps/api/tests/kria/test_kri844_take_line_ask.py",
+        "src/apps/api/tests/kria/test_kri844_dj_t2_cross_language_replay.py"
       ]
     },
     {
