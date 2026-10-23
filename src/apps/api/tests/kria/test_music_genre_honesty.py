@@ -664,6 +664,13 @@ async def test_an_everyday_word_in_a_non_music_audio_ask_is_not_a_genre(monkeypa
         ("Pop up shop music", {"genre": "pop"}),
         # Accepted miss (fail-safe): "pop love song" is not read as a pop ask.
         ("Suggest an upbeat pop love song", {"genre": "pop"}),
+        # English verbs after a music word: "the music pop(s)", it is not a genre.
+        ("Make the music pop", {"genre": "pop"}),
+        ("Make the song pop", {"genre": "pop"}),
+        ("Let the music pop at the cut", {"genre": "pop"}),
+        ("Make the music dance", {"genre": "electronic"}),
+        ("Make the music punk", {"genre": "other", "vibe_tags": ["punk"]}),
+        ("Make the music metal", {"genre": "other", "vibe_tags": ["metal"]}),
     ],
     ids=[
         "house-tour",
@@ -680,6 +687,12 @@ async def test_an_everyday_word_in_a_non_music_audio_ask_is_not_a_genre(monkeypa
         "soul-food-playlist",
         "pop-up-shop-music",
         "pop-love-song",
+        "music-pop",
+        "song-pop",
+        "music-pop-at-the-cut",
+        "music-dance",
+        "music-punk",
+        "music-metal",
     ],
 )
 async def test_an_everyday_word_must_be_attached_to_the_music_word(monkeypatch, ask, decoy) -> None:
@@ -867,6 +880,13 @@ async def test_a_negated_genre_next_to_an_asked_one_only_the_asked_one_counts(mo
         "No vocals, a tango song",
         "No lyrics please, suggest an upbeat tango song",
         "Not too slow, an upbeat tango song",
+        # A ruled-out thing that is not a genre ("sad songs", "boring", "slow ones") ends at
+        # its clause: a bare genre in the next clause is a new ask. Sentence ends reset it.
+        "No sad songs, tango please",
+        "Not boring, tango please",
+        "No slow ones, tango",
+        "No rap. Tango please.",
+        "I hate rap. Tango please.",
     ],
     ids=[
         "tango-not-jazz",
@@ -880,6 +900,11 @@ async def test_a_negated_genre_next_to_an_asked_one_only_the_asked_one_counts(mo
         "no-vocals",
         "no-lyrics",
         "not-too-slow",
+        "no-sad-songs",
+        "not-boring",
+        "no-slow-ones",
+        "sentence-then-bare-tango",
+        "hate-sentence-then-bare-tango",
     ],
 )
 async def test_the_asked_genre_is_still_found_beside_a_ruled_out_one(monkeypatch, ask) -> None:
@@ -1117,14 +1142,26 @@ async def test_a_genre_word_in_the_song_rationale_counts(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_everyday_genre_word_in_the_rationale_counts_for_the_song(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "rationale",
+    [
+        "Driving rock anthem with anthemic energy.",
+        "A defiant rock song about leaving town.",
+        "Gritty rock groove that wants fast cuts.",
+    ],
+    ids=["anthem", "song", "groove"],
+)
+async def test_an_everyday_genre_word_in_the_rationale_counts_when_a_song_noun_follows(
+    monkeypatch, rationale
+) -> None:
+    """In the rationale an everyday word is the song's genre only as "rock <song noun>"."""
     pop = _pop()
     rock = _track(
         "Loud Road",
         "Amp Brothers",
         genre="other",
         vibe_tags=["driving", "defiant"],
-        rationale="Driving rock anthem with anthemic energy.",
+        rationale=rationale,
     )
     _install(monkeypatch, [pop, rock], preference=[pop, rock])
 
@@ -1132,6 +1169,92 @@ async def test_an_everyday_genre_word_in_the_rationale_counts_for_the_song(monke
 
     _assert_suggests(result, rock)
     assert _section(result)[FIT_KEY] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ask", "name", "labels"),
+    [
+        # The rationale also says what clips the song wants, and can say what it is NOT.
+        (
+            "Suggest a rock song",
+            "rock",
+            {
+                "genre": "acoustic",
+                "rationale": "Calm acoustic ballad that wants rock climbing and outdoor footage.",
+            },
+        ),
+        (
+            "Suggest some dance music",
+            "dance",
+            {"genre": "pop", "rationale": "Mellow pop bed that suits dance class reels."},
+        ),
+        (
+            "Suggest a house track",
+            "house",
+            {
+                "genre": "acoustic",
+                "rationale": "Warm piano piece for house tour and interior b-roll.",
+            },
+        ),
+        (
+            "Suggest a country song",
+            "country",
+            {
+                "genre": "acoustic",
+                "rationale": "Soft guitar bed for a country road trip montage.",
+            },
+        ),
+        (
+            "Suggest a pop song",
+            "pop",
+            {"genre": "cinematic", "rationale": "Not a pop track; a brooding cinematic cue."},
+        ),
+        (
+            "Suggest a tango song",
+            "tango",
+            {"genre": "acoustic", "rationale": "Not a tango; a calm ballad."},
+        ),
+        # The same in every other label text.
+        ("Suggest a tango song", "tango", {"mood": "not tango, more of a slow waltz"}),
+        (
+            "Suggest a tango song",
+            "tango",
+            {"ideal_content_profile": "non-tango, calm dinner scenes"},
+        ),
+        ("Suggest a tango song", "tango", {"vibe_tags": ["calm", "no-tango"]}),
+        ("Suggest a tango song", "tango", {"rationale": "A waltz, rather than a tango."}),
+        ("Suggest a tango song", "tango", {"rationale": "A calm waltz instead of a tango."}),
+    ],
+    ids=[
+        "rock-climbing",
+        "dance-class",
+        "house-tour",
+        "country-road",
+        "not-a-pop-track",
+        "not-a-tango",
+        "mood-not-tango",
+        "profile-non-tango",
+        "tag-no-tango",
+        "rather-than-tango",
+        "instead-of-tango",
+    ],
+)
+async def test_a_label_that_only_mentions_the_genre_in_passing_is_not_a_fit(
+    monkeypatch, ask, name, labels
+) -> None:
+    calm = _lofi()
+    passing = _track("Mentions It", "Some Artist", **{"vibe_tags": ["calm"], **labels})
+    _install(monkeypatch, [calm, passing], preference=[calm, passing])
+
+    result = await _gate(monkeypatch, _dj_brief(ask))
+
+    text = _text(result)
+    section = _section(result)
+    assert section["track_id"] == calm.id, f"suggested {section.get('title')!r}"
+    assert section[ASKED_KEY] == name and section[FIT_KEY] is False
+    assert name in text.lower() and _says_no_match(text), text
+    assert not _claims_genre_for(text, passing, name), text
 
 
 @pytest.mark.asyncio

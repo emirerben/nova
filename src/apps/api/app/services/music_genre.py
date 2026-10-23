@@ -11,25 +11,35 @@ wrongly in the "asked" direction would force a genre the creator did not want ("
 must never mean "only rap"). Every doubt therefore leans to "not asked", which is exactly
 today's behaviour (no filter, no notice):
 
-- An everyday word ("house", "rock", "pop") is a genre only when a music word touches it:
-  right after ("a house track", "rock song") or right before ("música rock"). A word in
-  between makes it another noun ("house tour music", "rock climbing music"), and so does
-  being elsewhere in the ask ("music for the house tour").
+- An everyday word ("house", "rock", "pop") is a genre only when a music word touches it
+  AFTER it ("a house track", "rock song", "pop müzik"), or, in Spanish only, BEFORE it
+  ("música rock", "canción pop"). English "Make the music pop" is a verb, "house tour music"
+  and "rock climbing music" are other nouns, and "music for the house tour" is elsewhere.
 - A cue rules out the genres after it ("no", "without", "sin", "anything but", "other
-  than", "hate"...) in its own clause, and in the following clauses only while they are
-  bare lists of genres ("No rap, reggaeton or rock"). Any other word ends it, and so does
-  "but" / "pero" / "ama". "No vocals" / "not too slow" rule out nothing. Turkish puts the
-  cue after the genre ("rap olmasın", "caz istemiyorum").
+  than", "hate"...) in its own clause. It reaches the next clause only when the words it
+  rules out are themselves a bare list of genres, and that clause is one too ("No rap,
+  reggaeton or rock"); never across a sentence end. Any other word ends it, and so does
+  "but" / "pero" / "ama". "No vocals" / "not too slow" rule out nothing, and "No sad songs,
+  tango please" still asks for tango. Turkish puts the cue after the genre ("rap olmasın",
+  "caz istemiyorum").
 
 Fitting a track. The labels say a genre when ``MusicLabels.genre`` IS that genre (the
-enum's own word, or a true synonym such as "rap" or "EDM"), or when the genre appears as a
-whole word in the song's ``vibe_tags`` / ``mood`` / classifier ``rationale`` (and, for a
-word that is not also an everyday one, in ``ideal_content_profile``). A narrow alias
-("house", "folk", "orchestral") is only a kind of an enum family, so the family alone is
-not a fit: it is the closest the library has, offered as the closest.
+enum's own word, or a true synonym such as "rap" or "EDM"), or when its label text says the
+word. A narrow alias ("house", "folk", "orchestral") is only a kind of an enum family, so
+the family alone is not a fit: it is the closest the library has, offered as the closest.
+Which text counts depends on what it describes:
 
-Known limits, all on the "not asked" side: "pop love song", "a rock feel" and "Without
-rock, tango" are not read as asks.
+- ``vibe_tags`` and ``mood`` describe the song: any genre word counts.
+- The classifier ``rationale`` also says what clips the song wants ("wants rock climbing
+  footage"): an everyday word counts there only right before a song noun ("rock anthem").
+- ``ideal_content_profile`` describes the clips: only a word that is not also an everyday
+  one counts there ("tango"), never "rock" or "house".
+- In any of them, a genre word right after a negation ("not a tango", "non-tango", "rather
+  than a tango", two words back, three for instead / rather) does not count.
+
+Known limits, all on the "not asked" / "not a fit" side: "pop love song", "a rock feel" and
+"Without rock, tango" are not read as asks, and a rationale that spells the genre in an
+unusual way ("rock-and-roll banger") is not a fit.
 
 Music stays recommend-only: nothing here changes the audio of a video, only what the
 reply says about the song Kria suggests.
@@ -118,6 +128,14 @@ _MUSIC_WORDS = frozenset(
     """.split()
 )
 _MUSIC_PREFIXES = ("sarki", "muzi")
+# Spanish puts the music word first ("música rock"); in English "the music pop" is a verb.
+_MUSIC_WORDS_BEFORE_THE_GENRE = frozenset("musica cancion canciones tema".split())
+# In a song's label text: a genre word right after one of these (within 2 words) is what the
+# song is NOT. "instead of a tango" / "rather than a tango" reach one word further.
+_NEGATES_LABEL = frozenset("not no non without instead rather".split())
+_NEGATES_LABEL_FAR = frozenset("instead rather".split())
+# In the classifier's rationale an everyday genre word names the song only before one of these.
+_SONG_NOUNS = frozenset("anthem track song ballad cue groove beat tune number bed piece".split())
 # Ruling a genre out. Folded, apostrophes dropped ("don't" = "dont"). A bare "but" turns back
 # and never rules out; "no vocals" / "not too slow" rule out nothing the song could be.
 _RULES_OUT = frozenset("no not without except avoid never dont sin hate dislike skip".split())
@@ -206,16 +224,17 @@ def _is_genre_list(words: Sequence[str]) -> bool:
 
 
 def _mentions(clauses: Sequence[Sequence[str]]) -> Iterator[tuple[AskedGenre, bool, bool]]:
-    """Each genre named in the clauses of one part of the ask: (genre, ruled out, said as music).
+    """Each genre named in the clauses of one sentence: (genre, ruled out, said as music).
 
-    A cue rules out the genres after it in its clause, and in the next clauses while they
-    are bare genre lists. "Said as music" = a music word is the word right before it or
-    right after it, in the same clause.
+    A cue rules out the genres after it in its clause. It carries into the next clause only
+    when what it rules out here is a bare genre list and that clause is one too. "Said as
+    music" = a music word right after the genre (or, in Spanish, right before), same clause.
     """
     ruling_out = False
     for words in clauses:
         if ruling_out and not _is_genre_list(words):
             ruling_out = False
+        rules_out_from = 0  # where the words the active cue rules out begin
         i = 0
         while i < len(words):
             cue = _cue_length(words, i)
@@ -224,7 +243,7 @@ def _mentions(clauses: Sequence[Sequence[str]]) -> Iterator[tuple[AskedGenre, bo
                 if i < len(words) and words[i] in _NOT_A_GENRE_AFTER_CUE:
                     i += 1
                 else:
-                    ruling_out = True
+                    ruling_out, rules_out_from = True, i
             elif words[i] in _TURNS_BACK:
                 ruling_out = False
                 i += 1
@@ -232,35 +251,42 @@ def _mentions(clauses: Sequence[Sequence[str]]) -> Iterator[tuple[AskedGenre, bo
                 genre, size = found
                 end = i + size
                 ruled_out = ruling_out or any(w in _RULED_OUT_AFTER for w in words[end : end + 2])
-                as_music = (i > 0 and _is_music_word(words[i - 1])) or (
+                as_music = (i > 0 and words[i - 1] in _MUSIC_WORDS_BEFORE_THE_GENRE) or (
                     end < len(words) and _is_music_word(words[end])
                 )
                 yield genre, ruled_out, as_music
                 i = end
             else:
                 i += 1
+        if ruling_out and not _is_genre_list(words[rules_out_from:]):
+            ruling_out = False
 
 
 def asked_genres(ask: str) -> list[AskedGenre]:
     """The genres the creator's words name, in order of mention, each once.
 
-    ``ask`` is the requirement texts joined by ";", so each part is read on its own, clause
-    by clause. A genre the creator rules out ("no rap, reggaeton or rock") is not asked for,
-    and an everyday word ("house") only when said as music ("a house track").
+    ``ask`` is the requirement texts joined by ";", so each part is read on its own, sentence
+    by sentence and clause by clause. A genre the creator rules out ("no rap, reggaeton or
+    rock") is not asked for, and an everyday word ("house") only when said as music ("a house
+    track").
     """
     found: dict[str, AskedGenre] = {}
     for part in ask.split(";"):
-        clauses = [_words(clause) for clause in re.split(r"[,.!?:]", part)]
-        for genre, ruled_out, as_music in _mentions(clauses):
-            if not ruled_out and (as_music or not genre.everyday):
-                found.setdefault(genre.name, genre)
+        for sentence in re.split(r"[.!?]", part):
+            clauses = [_words(clause) for clause in re.split(r"[,:]", sentence)]
+            for genre, ruled_out, as_music in _mentions(clauses):
+                if not ruled_out and (as_music or not genre.everyday):
+                    found.setdefault(genre.name, genre)
     return list(found.values())
 
 
 class _TrackText(NamedTuple):
+    """A track's genre enum value and its label text, one folded word list per field."""
+
     genre: str  # ``MusicLabels.genre``
-    song: str  # folded words describing the song, padded with spaces for whole-word search
-    clips: str  # ``song`` plus the clips the song suits (``ideal_content_profile``)
+    song: list[list[str]]  # vibe tags and mood: what the song is
+    rationale: list[str]  # the classifier's sentence: the song, and the clips it wants
+    clips: list[str]  # ``ideal_content_profile``: the clips the song suits
 
 
 def _read_track(track: Any) -> _TrackText | None:
@@ -268,7 +294,7 @@ def _read_track(track: Any) -> _TrackText | None:
 
     ``ai_labels`` is ``{"labels": ..., "rationale": ...}``: the classifier is told to keep
     genre words out of ``vibe_tags``, so its one-sentence rationale ("Driving rock anthem")
-    describes the song too. ``None`` when the labels cannot be read.
+    says the genre too. ``None`` when the labels cannot be read.
     """
     raw = getattr(track, "ai_labels", None) or {}
     try:
@@ -276,19 +302,53 @@ def _read_track(track: Any) -> _TrackText | None:
     except (AttributeError, TypeError, ValueError):
         return None
     rationale = raw.get("rationale")
-    song = _spelling(
-        " ".join([*labels.vibe_tags, labels.mood, rationale if isinstance(rationale, str) else ""])
+    return _TrackText(
+        labels.genre,
+        [loose_words(text) for text in [*labels.vibe_tags, labels.mood]],
+        loose_words(rationale) if isinstance(rationale, str) else [],
+        loose_words(labels.ideal_content_profile),
     )
-    # The profile describes the clips a song suits ("rock climbing b-roll"), not the song.
-    clips = f"{song} {_spelling(labels.ideal_content_profile)}"
-    return _TrackText(labels.genre, f" {song} ", f" {clips} ")
+
+
+def _is_negated(words: Sequence[str], i: int) -> bool:
+    """Is the genre word at ``words[i]`` what the label says the song is NOT?"""
+    return bool(
+        _NEGATES_LABEL.intersection(words[max(0, i - 2) : i])
+        or _NEGATES_LABEL_FAR.intersection(words[max(0, i - 3) : i])
+    )
+
+
+def _says(
+    genre: AskedGenre, fields: Sequence[Sequence[str]], *, before_song_noun: bool = False
+) -> bool:
+    """Does one of these word lists name the genre, and not as what the song is not?
+
+    ``before_song_noun``: the genre word must be followed by a song noun ("rock anthem").
+    """
+    for words in fields:
+        for spelling in genre.spellings:
+            name = spelling.split()
+            for i in range(len(words) - len(name) + 1):
+                end = i + len(name)
+                if list(words[i:end]) != name or _is_negated(words, i):
+                    continue
+                if not before_song_noun or (end < len(words) and words[end] in _SONG_NOUNS):
+                    return True
+    return False
+
+
+def _label_says(read: _TrackText, genre: AskedGenre) -> bool:
+    """Do the track's label texts say this genre? An everyday word needs the song's own text."""
+    if genre.everyday:
+        return _says(genre, read.song) or _says(genre, [read.rationale], before_song_noun=True)
+    return _says(genre, [*read.song, read.rationale, read.clips])
 
 
 def track_genre_fits(track: Any, genres: Sequence[AskedGenre]) -> list[AskedGenre]:
     """The asked genres this track's labels say; none when the labels cannot be read.
 
     The enum value counts only for the genre it IS (``other`` is the catch-all, so never).
-    Otherwise the genre must be a whole word in the song's own label text.
+    Otherwise the genre must be named in the song's own label text.
     """
     read = _read_track(track)
     if read is None:
@@ -296,11 +356,7 @@ def track_genre_fits(track: Any, genres: Sequence[AskedGenre]) -> list[AskedGenr
     return [
         genre
         for genre in genres
-        if (genre.genre is not None and read.genre == genre.genre)
-        or any(
-            f" {spelling} " in (read.song if genre.everyday else read.clips)
-            for spelling in genre.spellings
-        )
+        if (genre.genre is not None and read.genre == genre.genre) or _label_says(read, genre)
     ]
 
 

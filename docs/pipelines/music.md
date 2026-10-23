@@ -54,9 +54,12 @@ leans to "not asked" whenever it is unsure, because a named genre becomes a hard
 an everyday word ("house", "rock") counts only right next to a music word ("a house
 track"), and a genre after a cue ("no rap, reggaeton or rock", "caz istemiyorum") is never
 asked. `_match_best_track` then ranks only the tracks whose labels say the genre (the
-`genre` enum value it IS, or the word in `vibe_tags` / `mood` / the classifier
-`rationale`; `other` is never a wildcard); a narrow alias like "house" is not met by its
-enum family alone, so the family is only offered as the closest, else the whole library.
+`genre` enum value it IS, or the word in `vibe_tags` / `mood`; `other` is never a
+wildcard). The classifier `rationale` also counts, but an everyday word there ("rock")
+only right before a song noun ("rock anthem"), since it also says what clips the song
+wants; and a genre word right after "not" / "non" / "rather than" never counts. A narrow
+alias like "house" is not met by its enum family alone, so the family is only offered as
+the closest, else the whole library.
 The frozen section records `asked_genre`, `asked_genres` and `genre_fit`, and the reply
 (summary and `policy_notices`) names the song and calls it that genre only when it
 fits; otherwise it says there is none and offers the closest. Recommend-only: nothing is
