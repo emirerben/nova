@@ -1562,3 +1562,70 @@ async def test_t12_failed_turn_keeps_the_accepted_draft(monkeypatch: pytest.Monk
     assert result.outcome == "failed" and result.draft is None
     assert result.base_version == 4
     assert draft.model_dump(mode="json") == before
+
+
+# Review round (KRI-818): F16 a cover index written in after-the-move numbering that
+# happens to name the current cover in before-the-move numbering is accepted silently;
+# F17 a valid named cover change is refused because of where the old cover moved;
+# F18 a removal-only bundle refuses untargeted one-slide text; F19 a slide_id whose
+# window matches neither reading is trusted.
+
+
+def _compile_parsed(draft: SlidePostDraft, assets: list, ops: list[dict]):
+    snapshot = build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID)
+    output = _parse(snapshot, ops)
+    assert len(output.ops) == len(ops)
+    return compile_slide_post_ops(draft, output.ops)
+
+
+def test_cover_index_in_post_move_numbering_landing_on_the_cover_fails_closed() -> None:
+    draft, assets = _troy()
+    ops = [
+        {"op": "reorder_clip", "from_index": 4, "to_index": 0},
+        {"op": "set_slide_cover", "slide_index": 0},
+    ]
+    with pytest.raises(KriaEditorOpError, match="cover"):
+        _compile_parsed(draft, assets, ops)
+
+
+@pytest.mark.parametrize(
+    ("move", "index", "expected"),
+    [((0, 4), 4, "museum"), ((1, 0), 1, "video"), ((0, 1), 1, "video")],
+)
+def test_named_cover_change_in_a_moving_bundle_is_delivered(
+    move: tuple[int, int], index: int, expected: str
+) -> None:
+    draft, assets = _troy()
+    ops = [
+        {"op": "reorder_clip", "from_index": move[0], "to_index": move[1]},
+        {"op": "set_slide_cover", "slide_index": index, "slide_id": TROY[index]},
+    ]
+    compiled = _compile_parsed(draft, assets, ops)
+    assert compiled.draft.slides[compiled.draft.cover_index].id == expected
+
+
+def test_named_cover_disagreeing_with_its_index_is_refused_by_the_parser() -> None:
+    draft, assets = _troy()
+    snapshot = build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID)
+    output = _parse(snapshot, [{"op": "set_slide_cover", "slide_index": 0, "slide_id": "museum"}])
+    assert output.ops == []
+
+
+def test_remove_then_untargeted_text_keeps_pre_edit_window() -> None:
+    draft, assets = _troy()
+    compiled = _compile_parsed(
+        draft,
+        assets,
+        [
+            {"op": "remove_clip", "slot_index": 0},
+            {"op": "add_text", "text": "Hi", "start_s": 2, "end_s": 3},
+        ],
+    )
+    assert _texts_by_slide(compiled.draft)["road"] == ["Hi"]
+
+
+def test_slide_id_whose_window_matches_neither_numbering_fails_closed() -> None:
+    draft, assets = _troy()
+    ops = _move_museum_first(start_s=4, end_s=5, slide_id="horse")
+    with pytest.raises(KriaEditorOpError, match="Which slide"):
+        _compile_parsed(draft, assets, ops)

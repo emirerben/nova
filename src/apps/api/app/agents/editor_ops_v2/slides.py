@@ -51,6 +51,14 @@ def _coerce_set_slide_cover(name: str, payload: dict, snapshot: dict, state: Any
     if slot.get("removed") or not isinstance(slide_id, str) or not slide_id:
         state.reject(op=name, reason="stale_target", detail="that slide is no longer available")
         return None
+    named = payload.get("slide_id")
+    if named is not None:
+        # KRI-818: the model named the photo by its stable id; it must be the same slide
+        # as the pre-edit index, or the two disagree and nothing is guessed.
+        if named != slide_id:
+            state.invalid_value()
+            return None
+        return {"slide_index": index, "slide_id": slide_id, "slide_named": True}
     return {"slide_index": index, "slide_id": slide_id}
 
 
@@ -331,7 +339,7 @@ SPECS: list[OpSpec] = [
     OpSpec(
         name="set_slide_cover",
         required=frozenset({"slide_index"}),
-        fields=frozenset({"slide_index"}),
+        fields=frozenset({"slide_index", "slide_id"}),
         family=_FAMILY,
         coerce=_coerce_set_slide_cover,
     ),

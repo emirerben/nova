@@ -503,38 +503,52 @@ def _refuse_renumbering_guesses(
     new_order: list[str],
 ) -> None:
     """Fail closed when a bundle's slide numbers could mean the post before OR after
-    its own reorder (KRI-818, Troya T12).
+    its own move (KRI-818, Troya T12).
 
-    Numbers and windows in ops mean the post BEFORE the turn. When the slides move in
-    the same bundle and a one-slide text names no slide, or a cover index points at the
-    current cover only in after-the-move numbering, the two readings disagree and
-    either guess can put the change on the wrong photo. Refusal only: nothing here ever
-    decides what the creator meant.
+    Numbers and windows in ops mean the post BEFORE the turn. When a ``reorder_clip``
+    in the same bundle moves slides (a removal alone or a criterion sort does not count:
+    the model cannot have meant a numbering it did not write), the before and after
+    readings of a number can name different photos. A one-slide text or a cover change
+    that names no slide id, and whose two readings disagree, is refused rather than
+    guessed. A named slide id whose window matches neither reading is refused too.
+    Refusal only: nothing here ever decides what the creator meant.
     """
+    survivors = set(new_order)
+    initial = [slide.id for slide in draft.slides if slide.id in survivors]
+    moved = new_order != initial and any(op.get("op") == "reorder_clip" for op in ops)
     post_windows = {sid: (float(i), float(i + 1)) for i, sid in enumerate(new_order)}
-    cover_id = draft.slides[draft.cover_index].id
+
+    def same(window: tuple[float, float] | None, start: float, end: float) -> bool:
+        return window is not None and abs(window[0] - start) + abs(window[1] - end) < 1e-6
+
     for op in ops:
         name = op.get("op")
-        if name == "add_text" and not op.get("slide_id"):
-            row = {"id": "", "start_s": op.get("start_s"), "end_s": op.get("end_s")}
-            before = _slide_ids_for_bar(row, {}, windows)
-            if len(before) == 1 and _slide_ids_for_bar(row, {}, post_windows) != before:
-                raise KriaEditorOpError(
-                    f'Which slide should "{op.get("text")}" go on? The slides move in '
-                    "this same edit, so I didn't guess"
-                )
-        if name == "set_slide_cover":
+        if name == "add_text":
+            sid, start, end = op.get("slide_id"), op.get("start_s"), op.get("end_s")
+            numeric = isinstance(start, (int, float)) and isinstance(end, (int, float))
+            if sid and numeric:
+                if not (
+                    same(windows.get(sid), float(start), float(end))
+                    or same(post_windows.get(sid), float(start), float(end))
+                ):
+                    raise KriaEditorOpError(
+                        f'Which slide should "{op.get("text")}" go on? Its slide number '
+                        "and photo don't match, so I didn't guess"
+                    )
+            elif not sid and moved:
+                row = {"id": "", "start_s": start, "end_s": end}
+                before = _slide_ids_for_bar(row, {}, windows)
+                if len(before) == 1 and _slide_ids_for_bar(row, {}, post_windows) != before:
+                    raise KriaEditorOpError(
+                        f'Which slide should "{op.get("text")}" go on? The slides move in '
+                        "this same edit, so I didn't guess"
+                    )
+        if name == "set_slide_cover" and moved and not op.get("slide_named"):
             index, target = op.get("slide_index"), op.get("slide_id")
-            if (
-                isinstance(index, int)
-                and target != cover_id
-                and index < len(new_order)
-                and new_order[index] == cover_id
-                and new_order != [slide.id for slide in draft.slides]
-            ):
+            if isinstance(index, int) and (index >= len(new_order) or new_order[index] != target):
                 raise KriaEditorOpError(
-                    "the cover stays with its photo when slides move. Tell me which "
-                    "photo should be the cover"
+                    "Which photo should be the cover? The slides move in this same edit, "
+                    "so I didn't guess"
                 )
 
 
