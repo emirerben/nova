@@ -46,6 +46,7 @@ from tests.routes._editor_save_matrix import (
     NULL_ROLE_TEXT_ID,
     ORDER,
     SOURCE_S,
+    TALKING_CUES,
     TITLE,
     VARIANT,
     Edit,
@@ -60,6 +61,7 @@ from tests.routes._editor_save_matrix import (
     phone_retimed_lane,
     requirements,
     run_save,
+    talking_segment_save,
     title_edit_lane,
 )
 
@@ -267,6 +269,71 @@ def _slides_untouched(outcome: Outcome) -> None:
     variant = outcome.job.assembly_plan["variants"][0]
     assert variant["render_status"] == "ready"
     assert "text_elements" not in variant
+
+
+# --- phone Talking speech segments after the first Delete (KRI-852) ------------------------
+# Output clock of the cleaned take: segment windows [0, 2), [2, 5), [5, 8) carry source
+# [0, 2), [3, 6), [7, 10); cues "one" 0-1.5, "two" 2-4.5, "three" 5-7.5 (TALKING_CUES).
+
+
+def _saved_talking_windows(outcome: Outcome) -> list[tuple[str, float, float]]:
+    slots = outcome.variant["user_timeline"]["slots"]
+    return [(s["slot_id"], s["in_s"], s["duration_s"]) for s in slots if not s.get("removed")]
+
+
+def _saved_talking_cues(outcome: Outcome) -> list[tuple[str, float, float]]:
+    return [
+        (c["text"], round(c["start_s"], 3), round(c["end_s"], 3))
+        for c in outcome.variant["caption_cues"]
+    ]
+
+
+def _talking_delete_moves_later_captions(outcome: Outcome) -> None:
+    # The kept segments keep their source windows; the deleted segment's caption is gone and
+    # the caption after it moved up with its clip (5-7.5 -> 2-4.5). Nothing stays on the
+    # pre-delete clock.
+    assert _saved_talking_windows(outcome) == [
+        ("native-phone-talking-source", 0.0, 2.0),
+        ("native-phone-talking-source-2", 7.0, 3.0),
+    ]
+    assert _saved_talking_cues(outcome) == [("one", 0.0, 1.5), ("three", 2.0, 4.5)]
+    assert not outcome.variant.get("speech_timing_unresolved")
+    assert len(TALKING_CUES) == 3
+
+
+def _talking_range_saves_and_clips_caption(outcome: Outcome) -> None:
+    # The Range sheet shortened the last segment to source [7.5, 10): its caption keeps only
+    # the spoken part still in the window (source 7.5-9.5 -> output 2.0-4.0).
+    assert _saved_talking_windows(outcome) == [
+        ("native-phone-talking-source", 0.0, 2.0),
+        ("native-phone-talking-source-2", 7.5, 2.5),
+    ]
+    assert _saved_talking_cues(outcome) == [("one", 0.0, 1.5), ("three", 2.0, 4.0)]
+    assert not outcome.variant.get("speech_timing_unresolved")
+
+
+def _talking_slide_saves_and_flags_untranscribed_speech(outcome: Outcome) -> None:
+    # "Slide source later" moved the first segment to source [0.5, 2.5). The Save is kept
+    # exactly; the caption follows (source 0.5-1.5 -> output 0-1.0); the newly exposed half
+    # second has no transcript here, so export asks for captions or the previous range
+    # (`speech_timing_unresolved`, the genuine protection #1770 keeps).
+    assert _saved_talking_windows(outcome) == [
+        ("native-phone-talking-source", 0.5, 2.0),
+        ("native-phone-talking-source-2", 7.0, 3.0),
+    ]
+    assert _saved_talking_cues(outcome) == [("one", 0.0, 1.0), ("three", 2.0, 4.5)]
+    assert outcome.variant.get("speech_timing_unresolved") is True
+
+
+def _talking_reorder_moves_captions_with_clips(outcome: Outcome) -> None:
+    # The swap is saved and every caption travels with its source occurrence: "three" now
+    # opens the video, "one" plays over the second clip. No word is left on the old clock.
+    assert [s[0] for s in _saved_talking_windows(outcome)] == [
+        "native-phone-talking-source-2",
+        "native-phone-talking-source",
+    ]
+    assert _saved_talking_cues(outcome) == [("three", 0.0, 2.5), ("one", 3.0, 4.5)]
+    assert not outcome.variant.get("speech_timing_unresolved")
 
 
 # --- pure-helper rows (the seam a Save leans on, pinned where it can be decided) --------------
@@ -876,6 +943,33 @@ ROWS: list[Row] = [
         "slides",
         # The capability map closes every lane for a slide post; Save agrees (KRI-750 fix).
         Expect(ok=False, status=422, code="slide_post_edit_unsupported", check=_slides_untouched),
+    ),
+    # 12. a phone Talking speech segment after the first Delete (KRI-852) -------------------------
+    # The Delete makes the timeline authored and editable. Every window or order change on a
+    # speech segment saves, and captions follow their source occurrence (no 409, no stale clock).
+    Row(
+        "talking-segment-delete-moves-later-captions",
+        "talking_authored",
+        Expect(ok=True, authored=True, check=_talking_delete_moves_later_captions),
+        run=lambda monkeypatch: talking_segment_save(monkeypatch, "none"),
+    ),
+    Row(
+        "talking-segment-range-saves-and-clips-caption",
+        "talking_authored",
+        Expect(ok=True, authored=True, check=_talking_range_saves_and_clips_caption),
+        run=lambda monkeypatch: talking_segment_save(monkeypatch, "range"),
+    ),
+    Row(
+        "talking-segment-slide-saves-and-flags-untranscribed-speech",
+        "talking_authored",
+        Expect(ok=True, authored=True, check=_talking_slide_saves_and_flags_untranscribed_speech),
+        run=lambda monkeypatch: talking_segment_save(monkeypatch, "slide"),
+    ),
+    Row(
+        "talking-segment-reorder-moves-captions-with-clips",
+        "talking_authored",
+        Expect(ok=True, authored=True, check=_talking_reorder_moves_captions_with_clips),
+        run=lambda monkeypatch: talking_segment_save(monkeypatch, "reorder"),
     ),
 ]
 

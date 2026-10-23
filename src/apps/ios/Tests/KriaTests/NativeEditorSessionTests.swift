@@ -3417,6 +3417,114 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.canUndo)
     }
 
+    // MARK: KRI-852 — a Talking speech segment edits like any clip, and its captions follow it
+
+    /// The server's rows for a 10 s take cut at two pauses: segments at source 0-2, 3-6 and 7-10 s play at 0-2,
+    /// 2-5 and 5-8 s, with one caption each ("one" 0-1.5, "two" 2-4.5, "three" 5-7.5). The slot ids come from the
+    /// snapshot, as on a real load: renaming a slot after the session is built mints a new clip id.
+    private func talkingSegmentSession() -> (NativeEditorSession, first: UUID, middle: UUID, last: UUID) {
+        let rows: [(id: String, inS: Double, duration: Double)] = [
+            ("native-phone-talking-source", 0, 2), ("native-phone-talking-source-1", 3, 3), ("native-phone-talking-source-2", 7, 3),
+        ]
+        var start = 0.0
+        let clips = rows.map { row -> EditorClip in
+            defer { start += row.duration }
+            return EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: start, end: start + row.duration, trimIn: row.inS, trimOut: row.inS + row.duration, sourceDuration: 10, slotID: row.id)
+        }
+        let slots = rows.map { row -> JSONValue in
+            .object(["slot_id": .string(row.id), "clip_index": .number(0), "in_s": .number(row.inS), "duration_s": .number(row.duration),
+                     "source_duration_s": .number(10), "transition_after": .string("cut")])
+        }
+        let cues: [(String, Double, Double)] = [("one", 0, 1.5), ("two", 2, 4.5), ("three", 5, 7.5)]
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["sections": .object([
+            "timeline_slots": .array(slots),
+            "caption_cues": .array(cues.map { .object(["id": .string($0.0), "text": .string($0.0), "start_s": .number($0.1), "end_s": .number($0.2)]) }),
+        ])])]
+        let session = NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: clips, text: [], captions: CaptionStyle(enabled: true, style: "sentence"), music: nil, revision: 0, serverSnapshot: snapshot))
+        XCTAssertEqual(session.document.clips.map(\.id), rows.map(\.id))
+        XCTAssertEqual(talkingCaptions(session), ["one 0.0-1.5", "two 2.0-4.5", "three 5.0-7.5"])
+        let ids = session.timelineClips.map(\.id)
+        return (session, ids[0], ids[1], ids[2])
+    }
+
+    /// "text start-end" on the output clock, rounded to the millisecond the server persists.
+    private func talkingCaptions(_ session: NativeEditorSession) -> [String] {
+        session.document.captionCues.map { "\($0.text) \(($0.startS * 1000).rounded() / 1000)-\(($0.endS * 1000).rounded() / 1000)" }
+    }
+
+    /// Deleting the middle segment drops its caption; the caption after it moves up with its clip (5-7.5 -> 2-4.5).
+    /// One undo step restores the clip and the caption together.
+    func testTalkingSegmentDeleteDropsItsCaptionAndMovesLaterCaptionsWithTheirClips() {
+        let (session, _, middle, _) = talkingSegmentSession()
+        XCTAssertTrue(session.deleteSelection(EditorSelection(kind: .clip, id: middle.uuidString)))
+        XCTAssertEqual(session.document.clips.map(\.id), ["native-phone-talking-source", "native-phone-talking-source-2"])
+        XCTAssertTrue(session.document.deletions.contains(EditorDeletion(kind: "clip", id: "native-phone-talking-source-1")))
+        XCTAssertEqual(talkingCaptions(session), ["one 0.0-1.5", "three 2.0-4.5"])
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertFalse(NativeSpeechTimelineProjection.requiresCaptionTiming(session.document))
+        session.undo()
+        XCTAssertEqual(session.document.clips.count, 3)
+        XCTAssertEqual(talkingCaptions(session), ["one 0.0-1.5", "two 2.0-4.5", "three 5.0-7.5"])
+    }
+
+    /// The Range sheet is available on a segment and writes the window; the caption keeps only the part of the
+    /// speech still inside it (source 7.5-9.5 -> output 2.0-4.0). Formerly refused with 409 TIMELINE_STALE.
+    func testTalkingSegmentRangeWritesTheWindowAndClipsItsCaption() {
+        let (session, first, middle, last) = talkingSegmentSession()
+        XCTAssertTrue(session.deleteSelection(EditorSelection(kind: .clip, id: middle.uuidString)))
+        let selection = EditorSelection(kind: .clip, id: last.uuidString)
+        XCTAssertNil(session.sourceWindowBlockedReason(for: selection))
+        XCTAssertNil(session.sourceWindowBlockedReason(for: EditorSelection(kind: .clip, id: first.uuidString)))
+        XCTAssertTrue(session.setSourceWindow(for: selection, .init(start: 7.5, length: 2.5), rate: 1, sourceDuration: 10))
+        let slot = session.document.clips[1]
+        XCTAssertEqual(slot.inS, 7.5, accuracy: 1e-9)
+        XCTAssertEqual(slot.durationS ?? 0, 2.5, accuracy: 1e-9)
+        XCTAssertEqual(slot.raw["source_start_locked"], .bool(true))
+        XCTAssertEqual(talkingCaptions(session), ["one 0.0-1.5", "three 2.0-4.0"])
+        XCTAssertFalse(NativeSpeechTimelineProjection.requiresCaptionTiming(session.document))
+        XCTAssertTrue(session.hasUnsavedChanges)
+    }
+
+    /// "Slide source later" and the typed timing write the window and lock the source start; the caption follows.
+    /// Speech slid into view that has no transcript keeps the Save but asks for captions or the previous range
+    /// before export (`requiresCaptionTiming`), the protection #1770 keeps; a window inside known speech does not.
+    func testTalkingSegmentSlideAndTimingWriteTheWindowAndFlagUntranscribedSpeech() {
+        let (session, first, middle, last) = talkingSegmentSession()
+        XCTAssertTrue(session.deleteSelection(EditorSelection(kind: .clip, id: middle.uuidString)))
+        session.selectClip(first)
+        session.slideSourceWindow(by: 0.5)
+        XCTAssertEqual(session.document.clips[0].inS, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(session.document.clips[0].raw["source_start_locked"], .bool(true))
+        XCTAssertEqual(talkingCaptions(session), ["one 0.0-1.0", "three 2.0-4.5"])
+        XCTAssertTrue(NativeSpeechTimelineProjection.requiresCaptionTiming(session.document))
+        session.undo()
+        XCTAssertEqual(talkingCaptions(session), ["one 0.0-1.5", "three 2.0-4.5"])
+        XCTAssertFalse(NativeSpeechTimelineProjection.requiresCaptionTiming(session.document))
+
+        session.setClipTiming(clipID: last, inS: 7.5, durationS: 2)
+        XCTAssertEqual(session.document.clips[1].inS, 7.5, accuracy: 1e-9)
+        XCTAssertEqual(session.document.clips[1].durationS ?? 0, 2, accuracy: 1e-9)
+        XCTAssertEqual(session.document.clips[1].raw["source_start_locked"], .bool(true))
+        XCTAssertEqual(talkingCaptions(session), ["one 0.0-1.5", "three 2.0-4.0"])
+        XCTAssertFalse(NativeSpeechTimelineProjection.requiresCaptionTiming(session.document))
+    }
+
+    /// A segment moves (drag, "Move earlier/later") and its caption moves with it: "three" opens the video, "one"
+    /// plays over the second clip. Formerly the move saved with every caption left on the old clock.
+    func testTalkingSegmentMovesAndItsCaptionMovesWithIt() {
+        let (session, first, middle, last) = talkingSegmentSession()
+        XCTAssertTrue(session.deleteSelection(EditorSelection(kind: .clip, id: middle.uuidString)))
+        XCTAssertTrue(session.canReorderClips)
+        session.moveClip(id: last, toIndex: 0)
+        XCTAssertEqual(session.document.clips.map(\.id), ["native-phone-talking-source-2", "native-phone-talking-source"])
+        XCTAssertEqual(talkingCaptions(session), ["three 0.0-2.5", "one 3.0-4.5"])
+        session.selectClip(first)
+        session.moveSelected(by: -1)
+        XCTAssertEqual(session.document.clips.map(\.id), ["native-phone-talking-source", "native-phone-talking-source-2"])
+        XCTAssertEqual(talkingCaptions(session), ["one 0.0-1.5", "three 2.0-4.5"])
+        XCTAssertFalse(NativeSpeechTimelineProjection.requiresCaptionTiming(session.document))
+    }
+
     func testLeadingTrimAdvancesSourceWithoutLeavingTimelineGap() {
         let first = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 4, start: 0, end: 4, trimIn: 1, trimOut: 5, sourceDuration: 8)
         let second = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 7, start: 4, end: 6, trimIn: 0, trimOut: 2, sourceDuration: 3)

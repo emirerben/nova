@@ -175,6 +175,36 @@ lag is 62.5 microseconds, minimum aligned correlation exceeds 0.982, maximum
 picture-region mean absolute error is below 2.1/255. Zero-delay correlations are
 also recorded; they are not silently substituted for aligned values.
 
+## Regression checks brought over from #1788 (2026-10-23)
+
+#1788 was an iOS-only stopgap for the same ticket that greyed Range / slide / move out on a
+speech segment. Its fixture and rows were brought into this branch and inverted so they prove
+the edit works; #1788 stays unmerged and is closed once this lands. Details and the row table:
+`docs/reviews/kri-750-save-failure-modes.md` §12.
+
+- Save matrix (`tests/routes/test_editor_save_contract_matrix.py`, rows `talking-segment-*`,
+  fixture `talking_cut_job` / `talking_segment_save` in `_editor_save_matrix.py`): a 10 s take cut
+  at two pauses with one caption per segment, saved with editor protocol 2 like the iPhone.
+  Deleting the middle segment drops its caption and moves the later caption with its clip
+  (5-7.5 s -> 2-4.5 s); Range saves with the caption clipped to the window; reorder moves captions
+  with their clips; a slide into speech that has no transcript saves exactly and sets
+  `speech_timing_unresolved`. With protocol 1 the same slide is refused as `unsupported_phone_edit`
+  (the pre-existing protocol-1 response, unchanged).
+- Native (`NativeEditorSessionTests`, `testTalkingSegment*`): the same four edits on a session whose
+  slots and cues come from the server snapshot (a renamed slot would mint a new clip id and bypass
+  the guard under test). Captions follow in the same undo step; `source_start_locked` is written on
+  a moved source start; `requiresCaptionTiming` fires only for untranscribed speech.
+- Registered in `scripts/ci/journey-manifest.json` (`kri-852-speech-editor`) and the gate's
+  covered neighbours.
+
+Results after merging `origin/main` (1cfb929d5):
+`python3 scripts/reliability-gates.py run kri-852-speech-editor` with a scratch Postgres:
+**163 passed, 0 environment skips/errors** (159 before, plus the four rows). Neighbouring API
+suites (matrix, speech state, code catalogue, authored/phone compilers, phone and subtitled commit,
+empty drafts, gate schema): 382 passed. Simulator (iPhone Air, iOS 26.5, arm64):
+`NativeEditorSessionTests/testTalkingSegment*`, `testTalkingSourceClipHasOneUndoableTrimGesture`
+and `NativeSpeechTimelineTests`: 9 passed.
+
 ## Remaining acceptance and mandatory-check limits
 
 - **KRI-771:** original physical iPhone Save/reopen/export is still open. The

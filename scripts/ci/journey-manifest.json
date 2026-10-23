@@ -1418,6 +1418,10 @@
         "KriaTests/NativeSpeechTimelineTests/testFractionalOverlapAndRepeatedSourceFixtureMatchesTheRenderer",
         "KriaTests/NativeSpeechTimelineTests/testMissingSourceWordsRetainTheRangeUntilCaptionRecovery",
         "KriaTests/NativeEditorSessionTests/testTalkingSourceClipHasOneUndoableTrimGesture",
+        "KriaTests/NativeEditorSessionTests/testTalkingSegmentDeleteDropsItsCaptionAndMovesLaterCaptionsWithTheirClips",
+        "KriaTests/NativeEditorSessionTests/testTalkingSegmentRangeWritesTheWindowAndClipsItsCaption",
+        "KriaTests/NativeEditorSessionTests/testTalkingSegmentSlideAndTimingWriteTheWindowAndFlagUntranscribedSpeech",
+        "KriaTests/NativeEditorSessionTests/testTalkingSegmentMovesAndItsCaptionMovesWithIt",
         "KriaTests/NativeSpeechTimelineTests/testSharedSourcePoolSurvivesReopenWithoutCaptionMirrors"
       ],
       "paths": [
@@ -1433,7 +1437,9 @@
         "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift",
         "src/apps/ios/Kria/Features/NativeEditorSession.swift",
         "src/apps/ios/Tests/Fixtures/speech_editor_projection.json",
-        "src/apps/ios/Tests/KriaTests/NativeSpeechTimelineTests.swift"
+        "src/apps/ios/Tests/KriaTests/NativeSpeechTimelineTests.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorSessionTests.swift",
+        "src/apps/api/tests/routes/_editor_save_matrix.py"
       ]
     },
     {
