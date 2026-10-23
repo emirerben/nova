@@ -9704,13 +9704,23 @@ async def _queue_pool_asset_analysis(
 
         await adopt_uploaded_visual(db, asset)
 
-    from app.services.pool_analysis_deadline import begin_attempt  # noqa: PLC0415
+    from app.services.pool_analysis_deadline import (  # noqa: PLC0415
+        begin_attempt,
+        queue_backlog_stmt,
+    )
 
     prior_attempts = int(getattr(asset, "analysis_attempt_count", 0) or 0)
+    dispatched_at = datetime.now(UTC)
+    # KRI-820: the claim window covers the shared queue's live backlog, so a
+    # photo that is only waiting in line never times out.
+    queue_ahead = int(
+        (await db.execute(queue_backlog_stmt(dispatched_at, exclude_id=asset.id))).scalar() or 0
+    )
     attempt_token = begin_attempt(
         asset,
-        now=datetime.now(UTC),
+        now=dispatched_at,
         attempt_count=1 if reset_attempts else prior_attempts + 1,
+        queue_ahead=queue_ahead,
     )
     await db.commit()
     await db.refresh(asset)

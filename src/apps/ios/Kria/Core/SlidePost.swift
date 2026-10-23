@@ -393,9 +393,19 @@ enum SlidePostAssetGate {
 
     static func isInFlight(_ asset: SlidePostAsset) -> Bool { inFlightStatuses.contains(asset.status) }
 
+    /// Still preparing inside the server's declared bound (`analysis_deadline_at`). Asking Kria
+    /// waits for these, draft or not: the server proposes from ready rows only, so asking now
+    /// would silently leave out photos the creator just added. Past the bound it no longer waits.
+    static func isAwaited(_ asset: SlidePostAsset, now: Date = Date()) -> Bool {
+        guard isInFlight(asset) else { return false }
+        guard let deadline = asset.analysisDeadlineAt.flatMap(PlanBlock.parseDate) else { return true }
+        return deadline > now
+    }
+
     static func isUsable(_ asset: SlidePostAsset) -> Bool {
         guard !["missing", "expired"].contains(asset.mediaStatus ?? "") else { return false }
-        return asset.status == "ready" || (asset.status == "failed" && asset.mediaStatus == "ready")
+        // Verified bytes stay placeable while an analysis-only Retry runs (server keeps media ready).
+        return asset.status == "ready" || (["failed", "queued", "analyzing"].contains(asset.status) && asset.mediaStatus == "ready")
     }
 
     /// Needs the creator: Retry or Remove (the row explains which).

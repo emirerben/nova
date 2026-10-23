@@ -16,7 +16,8 @@ Past the deadline an in-flight row is an actionable, retryable
 retry route, the reaper (which persists it and rotates the attempt token so a
 late worker cannot write) and creator preparation (which leaves it out).
 
-Pure functions only (no I/O) so routes, tasks and services share one rule.
+Pure functions only (no I/O; `queue_backlog_stmt` only builds a query) so
+routes, tasks and services share one rule.
 """
 
 from __future__ import annotations
@@ -29,10 +30,21 @@ from typing import Any
 # 60 s margin for the persist transaction. Video adds the 360 s budget its
 # transient-provider retries historically had.
 _RUN_WINDOW = {"image": timedelta(seconds=360), "video": timedelta(seconds=720)}
-# Waiting in the broker before a worker claims the row. A 20-photo batch at the
-# autoplace worker's concurrency of 2 clears in ~5 min; videos run longer, so a
-# full video batch gets a longer claim window rather than failing healthy work.
+# Waiting in the broker before a worker claims the row. The base covers an
+# autostopped autoplace machine cold-starting plus a short line; the window then
+# grows with the analyses already ahead of this one on the shared
+# visuals-analysis queue (all creators), one worst-case run per wave of the
+# autoplace process's concurrency, so healthy work that is only waiting in line
+# never becomes a user-facing timeout. Capped at the pre-KRI-820 60-minute
+# queued window so a lost broker message still terminates. Only the run window
+# after a claim is tight.
 _CLAIM_WINDOW = {"image": timedelta(minutes=10), "video": timedelta(minutes=30)}
+_CLAIM_WINDOW_CAP = timedelta(minutes=60)
+# `autoplace` process in fly.toml: `--concurrency=2 -Q autoplace-jobs,visuals-analysis`.
+_QUEUE_CONCURRENCY = 2
+# One queued analysis ahead occupies a slot for at most the task's 300 s hard
+# limit (image) or one full video run window.
+_QUEUE_SLOT = {"image": timedelta(seconds=300), "video": timedelta(seconds=720)}
 
 IN_FLIGHT_STATUSES = frozenset({"queued", "analyzing"})
 TIMED_OUT_CODE = "analysis_timed_out"
@@ -47,17 +59,46 @@ def run_window(kind: str | None) -> timedelta:
     return _RUN_WINDOW[_kind(kind)]
 
 
-def claim_window(kind: str | None) -> timedelta:
-    return _CLAIM_WINDOW[_kind(kind)]
+def claim_window(kind: str | None, queue_ahead: int = 0) -> timedelta:
+    """Time a dispatched attempt may wait for a worker, given how many other
+    in-flight analyses are already ahead of it on the shared queue."""
+    k = _kind(kind)
+    waves = -(-max(0, int(queue_ahead)) // _QUEUE_CONCURRENCY)
+    backlog = _QUEUE_SLOT[k] * waves
+    return min(max(_CLAIM_WINDOW[k], backlog + _CLAIM_WINDOW["image"]), _CLAIM_WINDOW_CAP)
 
 
 def max_dispatch_window() -> timedelta:
     """Longest any in-flight analysis can stay pending (used by waiters)."""
-    return max(claim_window(k) + run_window(k) for k in _RUN_WINDOW)
+    return max(_CLAIM_WINDOW_CAP + run_window(k) for k in _RUN_WINDOW)
 
 
-def dispatch_deadline(kind: str | None, now: datetime) -> datetime:
-    return now + claim_window(kind) + run_window(kind)
+def dispatch_deadline(kind: str | None, now: datetime, queue_ahead: int = 0) -> datetime:
+    return now + claim_window(kind, queue_ahead) + run_window(kind)
+
+
+def queue_backlog_stmt(now: datetime, *, exclude_id: Any = None):
+    """COUNT of live in-flight pool analyses (served by the partial
+    `idx_plan_item_assets_in_flight_deadline` index). Built here, executed by
+    the caller (sync or async), so every dispatch site sizes the window alike."""
+    from sqlalchemy import func, or_, select  # noqa: PLC0415
+
+    from app.models import PlanItemAsset  # noqa: PLC0415
+
+    stmt = (
+        select(func.count())
+        .select_from(PlanItemAsset)
+        .where(
+            PlanItemAsset.status.in_(tuple(IN_FLIGHT_STATUSES)),
+            or_(
+                PlanItemAsset.analysis_deadline_at.is_(None),
+                PlanItemAsset.analysis_deadline_at > now,
+            ),
+        )
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(PlanItemAsset.id != exclude_id)
+    return stmt
 
 
 def claim_deadline(current: datetime | None, kind: str | None, now: datetime) -> datetime:
@@ -69,7 +110,10 @@ def claim_deadline(current: datetime | None, kind: str | None, now: datetime) ->
 def effective_deadline(asset: Any) -> datetime | None:
     """The row's deadline; legacy in-flight rows (pre-0125) derive one."""
     explicit = getattr(asset, "analysis_deadline_at", None)
-    if explicit is not None:
+    dispatched = getattr(asset, "analysis_last_dispatched_at", None)
+    # A deadline older than the attempt's dispatch belongs to an earlier token
+    # (a requeue by pre-KRI-820 code): derive a fresh one instead.
+    if explicit is not None and (dispatched is None or explicit > dispatched):
         return explicit
     status = getattr(asset, "status", None)
     kind = getattr(asset, "kind", None)
@@ -80,7 +124,8 @@ def effective_deadline(asset: Any) -> datetime | None:
         anchor = getattr(asset, "analysis_last_dispatched_at", None) or getattr(
             asset, "created_at", None
         )
-        return dispatch_deadline(kind, anchor) if anchor is not None else None
+        # Its backlog at dispatch is unknown: give it the full capped window.
+        return anchor + _CLAIM_WINDOW_CAP + run_window(kind) if anchor is not None else None
     return None
 
 
@@ -92,8 +137,11 @@ def is_expired(asset: Any, now: datetime | None = None) -> bool:
     return deadline is not None and (now or datetime.now(UTC)) > deadline
 
 
-def begin_attempt(asset: Any, *, now: datetime, attempt_count: int) -> str:
-    """Stamp a fresh fenced `queued` attempt with its deadline; return the token."""
+def begin_attempt(asset: Any, *, now: datetime, attempt_count: int, queue_ahead: int = 0) -> str:
+    """Stamp a fresh fenced `queued` attempt with its deadline; return the token.
+
+    `queue_ahead` is the live in-flight backlog (`queue_backlog_stmt`) so the
+    claim window covers the line this attempt joins."""
     token = uuid.uuid4().hex
     asset.status = "queued"
     asset.error_code = None
@@ -103,7 +151,7 @@ def begin_attempt(asset: Any, *, now: datetime, attempt_count: int) -> str:
     asset.analysis_attempt_count = attempt_count
     asset.analysis_last_dispatched_at = now
     asset.analysis_started_at = None
-    asset.analysis_deadline_at = dispatch_deadline(getattr(asset, "kind", None), now)
+    asset.analysis_deadline_at = dispatch_deadline(getattr(asset, "kind", None), now, queue_ahead)
     return token
 
 

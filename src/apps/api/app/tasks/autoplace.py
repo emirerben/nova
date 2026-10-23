@@ -1567,19 +1567,43 @@ def analyze_pool_asset(
                         retries=retry_attempt,
                     )
                     return
+                deadline = getattr(asset, "analysis_deadline_at", None)
+                soft_limit = timedelta(seconds=_AUTOPLACE_TASK_LIMITS["soft_time_limit"])
+                if deadline is not None and now + soft_limit > deadline:
+                    # A late-delivered retry whose run cannot finish in bound:
+                    # persist the timeout rather than starting paid work that
+                    # would outlive the deadline (and race a creator Retry).
+                    pool_deadline.mark_timed_out(asset)
+                    db.commit()
+                    log.info("autoplace.asset_attempt_expired", asset_id=asset_id, stage="retry")
+                    return
             else:
                 if asset.status not in {"uploaded", "queued"}:
                     return
                 dispatched_at = getattr(asset, "analysis_last_dispatched_at", None)
                 if dispatched_at is not None:
                     queue_wait_s = max(0.0, (now - dispatched_at).total_seconds())
-                asset.status = "analyzing"
-                asset.media_status = "pending"
-                asset.analysis_started_at = now
                 # A claim may shorten the bound to one run, never extend it.
-                asset.analysis_deadline_at = pool_deadline.claim_deadline(
-                    getattr(asset, "analysis_deadline_at", None), kind, now
+                claim_deadline = pool_deadline.claim_deadline(
+                    pool_deadline.effective_deadline(asset), kind, now
                 )
+                soft_limit = timedelta(seconds=_AUTOPLACE_TASK_LIMITS["soft_time_limit"])
+                if now + soft_limit > claim_deadline:
+                    # Claimed too late for one run to fit: no paid work that
+                    # the reaper would fence out at the deadline anyway.
+                    pool_deadline.mark_timed_out(asset)
+                    db.commit()
+                    log.info(
+                        "autoplace.asset_attempt_expired", asset_id=asset_id, stage="claim_fit"
+                    )
+                    return
+                asset.status = "analyzing"
+                if getattr(asset, "media_status", None) != "ready":
+                    # KRI-820: an analysis-only Retry of already verified bytes
+                    # keeps the photo usable in a draft while it re-analyzes.
+                    asset.media_status = "pending"
+                asset.analysis_started_at = now
+                asset.analysis_deadline_at = claim_deadline
                 asset.error_code = None
                 asset.error_detail = None
                 asset.error_retryable = False

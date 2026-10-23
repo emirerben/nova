@@ -5,10 +5,14 @@ import XCTest
 ///
 /// Failure modes this guards (written before the change):
 /// - a pending or timed-out photo that is NOT in the draft blocks export / asking Kria;
+/// - photos still preparing inside their bound stop holding back "ask Kria", so the proposal
+///   (built from ready rows only) silently drops media the creator just added;
+/// - a photo past its declared bound keeps holding "ask Kria" back forever;
 /// - a pending or failed photo that IS in the draft (as a slide or a sticker) does not block;
 /// - removing the stalled photo leaves the remaining ready slides blocked;
 /// - a photo whose AI analysis timed out but whose bytes the server verified can't be placed,
-///   although the server's slide routes accept it (`media_status == "ready"`);
+///   although the server's slide routes accept it (`media_status == "ready"`), including while
+///   an analysis-only Retry re-analyzes it;
 /// - the server's timeout payload (`analysis_deadline_at` with microseconds, `analysis_timed_out`)
 ///   fails to decode and the row falls back to "Analyzing…";
 /// - the progress copy keeps promising "under a minute" with no bound the server will honour.
@@ -32,7 +36,8 @@ final class SlidePostStalledAssetTests: XCTestCase {
 
     private func blocking(_ assets: [SlidePostAsset], _ draft: SlidePostDraft?) -> (pending: Bool, failed: Bool) {
         let used = SlidePostAssetGate.used(assets, by: draft)
-        return (used.contains(where: SlidePostAssetGate.isInFlight), used.contains(where: SlidePostAssetGate.isFailed))
+        let pending = used.contains { SlidePostAssetGate.isInFlight($0) && !SlidePostAssetGate.isUsable($0) }
+        return (pending, used.contains(where: SlidePostAssetGate.isFailed))
     }
 
     func testStalledOrTimedOutPhotoOutsideTheDraftNeverBlocks() {
@@ -53,6 +58,26 @@ final class SlidePostStalledAssetTests: XCTestCase {
         XCTAssertTrue(blocking(failed, draft(["r1", "f"])).failed)
     }
 
+    func testAskingKriaWaitsForPhotosStillPreparingInsideTheirBound() {
+        let now = Date()
+        let iso = ISO8601DateFormatter()
+        func preparing(_ id: String, deadline: Date?) -> SlidePostAsset {
+            var row = asset(id, "analyzing", media: "pending")
+            row.analysisDeadlineAt = deadline.map(iso.string(from:))
+            return row
+        }
+        // New post (no draft yet): 2 ready, 6 still preparing well inside the bound.
+        let pool = (1...2).map { asset("r\($0)", "ready", media: "ready") }
+            + (1...6).map { preparing("p\($0)", deadline: now.addingTimeInterval(300)) }
+        XCTAssertTrue(pool.contains { SlidePostAssetGate.isAwaited($0, now: now) })
+        // Past the bound the row stops holding the request back (the server reports it failed).
+        let expired = preparing("x", deadline: now.addingTimeInterval(-1))
+        XCTAssertFalse(SlidePostAssetGate.isAwaited(expired, now: now))
+        // No deadline yet (legacy row): still awaited, never silently dropped.
+        XCTAssertTrue(SlidePostAssetGate.isAwaited(preparing("l", deadline: nil), now: now))
+        XCTAssertFalse(SlidePostAssetGate.isAwaited(asset("f", "failed", media: "failed"), now: now))
+    }
+
     func testRemovingTheStalledPhotoLeavesTheReadySlidesUnblocked() {
         let assets = (1...5).map { asset("r\($0)", "ready", media: "ready") }
         let gate = blocking(assets, draft(assets.map(\.id)))
@@ -66,7 +91,11 @@ final class SlidePostStalledAssetTests: XCTestCase {
         XCTAssertFalse(SlidePostAssetGate.isFailed(verified))
         XCTAssertFalse(SlidePostAssetGate.isUsable(asset("u", "failed", media: "failed")))
         XCTAssertFalse(SlidePostAssetGate.isUsable(asset("m", "ready", media: "missing")))
-        XCTAssertFalse(SlidePostAssetGate.isUsable(asset("a", "analyzing", media: "ready")))
+        // Retrying only the analysis of verified bytes keeps the slide in the exportable post.
+        let retrying = asset("a", "analyzing", media: "ready")
+        XCTAssertTrue(SlidePostAssetGate.isUsable(retrying))
+        XCTAssertFalse(blocking([retrying], draft(["a"])).pending)
+        XCTAssertFalse(SlidePostAssetGate.isUsable(asset("p", "analyzing", media: "pending")))
     }
 
     func testServerTimeoutPayloadDecodes() throws {

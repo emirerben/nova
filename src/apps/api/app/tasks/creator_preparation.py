@@ -9,10 +9,12 @@ from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from json import JSONDecodeError
 from types import SimpleNamespace
 from typing import TypeVar
 
 import structlog
+from pydantic import ValidationError
 from sqlalchemy import or_, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -334,6 +336,15 @@ def _analyze_sources(
             else:
                 pool_pending = True
             continue
+        if (
+            raw.get("asset_id")
+            and raw.get("asset_status") == "failed"
+            and raw.get("asset_error_code") == pool_deadline.TIMED_OUT_CODE
+        ):
+            # The reaper already persisted this bound as a timeout: never re-run
+            # a paid, unbounded inline analysis of the same stalled file.
+            omitted.append({"asset_id": raw["asset_id"], "reason": "analysis_timed_out"})
+            continue
         candidates.append(raw)
     # Even ready source clips pass the helper's cheap immutable-generation
     # check; cached semantic records never trigger another paid analysis.
@@ -367,6 +378,11 @@ def _analyze_sources(
                 try:
                     analyzed, _ref = future.result()
                     ready = clip_analysis_ready(analyzed, kind=analyzed.get("kind"))
+                except (ValidationError, JSONDecodeError):
+                    # Malformed model output for one file (both are ValueErrors).
+                    if not _omittable(raw):
+                        raise
+                    ready = False
                 except _SYSTEMIC_FAILURES:
                     raise
                 except Exception:  # noqa: BLE001 - one failed pool file is left out, not fatal
@@ -550,6 +566,9 @@ def _pending_pool_dispatches(
             or dispatched_at > now - POOL_REDISPATCH_AFTER
         ):
             continue
+        if getattr(asset, "analysis_deadline_at", None) is None:
+            # Legacy (pre-0125) row: pin its derived bound before the anchor moves.
+            asset.analysis_deadline_at = pool_deadline.effective_deadline(asset)
         asset.analysis_last_dispatched_at = now
         dispatches.append((str(asset.id), asset.analysis_attempt_token, asset.correlation_id))
         if len(dispatches) >= POOL_REDISPATCH_BATCH:

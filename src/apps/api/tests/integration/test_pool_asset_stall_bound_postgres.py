@@ -21,6 +21,11 @@ Failure modes covered (written before the fix, plan.md F1-F14):
   F13    another creator cannot retry the asset
   F14    media-library re-dispatch is capped
   F16    broker `expires` equals the row's deadline
+  F17    healthy photos only WAITING in a shared-queue backlog never time out:
+         the claim window grows with the live backlog (capped at the old
+         60-minute queued window); the run window after a claim stays tight
+  F18    a timeout the reaper already persisted is omitted by creator
+         preparation without a second paid inline analysis
 
 Writes `.dev/kri-820-e2e/report.json` at the repo root.
 """
@@ -282,15 +287,17 @@ async def _fresh_async_pool():
 async def test_hard_killed_claim_becomes_actionable_failure_within_bound(env, owner) -> None:
     asset_id = _add_asset(owner)
     t0 = datetime.now(UTC)
+    with sync_session() as db:
+        backlog = int(db.execute(bound.queue_backlog_stmt(t0)).scalar() or 0)
     await _queue(owner, asset_id)
     queued = _row(asset_id)
     publish = env.published[-1]
     # F16: a broker copy older than the deadline is dropped by the worker.
     assert queued.analysis_deadline_at is not None
     assert publish["expires"] == queued.analysis_deadline_at
-    assert queued.analysis_deadline_at - t0 <= bound.claim_window("image") + bound.run_window(
-        "image"
-    ) + timedelta(seconds=5)
+    assert queued.analysis_deadline_at - t0 <= bound.claim_window(
+        "image", backlog
+    ) + bound.run_window("image") + timedelta(seconds=5)
 
     def killed(*_args, **_kwargs):  # noqa: ANN002, ANN003
         raise HardKill()
@@ -340,7 +347,7 @@ async def test_reaper_never_extends_or_loops_past_the_deadline(env, owner) -> No
     await _queue(owner, asset_id)
     queued = _row(asset_id)
     publishes_before = len(env.published)
-    window = bound.claim_window("image") + bound.run_window("image")
+    window = queued.analysis_deadline_at - queued.analysis_last_dispatched_at
     timeline = []
     for minutes in (5, 5, 5):  # message lost: never claimed, sweeps every 5 min
         _age(asset_id, timedelta(minutes=minutes))
@@ -366,6 +373,49 @@ async def test_reaper_never_extends_or_loops_past_the_deadline(env, owner) -> No
         timeline=timeline,
         final=[row.status, row.error_code, row.analysis_attempt_count],
         republished=len(env.published) - publishes_before,
+    )
+
+
+async def test_queue_backlog_widens_the_claim_window_not_the_run_window(env, owner) -> None:
+    # Two creators' 20-photo batches already in line ahead of this one.
+    for i in range(40):
+        _add_asset(
+            owner,
+            name=f"line-{i}.jpg",
+            status="queued",
+            analysis_attempt_token=f"line-{i}",
+            analysis_deadline_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    last = _add_asset(owner, name="last-in-line.jpg")
+    t0 = datetime.now(UTC)
+    await _queue(owner, last)
+    queued = _row(last)
+    claim = queued.analysis_deadline_at - t0 - bound.run_window("image")
+    # 40 ahead at concurrency 2 = 20 waves of a 300 s worst-case run, capped at 60 min.
+    assert claim >= bound.claim_window("image", 40) - timedelta(seconds=5)
+    assert claim > bound.claim_window("image")
+    assert bound.claim_window("image", 40) == timedelta(minutes=60)
+    assert bound.claim_window("image", 4) == timedelta(minutes=20)
+    assert bound.claim_window("image", 10_000) == timedelta(minutes=60)
+
+    # Still waiting in line 30 min later: neither the read nor the reaper fails it.
+    _age(last, timedelta(minutes=30))
+    maintenance.reconcile_stale_pool_assets()
+    waiting = _row(last)
+    assert waiting.status == "queued"
+    assert (await _list(owner))[last]["status"] == "queued"
+
+    # Claimed at last: the bound tightens to one run and still ends in time.
+    _run_task(last, waiting.analysis_attempt_token, _ok_analysis("beach"))
+    done = _row(last)
+    assert done.status == "ready"
+    _step(
+        "queue_backlog_claim_window",
+        queue_ahead=40,
+        claim_window_s=claim.total_seconds(),
+        run_window_s=bound.run_window("image").total_seconds(),
+        waited_min=30,
+        final=done.status,
     )
 
 
@@ -542,10 +592,18 @@ def test_creator_preparation_uses_ready_sources_and_names_the_stalled_one(env, o
             )
         )
         db.commit()
+    persisted_timeout = _add_asset(
+        owner,
+        name="reaped.jpg",
+        status="failed",
+        media_status="failed",
+        error_code="analysis_timed_out",
+        gcs_generation="404",
+    )
     broken = _add_asset(
         owner, name="broken.jpg", status="failed", media_status="failed", gcs_generation="505"
     )
-    attempt_id = _prep_graph(owner, [*ready, stalled, broken])
+    attempt_id = _prep_graph(owner, [*ready, stalled, persisted_timeout, broken])
     token, _inputs, sources, *_ = prep._claim(attempt_id)
     analyzed_ids: list[str] = []
 
@@ -566,12 +624,13 @@ def test_creator_preparation_uses_ready_sources_and_names_the_stalled_one(env, o
     assert sorted(analyzed_ids) == sorted([*ready, broken])
     assert omitted == [
         {"asset_id": stalled, "reason": "analysis_timed_out"},
+        {"asset_id": persisted_timeout, "reason": "analysis_timed_out"},
         {"asset_id": broken, "reason": "analysis_failed"},
     ]
     with sync_session() as db:
         assert db.get(PlanItemAsset, uuid.UUID(broken)).status == "failed"
     state = progress(attempt_id, "resolving", 2, 4, omitted=omitted)
-    assert state["omitted"] == omitted and "left out 2 files" in state["message"]
+    assert state["omitted"] == omitted and "left out 3 files" in state["message"]
     _step(
         "creator_preparation_omits_stalled",
         request="Make a slider from my weekend photos",
@@ -609,7 +668,10 @@ def test_media_library_redispatch_is_capped(env, owner, monkeypatch) -> None:
         db.commit()
     sent: list[str] = []
     monkeypatch.setattr(
-        media_library.analyze_media_asset_task, "delay", lambda aid, _owner: sent.append(aid)
+        media_library.analyze_media_asset_task,
+        "delay",
+        # Count only this asset: rows left by earlier runs share the test DB.
+        lambda aid, _owner: sent.append(aid) if aid == str(asset_id) else None,
     )
     statuses = []
     for _ in range(media_library.MEDIA_ANALYSIS_MAX_REDISPATCHES + 2):

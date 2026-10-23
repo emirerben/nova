@@ -27,6 +27,10 @@ class _Rows:
     def all(self):
         return self._rows
 
+    def scalar(self):
+        # KRI-820 backlog COUNT: an empty shared queue.
+        return 0
+
 
 class _Session:
     def __init__(self, rows, *, preview_rows=()):  # noqa: ANN001

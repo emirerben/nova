@@ -98,7 +98,12 @@ struct SlidePostWorkspaceView: View {
     private var hasPendingAssets: Bool { session.slideAssets.contains(where: SlidePostAssetGate.isInFlight) || hasUploadsInFlight }
     /// KRI-820: only media the draft uses can hold the post back (see `SlidePostAssetGate`).
     private var draftAssets: [SlidePostAsset] { SlidePostAssetGate.used(session.state?.assets ?? [], by: session.draft ?? session.proposal?.draft) }
-    private var hasPendingDraftAssets: Bool { draftAssets.contains(where: SlidePostAssetGate.isInFlight) || hasUploadsInFlight }
+    /// Export waits only for the draft's own media; an unrelated upload still transferring can't be
+    /// in the draft yet, so it never blocks.
+    private var hasPendingDraftAssets: Bool { draftAssets.contains { SlidePostAssetGate.isInFlight($0) && !SlidePostAssetGate.isUsable($0) } }
+    /// Asking Kria waits for every photo still preparing within its bound (and every transfer), so
+    /// the proposal never quietly drops media the creator just added.
+    private var hasAwaitedAssets: Bool { session.slideAssets.contains { SlidePostAssetGate.isAwaited($0) } || hasUploadsInFlight }
     private var hasFailedDraftAssets: Bool { draftAssets.contains(where: SlidePostAssetGate.isFailed) }
     private var hasSkippedFiles: Bool {
         uploadFailures.contains { $0.projectID == uploadProjectID && !session.stickerUploadNames.contains(BackgroundUploadCoordinator.displayFilename($0.filename)) }
@@ -107,10 +112,10 @@ struct SlidePostWorkspaceView: View {
     /// picker couldn't read (`hasSkippedFiles`) — is simply left out and never blocks asking Kria (KRI-211).
     private var hasFailedAssets: Bool { session.slideAssets.contains(where: SlidePostAssetGate.isFailed) }
     private var hasFailedUploads: Bool { hasSkippedFiles || hasFailedAssets }
-    private var canRequestProposal: Bool { !session.isBusy && !hasPendingDraftAssets && !hasFailedDraftAssets && !session.readyAssets.isEmpty }
+    private var canRequestProposal: Bool { !session.isBusy && !hasAwaitedAssets && !hasPendingDraftAssets && !hasFailedDraftAssets && !session.readyAssets.isEmpty }
     private var proposalGuidance: String? {
         if hasFailedDraftAssets { return "Retry or remove the failed photos and videos in your post before asking Kria." }
-        if hasPendingDraftAssets { return "Wait for every photo and video to finish importing before asking Kria." }
+        if hasAwaitedAssets || hasPendingDraftAssets { return "Wait for every photo and video to finish importing before asking Kria." }
         if hasFailedAssets || hasPendingAssets { return "Kria will use the photos and videos that are ready." }
         return nil
     }

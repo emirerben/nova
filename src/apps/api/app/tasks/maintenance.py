@@ -227,6 +227,7 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
             .scalars()
             .all()
         )
+        queue_ahead: int | None = None
         for asset in rows:
             if asset.status == "deduped":
                 # The uploaded duplicate bytes were deleted synchronously at
@@ -293,7 +294,16 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
                 pool_deadline.mark_timed_out(asset)
                 timed_out += 1
                 continue
-            token = pool_deadline.begin_attempt(asset, now=current, attempt_count=attempts + 1)
+            if queue_ahead is None:
+                # KRI-820: size the claim window by the shared queue's backlog
+                # (one count per sweep; each requeue joins the line behind it).
+                queue_ahead = int(
+                    db.execute(pool_deadline.queue_backlog_stmt(current)).scalar() or 0
+                )
+            token = pool_deadline.begin_attempt(
+                asset, now=current, attempt_count=attempts + 1, queue_ahead=queue_ahead
+            )
+            queue_ahead += 1
             to_publish.append(
                 (
                     str(asset.id),

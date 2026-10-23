@@ -147,6 +147,7 @@ def source_snapshot(item: PlanItem, assets: list[PlanItemAsset]) -> list[dict]:
                 # KRI-820: in flight past its declared bound. Not an identity
                 # field, so it never changes `source_digest`.
                 analysis_expired=is_expired(asset),
+                asset_error_code=asset.error_code if asset.status == "failed" else None,
             )
         )
     # Match the existing creator-manifest cap, without silently losing sources.

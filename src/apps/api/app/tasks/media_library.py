@@ -96,11 +96,18 @@ def reconcile_media_library_analysis() -> int:
             analyze_media_asset_task.delay(str(row.asset_id), str(row.user_id))
             row.analysis_dispatch_pending = False
             sent += 1
+        stale_cutoff = datetime.now(UTC) - timedelta(minutes=15)
         for asset in stale:
+            # Re-read under the owner lock: a worker that finished in between
+            # must never be degraded to failed or re-sent (KRI-820).
+            db.refresh(asset, with_for_update=True)
+            if asset.status not in {"pending", "processing"} or asset.updated_at >= stale_cutoff:
+                continue
             metadata = dict(asset.metadata_json or {})
             redispatches = int(metadata.get(_REDISPATCH_COUNT_KEY) or 0)
             if redispatches >= MEDIA_ANALYSIS_MAX_REDISPATCHES:
                 asset.status = "failed"
+                asset.updated_at = datetime.now(UTC)
                 continue
             metadata[_REDISPATCH_COUNT_KEY] = redispatches + 1
             asset.metadata_json = metadata
