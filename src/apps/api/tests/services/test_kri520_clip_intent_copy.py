@@ -366,4 +366,6 @@ def test_label_grounding_ignores_dotless_i_case() -> None:
     )
 
     assert isinstance(label, GroundedLabel)
-    assert label.text == "Kırmızı Kapı" and label.grounding == "creator_text"
+    # KRI-826: the words match through the dotless-ı fold, and print as the creator
+    # wrote them, never the model's recasing.
+    assert label.text == "KIRMIZI KAPI" and label.grounding == "creator_text"

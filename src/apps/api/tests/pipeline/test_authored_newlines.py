@@ -26,7 +26,7 @@ def test_manual_newline_flag_survives_text_element_burn_contract():
 @pytest.mark.parametrize("size", [12, 72, 400])
 @pytest.mark.parametrize("phases", [None, {"entrance": "fade"}])
 def test_portable_and_cloud_keep_manual_rows_and_font_size(size, phases):
-    text = "An intentionally very long line that must not wrap\n\nLast line"
+    text = "An intentionally very long line that must fit the frame\n\nLast line"
     overlay = {
         "text": text,
         "start_s": 0,
@@ -40,8 +40,27 @@ def test_portable_and_cloud_keep_manual_rows_and_font_size(size, phases):
     }
     canvas = Canvas(600, 400)
     layer, _ = compile_text_overlay(overlay, layer_id="manual", canvas=canvas)
-    assert [run.text for run in layer.runs] == [text.split("\n")[0], "Last line"]
-    assert all(run.font_size == size for run in layer.runs)
+    first = text.split("\n")[0]
+    # KRI-826: the explicit rows stay hard breaks, and a stale narrow `max_width_frac`
+    # (0.2) never re-wraps them. A row that fits the frame's safe width (0.9 x 600)
+    # stays one line at the creator's size; a wider row soft-wraps inside it, and only
+    # a single word wider than the frame shrinks the text (never below 24px).
+    safe = 0.9 * canvas.width
+    face = cloud._typeface_for_overlay(overlay)
+    if skia.Font(face, size).measureText(first) <= safe:
+        assert [run.text for run in layer.runs] == [first, "Last line"]
+        assert all(run.font_size == size for run in layer.runs)
+    else:
+        assert layer.runs[-1].text == "Last line"
+        assert " ".join(run.text for run in layer.runs[:-1]).split() == first.split()
+        drawn = {run.font_size for run in layer.runs}
+        assert len(drawn) == 1
+        (drawn_size,) = drawn
+        assert min(size, 24) <= drawn_size <= size
+        font = skia.Font(face, drawn_size)
+        assert all(font.measureText(run.text) <= safe for run in layer.runs)
+        if skia.Font(face, size).measureText("intentionally") <= safe:
+            assert drawn_size == size  # wrap first; shrink only for an over-wide word
     with patch.object(cloud, "_draw_line_with_layers") as draw:
         cloud._draw_overlay_on_canvas(
             skia.Surface(600, 400).getCanvas(), overlay, 1, 2, render_canvas=canvas
@@ -50,8 +69,9 @@ def test_portable_and_cloud_keep_manual_rows_and_font_size(size, phases):
     assert len(actual) == len(layer.runs)
     for run, call in zip(layer.runs, actual, strict=True):
         assert (run.text, run.x, run.baseline_y) == call.args[1:4]
-        assert call.args[4].getSize() == size
-    assert layer.runs[1].baseline_y - layer.runs[0].baseline_y > size * 2
+        assert call.args[4].getSize() == layer.runs[0].font_size
+    # The blank authored row still takes its own baseline before "Last line".
+    assert layer.runs[-1].baseline_y - layer.runs[-2].baseline_y > layer.runs[0].font_size * 2
 
 
 def test_pillow_manual_text_never_wraps_or_resolves_a_smaller_font(tmp_path):

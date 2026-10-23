@@ -86,20 +86,32 @@ public enum AuthoredTextLayout {
             throw RecipeError.invalidTimeline
         }
         try phases?.validate()
-        let font = NativeFontIdentity.font(graphics, size: style.size, variations: style.fontVariations)
-        let attributes: [NSAttributedString.Key: Any] = [NSAttributedString.Key(kCTFontAttributeName as String): font, NSAttributedString.Key(kCTKernAttributeName as String): style.letterSpacing * style.size]
         let normalized = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        // KRI-826: the creator's own lines (`wrapsLines == false`) keep their breaks and size, but stay
+        // inside the frame: the same rule as cloud `text_overlay_skia._authored_lines` (see `AuthoredTextFit`).
+        let size = style.wrapsLines ? style.size : AuthoredTextFit.fittedSize(text: normalized, size: style.size,
+            safeWidth: AuthoredTextFit.safeWidth(canvasWidth: Double(canvas.width))) { points in
+                let font = NativeFontIdentity.font(graphics, size: points, variations: style.fontVariations)
+                return [NSAttributedString.Key(kCTFontAttributeName as String): font, NSAttributedString.Key(kCTKernAttributeName as String): style.letterSpacing * points]
+            }
+        let font = NativeFontIdentity.font(graphics, size: size, variations: style.fontVariations)
+        let attributes: [NSAttributedString.Key: Any] = [NSAttributedString.Key(kCTFontAttributeName as String): font, NSAttributedString.Key(kCTKernAttributeName as String): style.letterSpacing * size]
+        let wrapWidth = style.wrapsLines ? Double(canvas.width) * style.widthFraction : AuthoredTextFit.safeWidth(canvasWidth: Double(canvas.width))
         var values: [String] = []
         for paragraph in normalized.components(separatedBy: "\n") {
-            if !style.wrapsLines || paragraph.isEmpty {
+            if paragraph.isEmpty || (!style.wrapsLines && AuthoredTextFit.width(paragraph, attributes: attributes) <= wrapWidth) {
                 values.append(paragraph)
+                continue
+            }
+            if !style.wrapsLines {
+                values.append(contentsOf: AuthoredTextFit.wordRows(paragraph, attributes: attributes, width: wrapWidth))
                 continue
             }
             let source = paragraph as NSString
             let typesetter = CTTypesetterCreateWithAttributedString(NSAttributedString(string: paragraph, attributes: attributes))
             var offset = 0
             while offset < source.length {
-                let count = min(CTTypesetterSuggestLineBreak(typesetter, offset, Double(canvas.width) * style.widthFraction), source.length - offset)
+                let count = min(CTTypesetterSuggestLineBreak(typesetter, offset, wrapWidth), source.length - offset)
                 guard count > 0 else { throw RecipeError.invalidTimeline }
                 values.append(source.substring(with: NSRange(location: offset, length: count)).trimmingCharacters(in: .whitespaces))
                 offset += count
@@ -132,8 +144,8 @@ public enum AuthoredTextLayout {
             case .center: anchorX - line.1 / 2
             case .right: anchorX - line.1
             }
-            return PositionedTextRun(text: line.0, fontAssetID: style.fontAssetID, fontSize: style.size,
-                x: x, baselineY: top + ascent + Double(index) * lineStep, letterSpacing: style.letterSpacing * style.size,
+            return PositionedTextRun(text: line.0, fontAssetID: style.fontAssetID, fontSize: size,
+                x: x, baselineY: top + ascent + Double(index) * lineStep, letterSpacing: style.letterSpacing * size,
                 shaped: true, fill: style.color, stroke: style.stroke, strokeWidth: 2 * style.strokeWidth,
                 blurLayers: style.shadows, fontVariations: style.fontVariations)
         }
@@ -234,7 +246,9 @@ public enum AuthoredTextLayout {
         guard let provider = CGDataProvider(url: fontURL as CFURL), let graphics = CGFont(provider) else {
             throw RecipeError.invalidTimeline
         }
-        let font = NativeFontIdentity.font(graphics, size: style.size, variations: style.fontVariations)
+        // KRI-826: authored lines may have been fitted smaller than `style.size`.
+        let size = layout.runs.first?.fontSize ?? style.size
+        let font = NativeFontIdentity.font(graphics, size: size, variations: style.fontVariations)
         let regex = try NSRegularExpression(pattern: "\\S+")
         var result: [PositionedTextRun] = []
         for lineRun in layout.runs {
@@ -260,7 +274,7 @@ public enum AuthoredTextLayout {
                 }
                 guard !glyphs.isEmpty else { throw NativePreviewFeatureError("AuthoredTextLayout-206") }
                 result.append(PositionedTextRun(text: string.substring(with: match.range), fontAssetID: style.fontAssetID,
-                    fontSize: style.size, x: lineRun.x + (containsEmoji ? (glyphs.map(\.x).min() ?? 0) : 0), baselineY: lineRun.baselineY, letterSpacing: 0, shaped: containsEmoji,
+                    fontSize: size, x: lineRun.x + (containsEmoji ? (glyphs.map(\.x).min() ?? 0) : 0), baselineY: lineRun.baselineY, letterSpacing: 0, shaped: containsEmoji,
                     fill: style.color, stroke: style.stroke, strokeWidth: style.strokeWidth, blurLayers: style.shadows, glyphs: containsEmoji ? nil : glyphs, fontVariations: style.fontVariations))
             }
         }
@@ -272,5 +286,53 @@ public enum AuthoredTextLayout {
             karaoke: KaraokeContent(starts: starts, highlight: highlight, activeOnly: true))
     }
 
+}
+/// KRI-826: one fitting rule for the creator's own lines (`wrap_lines == false`), shared by the video
+/// compiler (`AuthoredTextLayout`) and the slide canvas, mirroring cloud `text_overlay_skia._authored_lines`:
+/// an explicit line break is always a hard break; a line that fits the frame's safe width (0.9 of the canvas)
+/// stays one line at the creator's size; a wider line soft-wraps at word boundaries at that width; only a single
+/// word still wider than it shrinks the whole text, never below `min(size, 24)`. Nothing is ever cut.
+public enum AuthoredTextFit {
+    public static let safeWidthFraction = 0.9
+    public static let minimumSize = 24.0
+
+    public static func safeWidth(canvasWidth: Double) -> Double { canvasWidth * safeWidthFraction }
+
+    static func width(_ text: String, attributes: [NSAttributedString.Key: Any]) -> Double {
+        CTLineGetTypographicBounds(CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attributes)), nil, nil, nil)
+    }
+
+    /// Greedy word wrap, the same as cloud `_wrap_text_to_lines`: a word wider than `width` stays whole on its row.
+    static func wordRows(_ paragraph: String, attributes: [NSAttributedString.Key: Any], width limit: Double) -> [String] {
+        var rows: [String] = []
+        var current: [String] = []
+        for word in paragraph.split(whereSeparator: \.isWhitespace).map(String.init) {
+            let candidate = (current + [word]).joined(separator: " ")
+            if current.isEmpty || width(candidate, attributes: attributes) <= limit {
+                current.append(word)
+            } else {
+                rows.append(current.joined(separator: " "))
+                current = [word]
+            }
+        }
+        if !current.isEmpty { rows.append(current.joined(separator: " ")) }
+        return rows.isEmpty ? [""] : rows
+    }
+
+    /// The size the text draws at: `size` unless one word is wider than `safeWidth` at it.
+    public static func fittedSize(text: String, size: Double, safeWidth: Double,
+                                  attributes: (Double) -> [NSAttributedString.Key: Any]) -> Double {
+        let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        func widest(_ points: Double) -> Double {
+            let attrs = attributes(points)
+            return words.map { width($0, attributes: attrs) }.max() ?? 0
+        }
+        let floor = Swift.min(size, minimumSize)
+        var fitted = size
+        while fitted > floor && widest(fitted) > safeWidth {
+            fitted = Swift.max(floor, Swift.min(fitted - 1, (fitted * 0.9).rounded(.down)))
+        }
+        return fitted
+    }
 }
 #endif

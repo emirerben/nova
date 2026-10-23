@@ -1,0 +1,52 @@
+{
+  "overlays": [
+    {
+      "text": "Bugün İstanbul’da ılık bir akşam 🌅 şimdi Kadıköy’de çay içiyoruz ☕️ 👨‍👩‍👧 50% {off}: a\\b 🏳️‍🌈",
+      "effect": "static",
+      "font_family": "Inter",
+      "text_size_px": 88,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.3,
+      "text_anchor": "center",
+      "vertical_anchor": "center",
+      "text_color": "#FFFFFF",
+      "wrap_lines": false,
+      "max_width_frac": 0.3,
+      "shadow_enabled": true,
+      "start_s": 0.0,
+      "end_s": 2.0
+    },
+    {
+      "text": "Bugün İstanbul’da ılık bir akşam 🌅 şimdi Kadıköy’de çay içiyoruz ☕️ 👨‍👩‍👧 50% {off}: a\\b",
+      "effect": "static",
+      "font_family": "Playfair Display",
+      "text_size_px": 110,
+      "position_x_frac": 0.95,
+      "position_y_frac": 0.7,
+      "text_anchor": "right",
+      "vertical_anchor": "center",
+      "text_color": "#FFFFFF",
+      "wrap_lines": false,
+      "max_width_frac": 0.3,
+      "shadow_enabled": true,
+      "start_s": 2.0,
+      "end_s": 4.0
+    },
+    {
+      "text": "Supercalifragilisticexpialidocious",
+      "effect": "static",
+      "font_family": "Inter",
+      "text_size_px": 200,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.5,
+      "text_anchor": "center",
+      "vertical_anchor": "center",
+      "text_color": "#FFFFFF",
+      "wrap_lines": false,
+      "max_width_frac": 0.3,
+      "shadow_enabled": true,
+      "start_s": 4.0,
+      "end_s": 6.0
+    }
+  ]
+}

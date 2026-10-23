@@ -3745,3 +3745,105 @@ def test_smooth_type_rotates_entrance_translation_in_layer_space():
     _y, entrance_x = np.where(entrance > 0)
     _y, untranslated_x = np.where(untranslated > 0)
     assert entrance_x.mean() > untranslated_x.mean()
+
+
+# KRI-826 strings: a creator's own long line (Turkish letters, a ’ apostrophe, emoji with
+# a variation selector and a ZWJ family) and filter/override characters that must draw
+# literally. Shared with the verify-overlays fixtures `kri826_*.json`.
+_KRI826_LONG = (
+    "Bugün İstanbul’da ılık bir akşam 🌅 şimdi Kadıköy’de çay içiyoruz ☕️ 👨‍👩‍👧 50% {off}: a\\b"
+)
+
+
+@pytest.mark.parametrize("canvas_size", [(1080, 1350), (1080, 1920)], ids=["slide", "talking"])
+@pytest.mark.parametrize(
+    ("text", "size", "expect"),
+    [
+        ("Short line\n\nstays put", 72, "unchanged"),
+        (_KRI826_LONG, 72, "wraps"),
+        ("Supercalifragilisticexpialidocious", 200, "shrinks"),
+    ],
+)
+def test_both_renderers_honor_authored_line_fit(canvas_size, text, size, expect):
+    """Parity guard (KRI-826): `wrap_lines=False` keeps the creator's lines, inside the frame.
+
+    The cloud Skia burn and the phone plan compile (`portable_text_layout`) must agree
+    run for run: same rows, size and position. Every row stays within the frame's safe
+    width (0.9 x W); a row that fits stays one line at the creator's size (KRI-564); a
+    wider row soft-wraps at that size; only an over-wide single word shrinks the text,
+    never below 24px. Nothing is cut: the rows hold every character of the text.
+    """
+    from unittest.mock import patch
+
+    from app.pipeline.canvas import Canvas
+    from app.pipeline.portable_text_layout import compile_text_overlay
+
+    canvas = Canvas(*canvas_size)
+    overlay = {
+        "text": text,
+        "start_s": 0,
+        "end_s": 2,
+        "font_family": "Fraunces",
+        "text_size_px": size,
+        # A stale narrow box never re-wraps a line that fits (the frame is the bound).
+        "max_width_frac": 0.3,
+        "wrap_lines": False,
+        "shadow_enabled": False,
+    }
+    layer, _ = compile_text_overlay(overlay, layer_id="manual", canvas=canvas)
+    with patch.object(tos, "_draw_line_with_layers") as draw:
+        tos._draw_overlay_on_canvas(
+            skia.Surface(*canvas_size).getCanvas(), overlay, 1, 2, render_canvas=canvas
+        )
+    cloud = [(c.args[1], c.args[2], c.args[3], c.args[4].getSize()) for c in draw.call_args_list]
+    cloud = [row for row in cloud if row[0]]
+    phone = [(r.text, r.x, r.baseline_y, r.font_size) for r in layer.runs]
+    assert [(t, s) for t, _x, _y, s in cloud] == [(t, s) for t, _x, _y, s in phone]
+    for (_t, cx, cy, _s), (_pt, px, py, _ps) in zip(cloud, phone, strict=True):
+        assert abs(cx - px) < 0.5 and abs(cy - py) < 0.5
+
+    safe = 0.9 * canvas.width
+    face = tos._typeface_for_overlay(overlay)
+    drawn = phone[0][3]
+    font = skia.Font(face, drawn)
+    shaped = tos._auto_shape(face, text, False)
+    widths = [tos._measure_line(font, t, shape_text=shaped) for t, *_ in phone]
+    assert all(w <= safe + 0.5 for w in widths), (widths, safe)
+    # Never cut: every non-space character of the creator's text is drawn, in order.
+    assert "".join("".join(t for t, *_ in phone).split()) == "".join(text.split())
+    if expect == "unchanged":
+        assert [t for t, *_ in phone] == ["Short line", "stays put"] and drawn == size
+    elif expect == "wraps":
+        assert len(phone) > 1 and drawn == size
+    else:
+        assert len(phone) == 1 and 24 <= drawn < size
+
+
+def test_authored_line_fit_matches_the_recorded_cross_platform_rows():
+    """The rows the iOS `AuthoredTextFit` tests assert are the cloud Skia rows (KRI-826).
+
+    Emoji widths depend on the host's emoji face (Apple on the recording Mac, Noto in the
+    prod image), so the emoji cases are recorded once; the emoji-free ones are re-checked
+    here on every platform, so the shared fixture can never drift from the renderer.
+    """
+    import json
+
+    from app.pipeline.canvas import Canvas
+
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "kri826_authored_fit_rows.json"
+    cases = json.loads(fixture.read_text())["cases"]
+    checked = 0
+    for case in cases:
+        if case["has_emoji"]:
+            continue
+        overlay = {"text": case["text"], "font_family": "Inter-Bold", "wrap_lines": False}
+        face = tos._typeface_for_overlay(overlay)
+        _font, size, rows = tos._authored_lines(
+            case["text"],
+            face,
+            case["size_px"],
+            tos._overlay_max_width_px(overlay, Canvas(*case["canvas"])),
+        )
+        assert (rows, size) == (case["rows"], case["fitted_size_px"])
+        checked += 1
+    assert checked >= 3

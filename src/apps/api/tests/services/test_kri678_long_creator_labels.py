@@ -16,6 +16,9 @@ Ways this can fail, written down before the fix:
 5. The plain "too long" reply is only given when there is no tapped answer, so a tapped
    answer for an unusable label still re-asks the picker.
 6. The render lane re-cleans the creator's text with the model bound and drops it.
+
+KRI-826 replaced the character and word caps for the creator's own words with the label
+bar itself (two lines of the 58px bar, `app.pipeline.text_fit`); "Café #1" now prints.
 """
 
 from __future__ import annotations
@@ -27,8 +30,6 @@ import pytest
 from app.agents._runtime import RunContext
 from app.agents.clip_intent_planner import ClipIntentPlannerOutput, PlannedClipIntent
 from app.schemas.clip_intents import (
-    CREATOR_LABEL_MAX_CHARS,
-    CREATOR_LABEL_MAX_WORDS,
     LABEL_MAX_CHARS,
     LABEL_MAX_WORDS,
     ClipUnderstanding,
@@ -42,6 +43,8 @@ from app.services.clip_intent_resolution import IntentClip, picker_eligible
 from app.services.clip_selection import fold_clip_selections
 
 REQUEST = 'Lunapark klibine "Parque de la Costa" etiketi koy.'
+# Three lines of the label bar: the one creator label that truly can't print.
+TOO_LONG = "Parque de la Costa con los chicos de la facultad y mi hermana Lucía"
 
 
 def _clips() -> list[IntentClip]:
@@ -156,26 +159,23 @@ def test_model_and_vision_copy_keep_the_three_word_fence() -> None:
 
 
 def test_creator_cap_stays_inside_the_width_bound() -> None:
-    """Failure 3: creator labels have a width bound too.
-
-    KRI-804 measured it: the montage label bar holds 28 characters on one line
-    (`kri804_montage_clip_label_width.json`); model and vision copy keep 24.
-    """
+    """Failure 3: creator labels have a width bound too: the label bar's two lines."""
     assert clean_creator_label_text("Sagrada Família de Gaudí")
     assert clean_creator_label_text("chimichurri & salsa criolla")
-    assert clean_creator_label_text("Parque Nacional Tierra del Fuego") is None
+    assert clean_creator_label_text("Parque Nacional Tierra del Fuego")
+    assert clean_creator_label_text(TOO_LONG) is None
     assert clean_label_text("chimichurri & salsa criolla") is None
-    assert (LABEL_MAX_CHARS, CREATOR_LABEL_MAX_CHARS) == (24, 28)
-    assert CREATOR_LABEL_MAX_WORDS == 5
+    assert LABEL_MAX_CHARS == 24
 
 
 @pytest.mark.parametrize(
     ("text", "problem"),
     [
         ("Parque de la Costa", None),
-        ("Parque Nacional Tierra del Fuego", "too_long"),
-        ("a b c d e f", "too_many_words"),
-        ("Café #1", "characters"),
+        ("Café #1", None),
+        ("a b c d e f", None),
+        (TOO_LONG, "too_long"),
+        ("  \u200b ", "empty"),
     ],
 )
 def test_creator_label_problem_names_why_text_cannot_print(text, problem) -> None:
@@ -187,9 +187,8 @@ def test_creator_label_problem_names_why_text_cannot_print(text, problem) -> Non
 @pytest.mark.parametrize(
     ("text", "en_hint"),
     [
-        # KRI-804: the reply states the bound itself ("a label holds up to 24").
-        ("Parque Nacional Tierra del Fuego", "a label holds up to 28"),
-        ("Café #1", 'a label can\'t show "#"'),
+        # KRI-826: the reply states the bound itself, the label bar's two lines.
+        (TOO_LONG, "it runs past the 2 lines a clip label holds"),
     ],
 )
 async def test_unusable_creator_label_gets_a_plain_reply_never_the_picker(
@@ -210,4 +209,4 @@ async def test_unusable_creator_label_gets_a_plain_reply_never_the_picker(
 
 def test_unusable_creator_label_is_never_a_picker_category() -> None:
     assert picker_eligible(_label("Parque de la Costa"))
-    assert not picker_eligible(_label("Parque Nacional Tierra del Fuego"))
+    assert not picker_eligible(_label(TOO_LONG))

@@ -2,6 +2,22 @@
   "schema_version": 1,
   "journeys": [
     {
+      "id": "kri-826-creator-text-literal-fit",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_kri826_creator_text_literal.py tests/kria/test_kri804_label_text_reply.py tests/pipeline/test_authored_newlines.py tests/pipeline/test_text_overlay_skia.py tests/pipeline/test_overlay_verify.py",
+      "xctests": [
+        "KriaTests/CreatorTextFitTests/testTheCapKeepsWholeCharactersOnly",
+        "KriaTests/CreatorTextFitTests/testTypedTextRoundTripsThroughSaveAndReopenByteForByte",
+        "KriaTests/CreatorTextFitTests/testTheExportedSlideKeepsALongAuthoredLineInsideTheFrame"
+      ],
+      "paths": [
+        "src/apps/api/app/pipeline/text_fit.py",
+        "src/apps/api/tests/fixtures/kri826_authored_fit_rows.json",
+        "src/apps/api/tests/kria/test_kri826_creator_text_literal.py",
+        "src/apps/ios/Tests/KriaTests/CreatorTextFitTests.swift"
+      ]
+    },
+    {
       "id": "kri-384-library-ingest",
       "needs_native": false,
       "api_tests": "tests/integration/test_media_library_ingest.py tests/integration/test_media_library_analysis.py tests/integration/test_media_library_reuse.py tests/integration/test_media_library_original_upgrade.py tests/pipeline/test_library_transcription_cost.py tests/routes/test_media_assets.py tests/routes/test_media_library_attachments.py tests/services/test_media_library_source_verification.py tests/integration/test_media_library_backfill.py",

@@ -41,6 +41,7 @@ import re
 import unicodedata
 from typing import Literal
 
+import regex
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.clip_understanding import ClipUnderstanding
@@ -79,16 +80,20 @@ LABEL_MIN_CONFIDENCE = 0.8
 LABEL_MAX_CHARS = 24
 LABEL_MAX_WORDS = 3
 # KRI-678: the creator's OWN label words ("Parque de la Costa", "Sagrada Família de
-# Gaudí") are a name, not a model-authored tag, so they may run a little longer.
-# Model and vision copy keep LABEL_MAX_WORDS and LABEL_MAX_CHARS.
-CREATOR_LABEL_MAX_WORDS = 5
+# Gaudí") are a name, not a model-authored tag, so they may run longer. KRI-826: the
+# label bar, not a word count, bounds them. Model and vision copy keep LABEL_MAX_WORDS
+# and LABEL_MAX_CHARS.
 # KRI-804: 24 characters was never the renderer's bound. The montage label bar (Fraunces
 # 58px in a 0.82 x 1080 = 885.6px box, cloud Skia and the phone alike) draws
 # "chimichurri & salsa criolla" (27) on one line at 805.5px, and both renderers wrap a
 # longer label, never clip it (`make verify-overlays`: kri804_montage_clip_label_width).
-# 28 is what that bar holds on ONE line at the measured ~30px per character; a second
-# line would cover more of the shot.
+# 28 is what that bar holds on ONE line at the measured ~30px per character.
+# KRI-826: this is a hint, not a limit. A creator label is bounded by what the bar draws
+# (`app.pipeline.text_fit.creator_label_fits`: at most two lines).
 CREATOR_LABEL_MAX_CHARS = 28
+# KRI-826: a storage sanity bound for the creator's own label words (code points, the
+# unit pydantic's max_length counts). Two lines of the bar hold well under it.
+CREATOR_LABEL_STORAGE_MAX = 80
 # Membership (group/order/include/caption) moves clips but prints nothing
 # itself, so it needs less certainty than a label's per-clip printed value
 # does.
@@ -130,6 +135,72 @@ def _clean(value: object, limit: int) -> str:
     if not isinstance(value, str):
         return ""
     return " ".join(value.split())[:limit]
+
+
+# KRI-826: invisible characters that are part of what the creator sees: the joiners
+# inside emoji ZWJ sequences and Indic/Persian words, and variation selectors (U+FE0F
+# makes "☕️" the emoji). Every other format character is invisible and is dropped.
+_KEPT_FORMAT_CHARS = frozenset({"\u200c", "\u200d"})
+_BLANK_LINES_RE = re.compile(r"\n{3,}")
+
+
+def _kept_char(char: str) -> bool:
+    category = unicodedata.category(char)
+    if category in {"Cc", "Cs", "Co", "Cn"}:
+        return char == "\n"
+    if category == "Cf":
+        code = ord(char)
+        return (
+            char in _KEPT_FORMAT_CHARS
+            or 0xFE00 <= code <= 0xFE0F
+            or 0xE0100 <= code <= 0xE01EF
+            # Tag characters spell subdivision flags (England, Scotland, Wales).
+            or 0xE0020 <= code <= 0xE007F
+        )
+    return True
+
+
+def _clean_literal(value: object, limit: int) -> str:
+    """``_clean`` that keeps the creator's explicit line breaks (KRI-826).
+
+    Within a line, whitespace runs become one space and the ends are trimmed, exactly
+    as ``_clean`` does, so text without a newline cleans to the same string ``_clean``
+    gives (every stored row re-validates byte-identically). At most one blank line
+    stays between two lines. Nothing visible is ever rewritten: no NFC/NFKC, no quote
+    or apostrophe swaps.
+    """
+    if not isinstance(value, str):
+        return ""
+    text = value.replace("\r\n", "\n").replace("\r", "\n")
+    text = "".join(char for char in text if _kept_char(char) or char.isspace())
+    lines = [" ".join(line.split()) for line in text.split("\n")]
+    return _BLANK_LINES_RE.sub("\n\n", "\n".join(lines)).strip("\n ")[:limit].strip("\n ")
+
+
+def _has_control(text: str) -> bool:
+    """A control character (not whitespace) is never typed copy: something broke it."""
+    return any(unicodedata.category(c) == "Cc" and not c.isspace() for c in text)
+
+
+def _has_printable(text: str) -> bool:
+    return any(c.isalnum() or unicodedata.category(c) in {"So", "Sm", "Sc"} for c in text)
+
+
+def clean_creator_literal_text(value: object, *, limit: int) -> str | None:
+    """The creator's own words as they will print, or None when nothing would show.
+
+    KRI-826: any printable Unicode is the creator's copy: "+", "’", "!", emoji,
+    diacritics, Turkish ı İ ş ğ and explicit line breaks. Invisible format characters
+    are dropped (they never show); the joiners and variation selectors emoji need are
+    kept. A control character refuses the text (``_has_control``). ``limit`` is a
+    code-point bound; longer text is refused, never cut.
+    """
+    if not isinstance(value, str) or _has_control(value):
+        return None
+    text = _clean_literal(value, len(value) + 1)
+    if not text or len(text) > limit or not _has_printable(text):
+        return None
+    return text
 
 
 def fit_intent_id(value: str) -> str:
@@ -223,7 +294,8 @@ class ClipIntent(BaseModel):
     @field_validator("creator_text", mode="before")
     @classmethod
     def _creator_text(cls, v: object) -> str | None:
-        return _clean(v, CREATOR_CAPTION_MAX_CHARS) or None
+        # KRI-826: the creator's line breaks survive (``_clean_literal``).
+        return _clean_literal(v, CREATOR_CAPTION_MAX_CHARS) or None
 
     @field_validator("caption_attribute", mode="before")
     @classmethod
@@ -233,8 +305,10 @@ class ClipIntent(BaseModel):
 
 class ClipAssignment(BaseModel):
     media_id: str = Field(min_length=1, max_length=200)
-    # Per-clip value for op="label" ("Volleyball"); None for pure membership.
-    value: str | None = Field(default=None, max_length=60)
+    # Per-clip value for op="label" ("Volleyball"); None for pure membership. A
+    # creator_text label holds the creator's own words (KRI-826), so it takes the
+    # creator storage bound and keeps their line breaks.
+    value: str | None = Field(default=None, max_length=CREATOR_LABEL_STORAGE_MAX)
     evidence: str = Field(default="", max_length=240)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     grounding: GroundingSource | None = None
@@ -242,7 +316,7 @@ class ClipAssignment(BaseModel):
     @field_validator("value", mode="before")
     @classmethod
     def _value(cls, v: object) -> str | None:
-        return _clean(v, 60) or None
+        return _clean_literal(v, CREATOR_LABEL_STORAGE_MAX) or None
 
     @field_validator("evidence", mode="before")
     @classmethod
@@ -270,9 +344,10 @@ class GroundedLabel(BaseModel):
     """The only shape the context-label render lane accepts when the flag is on."""
 
     media_id: str
-    # The creator's own words may use CREATOR_LABEL_MAX_CHARS; every other source is
-    # fenced to LABEL_MAX_CHARS before it gets here (`ground_label`).
-    text: str = Field(min_length=1, max_length=CREATOR_LABEL_MAX_CHARS)
+    # The creator's own words are bounded by the label bar (KRI-826) and stored up to
+    # CREATOR_LABEL_STORAGE_MAX; every other source is fenced to LABEL_MAX_CHARS
+    # before it gets here (`ground_label`).
+    text: str = Field(min_length=1, max_length=CREATOR_LABEL_STORAGE_MAX)
     grounding: GroundingSource
     confidence: float = Field(ge=0.0, le=1.0)
     intent_id: str = ""
@@ -300,6 +375,112 @@ def _contains_phrase(haystack: str, phrase: str) -> bool:
         return False
     span = len(needle)
     return any(words[i : i + span] == needle for i in range(len(words) - span + 1))
+
+
+_RAW_WORD_RE = regex.compile(r"[\p{L}\p{N}_][\p{L}\p{N}\p{M}_]*")
+# Quotes around a label are the chat's punctuation, not the label's.
+_OUTER_QUOTES = '"“”«»„'
+# The same apostrophe, typed by different keyboards (iOS smart punctuation types ’).
+_APOSTROPHES = str.maketrans({"’": "'", "‘": "'", "ʼ": "'", "`": "'"})
+
+
+def _is_word_char(char: str) -> bool:
+    return char.isalnum() or char == "_" or unicodedata.combining(char) > 0
+
+
+def _symbols(text: str) -> list[str]:
+    """The characters a word match ignores: punctuation, symbols, emoji (KRI-826)."""
+    return [
+        c.translate(_APOSTROPHES)
+        for c in text
+        if not (_is_word_char(c) or c.isspace() or c in _KEPT_FORMAT_CHARS)
+        and not 0xFE00 <= ord(c) <= 0xFE0F
+    ]
+
+
+def _is_subsequence(needle: list[str], haystack: list[str]) -> bool:
+    remaining = iter(haystack)
+    return all(any(item == other for other in remaining) for item in needle)
+
+
+def creator_literal_span(haystack: str, phrase: str) -> str | None:
+    """The creator's own bytes for ``phrase``, taken from ``haystack`` (KRI-826).
+
+    ``_contains_phrase`` matches words only: it ignores case, accents, punctuation and
+    emoji. So the printed text is never the model's copy of the words, it is the
+    creator's span: from the first matched word to the last, with their "+", "’",
+    casing and line breaks in between. A symbol the model puts before or after the
+    words ("🔥 asado", "criolla!") extends the span only when the creator wrote it
+    right there.
+
+    Literal provenance: every symbol in ``phrase`` must appear in the span, in order. A
+    symbol the creator never wrote ("!", "🔥") grounds nothing; a "+" the model wrote
+    as "and" is a different word list and never matches. A symbol the model dropped
+    is printed anyway, since the creator wrote it.
+    """
+    phrase = (phrase or "").strip().strip(_OUTER_QUOTES).strip()
+    needle = _word_list(phrase)
+    if not needle or not haystack:
+        return None
+    words: list[tuple[int, int, str]] = [
+        (match.start(), match.end(), folded)
+        for match in _RAW_WORD_RE.finditer(haystack)
+        for folded in _word_list(match.group())
+    ]
+    phrase_words = list(_RAW_WORD_RE.finditer(phrase))
+    if not phrase_words:
+        return None
+    leading = _symbols(phrase[: phrase_words[0].start()])
+    trailing = _symbols(phrase[phrase_words[-1].end() :])
+    wanted = _symbols(phrase)
+    span = len(needle)
+    for i in range(len(words) - span + 1):
+        if [w for _s, _e, w in words[i : i + span]] != needle:
+            continue
+        start, end = words[i][0], words[i + span - 1][1]
+        start = _extend(haystack, start, leading, step=-1)
+        end = _extend(haystack, end, trailing, step=1)
+        if start is None or end is None:
+            continue
+        text = haystack[start:end]
+        if _is_subsequence(wanted, _symbols(text)):
+            return text
+    return None
+
+
+def _extend(text: str, at: int, symbols: list[str], *, step: int) -> int | None:
+    """Move ``at`` over the creator's characters next to the span until it covers
+    ``symbols`` (nearest first); never past a word or a line break."""
+    if not symbols:
+        return at
+    pending = list(reversed(symbols)) if step < 0 else list(symbols)
+    index = at
+    while pending:
+        nxt = index - 1 if step < 0 else index
+        if nxt < 0 or nxt >= len(text):
+            return None
+        char = text[nxt]
+        if char == "\n" or _is_word_char(char):
+            return None
+        index = index - 1 if step < 0 else index + 1
+        mine = _symbols(char)
+        if mine and mine[0] == pending[0]:
+            pending.pop(0)
+    # Keep the joiners and selectors that belong to the last symbol taken.
+    while (
+        step > 0
+        and index < len(text)
+        and (text[index] in _KEPT_FORMAT_CHARS or 0xFE00 <= ord(text[index]) <= 0xFE0F)
+    ):
+        index += 1
+    return index
+
+
+def creator_span(haystack: str, phrase: str) -> str | None:
+    """The creator's span for ``phrase`` when it is their words (`_contains_phrase`)."""
+    if not _contains_phrase(haystack or "", phrase or ""):
+        return None
+    return creator_literal_span(haystack, phrase)
 
 
 def _tokens(text: str) -> set[str]:
@@ -343,34 +524,43 @@ def clean_label_text(
 
 
 def clean_creator_label_text(value: object) -> str | None:
-    """``clean_label_text`` with the creator's own-words bounds (KRI-678, KRI-804)."""
-    return clean_label_text(
-        value, max_words=CREATOR_LABEL_MAX_WORDS, max_chars=CREATOR_LABEL_MAX_CHARS
-    )
+    """The creator's own label words as they print, or None when the bar can't hold them.
+
+    KRI-826: the creator's words are their own authority. Any printable character
+    prints as written ("chimichurri + salsa criolla", "Julio’s 🔥", a line break they
+    typed); the only bound is the label bar itself, at most two lines
+    (``creator_label_fits``). Model and vision copy keep ``clean_label_text``.
+    """
+    text = clean_creator_literal_text(value, limit=CREATOR_LABEL_STORAGE_MAX)
+    if text is None:
+        return None
+    from app.pipeline.text_fit import creator_label_fits  # noqa: PLC0415 - lazy skia
+
+    return text if creator_label_fits(text) else None
 
 
-CreatorLabelProblem = Literal["too_long", "too_many_words", "characters", "empty"]
+CreatorLabelProblem = Literal["too_long", "characters", "empty"]
 
 
 def creator_label_problems(value: object) -> tuple[CreatorLabelProblem, ...]:
     """Every reason the creator's own label words can never be printed; () when they can.
 
-    KRI-804: a reply that names only the first reason ("+") sends the creator back with
-    a fix that is still unprintable (it was also too long). ``"empty"`` is always alone:
-    there is nothing else to fix.
+    KRI-804 named every reason; KRI-826 leaves three. ``"empty"``: nothing would show.
+    ``"too_long"``: the label bar can't hold the words on two lines. ``"characters"``:
+    only a control character (never typed copy). The creator's "+" or emoji prints.
     """
     if clean_creator_label_text(value) is not None:
         return ()
-    text = _clean(value, 200)
-    if not text or not any(c.isalpha() for c in text):
+    if not isinstance(value, str) or not _has_printable(_clean_literal(value, len(value))):
         return ("empty",)
     problems: list[CreatorLabelProblem] = []
-    if _LABEL_ALLOWED.search(text):
+    if _has_control(value):
         problems.append("characters")
-    if len(text) > CREATOR_LABEL_MAX_CHARS:
+    shown = clean_creator_literal_text(
+        "".join(c for c in value if not _has_control(c)), limit=len(value)
+    )
+    if shown is not None and clean_creator_label_text(shown) is None:
         problems.append("too_long")
-    if len(text.split()) > CREATOR_LABEL_MAX_WORDS:
-        problems.append("too_many_words")
     return tuple(problems)
 
 
@@ -385,38 +575,22 @@ def creator_label_problem(value: object) -> CreatorLabelProblem | None:
     return problems[0] if problems else None
 
 
-_LABEL_BLOCKED_RUN = re.compile(f"{_LABEL_ALLOWED.pattern}+", re.UNICODE)
-
-
-def label_blocked_characters(value: object) -> list[str]:
-    """What a label can't show, each once, in the order it appears ("+", "🇦🇷").
-
-    Runs stay together, so a flag's two code points read as the one flag they are.
-    """
-    seen: list[str] = []
-    for run in _LABEL_BLOCKED_RUN.findall(_clean(value, 200)):
-        if run not in seen:
-            seen.append(run)
-    return seen
-
-
 # Joining words a shorter label never starts or ends on ("chimichurri &").
-_LABEL_JOINERS = frozenset({"&", "and", "ve", "y", "e", "et", "und"})
+_LABEL_JOINERS = frozenset({"&", "+", "and", "ve", "y", "e", "et", "und"})
 
 
 def shorter_creator_label(value: object) -> str | None:
     """A label made only of the creator's own words that CAN print, or None (KRI-804).
 
-    "+" reads as "&" and any other character a label can't show is dropped; if that is
-    still too long, ONE word (never the first) is left out, keeping the longest result:
-    "chimichurri + salsa criolla picante" -> "chimichurri & salsa criolla". Cutting
-    more would break names apart ("Parque de la Costa Aires"), so there is no suggestion
-    then. Never a word the creator didn't write, so it is still their copy if they pick it.
+    When the words run past the label bar, ONE word (never the first) is left out,
+    keeping the longest result that fits. Cutting more would break names apart
+    ("Parque de la Costa Aires"), so there is no suggestion then. Never a word or a
+    character the creator didn't write, so it is still their copy if they pick it.
     """
     if not creator_label_problems(value):
         return None
-    original = _clean(value, 200)
-    words = _LABEL_ALLOWED.sub(" ", original.replace("+", " & ")).split()
+    original = " ".join(str(value or "").split())
+    words = original.split()
 
     def joiner(word: str) -> bool:
         return word.casefold() in _LABEL_JOINERS
@@ -429,9 +603,6 @@ def shorter_creator_label(value: object) -> str | None:
         label = clean_creator_label_text(" ".join(candidate))
         return label if label != original else None
 
-    whole = fits(words)
-    if whole is not None:
-        return whole
     # Never the joiner itself: "chimichurri salsa" would read as one thing, not two. On a
     # tie the later word goes, so the creator's phrase keeps its opening words in order.
     fitting = [
@@ -550,21 +721,27 @@ def ground_label(
     vision_confidence: float | None = None,
     intent_id: str = "",
 ) -> GroundedLabel | None:
-    """Apply the on-screen text fence. Returns None when the label must not render."""
-    text = clean_creator_label_text(value)
-    if text is None:
-        return None
-    if _contains_phrase(creator_request or "", text):
-        return GroundedLabel(
-            media_id=media_id,
-            text=text,
-            grounding="creator_text",
-            confidence=1.0,
-            intent_id=intent_id,
-        )
+    """Apply the on-screen text fence. Returns None when the label must not render.
+
+    KRI-826: the creator's own words print as THEY wrote them (``creator_span``), bounded
+    only by the label bar. Everything else keeps the short-tag taste rules.
+    """
+    span = creator_span(creator_request or "", value if isinstance(value, str) else "")
+    if span is not None:
+        creator_text = clean_creator_label_text(span)
+        if creator_text is not None:
+            return GroundedLabel(
+                media_id=media_id,
+                text=creator_text,
+                grounding="creator_text",
+                confidence=1.0,
+                intent_id=intent_id,
+            )
     # KRI-678 / KRI-804: only the creator's own words get the longer bounds. Copy
-    # grounded from a clip record or a vision answer keeps the short-tag bound.
-    if len(text.split()) > LABEL_MAX_WORDS or len(text) > LABEL_MAX_CHARS:
+    # grounded from a clip record or a vision answer keeps the short-tag bound and
+    # the label charset.
+    text = clean_label_text(value)
+    if text is None:
         return None
     words = _tokens(text)
     if not words:
@@ -637,12 +814,8 @@ def clean_creator_caption_text(value: object) -> str | None:
     Unlike ``clean_caption_text`` there is no word or punctuation bound: the
     creator wrote these words to be shown as written ("#1 Antoni Gaudí…").
     """
-    text = _clean(value, CREATOR_CAPTION_MAX_CHARS + 1)
-    if not text or len(text) > CREATOR_CAPTION_MAX_CHARS:
-        return None
-    if any(unicodedata.category(c) == "Cc" for c in text):
-        return None
-    if not any(c.isalnum() for c in text):
+    text = clean_creator_literal_text(value, limit=CREATOR_CAPTION_MAX_CHARS)
+    if text is None or not any(c.isalnum() for c in text):
         return None
     return text
 
@@ -683,8 +856,10 @@ def ground_caption(
     phrase, keeps the short-phrase shape bounds.
     """
     if creator_copy:
-        copy = clean_creator_caption_text(value)
-        if copy is not None and _contains_phrase(creator_request or "", copy):
+        # KRI-826: the creator's span, never the planner's copy of their words.
+        span = creator_span(creator_request or "", value if isinstance(value, str) else "")
+        copy = clean_creator_caption_text(span)
+        if copy is not None:
             return GroundedCaption(
                 text=copy, grounding="creator_text", confidence=1.0, intent_id=intent_id
             )
@@ -692,6 +867,11 @@ def ground_caption(
     if text is None:
         return None
     if _contains_phrase(creator_request or "", text):
+        # A phrase the resolver made of the creator's words ("The Pub" for "the pub")
+        # keeps its caption shape; KRI-826: a symbol the creator never wrote grounds
+        # nothing.
+        if creator_literal_span(creator_request, text) is None:
+            return None
         return GroundedCaption(
             text=text, grounding="creator_text", confidence=1.0, intent_id=intent_id
         )

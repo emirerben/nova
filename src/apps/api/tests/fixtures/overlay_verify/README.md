@@ -59,3 +59,19 @@ the glyph check must not FAIL it (it only FAILs codepoints no system face can dr
 at both bottom corners, carrying "chimichurri & salsa criolla" (27) and a 28-character
 label: the `CREATOR_LABEL_MAX_CHARS` bound. Both must stay on one un-clipped line; a
 longer label wraps rather than clips, which is why the bound is a one-line limit.
+
+`kri826_creator_label_literal.json` (KRI-826) is the same montage clip-label bar carrying
+the creator's own words exactly as typed: "chimichurri + salsa criolla" with its "+",
+"Julio’s 🔥 asado" (typographic apostrophe, inline emoji), a label with a typed line
+break, Turkish letters with a variation-selector emoji and a ZWJ family, and a two-line
+label. Every one must draw whole, un-clipped, with no tofu: emoji draw through the shaped
+path, which the renderer now switches on whenever the face lacks a glyph.
+
+`kri826_slide_long_turkish_emoji.json` and `kri826_talking_long_line.json` (KRI-826) are
+hand-edited text (`wrap_lines=false`, the iOS Slider and video editors) with one long
+authored line of Turkish, emoji and filter/override characters (`50% {off}: a\b`), plus a
+stale narrow `max_width_frac`. The authored line breaks stay; a line wider than the
+frame's safe width (0.9 x W) soft-wraps at the creator's size; a single over-wide word
+shrinks (never below 24px). All must stay inside the side margins. The slide fixture is
+verified on the 1080-wide portrait frame: slides share its width, so the side margins are
+the same.
