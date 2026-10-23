@@ -2059,6 +2059,90 @@ async def _validated_render_shape(
     return chosen
 
 
+async def _mint_prepared_execution(
+    db: AsyncSession,
+    *,
+    approval: CreatorAgentApproval,
+    draft: CreatorEditDraft,
+    thread: CreationThread,
+    item: PlanItem | None,
+    execution: CreatorAgentExecution | None,
+    retry_execution: CreatorAgentExecution | None,
+) -> None:
+    """KRI-722: pin one immutable prepared execution to this approval.
+
+    Runs after every approve gate, in the approving transaction, so a refused
+    approval never leaves a snapshot behind. A render retry keeps the snapshot of
+    the attempt it retries (same authority); its claim mints the new attempt id.
+    """
+
+    from app.kria import prepared_execution as prepared  # noqa: PLC0415
+    from app.models import CreatorPreparedExecution  # noqa: PLC0415
+
+    if retry_execution is not None:
+        retry = (retry_execution.result or {}).get("render_retry") or {}
+        source = await db.get(
+            CreatorAgentExecution, _optional_uuid(retry.get("source_execution_id"))
+        )
+        source_approval = (
+            await db.get(
+                CreatorAgentApproval, _optional_uuid((source.result or {}).get("approval_id"))
+            )
+            if source is not None
+            else None
+        )
+        # An unstamped (legacy) source attempt keeps the legacy retry path.
+        if getattr(source_approval, "prepared_execution_id", None) is not None:
+            approval.prepared_execution_id = source_approval.prepared_execution_id
+        return
+    if not settings.kria_prepared_execution_enabled or item is None:
+        return
+    document = _parse_draft_document(draft.snapshot_json)
+    if document is None:
+        return
+    try:
+        snapshot = prepared.build_snapshot(
+            creator_id=approval.creator_id,
+            thread_id=thread.id,
+            approval_id=approval.id,
+            draft=draft,
+            document=document,
+            sources=await prepared.load_source_identities(db, item, approval.creator_id),
+            execution_result=execution.result if execution is not None else None,
+        )
+    except ValueError as exc:
+        log.warning("kria_prepared_execution_refused", approval_id=str(approval.id), error=str(exc))
+        raise RuntimeFailure(
+            409,
+            prepared.STALE,
+            "This edit could not be prepared for rendering. Ask Kria to prepare it again.",
+            phase="approval",
+            recovery="refresh_replan",
+        ) from exc
+    row = CreatorPreparedExecution(
+        creator_id=approval.creator_id,
+        thread_id=thread.id,
+        approval_id=approval.id,
+        draft_id=draft.id,
+        draft_revision=int(draft.draft_revision),
+        schema_version=snapshot.schema_version,
+        snapshot=snapshot.model_dump(mode="json"),
+        snapshot_digest=snapshot.digest,
+    )
+    db.add(row)
+    # The snapshot row references the approval and the approval references it back:
+    # insert the snapshot first, then point the approval at it.
+    await db.flush()
+    approval.prepared_execution_id = row.id
+
+
+def _optional_uuid(value: object) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(value)) if value else None
+    except (TypeError, ValueError):
+        return None
+
+
 async def decide_approval(
     db: AsyncSession,
     *,
@@ -2637,6 +2721,16 @@ async def decide_approval(
                 "media_snapshot": snapshot_media(grant_item),
             },
         }
+    if decision == "approve":
+        await _mint_prepared_execution(
+            db,
+            approval=approval,
+            draft=draft,
+            thread=thread,
+            item=plan_item or await db.get(PlanItem, session.plan_item_id),
+            execution=execution,
+            retry_execution=retry_execution if is_render_retry else None,
+        )
     approval.status = "approved" if decision == "approve" else "denied"
     if decision == "deny":
         turn.status = "completed"

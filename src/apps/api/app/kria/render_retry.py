@@ -557,6 +557,43 @@ async def prepare_render_retry(
     return result
 
 
+def _next_prepared_attempt(db, approval, draft, item, job):  # noqa: ANN001, ANN202
+    """KRI-722: same snapshot, new attempt id; the Job's stamp moves to the new attempt.
+
+    Re-verifies the snapshot against the live draft, sources and capabilities first.
+    Legacy (unstamped) approvals return None and keep the KRI-674 path unchanged.
+    """
+    from app.kria import prepared_execution as prepared  # noqa: PLC0415
+    from app.models import CreatorPreparedExecution  # noqa: PLC0415
+
+    if getattr(approval, "prepared_execution_id", None) is None:
+        return None
+    row = db.get(CreatorPreparedExecution, approval.prepared_execution_id)
+    if row is None or row.creator_id != approval.creator_id:
+        raise prepared.PreparedExecutionError(prepared.STALE, "The prepared edit is missing.")
+    stamp = prepared.read_stamp(job.assembly_plan)
+    if stamp is None or stamp.get("id") != str(row.id):
+        raise prepared.PreparedExecutionError(
+            prepared.STALE, "This render no longer belongs to the approved edit."
+        )
+    snapshot = prepared.parse(row)
+    prepared.verify(
+        snapshot,
+        draft=draft,
+        document=KriaDraftDocument.model_validate(draft.snapshot_json or {}),
+        thread_id=approval.thread_id,
+        sources=prepared.load_source_identities_sync(db, item, approval.creator_id),
+    )
+    record = {
+        **stamp,
+        "attempt_id": prepared.new_attempt_id(),
+        "approval_id": str(approval.id),
+        "retry_of_attempt_id": stamp.get("attempt_id"),
+    }
+    prepared.stamp_job(job, record)
+    return record
+
+
 def claim_render_retry(approval_id: uuid.UUID):  # noqa: ANN201
     """Return (handled, claim). An accepted delivery never re-pins a second time."""
     from app.tasks.kria_runtime import _ApprovalDispatchClaim  # noqa: PLC0415
@@ -624,6 +661,7 @@ def claim_render_retry(approval_id: uuid.UUID):  # noqa: ANN201
                     )
                 if approval.draft_id != draft.id or approval.draft_revision != draft.draft_revision:
                     raise _failure("render_retry_target_stale", "The approved draft changed.")
+                prepared_record = _next_prepared_attempt(db, approval, draft, item, job)
                 status = retry_device_render(job, execution.target_variant_id)
                 apply_retry_variant_reset(job, execution.target_variant_id)
             except (RuntimeFailure, ValueError) as exc:
@@ -669,6 +707,7 @@ def claim_render_retry(approval_id: uuid.UUID):  # noqa: ANN201
                     "render_destination": "device",
                     "device_recipe_revision": status.request.identity.recipe_revision,
                 },
+                **({"prepared_execution": prepared_record} if prepared_record else {}),
             }
             turn.status = "executing"
             session.status = "executing"

@@ -1837,6 +1837,50 @@ class CreatorEditDraft(Base):
     )
 
 
+class CreatorPreparedExecution(Base):
+    """Immutable identity of one approved edit's execution inputs (KRI-722).
+
+    Minted by ``decide_approval`` in the approving transaction. Dispatch, device
+    publication, receipts, retries and draft pruning reference it by id; see
+    ``app.kria.prepared_execution``. Only ``invalidated_at``/``invalidation_code``
+    are ever written after insert (an audit of the first refused verification).
+    """
+
+    __tablename__ = "creator_prepared_executions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creation_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    approval_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_approvals.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    draft_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creator_edit_drafts.id", ondelete="SET NULL"), nullable=True
+    )
+    draft_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    snapshot_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    invalidated_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    invalidation_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("approval_id", name="uq_creator_prepared_executions_approval"),
+        CheckConstraint(
+            "octet_length(snapshot::text) <= 262144",
+            name="ck_creator_prepared_executions_size",
+        ),
+        Index("idx_creator_prepared_executions_draft", "draft_id"),
+    )
+
+
 class CreatorAgentApproval(Base):
     """Deterministically pinned approval for one consequential action bundle."""
 
@@ -1869,6 +1913,18 @@ class CreatorAgentApproval(Base):
     target_manifest_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     target_ownership_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
     execution_ids: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    # KRI-722: the immutable prepared execution this approval authorizes. A retry
+    # approval references its source attempt's snapshot (same authority, new attempt).
+    prepared_execution_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "creator_prepared_executions.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_creator_agent_approvals_prepared_execution",
+        ),
+        nullable=True,
+    )
     consequence_summary: Mapped[str] = mapped_column(Text, nullable=False)
     cost_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
