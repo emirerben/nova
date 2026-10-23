@@ -1342,6 +1342,21 @@
         "src/apps/api/app/services/phone_reaction_grounding.py",
         "src/apps/api/tests/fixtures/kri839_cafe_t2/t2_01_words.json"
       ]
+    },
+    {
+      "id": "kri-798-render-worker-restart",
+      "needs_native": false,
+      "api_tests": "tests/services/test_fly_machines.py tests/tasks/test_render_worker_lifecycle.py tests/tasks/test_render_worker_activity_sql.py tests/test_render_worker_wake.py",
+      "paths": [
+        "src/apps/api/app/config.py",
+        "src/apps/api/app/services/fly_machines.py",
+        "src/apps/api/app/tasks/maintenance.py",
+        "src/apps/api/app/worker.py",
+        "src/apps/api/tests/services/test_fly_machines.py",
+        "src/apps/api/tests/tasks/test_render_worker_lifecycle.py",
+        "src/apps/api/tests/tasks/test_render_worker_activity_sql.py",
+        "src/apps/api/tests/test_render_worker_wake.py"
+      ]
     }
   ]
 }
