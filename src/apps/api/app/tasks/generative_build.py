@@ -6823,6 +6823,7 @@ def _run_phone_subtitled_job(
     from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
     from app.pipeline.caption_language import (  # noqa: PLC0415
         SOURCE_DETECTED,
+        SOURCE_FALLBACK,
         coerce_caption_language_request,
         crosscheck_detected_language,
         resolve_spoken_caption_language,
@@ -7470,6 +7471,9 @@ def _run_phone_subtitled_job(
                         }
                         for word in words
                     ]
+                # KRI-838: the spoken language, only when something detected it (never the
+                # job language the fallback chain ends on): what an unmet ask is stamped.
+                spoken_caption_lang = detected_lang if _lang_source != SOURCE_FALLBACK else ""
                 caption_words, detected_lang = _requested_language_caption_words(
                     words, detected_lang
                 )
@@ -7486,6 +7490,20 @@ def _run_phone_subtitled_job(
                     # Cleanup cut the fillers out of the audio; an opening cut alone left them in.
                     if opening_cut_only or not is_filler_token(item["text"])
                 ]
+                if caption_words is not words:
+                    # KRI-838: the hinted pass is no proof (a whisper language hint does
+                    # not reliably translate). Read the text; translate when it is not in
+                    # the requested language. Done on the kept words so a cut sentence is
+                    # never translated whole. The cut and the lanes stay on the spoken words.
+                    ensured = _ensure_requested_caption_language(
+                        cut_words,
+                        requested=caption_language_req,
+                        fallback_language=spoken_caption_lang,
+                        job_id=job_id,
+                        variant_id="subtitled",
+                        glossary=_caption_glossary(snapshot, all_candidates),
+                    )
+                    cut_words, detected_lang = ensured.words, ensured.language
                 cues = build_plain_cues(cut_words, attach_words=True, budget=PHONE_CUE_BUDGET)
                 if spoken_text_asks:
                     # KRI-707: the SPOKEN words (never a requested caption language), cut.
@@ -7580,6 +7598,26 @@ def _run_phone_subtitled_job(
                         }
                         for word in transcript.words
                     ]
+                if caption_language_req is not None:
+                    # KRI-838: the hinted pass is no proof (a whisper language hint does
+                    # not reliably translate). Only the CAPTIONS take the verified or
+                    # translated words; `raw_words` and `timeline_words` stay on the spoken
+                    # pass (KRI-839).
+                    ensured = _ensure_requested_caption_language(
+                        caption_words,
+                        requested=caption_language_req,
+                        # The spoken pass's language when whisper or its text said it,
+                        # else Gemini's independent read of the clip, else "".
+                        fallback_language=(
+                            _spoken_lang
+                            if _lang_source != SOURCE_FALLBACK
+                            else _clip_spoken_language(clip_metas, clip_id)
+                        ),
+                        job_id=job_id,
+                        variant_id="subtitled",
+                        glossary=_caption_glossary(snapshot, all_candidates),
+                    )
+                    caption_words, detected_lang = ensured.words, ensured.language
                 cues = build_plain_cues(caption_words, attach_words=True, budget=PHONE_CUE_BUDGET)
                 if spoken_text_asks:
                     timeline_words = list(transcript.words)
@@ -7603,8 +7641,21 @@ def _run_phone_subtitled_job(
                         for word in (getattr(extra_transcript, "words", None) or [])
                     ]
                     if extra_words:
+                        extra_caption_words = extra_words
+                        if caption_language_req is not None:
+                            # KRI-838: an extra speaker's captions follow the same ask,
+                            # judged on their own words (the variant keeps the main
+                            # speaker's language stamp).
+                            extra_caption_words = _ensure_requested_caption_language(
+                                extra_words,
+                                requested=caption_language_req,
+                                fallback_language=_clip_spoken_language(clip_metas, extra_id),
+                                job_id=job_id,
+                                variant_id="subtitled",
+                                glossary=_caption_glossary(snapshot, all_candidates),
+                            ).words
                         cues = cues + build_plain_cues(
-                            extra_words, attach_words=True, budget=PHONE_CUE_BUDGET
+                            extra_caption_words, attach_words=True, budget=PHONE_CUE_BUDGET
                         )
                         if spoken_text_asks:
                             timeline_words.extend(extra_words)
@@ -8864,6 +8915,74 @@ def _apply_creator_spellings(cues: list, targets: tuple[str, ...]) -> list:
     return out
 
 
+def _transcript_with_words(transcript: Any, words: list, language: str) -> Any:
+    """A copy of ``transcript`` carrying ``words`` (and their joined text) in ``language``."""
+    clone = replace(transcript) if is_dataclass(transcript) else copy.copy(transcript)
+    clone.words = words
+    clone.full_text = " ".join(str(word.text) for word in words)
+    clone.language = language
+    return clone
+
+
+def _clip_spoken_language(clip_metas: Any, clip_id: Any) -> str:
+    """KRI-838: an INDEPENDENT read of the language spoken in a clip -- the language-ID on
+    Gemini's own transcript of it -- or "" when there is none. The hinted whisper pass cannot
+    say: it reports the language it was told to write, so a stamp taken from it repeats the
+    request. This is what ``ensure_caption_language`` may stamp when the text cannot say."""
+    from app.pipeline.caption_language import detect_text_language  # noqa: PLC0415
+
+    meta = next(
+        (m for m in clip_metas or () if str(getattr(m, "clip_id", "")) == str(clip_id)), None
+    )
+    return detect_text_language(getattr(meta, "transcript", None)) or ""
+
+
+def _caption_glossary(snapshot: dict, all_candidates: dict) -> tuple[str, ...]:
+    """KRI-838: the creator's own names and spellings for the captions -- the do-not-translate
+    list of the caption translator (the same words ``_apply_creator_spellings`` applies)."""
+    from app.pipeline.caption_spelling import extract_spelling_asks  # noqa: PLC0415
+
+    return _phone_caption_spellings(
+        snapshot, extract_spelling_asks(_creator_request_text(all_candidates))
+    )
+
+
+def _ensure_requested_caption_language(
+    words: list,
+    *,
+    requested: str,
+    fallback_language: str,
+    job_id: str,
+    variant_id: str,
+    glossary: tuple[str, ...] = (),
+) -> Any:
+    """KRI-838: caption ``words`` just transcribed with the creator's requested language as
+    the whisper hint, made to really be in it, and the language they honestly are.
+
+    A whisper language hint does not reliably translate (a Turkish hint on English speech
+    wrote the English again in local tests), so the hint alone is no proof. The text is
+    read; if it is not in the requested language it is translated
+    (``CAPTION_TRANSLATION_ENABLED``), and if that fails the original words come back with
+    the language they truly are, so the variant's ``caption_language`` and the review never
+    repeat the request. ``fallback_language`` is an INDEPENDENT read of the spoken language
+    (never the hinted pass's own label, which echoes the request), "" when unknown: it is
+    what an unmet ask is stamped with when the text cannot say. Returns a
+    ``CaptionLanguageResult``.
+    """
+    from app.pipeline.caption_translate import ensure_caption_language  # noqa: PLC0415
+
+    return ensure_caption_language(
+        words,
+        requested=requested,
+        fallback_language=fallback_language,
+        glossary=glossary,
+        enabled=settings.caption_translation_enabled,
+        model=settings.caption_translation_model,
+        variant_id=variant_id,
+        job_id=job_id,
+    )
+
+
 def _phone_spoken_text_asks(snapshot: dict) -> tuple:
     """KRI-707: the texts the creator wants on screen when they say a word, read
     deterministically off the approved brief pinned on the job
@@ -9005,6 +9124,7 @@ def _narrated_caption_transcript(
     caption_lang: str,
     requested_lang: str | None,
     variant_id: str,
+    glossary: tuple[str, ...] = (),
 ) -> tuple[Any, str]:
     """The transcript a narrated variant's captions are built from, and its language.
 
@@ -9019,6 +9139,12 @@ def _narrated_caption_transcript(
     ``caption_lang`` is the language returned when no request applies. A request
     already matching what was spoken, or an empty hinted pass, keeps ``transcript``
     (the empty case is recorded, never silent).
+
+    KRI-838: the hinted pass is no proof either -- a whisper language hint does not reliably
+    translate, so "Turkish" over an English voiceover can come back English. The hinted
+    words are read and, when they are not in the requested language, translated
+    (``_ensure_requested_caption_language``); if that fails the hinted words are returned
+    with the language they really are. ``glossary`` is the creator's do-not-translate list.
     """
     from app.pipeline.caption_language import infer_language_from_text  # noqa: PLC0415
     from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
@@ -9039,7 +9165,17 @@ def _narrated_caption_transcript(
         log.warning("caption_language_request_empty", job_id=job_id, **payload)
         return transcript, caption_lang
     record_pipeline_event("captions", "caption_language_requested", payload)
-    return requested, requested_lang
+    ensured = _ensure_requested_caption_language(
+        requested.words,
+        requested=requested_lang,
+        fallback_language=heard,
+        job_id=job_id,
+        variant_id=variant_id,
+        glossary=glossary,
+    )
+    if ensured.outcome == "translated":
+        requested = _transcript_with_words(requested, ensured.words, ensured.language)
+    return requested, ensured.language
 
 
 def _phone_narrated_reaction_lanes(
@@ -9732,6 +9868,7 @@ def _run_phone_narrated_job(
                     caption_lang=detected_lang,
                     requested_lang=caption_language_req,
                     variant_id="narrated",
+                    glossary=_caption_glossary(snapshot, all_candidates),
                 )
                 cues = build_plain_cues(caption_transcript.words, attach_words=True)
                 cues = correct_caption_cues(
@@ -25774,6 +25911,7 @@ def _render_narrated_variant(
     timing above still comes from the spoken words (`_narrated_caption_transcript`).
     """
     from app.pipeline.caption_language import coerce_caption_language_request  # noqa: PLC0415
+    from app.pipeline.caption_spelling import extract_spelling_asks  # noqa: PLC0415
     from app.pipeline.narrated_assembler import assemble_narrated  # noqa: PLC0415
     from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
     from app.storage import (  # noqa: PLC0415
@@ -26142,6 +26280,7 @@ def _render_narrated_variant(
             caption_lang=getattr(transcript, "language", "") or "",
             requested_lang=coerce_caption_language_request(caption_language_request),
             variant_id=variant_id,
+            glossary=extract_spelling_asks(creator_request),
         )
         caption_cues = assemble_narrated(
             step_timings,
@@ -27924,6 +28063,26 @@ def _render_subtitled_variant(
         )
         return caption_language_req, override_transcript.words
 
+    def _ensure_cloud_caption_words(lang: str, words: list, *, spoken: str) -> Any:
+        """KRI-838: after a hinted pass was adopted (``lang`` is the requested language),
+        read the words and translate them when they are not in it. Returns a
+        ``CaptionLanguageResult``: the language is the one the text honestly is, and the
+        words are untouched unless it says "translated". A pass that was not hinted (no
+        request, or ``lang`` is the spoken language) comes back as it went in."""
+        from app.pipeline.caption_translate import CaptionLanguageResult  # noqa: PLC0415
+
+        if caption_language_req is None or lang != caption_language_req:
+            return CaptionLanguageResult(words, lang, "heard")
+        # This render carries no creator request text, so there is no spelling list to
+        # keep verbatim here (the phone paths pass it).
+        return _ensure_requested_caption_language(
+            words,
+            requested=caption_language_req,
+            fallback_language=spoken,
+            job_id=job_id,
+            variant_id=variant_id,
+        )
+
     def _resolve_live_transcript_language(
         transcript: Any, *, retranscribe: Callable[[str], Any]
     ) -> tuple[str, Any]:
@@ -27954,7 +28113,15 @@ def _render_subtitled_variant(
                 "spoken": spoken_lang,
             },
         )
-        return caption_language_req, transcript
+        ensured = _ensure_cloud_caption_words(
+            caption_language_req,
+            list(transcript.words or []),
+            # `spoken_lang` is the hinted pass's own label; Gemini's transcript is independent.
+            spoken=_clip_spoken_language(clip_metas, selected_clip_id),
+        )
+        if ensured.outcome == "translated":
+            transcript = _transcript_with_words(transcript, ensured.words, ensured.language)
+        return ensured.language, transcript
 
     # Caption style: "word" → word-by-word lime pop (line visible, active word popped);
     # anything else → sentence blocks (the safe default). Reuses the narrated key.
@@ -28330,11 +28497,19 @@ def _render_subtitled_variant(
                     sc_language, words=sc_words
                 )
                 caption_words = _cut_caption_words(resolved_sc_words, sc_plan, sc_grid)
+                ensured = _ensure_cloud_caption_words(
+                    detected_lang, caption_words, spoken=sc_language
+                )
+                detected_lang, caption_words = ensured.language, ensured.words
                 cues = build_plain_cues(caption_words, attach_words=True)
             elif checked_uncut_words is not None:
                 detected_lang, resolved_uncut_words = _resolve_verbatim_caption_language(
                     checked_uncut_language, words=checked_uncut_words
                 )
+                ensured = _ensure_cloud_caption_words(
+                    detected_lang, resolved_uncut_words, spoken=checked_uncut_language
+                )
+                detected_lang, resolved_uncut_words = ensured.language, ensured.words
                 cues = build_plain_cues(resolved_uncut_words, attach_words=True)
             else:
                 # Content-addressed cache: re-renders of the same clip reuse the
@@ -28608,6 +28783,8 @@ def _render_subtitled_variant(
                 sc_language, words=sc_words
             )
             caption_words = _cut_caption_words(resolved_sc_words, sc_plan, sc_grid)
+            ensured = _ensure_cloud_caption_words(detected_lang, caption_words, spoken=sc_language)
+            detected_lang, caption_words = ensured.language, ensured.words
             cues = build_plain_cues(caption_words, attach_words=True)
         elif not smart_v2 and checked_uncut_words is not None:
             # Explicit keep-original means the exact accepted words and source
@@ -28615,6 +28792,10 @@ def _render_subtitled_variant(
             detected_lang, resolved_uncut_words = _resolve_verbatim_caption_language(
                 checked_uncut_language, words=checked_uncut_words
             )
+            ensured = _ensure_cloud_caption_words(
+                detected_lang, resolved_uncut_words, spoken=checked_uncut_language
+            )
+            detected_lang, resolved_uncut_words = ensured.language, ensured.words
             cues = build_plain_cues(resolved_uncut_words, attach_words=True)
         elif not smart_v2:
             # Flag-off / gated / analysis-failed path — today's flow, unchanged.

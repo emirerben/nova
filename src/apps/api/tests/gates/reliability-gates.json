@@ -2789,6 +2789,60 @@
         "Cafe T2 phone re-send after deploy (Turkish captions, cleanup declined)"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-838-caption-language",
+      "tickets": [
+        "KRI-838"
+      ],
+      "symptom": "Caf\u00e9 T2 (English speech, 'altyaz\u0131lar T\u00fcrk\u00e7e olsun') shipped English captions stamped 'tr' and the review said 'The captions are in Turkish' (a whisper language hint does not reliably translate; the label was the request). Don Julio T3 ('make the subtitles Spanish') was promised as Spanish before approval, dropped by the dispatcher (en/tr only) and rendered in the spoken language.",
+      "boundary": "compiler",
+      "status": "open_pr",
+      "owner": "KRI-838",
+      "paths": [
+        "src/apps/api/app/config.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/pipeline/caption_correct.py",
+        "src/apps/api/app/pipeline/caption_language.py",
+        "src/apps/api/app/pipeline/caption_translate.py",
+        "src/apps/api/app/tasks/generative_build.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri838_caption_language_asks.py",
+        "tests/pipeline/test_caption_language.py",
+        "tests/pipeline/test_caption_language_id.py",
+        "tests/pipeline/test_caption_translate.py",
+        "tests/tasks/test_kri838_caption_language_replay.py",
+        "tests/tasks/test_narrated_caption_language.py",
+        "tests/tasks/test_subtitled_caption_language.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": "caption_translation_enabled",
+      "evidence": {
+        "offline_replay": "Real kit prompts (caf\u00e9 T2 Turkish, Don Julio T3 English) through the real dispatcher parser, the real phone Talking job (no-cleanup and cleanup branches), the real cue builder and the real brief checks; whisper replayed from local whisper.cpp medium output of the two incident clips, the translator an authored stub. Red on main (only the config field and a stub provider function shimmed): 16 of 18 replay tests fail (English cues stamped 'tr' and 'met'; 'es' dropped; Spanish promised); green with the fix.",
+        "live_model": "Not run; no paid calls. The translator prompt is exercised through a fake provider client only.",
+        "native_output": "Pending: iPhone re-run of caf\u00e9 T2 and Don Julio T3 after deploy (Yasin).",
+        "production": "not merged"
+      },
+      "neighbours_covered": [
+        "phone Talking, no-cleanup and cleanup branches",
+        "multi-clip Talking extra speakers",
+        "phone and cloud Voiceover hinted pass",
+        "cloud Talking (live, silence-cut and checked-uncut words)",
+        "pre-approval promise (Spanish promised only when deliverable; EN and TR)"
+      ],
+      "neighbours_gap": [
+        "editor D5 re-transcribe route and task, and the web CaptionLanguage type, are still en/tr only",
+        "translated words carry synthetic per-word timing inside each sentence span",
+        "a regenerate re-translates (no cache); the translator is not an Agent with replay evals",
+        "the compile-time Voiceover receipt has no cue text (the render-ready review reads it)",
+        "a hinted pass with no independent spoken-language evidence leaves caption_language empty (unknown) rather than guessing"
+      ],
+      "follow_ups": [
+        "KRI-838 iPhone re-run",
+        "KRI-843 language cross-check"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

@@ -130,6 +130,47 @@ drives a second, caption-only pass (KRI-839). A prompt merely *written* in a
 language never changes it. Known gap: Kria runtime-v2 dispatches with an LLM
 summary instead of the creator's text, so that path does not pick up requests yet.
 
+**Verified, not trusted (KRI-838):** a whisper language hint does not reliably translate
+(local whisper.cpp medium, an approximation of prod's whisper-1: a Turkish hint on English
+speech wrote the English again, a Spanish hint a loose Spanish), so the hinted pass is only a
+first try. `app/pipeline/caption_language.py` holds the one language table (nine languages:
+en, tr, de, es, fr, it, ar, nl, pt; names and every creator spelling) read by the
+dispatcher parser, the brief checks and the worker, and a deterministic text
+language-ID (`detect_text_language`, `caption_language_verdict`: confirmed /
+contradicted / unknown; short or ambiguous text is "unknown", never a failure).
+Wherever a hinted pass becomes caption words, `ensure_caption_language`
+(`app/pipeline/caption_translate.py`; phone Talking, extra speakers, phone/cloud
+Voiceover via `_narrated_caption_transcript`, cloud Talking) reads the text: in the
+requested language -> kept, no model call; not -> one structured model call translates
+the caption sentences (the creator's own spellings are passed as do-not-translate terms)
+and the new words are spread over each sentence's original span; any failure (switch
+off, provider error, malformed answer, a translation still in the wrong language) returns
+the ORIGINAL words and stamps the variant's `caption_language` with the language the text
+really is, recording `caption_language_request_unmet`. When the text cannot say, the stamp
+is an independent read of the spoken language (the language-ID on Gemini's transcript of
+the clip, or the auto-detected pass) and otherwise "" (unknown): never the request. An
+empty `caption_language` hides the web/iOS language chip and reads as "can't check" in the
+review. A set that is mostly in the requested language gets only its clearly-foreign
+sentences translated (`caption_translation`, `partial: true`); if that fails they stay and
+`caption_language_minority_untranslated` is recorded. `caption_translation` records a
+successful translation. The cut, `raw_words` (beats, overlays) and spoken-text asks keep
+the spoken words; only the captions change. The brief side reads the cue text too:
+`_check_caption_words` reports "The captions are in English, not Turkish." for English
+lines under a `tr` label, and the pre-approval line promises a language only when
+`can_deliver_caption_language` says the worker can deliver it (otherwise "I can't make
+Spanish captions yet, so they'll be in the language that's spoken"). The worker re-checks
+the same rule (`coerce_caption_language_request`), so with the switch off a Spanish ask
+is not hinted at render time either, and Arabic is never promised or rendered (its caption
+fonts and right-to-left shaping were not verified). The dispatcher parser only reads a
+language that is bound to the caption word ("Spanish subtitles", "subtitles in Spanish",
+"make the subtitles Spanish"), never "Spanish food with subtitles". Kill switch:
+`CAPTION_TRANSLATION_ENABLED=false` (+ restart api and worker; the promise reads the same
+flag, so keep them equal). Model: `CAPTION_TRANSLATION_MODEL`, empty = the caption
+correction model. Known gaps: the editor D5 re-transcribe route/task and the web
+`CaptionLanguage` type are still en/tr only; a multi-clip Talking edit stamps the main
+speaker's language; the compile-time Voiceover receipt has no cue text (the render-ready
+review reads it).
+
 **Smart Captions (server-only flag):** set `SMART_CAPTIONS_ENABLED=true` on Fly
 and restart the API/workers. There is deliberately no `NEXT_PUBLIC` twin. A
 creator is eligible only when `SUBTITLED_ARCHETYPE_ENABLED=true`, the plan item

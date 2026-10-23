@@ -37,13 +37,23 @@ _TR_WORDS = _words(
     ("Gün", 8.0, 8.5),
     ("batımı.", 8.5, 9.0),
 )
+# KRI-838: a hinted pass is read, not trusted, so the stubbed English the hinted pass writes is
+# a real English caption (three bare nouns carry no language evidence to confirm it).
 _EN_WORDS = _words(
-    ("Morning", 0.0, 0.6),
+    ("Morning", 0.0, 0.3),
+    ("with", 0.3, 0.45),
+    ("the", 0.45, 0.6),
     ("balloons.", 0.6, 1.1),
-    ("Then", 4.0, 4.4),
-    ("walk.", 4.4, 5.0),
-    ("Sunset", 8.0, 8.6),
-    ("ends.", 8.6, 9.1),
+    ("Then", 4.0, 4.2),
+    ("we", 4.2, 4.3),
+    ("walk", 4.3, 4.5),
+    ("to", 4.5, 4.6),
+    ("the", 4.6, 4.8),
+    ("valley.", 4.8, 5.0),
+    ("Sunset", 8.0, 8.3),
+    ("is", 8.3, 8.5),
+    ("the", 8.5, 8.7),
+    ("end.", 8.7, 9.1),
 )
 _SPOKEN_TR = Transcript(
     words=_TR_WORDS, language="tr", full_text=" ".join(w.text for w in _TR_WORDS)
@@ -141,7 +151,9 @@ def test_phone_without_an_ask_captions_in_the_spoken_language(monkeypatch):
     assert whisper.call_count == 1
 
 
-@pytest.mark.parametrize("request_value", ["tr", "fr", 7])
+# KRI-838: "fr" was the unsupported example while the table held en/tr; it is a supported
+# language now, so the stray values are outside the table.
+@pytest.mark.parametrize("request_value", ["tr", "xx", 7])
 def test_phone_ask_matching_the_voice_or_unsupported_is_a_noop(monkeypatch, request_value):
     job, snapshot, _session, _bindings = _setup_narrated(
         monkeypatch, extra_candidates={"caption_language_request": request_value}
