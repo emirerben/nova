@@ -258,15 +258,16 @@ async def draft_script(
 
     ``creator_words`` are the creator's own messages (oldest first); they are the brief and
     the grounding the backstop compares against. ``prior`` + ``revision_note`` make this a
-    revision: same ``script_id`` and ``source_media_ids``, ``revision + 1``.
+    revision: ``revision + 1``, same ``script_id`` unless the footage changed.
     """
     lines, media_ids, duration = footage_lines(
         manifest, clips, include_facts=settings.clip_facts_for(creator_id)
     )
     revising = prior is not None and bool(revision_note)
-    if revising and prior is not None and prior.source_media_ids:
-        media_ids = prior.source_media_ids
-    script_id = (prior.script_id if revising and prior is not None else "") or _script_id(
+    # Provenance is always the footage this revision is written from; changed footage
+    # mints a new script_id so a stale draft is never mistaken for the current one.
+    same_footage = prior is not None and tuple(prior.source_media_ids) == tuple(media_ids)
+    script_id = (prior.script_id if revising and same_footage and prior else "") or _script_id(
         thread_id, media_ids
     )
     revision = (prior.revision + 1) if prior is not None else 1

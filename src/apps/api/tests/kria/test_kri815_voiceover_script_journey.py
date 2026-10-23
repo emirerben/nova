@@ -525,6 +525,38 @@ async def test_revising_the_script_keeps_footage_brief_and_identity(
     _report("j4_revision", chat)
 
 
+@pytest.mark.asyncio
+async def test_a_later_turn_never_silently_replaces_the_revised_script(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F8: r2 is what the creator asked for; "make the video" or a stale re-fire keeps it."""
+    chat = _seed()
+    await _turn(monkeypatch, chat, SCRIPT_ASK, _script_action(), writer=Cassette(_written(SCRIPT)))
+    note = "make it a bit calmer, drop the name"
+    await _turn(
+        monkeypatch,
+        chat,
+        note,
+        _script_action(evidence=note, note=note),
+        writer=Cassette(_written(SHORTER)),
+    )
+    assert _script(chat.replies[-1])["revision"] == 2
+
+    writer = Cassette()  # an empty cassette: any re-draft would show up in its prompts
+    for message, output in (
+        ("ok, make the narrated video now", _narrated()),
+        # The model re-fires turn 1's ask with a change the creator never typed.
+        ("looks good", _script_action(note="make it more dramatic")),
+        ("looks good", _script_action()),
+    ):
+        reply = await _turn(monkeypatch, chat, message, output, writer=writer)
+        assert "voiceover_script" not in (reply.payload or {}), message
+    assert writer.prompts == []
+    assert _count(CreatorAgentApproval, chat.thread_id) == 0
+    assert _count(CreatorEditDraft, chat.thread_id) == 0
+    _report("j4b_revision_kept", chat)
+
+
 # == F10/F5: after recording, the normal narrated edit is offered and claimable ==================
 
 

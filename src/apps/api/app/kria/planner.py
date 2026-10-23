@@ -2395,6 +2395,13 @@ def _quoted_by_creator(evidence: str, words: Sequence[str]) -> bool:
     return bool(excerpt) and any(excerpt in " ".join(text.split()) for text in words)
 
 
+async def _item_has_voiceover(db: AsyncSession, item_id: uuid.UUID) -> bool:
+    """The approval claim's voiceover predicate, read without pinning a connection."""
+    attached = bool((await _refetch_item(db, item_id)).voiceover_gcs_path)
+    await db.rollback()
+    return attached
+
+
 async def _plan_voiceover_script(
     db: AsyncSession,
     *,
@@ -2414,7 +2421,11 @@ async def _plan_voiceover_script(
     """
     words = _creator_words(inputs, user_message)
     hashes = {"manifest_hash": manifest.manifest_hash, "context_hash": manifest.context_hash}
-    if action is not None and not _quoted_by_creator(action.request_evidence, words):
+    if action is not None and (
+        not _quoted_by_creator(action.request_evidence, words)
+        # A change to the draft must be asked for now, in the creator's own words.
+        or (action.revision_note and not _quoted_by_creator(action.revision_note, [user_message]))
+    ):
         # The model's reading is never the creator's request: ask instead of writing.
         log.info("kria_voiceover_script_ungrounded", thread_id=str(thread_id))
         return PlannedKriaTurn(
@@ -2433,6 +2444,17 @@ async def _plan_voiceover_script(
     await db.rollback()
     if not voiceover_script.available(manifest, voiceover_attached=voiceover_attached):
         return PlannedKriaTurn(plan=voiceover_script.record_first_plan(), **hashes)
+    prior = await voiceover_script.latest_script(db, thread_id)
+    await db.rollback()
+    if prior is not None and (
+        action is None
+        or (
+            not action.revision_note
+            and not _quoted_by_creator(action.request_evidence, [user_message])
+        )
+    ):
+        # A draft exists and nothing new was asked: keep it (never silently re-draft).
+        return PlannedKriaTurn(plan=voiceover_script.record_first_plan(), **hashes)
     clips = list(inputs.intent_clips or []) or await _reload_intent_clips(
         db, item_id=item_id, creator_id=creator_id
     )
@@ -2440,7 +2462,9 @@ async def _plan_voiceover_script(
     pending = [
         clip.media_id
         for clip in clips
-        if clip.media_id in video_ids and understanding_incomplete(clip.analysis, kind=clip.kind)
+        if settings.kria_clip_understanding_enabled
+        and clip.media_id in video_ids
+        and understanding_incomplete(clip.analysis, kind=clip.kind)
     ]
     if pending:
         # A script written from blank clips would be generic: wait, and re-run the turn.
@@ -2454,8 +2478,6 @@ async def _plan_voiceover_script(
             continuable=True,
             **hashes,
         )
-    prior = await voiceover_script.latest_script(db, thread_id)
-    await db.rollback()
     deadline = turn_deadline.get()
     plan = await voiceover_script.draft_script(
         thread_id=thread_id,
@@ -2856,7 +2878,7 @@ async def _plan_creator_action(
         # The manifest already says so when the voiceover is in use; otherwise read the
         # item's own voiceover column, the exact predicate the approval claim uses.
         and not manifest.has_voiceover
-        and not (await _refetch_item(db, item_id)).voiceover_gcs_path
+        and not await _item_has_voiceover(db, item_id)
     ):
         # KRI-815: with no voiceover this edit is either refused as "unavailable" or approved
         # and then cancelled at claim (`voiceover_required`). Neither helps: hand back a
