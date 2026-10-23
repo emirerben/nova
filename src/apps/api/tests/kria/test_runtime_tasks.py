@@ -59,6 +59,13 @@ def _runtime_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "kria_runtime_v2_enabled", True)
 
 
+@pytest.fixture(autouse=True)
+def _no_stranded_successors(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Its own sessions would consume the scripted `db.execute` results below; the
+    # release itself runs against Postgres in test_turn_follow_up_postgres.py.
+    monkeypatch.setattr("app.tasks.kria_runtime._release_stranded_successors", lambda: 0)
+
+
 def _draft_plan(*, render_dependencies: list[str]) -> KriaTurnPlan:
     return KriaTurnPlan(
         mode="act",
@@ -555,7 +562,7 @@ def test_claim_owns_pending_turn_with_database_time_and_returns_trusted_snapshot
             "strongest_moment": "whisking",
         },
     )
-    source = SimpleNamespace(content="Open with the whisk")
+    source = SimpleNamespace(content="Open with the whisk", sequence=4)
     db = MagicMock()
     db.execute.side_effect = [_Result(scalar=turn), _Result(scalar=now)]
     db.get.side_effect = [thread, source]
@@ -573,6 +580,7 @@ def test_claim_owns_pending_turn_with_database_time_and_returns_trusted_snapshot
             "strongest_moment": "whisking",
             "editorial_decision": None,
             "client_request_id": "request-7",
+            "source_sequence": 4,
         },
         "Open with the whisk",
         1,
