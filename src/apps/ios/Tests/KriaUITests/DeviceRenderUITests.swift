@@ -67,7 +67,83 @@ final class DeviceRenderUITests: XCTestCase {
         XCTAssertTrue(eventually { !retry.exists }, "The retried render finished; nothing is left to retry")
     }
 
+    /// KRI-823: a device delivery failure never moves the job off `awaiting_device`, so the drawer used to keep
+    /// saying "Rendering" while the card said the edit needed attention. Launch 1 caches the project as Rendering on
+    /// disk; launch 2 finds the server already gave up (`timed_out`). Drawer and detail must both say so after the
+    /// relaunch, stay that way across a drawer refresh with the detail open, then follow Retry to Rendering and the
+    /// published export to Ready.
+    func testDrawerFollowsDeviceDeliveryFailureThroughRelaunchRetryAndReady() {
+        let first = launchSeeded(scenario: "ready", reset: true)
+        XCTAssertTrue(drawerRow(in: first, says: "Rendering"), first.debugDescription)
+        first.terminate()
+
+        let app = launchSeeded(scenario: "timed_out", reset: false, publishReady: true)
+        XCTAssertTrue(drawerRow(in: app, says: "Needs attention"), "A cached Rendering row must not survive the server's failure. \(app.debugDescription)")
+        seededRow(in: app).tap()
+
+        let card = app.descendants(matching: .any)["device-render-status"].firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 20), app.debugDescription)
+        let copy = card.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "stopped waiting after a day")).firstMatch
+        XCTAssertTrue(copy.waitForExistence(timeout: 20), app.debugDescription)
+
+        // Reopening the drawer reloads the list while the detail is open; neither may flip back to Rendering.
+        XCTAssertTrue(drawerRow(in: app, says: "Needs attention"))
+        closeDrawer(in: app)
+        XCTAssertTrue(copy.waitForExistence(timeout: 5), "The open detail keeps the needs-attention card")
+
+        let retry = card.buttons["device-render-retry"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+        retry.tap()
+        XCTAssertTrue(drawerRow(in: app, says: "Rendering", timeout: 10), app.debugDescription)
+        closeDrawer(in: app)
+        XCTAssertTrue(drawerRow(in: app, says: "Ready", timeout: 40), app.debugDescription)
+    }
+
     // MARK: - Helpers
+
+    private func launchSeeded(scenario: String, reset: Bool, publishReady: Bool = false) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"] + (reset ? ["-perf-reset"] : [])
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_CHAT_DEVICE_RENDER"] = scenario
+        app.launchEnvironment["KRIA_CHAT_DEVICE_SEED_THREAD"] = "1"
+        app.launchEnvironment["KRIA_PERF_DISK_STORE"] = "1"
+        if publishReady {
+            app.launchEnvironment["KRIA_CHAT_DEVICE_PUBLISH_READY"] = "1"
+            // The first launch's local export is gone (an interrupted device); only the server's record remains.
+            app.launchEnvironment["KRIA_CHAT_DEVICE_LOST_LOCAL_EXPORT"] = "1"
+        }
+        app.launch()
+        return app
+    }
+
+    private func seededRow(in app: XCUIApplication) -> XCUIElement {
+        app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Delivery check")).firstMatch
+    }
+
+    /// Opens the drawer (re-reading the project list) until the seeded project's row says `status`.
+    private func drawerRow(in app: XCUIApplication, says status: String, timeout: TimeInterval = 20) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if !app.buttons["drawer-new-chat"].exists {
+                let open = app.buttons["Open projects"]
+                if open.waitForExistence(timeout: 5) { open.tap() }
+            }
+            let row = seededRow(in: app)
+            if row.waitForExistence(timeout: 2), row.label.contains(status) { return true }
+            closeDrawer(in: app)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        } while Date() < deadline
+        return false
+    }
+
+    private func closeDrawer(in app: XCUIApplication) {
+        let close = app.buttons["Close projects"]
+        if close.exists { close.tap() }
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["drawer-new-chat"])
+        _ = XCTWaiter.wait(for: [dismissed], timeout: 5)
+    }
 
     private func launch(scenario: String) -> XCUIApplication {
         let app = XCUIApplication()

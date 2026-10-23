@@ -1671,11 +1671,7 @@ private struct CreationWorkspaceView: View {
             if feedHostsDeviceBuild {
                 planFeedView
             } else if let deviceRenderKey {
-                DeviceRenderPanel(key: deviceRenderKey, sessions: model.deviceRenders,
-                    retryApproved: model.deviceRenders.retryNeedsApproval(deviceRenderKey) ? { await retryApprovedRender() } : nil) {
-                    await refreshCapabilities()
-                    await refreshDeviceRender(retry: true)
-                }
+                deviceRenderPanel(deviceRenderKey)
             } else if showsPlanFeed {
                 planFeedView
             } else {
@@ -1735,6 +1731,14 @@ private struct CreationWorkspaceView: View {
                     }
                 }
             }
+        case .failed where fullThread?.deliveryNeedsAttention == true && deviceRenderKey != nil:
+            // KRI-823: a device delivery failure keeps its device Retry/Stop card,
+            // the same one the rendering stage hosts, never the generic failure.
+            if feedHostsDeviceBuild {
+                planFeedView
+            } else if let deviceRenderKey {
+                deviceRenderPanel(deviceRenderKey)
+            }
         case .failed:
             if failedWorkspacePresentation == .legacyCreationConfirmation, let thread = fullThread {
                 CreationConfirmationStage(
@@ -1768,6 +1772,18 @@ private struct CreationWorkspaceView: View {
                     ).id("failed")
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func deviceRenderPanel(_ key: DeviceRenderKey) -> some View {
+        DeviceRenderPanel(key: key, sessions: model.deviceRenders,
+            retryApproved: model.deviceRenders.retryNeedsApproval(key) ? { await retryApprovedRender() } : nil) {
+            await refreshCapabilities()
+            await refreshDeviceRender(retry: true)
+            // The retry re-pins the delivery server-side without a thread revision;
+            // re-read the project so drawer, detail and chat leave Needs attention.
+            await refreshNow()
         }
     }
 
@@ -2200,7 +2216,7 @@ private struct CreationWorkspaceView: View {
     private var deviceRenderKey: DeviceRenderKey? {
         guard let job = fullThread?.job, let jobID = UUID(uuidString: job.id),
               let variant = job.variants.first(where: {
-                  $0.renderDestination == "device" || $0.renderStatus == "awaiting_device"
+                  $0.renderDestination == "device" || $0.renderStatus == "awaiting_device" || $0.deliveryPhase != nil
               }), let variantID = variant.variantID else { return nil }
         return DeviceRenderKey(projectID: project.id, jobID: jobID, variantID: variantID)
     }
@@ -2389,7 +2405,8 @@ private struct CreationWorkspaceView: View {
             lastFullProjectionRevision: lastFullProjectionRevision,
             incomingRevision: delta.threadRevision,
             receivedEvents: fresh,
-            isRendering: currentProject.status == .rendering
+            // A device delivery changes without a thread revision (KRI-823).
+            isRendering: currentProject.status == .rendering || fullThread?.deliveryNeedsAttention == true
         ) {
             if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
         }
