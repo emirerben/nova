@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.73.0] - 2026-10-23
+
+### Changed
+- fix(visuals): bound stalled pool-asset analysis; ready assets stay usable (KRI-820) (#1778) <!-- release-pr: 1778 -->
+
 ## [0.81.72.0] - 2026-10-23
 
 ### Changed
