@@ -34,8 +34,8 @@ struct NativeFootagePanel: View {
         if let blocked { Text(blocked).font(.footnote).foregroundStyle(.secondary) }
     }
 
-    /// The phone renderer can't draw speed yet, so a device variant only offers to clear a saved speed. Crop is
-    /// offered only when the server opens `clips.source_crop` for this variant.
+    /// Native speed is available only when the server explicitly verified this
+    /// clip operation. Crop remains independently capability-gated.
     @ViewBuilder private var deviceControls: some View {
         Section("Speed and crop") {
             if selection.kind == .clip, session.canCropClips || session.footageCrop(for: selection) != nil {
@@ -43,9 +43,37 @@ struct NativeFootagePanel: View {
             } else if session.footageCrop(for: selection) != nil {
                 Button("Reset crop") { session.setFootageCrop(selection, crop: nil) }
             }
-            Text("Speed and looks aren’t available yet for edits rendered on this iPhone.").font(.footnote).foregroundStyle(.secondary)
+            if selection.kind == .clip, session.serverOffersClipPlaybackRate {
+                LabeledContent("Speed", value: String(format: "%g×", session.footagePlaybackRate(for: selection)))
+                NativeEditorSlider(
+                    session: session,
+                    value: Binding(
+                        get: { session.footagePlaybackRate(for: selection) },
+                        set: { session.setFootagePlaybackRate(selection, rate: $0) }
+                    ),
+                    in: 0.25...4,
+                    step: 0.05
+                ) { Text("Playback rate") }
+                .accessibilityIdentifier("native-editor-playback-rate")
+                .accessibilityValue(String(format: "%.2fx", session.footagePlaybackRate(for: selection)))
+                .disabled(session.speedBlockedReason(for: selection) != nil || !session.canSetClipPlaybackRate)
+                if let clip = session.timelineClips.first(where: { $0.id.uuidString == selection.id }) {
+                    LabeledContent("Clip duration", value: nativeTimecode(clip.end - clip.start))
+                        .accessibilityIdentifier("native-editor-speed-duration")
+                        .accessibilityValue(nativeTimecode(clip.end - clip.start))
+                }
+                if let reason = session.speedBlockedReason(for: selection) {
+                    Text(reason).font(.footnote).foregroundStyle(.secondary)
+                } else if !session.canSetClipPlaybackRate {
+                    Text("Speed isn’t available for this edit.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            } else {
+                Text("Speed and looks aren’t available yet for edits rendered on this iPhone.").font(.footnote).foregroundStyle(.secondary)
+            }
             if abs(session.footagePlaybackRate(for: selection) - 1) > 0.000_001 {
                 Button("Reset speed") { session.setFootagePlaybackRate(selection, rate: 1) }
+                    .disabled(selection.kind == .clip && (session.speedBlockedReason(for: selection) != nil || !session.canSetClipPlaybackRate))
             }
         }
     }
@@ -61,7 +89,9 @@ struct NativeFootagePanel: View {
                 in: 0.25...4,
                 step: 0.05
             ) { Text("Playback rate") }
-            Text("Changes footage speed while animation timing stays separate.").font(.footnote).foregroundStyle(.secondary)
+            .disabled(session.speedBlockedReason(for: selection) != nil)
+            if let reason = session.speedBlockedReason(for: selection) { Text(reason).font(.footnote).foregroundStyle(.secondary) }
+            else { Text("Changes footage speed while animation timing stays separate.").font(.footnote).foregroundStyle(.secondary) }
         }
         // A clip is cropped only where the server explicitly lists `clips.source_crop`; an overlay or visual keeps its section gate.
         if selection.kind != .clip || session.serverOffersClipCrop || session.footageCrop(for: selection) != nil {

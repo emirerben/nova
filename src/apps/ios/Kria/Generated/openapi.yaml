@@ -4368,6 +4368,14 @@
             "title": "Source Duration S",
             "type": "number"
           },
+          "source_end_s": {
+            "default": null,
+            "exclusiveMinimum": true,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Source End S",
+            "type": "number"
+          },
           "source_start_locked": {
             "default": null,
             "nullable": true,
@@ -11792,6 +11800,14 @@
             "nullable": true,
             "title": "Source Crop",
             "type": "object"
+          },
+          "source_end_s": {
+            "default": null,
+            "exclusiveMinimum": true,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Source End S",
+            "type": "number"
           },
           "source_start_locked": {
             "default": null,
