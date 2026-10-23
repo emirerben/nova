@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.75.0] - 2026-10-23
+
+### Changed
+- feat(kria): pin prepared execution snapshots to the approval, sources and attempt (KRI-722) (#1790) <!-- release-pr: 1790 -->
+
 ## [0.81.74.0] - 2026-10-23
 
 ### Changed
