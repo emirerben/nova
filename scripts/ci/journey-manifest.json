@@ -1433,6 +1433,16 @@
         "src/apps/api/tests/tasks/test_render_worker_activity_sql.py",
         "src/apps/api/tests/test_render_worker_wake.py"
       ]
+    },
+    {
+      "id": "kri-843-mixed-language-talking",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_kri843_mixed_language_transcript.py tests/services/test_speech_cleanup_language_crosscheck.py tests/tasks/test_speech_cleanup_analysis.py",
+      "paths": [
+        "src/apps/api/app/services/mixed_language_transcript.py",
+        "src/apps/api/app/pipeline/speech_cleanup_analysis.py",
+        "src/apps/api/tests/fixtures/kri843_don_julio_t1_passes.json"
+      ]
     }
   ]
 }
