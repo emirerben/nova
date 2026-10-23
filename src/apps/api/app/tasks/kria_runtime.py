@@ -1302,6 +1302,9 @@ def _complete_draft_turn(
                 thread_id=thread.id,
                 turn_id=turn.id,
                 updates=planned.brief_updates,
+                # KRI-814: a typed delegation is recorded, so readiness reads it as a
+                # delegated request instead of a missing extraction.
+                record_empty=planned.brief_delegated,
             )
             if settings.kria_choice_questions_enabled and apply_intent.tool_name == (
                 "draft.apply_strategy"

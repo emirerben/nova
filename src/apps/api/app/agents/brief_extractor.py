@@ -31,7 +31,8 @@ from app.pipeline.prompt_loader import load_prompt
 # v14 (KRI-792): named spoken cuts carry cut_lines as well as caption spellings.
 # v15 (KRI-789): shared brief records quoted start / end lines as a `timing` trim.
 # v16 shares the complete caption/spoken-trigger/quoted-trim/named-cut instruction union.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-22-v16"
+# v17 (KRI-814): shared brief section teaches the typed `delegates_all_choices` declaration.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-23-v17"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
@@ -133,7 +134,7 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
     def parse(self, raw_text: str, input: BriefExtractionInput) -> BriefExtractionOutput:  # noqa: A002, ARG002
         try:
             data = json.loads(raw_text)
-            allowed = {"brief_updates", "request_scope", "clarification"}
+            allowed = {"brief_updates", "request_scope", "clarification", "delegates_all_choices"}
             if (
                 not isinstance(data, dict)
                 or not set(data) <= allowed
@@ -174,6 +175,8 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
                 apply_updates(input.current_brief or CreativeBrief(), updates, source_turn_id=None)
             return BriefExtractionOutput(
                 brief_updates=updates,
+                # KRI-814: a declaration beside stated requirements fails closed.
+                delegates_all_choices=data.get("delegates_all_choices") is True and not updates,
                 request_scope=scope,
                 clarification=clarification,
             )

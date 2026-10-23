@@ -46,11 +46,12 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # change for the cumulative shared brief instructions.
 # v70 (KRI-851) edits only the Talking reaction-beats section, which these no-beats
 # montage renders never include: all four hashes are unchanged.
+# v71 (KRI-814) adds the typed `delegates_all_choices` declaration: brief-on hashes only.
 PRE_CHANGE_PROMPT_SHA = {
     (True, False): "ba2f0743754b875c49e3a94f5112cbb9595e786d9328f557fb0e30777b89e725",
-    (True, True): "7c449a08adc5d93dedf655ba7fbc430dd36cd559d1cff2b99e3e67702cabcc88",
+    (True, True): "5939040f5fde2b35908f7d17bd9c97dd604e2ce0d7739010da651841ed926d1e",
     (False, False): "b49f8c15b28a37d5ef66dbc9e1d1c3a8c724482d91f2e609aad4f6abd0b6d13a",
-    (False, True): "034970573dafdbb0383838c5cb6e14bffbb2749454cabb3ec7c0bf860146fd14",
+    (False, True): "d9403dd5d9c82d8385b25f0edb4da69c6d794f09f220407b43042cb26ec98158",
 }
 
 
@@ -120,7 +121,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-23-v70"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-23-v71"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

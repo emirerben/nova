@@ -665,6 +665,10 @@ class PlannedKriaTurn:
     # write a brief version).
     brief_updates: tuple[BriefUpdate, ...] = ()
     brief_route: Route | None = None
+    # KRI-814: every extraction batch typed `delegates_all_choices` and the turn has no
+    # update, so the turn-completion transaction records an empty brief version: the
+    # server-owned evidence that the request was read and asks for nothing specific.
+    brief_delegated: bool = False
     brief_clip_ids: tuple[str, ...] = ()
     # The manifest this turn planned against, so the receipt checks resolve
     # reaction beats (owned images, capability) exactly as approval will.
@@ -691,6 +695,19 @@ class PlannedKriaTurn:
     # "go ahead". Server-only: never reaches `KriaTurnPlan`, which forbids extra fields.
     continuable: bool = False
     prepared_collection_story: dict | None = None
+
+
+def _declares_delegation(outputs, updates) -> bool:  # noqa: ANN001
+    """KRI-814: every extraction batch declared delegation and the turn changes nothing.
+
+    Only the extraction step's typed field counts, never the strategy, the summary or the
+    chat text, and an update (including a moment ask the server carried) always wins.
+    """
+    return (
+        bool(outputs)
+        and not updates
+        and all(getattr(output, "delegates_all_choices", False) is True for output in outputs)
+    )
 
 
 def adapt_creator_action(
@@ -4590,6 +4607,7 @@ async def _plan_live_turn(
     planning_brief = prior_brief
     extraction_complete = False
     pre_extracted_updates: tuple[BriefUpdate, ...] = ()
+    extracted_delegation = False
     pre_extracted_retrieved_ids: list[str] = []
     semantic_request_scope: str | None = None
     # A rendered followup only needs typed requirement extraction before routing.
@@ -4655,6 +4673,7 @@ async def _plan_live_turn(
             pre_extracted_updates = carry_moment_ask(
                 prior_brief, tuple(unique_extracted.values()), user_message
             )
+            extracted_delegation = _declares_delegation(extraction_outputs, pre_extracted_updates)
             effective = apply_updates(prior_brief, pre_extracted_updates, source_turn_id=None)
             extraction_complete = True
             fresh = new_requirements(prior_brief, effective)
@@ -4725,6 +4744,7 @@ async def _plan_live_turn(
                         context_hash=manifest.context_hash,
                         brief_updates=pre_extracted_updates,
                         brief_route=route,
+                        brief_delegated=extracted_delegation,
                         brief_clip_ids=tuple(str(media.media_id) for media in manifest.media),
                         brief_manifest=manifest,
                         brief_coverage={
@@ -4906,6 +4926,9 @@ async def _plan_live_turn(
     # KRI-776: the creator's own moment numbers ride on the brief, whatever the Main
     # Creator's paraphrase kept ("six moments, about 2 seconds each" became a bare order list).
     updates = carry_moment_ask(prior_brief, tuple(unique_updates.values()), user_message)
+    delegated = (
+        extracted_delegation if extraction_complete else _declares_delegation(outputs, updates)
+    )
     try:
         effective = apply_updates(prior_brief, updates, source_turn_id=None)
     except BriefUpdateBatchError as exc:
@@ -5019,6 +5042,7 @@ async def _plan_live_turn(
                 context_hash=manifest.context_hash,
                 brief_updates=updates,
                 brief_route=route,
+                brief_delegated=delegated,
                 brief_clip_ids=clip_ids,
                 brief_manifest=manifest,
                 brief_coverage=coverage,
@@ -5056,6 +5080,7 @@ async def _plan_live_turn(
         # A re-plan that ended up asking a question or failing safe is not an
         # editor plan; only an act plan is held to the router's verdict.
         brief_route=route,
+        brief_delegated=delegated,
         brief_clip_ids=clip_ids,
         brief_manifest=manifest,
         brief_coverage=coverage,
