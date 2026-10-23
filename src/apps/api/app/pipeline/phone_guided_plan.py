@@ -378,16 +378,14 @@ def compile_phone_guided_plan(
             ):
                 raise UnsupportedPhonePlan("unsupported phone photo treatment")
         else:
-            # The recipe has no retime for story footage; dropping it silently
-            # would render something the creator didn't approve. A crop rides
-            # on the clip (`source_crop`, `sourceCrop` capability).
+            # Constant speed is carried by the recipe, independently of the
+            # approved source selection. Still images retain their own clock.
             if (
                 moment.kind != "video"
                 or moment.layout != "fullscreen"
                 or moment.image_motion is not None
                 or moment.look_preset not in {"none", "golden_hour"}
                 or moment.look_adjustments
-                or moment.playback_rate not in {None, 1}
             ):
                 raise UnsupportedPhonePlan("unsupported phone moment treatment")
             source = binding.original if binding is not None else visual
@@ -396,6 +394,15 @@ def compile_phone_guided_plan(
                 or source.orientation_degrees != 0
             ):
                 raise UnsupportedPhonePlan("phone looks require exact-canvas unrotated sources")
+        rate = float(moment.playback_rate if moment.playback_rate is not None else 1)
+        if not math.isfinite(rate) or not 0.25 <= rate <= 4:
+            raise UnsupportedPhonePlan(
+                "unsupported phone playback rate", capability="variableSpeed"
+            )
+        if rate != 1 and moment.media_id in lipsync_takes:
+            raise UnsupportedPhonePlan(
+                "a lip-sync clip cannot change speed independently of its song"
+            )
         source_duration = moment.source_end_s - moment.source_start_s
         incoming = None
         expected_start = cursor
@@ -441,7 +448,7 @@ def compile_phone_guided_plan(
             or (
                 not still
                 and not math.isclose(
-                    source_duration,
+                    source_duration / rate,
                     moment.duration_s,
                     abs_tol=_FRAME_S + _TIMING_ROUNDING_TOLERANCE_S,
                 )
@@ -476,7 +483,7 @@ def compile_phone_guided_plan(
             )
             cursor = moment.output_end_s
             continue
-        if not math.isclose(
+        if moment.playback_rate is None and not math.isclose(
             source_duration, moment.duration_s, abs_tol=_TIMING_ROUNDING_TOLERANCE_S
         ):
             # A v2 revision quantizes `duration_s` and an approval-inherited
@@ -485,7 +492,7 @@ def compile_phone_guided_plan(
             # what the timeline, text and audio are timed against: fill it
             # from the source rather than leave a one-frame hole. The refit
             # below still shifts the window if the original runs out.
-            source_duration = round(moment.duration_s, 6)
+            source_duration = round(moment.duration_s * rate, 6)
         source_start = moment.source_start_s
         lipsync_take = lipsync_takes.get(moment.media_id)
         if lipsync_take is not None:
@@ -518,35 +525,52 @@ def compile_phone_guided_plan(
                     )
                 source_duration = refit_duration
         elif moment.source_end_s > source.duration_s or source_start >= source.duration_s:
-            # `moment.source_start_s`/`source_end_s` are planned against the
-            # analysis proxy's server-measured (ffprobe) duration;
-            # `binding.original.duration_s` is the client's on-device
-            # (AVFoundation) measurement of the same file — independent
-            # measurements of conceptually the same quantity, and planning
-            # intentionally saturates a clip's proxy-measured capacity (and
-            # centers shorter windows within it) when the target duration
-            # demands it. A short clip carrying a fraction of a beat, or a
-            # multi-clip beat's centered window, routinely lands outside what
-            # the on-device file actually measures (observed live: jobs
-            # aeb62e3c/0e84c6f8/031c8ff0). That disagreement is expected, not
-            # a broken plan — refit the window into what the device's own
-            # file actually has, preferring to keep the full requested
-            # duration by shifting the start rather than truncating it (a
-            # truncated moment would desync from the text/audio timed against
-            # its original duration).
-            # Never fit exactly to the device-measured boundary: reading a
-            # track to its precise reported duration is a classic AVFoundation
-            # edge case (the true last frame can land a few ms past the
-            # nominal duration, or reading up to the exact boundary lands
-            # mid-frame and the export fails). Leave a small safety margin.
-            available = max(0.0, source.duration_s - _EXPORT_SAFETY_MARGIN_S)
-            fitted_duration = min(source_duration, available)
-            if fitted_duration < 0.1:
-                raise UnsupportedPhonePlan(
-                    "phone moment timing must preserve its exact source window"
-                )
-            source_start = min(source_start, max(0.0, available - fitted_duration))
-            source_duration = round(fitted_duration, 6)
+            if moment.playback_rate is not None:
+                # Never slide an explicitly selected action to compensate for a
+                # different device duration, including an explicit reset to 1x.
+                # A tiny end-only measurement mismatch
+                # is safe; a material mismatch requires a new selection.
+                available = max(0.0, source.duration_s - _EXPORT_SAFETY_MARGIN_S)
+                deficit = source_start + source_duration - available
+                if deficit > rate * _FRAME_S + _EXPORT_SAFETY_MARGIN_S:
+                    raise UnsupportedPhonePlan(
+                        "phone speed must preserve its selected source window"
+                    )
+                if available <= source_start:
+                    raise UnsupportedPhonePlan(
+                        "phone speed must preserve its selected source window"
+                    )
+                source_duration = round(min(source_duration, available - source_start), 6)
+            else:
+                # `moment.source_start_s`/`source_end_s` are planned against the
+                # analysis proxy's server-measured (ffprobe) duration;
+                # `binding.original.duration_s` is the client's on-device
+                # (AVFoundation) measurement of the same file — independent
+                # measurements of conceptually the same quantity, and planning
+                # intentionally saturates a clip's proxy-measured capacity (and
+                # centers shorter windows within it) when the target duration
+                # demands it. A short clip carrying a fraction of a beat, or a
+                # multi-clip beat's centered window, routinely lands outside what
+                # the on-device file actually measures (observed live: jobs
+                # aeb62e3c/0e84c6f8/031c8ff0). That disagreement is expected, not
+                # a broken plan — refit the window into what the device's own
+                # file actually has, preferring to keep the full requested
+                # duration by shifting the start rather than truncating it (a
+                # truncated moment would desync from the text/audio timed against
+                # its original duration).
+                # Never fit exactly to the device-measured boundary: reading a
+                # track to its precise reported duration is a classic AVFoundation
+                # edge case (the true last frame can land a few ms past the
+                # nominal duration, or reading up to the exact boundary lands
+                # mid-frame and the export fails). Leave a small safety margin.
+                available = max(0.0, source.duration_s - _EXPORT_SAFETY_MARGIN_S)
+                fitted_duration = min(source_duration, available)
+                if fitted_duration < 0.1:
+                    raise UnsupportedPhonePlan(
+                        "phone moment timing must preserve its exact source window"
+                    )
+                source_start = min(source_start, max(0.0, available - fitted_duration))
+                source_duration = round(fitted_duration, 6)
         if pooled and source_start + source_duration > _DEVICE_SOURCE_LIMIT_S:
             # Named up front rather than as the recipe's own validation error.
             raise UnsupportedPhonePlan("phone visual video window is past the 30-minute limit")
@@ -580,6 +604,14 @@ def compile_phone_guided_plan(
         ):
             display_w, display_h = display_dims(source)
             transform = fit_transform(display_w, display_h, canvas, landscape_fit)
+        hold_duration = None
+        if moment.playback_rate is not None:
+            # The saved source edges remain exact; the render clock is whole
+            # frames. Never read beyond that selection or overlap the next
+            # slot: trim at most one output frame, or hold its final frame.
+            source_duration = min(source_duration, moment.duration_s * rate)
+            hold = max(0.0, moment.duration_s - source_duration / rate)
+            hold_duration = hold if hold > _TIMING_ROUNDING_TOLERANCE_S else None
         clips.append(
             TimelineClip(
                 id=moment.moment_id,
@@ -587,7 +619,8 @@ def compile_phone_guided_plan(
                 source_start=source_start,
                 source_duration=source_duration,
                 timeline_start=moment.output_start_s,
-                rate=1,
+                rate=rate,
+                hold_duration=hold_duration,
                 transform=transform,
                 transition=incoming,
                 look="golden_hour" if moment.look_preset == "golden_hour" else None,
@@ -644,7 +677,11 @@ def compile_phone_guided_plan(
     # never be allowed to end past this real, possibly-shrunk duration -- see
     # the clamp pass after the layer loop.
     compiled_duration = max(
-        (clip.timeline_start + clip.source_duration / clip.rate for clip in clips), default=0.0
+        (
+            clip.timeline_start + clip.source_duration / clip.rate + (clip.hold_duration or 0)
+            for clip in clips
+        ),
+        default=0.0,
     )
     # Millisecond rounding noise between independently-rounded timing fields
     # is expected and already tolerated everywhere else in this function (see
@@ -784,6 +821,7 @@ def compile_phone_guided_plan(
     )
     required_capabilities = (
         {"basicComposition", "local1080Export"}
+        | ({"variableSpeed"} if any(clip.rate != 1 for clip in clips) else set())
         | (
             {"crossfade"}
             if any(clip.transition and clip.transition.kind == "crossfade" for clip in clips)

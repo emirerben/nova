@@ -292,15 +292,20 @@ enum NativeEditorInteraction {
         carousel: [String: JSONValue]?
     ) -> NativeEditorTimelineProjection {
         var baseWindows: [NativeEditorClipWindow] = []
+        // A source-window marker opts the whole timeline into the server's
+        // 30fps layout clock: downstream legacy slots and transition edges
+        // must share it or millisecond rounding accumulates frame drift.
+        let usesSourceFrameClock = slots.contains { !$0.removed && sourcePreservingOutputDuration($0) != nil }
         var cursor: TimeInterval = 0
         var previous: (slot: EditorTimelineSlot, duration: TimeInterval)?
         for (index, slot) in slots.enumerated() where !slot.removed {
-            let duration = max(0.1, slot.durationS ?? 0.1)
+            let rawDuration = sourcePreservingOutputDuration(slot) ?? max(0.1, slot.durationS ?? 0.1)
+            let duration = usesSourceFrameClock ? roundedFrame(rawDuration) : rawDuration
             let overlap = previous.map {
-                transitionOverlap(left: $0.slot, leftDuration: $0.duration, rightDuration: duration)
+                timelineTransitionOverlap(left: $0.slot, leftDuration: $0.duration, rightDuration: duration, frameClock: usesSourceFrameClock)
             } ?? 0
-            let start = roundedMillis(cursor - overlap)
-            let end = roundedMillis(start + duration)
+            let start = usesSourceFrameClock ? roundedFrame(cursor - overlap) : roundedMillis(cursor - overlap)
+            let end = usesSourceFrameClock ? roundedFrame(start + duration) : roundedMillis(start + duration)
             baseWindows.append(
                 NativeEditorClipWindow(
                     sourceIndex: index,
@@ -387,6 +392,40 @@ enum NativeEditorInteraction {
             baseInsertionTime: baseInsertion,
             downstreamShift: shift,
             totalDuration: max(carouselItem.end, projectedWindows.last?.end ?? 0)
+        )
+    }
+
+    private static func timelineTransitionOverlap(
+        left: EditorTimelineSlot, leftDuration: TimeInterval, rightDuration: TimeInterval, frameClock: Bool
+    ) -> TimeInterval {
+        guard left.transitionAfter != "cut" else { return 0 }
+        let requested = left.transitionDurationS ?? 0.3
+        let overlap = min(0.3, requested, leftDuration * 0.3, rightDuration * 0.3)
+        guard overlap >= 0.1 else { return 0 }
+        return frameClock ? roundedFrame(overlap) : roundedMillis(overlap)
+    }
+
+    private static func roundedFrame(_ value: TimeInterval) -> TimeInterval {
+        (value * 30).rounded(.toNearestOrEven) / 30
+    }
+
+    /// `source_end_s` opts a slot into the exact source-window contract. The
+    /// server places that window on its 30fps clock using ties-to-even; retain
+    /// the raw end itself so future rate changes recover the exact source span.
+    /// Legacy duration-only slots retain their millisecond projection.
+    static func sourcePreservingOutputDuration(sourceStart: Double, sourceEnd: Double, rate: Double) -> TimeInterval? {
+        guard sourceStart.isFinite, sourceEnd.isFinite, sourceEnd > sourceStart,
+              rate.isFinite, rate > 0 else { return nil }
+        let duration = (sourceEnd - sourceStart) / rate
+        guard duration.isFinite else { return nil }
+        return max(0.1, (duration * 30).rounded(.toNearestOrEven) / 30)
+    }
+
+    private static func sourcePreservingOutputDuration(_ slot: EditorTimelineSlot) -> TimeInterval? {
+        sourcePreservingOutputDuration(
+            sourceStart: slot.inS,
+            sourceEnd: slot.raw["source_end_s"]?.numberValue ?? .nan,
+            rate: slot.raw["playback_rate"]?.numberValue ?? 1
         )
     }
 

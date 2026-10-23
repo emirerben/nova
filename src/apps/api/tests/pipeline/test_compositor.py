@@ -81,10 +81,10 @@ class TestBuildVideoFilter:
         assert "ass=" not in joined
 
     def test_speed_factor_2x_adds_setpts(self):
-        """speed_factor=2.0 → setpts=PTS/2.0 in filter chain."""
+        """speed_factor=2.0 → start-anchored setpts=(PTS-STARTPTS)/2.0 in filter chain."""
         filters = _build_video_filter("16:9", None, speed_factor=2.0)
         joined = ",".join(filters)
-        assert "setpts=PTS/2.0" in joined
+        assert "setpts=(PTS-STARTPTS)/2.0" in joined
 
     def test_speed_factor_1_no_setpts(self):
         """speed_factor=1.0 → no setpts filter (avoid rounding artifacts)."""
@@ -93,10 +93,10 @@ class TestBuildVideoFilter:
         assert "setpts" not in joined
 
     def test_speed_factor_half_adds_setpts(self):
-        """speed_factor=0.5 → setpts=PTS/0.5 in filter chain."""
+        """speed_factor=0.5 → start-anchored setpts=(PTS-STARTPTS)/0.5 in filter chain."""
         filters = _build_video_filter("16:9", None, speed_factor=0.5)
         joined = ",".join(filters)
-        assert "setpts=PTS/0.5" in joined
+        assert "setpts=(PTS-STARTPTS)/0.5" in joined
 
     def test_setpts_is_after_colorspace(self):
         """colorspace is first (SDR no-op), then fps normalization, then
@@ -105,12 +105,14 @@ class TestBuildVideoFilter:
         block 0b) sits between colorspace and setpts: it normalizes mixed-fps
         sources to the output container fps BEFORE any timed filters operate,
         so speed-ramps and timed darkening/narrowing windows reason about a
-        single uniform timeline."""
+        single uniform timeline. The retime re-samples to the output fps
+        right after setpts so the encoder never picks duplicate/drop frames."""
         filters = _build_video_filter("16:9", None, speed_factor=2.0)
         assert filters[0] == "colorspace=all=bt709:iall=bt709"
         assert filters[1].startswith("framerate=fps=")
-        assert filters[2] == "setpts=PTS/2.0"
-        assert "scale" in filters[3]
+        assert filters[2] == "setpts=(PTS-STARTPTS)/2.0"
+        assert filters[3].startswith("fps=")
+        assert "scale" in filters[4]
 
     def test_colorspace_filter_assumes_bt709_input(self):
         """The colorspace filter MUST carry `iall=bt709` so it tolerates
@@ -234,9 +236,7 @@ class TestBuildVideoFilter:
         assert "eq=" not in joined
 
     def test_darkening_window_adds_colorlevels(self):
-        filters = _build_video_filter(
-            "16:9", None, darkening_windows=[(0.0, 2.0)]
-        )
+        filters = _build_video_filter("16:9", None, darkening_windows=[(0.0, 2.0)])
         joined = ",".join(filters)
         assert "colorlevels" in joined
         assert "between(t,0.000,2.000)" in joined
@@ -269,7 +269,8 @@ class TestBuildVideoFilter:
     def test_grid_overlay_custom_color_opacity_thickness(self):
         """Grid respects custom color/opacity/thickness across all 4 inner lines."""
         filters = _build_video_filter(
-            "9:16", None,
+            "9:16",
+            None,
             has_grid=True,
             grid_color="#E63946",
             grid_opacity=0.8,
@@ -291,8 +292,11 @@ class TestBuildVideoFilter:
         for bad in ("#XXXXXX", "#GGGGGG", "FFFFFF", "#FF", "#FFFFFFFF", "red", "#;rm -r"):
             with pytest.raises(ValidationError):
                 RecipeSlotSchema(
-                    position=1, target_duration_s=2.0, slot_type="b-roll",
-                    has_grid=True, grid_color=bad,
+                    position=1,
+                    target_duration_s=2.0,
+                    slot_type="b-roll",
+                    has_grid=True,
+                    grid_color=bad,
                 )
 
     def test_grid_color_validator_rejects_rgba(self):
@@ -303,15 +307,19 @@ class TestBuildVideoFilter:
 
         with pytest.raises(ValidationError):
             RecipeSlotSchema(
-                position=1, target_duration_s=2.0, slot_type="b-roll",
-                has_grid=True, grid_color="#FFFFFFAA",
+                position=1,
+                target_duration_s=2.0,
+                slot_type="b-roll",
+                has_grid=True,
+                grid_color="#FFFFFFAA",
             )
 
     def test_grid_highlight_adds_two_drawbox_for_v_and_h_lines(self):
         """grid_highlight_intersection adds ONE vertical + ONE horizontal stroke
         on top of the 4 base grid drawboxes."""
         filters = _build_video_filter(
-            "9:16", None,
+            "9:16",
+            None,
             has_grid=True,
             grid_highlight_intersection="bottom-right",
             grid_highlight_color="#D9435A",
@@ -334,7 +342,8 @@ class TestBuildVideoFilter:
     def test_grid_highlight_skipped_when_intersection_missing(self):
         """has_grid alone (no intersection) draws only the 4 white base grid lines."""
         filters = _build_video_filter(
-            "9:16", None,
+            "9:16",
+            None,
             has_grid=True,
             grid_highlight_intersection=None,
             grid_highlight_windows=[(0.0, 0.4)],
@@ -347,7 +356,8 @@ class TestBuildVideoFilter:
     def test_grid_highlight_sustained_when_windows_none(self):
         """intersection without windows → highlight on for the whole slot (no enable clause)."""
         filters = _build_video_filter(
-            "9:16", None,
+            "9:16",
+            None,
             has_grid=True,
             grid_highlight_intersection="top-left",
             grid_highlight_windows=None,
@@ -363,15 +373,13 @@ class TestBuildVideoFilter:
     def test_grid_highlight_top_left_picks_left_v_and_top_h(self):
         """top-left intersection -> left-vertical (iw/3) + top-horizontal (ih/3)."""
         filters = _build_video_filter(
-            "9:16", None,
+            "9:16",
+            None,
             has_grid=True,
             grid_highlight_intersection="top-left",
             grid_highlight_windows=[(0.0, 0.4)],
         )
-        highlights = [
-            f for f in filters
-            if f.startswith("drawbox=") and "0xE63946" in f
-        ]
+        highlights = [f for f in filters if f.startswith("drawbox=") and "0xE63946" in f]
         assert len(highlights) == 2
         v_line = next(f for f in highlights if "h=ih" in f)
         h_line = next(f for f in highlights if "w=iw" in f)
@@ -382,20 +390,22 @@ class TestBuildVideoFilter:
         """Grid filter must come before ass subtitle so captions render on top."""
         import os
         import tempfile
+
         # Create a temp file that exists so ass filter is appended
         with tempfile.NamedTemporaryFile(suffix=".ass", delete=False) as tmp:
             tmp.write(b"[Script Info]\n")
             ass_path = tmp.name
         try:
             filters = _build_video_filter(
-                "9:16", ass_path, has_grid=True,
+                "9:16",
+                ass_path,
+                has_grid=True,
             )
             # The 4 base grid drawboxes carry the default white color; the
             # last one must still come before the ass subtitle filter so
             # captions render on top of the grid.
             grid_idx = max(
-                i for i, f in enumerate(filters)
-                if f.startswith("drawbox=") and "0xFFFFFF" in f
+                i for i, f in enumerate(filters) if f.startswith("drawbox=") and "0xFFFFFF" in f
             )
             ass_idx = next(i for i, f in enumerate(filters) if f.startswith("ass="))
             assert grid_idx < ass_idx
@@ -403,9 +413,7 @@ class TestBuildVideoFilter:
             os.unlink(ass_path)
 
     def test_narrowing_window_adds_drawbox(self):
-        filters = _build_video_filter(
-            "16:9", None, narrowing_windows=[(1.0, 3.0)]
-        )
+        filters = _build_video_filter("16:9", None, narrowing_windows=[(1.0, 3.0)])
         joined = ",".join(filters)
         assert "drawbox" in joined
 
@@ -462,6 +470,7 @@ class TestEncodingArgs:
 class TestReframeAndExport:
     def _make_successful_run(self, output_path: str):
         """Simulate ffmpeg writing a valid small output file."""
+
         def side_effect(cmd, **kwargs):
             # Write a fake output file
             with open(output_path, "wb") as f:
@@ -514,9 +523,7 @@ class TestReframeAndExport:
         with tempfile.TemporaryDirectory() as tmpdir:
             output = os.path.join(tmpdir, "out.mp4")
             with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(
-                    returncode=1, stderr=b"ffmpeg: error"
-                )
+                mock_run.return_value = MagicMock(returncode=1, stderr=b"ffmpeg: error")
                 with pytest.raises(ReframeError, match="FFmpeg failed"):
                     reframe_and_export(
                         input_path="/fake/input.mp4",
@@ -564,7 +571,8 @@ class TestBuildVideoFilterOverlays:
 
     def test_darkening_window_produces_colorlevels(self):
         filters = _build_video_filter(
-            "9:16", None,
+            "9:16",
+            None,
             darkening_windows=[(0.5, 2.5)],
         )
         joined = ",".join(filters)
@@ -574,7 +582,8 @@ class TestBuildVideoFilterOverlays:
 
     def test_multiple_darkening_windows(self):
         filters = _build_video_filter(
-            "9:16", None,
+            "9:16",
+            None,
             darkening_windows=[(0.5, 2.5), (4.0, 6.0)],
         )
         joined = ",".join(filters)
@@ -582,7 +591,8 @@ class TestBuildVideoFilterOverlays:
 
     def test_narrowing_window_produces_drawbox(self):
         filters = _build_video_filter(
-            "9:16", None,
+            "9:16",
+            None,
             narrowing_windows=[(0.5, 2.5)],
         )
         joined = ",".join(filters)
@@ -593,7 +603,8 @@ class TestBuildVideoFilterOverlays:
     def test_filter_ordering(self):
         """scale before colorlevels before drawbox."""
         filters = _build_video_filter(
-            "9:16", None,
+            "9:16",
+            None,
             darkening_windows=[(0.5, 2.5)],
             narrowing_windows=[(0.5, 2.5)],
         )
@@ -607,7 +618,8 @@ class TestBuildVideoFilterOverlays:
         """Calling with None defaults produces same filters as before."""
         filters_old = _build_video_filter("16:9", None)
         filters_new = _build_video_filter(
-            "16:9", None,
+            "16:9",
+            None,
             darkening_windows=None,
             narrowing_windows=None,
         )
@@ -647,7 +659,8 @@ class TestBuildVideoFilterOverlays:
     def test_darkening_enable_timing_format(self):
         """enable='between(t,0.5,2.5)' correctly formatted."""
         filters = _build_video_filter(
-            "9:16", None,
+            "9:16",
+            None,
             darkening_windows=[(0.5, 2.5)],
         )
         joined = ",".join(filters)
@@ -663,6 +676,7 @@ class TestOverlayCommand:
             # Create a dummy PNG
             png_path = os.path.join(tmpdir, "overlay.png")
             from PIL import Image
+
             Image.new("RGBA", (1080, 1920), (0, 0, 0, 0)).save(png_path)
 
             output = os.path.join(tmpdir, "out.mp4")
@@ -680,11 +694,13 @@ class TestOverlayCommand:
                     aspect_ratio="9:16",
                     ass_subtitle_path=None,
                     output_path=output,
-                    text_overlay_pngs=[{
-                        "png_path": png_path,
-                        "start_s": 0.5,
-                        "end_s": 2.5,
-                    }],
+                    text_overlay_pngs=[
+                        {
+                            "png_path": png_path,
+                            "start_s": 0.5,
+                            "end_s": 2.5,
+                        }
+                    ],
                 )
                 cmd = mock_run.call_args[0][0]
                 assert "-filter_complex" in cmd
@@ -720,6 +736,7 @@ class TestOverlayCommand:
         with tempfile.TemporaryDirectory() as tmpdir:
             png_path = os.path.join(tmpdir, "overlay.png")
             from PIL import Image
+
             Image.new("RGBA", (1080, 1920), (0, 0, 0, 0)).save(png_path)
 
             output = os.path.join(tmpdir, "out.mp4")
@@ -737,11 +754,13 @@ class TestOverlayCommand:
                     aspect_ratio="9:16",
                     ass_subtitle_path=None,
                     output_path=output,
-                    text_overlay_pngs=[{
-                        "png_path": png_path,
-                        "start_s": 0.5,
-                        "end_s": 2.5,
-                    }],
+                    text_overlay_pngs=[
+                        {
+                            "png_path": png_path,
+                            "start_s": 0.5,
+                            "end_s": 2.5,
+                        }
+                    ],
                 )
                 cmd = mock_run.call_args[0][0]
                 fc_idx = cmd.index("-filter_complex")
@@ -803,7 +822,8 @@ class TestColorGrading:
     def test_filter_ordering_color_before_darkening(self):
         """Color grading filters appear before darkening (colorlevels)."""
         filters = _build_video_filter(
-            "9:16", None,
+            "9:16",
+            None,
             color_hint="warm",
             darkening_windows=[(0.5, 2.5)],
         )
@@ -896,19 +916,25 @@ def _make_test_clip(tmp_path, idx: int, dur_s: float = 1.2) -> str:
     """
     out = str(tmp_path / f"clip_{idx:02d}.mp4")
     cmd = [
-        "ffmpeg", "-y", "-loglevel", "error",
-        "-f", "lavfi",
-        "-i", f"testsrc=duration={dur_s}:size=1080x1920:rate=30",
-        "-pix_fmt", "yuv420p",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
+        "ffmpeg",
+        "-y",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        f"testsrc=duration={dur_s}:size=1080x1920:rate=30",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
         out,
     ]
     result = _subprocess.run(cmd, capture_output=True, timeout=30, check=False)
     if result.returncode != 0:
-        raise AssertionError(
-            f"failed to make test clip {idx}: {result.stderr.decode()[:200]}"
-        )
+        raise AssertionError(f"failed to make test clip {idx}: {result.stderr.decode()[:200]}")
     return out
 
 

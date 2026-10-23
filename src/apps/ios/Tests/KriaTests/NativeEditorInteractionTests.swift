@@ -261,6 +261,51 @@ final class NativeEditorInteractionTests: XCTestCase {
         XCTAssertEqual(projection.unprojectOutputTime(3.2), 3.2)
     }
 
+    /// Marked speed windows use the server's 30fps output clock. Their source
+    /// end stays exact, while each half-frame output duration rounds ties to
+    /// even before the following clip is placed.
+    func testMarkedSpeedWindowsRoundEachOutputDurationToEvenThirtyFPSFrame() {
+        let slots = (0..<4).map { index in
+            EditorTimelineSlot(
+                id: "speed-\(index)", clipIndex: index, inS: Double(index * 3), durationS: 0.75,
+                raw: ["source_end_s": .number(Double(index * 3 + 3)), "playback_rate": .number(4)]
+            )
+        }
+
+        let projection = NativeEditorInteraction.timelineProjection(slots: slots, carousel: nil)
+        for window in projection.baseClipWindows {
+            XCTAssertEqual(window.end - window.start, 22.0 / 30.0, accuracy: 0.000_001)
+        }
+        XCTAssertEqual(projection.totalDuration, 88.0 / 30.0, accuracy: 0.000_001)
+    }
+
+    func testMarkedTimelineUsesTheFrameClockForMixedClipAndTransitionBoundaries() {
+        let marked = EditorTimelineSlot(
+            id: "marked", clipIndex: 0, inS: 0, durationS: 0.75,
+            transitionAfter: "crossfade", transitionDurationS: 0.15,
+            raw: ["source_end_s": .number(3), "playback_rate": .number(4)]
+        )
+        let legacy = EditorTimelineSlot(id: "legacy", clipIndex: 1, inS: 3, durationS: 1.3)
+
+        let projection = NativeEditorInteraction.timelineProjection(slots: [marked, legacy], carousel: nil)
+        XCTAssertEqual(projection.baseClipWindows[0].end, 22.0 / 30.0, accuracy: 0.000_001)
+        XCTAssertEqual(projection.baseClipWindows[1].start, 18.0 / 30.0, accuracy: 0.000_001)
+        XCTAssertEqual(projection.baseClipWindows[1].end, 57.0 / 30.0, accuracy: 0.000_001)
+        XCTAssertEqual(projection.totalDuration, 57.0 / 30.0, accuracy: 0.000_001)
+    }
+
+    func testRemovedMarkedSpeedSlotDoesNotPutLegacySurvivorsOnFrameClock() {
+        let removedMarked = EditorTimelineSlot(
+            id: "removed", clipIndex: 0, inS: 0, durationS: 0.75, removed: true,
+            raw: ["source_end_s": .number(3), "playback_rate": .number(4)]
+        )
+        let legacy = EditorTimelineSlot(id: "legacy", clipIndex: 1, inS: 3, durationS: 0.755)
+
+        let projection = NativeEditorInteraction.timelineProjection(slots: [removedMarked, legacy], carousel: nil)
+        XCTAssertEqual(projection.baseClipWindows.count, 1)
+        XCTAssertEqual(projection.totalDuration, 0.755, accuracy: 0.000_001)
+    }
+
     private func slot(
         _ id: String,
         duration: Double = 2,
