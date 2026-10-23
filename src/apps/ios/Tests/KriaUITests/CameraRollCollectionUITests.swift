@@ -9,7 +9,7 @@ final class CameraRollCollectionUITests: XCTestCase {
         XCTAssertFalse(app.switches.matching(NSPredicate(format: "identifier BEGINSWITH 'collection-analysis-'")).firstMatch.exists)
         app.buttons["collection-options"].tap()
         app.buttons["Edit groups"].tap()
-        let group = app.textFields["collection-group-fixture-video"]
+        let group = app.textFields.matching(identifier: "collection-group-fixture-video").firstMatch
         group.tap()
         group.press(forDuration: 1.2)
         if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
@@ -21,8 +21,9 @@ final class CameraRollCollectionUITests: XCTestCase {
         app.terminate()
         app.launchArguments = ["-camera-roll-collection"]
         app.launch()
-        XCTAssertTrue(app.textFields["collection-group-fixture-video"].waitForExistence(timeout: 10))
-        XCTAssertTrue((app.textFields["collection-group-fixture-video"].value as? String ?? "").contains("Evening"))
+        XCTAssertTrue(app.textFields.matching(identifier: "collection-group-fixture-video").firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textFields.matching(identifier: "collection-group-fixture-video").firstMatch.isHittable)
+        XCTAssertTrue((app.textFields.matching(identifier: "collection-group-fixture-video").firstMatch.value as? String ?? "").contains("Evening"))
         XCTAssertFalse(app.buttons["collection-remove-fixture-photo"].exists)
         XCTAssertTrue(app.buttons["collection-find-stories"].exists)
         XCTAssertFalse(app.staticTexts["No media has been uploaded for this collection."].exists)
@@ -32,13 +33,18 @@ final class CameraRollCollectionUITests: XCTestCase {
         evidence.lifetime = .keepAlways
         add(evidence)
     }
-    func testPartiallyIndexedCollectionStillOffersStories() {
+    func testPartiallyIndexedCollectionWaitsForExplicitPartialChoice() {
         let app = XCUIApplication()
         app.launchArguments = ["-camera-roll-collection-ready"]
         app.launch()
         XCTAssertTrue(app.buttons["collection-find-stories"].waitForExistence(timeout: 10))
         app.buttons["collection-find-stories"].tap()
-        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10), "One clip without timed moments must not block the usable footage")
+        let ready = app.buttons["collection-use-ready-videos"]
+        XCTAssertTrue(ready.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["Boat journey"].exists, "Full-collection ideas must wait for missing analysis")
+        ready.tap()
+        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["1 video wasn’t included because analysis isn’t ready."].exists)
     }
 
 }
