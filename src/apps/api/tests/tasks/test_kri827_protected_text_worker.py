@@ -39,7 +39,7 @@ FIXTURE = json.loads(
         / "t1_brief_and_speech.json"
     ).read_text(encoding="utf-8")
 )
-# The stored T1 brief plus what the v76 brief section records for "No text on her face or on
+# The stored T1 brief plus what the v77 brief section records for "No text on her face or on
 # the plate" (the stored brief predates it and kept the ask only in r6's prose).
 KEEP_OFF = BriefRequirement(
     id="r8",

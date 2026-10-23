@@ -7,8 +7,8 @@ text's whole time on screen.
 ## Contract
 
 - **What** to keep clear: the brief writer records `facts.keep_text_off =
-  [{"kind": "face"}, {"kind": "object", "label": "plate"}]` (Main Creator v76 / extractor
-  v21). Server code reads the field, never the words (KRI-667).
+  [{"kind": "face"}, {"kind": "object", "label": "plate"}]` (Main Creator v77 / extractor
+  v22). Server code reads the field, never the words (KRI-667).
 - **Where** an object is: only the creator's mark, a box on one frame of one of their clips
   (`SubmitTurnBody.protected_region`, normalized upright-source coordinates). The server
   checks the clip belongs to the thread's item (404 otherwise), stamps its storage

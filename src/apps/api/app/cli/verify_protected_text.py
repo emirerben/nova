@@ -4,7 +4,7 @@
 
 Builds synthetic talk-to-camera clips whose "plate" (a textured disc) follows a known path,
 pins Merope T1's real request and brief ("... No text on her face or on the plate ...", as
-the v76 brief section records it in `keep_text_off`) and a creator mark of the plate on an
+the v77 brief section records it in `keep_text_off`) and a creator mark of the plate on an
 approval binding, then runs the production decisions:
 `resolve_protected_plan` (the real tracker subprocess), the caption look chooser, the
 opening-title and spoken-text placement. Each placed row's REAL Skia ink (and each caption
@@ -377,7 +377,7 @@ def run_scenario(sc: Scenario, work_dir: str) -> dict:
     with open(fixture) as handle:
         merope = json.load(handle)
     stored = CreativeBrief.model_validate(merope["brief"])
-    # What the brief section (v76) records for "No text on her face or on the plate".
+    # What the brief section (v77) records for "No text on her face or on the plate".
     keep_off = BriefRequirement(
         id="r8",
         kind="style",

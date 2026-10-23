@@ -35,7 +35,7 @@ FIXTURE = json.loads(
     ).read_text(encoding="utf-8")
 )
 T1_BRIEF = CreativeBrief.model_validate(FIXTURE["brief"])
-# What the v76 brief section teaches for "No text on her face or on the plate".
+# What the v77 brief section teaches for "No text on her face or on the plate".
 KEEP_OFF = BriefRequirement(
     id="r8",
     kind="style",
@@ -58,7 +58,7 @@ def test_merope_asks_to_keep_text_off_her_face_and_the_plate():
 
 
 def test_a_description_alone_protects_nothing():
-    """The stored T1 brief (before v76) says it only in r6's description: nothing is read
+    """The stored T1 brief (before v77) says it only in r6's description: nothing is read
     from that model-written prose."""
     assert protected_targets(T1_BRIEF) == ()
 
