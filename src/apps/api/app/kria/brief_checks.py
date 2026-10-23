@@ -4789,7 +4789,7 @@ def _with_protected_text(
     every text clear of every named target over each text's whole time on screen, against
     an object the tracker actually saw. Anything else says what is missing."""
     row = next((r for r in facts.protected_text or () if r[0] == req.id), None)
-    if row is None or base.status != "met" or row[1] == "clear":
+    if row is None or row[1] == "clear":
         return base
     _, verdict, labels = row
     # The object in the creator's own words; a face target is "your face" in either language.
@@ -6878,8 +6878,16 @@ def _has_checker(req: BriefRequirement) -> bool:
 def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if facts.protected_text is not None and any(r[0] == req.id for r in facts.protected_text):
         # KRI-827: "no text on her face or on the plate" is judged by the render's own
-        # measurement of every text against every named target.
-        return _with_protected_text(req, facts, _receipt(req, "met", None))
+        # measurement of every text against every named target. Any other ask on the same
+        # requirement ("brighten the clips and no text on the plate") keeps its own checker;
+        # the protected-text verdict folds into it, never replaces it.
+        from app.kria.protected_targets import KEEP_TEXT_OFF_KEY  # noqa: PLC0415
+
+        rest = req.model_copy(
+            update={"facts": {k: v for k, v in req.facts.items() if k != KEEP_TEXT_OFF_KEY}}
+        )
+        base = _check_requirement(rest, facts) if _has_checker(rest) else _receipt(req, "met", None)
+        return _with_protected_text(req, facts, base)
     return _check_requirement(req, facts)
 
 

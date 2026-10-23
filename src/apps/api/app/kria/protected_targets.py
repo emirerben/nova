@@ -133,7 +133,10 @@ def fold_protected_regions(events: Iterable[tuple[str, Any]]) -> list[dict]:
             mark = ProtectedRegionSelection.model_validate(dict(raw))
         except ValueError:
             continue
-        marks[(fold_text(mark.label), mark.media_id)] = mark.model_dump(mode="json")
+        key = (fold_text(mark.label), mark.media_id)
+        # Re-marking moves the key to the end, so list order is the creator's mark order.
+        marks.pop(key, None)
+        marks[key] = mark.model_dump(mode="json")
     return list(marks.values())
 
 
@@ -151,13 +154,21 @@ def binding_protected_regions(
 
 
 def selection_for(
-    target: ProtectedTarget, selections: Iterable[ProtectedRegionSelection]
+    target: ProtectedTarget,
+    selections: Iterable[ProtectedRegionSelection],
+    media_id: str | None = None,
 ) -> ProtectedRegionSelection | None:
     """The creator's latest mark for ``target``: the same label, folded ("Plate" marks
     "plate"). The app's mark card carries the target's label, so a mark for another thing
-    never stands in."""
+    never stands in. With ``media_id`` (the clip being rendered), the latest mark on that
+    clip wins over a later mark on another clip."""
     label = fold_text(target.label)
-    return next((m for m in reversed(list(selections)) if fold_text(m.label) == label), None)
+    same = [m for m in selections if fold_text(m.label) == label]
+    if media_id is not None:
+        on_clip = [m for m in same if m.media_id == media_id]
+        if on_clip:
+            return on_clip[-1]
+    return same[-1] if same else None
 
 
 __all__ = [

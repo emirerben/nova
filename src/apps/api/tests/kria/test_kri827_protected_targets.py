@@ -104,3 +104,51 @@ def test_only_creator_turns_author_marks() -> None:
         ("user", {"protected_region": {**mark, "box": [0.0, 0.0, 0.001, 0.001]}}),  # too small
     ]
     assert fold_protected_regions(events) == []
+
+
+def test_re_marking_on_the_speaking_clip_wins_over_an_older_mark_elsewhere() -> None:
+    """The creator marks the plate on A, then B by mistake, then A again: the render of A
+    uses A's latest mark, never "you marked it on another clip"."""
+    a = {"label": "plate", "media_id": "clip-a", "source_t_s": 0.0, "box": list(BOX)}
+    b = {**a, "media_id": "clip-b"}
+    a2 = {**a, "source_t_s": 1.5}
+    marks = fold_protected_regions([("user", {"protected_region": m}) for m in (a, b, a2)])
+    selections = [ProtectedRegionSelection.model_validate(m) for m in marks]
+    target = ProtectedTarget("object", "plate", ("r8",))
+    assert selection_for(target, selections).source_t_s == 1.5  # latest overall is A again
+    chosen = selection_for(target, selections, media_id="clip-a")
+    assert (chosen.media_id, chosen.source_t_s) == ("clip-a", 1.5)
+
+
+def test_another_ask_on_the_same_requirement_is_still_judged() -> None:
+    """ "Brighten the clips and no text on the plate" in one requirement: the plate measured
+    clear never certifies the brightening the render cannot do."""
+    from app.kria.brief_checks import PlanFacts, check_requirement
+
+    req = KEEP_OFF.model_copy(update={"facts": {**KEEP_OFF.facts, "footage_light": "brighter"}})
+    clear = PlanFacts(protected_text=(("r8", "clear", ("face", "plate")),))
+    assert check_requirement(req, clear).status != "met"
+    # The keep-off ask alone, measured clear, is met; measured unverified, it is not.
+    assert check_requirement(KEEP_OFF, clear).status == "met"
+    unverified = PlanFacts(protected_text=(("r8", "unverified", ("plate",)),))
+    assert check_requirement(KEEP_OFF, unverified).status == "partial"
+
+
+def test_a_face_the_sampler_never_saw_is_not_called_clear() -> None:
+    """Face sampler failed / timed out -> the fallback box was protected: best effort, so
+    the face target is unverified, never clear (and a placement error is never clear)."""
+    from app.pipeline.phone_protected_text import ProtectedPlan, protected_text_receipt
+
+    plan = ProtectedPlan(
+        targets=(ProtectedTarget("face", "face", ("r8",)),),
+        target_rows=({"kind": "face", "label": "face", "requirement_ids": ["r8"]},),
+        protect_all_faces=True,
+    )
+    seen = {"status": "moved", "faces": "detected", "face_collision": False}
+    assert protected_text_receipt(plan, {"title": seen})["verdict"] == "clear"
+    fallback = {**seen, "faces": "fallback"}
+    assert protected_text_receipt(plan, {"title": fallback})["verdict"] == "unverified"
+    error = {"status": "error", "object_collision": True}
+    assert protected_text_receipt(plan, {"title": seen, "closing": error})["verdict"] != "clear"
+    hit = {**seen, "face_collision": True}
+    assert protected_text_receipt(plan, {"title": hit})["verdict"] == "collision"

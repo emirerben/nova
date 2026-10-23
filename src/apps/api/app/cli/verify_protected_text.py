@@ -436,6 +436,8 @@ def run_scenario(sc: Scenario, work_dir: str) -> dict:
         keep_segments=kept,
         **proj,
     )
+    # As the worker records it: captions measured against faces the sampler saw.
+    caption_receipt = {**caption_receipt, "faces": "detected" if faces else "none"}
     common = {
         "clip_path": clip,
         "keep_segments": kept,
@@ -446,11 +448,8 @@ def run_scenario(sc: Scenario, work_dir: str) -> dict:
         "position_x": sc.position_x,
         "sample": face_sampler,
     }
-    protected_kwargs = (
-        {"objects": plan.objects, "protect_all_faces": plan.protect_all_faces}
-        if plan.objects
-        else {}
-    )
+    # As the worker passes them (`_protected_placement_kwargs`): any plan, faces-only too.
+    protected_kwargs = {"objects": plan.objects, "protect_all_faces": plan.protect_all_faces}
     title = talking_title_element(
         TITLE, duration_s=2.0, first_word_end_s=None, timeline_duration_s=timeline_s, canvas=canvas
     )

@@ -447,7 +447,7 @@ def place_talking_title(
     placement is exactly what it was. ``protect_all_faces`` keeps every detected face
     clear, not only the dominant one (the creator named "her face")."""
     default_y = float(row.get("y_frac") or 0.15)
-    if objects:
+    if objects or protect_all_faces:
         return place_protected_title(
             row,
             clip_path=clip_path,
@@ -535,9 +535,11 @@ def choose_protected_y_frac(
     *,
     caption_top_frac: float = CAPTION_BAND_TOP_FRAC,
     avoid: Sequence[NormalizedBox] = (),
+    relax_text: bool = True,
 ) -> tuple[float, dict[str, Any]] | None:
     """The first spot clear of every face and object (and, when one exists, of ``avoid``
-    text), or ``None`` when none is. Faces and objects are never traded for each other."""
+    text), or ``None`` when none is. Faces and objects are never traded for each other.
+    ``relax_text=False`` refuses any spot touching ``avoid`` text too."""
     candidates: list[tuple[float, float]] = []
     for value in (default_y, *_FALLBACK_Y_FRACS, *_PROTECTED_SCAN_Y):
         if all(abs(value - existing) > 0.005 for existing, _ in candidates):
@@ -545,7 +547,7 @@ def choose_protected_y_frac(
     below = _below_face_y_frac(probe_box, faces)
     if below is not None:
         candidates.append((below, _BELOW_FACE_BOTTOM_MAX_FRAC))
-    for keep_text_clear in (True, False) if avoid else (True,):
+    for keep_text_clear in (True, False) if avoid and relax_text else (True,):
         for y_frac, bottom_limit in candidates:
             box = _translate_centered_box_to_y(probe_box, y_frac)
             if box.top < _TOP_MARGIN_FRAC - 1e-6 or box.bottom > bottom_limit + 1e-6:
@@ -620,14 +622,23 @@ def place_protected_title(
         )
         base_size = row.get("size_px")
         best: tuple[float, float, float, dict] | None = None
-        for factor in _PROTECTED_SHRINK if base_size else (1.0,):
+        # Clear of the other text at every size first (a moved caption block included), and
+        # only then a spot that touches it (``text_overlap`` in the receipt).
+        ladder = [
+            (strict, factor)
+            for strict in ((True, False) if avoid else (False,))
+            for factor in (_PROTECTED_SHRINK if base_size else (1.0,))
+        ]
+        for strict_text, factor in ladder:
             trial = dict(row)
             if base_size and factor != 1.0:
                 trial["size_px"] = max(1, round(float(base_size) * factor))
             probe = _translate_centered_box_to_y(
                 _measure_title_box(trial, canvas=canvas), default_y
             )
-            chosen = choose_protected_y_frac(probe, default_y, faces, object_boxes, avoid=avoid)
+            chosen = choose_protected_y_frac(
+                probe, default_y, faces, object_boxes, avoid=avoid, relax_text=not strict_text
+            )
             if chosen is not None:
                 y_frac, decision = chosen
                 placed = dict(trial)
@@ -650,7 +661,13 @@ def place_protected_title(
                 obj = max((object_collision(box, o) for o in object_boxes), default=0.0)
                 face = max((box.coverage_by(f) for f in faces), default=0.0)
                 if best is None or (obj + face, factor) < (best[1] + best[2], best[0]):
-                    best = (factor, obj, face, {"y_frac": y_frac, "size_px": trial.get("size_px")})
+                    text = max((box.coverage_by(t) for t in avoid), default=0.0)
+                    best = (
+                        factor,
+                        obj,
+                        face,
+                        {"y_frac": y_frac, "size_px": trial.get("size_px"), "text": text},
+                    )
     except Exception as exc:  # noqa: BLE001 - a placement nicety never blocks a render
         log.warning("phone_subtitled_title.protected_placement_failed", error=str(exc)[:200])
         return dict(row), {
@@ -673,6 +690,7 @@ def place_protected_title(
         "object_coverage": round(best[1], 5) if best else None,
         "face_collision": bool(best and best[2] > _MAX_FACE_COVERAGE),
         "object_collision": bool(best is None or best[1] > _MAX_FACE_COVERAGE),
+        "text_overlap": bool(best and best[3]["text"] > _MAX_FACE_COVERAGE),
         "objects": object_receipts,
         "objects_verified": verified,
         "default_y_frac": default_y,

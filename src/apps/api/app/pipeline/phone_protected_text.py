@@ -21,6 +21,7 @@ Nothing here runs without such an ask or mark: the default render is unchanged.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -71,11 +72,25 @@ class _Canvas(Protocol):
 
 
 @dataclass(frozen=True)
+class ProtectedGeometry:
+    """Where the speaker clip is drawn (cut, crop, scale) and every face seen over the kept
+    span, for re-checking rows a later stage restyles (`keep_styled_rows_clear`)."""
+
+    keep_segments: tuple[tuple[float, float], ...]
+    display_width: float
+    display_height: float
+    scale: float
+    position_x: float
+    faces: tuple[NormalizedBox, ...] = ()
+
+
+@dataclass(frozen=True)
 class ProtectedPlan:
     targets: tuple[ProtectedTarget, ...]
     objects: tuple[ObjectTrack, ...] = ()
     target_rows: tuple[dict[str, Any], ...] = ()
     protect_all_faces: bool = False
+    geometry: ProtectedGeometry | None = None
 
 
 def resolve_protected_plan(
@@ -115,7 +130,7 @@ def resolve_protected_plan(
         if target.kind == "face":
             rows.append({**row, "grounding": "face_sampler"})
             continue
-        mark = selection_for(target, selections)
+        mark = selection_for(target, selections, media_id=media_id)
         if mark is None:
             rows.append({**row, "status": "no_selection"})
             continue
@@ -123,7 +138,7 @@ def resolve_protected_plan(
         if mark.media_id != media_id:
             rows.append({**row, "status": "other_source"})
             continue
-        if mark.generation and generation and mark.generation != generation:
+        if generation and mark.generation != generation:
             rows.append({**row, "status": "invalidated", "current_generation": generation})
             continue
         if clip_path is None:
@@ -184,7 +199,7 @@ def choose_caption_look(
         compile_caption_layers,
     )
 
-    if not cues or not objects:
+    if not cues or (not objects and not faces):
         return None, {"status": "skipped"}
     typeface = cloud._resolve_typeface_for_overlay({"font_family": CAPTION_FONT_FAMILY}).typeface
     default = PhoneCaptionLook()
@@ -200,7 +215,7 @@ def choose_caption_look(
             look=look,
         )
         worst_object = worst_face = 0.0
-        colliding = 0
+        colliding = object_lines = face_lines = 0
         for layer in layers:
             inks = [b for run in layer.runs if (b := caption_ink_box(run, typeface)) is not None]
             if not inks:
@@ -228,12 +243,16 @@ def choose_caption_look(
                     verified = False
                 obj = max([obj, *(object_collision(box, o) for o in found)])
             worst_object, worst_face = max(worst_object, obj), max(worst_face, face)
+            object_lines += obj > _MAX_COVERAGE
+            face_lines += face > _MAX_COVERAGE
             if obj > _MAX_COVERAGE or face > _MAX_COVERAGE:
                 colliding += 1
         evaluated.append(
             {
                 "position_y_frac": y_frac,
                 "colliding_lines": colliding,
+                "object_lines": object_lines,
+                "face_lines": face_lines,
                 "object_coverage": round(worst_object, 5),
                 "face_coverage": round(worst_face, 5),
             }
@@ -244,16 +263,34 @@ def choose_caption_look(
                 "status": "moved" if moved else "preset",
                 "position_y_frac": y_frac,
                 "object_collision": False,
+                "face_collision": False,
                 "objects_verified": verified and all(t.status == "tracked" for t in objects),
                 "evaluated": evaluated,
             }
+    # Nothing clears: the captions stay at the default look, and the receipt says which of
+    # the object / the face they still cover there (never one standing in for the other).
+    at_default = evaluated[0] if evaluated else {}
     return None, {
         "status": "best_effort",
         "position_y_frac": default.position_y_frac,
-        "object_collision": True,
+        "object_collision": bool(objects) and at_default.get("object_lines", 1) > 0,
+        "face_collision": at_default.get("face_lines", 1) > 0,
         "objects_verified": False,
         "evaluated": evaluated,
     }
+
+
+def _face_status(placement: Mapping[str, Any]) -> str:
+    """A face target is ``clear`` only where the placement LOOKED at the faces (the sampler
+    detected them) and kept the text off; a fallback box, a sampler failure or timeout, a
+    placement error is ``unverified`` -- best effort is never labelled verified."""
+    if placement.get("face_collision") is True:
+        return "collision"
+    if placement.get("status") == "skipped":
+        return "clear"
+    if placement.get("status") == "error" or placement.get("faces") != "detected":
+        return "unverified"
+    return "clear"
 
 
 def _placement_status(placement: Mapping[str, Any] | None) -> str:
@@ -274,14 +311,21 @@ def protected_text_receipt(
     ``placements`` maps a text kind ("title", "closing", "spoken:<id>", "captions") to its
     placement receipt."""
     texts = {name: _placement_status(p) for name, p in placements.items() if p is not None}
-    faces_hit = any(
-        isinstance(p, Mapping) and p.get("face_collision") is True for p in placements.values()
+    face_texts = {name: _face_status(p) for name, p in placements.items() if isinstance(p, Mapping)}
+    # Text on text (a moved caption block meeting the title) is no target's verdict, but it
+    # is never hidden either.
+    overlaps = sorted(
+        name
+        for name, p in placements.items()
+        if isinstance(p, Mapping) and p.get("text_overlap") is True
     )
     targets: list[dict[str, Any]] = []
     for row in plan.target_rows:
         entry = dict(row)
         if row["kind"] == "face":
-            entry["status"] = "collision" if faces_hit else "clear"
+            entry["status"] = max(
+                face_texts.values(), key=lambda s: _STATUS_RANK[s], default="clear"
+            )
         elif "status" not in row:
             worst = max(texts.values(), key=lambda s: _STATUS_RANK[s], default="clear")
             if row.get("track_status") != "tracked" and worst == "clear":
@@ -291,11 +335,78 @@ def protected_text_receipt(
     verdict = max(
         (t["status"] for t in targets), key=lambda s: _STATUS_RANK.get(s, 3), default="clear"
     )
-    return {"version": 1, "verdict": verdict, "targets": targets, "texts": texts}
+    return {
+        "version": 1,
+        "verdict": verdict,
+        "targets": targets,
+        "texts": texts,
+        "face_texts": face_texts,
+        "text_overlaps": overlaps,
+    }
+
+
+def _row_coverage(row: Mapping[str, Any], plan: ProtectedPlan, canvas: _Canvas) -> float:
+    """How much of a face or a marked object ``row``'s drawn ink (its font, size, spot and
+    motion as styled) covers at worst over its whole window."""
+    from app.pipeline.phone_text_style import animation_box, measure_box  # noqa: PLC0415
+
+    geometry = plan.geometry
+    assert geometry is not None
+    probe = copy.deepcopy(dict(row))
+    box = NormalizedBox(*animation_box(probe, measure_box(probe, canvas), canvas))  # type: ignore[arg-type]
+    worst = max((box.coverage_by(face) for face in geometry.faces), default=0.0)
+    for track in plan.objects:
+        found, _ = object_canvas_boxes(
+            track,
+            window=(float(row["start_s"]), float(row["end_s"])),
+            keep_segments=geometry.keep_segments,
+            display_width=geometry.display_width,
+            display_height=geometry.display_height,
+            canvas=canvas,
+            scale=geometry.scale,
+            position_x=geometry.position_x,
+        )
+        worst = max([worst, *(object_collision(box, o) for o in found)])
+    return worst
+
+
+def keep_styled_rows_clear(
+    before: Sequence[dict], after: Sequence[dict], *, plan: ProtectedPlan | None, canvas: _Canvas
+) -> tuple[list[dict], list[str]]:
+    """Rows a text-style pass restyled (font, size, spot) are re-measured against the faces
+    and marked objects; a restyle that puts a row on one its placement had kept it off of
+    is undone (the placed row is kept), so the protected receipt measured at placement stays
+    true. A row that cannot be measured keeps its placed geometry too. Returns the rows and
+    the ids that were kept as placed."""
+    if plan is None or plan.geometry is None:
+        return list(after), []
+    placed = {row.get("id"): row for row in before}
+    out: list[dict] = []
+    kept: list[str] = []
+    for row in after:
+        original = placed.get(row.get("id"))
+        if original is None or original == row:
+            out.append(row)
+            continue
+        try:
+            moved_onto = _row_coverage(row, plan, canvas) > _MAX_COVERAGE and (
+                _row_coverage(original, plan, canvas) <= _MAX_COVERAGE
+            )
+        except Exception as exc:  # noqa: BLE001 - unmeasurable restyle: keep the measured row
+            log.warning("protected_text.styled_row_unmeasured", error=str(exc)[:200])
+            moved_onto = True
+        if moved_onto:
+            out.append(copy.deepcopy(original))
+            kept.append(str(row.get("id")))
+        else:
+            out.append(row)
+    return out, kept
 
 
 __all__ = [
+    "ProtectedGeometry",
     "ProtectedPlan",
+    "keep_styled_rows_clear",
     "choose_caption_look",
     "protected_text_receipt",
     "resolve_protected_plan",

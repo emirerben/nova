@@ -32,11 +32,22 @@ text's whole time on screen.
    over every 0.1 s sample of the row's window (swept between samples), mapped through the
    current cut and crop (`object_canvas_boxes`). Ladder: preset, fallback rows, any row in the
    band, under the face, then shrink (0.85 / 0.72 / 0.6). No branch trades the object for the
-   face.
+   face. A face-only ask ("no text on her face") takes the same path and protects every
+   detected face. When the captions moved (possibly up into the title band) the title and
+   closing rows keep clear of the moved caption lines at every size before any spot that
+   touches them (`text_overlaps` in the receipt).
+   A later text-style pass (`generation_style_rows`) is re-measured
+   (`keep_styled_rows_clear`): a restyle that grows or moves a row onto a face or the object
+   is undone, so the placement receipt stays true.
 4. Receipt `variant.protected_text_regions`: per target `clear | collision | unverified |
    no_selection | invalidated | other_source`, with the mark's provenance and the cut/crop it
    was projected through. `brief_checks` judges a `keep_text_off` requirement from it: `met`
-   only when every text was measured clear of an object the tracker actually saw.
+   only when every text was measured clear of an object the tracker actually saw. A face
+   target is `clear` only where the face sampler detected the faces (fallback box, sampler
+   failure/timeout or a placement error is `unverified`). Any other ask on the same
+   requirement ("brighten the clips and ...") keeps its own checker; the verdicts combine.
+   A mark with no stamped generation is `invalidated` once the clip has one; the latest mark
+   on the rendered clip wins.
 
 Without a `keep_text_off` fact or a mark nothing runs and the render is unchanged.
 
@@ -56,3 +67,7 @@ real tracker + real Skia ink measured every 0.1 s; writes `.protected-verify/rep
 - Cloud (non-phone) caption placement and guided-story per-moment text still protect faces
   only.
 - Automatic object detection (no mark) is not attempted.
+- Approval readiness does not yet ask the creator to mark a named object before approving.
+- Editor Save does not yet compare the receipt's provenance (keep_segments, crop,
+  position_x) with the saved edit: a trim / crop / text move after the render keeps the
+  render-time `protected_text_regions` verdict.
