@@ -901,7 +901,11 @@ def ground_phone_reaction_beats(
                                 occ.card_id = None
                                 if occ.sound is None:
                                     occ.failed = True
-                                    occ.reason = "overlap"
+                                    occ.reason = (
+                                        FULLSCREEN_OVERLAP_REASON
+                                        if card.slot == "fullscreen"
+                                        else "overlap"
+                                    )
                         else:
                             cards_by_id[card_id] = replace(card, end_s=new_end)
         except Exception as exc:  # noqa: BLE001 - closing failure must not sink beats

@@ -48,9 +48,9 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v74 combines subtitle semantics and delegation; brief-off matches subtitle v73 exactly.
 # v76 (KRI-840) adds the `display_mode` brief fact: only the two brief-on renders change.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "792416d11936059a35320615777738365105937efa1547727b60ef9b23920ca4",
+    (True, True): "e3aad0c57bc12f89f2fcb1f521f0be0ba203ac7e851f0db578d3a5ba389575c4",
     (True, False): "e33c7b44e601b95b61036b2806cc2111d8aa20204994881bf8fe128534b5cf3c",
-    (False, True): "148e2160ee4fea02126c4a811ade37de8db18bf207dc35a7dba5874a6d76cc59",
+    (False, True): "a4401b3f203d9ebc0486a421bc3fe4a387465a7b0ffd04d9c9f4359f51b75da6",
     (False, False): "6e32911313c9667767209df7d6d929db36873990e5dceb2d27549ba179569c1d",
 }
 

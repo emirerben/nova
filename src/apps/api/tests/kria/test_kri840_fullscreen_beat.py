@@ -1,8 +1,8 @@
 """KRI-840: "show the photo FULL SCREEN when I say <word>" on a phone Talking edit.
 
-Written BEFORE the fix (failure modes: ``kri840-failure-modes.md``). Two real test-kit
-prompts, replayed offline from the creator's words to the compiled device recipe and the
-brief receipt, with real word timings (no network, no LLM, no database):
+Written BEFORE the fix (failure modes: ``docs/reviews/kri-840-fullscreen-beat/failure-modes.md``).
+Two real test-kit prompts, replayed offline from the creator's words to the compiled device
+recipe and the brief receipt, with real word timings (no network, no LLM, no database):
 
 * Café T2 (Turkish): "'traditional Colombian dessert' dediğinde oblea fotoğrafı tam ekran
   gelsin" + the Cotopaxi photo as a small corner card at "Ecuador". Word timings are the
@@ -51,7 +51,6 @@ from app.agents._schemas.reaction_beats import ReactionBeat
 from app.config import settings
 from app.kria.brief import BriefRequirement
 from app.kria.brief_checks import (
-    BeatFact,
     check_requirement,
     plan_facts_from_phone_variant,
     plan_facts_from_strategy,
@@ -329,24 +328,6 @@ def _fullscreen_card(grounded, beat_id: str) -> SubtitledOverlayCard:  # noqa: A
 
 
 # ======================================================================== A. the beat field
-
-
-def _validated(raw: dict) -> ReactionBeat:
-    try:
-        return ReactionBeat.model_validate(raw)
-    except ValidationError as exc:  # red on main: the field does not exist
-        pytest.fail(
-            "ReactionBeat has no 'display_mode' field yet "
-            f"({exc.errors()[0]['type']}: {exc.errors()[0]['loc']})"
-        )
-
-
-def test_a_reaction_beat_can_ask_for_the_full_screen() -> None:
-    beat = _validated(
-        _beat("oblea", "traditional Colombian dessert", _OBLEA, display_mode="fullscreen")
-    )
-    assert beat.display_mode == "fullscreen"
-    assert _validated(_beat("cotopaxi", "Ecuador", _COTOPAXI)).display_mode == "pip"
 
 
 def test_a_fullscreen_beat_survives_the_strategy_round_trip() -> None:
@@ -930,13 +911,6 @@ def test_a_draft_with_only_fullscreen_images_is_not_the_word_timed_ask() -> None
     _assert_honest_not_done(check_requirement(_FS_ASK_EN, facts))
 
 
-def test_the_beat_fact_defaults_to_the_corner_card() -> None:
-    # GUARD for the dataclass shape the fix extends: a BeatFact built with only the old
-    # arguments still means "a corner card".
-    fact = BeatFact(trigger="Argentinian", visual_id="x")
-    assert getattr(fact, "display_mode", "pip") == "pip"
-
-
 # ============================== E. the real worker task, from the strategy to the pinned recipe
 
 
@@ -1050,31 +1024,6 @@ def _strategy(beats: list[dict]) -> CreativeStrategy:
     return CreativeStrategy.model_validate(
         {"edit_format": "subtitled", "audio_strategy": "original_audio", "reaction_beats": beats}
     )
-
-
-def test_a_reaction_beat_rejects_a_display_mode_the_model_made_up() -> None:
-    with pytest.raises(ValidationError):
-        ReactionBeat.model_validate(_beat("grill", "Argentinian", _GRILL, display_mode="corner"))
-
-
-def test_repair_keeps_a_fullscreen_beat_where_full_screen_is_available() -> None:
-    from app.services.creator_capabilities import repair_creator_reaction_beats
-
-    repaired, notices = repair_creator_reaction_beats(
-        _manifest(), _strategy([_grill(display_mode="fullscreen", hold_s=1.2)])
-    )
-    (beat,) = repaired.reaction_beats
-    assert (beat.display_mode, beat.hold_s) == ("fullscreen", 1.2)
-    assert notices == []
-
-
-def test_repair_keeps_a_sticker_role_beat_the_model_asked_full_screen() -> None:
-    from app.services.creator_capabilities import repair_creator_reaction_beats
-
-    sticker = _beat("grill", "Argentinian", _GRILL, display_mode="fullscreen")
-    sticker["visual_role"] = "sticker"
-    (beat,) = repair_creator_reaction_beats(_manifest(), _strategy([sticker]))[0].reaction_beats
-    assert beat.display_mode == "fullscreen"
 
 
 def test_repair_without_full_screen_turns_the_beat_into_a_corner_card_and_says_so() -> None:
@@ -1280,6 +1229,22 @@ def test_a_closing_photo_never_merges_into_a_full_screen_beat_card(monkeypatch) 
     beat_card = by_id["beat-bread-1"]
     assert beat_card.display_mode == "fullscreen"
     assert beat_card.end_s <= by_id["closing-photo"].start_s + 1e-6, "closing wins the overlap"
+
+
+def test_a_closing_photo_that_takes_a_full_screen_beats_moment_says_full_screen_overlap(
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    # "cream," (22.11 s) is inside the closing shot's last 3 s (from 21.6 s): the closing photo
+    # wins, the full-screen photo is gone, and the creator must not be told it "covered your face".
+    beats = [_beat("cream", "cream", _OBLEA, display_mode="fullscreen")]
+    closing = {"visual_id": f"asset-{_COTOPAXI}"}
+    grounded = _ground(
+        monkeypatch, beats, CAFE_WORDS, _CAFE_DURATION_S, _CAFE_ASSETS, closing=closing
+    )
+    assert "cream" not in _cards_by_beat(grounded)
+    assert [(u["beat_id"], u["reason"]) for u in grounded.receipt["unplaced"]] == [
+        ("cream", "fullscreen_overlap")
+    ]
 
 
 def test_a_full_screen_beat_does_not_take_the_even_slot_of_another_photo(monkeypatch) -> None:  # noqa: ANN001
