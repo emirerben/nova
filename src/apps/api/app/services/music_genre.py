@@ -11,17 +11,26 @@ wrongly in the "asked" direction would force a genre the creator did not want ("
 must never mean "only rap"). Every doubt therefore leans to "not asked", which is exactly
 today's behaviour (no filter, no notice):
 
-- An everyday word ("house", "rock", "pop") is a genre only when a music word touches it
-  AFTER it ("a house track", "rock song", "pop müzik"), or, in Spanish only, BEFORE it
-  ("música rock", "canción pop"). English "Make the music pop" is a verb, "house tour music"
-  and "rock climbing music" are other nouns, and "music for the house tour" is elsewhere.
+- Said as music. The music ask is every live audio/global requirement joined with ";", so
+  it also holds source-sound asks ("Keep the tango band audible") and place or class nouns
+  ("music for the jazz club visit"). Each ";" part is read on its own:
+  - A part that names music (song, music, track, playlist, şarkı, müzik, canción...) asks a
+    genre only when the genre is said as music: a music word right after it, or after a bare
+    list it starts ("a tango, a salsa or a jazz song"; "-style" and articles bridge), or,
+    in Spanish only, right before it ("música rock"). English "Make the music pop" is a
+    verb, "house tour music" and "jazz club music" are other nouns.
+  - A part with no music word asks a genre only if it is not an everyday word ("house",
+    "rock", "pop" never) and the part has no sound word (audible, hear, mute, noise,
+    voice, loud, ses*, duyul*, sonido...): "SUGGEST A TANGO", "Tango please" ask; "Keep the
+    tango band audible" does not.
 - A cue rules out the genres after it ("no", "without", "sin", "anything but", "other
-  than", "hate"...) in its own clause. It reaches the next clause only when the words it
-  rules out are themselves a bare list of genres, and that clause is one too ("No rap,
-  reggaeton or rock"); never across a sentence end. Any other word ends it, and so does
-  "but" / "pero" / "ama". "No vocals" / "not too slow" rule out nothing, and "No sad songs,
-  tango please" still asks for tango. Turkish puts the cue after the genre ("rap olmasın",
-  "caz istemiyorum").
+  than", "hate", "tired of", "leave out"...; not "cut" or "drop", which are editing verbs)
+  in its own clause. It reaches the next clause only when the words it rules out are
+  themselves a bare list of genres, and that clause is one too ("No rap, reggaeton or
+  rock"); never across a sentence end. Any other word ends it, and so does "but" / "pero" /
+  "ama". "No vocals" / "not too slow" rule out nothing, and "No sad stuff, tango please"
+  still asks for tango. Turkish puts the cue after the genre ("rap olmasın", "caz
+  istemiyorum").
 
 Fitting a track. The labels say a genre when ``MusicLabels.genre`` IS that genre (the
 enum's own word, or a true synonym such as "rap" or "EDM"), or when its label text says the
@@ -37,9 +46,13 @@ Which text counts depends on what it describes:
 - In any of them, a genre word right after a negation ("not a tango", "non-tango", "rather
   than a tango", two words back, three for instead / rather) does not count.
 
-Known limits, all on the "not asked" / "not a fit" side: "pop love song", "a rock feel" and
-"Without rock, tango" are not read as asks, and a rationale that spells the genre in an
-unusual way ("rock-and-roll banger") is not a fit.
+Known limits, all on the "not asked" / "not a fit" side: "pop love song", "a song with a
+tango feel", "Without rock, tango" and a bare genre in a part that names music elsewhere
+("No sad songs, tango please", "Calm music, tango please") are not read as asks. A
+rationale that spells the genre unusually ("rock-and-roll banger") is not a fit. Label
+text that uses a genre word as an adjective ("dance-floor drama", "rock-solid beat") is
+still trusted as the song's own words: only a negation or, for an everyday word in the
+rationale, a missing song noun, keeps it from counting.
 
 Music stays recommend-only: nothing here changes the audio of a video, only what the
 reply says about the song Kria suggests.
@@ -128,6 +141,24 @@ _MUSIC_WORDS = frozenset(
     """.split()
 )
 _MUSIC_PREFIXES = ("sarki", "muzi")
+# Words that make a part of the ask about a SOUND from the footage ("keep the tango band
+# audible"), not about the song: a genre word there names the band, the club, the class.
+_SOURCE_SOUND_WORDS = frozenset(
+    """
+    audible hear heard hearing listen listening mute muted sound sounds noise noises volume
+    loud louder quiet quieter voice voices sonido sonidos ruido ruidos escuchar escuche
+    escuchen
+    """.split()
+)
+_SOURCE_SOUND_PREFIXES = ("duyul",)  # Turkish "duyulsun" (let it be heard)
+# Between a genre word and the music word that makes it a music ask: more genres, the
+# connectors of a list, articles, and "-style" ("a tango or a jazz song", "tango tarzı bir şarkı").
+_BRIDGE_WORDS = frozenset(
+    """
+    or and nor ni y o veya ve ya da a an the some any one another bir el la un una please por
+    favor lutfen either style styled ish tarzi tarzinda turu turunde
+    """.split()
+)
 # Spanish puts the music word first ("música rock"); in English "the music pop" is a verb.
 _MUSIC_WORDS_BEFORE_THE_GENRE = frozenset("musica cancion canciones tema".split())
 # In a song's label text: a genre word right after one of these (within 2 words) is what the
@@ -138,7 +169,11 @@ _NEGATES_LABEL_FAR = frozenset("instead rather".split())
 _SONG_NOUNS = frozenset("anthem track song ballad cue groove beat tune number bed piece".split())
 # Ruling a genre out. Folded, apostrophes dropped ("don't" = "dont"). A bare "but" turns back
 # and never rules out; "no vocals" / "not too slow" rule out nothing the song could be.
-_RULES_OUT = frozenset("no not without except avoid never dont sin hate dislike skip".split())
+_RULES_OUT = frozenset(
+    """
+    no not without except avoid never dont sin hate dislike skip ditch remove ban unlike kill
+    """.split()
+)
 _RULES_OUT_PHRASES = (
     ("anything", "but"),
     ("everything", "but"),
@@ -147,6 +182,13 @@ _RULES_OUT_PHRASES = (
     ("other", "than"),
     ("doesnt", "have", "to", "be"),
     ("neednt", "be"),
+    ("tired", "of"),
+    ("sick", "of"),
+    ("bored", "of"),
+    ("rid", "of"),
+    ("free", "of"),
+    ("leave", "out"),
+    ("away", "from"),
 )
 _TURNS_BACK = frozenset("but ama fakat pero sino".split())
 _NOT_A_GENRE_AFTER_CUE = frozenset(
@@ -182,6 +224,8 @@ def _build_lexicon() -> dict[str, AskedGenre]:
 
 _LEXICON = _build_lexicon()
 _LONGEST_NAME = max(len(spelling.split()) for spelling in _LEXICON)
+_GENRE_WORDS = frozenset(word for spelling in _LEXICON for word in spelling.split())
+_BETWEEN_GENRE_AND_MUSIC = _GENRE_WORDS | _BRIDGE_WORDS
 
 
 def _words(text: str) -> list[str]:
@@ -190,6 +234,31 @@ def _words(text: str) -> list[str]:
 
 def _is_music_word(word: str) -> bool:
     return word in _MUSIC_WORDS or word.startswith(_MUSIC_PREFIXES)
+
+
+def _is_source_sound_word(word: str) -> bool:
+    if word in _SOURCE_SOUND_WORDS or word.startswith(_SOURCE_SOUND_PREFIXES):
+        return True
+    # Turkish "ses" (sound), "sesi", "sesini", "sesli", not English "session" or "sesame".
+    return word.startswith("ses") and not word.startswith(("sess", "sesa", "sest", "sesq"))
+
+
+def _said_as_music(words: Sequence[str], start: int, end: int) -> bool:
+    """Is the genre at ``words[start:end]`` said as music?
+
+    A music word comes right after it, or after a bare list of genres and connectors that
+    it starts ("a tango or a jazz song"); or, in Spanish only, one comes right before it
+    ("música rock"). In English "Make the music pop" is a verb, "jazz club music" a place.
+    """
+    after = end
+    while after < len(words) and words[after] in _BETWEEN_GENRE_AND_MUSIC:
+        after += 1
+    if after < len(words) and _is_music_word(words[after]):
+        return True
+    before = start - 1
+    while before >= 0 and words[before] in _BETWEEN_GENRE_AND_MUSIC:
+        before -= 1
+    return before >= 0 and words[before] in _MUSIC_WORDS_BEFORE_THE_GENRE
 
 
 def _genre_at(words: Sequence[str], i: int) -> tuple[AskedGenre, int] | None:
@@ -228,8 +297,10 @@ def _mentions(clauses: Sequence[Sequence[str]]) -> Iterator[tuple[AskedGenre, bo
 
     A cue rules out the genres after it in its clause. It carries into the next clause only
     when what it rules out here is a bare genre list and that clause is one too. "Said as
-    music" = a music word right after the genre (or, in Spanish, right before), same clause.
+    music": see ``_said_as_music`` (read over the whole sentence, across its commas).
     """
+    sentence = [word for words in clauses for word in words]
+    offset = 0  # where this clause starts in ``sentence``
     ruling_out = False
     for words in clauses:
         if ruling_out and not _is_genre_list(words):
@@ -251,15 +322,13 @@ def _mentions(clauses: Sequence[Sequence[str]]) -> Iterator[tuple[AskedGenre, bo
                 genre, size = found
                 end = i + size
                 ruled_out = ruling_out or any(w in _RULED_OUT_AFTER for w in words[end : end + 2])
-                as_music = (i > 0 and words[i - 1] in _MUSIC_WORDS_BEFORE_THE_GENRE) or (
-                    end < len(words) and _is_music_word(words[end])
-                )
-                yield genre, ruled_out, as_music
+                yield genre, ruled_out, _said_as_music(sentence, offset + i, offset + end)
                 i = end
             else:
                 i += 1
         if ruling_out and not _is_genre_list(words[rules_out_from:]):
             ruling_out = False
+        offset += len(words)
 
 
 def asked_genres(ask: str) -> list[AskedGenre]:
@@ -272,10 +341,13 @@ def asked_genres(ask: str) -> list[AskedGenre]:
     """
     found: dict[str, AskedGenre] = {}
     for part in ask.split(";"):
+        part_words = _words(part)
+        # A part with no music word and no sound word is a bare ask ("Tango please").
+        bare = not any(_is_music_word(w) or _is_source_sound_word(w) for w in part_words)
         for sentence in re.split(r"[.!?]", part):
             clauses = [_words(clause) for clause in re.split(r"[,:]", sentence)]
             for genre, ruled_out, as_music in _mentions(clauses):
-                if not ruled_out and (as_music or not genre.everyday):
+                if not ruled_out and (as_music or (bare and not genre.everyday)):
                     found.setdefault(genre.name, genre)
     return list(found.values())
 

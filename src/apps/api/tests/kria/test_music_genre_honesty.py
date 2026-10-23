@@ -497,7 +497,7 @@ async def test_turkish_reply_says_it_in_turkish(monkeypatch) -> None:
 
     result = await _gate(
         monkeypatch,
-        _dj_brief("Tango tarzı hareketli bir şarkı öner"),
+        _dj_brief("Tango tarzı bir şarkı öner"),
         summary=BASE_SUMMARY_TR,
         language="tr",
     )
@@ -774,6 +774,135 @@ async def test_an_everyday_word_in_the_clip_profile_does_not_make_a_track_that_g
     assert not _claims_genre_for(text, climbing, "rock")
 
 
+# ── 3b'. a genre word in a sound or a noun phrase is not a song genre ────────
+# The music ask joins EVERY audio/global requirement, so "Keep the tango band audible" and
+# "Calm music for the jazz club visit" reach the genre reader next to a real music ask.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ask", "word"),
+    [
+        ("Keep the tango band audible", "tango"),
+        ("Keep the jazz band audible", "jazz"),
+        ("Keep the flamenco guitarist audible", "flamenco"),
+        ("Keep the street samba drums audible", "samba"),
+        ("Keep the gospel choir audible", "gospel"),
+        ("Mute the reggae bar noise", "reggae"),
+        ("I want to hear the street jazz musician", "jazz"),
+        ("Calm music for the jazz club visit", "jazz"),
+        ("Calm song for our tango class", "tango"),
+        ("Keep the tango singer's voice audible; Suggest some calm music", "tango"),
+        ("Keep the sound of the salsa band", "salsa"),
+        ("Utah Jazz game highlights, upbeat song", "jazz"),
+        ("Keep the opera singer audible", "opera"),
+        ("Keep the punk band audible", "punk"),
+        ("Keep the metal band loud", "metal"),
+        ("Keep the disco ball sound", "disco"),
+        ("Keep the blues musician audible", "blues"),
+        ("Tango sesi duyulsun", "tango"),
+        ("Mantén el sonido de la banda de tango", "tango"),
+    ],
+    ids=[
+        "tango-band",
+        "jazz-band",
+        "flamenco-guitarist",
+        "samba-drums",
+        "gospel-choir",
+        "reggae-bar-noise",
+        "hear-jazz-musician",
+        "jazz-club-visit",
+        "tango-class",
+        "tango-voice-then-music",
+        "salsa-band-sound",
+        "utah-jazz",
+        "opera-singer",
+        "punk-band",
+        "metal-band-loud",
+        "disco-ball-sound",
+        "blues-musician",
+        "tr-tango-sesi",
+        "es-sonido-tango",
+    ],
+)
+async def test_a_genre_word_in_a_sound_or_noun_phrase_is_not_a_genre(
+    monkeypatch, ask, word
+) -> None:
+    pop = _pop()
+    decoy = _track("Decoy", "Some Band", genre="other", vibe_tags=[word, "steady"])
+    _install(monkeypatch, [pop, decoy], preference=[pop, decoy])
+
+    result = await _gate(monkeypatch, _dj_brief(ask))
+
+    section = _section(result)
+    assert section["track_id"] == pop.id, f"suggested {section.get('title')!r}"
+    assert ASKED_KEY not in section and FIT_KEY not in section
+    assert not _says_no_match(_text(result)), _text(result)
+    assert not result.policy_notices
+
+
+@pytest.mark.asyncio
+async def test_keep_the_tango_band_audible_beside_a_calm_music_ask(monkeypatch) -> None:
+    """The reviewer's probe: the keep-sound ask and the music ask are two audio/global
+    requirements; the library holds a tango track the matcher ranks last."""
+    pop, calm, tango = _pop(), _lofi(), _tango()
+    _install(monkeypatch, [pop, calm, tango], preference=[calm, pop, tango])
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(
+                id="r1",
+                kind="audio",
+                scope="global",
+                description="Keep the tango band audible",
+                facts={"audio_intent": "source_unchanged", "triggers": ["tango band"]},
+            ),
+            BriefRequirement(
+                id="r2", kind="audio", scope="global", description="Suggest some calm music for it"
+            ),
+        ],
+    )
+
+    result = await _gate(monkeypatch, brief)
+
+    section = _section(result)
+    assert section["track_id"] == calm.id, f"suggested {section.get('title')!r}"
+    assert ASKED_KEY not in section and FIT_KEY not in section
+    assert not result.policy_notices and "tango" not in _text(result).lower(), _text(result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ask",
+    ["Suggest a tango, a salsa or a jazz song", "Suggest tango, salsa or jazz music for it"],
+    ids=["song", "music"],
+)
+async def test_a_list_of_genres_before_one_music_word_asks_all_of_them(monkeypatch, ask) -> None:
+    pop = _pop()
+    salsa = _track("Hot Night", "Los Fuegos", genre="other", vibe_tags=["salsa", "upbeat"])
+    _install(monkeypatch, [pop, salsa], preference=[pop, salsa])
+
+    result = await _gate(monkeypatch, _dj_brief(ask))
+
+    _assert_suggests(result, salsa)
+    section = _section(result)
+    assert section[ASKED_ALL_KEY] == ["tango", "salsa", "jazz"]
+    assert section[ASKED_KEY] == "salsa" and section[FIT_KEY] is True
+
+
+@pytest.mark.asyncio
+async def test_a_genre_feel_is_not_read_as_a_genre_ask(monkeypatch) -> None:
+    """Accepted miss (fail-safe): "a song with a tango feel" names the genre as a noun."""
+    pop = _pop()
+    tango = _tango()
+    _install(monkeypatch, [pop, tango], preference=[pop, tango])
+
+    result = await _gate(monkeypatch, _dj_brief("Suggest a song with a tango feel"))
+
+    assert _section(result)["track_id"] == pop.id
+    assert ASKED_KEY not in _section(result)
+
+
 # ── 3c. a genre the creator ruled out is not a genre they asked for ──────────
 # A named genre is a hard filter, so "no rap please" must never turn into "only rap".
 
@@ -804,6 +933,13 @@ async def test_an_everyday_word_in_the_clip_profile_does_not_make_a_track_that_g
         ("I hate rap, suggest a calm song", {"genre": "hip_hop", "vibe_tags": ["hype"]}),
         ("Tango olmadan bir şarkı", {"genre": "other", "vibe_tags": ["tango"]}),
         ("No more rap please", {"genre": "hip_hop", "vibe_tags": ["hype"]}),
+        ("I'm tired of rap, suggest a calm song", {"genre": "hip_hop", "vibe_tags": ["hype"]}),
+        ("Sick of reggaeton; a calm song please", {"genre": "other", "vibe_tags": ["reggaeton"]}),
+        ("Get rid of the rap, calm music", {"genre": "hip_hop", "vibe_tags": ["hype"]}),
+        ("Leave out the tango, calm song", {"genre": "other", "vibe_tags": ["tango"]}),
+        ("Unlike tango, calm please", {"genre": "other", "vibe_tags": ["tango"]}),
+        ("Ditch the jazz, a calm song", {"genre": "other", "vibe_tags": ["jazz"]}),
+        ("Bored of rock, calm music", {"genre": "other", "vibe_tags": ["rock"]}),
     ],
     ids=[
         "no-rap",
@@ -826,6 +962,13 @@ async def test_an_everyday_word_in_the_clip_profile_does_not_make_a_track_that_g
         "hate",
         "tr-olmadan",
         "no-more",
+        "tired-of",
+        "sick-of",
+        "rid-of",
+        "leave-out",
+        "unlike",
+        "ditch",
+        "bored-of",
     ],
 )
 async def test_a_negated_genre_is_not_an_asked_genre(monkeypatch, ask, ruled_out) -> None:
@@ -882,11 +1025,14 @@ async def test_a_negated_genre_next_to_an_asked_one_only_the_asked_one_counts(mo
         "Not too slow, an upbeat tango song",
         # A ruled-out thing that is not a genre ("sad songs", "boring", "slow ones") ends at
         # its clause: a bare genre in the next clause is a new ask. Sentence ends reset it.
-        "No sad songs, tango please",
+        "No sad stuff, tango please",
         "Not boring, tango please",
         "No slow ones, tango",
         "No rap. Tango please.",
         "I hate rap. Tango please.",
+        # "cut" and "drop" are editing verbs, not dislike cues.
+        "Cut on the beat with an upbeat tango song",
+        "Drop the intro, then an upbeat tango song",
     ],
     ids=[
         "tango-not-jazz",
@@ -900,11 +1046,13 @@ async def test_a_negated_genre_next_to_an_asked_one_only_the_asked_one_counts(mo
         "no-vocals",
         "no-lyrics",
         "not-too-slow",
-        "no-sad-songs",
+        "no-sad-stuff",
         "not-boring",
         "no-slow-ones",
         "sentence-then-bare-tango",
         "hate-sentence-then-bare-tango",
+        "cut-on-the-beat",
+        "drop-the-intro",
     ],
 )
 async def test_the_asked_genre_is_still_found_beside_a_ruled_out_one(monkeypatch, ask) -> None:

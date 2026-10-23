@@ -2,8 +2,9 @@
 
 Parent: KRI-829 (Don Julio M1 case, KRI-802). Claim: **local fix, offline verified**.
 No paid model call, no prompt change, no media change. Music stays recommend-only:
-Kria names a track for the creator to add when posting; nothing is mixed into the video
-and nothing caps the length by the song.
+Kria names a track for the creator to add when posting and nothing is mixed into the
+video. This change adds no length cap; the existing KRI-679 song-owned natural length
+(`length_policy.py`, `length_planning.py`) is unchanged.
 
 ## Request and acceptance
 
@@ -98,4 +99,10 @@ bash scripts/check-api.sh test tests/kria/test_music_genre_honesty.py \
 - A song title in the ask ("like Tango in the Night") is read as a genre; the notice can
   be cut by `reply_from_receipts`' 1200-character cap on a very long receipts list (not
   the M1 path).
+- The song's own label words are trusted: a `mood` such as "dance-floor drama" or
+  "rock-solid" fits a dance or rock ask, and a non-everyday genre word in
+  `ideal_content_profile` ("tango lessons") fits that genre.
+- Reading the ask is word-based, not NLP. Every known miss leans to "not asked" (no
+  filter, no notice: the pre-fix behaviour), e.g. "a song with a tango feel" or "Skip the
+  blurry shot and suggest a tango song".
 - The full Don Julio M1 request (KRI-802) stays open under KRI-829.
