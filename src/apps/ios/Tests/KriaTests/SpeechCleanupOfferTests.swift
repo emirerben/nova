@@ -69,7 +69,7 @@ final class SpeechCleanupOfferTests: XCTestCase {
         let (offer, analysisID) = SpeechCleanupOffer.resolve(cleanup(#"""
         {"applicable": true, "requires_choice": true,
          "analysis": {"id": "a1", "status": "ready", "candidate_count": 3, "estimated_removed_ms": 4200,
-                      "category_counts": {"filler_sounds": 2, "long_pauses": 1}}}
+                      "category_counts": {"filler_sounds": 2, "long_pauses": 1, "retakes": 1}}}
         """#))
         XCTAssertEqual(analysisID, "a1")
         guard case let .choice(stats) = offer else { return XCTFail("Expected .choice, got \(offer)") }
@@ -77,6 +77,26 @@ final class SpeechCleanupOfferTests: XCTestCase {
         XCTAssertEqual(stats.estimatedRemovedMs, 4200)
         XCTAssertEqual(stats.fillerSounds, 2)
         XCTAssertEqual(stats.longPauses, 1)
+        XCTAssertEqual(stats.retakes, 1)
+        XCTAssertTrue(stats.removesRetakes)
+    }
+
+    func testLegacyStatsWithoutRetakesKeepTheOriginalDisclosure() {
+        XCTAssertFalse(SpeechCleanupStats(retakes: nil).removesRetakes)
+        XCTAssertFalse(SpeechCleanupStats(retakes: 0).removesRetakes)
+        XCTAssertTrue(SpeechCleanupStats(retakes: 2).removesRetakes)
+        XCTAssertEqual(
+            SpeechCleanupStats(retakes: nil).cleanupConsentSentence,
+            "Choose whether to remove the detected pauses and filler sounds. A sentence you restarted stays in."
+        )
+        XCTAssertEqual(
+            SpeechCleanupStats(retakes: 1).cleanupConsentSentence,
+            "Clean up speech also removes the detected restarted sentence."
+        )
+        XCTAssertEqual(
+            SpeechCleanupStats(retakes: 2).cleanupConsentSentence,
+            "Clean up speech also removes the detected restarted sentences."
+        )
     }
 
     func testNoFindingsWithRequiresChoiceStillOffersAChoice() {
@@ -133,5 +153,13 @@ final class SpeechCleanupOfferTests: XCTestCase {
 
         let zeroCandidates = SpeechCleanupStats(candidateCount: 0, estimatedRemovedMs: 1000)
         XCTAssertEqual(zeroCandidates.summarySentence, "About 1s shorter.", "A zero count is not worth stating as a finding")
+    }
+
+    func testSummarySentenceNamesRestartedSentencesWhenTheyAreIncludedInTheCount() {
+        let stats = SpeechCleanupStats(candidateCount: 4, fillerSounds: 2, longPauses: 1, retakes: 1)
+        XCTAssertEqual(
+            stats.summarySentence,
+            "Found 4 speech cleanup points (2 filler sounds, 1 long pause, 1 restarted sentence)."
+        )
     }
 }

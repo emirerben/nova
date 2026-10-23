@@ -105,9 +105,12 @@ log = structlog.get_logger()
 # v69 retains all shared brief instructions plus editorial audio pairing.
 # v70 (KRI-851): the Talking reaction-beats section no longer forbids `opening_title`; a requested
 # title / closing text still goes in `opening_title` / `closing_title` alongside the beats.
-# v73 keeps v70 and makes captions/subtitles the speech lane, independent of restrictions
-# on authored text. v71/v72 are reserved by the independent KRI-814 PR.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v73"
+# KRI-814: a typed `delegates_all_choices` declaration for a message that states no requirement
+# and hands every choice to Kria, so readiness need not match the stock sentence (v71).
+# v72 (KRI-814): earlier creator lines never read into the brief are read with the current one.
+# v74 combines delegation v72 with subtitle-semantics v73, retaining all instructions.
+# v75 adds N2 fullscreen photo-then-original sequences to the complete v74 union.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v75"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -275,18 +278,28 @@ reaction beat: never set `execution_contract` for it, and never leave such a req
 never a clip intent or a selected media id. Every proposal keeps each beat the FULL CREATOR
 REQUEST CONTRACT still asks for, also when the latest message is about something else ("use all
 7 clips"). A cue that names one of the project's own CLIPS instead ("when I say Deniz, show Deniz
-at the laptop", "'mutfak' dediğimde mutfağı göster") is never a beat and never an
-`order`: the voiceover already decides when each clip plays, and cues listed together are not
-a sequence. Give each such clip one `clip_intents` entry with `op` "include" and `attribute`
-naming the clip as the creator described it, and keep every own clip selected unless the
-creator limited them. Asking the clips to follow the voiceover ("follow my voiceover: river,
-kitchen, attic") is that same `include` per named clip. Only "start/end with X" is an `order`
-(with `position`), and only another sequence the creator explicitly asks for ("in this order:
-A, B, C") is an `order` without one.
-A photo beat shows as a picture-in-picture card over the footage. Never set `licensed_sfx` on this
-edit once this capability is available -- beats place sound at the exact moments the creator
-named instead. A bare "add fun sound effects" with no named spoken moment adds NO beats. Keep the
-edit's own voiceover `edit_format`.
+at the laptop", "'mutfak' dediğimde mutfağı göster") is never a beat and never an `order`:
+give each such clip one `clip_intents` entry with `op` "include" and `attribute` naming the clip
+as the creator described it. Keep every own clip selected unless the creator limited them. Asking
+the clips to follow the voiceover ("follow my voiceover: river, kitchen, attic") is that same
+`include` per named clip. Only "start/end with X" is an `order` (with `position`), and only
+another sequence the creator explicitly asks for ("in this order: A, B, C") is an `order`.
+For a normal photo request, make its reaction beat `display_mode` "fullscreen" so it fills
+the frame; use "pip" when the creator explicitly says small, corner, overlay, or
+picture-in-picture. Stickers keep their normal small "pip" placement unless fullscreen is
+explicitly requested. Never add a title, label, or other decorative text for this. When they ask
+for a photo then one of their own clips ("when I say river, show the river photo first then the
+river clip"), make the photo beat fullscreen with `occurrence` "first" and
+`following_clip_id` equal to that selected original video's exact media id; also add the clip's
+`include` intent, with the same actual quoted spoken cue in its attribute so the aligner selects
+the right clip moment. `following_clip_id` is only for this photo-then-own-video relationship:
+never use a Visuals video, an unselected video, or it for Deniz/end cues. A photo beat normally
+fills the frame, then the edit continues with the voiceover footage. "End with Deniz" remains an
+`order` intent with `position` "last", never a following clip. Titles are separate from the
+voiceover subtitles: never turn a spoken cue into a title or add decorative text.
+Never set `licensed_sfx` on this edit once this capability is available -- beats place sound at
+the exact moments the creator named instead. A bare "add fun sound effects" with no named
+spoken moment adds NO beats. Keep the edit's own voiceover `edit_format`.
 """.strip("\n")
 )
 
@@ -516,6 +529,18 @@ picks one of the alternatives you offered in your previous question, their origi
 changed to that alternative: record the superseded requirements with `change` or `remove`
 (exact `target_requirement_id` and `expected_version` from the contract) and plan the chosen
 alternative using the original request's exact words.
+Also return a top-level boolean `delegates_all_choices`. Set it to true ONLY when the CURRENT
+USER MESSAGE states no requirement at all and hands every creative choice to you ("Make
+something great from my Troya trip", "Suggest an edit", "you decide", "Troya gezimden harika bir
+şey yap", "Bana bir düzenleme öner"); `brief_updates` is then empty. Set it to false whenever the
+message asks for anything specific (a title or other text, a length, an order, clips to use or
+skip, music or sound, a look), even when it also says "suggest an edit" or "you decide the
+rest", and whenever you are unsure. It never withdraws a requirement already in the contract.
+When the contract is "Creative brief v0 (nothing recorded yet)" and lists earlier creator
+messages, those messages were never read into the brief: treat them as part of the CURRENT USER
+MESSAGE. Record every requirement any of them states as an `add`, and set
+`delegates_all_choices` to true only when neither they nor the current message state any
+requirement.
 """.strip("\n")
 
 
@@ -547,6 +572,10 @@ class MainCreatorOutput(BaseModel):
     # KRI-188: requirements newly stated/changed by the current message. Empty
     # (and omitted from dumps) unless the brief is enabled for this creator.
     brief_updates: list[BriefUpdate] = Field(default_factory=list, exclude_if=lambda v: not v)
+    # KRI-814: the extraction step's typed declaration that the current message states no
+    # requirement and delegates every choice. Only ever True with no `brief_updates`; the
+    # server, never the strategy or summary prose, turns it into an empty brief version.
+    delegates_all_choices: bool = Field(default=False, exclude_if=lambda v: not v)
     creative_decision: CreativeCopyDecision | None = Field(
         default=None, exclude_if=lambda v: v is None
     )
@@ -855,6 +884,11 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         )
                         strategy = strategy.model_copy(update={"editorial_plan": None})
                 action = action.model_copy(update={"strategy": strategy})
+            brief_updates = (
+                _refile_take_trims(parse_brief_updates(data.get("brief_updates")), input)
+                if input.brief_enabled
+                else []
+            )
             return MainCreatorOutput(
                 action=action,
                 creative_decision=(
@@ -862,11 +896,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     if data.get("creative_decision") is not None
                     else None
                 ),
-                brief_updates=(
-                    _refile_take_trims(parse_brief_updates(data.get("brief_updates")), input)
-                    if input.brief_enabled
-                    else []
-                ),
+                brief_updates=brief_updates,
+                # KRI-814: a declaration beside stated requirements contradicts itself; fail
+                # closed (the requirements stand, nothing is recorded as delegated).
+                delegates_all_choices=input.brief_enabled
+                and data.get("delegates_all_choices") is True
+                and not brief_updates,
             )
         except ValidationError as exc:
             # Tell the retry which contract fields failed, without echoing

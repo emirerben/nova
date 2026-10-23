@@ -739,7 +739,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/kria/clip_scope.py",
-                (True, "covered", "kri-623-ruled-out-clips"),
+                (True, "covered", "kri-598-voiceover-planner,kri-623-ruled-out-clips"),
+            ),
+            (
+                "src/apps/api/app/pipeline/narrated_photo_sequence.py",
+                (True, "covered", "kri-577-reliability-gates,kri-598-voiceover-planner"),
             ),
             (
                 "src/apps/api/tests/fixtures/kri623_tigre_m2_montage_turn.json",
@@ -922,7 +926,7 @@ class GitDiffTests(unittest.TestCase):
         self.write("src/apps/ios/Kria/Core/Services.swift", "changed")
         self.assertEqual(
             ci.journey_details("pull_request", self.base, self.commit()),
-            (True, "covered", "kri-524-creation,kri-557-thinking,kri-648-phone-text"),
+            (True, "covered", "kri-524-creation,kri-557-thinking,kri-648-phone-text,kri-551-consented-retakes"),
         )
 
     def test_journey_native_runner_is_linux_for_python_only_and_mac_for_mixed(self):

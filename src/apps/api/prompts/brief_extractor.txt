@@ -11,8 +11,8 @@ $user_message
 
 $brief_section
 
-Return one JSON object with `brief_updates`, `request_scope`, and (only for a
-clarification) `clarification`. `request_scope` is exactly one of: `edit` for a
+Return one JSON object with `brief_updates`, `delegates_all_choices`, `request_scope`,
+and (only for a clarification) `clarification`. `request_scope` is exactly one of: `edit` for a
 revision to the rendered video, `rebuild` for a request to remake the whole video,
 or `clarify` when the latest instruction cannot distinguish those scopes. For
 `clarify`, give one concise question in `clarification`; otherwise omit it.

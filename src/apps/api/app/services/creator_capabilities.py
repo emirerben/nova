@@ -41,7 +41,9 @@ from app.agents._schemas.creator_policy import (
     MontageCadenceUnavailableError,
     UserSongUnavailableError,
     effective_render_program,
+    native_voiceover_all_scope,
     normalize_creator_strategy_media,
+    own_video_ids,
     repair_creator_strategy_shape,
     repair_creator_user_song,
     repair_creator_voice_mode,
@@ -767,6 +769,12 @@ def resolve_creator_manifest(
     )
     if is_phone_voiceover and phone_voiceover_reaction_beats_supported():
         capabilities[CAPABILITY_REACTION_BEATS] = _available()
+        # N2: the existing full-screen rollout switch and the verified
+        # Voiceover editor-lane capability are both required before a
+        # word-timed Voiceover visual may take over the frame.  Talking keeps
+        # its established capability branch above unchanged.
+        if getattr(settings, "phone_subtitled_fullscreen_overlays_enabled", False):
+            capabilities[CAPABILITY_MEDIA_OVERLAY_FULLSCREEN] = _available()
     elif is_phone_subtitled:
         if (
             capabilities.get("media_overlays", _unavailable("x", "x")).available
@@ -974,8 +982,30 @@ def _repair_creator_reaction_beats(
     video_cards = manifest.capabilities.get(CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS)
     videos_allowed = video_cards is not None and video_cards.available
     beats = []
+    native_voiceover = bool(
+        manifest.has_voiceover
+        and strategy.render_program != "guided"
+        and strategy.edit_format in NARRATED_EDIT_FORMATS
+    )
+    fullscreen_cap = manifest.capabilities.get(CAPABILITY_MEDIA_OVERLAY_FULLSCREEN)
+    fullscreen_available = fullscreen_cap is not None and fullscreen_cap.available
+    # `media_scope="all"` on a native voiceover expands to every own video
+    # during normalisation below. Resolve a following clip against that same
+    # effective selection now, because reaction-beat repair intentionally runs
+    # before generic media normalisation.
+    selected_ids = (
+        set(own_video_ids(manifest))
+        if native_voiceover_all_scope(manifest, strategy)
+        else set(strategy.selected_media_ids)
+    )
+    original_videos = [
+        media
+        for media in manifest.media
+        if media.kind == "video" and not media.media_id.startswith("asset-")
+    ]
     for beat in strategy.reaction_beats or []:
         visual_id = beat.visual_id
+        resolved_visual = None
         if visual_id is not None:
             resolved_media = resolve_creator_image_media_ref(manifest, visual_id)
             if resolved_media is None:
@@ -995,9 +1025,52 @@ def _repair_creator_reaction_beats(
                     )
                     continue
             visual_id = resolved_media.media_id
-        beats.append(
-            beat.model_copy(update={"visual_id": visual_id, "sound": _resolve_sound(beat.sound)})
-        )
+            resolved_visual = resolved_media
+        updates: dict[str, object] = {
+            "visual_id": visual_id,
+            "sound": _resolve_sound(beat.sound),
+        }
+        following_clip_id = beat.following_clip_id
+        if following_clip_id is not None:
+            # A photo-then-original-video sequence is atomic.  Keeping just
+            # the photo would let approval claim a different request was met.
+            if not (
+                beat.display_mode == "fullscreen"
+                and native_voiceover
+                and fullscreen_available
+                and resolved_visual is not None
+                and resolved_visual.kind == "image"
+                and beat.occurrence == "first"
+            ):
+                notices.append(
+                    f'The photo-then-video sequence for "{beat.trigger}" needs a first, '
+                    "full-screen photo on this voiceover edit; left that sequence out."
+                )
+                continue
+            # Resolve labels as well as ids, then persist only the manifest's
+            # canonical original-media id for the renderer binding.
+            following = _match_owned_media_ref(original_videos, following_clip_id)
+            if following is None:
+                notices.append(
+                    "Couldn't find the selected original video to show after "
+                    f'"{beat.trigger}"; left that sequence out.'
+                )
+                continue
+            if following.media_id not in selected_ids:
+                notices.append(
+                    f'The video after "{beat.trigger}" is not selected for this edit; '
+                    "left that sequence out."
+                )
+                continue
+            updates["following_clip_id"] = following.media_id
+        elif beat.display_mode == "fullscreen":
+            if not (native_voiceover and fullscreen_available and visual_id is not None):
+                notices.append(
+                    f'Full-screen visual for "{beat.trigger}" is not available for this edit; '
+                    "left it out."
+                )
+                continue
+        beats.append(beat.model_copy(update=updates))
     resolved_beats = beats or None
 
     closing = strategy.closing_media

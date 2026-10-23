@@ -14,7 +14,7 @@ The independent expected behavior is recorded in
 
 ## Implementation boundary
 
-Main Creator v73 (retaining main's KRI-851 v70 title-with-beats fix), Brief Extractor v19 and
+Main Creator v74 (retaining main's KRI-851 v70 title-with-beats fix), Brief Extractor v20 and
 Edit Copilot v86 teach this distinction.
 No renderer, client build, schema, database migration, or feature flag changes.
 The subtitle requirement gets its own focused description, separate from source
@@ -73,3 +73,12 @@ content; it does not include the unmerged delegation implementation. Main v70
 Talking title-with-beats wording and the full shared brief instruction union remain
 intact. Main after #1747/#1752 is integrated additively; all previous source commits
 are retained. Fresh exact-head CI remains required before merge.
+
+## Combined delegation integration
+
+In dependent PR #1771, Main Creator v74 / Brief Extractor v20 combine the reviewed
+subtitle instruction bytes with the complete KRI-814 declaration and earlier-message
+instructions. An exact section-union comparison confirms neither instruction was
+dropped; the main and copilot prompt templates match subtitle source1c1baa7e3.
+Brief-off montage hashes equal subtitle v73; brief-on hashes cover the combined text.
+The original subtitle PR remains v73/v19. Land #1755 before this dependent PR.

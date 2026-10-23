@@ -135,10 +135,10 @@ def normalize_retake_spans(raw_entries: Sequence[Any], n_words: int) -> list[Ret
     for entry in raw_entries:
         if not isinstance(entry, dict):
             continue
-        try:
-            start = int(entry.get("start_word"))  # type: ignore[arg-type]
-            end = int(entry.get("end_word"))  # type: ignore[arg-type]
-        except (TypeError, ValueError):
+        start, end = entry.get("start_word"), entry.get("end_word")
+        # Indices identify spoken words: coercing true, "2", or 1.9 can turn a
+        # malformed model response into a real speech deletion.
+        if type(start) is not int or type(end) is not int:
             continue
         if not (0 <= start <= n_words - 1 and 0 <= end <= n_words - 1):
             continue

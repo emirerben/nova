@@ -28,6 +28,7 @@ import pytest
 
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_binding import BriefBinding
+from app.kria.brief_checks import check_requirement, plan_facts_from_phone_variant
 from app.kria.reply_language import bind_reply_language, release_reply_language
 from app.tasks import kria_runtime
 
@@ -75,6 +76,11 @@ _N3_REMOVED = [
 
 _RESTART_LIMIT_EN = "a sentence you restarted stays in"
 _RESTART_LIMIT_TR = "baştan başladığın bir cümle videoda kalır"
+# KRI-846 + KRI-551: a named line is never sent to the editor, and a generic cut record (even one
+# with a retake) cannot prove it was removed, so it "may still be" in the video.
+_NAMED_CUT_LIMIT_EN = (
+    "I can't cut out one exact line yet or confirm it's gone, so it may still be in your video"
+)
 
 
 def _n3_variant(**overrides) -> dict:
@@ -143,7 +149,7 @@ def test_the_n3_restart_is_still_in_the_video_and_the_reply_says_so():
     assert text.startswith(DEFAULT)
     assert "Speech cleanup cut 14 long pauses and 1 filler sound (14.3 s)." in text
     assert _RESTART_LIMIT_EN in text
-    assert "trim it in the editor" in text
+    assert "editor" not in text  # KRI-846: no editor action cuts a spoken line
     # Never claims the restart (or any retake) was handled.
     assert "retakes were" not in text
     assert "removed the restart" not in text.lower()
@@ -158,17 +164,53 @@ def test_the_n3_reply_speaks_turkish_in_a_turkish_chat():
 
     assert "Konuşma temizliği şunları kesti: 14 uzun duraklama, 1 dolgu sesi (14,3 sn)." in text
     assert _RESTART_LIMIT_TR in text
-    assert "editörde kırp" in text
+    assert "editör" not in text  # KRI-846
     assert _RESTART_LIMIT_EN not in text
 
 
 def test_a_bound_brief_that_already_reports_the_restart_limit_is_not_told_twice():
     text = _review(_n3_variant(), brief=_marathon_brief())
 
-    assert text.count("isn't cut automatically yet") == 1
+    assert text.count("can't cut out one exact line yet") == 1
     assert _RESTART_LIMIT_EN not in text
     # The counts are new information, so they stay.
     assert "Speech cleanup cut 14 long pauses and 1 filler sound" in text
+
+
+def test_a_bound_n3_brief_with_a_recorded_retake_reports_it_but_keeps_the_line_partial():
+    variant = _n3_variant()
+    variant["silence_cut"]["removed"].append({"start_s": 14.06, "end_s": 20.15, "reason": "retake"})
+
+    receipt = check_requirement(
+        _marathon_brief().requirements[0], plan_facts_from_phone_variant(variant)
+    )
+    text = _review(variant, brief=_marathon_brief())
+
+    assert receipt.status == "partial"
+    assert _NAMED_CUT_LIMIT_EN in (receipt.reason or "")
+    assert "1 restarted sentence" in text
+    assert "isn't cut automatically yet" not in text
+    assert _RESTART_LIMIT_EN not in text
+    # A retake count does not prove this brief's kilometer-thirty line was the one removed.
+    assert _NAMED_CUT_LIMIT_EN in text
+    assert "Speech cleanup cut 14 long pauses, 1 filler sound and 1 restarted sentence" in text
+
+
+def test_an_unrelated_recorded_retake_never_marks_a_requested_line_done():
+    req = BriefRequirement(
+        id="r-unrelated",
+        kind="audio",
+        scope="global",
+        description="cut the part where I say 'I almost didn't start'",
+        facts={},
+    )
+    variant = _n3_variant()
+    variant["silence_cut"]["removed"].append({"start_s": 14.06, "end_s": 20.15, "reason": "retake"})
+
+    receipt = check_requirement(req, plan_facts_from_phone_variant(variant))
+
+    assert receipt.status == "partial"
+    assert receipt.reason == (f"Speech cleanup cut the long pauses; {_NAMED_CUT_LIMIT_EN}")
 
 
 def test_counts_come_only_from_the_cut_record():

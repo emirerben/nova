@@ -1,0 +1,121 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-10-22-v69",
+  "input": {
+    "user_message": "When I say \"the loft\", show the loft bed. When I say \"bathtub\", show the bathtub photo. When I say \"the river\", show the river photo first, then the river clip. End on Deniz at his laptop. Title: \"3 things we loved\". Clean captions.",
+    "creator_request": "",
+    "creator_context": "",
+    "creator_direction": "",
+    "item_context": "{'current_edit_format': 'narrated_planned', 'current_audio_mode': 'voiceover', 'has_recorded_voiceover': True}",
+    "media_context": [
+      {
+        "media_id": "clip-loft",
+        "kind": "video",
+        "duration_s": 8,
+        "creator_note": "loft bed"
+      },
+      {
+        "media_id": "clip-river",
+        "kind": "video",
+        "duration_s": 6,
+        "creator_note": "river clip"
+      },
+      {
+        "media_id": "clip-deniz",
+        "kind": "video",
+        "duration_s": 6,
+        "creator_note": "Deniz at laptop"
+      },
+      {
+        "media_id": "asset-bathtub-photo",
+        "kind": "image",
+        "duration_s": null,
+        "filename": "bathtub.jpg"
+      },
+      {
+        "media_id": "asset-river-photo",
+        "kind": "image",
+        "duration_s": null,
+        "filename": "river.jpg"
+      }
+    ],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-n2-eval",
+      "edit_format": "narrated_planned",
+      "render_program": "native",
+      "has_voiceover": true,
+      "narration": {
+        "gcs_path": "redacted/voice.m4a",
+        "generation": "test-generation",
+        "duration_s": 19.634
+      },
+      "media": [
+        {
+          "media_id": "clip-loft",
+          "kind": "video",
+          "duration_s": 8,
+          "label": "Loft bed"
+        },
+        {
+          "media_id": "clip-river",
+          "kind": "video",
+          "label": "River clip",
+          "duration_s": 6
+        },
+        {
+          "media_id": "clip-deniz",
+          "kind": "video",
+          "label": "Deniz at laptop",
+          "duration_s": 6
+        },
+        {
+          "media_id": "asset-bathtub-photo",
+          "kind": "image",
+          "label": "Bathtub photo",
+          "duration_s": null
+        },
+        {
+          "media_id": "asset-river-photo",
+          "kind": "image",
+          "label": "River photo",
+          "duration_s": null
+        }
+      ],
+      "catalog": [],
+      "capabilities": {
+        "reaction_beats": {
+          "available": true
+        },
+        "media_overlays:fullscreen": {
+          "available": true
+        },
+        "clip_intents": {
+          "available": true
+        }
+      },
+      "limits": {
+        "max_commands": 4,
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_output_duration_s": 120
+      },
+      "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "creative_copy_state": [],
+    "brief_enabled": false
+  },
+  "raw_text": "{\"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"native\", \"edit_format\": \"narrated_planned\", \"audio_strategy\": \"voiceover\", \"caption_style\": \"clean\", \"opening_title\": \"3 things we loved\", \"target_duration_s\": 19.634, \"render_program\": \"native\", \"selected_media_ids\": [\"clip-loft\", \"clip-river\", \"clip-deniz\"], \"reaction_beats\": [{\"beat_id\": \"bathtub\", \"trigger\": \"bathtub\", \"visual_id\": \"asset-bathtub-photo\", \"visual_role\": \"photo\", \"display_mode\": \"fullscreen\"}, {\"beat_id\": \"river\", \"trigger\": \"the river\", \"occurrence\": \"first\", \"visual_id\": \"asset-river-photo\", \"visual_role\": \"photo\", \"display_mode\": \"fullscreen\", \"following_clip_id\": \"clip-river\"}], \"clip_intents\": [{\"intent_id\": \"loft-cue\", \"op\": \"include\", \"attribute\": \"the loft bed when I say the loft\", \"creator_text\": null, \"caption_attribute\": null, \"position\": null}, {\"intent_id\": \"river-cue\", \"op\": \"include\", \"attribute\": \"the river clip when I say the river\", \"creator_text\": null, \"caption_attribute\": null, \"position\": null}, {\"intent_id\": \"deniz-last\", \"op\": \"order\", \"attribute\": \"Deniz at the laptop\", \"creator_text\": null, \"caption_attribute\": null, \"position\": \"last\"}], \"rationale\": \"Use full-screen photo beats at the named voiceover words, then return to the river clip.\"}, \"summary\": \"I’ll use the title, clean subtitles, full-screen photos at the named moments, and end on Deniz.\"}}",
+  "output": {},
+  "meta": {
+    "source": "hand_authored_replay_not_live",
+    "n2_fullscreen": {
+      "bathtub_photo": "asset-bathtub-photo",
+      "river_photo": "asset-river-photo",
+      "river_clip": "clip-river",
+      "title": "3 things we loved",
+      "loft_clip": "clip-loft"
+    }
+  }
+}

@@ -65,8 +65,8 @@ def test_the_sourdough_cut_request_is_an_honest_partly_that_never_blocks_the_dra
     assert receipt.status == "partial"
     assert receipt.reason == (
         "Choose Clean up speech when you approve and the long pauses are cut; "
-        "a retake or a specific line isn't cut automatically yet, so trim that in the "
-        "editor; I can't confirm this draft's length yet."
+        "I can't cut out one exact line yet or confirm it's gone, so it may still be in "
+        "your video; I can't confirm this draft's length yet."
     )
     assert is_judged(req, receipt)
     [bound] = build_receipts([req], _talking(), include_unchecked=True)
@@ -169,15 +169,15 @@ def test_a_pause_cut_ask_says_so_when_cleanup_is_not_offered():
     assert is_format_limit(receipt.reason)
 
 
-def test_a_named_line_is_editor_work_even_with_cleanup_on():
+def test_a_named_line_stays_in_even_with_cleanup_on():
     req = _req("timing", "cut the part where I say 'let me start that one again'")
 
     receipt = check_requirement(req, _talking(speech_cleanup_enabled=True))
 
     assert receipt.status == "partial"
     assert receipt.reason == (
-        "Speech cleanup cuts the long pauses; a retake or a specific line isn't cut "
-        "automatically yet, so trim that in the editor"
+        "Speech cleanup cuts the long pauses; I can't cut out one exact line yet or confirm "
+        "it's gone, so it may still be in your video"
     )
     assert is_format_limit(receipt.reason)
 
@@ -371,7 +371,10 @@ def test_cleanup_and_a_named_cut_keep_the_named_cut_receipt_when_length_matches(
     receipt = check_requirement(req, _talking(speech_cleanup_enabled=True, duration_s=24))
 
     assert receipt.status == "partial"
-    assert "trim that in the editor" in (receipt.reason or "")
+    assert (
+        "I can't cut out one exact line yet or confirm it's gone, so it may still be in your video"
+        in (receipt.reason or "")
+    )
     assert "can't promise" not in (receipt.reason or "")
 
 

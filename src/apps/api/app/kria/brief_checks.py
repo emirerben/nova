@@ -110,6 +110,11 @@ class BeatFact:
     # Seconds into the render where the pop-in shows (a rendered variant's receipt);
     # None for a draft, which has not been laid out yet.
     at_s: float | None = None
+    display_mode: str = "pip"
+    following_clip_id: str | None = None
+    # None is an approved request, not execution evidence. Only the compiled
+    # sequence receipt can prove that the original video actually follows.
+    sequence_realized: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -502,7 +507,14 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
     return {
         "reaction_beats_available": available,
         "reaction_beats": tuple(
-            BeatFact(trigger=b.trigger, visual_id=b.visual_id, sound=b.sound) for b in kept
+            BeatFact(
+                trigger=b.trigger,
+                visual_id=b.visual_id,
+                sound=b.sound,
+                display_mode=b.display_mode,
+                following_clip_id=b.following_clip_id,
+            )
+            for b in kept
         ),
         "dropped_beat_triggers": tuple(
             dict.fromkeys(
@@ -1403,6 +1415,16 @@ def _phone_receipt_facts(receipt: object, *, timed: bool) -> dict[str, Any]:
                 visual_id=str(entry.get("visual_label") or "") or None,
                 sound=str(entry.get("sound_label") or "") or None,
                 at_s=at_s,
+                display_mode=str(entry.get("display_mode") or "pip"),
+                following_clip_id=entry.get("following_clip_id"),
+                sequence_realized=(
+                    entry.get("sequence_realized") is True
+                    and entry.get("display_mode") == "fullscreen"
+                    and _finite_number(entry.get("following_at_s")) is not None
+                    and entry.get("following_at_s") == entry.get("end_s")
+                    if entry.get("following_clip_id")
+                    else None
+                ),
             )
         )
     unheard: list[str] = []
@@ -2362,7 +2384,7 @@ _CLEANUP_VERB_RE = re.compile(
     r"|\bkes|\bçikar|\bsil\b|\bolmasin|\bolmadan"
 )
 # A specific stretch of speech named for removal ("the part where I say ...", a retake,
-# a quoted line): speech cleanup cuts pauses and non-word sounds, never spoken words.
+# a quoted line): a generic cleanup record cannot confirm that this exact spoken line was removed.
 # KRI-792: a slip, stumble, mistake or half-finished question the creator says to cut names
 # spoken words too. Only right after the cut verb (Turkish: right before it), so "captions
 # with no spelling mistakes" stays a captions ask. The fallback for a brief without
@@ -3027,8 +3049,15 @@ _CLEANUP_IF_OFFERED = (
     "If Clean up speech is offered when you approve, choose it to cut the long pauses"
 )
 _CLEANUP_UNAVAILABLE = "Speech cleanup isn't available for this project yet, so the pauses stay"
-_NAMED_CUTS_NEED_EDITOR = (
-    "a retake or a specific line isn't cut automatically yet, so trim that in the editor"
+# KRI-846: said as a plain limit, never as editor work: no editor action cuts a spoken line
+# out (talking-source slots can't be trimmed or split, the server refuses any change to their
+# windows with 409 TIMELINE_STALE, and a Narrated editor trims pictures, not the voice).
+# KRI-551: a consented retake cleanup may have removed the line, and a generic cleanup record
+# (even one with a retake) cannot prove it, so it says "may still be", never "stays". One
+# static string for every speech format: `_loc` translates exact keys only and the
+# review-note dedupe compares text.
+_NAMED_CUTS_STAY = (
+    "I can't cut out one exact line yet or confirm it's gone, so it may still be in your video"
 )
 _CAPTIONS_WORD_BY_WORD = "words light up as you say them"
 # KRI-541: what speech cleanup did on a finished render.
@@ -3150,8 +3179,9 @@ _REASON_TR: dict[str, str] = {
     _CLEANUP_UNAVAILABLE: (
         "Konuşma temizliği bu proje için henüz yok, o yüzden duraklamalar kalıyor"
     ),
-    _NAMED_CUTS_NEED_EDITOR: (
-        "tekrar çekim ya da belirli bir cümle henüz otomatik kesilmiyor, onu editörde kırp"
+    _NAMED_CUTS_STAY: (
+        "belirli bir cümleyi henüz tam olarak kesemiyorum ve çıkarıldığını doğrulayamıyorum, "
+        "o yüzden videoda kalmış olabilir"
     ),
     _CAPTIONS_WORD_BY_WORD: "kelimeler sen söylerken yanıyor",
     _CLEANUP_DONE: "Konuşma temizliği uzun duraklamaları kesti",
@@ -3595,6 +3625,13 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
             problems.extend(_capped_beat_problems(req, facts, names))
             text = _req_text(req)
             if placements:
+                if any(b.following_clip_id and b.sequence_realized is False for b in placements):
+                    problems.append(
+                        say(
+                            en="The full-screen photo followed by its video has not been verified",
+                            tr="Tam ekran fotoğrafın ardından videonun geldiği doğrulanmadı",
+                        )
+                    )
                 if _SOUND_RE.search(text) and not any(b.sound for b in placements):
                     problems.append(
                         say(
@@ -3766,8 +3803,10 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     """Pauses, retakes and filler the creator asked to cut, against the draft.
 
     Speech cleanup (the preflight check the creator confirms at approval) cuts long
-    pauses and non-word sounds out of a Talking or voiceover edit; it never cuts a
-    spoken line, so a retake or "the bit where I say X" is reported as editor work.
+    pauses and non-word sounds out of a Talking or voiceover edit. A retake count or
+    other generic cleanup record cannot confirm that a requested spoken line was removed,
+    so a retake or "the bit where I say X" stays partial, with the limit stated plainly
+    (KRI-846: never as editor work, since no editor action cuts a spoken line).
     A length the same sentence names ("keep it under 45 s") follows the cut take.
     Every honest outcome here is a limit of the format, not a simplification.
     """
@@ -3789,7 +3828,7 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         lead, status = _CLEANUP_IF_OFFERED, "partial"
     notes = [_loc(lead)]
     if _wants_named_cuts(req):
-        notes.append(_loc(_NAMED_CUTS_NEED_EDITOR))
+        notes.append(_loc(_NAMED_CUTS_STAY))
         status = "partial"
     cleanup = _receipt(req, status, "; ".join(notes) if status == "partial" else None)
     return _merge_cleanup_timing(req, facts, cleanup)
@@ -3808,8 +3847,8 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
         return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
     notes = [_loc(lead)]
     if _wants_named_cuts(req):
-        # The cut removes pauses and filler sounds; a named line or retake stays.
-        notes.append(_loc(_NAMED_CUTS_NEED_EDITOR))
+        # The generic cut record cannot prove that this requested line was the removed span.
+        notes.append(_loc(_NAMED_CUTS_STAY))
         status = "partial"
     if status == "met" and outcome == "applied":
         return _receipt(req, "met", None)
@@ -3854,10 +3893,11 @@ def speech_cleanup_review_note(
     Read off the variant's own cut record, never off a brief, so the reply is honest even when
     the render's brief binding was lost (prod thread ddc6e71b: the creator asked to cut "the part
     where I restart the kilometer thirty sentence", the cleanup cut 14 silences and a filler,
-    the restart stayed, and no receipt said so). Consented cleanup cuts long pauses and filler
-    sounds only; it never detects a retake, so the limit is stated unless a retake cut really
-    could have run (``retake_cut_possible``) or the record shows one. ``text`` is the reply built
-    so far: a requirement receipt that already reports the limit is not repeated.
+    the restart stayed, and no receipt said so). A generic cleanup count cannot prove whether a
+    requested spoken line was removed, so that remains a partial receipt even when it records a
+    retake. The unbound-review limit is stated unless a retake cut really could have run
+    (``retake_cut_possible``) or the record shows one. ``text`` is the reply built so far: a
+    requirement receipt that already reports the limit is not repeated.
     ``None`` for a variant that is not a speech edit or whose cleanup did not run.
     """
     if variant.get("resolved_archetype") not in _RENDERED_EDIT_FORMATS:
@@ -3900,16 +3940,13 @@ def speech_cleanup_review_note(
                 ),
             )
         ]
-    if not retakes and not retake_cut_possible and _loc(_NAMED_CUTS_NEED_EDITOR) not in text:
+    if not retakes and not retake_cut_possible and _loc(_NAMED_CUTS_STAY) not in text:
         sentences.append(
             say(
-                en=(
-                    "It only cuts pauses and filler sounds, so a sentence you restarted stays "
-                    "in; trim it in the editor."
-                ),
+                en="It only cuts pauses and filler sounds, so a sentence you restarted stays in.",
                 tr=(
                     "Yalnızca duraklamaları ve dolgu seslerini keser; baştan başladığın bir "
-                    "cümle videoda kalır, onu editörde kırp."
+                    "cümle videoda kalır."
                 ),
             )
         )

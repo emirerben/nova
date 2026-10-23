@@ -177,6 +177,14 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         try await assertCase("approved_hook")
     }
 
+    /// Authored replay of the local N2 cabin kit. It proves native recipe and
+    /// renderer parity for a photo-to-river-video sequence; it is not a model
+    /// understanding evaluation.
+    func testN2FullscreenCabinReplay() async throws {
+        executionTimeAllowance = 600
+        try await assertCase("n2_fullscreen")
+    }
+
     private func assertCase(_ caseID: String, expectedCreationProvenance: String = "authored_model_transport_fixture") async throws {
         let input = try inputDirectory()
         let meta = try XCTUnwrap(

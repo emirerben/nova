@@ -9075,6 +9075,7 @@ def _phone_narrated_reaction_lanes(
             words=words,
             duration_s=duration_s,
             clip_path=None,
+            allow_fullscreen=bool(settings.phone_subtitled_fullscreen_overlays_enabled),
         )
     except OperationalError:
         raise  # transient DB -> Celery autoretry, never a lane drop
@@ -9873,6 +9874,36 @@ def _run_phone_narrated_job(
                         reason="compile_dropped",
                     )
                     lanes = dropped if dropped.overlays or dropped.sound_effects else None
+            # An explicit photo-then-original sequence is atomic. Only the final
+            # surviving full-screen photo may restart its aligned video. A lost
+            # photo or unsafe timing requires recovery rather than a false success.
+            from app.pipeline.narrated_photo_sequence import (  # noqa: PLC0415
+                PhotoSequenceUnavailable,
+                compile_narrated_photo_sequences,
+            )
+
+            try:
+                recipe, photo_sequences = compile_narrated_photo_sequences(
+                    recipe, beats=beats, bindings=bindings
+                )
+            except PhotoSequenceUnavailable as exc:
+                record_pipeline_event(
+                    "narrated",
+                    "photo_sequence_unavailable",
+                    {"trigger": exc.trigger, "reason": exc.reason},
+                )
+                if not _save_request_recovery(
+                    job_id,
+                    snapshot,
+                    ownership_epoch=ownership_epoch,
+                    message=str(exc),
+                ):
+                    return None
+                raise
+            if beat_receipt is not None and photo_sequences:
+                beat_receipt = copy.deepcopy(beat_receipt)
+                for placed in beat_receipt.get("placed") or []:
+                    placed.update(photo_sequences.get(placed.get("beat_id"), {}))
             if lanes is not None:
                 referenced = {card.media_id for card in lanes.overlays}
                 visuals = tuple(visual for visual in visuals if visual.media_id in referenced)
@@ -25082,6 +25113,16 @@ def _narrated_creator_clip_labels(
             media_id = assignment.get("media_id") if isinstance(assignment, Mapping) else None
             if media_id and attribute not in labels_by_media.setdefault(str(media_id), []):
                 labels_by_media[str(media_id)].append(attribute)
+    # The typed photo -> original relation gives the alignment agent the same
+    # exact spoken cue even if no redundant include intent survived planning.
+    for beat in strategy.get("reaction_beats") or []:
+        if not isinstance(beat, Mapping) or beat.get("display_mode") != "fullscreen":
+            continue
+        following = beat.get("following_clip_id")
+        trigger = " ".join(str(beat.get("trigger") or "").split())
+        if following and trigger:
+            cue_label = f'Show at the spoken cue "{trigger}"; a photo covers the opening'
+            labels_by_media.setdefault(str(following), []).append(cue_label)
     labels: dict[str, str] = {}
     clip_by_media: dict[str, str] = {}
     for clip_id, gcs_path in clip_id_to_gcs.items():

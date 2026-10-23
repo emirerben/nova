@@ -40,6 +40,7 @@ SpeechCleanupConflictCode = Literal[
     "speech_cleanup_failed",
     "speech_cleanup_choice_not_allowed",
     "speech_cleanup_choice_required",
+    "speech_cleanup_retakes_consent_required",
 ]
 
 # Same wording surfaced by v1's card projection -- a v2 client has no
@@ -64,6 +65,10 @@ _SPEECH_CLEANUP_CONFLICT_COPY_EN: dict[str, str] = {
     "speech_cleanup_choice_required": (
         "Choose how to handle the pauses and filler words before I render."
     ),
+    "speech_cleanup_retakes_consent_required": (
+        "This speech check also found restarted sentences. Update the app to review that cleanup "
+        "choice, or keep the original speech."
+    ),
 }
 
 # The same messages for a Turkish chat (KRI-520). Clients branch on the CODE, never on this
@@ -84,6 +89,10 @@ _SPEECH_CLEANUP_CONFLICT_COPY_TR: dict[str, str] = {
     ),
     "speech_cleanup_choice_required": (
         "Videoyu oluşturmadan önce duraklamaların ve dolgu sözcüklerinin nasıl ele alınacağını seç."
+    ),
+    "speech_cleanup_retakes_consent_required": (
+        "Bu konuşma kontrolü yeniden başlatılan cümleler de buldu. Bu temizleme seçimini "
+        "incelemek için uygulamayı güncelle ya da özgün konuşmayı koru."
     ),
 }
 
@@ -136,12 +145,53 @@ class SpeechCleanupDecisionConflict:
 SpeechCleanupDecisionResult = SpeechCleanupDecisionOk | SpeechCleanupDecisionConflict
 
 
+def retakes_consent_required(
+    current_cleanup: SpeechCleanupAnalysis | None,
+    *,
+    source_policy_fingerprint: str | None,
+    submitted_analysis_id: uuid.UUID | None,
+    submitted_choice: SpeechCleanupChoice | None,
+    cleanup_retakes_aware: bool = False,
+    reused_recorded_decision: bool = False,
+) -> bool:
+    """Whether a new clean choice needs updated restarted-sentence disclosure.
+
+    The caller supplies the current source-policy identity. This makes a
+    previously stored clean choice reusable only for the same current analysis,
+    never for a source or detector-policy change. It deliberately answers only
+    the retake-consent question; callers with different pending/failed-analysis
+    contracts keep their existing behavior.
+    """
+
+    if (
+        current_cleanup is None
+        or source_policy_fingerprint is None
+        or current_cleanup.source_policy_fingerprint != source_policy_fingerprint
+        or submitted_analysis_id != current_cleanup.id
+        or submitted_choice != "clean"
+        or current_cleanup.status != "ready"
+        or cleanup_retakes_aware
+        or reused_recorded_decision
+        or current_cleanup.decision == "clean"
+    ):
+        return False
+    category_counts = (
+        current_cleanup.category_counts if isinstance(current_cleanup.category_counts, dict) else {}
+    )
+    try:
+        return int(category_counts.get("retakes") or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 async def evaluate_enforce_mode_decision(
     db: AsyncSession,
     item: PlanItem,
     *,
     cleanup_analysis_id: uuid.UUID | None,
     cleanup_choice: SpeechCleanupChoice | None,
+    cleanup_retakes_aware: bool = False,
+    reused_recorded_decision: bool = False,
     resolution: ActiveNarrationResolution | None = None,
 ) -> SpeechCleanupDecisionResult:
     """Validate a submitted speech-cleanup decision under enforce mode.
@@ -213,6 +263,20 @@ async def evaluate_enforce_mode_decision(
             return SpeechCleanupDecisionConflict("speech_cleanup_choice_not_allowed")
         if current_cleanup.status == "ready" and cleanup_choice is None:
             return SpeechCleanupDecisionConflict("speech_cleanup_choice_required")
+        # A pre-retakes client promised that a restarted sentence stays. Only a
+        # newly submitted clean decision needs the updated disclosure; a prior
+        # decision on this exact current analysis is already recorded consent.
+        if retakes_consent_required(
+            current_cleanup,
+            source_policy_fingerprint=(
+                resolved.source.source_policy_fingerprint if resolved.source is not None else None
+            ),
+            submitted_analysis_id=cleanup_analysis_id,
+            submitted_choice=cleanup_choice,
+            cleanup_retakes_aware=cleanup_retakes_aware,
+            reused_recorded_decision=reused_recorded_decision,
+        ):
+            return SpeechCleanupDecisionConflict("speech_cleanup_retakes_consent_required")
     return SpeechCleanupDecisionOk(analysis_id=cleanup_analysis_id, choice=cleanup_choice)
 
 

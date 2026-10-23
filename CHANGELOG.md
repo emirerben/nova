@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.68.0] - 2026-10-23
+
+### Changed
+- fix(kria): a named line cut says it stays in, never "trim that in the editor" (KRI-846) (#1765) <!-- release-pr: 1765 -->
+
+## [0.81.67.0] - 2026-10-23
+
+### Changed
+- fix(ios): narrated source preview plays slow-to-fill steps at the export rate (KRI-813) (#1776) <!-- release-pr: 1776 -->
+
+## [0.81.66.0] - 2026-10-23
+
+### Fixed
+- fix(kria): render voiceover photo-to-video requests full screen (#1756) <!-- release-pr: 1756 -->
+
+## [0.81.65.0] - 2026-10-23
+
+### Fixed
+- fix(speech): require explicit consent for preflight retake removal (KRI-551) (#1753) <!-- release-pr: 1753 -->
+
+## [0.81.64.0] - 2026-10-23
+
+### Changed
+- fix(kria): natural delegating requests reach approval and recover in the same chat (KRI-814) (#1771) <!-- release-pr: 1771 -->
+
 ## [0.81.63.0] - 2026-10-23
 
 ### Fixed

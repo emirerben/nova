@@ -372,6 +372,9 @@ def placed_media(strategy: CreativeStrategy) -> set[str]:
     """Media the strategy itself places or plays: never removed by an exclusion."""
 
     placed = {beat.visual_id for beat in strategy.reaction_beats or [] if beat.visual_id}
+    placed.update(
+        beat.following_clip_id for beat in strategy.reaction_beats or [] if beat.following_clip_id
+    )
     if strategy.closing_media is not None:
         placed.add(strategy.closing_media.visual_id)
         if strategy.closing_media.badge_visual_id:
