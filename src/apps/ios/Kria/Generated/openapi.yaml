@@ -1064,7 +1064,7 @@
           },
           "offset": {
             "default": 0,
-            "maximum": 50.0,
+            "maximum": 500.0,
             "minimum": 0.0,
             "title": "Offset",
             "type": "integer"
@@ -1340,7 +1340,7 @@
             "items": {
               "$ref": "#/components/schemas/CollectionMember"
             },
-            "maxItems": 50,
+            "maxItems": 500,
             "title": "Members",
             "type": "array"
           },
@@ -10423,6 +10423,11 @@
       "StoryGenerationBody": {
         "additionalProperties": false,
         "properties": {
+          "allow_partial_analysis": {
+            "default": false,
+            "title": "Allow Partial Analysis",
+            "type": "boolean"
+          },
           "cache_only": {
             "default": false,
             "title": "Cache Only",

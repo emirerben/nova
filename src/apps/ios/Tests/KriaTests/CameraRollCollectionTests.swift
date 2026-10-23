@@ -14,6 +14,34 @@ final class CameraRollCollectionTests: XCTestCase {
         let saved = String(decoding: try JSONEncoder().encode(resumed), as: UTF8.self)
         XCTAssertFalse(saved.contains("wantsAnalysis"), "Old unchecked flags must not exclude added content")
     }
+    func testFiveHundredItemsSurviveResume() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let originals = MediaLibraryOriginals(owner: "capacity-fixture", base: root)
+        var collection = try CameraRollCollection(name: "Full trip", identifiers: (0..<500).map(String.init))
+        for index in 0..<500 {
+            let asset = SavedMediaAsset(id: UUID(), kind: "video", status: "ready",
+                originalDeclaredSHA256: String(repeating: "a", count: 64), originalByteCount: 100_000_000,
+                originalAvailability: "device_only",
+                metadata: ["filename": .string("IMG_\(index).MOV"), "duration_s": .number(10)],
+                sources: [SavedMediaSource(id: UUID(), role: "analysis_proxy", status: "available",
+                    byteCount: 1_000_000, contentType: "video/mp4", uploadedSHA256: String(repeating: "b", count: 64), generation: "42")],
+                usage: [], storageWarnings: [])
+            collection.bind(asset, to: String(index))
+            collection.record([metadata(String(index), seconds: Double(index))], sharesCaptureContext: true)
+        }
+        collection.serverRevision = 7
+        collection.setGroup("Last stop", for: "499")
+        try collection.save(in: originals)
+        let resumed = try CameraRollCollection.load(id: collection.id, in: originals, sharesCaptureContext: true)
+        XCTAssertEqual(resumed.entries.count, 500)
+        XCTAssertEqual(resumed.entries.last?.id, "499")
+        XCTAssertEqual(resumed.entries.compactMap(\.savedAsset).count, 500)
+        XCTAssertEqual(resumed.entries.last?.savedAsset?.filename, "IMG_499.MOV")
+        XCTAssertEqual(resumed.group(for: "499"), "Last stop")
+        XCTAssertEqual(resumed.serverRevision, 7)
+    }
+
     func testSelectionResumeCorrectionsAndRemoval() throws {
         var collection = try CameraRollCollection(name: "Outing", identifiers: ["a", "b", "a"])
         XCTAssertEqual(collection.entries.map(\.id), ["a", "b"])
@@ -42,7 +70,7 @@ final class CameraRollCollectionTests: XCTestCase {
     }
 
     func testBoundedSelectionAndUnselectedMetadata() throws {
-        XCTAssertThrowsError(try CameraRollCollection(name: "Too many", identifiers: (0..<51).map(String.init)))
+        XCTAssertThrowsError(try CameraRollCollection(name: "Too many", identifiers: (0..<501).map(String.init)))
         var collection = try CameraRollCollection(name: "Outing", identifiers: ["a"])
         collection.record([metadata("other", seconds: 0)], sharesCaptureContext: true)
         XCTAssertEqual(collection.pendingIdentifiers, ["a"])

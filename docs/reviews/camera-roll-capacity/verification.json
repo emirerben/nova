@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "claim": "local_fix",
+  "baseline": "5d2332427b66250f4ac15ad72736ebaf6af9f20d",
+  "request": "Allow substantially more uploads and stop proposing basic six-second edits after much more footage was uploaded.",
+  "private_incident_aggregate": {
+    "members": 33,
+    "videos": 28,
+    "photos": 5,
+    "video_source_seconds": 130.271726,
+    "original_idea_moments": 3,
+    "original_idea_seconds": 6.5,
+    "indexed_moments_at_original_request": 8
+  },
+  "cached_window_replay": {
+    "before": {
+      "video_sources_with_windows": 11,
+      "windows": 15,
+      "summed_window_seconds": 37.84
+    },
+    "after": {
+      "video_sources_with_windows": 19,
+      "windows": 30,
+      "summed_window_seconds": 70.352
+    },
+    "all_accepted_windows_in_source_bounds": true,
+    "limitations": "Window seconds may overlap. Cached descriptions are fallible; this is not inspected footage or creative-quality evidence. No production writes, media reads or provider calls."
+  },
+  "offline_suite": {
+    "passed": 2166,
+    "skipped": 15,
+    "xfailed": 7,
+    "warnings": 55,
+    "command": "bash scripts/check-api.sh test tests/evals/ tests/integration/test_media_collections.py tests/integration/test_editorial_taste.py tests/integration/test_camera_roll_execution.py tests/integration/test_camera_roll_retrieval_eval_cli.py tests/integration/test_camera_roll_pilot_cli.py -q"
+  },
+  "contracts": "tools.json, kria_mobile.json and generated OpenAPI match",
+  "ios_orchestration": {
+    "passed": 117,
+    "command": "python3 -m unittest discover -s scripts/ios/tests -q"
+  },
+  "native": {
+    "platform": "Dedicated iPhone 17 Pro simulator, iOS 26.5",
+    "collection_persistence_checks_passed": 6,
+    "collection_500_fixture": "500 bound saved-video metadata records saved to disk and loaded, including the last filename, group and server revision; 501 selection rejected. No actual original media read.",
+    "ui_cases_passed": [
+      "Explicit partial choice and omitted-video message",
+      "Taste examples, feedback and forgetting",
+      "Research facts and source disclosure",
+      "Replace, audio policy and rejection without rendering"
+    ],
+    "resume_case": "Passed the focused final collection UI run: both partial opt-in and correction/removal/relaunch, 2 tests, 0 failures.",
+    "physical_device_upload_export": "Not run for this follow-up.",
+    "result_bundles": [
+      ".dev/capacity-native-v4.xcresult (six persistence tests and three story UI cases passed; superseded resume selector failed)",
+      ".dev/capacity-collection-ui-final.xcresult (two collection UI cases passed after selector correction)"
+    ],
+    "focused_command": "xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation -derivedDataPath .derived-data -destination 'platform=iOS Simulator,id=D1ADC88A-2303-43FB-A37D-50AACFDCBB18' -parallel-testing-enabled NO -only-testing:KriaUITests/CameraRollCollectionUITests CODE_SIGNING_ALLOWED=NO test"
+  },
+  "red_controls": [
+    "Original max-50 rejects 500; original visual indexing discards the clipped visual end; original default story request accepts partial coverage.",
+    "Original prompt lacks the source-time union summary.",
+    "Before partial opt-in, the request is rejected as an unknown field.",
+    "Before the final recheck, invalidating another source during the provider call returns 200 rather than 409."
+  ],
+  "negative_bounds_controls": [
+    "Entirely out-of-bounds and reversed visual intervals remain excluded.",
+    "An ASR word that runs past the clip end is excluded, never shortened.",
+    "Overlapping labels add source time once.",
+    "A partial cache never satisfies a later full request."
+  ],
+  "live_model_previews": {
+    "calls": 2,
+    "settled_usd": 0.006656,
+    "model": "gemini-2.5-flash",
+    "attempts_per_preview": 1,
+    "thinking_budget": 512,
+    "max_output_tokens": 4096,
+    "cap_per_preview_usd": 0.05,
+    "previews": [
+      {
+        "prompt_version": "2026-10-22.1",
+        "moments": 7,
+        "seconds": 22.107,
+        "settled_usd": 0.003432,
+        "operator_screen": "Failed: advertising-like copy"
+      },
+      {
+        "prompt_version": "2026-10-22.2",
+        "moments": 6,
+        "seconds": 18.333,
+        "settled_usd": 0.003224,
+        "operator_screen": "Failed the frozen 20\u201340 second developed-idea bar; still generic"
+      }
+    ],
+    "creator_verdict": null,
+    "scope": "Available cached subset only, 19 sources; no full-collection result. No new media upload, search, product offer, production write or render.",
+    "local_setup_refusal": {
+      "calls": 0,
+      "cost_usd": 0,
+      "reason": "Missing owner fixture in isolated development cost ledger; original refusal retained privately."
+    }
+  },
+  "remaining_gaps": {
+    "KRI-731": [
+      "Creator-acceptable idea quality on the full collection. The live previews do not establish it.",
+      "Actual full-quality iPhone export and reopening after these changes.",
+      "Production API and updated TestFlight client rollout."
+    ],
+    "KRI-730": [
+      "Eight original videos lacked cached analysis at diagnosis; one analyzed video had no usable timed visual window.",
+      "No physical-device benchmark of 500 full-quality originals."
+    ]
+  },
+  "log_sha256": {
+    "capacity-red.log": "9ae242ba240cda96087410d43cf7d6c8760c9e039396cf5debb96300d1c08657",
+    "planning-coverage-red.log": "8899d1812495c86f197a26c81eaacdd5fa058588769cb981a031c1c1859a8be6",
+    "partial-opt-in-red.log": "1f8a28984aee6cf1c2e289f8ec587dd244a4263891e2d6488cae36b5dde11245",
+    "final-coverage-red.log": "3c52e4345e2fc63ffded961a0f4aeae3a6e92dc7e7d5e239bb03bfa87f896b4d",
+    "capacity-final-replay-v3.log": "0b76e89c034e7b51d42c57bd66f34804d11a713a2cb59deeee3635e35d29ed88",
+    "capacity-contracts-final.log": "c258c533dd6b97fdad975fd38a735a66639112d36af4872a157c09bf6aa865a0",
+    "capacity-ios-orchestration.log": "dae3ba0662de1001b6d537b031b634bd337d42dfa6b8d4e136b9875ac754a34b",
+    "capacity-collections-final-v2.log": "7b902e2b121255feace2f13d6971126f64be8c9563707f6c6a9316a3ee106841",
+    "capacity-adjacent-journeys.log": "95e56356e1356fd1ecdf5f0b1ee660398105926d53b272f8cde3b3f59362f580",
+    "capacity-ios-orchestration-v3.log": "9bda112c666b35ec91e6b7898390a615f508ef36681d59236062cb97b39c9779",
+    "capacity-native-v4.log": "29901388f8706b7361cad2b6af9c9b1a187b7de08d6897e2cf98bdb669a5440a",
+    "capacity-boundary-final.log": "74e6239ef38e36907309c0f71d181c1d330b5052bdc6e6412db5f487f5ac466c",
+    "capacity-collection-ui-final.log": "d03e88d3057fb87551a543afb7a10569f515c4fb08f3b63998bf76b5b6d0f2e8"
+  },
+  "adjacent_journeys": {
+    "passed": 61,
+    "command": "bash scripts/check-api.sh test tests/integration/test_actual_export_verification.py tests/integration/test_actual_export_completion.py tests/routes/test_actual_export_publication.py tests/journeys/test_editorial_taste_cli.py tests/journeys/test_editorial_taste_evaluation_cli.py -q",
+    "limitations": "Offline guards and replay, not a new inspected export."
+  },
+  "final_collection_suite": {
+    "passed": 23,
+    "command": "bash scripts/check-api.sh test tests/integration/test_media_collections.py -q"
+  },
+  "code_sha256": {
+    "src/apps/api/app/agents/camera_roll_stories.py": "e12cf3b08974cb3d3526610320af32516f5aae2e04fc39a7ef067352f7999308",
+    "src/apps/api/app/services/media_moments.py": "f242fcb91d74d7a703c852a76ddad6dc7460658efe9d318a74feabe935709d66",
+    "src/apps/api/app/services/media_collection_stories.py": "824c00c3be5540e01077cb950d93a57c82d49179cf2795cfd63c8ec1348135e2",
+    "src/apps/ios/Kria/Core/CameraRollCollection.swift": "853b525efb539700737883b8f7c8a4a20ebd6410bd5d3829654907eaf11b186b",
+    "src/apps/ios/Kria/Features/CameraRollCollectionView.swift": "bd85ef0f8192bd970bda69071fd385052d84aa8c4b67dca47efaeb66bdd49abd",
+    "src/apps/ios/Tests/KriaUITests/CameraRollCollectionUITests.swift": "8bbc6c01f557008b836c7ad15dd3ceb3d74673689614cdcf7203af4f3260efda",
+    "src/apps/ios/Tests/KriaTests/CameraRollCollectionTests.swift": "dae7ccb33821efa71704ba1aeb799083a5aa545f9ed8bce84835ff54e57a8259",
+    "src/apps/api/tests/integration/test_media_collections.py": "9a75fdd50b400a3d8c7f6b4c6d18ee9dcc632f4e6df2aceab47fcdcce55fc364"
+  },
+  "final_boundary_suite": {
+    "passed": 2,
+    "command": "bash scripts/check-api.sh test tests/integration/test_media_collections.py::test_story_candidates_cover_large_collections_in_bounded_passes -q",
+    "assertions": "Retains exact all-source coverage for the 50 case and owned bounded candidate coverage for 500, with final-source retrieval."
+  },
+  "continuation": "Historical capacity receipt. Current prompt/service and native-default verification continues in multiple-ideas-verification.json; earlier live failures remain failures."
+}
