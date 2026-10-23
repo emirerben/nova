@@ -39,6 +39,10 @@ How a fix could go wrong, each pinned below (``[guard]`` = already true on main,
 7. Two-word lines stop working or change timings [guard].
 8. The legacy ``order`` reply ({"start", "end"}) for one video is not re-filed as the trim
    when the end line is one word, so the model's older shape still asks nothing about it.
+9. A legacy ``order`` row (stored before KRI-789, or keyed and left alone by the re-filing)
+   keeps the two-word floor on its ``end``, so a one-word end there is no line to cut at; the
+   receipt must still not read "met" off the start cut alone, and a route's one-word places
+   stay no take window at all [guard].
 """
 
 from __future__ import annotations
@@ -396,6 +400,63 @@ def test_an_end_line_with_no_words_in_it_is_never_certified_by_the_start_alone(
     receipt = _receipt_for(reqs, _rendered(**receipts))
     assert receipt.status != "met", receipt
     assert receipt.verification == "unchecked"
+
+
+def _legacy_order(*, key: str | None = None, **facts: str) -> BriefRequirement:
+    """The pre-KRI-789 shape (and a keyed reply refile leaves alone): ``order`` + start / end."""
+    return BriefRequirement(
+        id="r2",
+        kind="order",
+        scope="global",
+        description='Start at my "What\'s your name?" and end right after the "Cheers!"',
+        facts={**({"key": key} if key else {}), **({"start": START, "end": END} | facts)},
+    )
+
+
+@pytest.mark.parametrize("key", [None, "capture_time"])
+def test_a_legacy_order_row_with_a_one_word_end_is_never_certified_by_the_start_alone(
+    key: str | None,
+) -> None:
+    """The legacy ``end`` keeps the two-word floor (it is a route's place on a keyed row), so
+    "Cheers!" there is not a line to cut at; the end is still asked, so the start cut applied
+    must not read "met" for the whole ask."""
+    reqs = [_length(), _legacy_order(key=key)]
+    assert requirement_opening_quote(reqs[1]) == START
+    assert requirement_end_quote(reqs[1]) is None
+
+    plan, receipts = _worker(reqs)
+
+    assert receipts is not None and set(receipts) == {"opening_cut"}, receipts
+    assert plan is not None and plan.keep_segments[-1][1] == pytest.approx(TAKE_S)
+    receipt = _receipt_for(reqs, _rendered(**receipts))
+    assert receipt.status != "met", receipt
+    assert receipt.verification == "unchecked"
+
+
+def test_a_legacy_order_row_with_a_two_word_end_is_still_cut_and_met() -> None:
+    """[guard] The same legacy shape with a two-word end ("Thank you.") reads both lines."""
+    reqs = [_length(), _legacy_order(end="Thank you.")]
+
+    plan, receipts = _worker(reqs)
+
+    assert receipts is not None and {r["status"] for r in receipts.values()} == {"applied"}
+    assert set(receipts) == {"opening_cut", "end_cut"}
+    receipt = _receipt_for(reqs, _rendered(**receipts))
+    assert (receipt.status, receipt.reason) == ("met", None)
+
+
+@pytest.mark.parametrize("key", [None, "capture_time"])
+def test_a_route_row_with_one_word_places_is_still_no_take_window(key: str | None) -> None:
+    """[guard] Arnavutkoy -> Eminonu: one word each, so no line on either side. The row is not
+    judged as a take window, whatever the render recorded about the take."""
+    route = _legacy_order(key=key, start="Arnavutkoy", end="Eminonu")
+    route = route.model_copy(update={"description": "Start in Arnavutkoy and finish in Eminonu"})
+
+    assert take_window_ask([route]) is None
+    assert not wants_take_window(route)
+    plain = _receipt_for([route], _rendered())
+    cut = {"opening_cut": {"status": "applied", "quote": START, "requirement_ids": ["r2"]}}
+    assert _receipt_for([route], _rendered(**cut)) == plain
 
 
 # -- 5. the right "Cheers!" ----------------------------------------------------------------------
