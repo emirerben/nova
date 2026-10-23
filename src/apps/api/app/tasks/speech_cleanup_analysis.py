@@ -574,6 +574,16 @@ def _run_engine_once(
     reference_transcript: str | None,
     reference_source: str | None = None,
 ) -> SpeechCleanupAnalysisResult:
+    retake_detect_fn = None
+    if settings.retake_cut_enabled and settings.speech_cleanup_retakes_enabled:
+
+        def retake_detect_fn(words, language):  # noqa: ANN001
+            return _retake_spans_for_timed_words(
+                words,
+                language=language,
+                work=work,
+            )
+
     analysis_input = SpeechCleanupAnalysisInput(
         source_fingerprint=work.claim.source_policy_fingerprint,
         local_media_path=str(local_audio_path),
@@ -589,7 +599,9 @@ def _run_engine_once(
         reference_source=reference_source,
     )
     try:
-        return run_speech_cleanup_engine(analysis_input)
+        if retake_detect_fn is None:
+            return run_speech_cleanup_engine(analysis_input)
+        return run_speech_cleanup_engine(analysis_input, retake_detect_fn=retake_detect_fn)
     except _PROGRAMMING_ERRORS:
         raise
     except TranscribeError as exc:
@@ -608,6 +620,56 @@ def _run_engine_once(
                 "transcription_unavailable", detail=type(exc).__name__
             ) from exc
         raise
+
+
+def _retake_spans_for_timed_words(
+    words, *, language: str, work: _ClaimedWork
+) -> tuple[tuple[int, int], ...]:  # noqa: ANN001
+    """Run the paid detector only after the engine has fixed word indexes.
+
+    This is deliberately failure-isolated: an unavailable or malformed retake
+    detector yields no retake cuts while the accepted pause/filler analysis
+    continues normally.
+    """
+
+    analysis_id = str(work.claim.analysis_id)
+    try:
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents.retake_detector import (  # noqa: PLC0415
+            RetakeDetectorInput,
+            run_retake_detector,
+        )
+
+        output = run_retake_detector(
+            RetakeDetectorInput.model_validate(
+                {
+                    "words": [
+                        {
+                            "i": index,
+                            "text": word.text,
+                            "start_s": word.start_s,
+                            "end_s": word.end_s,
+                        }
+                        for index, word in enumerate(words)
+                    ],
+                    "language": language,
+                }
+            ),
+            ctx=RunContext(
+                plan_item_id=str(work.plan_item_id) if work.plan_item_id is not None else None,
+                creator_id=work.creator_id,
+                request_id=f"speech-cleanup-retakes:{analysis_id}",
+                usage_purpose="optional_background",
+            ),
+        )
+        return tuple((span.start_word, span.end_word) for span in output.retakes)
+    except Exception as exc:  # noqa: BLE001 -- never block consented base cleanup
+        log.warning(
+            "speech_cleanup_analysis.retake_detector_failed",
+            analysis_id=analysis_id,
+            error_class=type(exc).__name__,
+        )
+        return ()
 
 
 def _analyze_work(work: _ClaimedWork) -> SpeechCleanupAnalysisResult:

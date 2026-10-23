@@ -335,7 +335,7 @@ def test_speech_cleanup_notes_are_turkish_and_stay_a_format_limit() -> None:
 
     assert receipt.reason == (
         "Onaylarken \u201cKonuşmayı temizle\u201d seçeneğini seç, uzun duraklamalar kesilir; "
-        "tekrar çekim ya da belirli bir cümle henüz otomatik kesilmiyor, onu editörde kırp; "
+        "o belirli konuşulan cümlenin kaldırıldığını doğrulamadım; editörde kontrol et; "
         "Bu taslağın uzunluğunu henüz doğrulayamıyorum."
     )
     # A limit of the format in Turkish too: it never asks for a simpler version.
@@ -353,7 +353,7 @@ def test_english_speech_cleanup_reason_is_unchanged() -> None:
     facts = PlanFacts(edit_format="subtitled", caption_style="karaoke", speech_cleanup_offered=True)
     assert check_requirement(req, facts).reason == (
         "Choose Clean up speech when you approve and the long pauses are cut; "
-        "a retake or a specific line isn't cut automatically yet, so trim that in the "
+        "I have not confirmed that exact spoken line was removed; check it in the "
         "editor; I can't confirm this draft's length yet."
     )
 
