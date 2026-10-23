@@ -37,6 +37,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.kria.asset_holds import hold_seconds
 from app.kria.brief_route import fold_text, loose_text
 from app.kria.freeze_ask import times_one_moment
 from app.kria.reply_language import current_reply_language, say
@@ -687,6 +688,8 @@ CONFLICT_VOICE_VS_DURATION = "voice_vs_duration"
 CONFLICT_WHICH_VOICE = "which_voice"
 CONFLICT_LENGTH_VS_NATURAL = "length_vs_natural"
 CONFLICT_SOURCE_COVERAGE = "source_coverage"
+# KRI-825: the photos the creator gave a length cannot all play inside their total.
+CONFLICT_HOLDS_VS_LENGTH = "holds_vs_length"
 OPT_UPDATE_FOOTAGE = "update_footage"
 # Fixed priority: an answer can change a later detector's inputs, so exactly one question
 # is asked per turn, in this order.
@@ -696,6 +699,7 @@ CONFLICT_PRIORITY = (
     CONFLICT_TEXT_PLACEMENT,
     CONFLICT_TITLE_TEXT,
     CONFLICT_SOURCE_COVERAGE,
+    CONFLICT_HOLDS_VS_LENGTH,
     CONFLICT_DURATION_VS_COUNT,
     CONFLICT_VOICE_VS_DURATION,
     CONFLICT_LENGTH_VS_NATURAL,
@@ -711,6 +715,7 @@ OPT_MATCH_VOICE = "match_voice"
 OPT_SILENT_TAIL = "silent_tail"
 OPT_ACCEPT_NATURAL = "accept_natural"
 OPT_TRIM_TO_REQUESTED = "trim_to_requested"
+OPT_KEEP_LENGTH = "keep_length"
 
 # What an "order I filmed them" requirement means to the contract (brief order keys).
 ATTACHMENT_ORDER_KEY = "attachment"
@@ -1031,6 +1036,108 @@ def _duration_vs_count(
         options=tuple(options),
         # The creator's inputs only: the model's own selection or length never reopens it.
         input_digest=_digest(CONFLICT_DURATION_VS_COUNT, sorted(ids), sorted(clip_ids), seconds),
+        effects=effects,
+    )
+
+
+def _holds_vs_length(
+    strategy: Mapping[str, Any],
+    brief: Any,
+    rows: list[Any],
+    cap: ChoiceCapability,
+    *,
+    snapshot: Mapping[str, Any] | None,
+) -> UnresolvedChoice | None:
+    """KRI-825: the creator's photo lengths and their total cannot both play.
+
+    "Keep each photo 3 seconds" with three photos and "make it 8 seconds" leaves no room
+    for the footage. The planner records it (``still_hold_conflict``, read off the same
+    budget the approved length plan uses); this asks once, with one recommended feasible
+    option (a total that fits every held photo) and the other feasible one (keep the
+    total; the photos go back to the edit's own pacing). Never a silent clamp.
+    """
+
+    conflict = (snapshot or {}).get("still_hold_conflict")
+    if not isinstance(conflict, Mapping):
+        return None
+    requested = _number(conflict.get("requested_s"))
+    needed = _number(conflict.get("needed_s"))
+    held = _number(conflict.get("held_s"))
+    if requested is None or needed is None or held is None or needed <= requested:
+        return None
+    _durations, total_ids, quoted = _requested_durations(brief)
+    hold_ids = [str(i) for i in conflict.get("requirement_ids") or []]
+    can_extend = needed <= cap.max_duration_s
+    asked = _clean_seconds(requested)
+    shown = _clean_seconds(needed)
+    said = quoted or say(en=f"{asked} seconds", tr=f"{asked} saniye")
+    keep_strategy: dict[str, Any] = {}
+    group = _number(conflict.get("group_hold_s"))
+    profile = strategy.get("mixed_media_timing")
+    if group is not None and isinstance(profile, Mapping):
+        # The photos' group length lives on the timing profile: keeping the total drops
+        # only that number (the AI's photo pacing decides again).
+        keep_strategy["mixed_media_timing"] = {
+            key: value for key, value in profile.items() if key != "image_hold_s"
+        }
+    options = [
+        _option(
+            OPT_KEEP_LENGTH,
+            label=(
+                f"Keep {asked} seconds, photos at the usual pace",
+                f"{asked} saniyeyi koru, fotoğraflar normal hızda",
+            ),
+            description=(
+                "The photos you timed play at the edit's own pace so everything fits.",
+                "Süre verdiğin fotoğraflar her şey sığsın diye düzenlemenin kendi hızında oynar.",
+            ),
+            recommended=not can_extend,
+            aliases=("keep the length", "keep it", f"keep {asked} seconds"),
+            tr_aliases=("süreyi koru", "süre kalsın", "süreyi değiştirme"),
+        )
+    ]
+    effects: dict[str, Mapping[str, Any]] = {OPT_KEEP_LENGTH: {"strategy": keep_strategy}}
+    if can_extend:
+        options.insert(
+            0,
+            _option(
+                OPT_EXTEND,
+                label=(f"Make it {shown} seconds", f"Videoyu {shown} saniye yap"),
+                description=(
+                    "Every photo plays the length you gave it, with the footage around it.",
+                    "Her fotoğraf verdiğin süre kadar kalır, çekimler de etrafında oynar.",
+                ),
+                recommended=True,
+                aliases=("extend", "make it longer", "longer", f"{shown} seconds"),
+                tr_aliases=_EXTEND_TR_ALIASES,
+            ),
+        )
+        effects[OPT_EXTEND] = {
+            "strategy": {
+                "target_duration_s": shown,
+                "target_duration_requested": True,
+                "creator_duration_s": shown,
+            }
+        }
+    return UnresolvedChoice(
+        kind=CONFLICT_HOLDS_VS_LENGTH,
+        conflict_id=CONFLICT_HOLDS_VS_LENGTH,
+        field_path="target_duration_s",
+        requirement_ids=tuple(dict.fromkeys([*total_ids, *hold_ids])),
+        intro=say(
+            en=f'Your brief says "{said}" and the photos you timed take {_clean_seconds(held)} '
+            "seconds.",
+            tr=f'İsteğinde "{said}" yazıyor ve süre verdiğin fotoğraflar '
+            f"{_clean_seconds(held)} saniye tutuyor.",
+        ),
+        reason=say(
+            en=f"Those photos and your footage need about {shown} seconds, more than {asked}.",
+            tr=f"O fotoğraflar ve çekimlerin yaklaşık {shown} saniye istiyor, {asked} "
+            "saniyeden fazla.",
+        ),
+        options=tuple(options),
+        # The creator's inputs only: the requested total, the held seconds, who holds.
+        input_digest=_digest(CONFLICT_HOLDS_VS_LENGTH, requested, needed, held, sorted(hold_ids)),
         effects=effects,
     )
 
@@ -2451,6 +2558,7 @@ def collect_conflicts(
         _text_placement,
         functools.partial(_title_text, clip_paths=clip_paths),
         functools.partial(_source_coverage, snapshot=media_snapshot),
+        functools.partial(_holds_vs_length, snapshot=media_snapshot),
         _duration_vs_count,
         _which_voice,
         _voice_vs_duration,
@@ -2883,6 +2991,7 @@ class ChoiceResolution:
 def length_inputs_waiting(resolution: ChoiceResolution) -> str | None:
     """An unanswered timing choice or required media update never becomes a draft."""
     timing_kinds = {
+        CONFLICT_HOLDS_VS_LENGTH,
         CONFLICT_DURATION_VS_COUNT,
         CONFLICT_VOICE_VS_DURATION,
         CONFLICT_LENGTH_VS_NATURAL,
@@ -2911,6 +3020,12 @@ def _apply_effect(strategy: dict[str, Any], choice: UnresolvedChoice, option_key
 
 
 _DISCLOSURES = {
+    (CONFLICT_HOLDS_VS_LENGTH, OPT_EXTEND): (
+        "I made it long enough for every photo to play the length you gave it."
+    ),
+    (CONFLICT_HOLDS_VS_LENGTH, OPT_KEEP_LENGTH): (
+        "I kept your length: the photos you timed play at the edit's own pace."
+    ),
     (CONFLICT_DURATION_VS_COUNT, OPT_EXTEND): (
         "I extended it so every clip stays on screen long enough to be seen."
     ),
@@ -2933,6 +3048,12 @@ _DISCLOSURES = {
 }
 # The same notes for a Turkish chat (KRI-520), keyed identically.
 _DISCLOSURES_TR = {
+    (CONFLICT_HOLDS_VS_LENGTH, OPT_EXTEND): (
+        "Her fotoğraf verdiğin süre kadar kalsın diye videoyu uzattım."
+    ),
+    (CONFLICT_HOLDS_VS_LENGTH, OPT_KEEP_LENGTH): (
+        "Süreni korudum: süre verdiğin fotoğraflar düzenlemenin kendi hızında oynuyor."
+    ),
     (CONFLICT_DURATION_VS_COUNT, OPT_EXTEND): (
         "Süreyi uzattım, böylece her klip görülecek kadar ekranda kalıyor."
     ),
@@ -3260,7 +3381,35 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
         for req in _live(brief):
             if req.id not in ids:
                 continue
-            if kind == CONFLICT_DURATION_VS_COUNT and option == OPT_EXTEND and req.kind == "timing":
+            if (
+                kind == CONFLICT_HOLDS_VS_LENGTH
+                and option == OPT_KEEP_LENGTH
+                and hold_seconds(req) is not None
+            ):
+                # KRI-825: the creator chose their total over these photo lengths.
+                changed[req.id] = req.model_copy(update={"status": "superseded"})
+            elif (
+                kind == CONFLICT_HOLDS_VS_LENGTH
+                and option == OPT_EXTEND
+                and req.kind == "timing"
+                and hold_seconds(req) is None
+            ):
+                new = _number(data.get("target_duration_s"))
+                if new is not None:
+                    changed[req.id] = req.model_copy(
+                        update={
+                            "facts": {**req.facts, "duration_s": data["target_duration_s"]},
+                            "description": say(
+                                en=f"Keep {_clean_seconds(new)} seconds (so every timed "
+                                "photo fits)",
+                                tr=f"{_clean_seconds(new)} saniye olsun (süre verilen her "
+                                "fotoğraf sığsın diye)",
+                            ),
+                        }
+                    )
+            elif (
+                kind == CONFLICT_DURATION_VS_COUNT and option == OPT_EXTEND and req.kind == "timing"
+            ):
                 new = _number(data.get("target_duration_s"))
                 old = _number((req.facts or {}).get("duration_s"))
                 if new is None or old is None or abs(new - old) < 0.001:
@@ -3436,6 +3585,7 @@ __all__ = [
     "CAPTURE_ORDER_KEYS",
     "CHOICE_QUESTION_VERSION",
     "CONFLICT_DURATION_VS_COUNT",
+    "CONFLICT_HOLDS_VS_LENGTH",
     "CONFLICT_LENGTH_VS_NATURAL",
     "CONFLICT_ORDER_BASIS",
     "CONFLICT_PRIORITY",
@@ -3450,6 +3600,7 @@ __all__ = [
     "OPT_ACCEPT_NATURAL",
     "OPT_TRIM_TO_REQUESTED",
     "OPT_FEWER",
+    "OPT_KEEP_LENGTH",
     "OPT_MATCH_VOICE",
     "OPT_NO_TITLE",
     "OPT_SILENT_TAIL",

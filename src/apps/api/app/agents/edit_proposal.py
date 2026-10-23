@@ -51,6 +51,7 @@ from app.schemas.edit_proposal import (
     clean_creator_shot_labels,
     closing_title_hold_s,
     creator_copy_match_key,
+    exact_photo_hold_s,
     media_context_group,
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
@@ -2186,6 +2187,10 @@ def _normalize_fast_montage_duration(
         if quick_mixed_timing
         else 1.2
     )
+    # KRI-825: the photos' creator-stated length is exact, whatever the cut ceiling.
+    exact_photo_s = exact_photo_hold_s(input.mixed_media_timing)
+    if exact_photo_s is not None and input.montage_cadence is None:
+        split_limit_s = max(split_limit_s, exact_photo_s)
     cuts, repaired_cut_ids, raw_total_s = _compile_fast_cuts(
         raw_cuts,
         split_limit_s=split_limit_s,
@@ -2257,6 +2262,8 @@ def _normalize_fast_montage_duration(
                     if media.kind == "video" and source_duration_s >= 0.8
                     else min(0.4, source_duration_s)
                     if media.kind == "video" and source_duration_s > 0
+                    else exact_photo_s
+                    if media.kind == "image" and exact_photo_s is not None
                     else 0.4
                 )
             capacity_s = cut.output_duration_s - minimum_duration_s
@@ -2270,6 +2277,8 @@ def _normalize_fast_montage_duration(
                 and not quick_mixed_timing
                 else mixed_bounds.maximum_s
                 if quick_mixed_timing
+                else exact_photo_s
+                if media.kind == "image" and exact_photo_s is not None
                 else 1.2
             )
             capacity_s = max_duration_s - cut.output_duration_s
@@ -2357,7 +2366,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.19.0",
+        prompt_version="1.20.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -2442,6 +2451,21 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             "hard cuts only, preserve the exact total, and return the exact typed profile "
             "instead of null."
         )
+        exact_photo_s = exact_photo_hold_s(input.mixed_media_timing)
+        if exact_photo_s is not None and not uses_quick_photo_long_video_timing(
+            input.mixed_media_timing
+        ):
+            # KRI-825: the creator gave the photos a length and said nothing about the
+            # videos: the photos are exact, every other cut keeps its usual rules.
+            mixed_timing_note = (
+                f"PHOTO LENGTH: the creator asked every photo to hold exactly "
+                f"{exact_photo_s:g}s. Give each photo cut exactly that output_duration_s; the "
+                "1.2s cut maximum applies to video cuts only. Preserve the exact total duration."
+            )
+            mixed_timing_rule = (
+                "When PHOTO LENGTH is present, every photo holds exactly that length (never "
+                "the 0.5-0.8s default); return the exact typed profile instead of null."
+            )
         if uses_quick_photo_long_video_timing(input.mixed_media_timing):
             profile = input.mixed_media_timing
             image_bounds = mixed_media_hold_bounds("image", profile)

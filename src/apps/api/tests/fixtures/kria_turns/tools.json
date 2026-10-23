@@ -4545,7 +4545,7 @@
               "image_hold_s": {
                 "anyOf": [
                   {
-                    "maximum": 0.8,
+                    "maximum": 10.0,
                     "minimum": 0.1,
                     "type": "number"
                   },

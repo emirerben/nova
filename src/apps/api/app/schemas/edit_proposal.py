@@ -413,6 +413,108 @@ _TR_NEG = (
 _TR_SECONDS = r"(?:saniye\w*|sn\b|sny\b)"
 _TR_NUMBER = r"(?<![\d.,])(\d+(?:[.,]\d+)?)"
 
+# KRI-825: any length a creator may state for a photo (one photo, or the photos as a
+# group). The AI's own photo cadence (``MIXED_MEDIA_IMAGE_HOLD``, 0.5-0.8 s) is only the
+# default for photos nobody gave a length; it never bounds a creator's number.
+CREATOR_STILL_HOLD_MIN_S = 0.1
+CREATOR_STILL_HOLD_MAX_S = 10.0
+# Read after a photo-group mention ("photos ... 1 second"): within this many characters.
+_GROUP_SECONDS_WINDOW = 80
+# English negation words ("don't make the photos 1 second"); Turkish negates after (_TR_NEG).
+_EN_NEG = r"(?:do not|don't|dont|never|should not|shouldn't|not)"
+# Punctuation that closes a clause (a decimal point or comma between digits does not).
+_CLAUSE_MARKS = ".!?;,\n"
+# Negation is read this far into the clause: English before the seconds, Turkish after.
+_NEG_BEFORE_CHARS = 40
+_NEG_AFTER_CHARS = 28
+# A length that is not the photos' own: another medium or the whole video between the
+# photos and the seconds ("use my photos, make it 8 seconds"), or the video right after the
+# seconds ("photos in a 8 second video", "8 saniyelik video").
+_NOT_PHOTO_LENGTH = re.compile(
+    rf"\b(?:(?P<medium>videos?|clips?|footage|total|overall|whole|entire|it|{_TR_MEDIA}"
+    r"|toplam\w*|tum\s+video\w*)|(?P<length>long|edits?|reels?|montages?|tiktoks?|films?"
+    r"|uzunlu\w*))\b"
+)
+_GROUP_MILLISECONDS = re.compile(r"(?<![\d.,])(\d+)\s*(?:ms|milisaniye\w*|milliseconds?)\b")
+
+
+def clause_bounds(text: str, start: int, end: int) -> tuple[int, int]:
+    """The clause around ``text[start:end]``, bounded by punctuation (KRI-825).
+
+    Language-neutral: only punctuation splits a clause, never a word, and a decimal point
+    or comma between digits ("1,5 sn", "3.5 seconds") stays inside the number.
+    """
+
+    def closes(index: int) -> bool:
+        mark = text[index]
+        if mark not in _CLAUSE_MARKS:
+            return False
+        between_digits = 0 < index < len(text) - 1 and (
+            text[index - 1].isdigit() and text[index + 1].isdigit()
+        )
+        return not (mark in ".," and between_digits)
+
+    lo = start
+    while lo > 0 and not closes(lo - 1):
+        lo -= 1
+    hi = end
+    while hi < len(text) and not closes(hi):
+        hi += 1
+    return lo, hi
+
+
+def seconds_negated(
+    text: str, start: int, end: int, *, english: bool = True, turkish: bool = True
+) -> bool:
+    """The creator's own clause negates the seconds at ``text[start:end]`` (KRI-825).
+
+    English negates before the length ("don't make the photos 1 second"), Turkish after it
+    ("fotoğraflar 1 saniye olmasın"). The one negation reader for a stated length, shared by
+    the photo-group recognizers and the per-photo grounding (``asset_holds``).
+    """
+    from app.kria.brief_route import loose_text  # noqa: PLC0415 - app.kria imports this module
+
+    lo, hi = clause_bounds(text, start, end)
+    before = text[max(lo, start - _NEG_BEFORE_CHARS) : start]
+    after = loose_text(text[end : min(hi, end + _NEG_AFTER_CHARS)])
+    return bool(
+        (english and re.search(rf"\b{_EN_NEG}\b", before))
+        or (turkish and re.search(rf"\b{_TR_NEG}", after))
+    )
+
+
+def _group_photo_seconds(text: str, group: str) -> list[tuple[int, int, float]]:
+    """Each length stated for the photos as a group, as (start, end, seconds) of the length.
+
+    The seconds expression is the planner's own reader (``_stated_holds``: digits or
+    EN/TR words, decimal comma, "and a half" / "buçuk"), so "photos one second" and
+    "fotoğraflar 1,5 sn" read like "photos 1.5 s". Only the first length after a group
+    mention counts, inside the same clause and before any other medium; a length that is
+    the video's ("a 8 second video", "8 saniyelik video") is not the photos'.
+    """
+    from app.kria.planner import _stated_holds  # noqa: PLC0415 - app.kria imports this module
+
+    found: list[tuple[int, int, float]] = []
+    for photos in re.finditer(group, text):
+        origin = photos.end()
+        _lo, clause_end = clause_bounds(text, origin, origin)
+        window = text[origin : min(clause_end, origin + _GROUP_SECONDS_WINDOW)]
+        stated = list(_stated_holds(window))
+        stated += [
+            (match.start(), match.end(), float(match.group(1)) / 1000)
+            for match in _GROUP_MILLISECONDS.finditer(window)
+        ]
+        if not stated:
+            continue
+        start, end, value = min(stated)
+        if any(m["medium"] for m in _NOT_PHOTO_LENGTH.finditer(window[:start])):
+            continue
+        if _NOT_PHOTO_LENGTH.match(window[end:].lstrip(" -")):
+            continue
+        if CREATOR_STILL_HOLD_MIN_S - 1e-9 <= value <= CREATOR_STILL_HOLD_MAX_S + 1e-9:
+            found.append((origin + start, origin + end, value))
+    return found
+
 
 def loose_creator_text(text: object) -> str:
     """``loose_text`` of ``text`` for the Turkish readers; "" when the text reads as
@@ -778,13 +880,14 @@ class MixedMediaTimingProfile(BaseModel):
     """
 
     image_hold: Literal["very_fast", "standard"] = "standard"
-    # Optional exact still duration requested by the creator.  Omitted keeps
-    # the legacy very_fast 0.5–0.8s bounds; numeric values are intentionally
-    # narrow and never affect video minimums.
+    # Optional exact length the creator stated for the photos as a group, read only from
+    # their own words (``recognize_mixed_media_timing``). Omitted keeps the AI's very_fast
+    # 0.5-0.8 s cadence; a stated number is the creator's (KRI-825: any 0.1-10 s, never
+    # bounded by that cadence) and never affects video minimums.
     image_hold_s: float | None = Field(
         default=None,
-        ge=0.1,
-        le=0.8,
+        ge=CREATOR_STILL_HOLD_MIN_S,
+        le=CREATOR_STILL_HOLD_MAX_S,
         exclude_if=lambda value: value is None,
     )
     video_hold: Literal["longer", "standard"] = "standard"
@@ -835,6 +938,15 @@ def mixed_media_hold_bounds(
     return MIXED_MEDIA_IMAGE_HOLD if kind == "image" else MIXED_MEDIA_VIDEO_HOLD
 
 
+def exact_photo_hold_s(profile: MixedMediaTimingProfile | None) -> float | None:
+    """The length the creator stated for the photos as a group, else None (KRI-825).
+
+    Read only from the creator's own words (``recognize_mixed_media_timing``), so every
+    photo without its own stated length holds exactly this, whatever the AI's cadence.
+    """
+    return profile.image_hold_s if profile is not None else None
+
+
 def uses_quick_photo_long_video_timing(
     profile: MixedMediaTimingProfile | None,
 ) -> bool:
@@ -856,7 +968,7 @@ def recognize_mixed_media_timing(text: str) -> MixedMediaTimingProfile | None:
     photo_fast = r"(?:very fast|faster|quick(?:ly)?|snappy|rapid|flash(?: by)?)"
     video = r"(?:videos?|clips?|footage)"
     video_long = r"(?:longer|more time|breathe|linger|hold|slower)"
-    negation = r"(?:do not|don't|dont|never|should not|shouldn't|not)"
+    negation = _EN_NEG
 
     image_grouping: ImageGrouping = "scattered"
     if re.search(
@@ -919,42 +1031,29 @@ def recognize_mixed_media_timing(text: str) -> MixedMediaTimingProfile | None:
             )
         )
 
-    # Preserve an explicit numeric still cadence while keeping generic
-    # "very fast" requests on the established 0.5–0.8s contract. Parse this
-    # before the generic paired form so a request containing both "very fast"
-    # and an exact value does not lose the value.
-    numeric_matches = list(
-        re.finditer(
-            rf"{PHOTO_GROUP_PATTERN}.{{0,80}}?\b(0?\.[0-9]+|[1-9][0-9]{{0,2}})\s*(?:s|sec(?:ond)?s?|ms|milliseconds?)\b",
-            normalized,
-        )
-    )
-    valid_numeric_matches: list[tuple[re.Match[str], float]] = []
-    for match in numeric_matches:
-        value = float(match.group(1))
-        if "ms" in match.group(0) or "millisecond" in match.group(0):
-            value /= 1000
-        if 0.1 <= value <= 0.8:
-            valid_numeric_matches.append((match, value))
+    # Preserve an explicit numeric still length while keeping generic "very fast"
+    # requests on the established 0.5-0.8 s cadence. Parse this before the generic paired
+    # form so a request containing both "very fast" and an exact value keeps the value.
+    # KRI-825: any length the creator states for the photos (0.1-10 s, "1 second", "one
+    # second", "1,5 s") is kept; the 0.5-0.8 s band is only the AI's default.
+    numeric_matches = _group_photo_seconds(normalized, PHOTO_GROUP_PATTERN)
     # Conversation history is passed oldest-to-newest. A correction such as
     # "make the images 0.2 seconds instead of 0.1" must override the earlier
-    # 0.1-second request rather than silently reusing the first regex match.
-    numeric_match, numeric_value = (
-        valid_numeric_matches[-1] if valid_numeric_matches else (None, None)
+    # 0.1-second request rather than silently reusing the first match.
+    numeric_start, numeric_end, numeric_value = (
+        numeric_matches[-1] if numeric_matches else (None, None, None)
     )
     has_video_context = bool(re.search(rf"\b{video}\b", normalized))
-    selected_numeric_context = (
-        normalized[max(0, numeric_match.start() - 40) : numeric_match.end()]
-        if numeric_match is not None
-        else ""
+    numeric_negated = numeric_start is not None and seconds_negated(
+        normalized, numeric_start, numeric_end, turkish=False
     )
-    numeric_negated = bool(
-        re.search(
-            rf"\b{negation}\b.{{0,40}}\b{photo}\b",
-            selected_numeric_context,
-        )
-    )
-    if numeric_match and has_video_context and not numeric_negated:
+    if numeric_value is not None and not numeric_negated:
+        if not has_video_context:
+            # KRI-825: "every photo 1 second" says nothing about the videos: the photos
+            # get their length and the videos keep their own pacing.
+            return MixedMediaTimingProfile(
+                image_hold="very_fast", image_hold_s=numeric_value, **sequence_fields
+            )
         return MixedMediaTimingProfile(
             image_hold="very_fast",
             image_hold_s=numeric_value,
@@ -1004,26 +1103,22 @@ def _recognize_turkish_mixed_media_timing(
             re.search(rf"\b{_TR_NEG}", match.group("tail")) for match in matches
         )
 
-    # An exact still length ("fotoğraflar 0,3 saniye"), like the English numeric path.
-    numeric: list[tuple[float, str]] = []
-    for match in re.finditer(
-        rf"{_TR_PHOTO_GROUP}\b(?:(?!\b{_TR_MEDIA})[^!?;]){{0,80}}?{_TR_NUMBER}\s*"
-        rf"(?P<unit>ms\b|milisaniye\w*|saniye\w*|sn\b)(?P<tail>{_TR_CLAUSE_TAIL})",
-        loose,
-    ):
-        value = _tr_float(match.group(1))
-        if match.group("unit").startswith(("ms", "milisaniye")):
-            value /= 1000
-        if 0.1 <= value <= 0.8:
-            numeric.append((value, match.group("tail")))
-    if numeric and re.search(rf"\b{_TR_MEDIA}", loose):
-        value, tail = numeric[-1]
-        if not re.search(rf"\b{_TR_NEG}", tail):
+    # An exact still length ("fotoğraflar 0,3 saniye", "fotoğraflar 1,5 sn", "her fotoğraf
+    # bir saniye"), like the English numeric path (KRI-825: any 0.1-10 s).
+    numeric = _group_photo_seconds(loose, _TR_PHOTO_GROUP)
+    if numeric:
+        start, end, value = numeric[-1]
+        if not seconds_negated(loose, start, end, english=False):
+            # The videos get longer only when the creator said so ("videolar daha uzun").
+            video_fields = (
+                {"video_hold": "longer", "boundary_style": "cut"}
+                if stated(_TR_MEDIA, video_gap, _TR_VIDEO_LONG)
+                else {}
+            )
             return MixedMediaTimingProfile(
                 image_hold="very_fast",
                 image_hold_s=value,
-                video_hold="longer",
-                boundary_style="cut",
+                **video_fields,  # type: ignore[arg-type]
                 **sequence_fields,  # type: ignore[arg-type]
             )
     if stated(_TR_PHOTO, photo_gap, _TR_PHOTO_FAST) and stated(
@@ -1330,7 +1425,7 @@ class CreatorStillHold(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     media_id: str = Field(min_length=1, max_length=200)
-    hold_s: float = Field(ge=0.1, le=10.0)
+    hold_s: float = Field(ge=CREATOR_STILL_HOLD_MIN_S, le=CREATOR_STILL_HOLD_MAX_S)
     requirement_id: str = Field(min_length=1, max_length=24)
 
 
@@ -1613,7 +1708,15 @@ class EditProposalSnapshot(BaseModel):
                 raise ValueError("fast montage cuts reference missing media IDs")
             quick_mixed_timing = uses_quick_photo_long_video_timing(self.mixed_media_timing)
             still_holds = {hold.media_id: hold.hold_s for hold in self.creator_still_holds}
-            if not set(still_holds) <= {ref.media_id for ref in self.media if ref.kind == "image"}:
+            # KRI-825: the photos' group length holds every photo without its own.
+            group_hold_s = exact_photo_hold_s(self.mixed_media_timing)
+            if group_hold_s is not None:
+                for ref in self.media:
+                    if ref.kind == "image":
+                        still_holds.setdefault(ref.media_id, group_hold_s)
+            if not {hold.media_id for hold in self.creator_still_holds} <= {
+                ref.media_id for ref in self.media if ref.kind == "image"
+            }:
                 raise ValueError("creator still holds must name photos in the proposal")
             if (
                 self.narration is None
