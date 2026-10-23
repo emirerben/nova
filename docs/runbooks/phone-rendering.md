@@ -2589,7 +2589,7 @@ Tests: `tests/tasks/test_phone_subtitled_closing_title_worker.py`,
 `tests/kria/test_strategy_policy.py::test_closing_text_*`,
 `tests/services/test_phone_reaction_grounding.py::test_closing_card_*`.
 
-### Start and end lines on phone Talking edits (KRI-628, KRI-704, KRI-790)
+### Start and end lines on phone Talking edits (KRI-628, KRI-704, KRI-790, KRI-837)
 
 "Start at "Hi, I'm Karolina, I'm from Ecuador" and end right after "I'm gonna be
 here all week"" (café kit T1, thread 32A5B608, 2026-10-21) keeps one window of a
@@ -2600,6 +2600,11 @@ word. No model or prompt is involved:
   `facts.end_line` (KRI-789's `timing` shape), the legacy `facts.start` /
   `facts.end` on an `order` row (briefs stored before KRI-789), and the KRI-628
   description cue for a start line. The end line comes from a field only (KRI-667).
+  A quoted one-word line in `start_line` / `end_line` ("Cheers!") is a line (KRI-837);
+  the legacy `start` / `end` keys and the description cue keep the two-word floor, since
+  an `order` row's one-word start/end can be route places. A side the creator wrote
+  but no reader can use (a one-word legacy `end`, a `start_line` / `end_line` with no
+  words) stays unchecked: an end that wasn't cut is never "met".
 - **Lines.** `speech_segments.ground_line`: the exact/token match first, then the
   run of words whose folded text reads most like the quote (ratio >= 0.85,
   3+ tokens), so "Carolina from Ecuador" (no second "I'm") still finds the line.
@@ -2621,7 +2626,8 @@ Gap: cleanup off with no checked preflight snapshot still reports `cleanup_off`.
 Verify on a real take (writes `report.json`, and with `--video` a `window.mp4` to
 watch): `cd src/apps/api && python -m app.cli.verify_take_window --take
 tests/fixtures/kri790_merope_t1_take.json --video <take.mp4>`.
-Tests: `tests/pipeline/test_phone_take_window.py`, `tests/pipeline/test_phone_opening_cut.py`.
+Tests: `tests/pipeline/test_phone_take_window.py`, `tests/pipeline/test_phone_opening_cut.py`,
+`tests/kria/test_kri837_one_word_end_line.py`.
 
 ### Text on a spoken word on phone Talking edits (KRI-707)
 

@@ -797,7 +797,8 @@ jobs:
         run: |
           set -o pipefail
           python3 -m pytest tests/pipeline/test_phone_opening_cut.py \
-            tests/pipeline/test_phone_take_window.py -q \
+            tests/pipeline/test_phone_take_window.py \
+            tests/kria/test_kri837_one_word_end_line.py -q \
             | tee ../../../test-results/kri-559/opening-cut-api-tests.log
       - name: Verify caption correction keeps spoken order and word timing
         if: contains(needs.changes.outputs.journey_ids, 'kri-708-caption-correction')

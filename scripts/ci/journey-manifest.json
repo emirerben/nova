@@ -654,7 +654,7 @@
     {
       "id": "kri-628-opening-cut",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_phone_opening_cut.py tests/pipeline/test_phone_take_window.py",
+      "api_tests": "tests/pipeline/test_phone_opening_cut.py tests/pipeline/test_phone_take_window.py tests/kria/test_kri837_one_word_end_line.py",
       "paths": [
         "src/apps/api/app/kria/opening_cut_ask.py",
         "src/apps/api/app/pipeline/phone_opening_cut.py",
@@ -662,7 +662,8 @@
         "src/apps/api/app/services/speech_segments.py",
         "src/apps/api/app/cli/verify_take_window.py",
         "src/apps/api/tests/fixtures/kri790_merope_t1_take.json",
-        "src/apps/api/tests/pipeline/test_phone_take_window.py"
+        "src/apps/api/tests/pipeline/test_phone_take_window.py",
+        "src/apps/api/tests/kria/test_kri837_one_word_end_line.py"
       ]
     },
     {

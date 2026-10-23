@@ -1048,7 +1048,8 @@
       "regression_tests": [
         "tests/pipeline/test_phone_take_window.py",
         "tests/pipeline/test_phone_opening_cut.py",
-        "tests/tasks/test_phone_opening_cut_cleanup_off.py"
+        "tests/tasks/test_phone_opening_cut_cleanup_off.py",
+        "tests/kria/test_kri837_one_word_end_line.py"
       ],
       "harness": "real_compiler",
       "kill_switch": null,
