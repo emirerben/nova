@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.50.0] - 2026-10-23
+
+### Changed
+- fix(library): add a device-only saved video to Visuals from its verified original (KRI-822) (#1750) <!-- release-pr: 1750 -->
+
 ## [0.81.49.0] - 2026-10-23
 
 ### Changed
