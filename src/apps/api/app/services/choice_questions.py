@@ -2115,6 +2115,15 @@ def _length_vs_natural(
     *,
     snapshot: Mapping[str, Any] | None,
 ) -> UnresolvedChoice | None:
+    # An exclusive creator cap is satisfied by a naturally shorter whole output.
+    # Do not turn it into an exact target and ask the creator to lengthen it. Route
+    # adapters that add a tail must validate their measured final export separately.
+    from app.services.length_policy import (  # noqa: PLC0415
+        creator_max_export_duration_s,
+        strict_duration_matches,
+    )
+
+    strict_max = creator_max_export_duration_s(brief=brief)
     durations, requirement_ids, quoted = _requested_durations(brief)
     if len(set(durations)) != 1 or not durations:
         return None
@@ -2127,6 +2136,14 @@ def _length_vs_natural(
     if natural is None:
         return None
     owner, capacity, can_trim = natural
+    if strict_max is not None and owner == "take":
+        # Phone exports append the standard ending to a spoken-take edit. A strict
+        # whole-file cap must compare against that final length, not the raw take.
+        from app.kria.device_render import BRAND_TAIL_SECONDS  # noqa: PLC0415
+
+        capacity += BRAND_TAIL_SECONDS["standard"]
+    if strict_max is not None and strict_duration_matches(capacity, strict_max):
+        return None
     if owner == "take" and _asks_speech_cleanup(brief):
         # KRI-629: the take's raw length is not what the edit will run. Pause/filler
         # cleanup is consented to at approval, after this question would have been
@@ -2142,7 +2159,7 @@ def _length_vs_natural(
     asked = durations[0]
     # A ten-percent tolerance avoids a needless card for ordinary source timing
     # rounding (e.g. a 24.0s voice rendered as 23.8s).
-    if abs(asked - capacity) <= max(0.01, asked * 0.10):
+    if strict_max is None and abs(asked - capacity) <= max(0.01, asked * 0.10):
         return None
     if owner == "footage" and asked < 3 <= capacity:
         from app.services.length_policy import creator_duration_matches  # noqa: PLC0415
@@ -3323,7 +3340,14 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
             ):
                 new = _number(data.get("target_duration_s"))
                 old = _number((req.facts or {}).get("duration_s"))
-                if new is None or old is None or abs(new - old) < 0.001:
+                if new is None or old is None:
+                    continue
+                from app.services.length_policy import strict_duration_limit_s  # noqa: PLC0415
+
+                # Choosing the available source is an explicit waiver of an
+                # exclusive cap, even when both values print as the same
+                # number (e.g. take 38.4 + standard 1.6 s tail = 40).
+                if abs(new - old) < 0.001 and strict_duration_limit_s(req) is None:
                     continue
                 changed[req.id] = req.model_copy(
                     update={

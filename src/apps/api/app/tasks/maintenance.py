@@ -903,6 +903,20 @@ def cleanup_agent_runs(self, retention_days: int | None = None) -> dict:
 # ---------------------------------------------------------------------------
 
 _RENDER_WORKER_IDLE_SINCE_KEY = "render_worker:idle_since"
+_LIFECYCLE_START_WAIT_CAP_S = 60
+_CREATOR_ACTIVITY_SQL = text("""
+SELECT EXISTS (SELECT 1 FROM creation_threads
+ WHERE status = 'active' AND updated_at >= now() - make_interval(secs => :window_s))
+ OR EXISTS (SELECT 1 FROM creation_thread_upload_reservations WHERE expires_at > now())
+ OR EXISTS (SELECT 1 FROM creator_planning_attempts
+ WHERE status IN ('queued','running') AND updated_at >= now() - make_interval(secs => :inflight_s))
+ OR EXISTS (SELECT 1 FROM creator_agent_turns
+ WHERE status IN ('pending','queued','planning','executing','awaiting_approval','observing')
+   AND updated_at >= now() - make_interval(secs => :inflight_s))
+ OR EXISTS (SELECT 1 FROM creator_agent_approvals
+ WHERE status IN ('pending','approved')
+   AND created_at >= now() - make_interval(secs => :inflight_s))
+""")
 
 _lifecycle_redis_lock = threading.Lock()
 _lifecycle_redis_client = None
@@ -946,6 +960,7 @@ def _decide_lifecycle_action(
     now: float,
     grace_min: int,
     machine_state: str | None = "started",
+    last_activity_at: float | None = None,
 ) -> tuple[str, float | None]:
     """Pure decision logic — no Celery/Redis/Fly I/O, fully unit-testable.
 
@@ -985,9 +1000,29 @@ def _decide_lifecycle_action(
     if machine_state is not None and machine_state != "started":
         return "idle_stopped", None
     since = idle_since if idle_since is not None else now
+    if (
+        last_activity_at is not None
+        and last_activity_at > since
+        and last_activity_at >= now - grace_min * 60
+    ):
+        since = min(last_activity_at, now)
     if (now - since) >= grace_min * 60:
         return "stop", None
     return "grace", since
+
+
+def _activity_guard_active(grace_min: int = 10) -> bool:
+    """Fail closed: an unavailable activity query must never stop active work."""
+    try:
+        with sync_session() as db:
+            return bool(
+                db.execute(
+                    _CREATOR_ACTIVITY_SQL, {"window_s": grace_min * 60, "inflight_s": 3600}
+                ).scalar_one()
+            )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("render_worker_lifecycle_activity_query_failed", error=str(exc))
+        return True
 
 
 @celery_app.task(
@@ -995,8 +1030,8 @@ def _decide_lifecycle_action(
     bind=True,
     autoretry_for=(),
     max_retries=0,
-    soft_time_limit=30,
-    time_limit=45,
+    soft_time_limit=100,
+    time_limit=115,
 )
 def manage_render_worker_lifecycle(self) -> str:
     """Stop the render worker when idle past the grace period; start it
@@ -1011,6 +1046,7 @@ def manage_render_worker_lifecycle(self) -> str:
         stop_render_worker,
     )
     from app.services.queue_state import render_worker_idle  # noqa: PLC0415
+    from app.worker import RENDER_WORKER_LAST_DISPATCH_KEY  # noqa: PLC0415
 
     if not settings.RENDER_AUTOSTOP_ENABLED:
         return "disabled"
@@ -1022,18 +1058,54 @@ def manage_render_worker_lifecycle(self) -> str:
     machine_state = get_render_worker_state() if idle is not None else None
     now = datetime.now(UTC).timestamp()
 
+    activity_guard = settings.RENDER_AUTOSTOP_ACTIVITY_GUARD_ENABLED
+
     redis_client = _get_lifecycle_redis()
     idle_since: float | None = None
+    dispatch_at: float | None = None
+    dispatch_unknown = False
     if redis_client is not None:
         try:
             raw = redis_client.get(_RENDER_WORKER_IDLE_SINCE_KEY)
             idle_since = float(raw) if raw else None
+            if activity_guard:
+                try:
+                    stamp = redis_client.get(RENDER_WORKER_LAST_DISPATCH_KEY)
+                    dispatch_at = float(stamp) if stamp else None
+                except Exception:  # never stop when the newer activity read is unknown
+                    dispatch_unknown = True
         except Exception as exc:  # noqa: BLE001
             log.warning("render_worker_lifecycle_redis_read_failed", error=str(exc))
 
     action, new_idle_since = _decide_lifecycle_action(
-        idle, idle_since, now, settings.RENDER_IDLE_GRACE_MIN, machine_state
+        idle,
+        idle_since,
+        now,
+        settings.RENDER_IDLE_GRACE_MIN,
+        machine_state,
+        last_activity_at=dispatch_at if activity_guard else None,
     )
+    if action == "stop" and activity_guard:
+        # A stale dispatch must not bypass the independent creator-activity
+        # guard. Re-read dispatch after the DB check to narrow the stop race.
+        active = dispatch_unknown or _activity_guard_active(settings.RENDER_IDLE_GRACE_MIN)
+        if not active and redis_client is not None:
+            try:
+                stamp = redis_client.get(RENDER_WORKER_LAST_DISPATCH_KEY)
+                dispatch_at = float(stamp) if stamp else None
+                action, new_idle_since = _decide_lifecycle_action(
+                    idle,
+                    idle_since,
+                    now,
+                    settings.RENDER_IDLE_GRACE_MIN,
+                    machine_state,
+                    last_activity_at=dispatch_at,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("render_worker_lifecycle_activity_read_failed", error=str(exc))
+                active = True
+        if active:
+            action, new_idle_since = "grace", now
 
     if redis_client is not None:
         try:
@@ -1053,7 +1125,9 @@ def manage_render_worker_lifecycle(self) -> str:
         # the mechanism that bounds a missed/failed wake to one poll
         # interval instead of an indefinite hang.
         if machine_state != "started":
-            ok = start_render_worker()
+            ok = start_render_worker(
+                wait_s=min(settings.RENDER_START_WAIT_S, _LIFECYCLE_START_WAIT_CAP_S)
+            )
             log.info("render_worker_lifecycle_backstop_start", ok=ok, prior_state=machine_state)
 
     return action

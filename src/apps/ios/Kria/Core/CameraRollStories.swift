@@ -60,10 +60,10 @@ struct CameraRollStoryResearch: Codable, Sendable {
         let url: String
     }
 }
-struct CameraRollStories: Decodable, Sendable {
+struct CameraRollStories: Codable, Sendable {
     let stories: [CameraRollStory]
     let coverage: Coverage
-    struct Coverage: Decodable, Sendable {
+    struct Coverage: Codable, Sendable {
         let moments: [CameraRollMoment]
         let incompleteSpeech: [UUID]
         let unindexed: [UUID]

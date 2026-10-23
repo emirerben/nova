@@ -1,5 +1,9 @@
 import Foundation
 
+#if canImport(AVFoundation)
+import AVFoundation
+#endif
+
 public struct DeviceRenderIdentity: Codable, Equatable, Sendable {
     public let jobID: UUID
     public let variantID: String
@@ -25,7 +29,51 @@ public struct DeviceRenderRequest: Codable, Equatable, Sendable {
     public let identity: DeviceRenderIdentity
     public let recipe: EditRecipe
     public let recovery: DeviceRepairInstruction?
-    public init(identity: DeviceRenderIdentity, recipe: EditRecipe, recovery: DeviceRepairInstruction? = nil) { self.identity = identity; self.recipe = recipe; self.recovery = recovery }
+    /// A server-owned, exclusive output duration ceiling. Omitted by older
+    /// servers and local receipts, which deliberately preserves their legacy
+    /// export behavior.
+    public let maxExportDurationS: Double?
+    public init(identity: DeviceRenderIdentity, recipe: EditRecipe, recovery: DeviceRepairInstruction? = nil, maxExportDurationS: Double? = nil) {
+        self.identity = identity; self.recipe = recipe; self.recovery = recovery; self.maxExportDurationS = maxExportDurationS
+    }
+}
+
+/// The server rejects exports at or above its duration ceiling. Keep the
+/// wording local and actionable so the creator can adjust the edit before an
+/// upload attempt, while retaining both numbers for support/debugging.
+public struct DeviceExportDurationLimitError: Error, Equatable, Sendable, LocalizedError {
+    public let limitS: Double
+    public let durationS: Double
+    public let isMeasuredOutput: Bool
+
+    public init(limitS: Double, durationS: Double, isMeasuredOutput: Bool) {
+        self.limitS = limitS; self.durationS = durationS; self.isMeasuredOutput = isMeasuredOutput
+    }
+
+    public var errorDescription: String? {
+        message(locale: .current)
+    }
+
+    /// Kept explicit for deterministic tests and for callers that already
+    /// know the creator's language. The package otherwise follows the device
+    /// locale used by `LocalizedError` presentation.
+    public func message(locale: Locale) -> String {
+        let style = Duration.UnitsFormatStyle.units(allowed: [.minutes, .seconds], width: .wide)
+        let limit = Duration.seconds(limitS).formatted(style.locale(locale))
+        let isTurkish = locale.identifier.lowercased().hasPrefix("tr")
+        guard durationS.isFinite, durationS > 0 else {
+            return isTurkish
+                ? "Dışa aktarılan videonun süresi okunamadı. Sınır \(limit). Düzenlemeyi kısaltın veya daha az konuşma seçin, ardından yeniden deneyin."
+                : "The exported video's length could not be read. The limit is \(limit). Shorten the edit or select less speech, then try again."
+        }
+        let duration = Duration.seconds(durationS).formatted(style.locale(locale))
+        if isTurkish {
+            let subject = isMeasuredOutput ? "Bu dışa aktarılan video \(duration) uzunluğunda." : "Bu düzenleme yaklaşık \(duration) uzunluğunda."
+            return "\(subject) Sınır \(limit). Düzenlemeyi kısaltın veya daha az konuşma seçin, ardından yeniden deneyin."
+        }
+        let subject = isMeasuredOutput ? "This exported video is \(duration) long." : "This edit will be about \(duration) long."
+        return "\(subject) The limit is \(limit). Shorten the edit or select less speech, then try again."
+    }
 }
 
 public enum DeviceRenderPhase: String, Codable, Sendable {
@@ -82,6 +130,7 @@ public enum DeviceRenderFailureReasonCode: String, Sendable {
     /// Classifies an error thrown while resolving sources or exporting locally.
     public static func forRenderFailure(_ error: Error) -> Self {
         if error is CancellationError { return .cancelledByUser }
+        if error is DeviceExportDurationLimitError { return .exportFailed }
         if case MediaEngineError.insufficientStorage = error { return .insufficientStorage }
         // A schema-version mismatch surfacing here (recipe.validate() is also
         // called mid-render by `OriginalSourceResolver.resolve`) means this
@@ -254,6 +303,44 @@ public actor DeviceRenderCoordinator {
               try SHA256Fingerprinter().fingerprint(file: url) == saved.outputFingerprint else { return nil }
         return url
     }
+    /// The recipe timeline is the canonical pre-export estimate. A standard
+    /// brand tail is measured from the exact bundled asset the exporter uses,
+    /// rather than duplicated as a stale seconds constant here.
+    private func estimatedExportDuration(for request: DeviceRenderRequest) async throws -> Double {
+        let recipeDuration = TimelineMath.totalDuration(of: request.recipe)
+        guard recipeDuration.isFinite, recipeDuration >= 0 else { throw MediaEngineError.exportFailed }
+        #if canImport(AVFoundation)
+        guard exporter.brandTail == KriaBranding.Options.standard.contractTail else { return recipeDuration }
+        guard let outro = try await KriaOutroAssetCache.shared.load() else {
+            throw MediaEngineError.missingBrandingResource(KriaBranding.outroFileName)
+        }
+        let total = recipeDuration + outro.duration.seconds
+        guard total.isFinite else { throw MediaEngineError.exportFailed }
+        return total
+        #else
+        return recipeDuration
+        #endif
+    }
+    private func validateEstimatedDuration(for request: DeviceRenderRequest) async throws {
+        guard let limit = request.maxExportDurationS else { return }
+        guard limit.isFinite, limit > 0 else { throw MediaEngineError.exportFailed }
+        let estimate = try await estimatedExportDuration(for: request)
+        guard estimate < limit else {
+            throw DeviceExportDurationLimitError(limitS: limit, durationS: estimate, isMeasuredOutput: false)
+        }
+    }
+    private func validateOutputDuration(_ output: URL, for request: DeviceRenderRequest) async throws {
+        guard let limit = request.maxExportDurationS else { return }
+        guard limit.isFinite, limit > 0 else { throw MediaEngineError.exportFailed }
+        #if canImport(AVFoundation)
+        let duration = try await AVURLAsset(url: output).load(.duration).seconds
+        guard duration.isFinite, duration > 0, duration < limit else {
+            throw DeviceExportDurationLimitError(limitS: limit, durationS: duration, isMeasuredOutput: true)
+        }
+        #else
+        throw MediaEngineError.avFoundationUnavailable
+        #endif
+    }
     private func perform(attempt: UUID) async {
         defer { if receipt?.attemptID == attempt { running = nil } }
         guard let saved = receipt, current(attempt) else { return }
@@ -261,9 +348,13 @@ public actor DeviceRenderCoordinator {
             let serverCurrent = try await publisher.isCurrent(saved.request.identity)
             guard current(attempt) else { return }
             guard serverCurrent else { try update(attempt, phase: .superseded); return }
+            try await validateEstimatedDuration(for: saved.request)
+            guard current(attempt) else { return }
             let output: URL
             if let existing = try intactOutput(saved) {
                 output = existing
+                try await validateOutputDuration(output, for: saved.request)
+                guard current(attempt) else { return }
             } else {
                 try update(attempt, phase: .preparing)
                 let assets = try await sources.resolve(for: saved.request.recipe)
@@ -273,6 +364,8 @@ public actor DeviceRenderCoordinator {
                 output = directory.appendingPathComponent("\(attempt.uuidString).mp4")
                 _ = try await exporter.export(recipe: saved.request.recipe, assetURLs: assets, outputURL: output, exportID: attempt.uuidString,
                                          progress: { [weak self] fraction in Task { await self?.recordExport(fraction, attempt: attempt) } })
+                guard current(attempt) else { return }
+                try await validateOutputDuration(output, for: saved.request)
                 guard current(attempt) else { return }
                 receipt?.outputURL = output
                 receipt?.outputFingerprint = try SHA256Fingerprinter().fingerprint(file: output)
@@ -290,9 +383,13 @@ public actor DeviceRenderCoordinator {
             if current(attempt) { try? update(attempt, phase: .cancelled) }
         } catch {
             if current(attempt) {
-                let entersNeedsAttention = receipt?.outputURL == nil
+                // A cached file may have reached `.localReady` in an older
+                // build before the bound existed. Treat an invalid measured
+                // duration as a local-render failure anyway: it is never
+                // eligible for another sync attempt.
+                let entersNeedsAttention = receipt?.outputURL == nil || error is DeviceExportDurationLimitError
                 let identity = receipt?.request.identity
-                let detail = String(describing: error)
+                let detail = error.localizedDescription
                 try? update(attempt, phase: entersNeedsAttention ? .needsAttention : .localReady, error: detail)
                 if entersNeedsAttention, let identity {
                     reportFailure(identity: identity, reasonCode: .forRenderFailure(error), detail: detail)

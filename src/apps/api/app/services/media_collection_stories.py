@@ -197,7 +197,11 @@ async def generate_stories(db, owner, identifier, body):
             raise
     else:
         raise HTTPException(
-            409 if claim.status == "busy" else 503, "Stories are pending; retry shortly"
+            409 if claim.status == "busy" else 503,
+            {
+                "code": "collection_analysis_pending",
+                "message": "Stories are pending; retry shortly",
+            },
         )
     await media_collections.lock_library_owner(db, owner)
     # Serialize the final check with pause, Forget, profile changes and feedback.

@@ -276,6 +276,8 @@ class PlanFacts:
     # Seconds the phone appended after the edit (the Kria outro) when the record says so;
     # never in the plan's own length: a 28.0s plan is a ~29.6s file (KRI-210). 0 = unknown.
     outro_s: float = 0.0
+    # Measured complete exported file, not the recipe's edit duration plus an estimate.
+    measured_export_duration_s: float | None = None
     # KRI-190: clips whose label is on a cut shorter than its reading time (the
     # clip itself is too short). A label the viewer cannot read is not "met".
     unreadable_label_clip_ids: tuple[str, ...] = ()
@@ -1446,6 +1448,17 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     changes = _phone_receipt_facts(
         variant.get("phone_beat_receipt"), timed=variant.get("resolved_archetype") == "narrated"
     )
+    measured = _finite_number(variant.get("measured_export_duration_s"))
+    if (
+        measured is not None
+        and measured > 0
+        and variant.get("ok") is True
+        and variant.get("render_status") == "ready"
+        and variant.get("measured_export_generation_id")
+        and variant.get("measured_export_generation_id") == variant.get("render_generation_id")
+    ):
+        changes["measured_export_duration_s"] = measured
+    changes["outro_s"] = _declared_outro_s(variant)
     bed = _finite_number(variant.get("voiceover_bed_level"))
     if bed is not None:
         changes["voiceover_bed_level"] = max(0.0, bed)
@@ -3913,7 +3926,7 @@ def _merge_cleanup_timing(
     if timing.status == "met":
         return cleanup
     if cleanup.status == "met" or not cleanup.reason:
-        return _receipt(req, "partial", timing.reason)
+        return _receipt(req, "partial", timing.reason, verification=timing.verification)
     if not timing.reason or timing.reason == cleanup.reason:
         return cleanup
     return _receipt(req, "partial", f"{cleanup.reason}; {timing.reason}")
@@ -4806,6 +4819,36 @@ def _check_opening_cut(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
 
 
 def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    from app.services.length_policy import (  # noqa: PLC0415
+        strict_duration_limit_s,
+        strict_duration_matches,
+    )
+
+    maximum = strict_duration_limit_s(req)
+    if maximum is not None:
+        measured = facts.measured_export_duration_s
+        if measured is None:
+            return _receipt(
+                req,
+                "partial",
+                say(
+                    en="I'll check the full video length, including its ending, after export.",
+                    tr="Kapanış dahil tam video süresini dışa aktardıktan sonra kontrol edeceğim.",
+                ),
+                verification="unchecked",
+            )
+        if strict_duration_matches(measured, maximum):
+            return _receipt(req, "met", None)
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"The finished video is {_round_s(measured)}s including its ending; "
+                f"you asked for under {_round_s(maximum)}s.",
+                tr=f"Kapanışı dahil bitmiş video {_round_s(measured)} saniye; "
+                f"{_round_s(maximum)} saniyenin altında istemiştin.",
+            ),
+        )
     if clip_length_ask(req) is not None:
         # KRI-558: a per-clip length is judged on the clips, never against the total length.
         return _check_clip_lengths(req, facts)

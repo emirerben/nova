@@ -136,7 +136,11 @@
       "KriaUITests/CameraRollStoriesUITests/testThreeIdeasRemainIndependentWhenOneIsRejected",
       "KriaUITests/CameraRollStoriesUITests/testConfirmExamplesRateIdeaAndForget",
       "KriaUITests/CameraRollStoriesUITests/testResearchFactsAndSourcesStayBehindTheIdea",
-      "KriaUITests/CameraRollCollectionUITests/testPartiallyIndexedCollectionWaitsForExplicitPartialChoice"
+      "KriaUITests/CameraRollCollectionUITests/testPartiallyIndexedCollectionWaitsForExplicitPartialChoice",
+      "KriaUITests/CameraRollCollectionUITests/testSavedIdeasSurviveRelaunchWithoutReselectingFootage",
+      "KriaUITests/CameraRollCollectionUITests/testSavedPartialIdeasRequireNewChoiceWhenCoverageChanges",
+      "KriaUITests/CameraRollCollectionUITests/testUnavailableAnalysisIsNotAnEditConflict",
+      "KriaUITests/CameraRollCollectionUITests/testRealConflictCanOpenLatestWithoutLosingLocalCollection"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",

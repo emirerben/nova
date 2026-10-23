@@ -3,10 +3,12 @@ from app.services.choice_questions import (
     CONFLICT_LENGTH_VS_NATURAL,
     OPT_ACCEPT_NATURAL,
     OPT_TRIM_TO_REQUESTED,
+    answered_brief,
     build_choice_question,
     collect_conflicts,
     resolve_choices,
 )
+from app.services.length_policy import creator_max_export_duration_s
 
 
 def brief(seconds):
@@ -45,6 +47,118 @@ def test_requested_30_seconds_on_a_12_second_spoken_take_offers_actual_length():
     )
     assert [option.key for option in found.options] == [OPT_ACCEPT_NATURAL]
     assert found.effects[OPT_ACCEPT_NATURAL]["strategy"]["target_duration_s"] == 12
+
+
+def test_strict_duration_does_not_ask_to_lengthen_a_valid_shorter_take():
+    strict = CreativeBrief(
+        requirements=[
+            BriefRequirement(
+                id="duration",
+                kind="timing",
+                scope="global",
+                description="Keep it under 40 seconds",
+                facts={"duration_s": 40},
+            )
+        ]
+    )
+    found = collect_conflicts(
+        {"audio_strategy": "original_audio", "edit_format": "talking_head"},
+        strict,
+        {"clip_assignments": [{"media_id": "take", "duration_s": 20}]},
+    )
+    assert not any(item.kind == CONFLICT_LENGTH_VS_NATURAL for item in found)
+
+
+def test_strict_duration_over_a_take_includes_phone_ending_and_bypasses_rounding_tolerance():
+    strict = CreativeBrief(
+        requirements=[
+            BriefRequirement(
+                id="duration",
+                kind="timing",
+                scope="global",
+                description="Keep it under 40 seconds",
+                facts={"duration_s": 40},
+            )
+        ]
+    )
+    found = next(
+        item
+        for item in collect_conflicts(
+            {"audio_strategy": "original_audio", "edit_format": "talking_head"},
+            strict,
+            {"clip_assignments": [{"media_id": "take", "duration_s": 41}]},
+        )
+        if item.kind == CONFLICT_LENGTH_VS_NATURAL
+    )
+    assert found.effects[OPT_ACCEPT_NATURAL]["strategy"]["target_duration_s"] == 42.6
+
+
+def test_accept_natural_rewrites_a_strict_limit_so_it_cannot_linger() -> None:
+    original = CreativeBrief(
+        requirements=[
+            BriefRequirement(
+                id="duration",
+                kind="timing",
+                scope="global",
+                description="Keep it under 40 seconds",
+                facts={"duration_s": 40},
+            )
+        ]
+    )
+    resolved = answered_brief(
+        original,
+        {
+            "target_duration_s": 20,
+            "choice_answers": [
+                {
+                    "kind": CONFLICT_LENGTH_VS_NATURAL,
+                    "option": OPT_ACCEPT_NATURAL,
+                    "requirement_ids": ["duration"],
+                }
+            ],
+        },
+    )
+    requirement = resolved.requirements[0]
+    assert requirement.facts["duration_s"] == 20
+    assert "under 40" not in requirement.description
+
+
+def test_accept_natural_waives_a_strict_cap_even_when_its_available_length_is_the_same_number():
+    original = CreativeBrief(
+        requirements=[
+            BriefRequirement(
+                id="duration",
+                kind="timing",
+                scope="global",
+                description="Keep it under 40 seconds",
+                facts={"duration_s": 40},
+            )
+        ]
+    )
+    choice = next(
+        item
+        for item in collect_conflicts(
+            {"audio_strategy": "original_audio", "edit_format": "talking_head"},
+            original,
+            {"clip_assignments": [{"media_id": "take", "duration_s": 38.4}]},
+        )
+        if item.kind == CONFLICT_LENGTH_VS_NATURAL
+    )
+    strategy = {
+        **choice.effects[OPT_ACCEPT_NATURAL]["strategy"],
+        "choice_answers": [
+            {
+                "kind": CONFLICT_LENGTH_VS_NATURAL,
+                "option": OPT_ACCEPT_NATURAL,
+                "requirement_ids": ["duration"],
+            }
+        ],
+    }
+
+    answered = answered_brief(original, strategy)
+
+    assert answered.requirements[0].facts["duration_s"] == 40
+    assert creator_max_export_duration_s(brief=answered) is None
 
 
 def test_supported_short_song_trim_keeps_the_creator_requested_length():

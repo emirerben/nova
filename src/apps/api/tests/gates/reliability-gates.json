@@ -2162,11 +2162,12 @@
         "KRI-729",
         "KRI-730",
         "KRI-731",
-        "KRI-732"
+        "KRI-732",
+        "KRI-853"
       ],
       "status": "open_pr",
       "owner": "KRI-731",
-      "symptom": "A recommendation can exclude added assets, change source windows after review, or confuse selection with render approval.",
+      "symptom": "A recommendation can exclude added assets, change source windows after review, or confuse selection with render approval. Returning to an unchanged collection can advance its revision, lose cached ideas, and mislabel an unavailable-analysis response as an editor conflict.",
       "boundary": "dispatch",
       "journey": "kri-729-camera-roll-recommendations",
       "paths": [
@@ -2431,6 +2432,55 @@
         "An `add` of the new label beside a live r2 (no change) still keeps both labels; prod's successful attempt used change.",
         "Unknown extra keys (id, status) and a misspelled scope stay refused; the retry is now told the field.",
         "\"chimichurri & salsa criolla\" is 27 characters, over the 24-character label cap: KRI-804."
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-798-render-worker-restart",
+      "tickets": [
+        "KRI-798",
+        "KRI-829"
+      ],
+      "symptom": "Merope T1 job 0701fcc9-748b-4ac9-a640-130c125c0c17 stopped its render worker at 13:25:23.121; dispatch followed at 13:25:23.956, Fly start/412 at 13:25:24.031, and the periodic backstop only at 13:27:24.8. A first render could arrive while the worker was stopping.",
+      "boundary": "dispatch",
+      "status": "open_pr",
+      "owner": "KRI-798",
+      "journey": "kri-798-render-worker-restart",
+      "paths": [
+        "src/apps/api/app/config.py",
+        "src/apps/api/app/services/fly_machines.py",
+        "src/apps/api/app/tasks/maintenance.py",
+        "src/apps/api/app/worker.py"
+      ],
+      "regression_tests": [
+        "tests/services/test_fly_machines.py",
+        "tests/tasks/test_render_worker_lifecycle.py",
+        "tests/tasks/test_render_worker_activity_sql.py",
+        "tests/test_render_worker_wake.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": "RENDER_AUTOSTOP_ENABLED",
+      "evidence": {
+        "offline_replay": "The saved 2026-09-23 worker-lifecycle race fix is replayed with real HTTP state transitions, lifecycle decisions, dispatch wake behavior, and PostgreSQL activity SQL. The Fly client transport is stubbed; no Fly API call is made.",
+        "live_model": "not_applicable; no model call is involved.",
+        "native_output": "not_applicable; this is worker availability rather than a device output assertion.",
+        "production": "No deployment or flag action. RENDER_AUTOSTOP_ENABLED remains false by default; live idle-stop and first-render observation are pending."
+      },
+      "neighbours_covered": [
+        "missing Fly token and HTTP failure fail soft",
+        "one worker only; ambiguous resolution never acts",
+        "stopping-to-stopped wait uses Fly instance_id and a bounded timeout",
+        "412 start race retries within the configured budget",
+        "autostop disabled is a complete no-op",
+        "recent dispatch and runtime-v2 awaiting approval defer an otherwise due stop",
+        "stale activity does not defer indefinitely",
+        "wake filtering and Redis debounce fail open",
+        "current stop signal and Celery soft shutdown remain unchanged"
+      ],
+      "neighbours_gap": [
+        "real Fly Machine stop/start observation",
+        "real first render after an idle stop",
+        "production queue latency and cost after enabling the separate default-off autostop flag"
       ],
       "red_control": "not_applicable"
     },

@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.63.0] - 2026-10-23
+
+### Fixed
+- fix(ios): preserve camera-roll ideas on resume and simplify review (KRI-853) (#1772) <!-- release-pr: 1772 -->
+
+## [0.81.62.0] - 2026-10-23
+
+### Fixed
+- fix(worker): retry stopping workers and protect active creation (KRI-798) (#1754) <!-- release-pr: 1754 -->
+
+## [0.81.61.0] - 2026-10-23
+
+### Fixed
+- fix(ios): enforce strict exported duration from approved brief (KRI-629) (#1757) <!-- release-pr: 1757 -->
+
+## [0.81.60.0] - 2026-10-23
+
+### Fixed
+- fix: preserve speech subtitles when extra text is restricted (#1755) <!-- release-pr: 1755 -->
+
 ## [0.81.59.0] - 2026-10-23
 
 ### Changed
