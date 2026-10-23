@@ -15,8 +15,8 @@ brief receipt, with real word timings (no network, no LLM, no database):
   are laid out on the segment times of ``whisper_en.json`` (sauces line 4.2-6.1 s).
 
 Field shape under test: ``ReactionBeat.display_mode`` is ``"pip"`` (the default, omitted from
-every dump) or ``"fullscreen"``. It is the name open PR #1756 already adds for Voiceover, so
-the two lanes share one field. A grounded fullscreen card is a ``SubtitledOverlayCard`` with
+every dump) or ``"fullscreen"``. It is the field PR #1756 added for Voiceover, so
+the two lanes share it. A grounded fullscreen card is a ``SubtitledOverlayCard`` with
 ``display_mode="fullscreen"`` (KRI-297's cover-fill track) and its receipt entry carries
 ``"display_mode": "fullscreen"`` (absent = corner card). The ask side is a brief fact
 (``facts["display_mode"]`` = ``"fullscreen"`` | ``"pip"``) because KRI-667 forbids new
@@ -32,7 +32,6 @@ Reading the failures on main (before the fix):
 
 from __future__ import annotations
 
-import inspect
 import json
 from typing import Any
 
@@ -233,23 +232,30 @@ def _beat(beat_id: str, trigger: str, media_id: str, **extra: Any) -> dict:
     }
 
 
-def _ground(monkeypatch, beats, words, duration_s, assets, *, video_supported=False):  # noqa: ANN001
-    """The real grounding with its two database seams and the face sampler faked.
-
-    Passes ``allow_fullscreen=True`` when the grounding takes that gate (open PR #1756 adds it,
-    default off) so these tests mean the same thing before and after it lands.
-    """
+def _ground(  # noqa: ANN202
+    monkeypatch,  # noqa: ANN001
+    beats,  # noqa: ANN001
+    words,  # noqa: ANN001
+    duration_s,  # noqa: ANN001
+    assets,  # noqa: ANN001
+    *,
+    video_supported=False,  # noqa: ANN001
+    closing=None,  # noqa: ANN001
+):
+    """The real grounding with its two database seams and the face sampler faked, called the
+    way the phone Talking worker calls it: full screen allowed, 1.5 s default hold."""
     monkeypatch.setattr(rg, "_load_ready_pool_assets", lambda *a, **k: assets)
     monkeypatch.setattr(rg, "_load_sfx_entries", lambda *a, **k: [])
     monkeypatch.setattr(pg, "sample_face_regions", lambda *a, **k: ([], {}))
-    extra: dict[str, Any] = {}
-    if "allow_fullscreen" in inspect.signature(rg.ground_phone_reaction_beats).parameters:
-        extra["allow_fullscreen"] = True
+    extra: dict[str, Any] = {
+        "allow_fullscreen": True,
+        "fullscreen_hold_s_default": rg.TALKING_FULLSCREEN_HOLD_S_DEFAULT,
+    }
     return rg.ground_phone_reaction_beats(
         lambda: None,
         job_id="job-kri840",
         beats=beats,
-        closing=None,
+        closing=closing,
         words=words,
         duration_s=duration_s,
         clip_path="/tmp/clip.mp4",
@@ -614,9 +620,15 @@ def test_voice_and_captions_run_unbroken_under_the_fullscreen_photo(
     assert recipe.audio.original_volume == 1.0
     assert all(c.volume == 0 for t in recipe.tracks if t.id != "subtitled" for c in t.clips)
     caption_layers = [layer for layer in recipe.text_layers if layer.id.startswith("caption")]
-    assert _covered(caption_layers, window.start_s, window.end_s), (
-        "a caption gap inside the full-screen window"
-    )
+    # Wherever someone is speaking under the photo a caption is on screen. (A pause between two
+    # cues has none to show: Don Julio's sauces line ends at 6.1 s, the next starts at 6.8 s.)
+    for cue in cues:
+        start = max(window.start_s, cue["start_s"])
+        end = min(window.end_s, cue["end_s"])
+        if end > start:
+            assert _covered(caption_layers, start, end), (
+                f"a caption gap under the full-screen photo while {cue['text']!r} is spoken"
+            )
 
 
 def test_julio_t2_opening_cut_keeps_the_fullscreen_photo_on_its_word(monkeypatch) -> None:  # noqa: ANN001
@@ -662,6 +674,7 @@ def test_a_fullscreen_beat_and_the_fullscreen_images_sequence_never_collide(monk
         duration_s=_CAFE_DURATION_S,
         clip_path="/tmp/clip.mp4",
         occupied=[beat_window],
+        fullscreen_occupied=[beat_window],
         used_media_ids=frozenset({_OBLEA}),
         layout="fullscreen_images",
     )
@@ -814,7 +827,9 @@ def _manifest() -> ResolvedCreatorManifest:
     )
 
 
-def _draft_facts(beats: list[dict], **strategy_extra: Any):  # noqa: ANN202
+def _draft_facts(  # noqa: ANN202
+    beats: list[dict], *, manifest: ResolvedCreatorManifest | None = None, **strategy_extra: Any
+):
     data = {
         "edit_format": "subtitled",
         "audio_strategy": "original_audio",
@@ -825,7 +840,7 @@ def _draft_facts(beats: list[dict], **strategy_extra: Any):  # noqa: ANN202
         strategy = CreativeStrategy.model_validate(data).model_dump(mode="json", exclude_none=True)
     except ValidationError as exc:
         pytest.fail(f"the draft strategy does not validate: {exc.errors()[0]['type']}")
-    return plan_facts_from_strategy(strategy, manifest=_manifest())
+    return plan_facts_from_strategy(strategy, manifest=manifest or _manifest())
 
 
 def _grill(**extra: Any) -> dict:
@@ -1015,3 +1030,288 @@ def test_worker_never_lets_a_corner_card_pass_for_the_full_screen_ask(monkeypatc
     receipt = check_requirement(_FS_ASK_EN, plan_facts_from_phone_variant(variant))
     assert receipt.status == "partial", (receipt.status, receipt.reason)
     assert "corner" in (receipt.reason or "").lower(), receipt.reason
+
+
+# ================== F. repair, demotion, closing photo, creator-facing notes (added with the fix)
+
+
+def _manifest_without_fullscreen() -> ResolvedCreatorManifest:
+    """A Voiceover edit, or Talking with PHONE_SUBTITLED_FULLSCREEN_OVERLAYS_ENABLED off."""
+    manifest = _manifest()
+    capabilities = {
+        name: cap
+        for name, cap in manifest.capabilities.items()
+        if name != "media_overlays:fullscreen"
+    }
+    return manifest.model_copy(update={"capabilities": capabilities})
+
+
+def _strategy(beats: list[dict]) -> CreativeStrategy:
+    return CreativeStrategy.model_validate(
+        {"edit_format": "subtitled", "audio_strategy": "original_audio", "reaction_beats": beats}
+    )
+
+
+def test_a_reaction_beat_rejects_a_display_mode_the_model_made_up() -> None:
+    with pytest.raises(ValidationError):
+        ReactionBeat.model_validate(_beat("grill", "Argentinian", _GRILL, display_mode="corner"))
+
+
+def test_repair_keeps_a_fullscreen_beat_where_full_screen_is_available() -> None:
+    from app.services.creator_capabilities import repair_creator_reaction_beats
+
+    repaired, notices = repair_creator_reaction_beats(
+        _manifest(), _strategy([_grill(display_mode="fullscreen", hold_s=1.2)])
+    )
+    (beat,) = repaired.reaction_beats
+    assert (beat.display_mode, beat.hold_s) == ("fullscreen", 1.2)
+    assert notices == []
+
+
+def test_repair_keeps_a_sticker_role_beat_the_model_asked_full_screen() -> None:
+    from app.services.creator_capabilities import repair_creator_reaction_beats
+
+    sticker = _beat("grill", "Argentinian", _GRILL, display_mode="fullscreen")
+    sticker["visual_role"] = "sticker"
+    (beat,) = repair_creator_reaction_beats(_manifest(), _strategy([sticker]))[0].reaction_beats
+    assert beat.display_mode == "fullscreen"
+
+
+def test_repair_without_full_screen_turns_the_beat_into_a_corner_card_and_says_so() -> None:
+    from app.services.creator_capabilities import repair_creator_reaction_beats
+
+    repaired, notices = repair_creator_reaction_beats(
+        _manifest_without_fullscreen(), _strategy([_grill(display_mode="fullscreen", hold_s=1.2)])
+    )
+    (beat,) = repaired.reaction_beats or []  # never dropped: dropping reads as "couldn't find it"
+    assert (beat.display_mode, beat.hold_s, beat.trigger) == ("pip", 1.2, "Argentinian")
+    assert len(notices) == 1 and '"Argentinian"' in notices[0] and "corner" in notices[0], notices
+    assert "couldn't find" not in notices[0].lower()
+
+
+def test_repair_makes_a_sound_only_beat_a_plain_pop_in() -> None:
+    from app.services.creator_capabilities import repair_creator_reaction_beats
+
+    ding = {
+        "beat_id": "ding",
+        "trigger": "Argentinian",
+        "sound": "ding",
+        "display_mode": "fullscreen",
+    }
+    repaired, notices = repair_creator_reaction_beats(_manifest(), _strategy([ding]))
+    (beat,) = repaired.reaction_beats
+    assert beat.display_mode == "pip" and beat.sound == "ding"
+    assert notices == [], "nothing visible changed, so nothing to tell the creator"
+
+
+def test_the_draft_says_partial_not_couldnt_find_when_full_screen_is_unavailable() -> None:
+    facts = _draft_facts(
+        [_grill(display_mode="fullscreen", hold_s=1.2)], manifest=_manifest_without_fullscreen()
+    )
+    receipt = check_requirement(_FS_ASK_EN, facts)
+    reason = (receipt.reason or "").lower()
+    assert receipt.status == "partial", (receipt.status, receipt.reason)
+    assert "corner" in reason and "couldn't find" not in reason, receipt.reason
+
+
+def _talking_manifest():  # noqa: ANN202
+    """The real manifest a phone Talking item resolves to: one take plus the grill photo."""
+    from app.services import creator_capabilities as capabilities
+
+    return capabilities.resolve_creator_manifest(
+        item_id="item-kri840",
+        edit_format="subtitled",
+        media=[
+            {"media_id": "take.mp4", "kind": "video", "duration_s": 12.9},
+            {"media_id": f"asset-{_GRILL}", "kind": "image", "label": "Don Julio grill"},
+        ],
+        catalog=[],
+        phone_source_media_ids=["take.mp4"],
+        phone_rendering_allowed=True,
+    )
+
+
+def _julio_strategy() -> CreativeStrategy:
+    return CreativeStrategy(
+        edit_format="subtitled",
+        audio_strategy="original_audio",
+        render_program="native",
+        selected_media_ids=["take.mp4"],
+        reaction_beats=[_grill(display_mode="fullscreen", hold_s=1.2)],
+    )
+
+
+def test_the_real_talking_manifest_keeps_the_full_screen_beat(prod_profile) -> None:  # noqa: ANN001
+    from app.kria.strategy_policy import CheckedStrategy, check_strategy_for_runtime_v2
+
+    checked = check_strategy_for_runtime_v2(
+        _talking_manifest(), _julio_strategy(), ask_before_simplifying=True
+    )
+    assert isinstance(checked, CheckedStrategy), checked
+    assert [b.display_mode for b in checked.strategy.reaction_beats] == ["fullscreen"]
+    assert not any("corner" in notice for notice in checked.notices)
+
+
+def test_with_full_screen_switched_off_the_creator_is_told_before_it_becomes_a_corner_card(
+    prod_profile,  # noqa: ANN001
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    from app.kria.strategy_policy import (
+        CheckedStrategy,
+        RefusedStrategy,
+        check_strategy_for_runtime_v2,
+    )
+    from app.services import creator_capabilities as capabilities
+
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_fullscreen_overlays_enabled", False)
+    manifest = _talking_manifest()
+    assert capabilities.CAPABILITY_MEDIA_OVERLAY_FULLSCREEN not in manifest.capabilities
+
+    # Told (no question) where the chat does not ask before simplifying: the beat is kept.
+    told = check_strategy_for_runtime_v2(manifest, _julio_strategy())
+    assert isinstance(told, CheckedStrategy), told
+    assert [b.display_mode for b in told.strategy.reaction_beats] == ["pip"]
+    assert any('"Argentinian"' in n and "corner" in n for n in told.notices), told.notices
+
+    # Asked first where it does: the question names the corner card, never "couldn't find".
+    asked = check_strategy_for_runtime_v2(manifest, _julio_strategy(), ask_before_simplifying=True)
+    assert isinstance(asked, RefusedStrategy), asked
+    assert "corner" in asked.question and "couldn't find" not in asked.question.lower()
+
+
+def test_the_turkish_chat_gets_the_downgrade_notice_in_turkish() -> None:
+    from app.kria.strategy_policy import localize_known_message
+    from app.services.creator_capabilities import repair_creator_reaction_beats
+
+    _repaired, (notice,) = repair_creator_reaction_beats(
+        _manifest_without_fullscreen(),
+        _strategy(
+            [_beat("oblea", "traditional Colombian dessert", _OBLEA, display_mode="fullscreen")]
+        ),
+    )
+    with reply_language_for("tr"):
+        translated = localize_known_message(notice)
+    assert translated != notice and "köşe" in translated, translated
+
+
+def _beat_entry(**extra: Any) -> dict:
+    return {
+        "beat_id": "grill",
+        "trigger": "Argentinian",
+        "at_s": 5.0,
+        "end_s": 6.2,
+        "visual_label": "Don Julio grill",
+        **extra,
+    }
+
+
+def _receipt_with(entry: dict) -> dict:
+    return {
+        "version": 1,
+        "matcher": "phrase",
+        "face_sampling": "skipped",
+        "placed": [entry],
+        "unplaced": [],
+        "closing": {"status": "none", "badge": "none"},
+    }
+
+
+def test_demoting_the_sound_keeps_the_full_screen_photo_marked_full_screen() -> None:
+    receipt = _receipt_with(_beat_entry(sound_label="Ding", display_mode="fullscreen"))
+    out = gb._demote_beat_receipt(
+        receipt, sfx_ids=frozenset({"beat-grill-1-sfx"}), reason="bind_failed"
+    )
+    (kept,) = out["placed"]
+    assert kept["display_mode"] == "fullscreen" and "sound_label" not in kept, kept
+
+
+def test_demoting_the_photo_drops_the_full_screen_mark_with_it() -> None:
+    receipt = _receipt_with(_beat_entry(sound_label="Ding", display_mode="fullscreen"))
+    out = gb._demote_beat_receipt(
+        receipt, card_ids=frozenset({"beat-grill-1"}), reason="compile_dropped"
+    )
+    (kept,) = out["placed"]
+    assert "display_mode" not in kept and "visual_label" not in kept, kept
+
+
+def test_two_full_screen_beats_on_neighbouring_words_say_which_one_gave_way(monkeypatch) -> None:  # noqa: ANN001
+    # "Hi" (2.34 s) and "Karolina" (2.39 s): the earlier full-screen photo would last 0.05 s.
+    beats = [
+        _beat("a", "Hi", _OBLEA, display_mode="fullscreen"),
+        _beat("b", "Karolina", _COTOPAXI, display_mode="fullscreen"),
+    ]
+    grounded = _ground(monkeypatch, beats, CAFE_WORDS, _CAFE_DURATION_S, _CAFE_ASSETS)
+    assert set(_cards_by_beat(grounded)) == {"b"}
+    assert [(u["beat_id"], u["reason"]) for u in grounded.receipt["unplaced"]] == [
+        ("a", "fullscreen_overlap")
+    ]
+    variant = {
+        "resolved_archetype": "subtitled",
+        "render_destination": "device",
+        "phone_beat_receipt": grounded.receipt,
+    }
+    assert plan_facts_from_phone_variant(variant).beat_room_drops == (("Hi", "overlap"),)
+
+
+def test_the_creator_is_told_why_a_full_screen_photo_gave_way() -> None:
+    from app.services.nova_steps import beat_miss_sentence
+
+    sentence = beat_miss_sentence("Argentinian", "fullscreen_overlap")
+    assert sentence != beat_miss_sentence("Argentinian", "error: boom"), "fell to the generic line"
+    assert "full-screen" in sentence and '"Argentinian"' in sentence
+    # An edit approved before full screen was switched off reaches the worker with the beat.
+    off = beat_miss_sentence("Argentinian", "fullscreen_not_enabled")
+    assert off != beat_miss_sentence("Argentinian", "error: boom"), "fell to the generic line"
+    assert "Full screen" in off and '"Argentinian"' in off
+
+
+def test_a_closing_photo_never_merges_into_a_full_screen_beat_card(monkeypatch) -> None:  # noqa: ANN001
+    # The same photo is the "bread" full-screen beat (12.52 s, 1.5 s) and the closing shot
+    # (from the end of "bread", 13.4 s): a corner card cannot be stretched out of a cutaway.
+    beats = [_beat("bread", "bread", _OBLEA, display_mode="fullscreen")]
+    closing = {"visual_id": f"asset-{_OBLEA}", "from_trigger": "bread"}
+    grounded = _ground(
+        monkeypatch, beats, CAFE_WORDS, _CAFE_DURATION_S, _CAFE_ASSETS, closing=closing
+    )
+    by_id = {card.id: card for card in grounded.cards}
+    assert grounded.closing_card_id == "closing-photo", grounded.closing_card_id
+    assert by_id["closing-photo"].display_mode == "pip"
+    assert by_id["closing-photo"].end_s == pytest.approx(_CAFE_DURATION_S)
+    beat_card = by_id["beat-bread-1"]
+    assert beat_card.display_mode == "fullscreen"
+    assert beat_card.end_s <= by_id["closing-photo"].start_s + 1e-6, "closing wins the overlap"
+
+
+def test_a_full_screen_beat_does_not_take_the_even_slot_of_another_photo(monkeypatch) -> None:  # noqa: ANN001
+    """The worker hands the beat's window to the `fullscreen_images` sequence: no lane drop."""
+    job, _snapshot, _session, _binding_ = _setup_subtitled(
+        monkeypatch,
+        duration_s=_CAFE_DURATION_S,
+        transcript_words=[Word(w["text"], w["start_s"], w["end_s"], 1.0) for w in CAFE_WORDS],
+    )
+    _enable_beats(monkeypatch)
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind([]))
+    monkeypatch.setattr(rg, "_load_ready_pool_assets", lambda *a, **k: _CAFE_ASSETS)
+    monkeypatch.setattr(rg, "_load_sfx_entries", lambda *a, **k: [])
+    monkeypatch.setattr(
+        pg, "_load_ready_pool_assets", lambda *a, **k: [_asset(_OTHER_A), _asset(_OTHER_B)]
+    )
+    monkeypatch.setattr(pg, "sample_face_regions", lambda *a, **k: ([], {}))
+    job.all_candidates["overlay_display"] = "fullscreen_images"
+    job.all_candidates["creator_strategy"] = {"reaction_beats": _cafe_beats()}
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device", (job.status, job.failure_reason, job.error_detail)
+    variant = job.assembly_plan["variants"][0]
+    assert variant["phone_lane_receipt"]["dropped"] == [], "the whole overlays lane was dropped"
+    recipe = device_status(job, "subtitled").request.recipe
+    clips = sorted(
+        next(t for t in recipe.tracks if t.id == "subtitled-fullscreen").clips,
+        key=lambda c: c.timeline_start,
+    )
+    assert len(clips) == 3, [
+        (c.id, c.timeline_start) for c in clips
+    ]  # oblea + the two sequence photos
+    for earlier, later in zip(clips, clips[1:], strict=False):
+        assert earlier.timeline_start + earlier.source_duration <= later.timeline_start + 1e-6

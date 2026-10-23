@@ -79,10 +79,15 @@ log = structlog.get_logger()
 MAX_REACTION_OCCURRENCES = 24
 MAX_REACTION_PLACEMENTS = 48
 OCCURRENCE_CAP_REASON = "occurrence_cap"
+# KRI-840: a full-screen photo that another full-screen photo cut short to nothing.
+FULLSCREEN_OVERLAP_REASON = "fullscreen_overlap"
 
 _PHOTO_HOLD_S_DEFAULT = 3.0
 _STICKER_HOLD_S_DEFAULT = 2.5
 _FULLSCREEN_FOLLOWING_HOLD_S_DEFAULT = 1.5
+# KRI-840: phone Talking cuts to a full-screen photo for "a moment", not a held card: the
+# Talking worker passes this as `fullscreen_hold_s_default` for a beat with no `hold_s`.
+TALKING_FULLSCREEN_HOLD_S_DEFAULT = 1.5
 # KRI-521: a video beat plays its own length by default, capped so a long clip
 # doesn't sit in the corner for half the take.
 _VIDEO_HOLD_S_MAX = 6.0
@@ -499,7 +504,9 @@ def _truncate_same_slot_overlaps(
                 if current.end_s > nxt.start_s:
                     new_end = nxt.start_s
                     if new_end - current.start_s < _MIN_TRUNCATED_WINDOW_S:
-                        dropped[current.id] = "overlap"
+                        dropped[current.id] = (
+                            FULLSCREEN_OVERLAP_REASON if current.slot == "fullscreen" else "overlap"
+                        )
                         i += 1
                         continue
                     current = replace(current, end_s=new_end)
@@ -534,6 +541,7 @@ def ground_phone_reaction_beats(
     clip_path: str | None,
     video_supported: bool = False,
     allow_fullscreen: bool = False,
+    fullscreen_hold_s_default: float | None = None,
     face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
 ) -> GroundedReactionBeats:
     """Ground creator-authored reaction beats + closing media against the
@@ -544,6 +552,18 @@ def ground_phone_reaction_beats(
     ``kind="video"`` card in the photo corner, played from its start. Off
     (default), a video is reported ``visual_is_video`` exactly as before. The
     closing shot and badge stay photo-only.
+
+    ``allow_fullscreen`` (default off): a beat whose ``display_mode`` is ``"fullscreen"``
+    becomes a full-frame cutaway card that starts on its spoken word and lasts ``hold_s``.
+    It lives in its own slot -- a corner card never cuts it short, two full-screen photos
+    never overlap (``fullscreen_overlap``) -- and needs no face/caption-safe corner. Off, it
+    is reported ``fullscreen_not_enabled``: the capability repair upstream turns a fullscreen
+    beat the edit cannot draw into a corner card before it ever gets here (KRI-840).
+
+    ``fullscreen_hold_s_default`` (KRI-840, default ``None`` = unchanged): how long a
+    full-screen beat with no ``hold_s`` stays up. Phone Talking passes
+    ``TALKING_FULLSCREEN_HOLD_S_DEFAULT`` (1.5 s, "a moment"); ``None`` keeps the Voiceover
+    defaults (the photo default, or 1.5 s for a photo-then-video sequence).
 
     ``face_box_to_canvas`` (KRI-547, default ``None`` = unchanged) maps the
     sampled faces' eyes-nose-mouth core through a face-filled speaker crop
@@ -661,13 +681,21 @@ def ground_phone_reaction_beats(
             elif is_video and asset is not None:
                 video_s = _coerce_float(asset.get("duration_s"), 0.0)
                 natural = video_s if video_s > 0 else _VIDEO_HOLD_S_MAX
-                hold = min(hold if hold is not None else _VIDEO_HOLD_S_MAX, natural)
-            elif hold is None:
-                hold = (
-                    _PHOTO_HOLD_S_DEFAULT
-                    if display_mode == "fullscreen" or slot == "photo"
-                    else _STICKER_HOLD_S_DEFAULT
+                default_hold = (
+                    fullscreen_hold_s_default
+                    if display_mode == "fullscreen" and fullscreen_hold_s_default is not None
+                    else _VIDEO_HOLD_S_MAX
                 )
+                hold = min(hold if hold is not None else default_hold, natural)
+            elif hold is None:
+                if display_mode == "fullscreen" and fullscreen_hold_s_default is not None:
+                    hold = fullscreen_hold_s_default
+                else:
+                    hold = (
+                        _PHOTO_HOLD_S_DEFAULT
+                        if display_mode == "fullscreen" or slot == "photo"
+                        else _STICKER_HOLD_S_DEFAULT
+                    )
 
             any_success = False
             for occurrence_index, (match_start_s, match_end_s) in enumerate(windows, start=1):

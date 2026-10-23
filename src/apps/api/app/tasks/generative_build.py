@@ -6752,6 +6752,11 @@ def _demote_beat_receipt(
             survivor["at_s"] = entry.get("at_s")
             survivor["end_s"] = entry.get("end_s")
             survivor["visual_label"] = entry.get("visual_label")
+            if entry.get("display_mode") == "fullscreen":  # KRI-840: absent = the corner card
+                survivor["display_mode"] = "fullscreen"
+                for key in ("card_id", "following_clip_id"):
+                    if entry.get(key) is not None:
+                        survivor[key] = entry[key]
         if sound_survives:
             survivor.setdefault("at_s", entry.get("at_s"))
             survivor["sound_label"] = entry.get("sound_label")
@@ -7030,6 +7035,12 @@ def _run_phone_subtitled_job(
     # KRI-661: the creator asked for their Visuals in the order they were taken (the
     # approved contract pinned capture-time order). Only the sequence layouts read it.
     overlay_chronological: bool = _approved_capture_order(snapshot, all_candidates)
+    # KRI-840: "show the photo full screen when I say X" (a reaction beat with
+    # display_mode "fullscreen") rides the same full-screen track and the same kill switch
+    # as the KRI-297 sequence; off, capability repair has already made it a corner card.
+    fullscreen_beats_enabled: bool = bool(
+        getattr(settings, "phone_subtitled_fullscreen_overlays_enabled", True)
+    )
     language: str = all_candidates.get("language") or "en"
     # KRI-177: same explicit override contract as the cloud subtitled render —
     # re-validated here since a stray/legacy value must never silently win.
@@ -7841,21 +7852,24 @@ def _run_phone_subtitled_job(
                     else:
                         import app.services.phone_reaction_grounding as phone_reaction_grounding_mod  # noqa: PLC0415
 
+                        ground_beats = phone_reaction_grounding_mod.ground_phone_reaction_beats
                         try:
-                            grounded_beats = (
-                                phone_reaction_grounding_mod.ground_phone_reaction_beats(
-                                    _sync_session,
-                                    job_id=job_id,
-                                    beats=beats,
-                                    closing=closing,
-                                    words=raw_words or [],
-                                    duration_s=float(probe.duration_s),
-                                    clip_path=clip_path,
-                                    # KRI-521: "when I say X, show my video" -- the
-                                    # same gate the KRI-183 PiP pass uses.
-                                    video_supported=video_overlays_enabled,
-                                    **framed_grounding,
-                                )
+                            grounded_beats = ground_beats(
+                                _sync_session,
+                                job_id=job_id,
+                                beats=beats,
+                                closing=closing,
+                                words=raw_words or [],
+                                duration_s=float(probe.duration_s),
+                                clip_path=clip_path,
+                                # KRI-521: "when I say X, show my video" -- the
+                                # same gate the KRI-183 PiP pass uses.
+                                video_supported=video_overlays_enabled,
+                                allow_fullscreen=fullscreen_beats_enabled,
+                                fullscreen_hold_s_default=(
+                                    phone_reaction_grounding_mod.TALKING_FULLSCREEN_HOLD_S_DEFAULT
+                                ),
+                                **framed_grounding,
                             )
                         except OperationalError:
                             raise  # transient DB -> Celery autoretry, never a lane drop
@@ -7897,6 +7911,14 @@ def _run_phone_subtitled_job(
                 # overlapping" invariant of KRI-183.
                 beat_windows: list[tuple[float, float]] = [
                     (float(card.start_s), float(card.end_s)) for card in beat_cards
+                ]
+                # KRI-840: a full-screen beat owns the full-screen track at its word; the
+                # even-slot sequence slides its cutaways around these (two full-screen
+                # windows overlapping would drop the WHOLE overlays lane in the compiler).
+                fullscreen_beat_windows: list[tuple[float, float]] = [
+                    (float(card.start_s), float(card.end_s))
+                    for card in beat_cards
+                    if card.display_mode == "fullscreen"
                 ]
                 # KRI-514: closing text with no closing photo to sit on takes
                 # the last 3 s near the top; keep generic cards out of it.
@@ -7940,6 +7962,7 @@ def _run_phone_subtitled_job(
                                     for card in (lane_request.overlays if lane_request else [])
                                 ]
                                 + beat_windows,
+                                fullscreen_occupied=fullscreen_beat_windows,
                                 used_media_ids=frozenset(
                                     card.media_id
                                     for card in (lane_request.overlays if lane_request else [])
