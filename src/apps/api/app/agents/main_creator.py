@@ -862,6 +862,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         reaction_beats=len(strategy.reaction_beats or ()),
                     )
                     strategy = strategy.model_copy(update={"execution_contract": None})
+                strategy = _repair_unavailable_format(
+                    input.capability_manifest,
+                    strategy,
+                    source_audio_stated=input.brief_enabled
+                    and _states_source_audio(data.get("brief_updates")),
+                )
                 strategy = normalize_creator_strategy_media(
                     input.capability_manifest,
                     strategy,
@@ -1303,7 +1309,75 @@ def _schema_error_class(exc: ValidationError) -> str:
     return _clean_error_class(",".join(parts) or "validation_error")
 
 
+def _states_source_audio(brief_updates: object) -> bool:
+    """This turn's own brief records "keep the original camera sound" (a typed fact)."""
+    try:
+        updates = parse_brief_updates(brief_updates)
+    except Exception:  # noqa: BLE001 - an unreadable batch is refused by the parse below
+        return False
+    return any(
+        update.kind == "audio" and update.facts.get("audio_intent") == "source_unchanged"
+        for update in updates
+    )
+
+
+def _repair_unavailable_format(manifest, strategy, *, source_audio_stated: bool):
+    """Repair a model-chosen strategy this edit cannot render back to the creator's own.
+
+    Each policy refusal spends one of three attempts, and a model that keeps reaching
+    for an "explainer" format the iPhone cannot render (Talking with 28 clips, slides)
+    ends the turn with no plan (KRI-816, T06). The item's format is the one the creator
+    chose; the model's substitute is not creator intent. Likewise a voiceover with
+    nothing recorded is dropped only when this turn's own brief records that the creator
+    asked for their original camera sound (a typed fact, never a word match).
+    """
+    from app.agents._schemas.edit_format import coerce_edit_format  # noqa: PLC0415
+
+    if (
+        source_audio_stated
+        and strategy.audio_strategy == "voiceover"
+        and not manifest.has_voiceover
+        and coerce_edit_format(strategy.edit_format) not in NARRATED_EDIT_FORMATS
+    ):
+        log.info("main_creator_unrecorded_voiceover_repaired")
+        strategy = strategy.model_copy(update={"audio_strategy": "original_audio"})
+    chosen = coerce_edit_format(strategy.edit_format)
+    own = coerce_edit_format(manifest.edit_format)
+    if chosen == own or chosen in NARRATED_EDIT_FORMATS:
+        return strategy
+
+    def renders(edit_format: str) -> bool:
+        for key in (f"edit_format:{edit_format}", f"phone_format:{edit_format}"):
+            capability = manifest.capabilities.get(key)
+            if capability is not None and not capability.available:
+                return False
+        return manifest.capabilities.get(f"edit_format:{edit_format}") is not None
+
+    if renders(chosen) or not renders(own):
+        return strategy
+    log.info("main_creator_unavailable_format_repaired", chosen=chosen, restored=own)
+    return strategy.model_copy(update={"edit_format": own})
+
+
+# Closed, value-free tags for server policy refusals (KRI-816): the old catch-all
+# `policy_refusal` hid which rule ended the T06 turn.
+_POLICY_REFUSAL_TAGS: tuple[tuple[str, str], ...] = (
+    ("is unavailable", "policy_edit_format_unavailable"),
+    ("does not support voiceover", "policy_phone_voiceover_unavailable"),
+    ("phone rendering requires bound video", "policy_phone_media_unavailable"),
+    ("montage audio sources", "policy_montage_audio_sources"),
+    ("montage cadence sources", "policy_montage_cadence_sources"),
+    ("requires at least one attached clip", "policy_native_no_clip"),
+    ("selected_media_ids must reference", "policy_unknown_media"),
+)
+
+
 def _non_pydantic_error_class(exc: Exception) -> str:
+    from app.agents._schemas.creator_policy import (  # noqa: PLC0415
+        PhoneFormatUnavailableError,
+        PhoneMediaUnavailableError,
+    )
+
     if isinstance(exc, UserSongUnavailableError):
         return "user_song_unavailable"
     if isinstance(exc, json.JSONDecodeError):
@@ -1315,7 +1389,17 @@ def _non_pydantic_error_class(exc: Exception) -> str:
         return "strategy_duration_missing"
     if "brief_updates" in message:
         return "brief_updates_invalid"
-    return "policy_refusal" if isinstance(exc, ValueError) else type(exc).__name__.lower()
+    if isinstance(exc, PhoneFormatUnavailableError):
+        return (
+            "policy_phone_voiceover_unavailable"
+            if getattr(exc, "voiceover", False)
+            else "policy_phone_format_unavailable"
+        )
+    if isinstance(exc, PhoneMediaUnavailableError):
+        return "policy_phone_media_unavailable"
+    if isinstance(exc, ValueError):
+        return next((tag for key, tag in _POLICY_REFUSAL_TAGS if key in message), "policy_refusal")
+    return type(exc).__name__.lower()
 
 
 def _clean_error_class(value: str) -> str:
