@@ -137,3 +137,91 @@ def test_a_photo_shown_as_a_card_cannot_be_cropped(monkeypatch):
     parsed = _parse(build_editor_snapshot(job, variant), _crop_op(1))
     with pytest.raises(KriaEditorOpError):
         compile_editor_ops(job, variant, parsed.ops)
+
+
+# Playback speed failure cases (plans/playback-speed.md): the real capability
+# closes a supported recipe; a rate-only op moves the selection; repeated rates
+# compound; reset loses source; Save drops rate; missing device verification opens
+# the control. These exercise parser -> operation -> real Save -> native recipe.
+@pytest.mark.parametrize(
+    "rates",
+    [
+        (2.0,),
+        (0.5,),
+        (0.25,),
+        (4.0,),
+        (2.0, 2.0),
+        (2.0, 0.5, 1.0),
+        (0.75, 1.5, 3.0, 1.0),
+    ],
+)
+def test_phone_clip_speed_preserves_selected_source_through_save(monkeypatch, rates):
+    from app.routes import generative_jobs as gj
+    from app.services.device_render import device_status
+    from tests.routes._editor_save_matrix import VARIANT, order_required_job
+
+    job, variant, _ = order_required_job(monkeypatch, order_required=False)
+    monkeypatch.setattr(
+        gj.settings,
+        "phone_render_verified_features",
+        [*gj.settings.phone_render_verified_features, "variableSpeed"],
+    )
+    original = gj.editor_deletion_timeline(job, variant)[0]
+    source_start = original["in_s"]
+    source_span = original["duration_s"]
+    source_end = source_start + source_span
+    for rate in rates:
+        snapshot = build_editor_snapshot(job, variant)
+        assert snapshot["timeline_patch_capabilities"]["playback_rate"] is True
+        parsed = _parse(
+            snapshot,
+            {
+                "op": "patch_slots",
+                "selector": {"slot_indexes": [0]},
+                "patch": {"playback_rate": rate},
+            },
+        )
+        assert parsed.ops
+        compiled = compile_editor_ops(job, variant, parsed.ops)
+        slot = compiled.payload.timeline_slots[0]
+        assert slot.in_s == pytest.approx(source_start)
+        assert slot.source_end_s == pytest.approx(source_end, abs=1e-6)
+        assert slot.duration_s == pytest.approx(source_span / rate, abs=1 / 30)
+        gj.prepare_editor_commit(job, VARIANT, compiled.payload)
+        variant = job.assembly_plan["variants"][0]
+        recipe = device_status(job, VARIANT).request.recipe
+        footage = next(t for t in recipe.tracks if t.kind == "video").clips[0]
+        assert footage.rate == rate
+        assert footage.source_start == pytest.approx(source_start)
+        assert footage.source_duration == pytest.approx(source_span, abs=rate / 30)
+        reopened = gj.editor_deletion_timeline(job, variant)[0]
+        assert reopened["duration_s"] == pytest.approx(source_span / rate, abs=1 / 30)
+        assert reopened["source_end_s"] == pytest.approx(source_end, abs=1e-6)
+
+
+def test_phone_speed_stays_closed_without_verified_renderer(monkeypatch):
+    from tests.routes._editor_save_matrix import order_required_job
+
+    job, variant, _ = order_required_job(monkeypatch)
+    snapshot = build_editor_snapshot(job, variant)
+    assert snapshot["timeline_patch_capabilities"]["playback_rate"] is False
+
+
+def test_authored_total_duration_recomputes_exact_source_end_before_save():
+    """Bulk duration writers cannot leave an old endpoint paired with a new duration."""
+    from app.services.phone_editor_sources import EDITOR_SOURCES_FIELD
+    from tests.pipeline.test_authored_timeline import fixture
+
+    job, variant, _previous = fixture()
+    variant[EDITOR_SOURCES_FIELD]["sources"][0]["duration_s"] = 12
+    variant["user_timeline"]["slots"][0].update(
+        media_id="new", in_s=2, duration_s=3, source_end_s=8, playback_rate=2
+    )
+    compiled = compile_editor_ops(
+        job,
+        variant,
+        [{"op": "set_total_duration", "target_s": 2, "strategy": "uniform"}],
+    )
+    slot = compiled.payload.timeline_slots[0]
+    assert slot.duration_s == pytest.approx(2, abs=1 / 30)
+    assert slot.source_end_s == pytest.approx(6, abs=1e-6)

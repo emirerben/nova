@@ -65,7 +65,12 @@ enum GuidedLabelRebase {
                 mediaID: slot.raw["media_id"]?.stringValue ?? mediaByClipIndex[slot.clipIndex],
                 start: window.start, end: window.end,
                 sourceStart: slot.inS,
-                sourceEnd: slot.inS + (window.end - window.start) * (slot.raw["playback_rate"]?.numberValue ?? 1)
+                // Native composite/narrated slots can carry their selected
+                // source span without an explicit rate. Preserve that anchor
+                // when a later speed assignment changes only output length.
+                sourceEnd: slot.raw["source_end_s"]?.numberValue.flatMap { $0 > slot.inS ? $0 : nil }
+                    ?? slot.inS + (slot.raw["native_source_span_s"]?.numberValue
+                        ?? (window.end - window.start) * (slot.raw["playback_rate"]?.numberValue ?? 1))
             )
         }
     }
@@ -246,13 +251,17 @@ enum GuidedLabelRebase {
                 newStart = max(0, newEnd - minBarS)
             }
         } else {
-            guard let (a, b) = projectSpan(start, end, old: old, new: new) else {
+            let rateChanged = hasRateChange(old: old, new: new)
+            guard let (a, b) = projectSpan(start, end, old: old, new: new, exactEnd: rateChanged) else {
                 // Every clip under the text is gone: drop it. A text over no clip at all was
                 // already stale: leave it (phone-only deviation).
                 return old.contains(where: { overlap(start, end, $0.start, $0.end) > 0.000001 }) ? nil : element
             }
             newStart = a.time
-            newEnd = min(newTotal, b.time + frameS)
+            // The old frame-early convention is kept for unit-speed timelines.
+            // A speed edit already maps the exact source end; adding a frame
+            // here would stretch every source-bound label after each retime.
+            newEnd = min(newTotal, b.time + (rateChanged ? 0 : frameS))
             if newEnd - newStart <= frameS / 2 {
                 if let segment = new.first(where: { $0.id == a.id }) { newEnd = min(newTotal, segment.end) }
                 if newEnd - newStart <= frameS / 2 {
@@ -276,11 +285,17 @@ enum GuidedLabelRebase {
     private static func project(_ time: Double, old: [SlotWindow], new: [SlotWindow]) -> (time: Double, id: String)? {
         let anchor: SlotWindow
         let sourceTime: Double
+        let anchorRate: Double
         if let window = old.reversed().first(where: { $0.start <= time && time < $0.end }) {
             anchor = window
-            sourceTime = min(window.sourceEnd, window.sourceStart + max(0, time - window.start))
+            let outputSpan = window.end - window.start
+            anchorRate = outputSpan > 0 ? (window.sourceEnd - window.sourceStart) / outputSpan : 1
+            sourceTime = min(window.sourceEnd, window.sourceStart + max(0, time - window.start) * anchorRate)
         } else if let last = old.last, abs(time - last.end) <= 0.000001 {
-            anchor = last; sourceTime = last.sourceEnd
+            anchor = last
+            let outputSpan = last.end - last.start
+            anchorRate = outputSpan > 0 ? (last.sourceEnd - last.sourceStart) / outputSpan : 1
+            sourceTime = last.sourceEnd
         } else { return nil }
         let candidates = new.filter {
             anchor.id.isEmpty ? $0.mediaID == anchor.mediaID : ($0.id == anchor.id || $0.parentID == anchor.id)
@@ -292,19 +307,25 @@ enum GuidedLabelRebase {
         }
         guard let target else { return nil }
         let clamped = min(target.sourceEnd, max(target.sourceStart, sourceTime))
-        let projected = min(target.end, max(target.start, target.start + clamped - target.sourceStart))
-        return (round6((projected * 30).rounded(.toNearestOrEven) / 30), target.id)
+        let targetOutputSpan = target.end - target.start
+        let targetRate = targetOutputSpan > 0 ? (target.sourceEnd - target.sourceStart) / targetOutputSpan : 1
+        let projected = min(target.end, max(target.start, target.start + (clamped - target.sourceStart) / targetRate))
+        // Preserve the legacy 30fps snap for unit-speed documents. Retime
+        // anchors stay in source time so repeated speed changes do not accrue
+        // a frame of rounding error on each assignment.
+        let rateChanged = abs(anchorRate - targetRate) > 0.000_001
+        return (rateChanged ? round6(projected) : round6((projected * 30).rounded(.toNearestOrEven) / 30), target.id)
     }
 
     /// The server's `_project_span`: the start and (one-frame-early) end of `[start, end)` on the
     /// new clips. When an edge sits in a deleted clip the range survives as long as ANY clip under
     /// it does: it re-anchors to the earliest start and latest end of the surviving pieces.
     private static func projectSpan(
-        _ start: Double, _ end: Double, old: [SlotWindow], new: [SlotWindow]
+        _ start: Double, _ end: Double, old: [SlotWindow], new: [SlotWindow], exactEnd: Bool
     ) -> ((time: Double, id: String), (time: Double, id: String))? {
         let frameS = 1.0 / 30.0
         if let first = project(start, old: old, new: new),
-           let last = project(max(start, end - frameS), old: old, new: new) {
+           let last = project(max(start, exactEnd ? end : end - frameS), old: old, new: new) {
             return (first, last)
         }
         var heads: [(time: Double, id: String)] = []
@@ -312,7 +333,7 @@ enum GuidedLabelRebase {
         for window in old {
             let lo = max(start, window.start), hi = min(end, window.end)
             if hi - lo <= 0.000001 { continue }
-            if let head = project(lo, old: old, new: new), let tail = project(max(lo, hi - frameS), old: old, new: new) {
+            if let head = project(lo, old: old, new: new), let tail = project(max(lo, exactEnd ? hi : hi - frameS), old: old, new: new) {
                 heads.append(head); tails.append(tail)
             }
         }
@@ -321,6 +342,19 @@ enum GuidedLabelRebase {
         for candidate in heads.dropFirst() where candidate.time < head.time { head = candidate }
         for candidate in tails.dropFirst() where candidate.time > tail.time { tail = candidate }
         return (head, tail)
+    }
+
+    private static func hasRateChange(old: [SlotWindow], new: [SlotWindow]) -> Bool {
+        for oldWindow in old {
+            guard let newWindow = new.first(where: { $0.id == oldWindow.id || $0.parentID == oldWindow.id }) else { continue }
+            let oldOutput = oldWindow.end - oldWindow.start
+            let newOutput = newWindow.end - newWindow.start
+            guard oldOutput > 0, newOutput > 0 else { continue }
+            let oldRate = (oldWindow.sourceEnd - oldWindow.sourceStart) / oldOutput
+            let newRate = (newWindow.sourceEnd - newWindow.sourceStart) / newOutput
+            if abs(oldRate - newRate) > 0.000_001 { return true }
+        }
+        return false
     }
 
     private static func round6(_ value: Double) -> Double { (value * 1_000_000).rounded() / 1_000_000 }

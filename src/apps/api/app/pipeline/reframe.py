@@ -439,7 +439,7 @@ def reframe_and_export(
             # is retimed by setpts in _build_video_filter; only request this
             # audio filter when the caller explicitly preserves source audio.
             *(["-af", _atempo_filter(speed_factor)] if has_audio and speed_factor != 1.0 else []),
-            *(["-t", f"{duration:.6f}"] if exact_duration else []),
+            *(["-t", f"{duration / speed_factor:.6f}"] if exact_duration else []),
             # Intermediate (re-encoded by the final burn). ultrafast keeps per-slot
             # render speed, but its weaker tools macroblock dark gradients and the
             # final fast pass can't recover that. crf=14 (vs the 18 default) spends
@@ -1143,7 +1143,10 @@ def _build_video_filter(
 
     # 0. Speed ramp -- FIRST filter to normalize PTS for all subsequent timed filters
     if speed_factor != 1.0 and speed_factor > 0:
-        filters.append(f"setpts=PTS/{speed_factor}")
+        filters.append(f"setpts=(PTS-STARTPTS)/{speed_factor}")
+        # Re-sample the retimed clock before encoding; source-rate frames
+        # otherwise leave duplicate/drop decisions to the output muxer.
+        filters.append(f"fps={settings.output_fps}")
 
     if source_crop is not None:
         # Values have already crossed the bounded guided-revision schema. Use
