@@ -2,28 +2,91 @@ import Foundation
 import UniformTypeIdentifiers
 import KriaMediaEngine
 
-struct SavedCameraRollCollection: Codable, Sendable {
+struct SavedCameraRollCollection: Codable, Sendable, Identifiable {
     let id: UUID
     let revision: Int
+    var name: String? = nil
+    var members: [CameraRollCollectionMember]? = nil
+}
+
+struct CameraRollCollectionMember: Codable, Sendable, Equatable {
+    let asset_id: UUID
+    let source_id: UUID
+    let group: String
+}
+
+struct CameraRollCollectionSelection: Codable, Sendable, Equatable {
+    let name: String
+    let members: [CameraRollCollectionMember]
+}
+
+struct SavedCameraRollIdeas: Codable, Sendable {
+    let revision: Int
+    let selection: CameraRollCollectionSelection
+    let query: String
+    let researchTopic: String?
+    var result: CameraRollStories
+    var allowPartialAnalysis: Bool? = nil
+}
+
+extension CameraRollCollection {
+    var remoteSelection: CameraRollCollectionSelection? {
+        var members: [CameraRollCollectionMember] = []
+        for entry in entries {
+            // Phone stories pin the analysis proxy; a cloud original is not interchangeable.
+            guard let asset = entry.savedAsset,
+                  let source = asset.kind == "video" ? asset.bindableSource(for: .clip, destination: .phone) : asset.source else { return nil }
+            members.append(CameraRollCollectionMember(asset_id: asset.id, source_id: source.id, group: group(for: entry.id)))
+        }
+        return CameraRollCollectionSelection(name: name.trimmingCharacters(in: .whitespacesAndNewlines), members: members)
+    }
+    var matchingSavedIdeas: SavedCameraRollIdeas? {
+        guard let savedIdeas, savedIdeas.revision == serverRevision, savedIdeas.selection == remoteSelection,
+              savedIdeas.result.stories.contains(where: { !$0.rejected }) else { return nil }
+        return savedIdeas
+    }
+}
+
+/// Collection failures must not inherit the editor's generic conflict wording.
+enum CameraRollCollectionFailure {
+    static let unavailable = "This footage needs analysis. Your collection is saved; new analysis is unavailable right now."
+    static func isChanged(_ error: Error) -> Bool {
+        guard let error = error as? APIError else { return false }
+        return error.conflictCode == "collection_changed" || error.conflictDetail == "This collection changed. Refresh before continuing."
+    }
+    static func message(_ error: Error) -> String {
+        guard let apiError = error as? APIError else { return error.localizedDescription }
+        if isChanged(error) { return "Your collection was updated. Your local changes are saved. Review the latest collection to continue." }
+        let reason: String
+        if case let .requestFailed(_, detail) = apiError { reason = detail.code ?? detail.message ?? "" }
+        else { reason = apiError.conflictCode ?? apiError.conflictDetail ?? "" }
+        switch reason {
+        case "collection_analysis_unavailable", "No eligible cached result; new model calls are disabled": return unavailable
+        case "collection_analysis_pending", "Stories are pending; retry shortly": return "Your story ideas are still being prepared. Your collection is saved; try again shortly."
+        case "collection_media_unavailable", "Selected media is unavailable or its source changed. Remove or repair it.": return "Some footage is unavailable. Remove or restore it before finding ideas."
+        default:
+            if case .conflict = apiError { return "Could not finish finding ideas. Your collection is saved. Try again." }
+            return apiError.localizedDescription
+        }
+    }
 }
 
 extension KriaAPIClient {
+    func cameraRollCollection(id: UUID) async throws -> SavedCameraRollCollection { throw APIError.unsupported }
     func importCollectionMedia(file: URL, kind: String) async throws -> SavedMediaAsset { throw APIError.unsupported }
     func saveCameraRollCollection(_ collection: CameraRollCollection, revision: Int) async throws -> SavedCameraRollCollection { throw APIError.unsupported }
 }
 
 extension KriaAPI {
     func saveCameraRollCollection(_ collection: CameraRollCollection, revision: Int) async throws -> SavedCameraRollCollection {
-        struct Member: Encodable { let asset_id: UUID; let source_id: UUID; let group: String }
-        struct Body: Encodable { let name: String; let expected_revision: Int; let members: [Member] }
-        let members = try collection.entries.map { entry in
-            // Stories bind phone Footage: pin the proxy, never a full original added for Visuals.
-            guard let asset = entry.savedAsset, let source = asset.kind == "video" ? asset.bindableSource(for: .clip, destination: .phone) : asset.source else { throw APIError.invalidResponse }
-            return Member(asset_id: asset.id, source_id: source.id, group: collection.group(for: entry.id))
-        }
+        struct Body: Encodable { let name: String; let expected_revision: Int; let members: [CameraRollCollectionMember] }
+        guard let selection = collection.remoteSelection else { throw APIError.invalidResponse }
         return try await request(path: "me/media-collections/\(collection.id)", method: "PUT",
-                                 bodyData: JSONEncoder().encode(Body(name: collection.name, expected_revision: revision, members: members)),
+                                 bodyData: JSONEncoder().encode(Body(name: selection.name, expected_revision: revision, members: selection.members)),
                                  decode: SavedCameraRollCollection.self)
+    }
+    func cameraRollCollection(id: UUID) async throws -> SavedCameraRollCollection {
+        try await request(path: "me/media-collections/\(id)", method: "GET", bodyData: nil, decode: SavedCameraRollCollection.self)
     }
 
     /// Explicit import uses the existing reservation/finalize catalogue contract. Videos upload

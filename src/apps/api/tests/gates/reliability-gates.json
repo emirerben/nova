@@ -2162,11 +2162,12 @@
         "KRI-729",
         "KRI-730",
         "KRI-731",
-        "KRI-732"
+        "KRI-732",
+        "KRI-853"
       ],
       "status": "open_pr",
       "owner": "KRI-731",
-      "symptom": "A recommendation can exclude added assets, change source windows after review, or confuse selection with render approval.",
+      "symptom": "A recommendation can exclude added assets, change source windows after review, or confuse selection with render approval. Returning to an unchanged collection can advance its revision, lose cached ideas, and mislabel an unavailable-analysis response as an editor conflict.",
       "boundary": "dispatch",
       "journey": "kri-729-camera-roll-recommendations",
       "paths": [

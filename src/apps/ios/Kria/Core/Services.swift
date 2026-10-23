@@ -133,6 +133,7 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func createCameraRollStoryThread(id: UUID, revision: Int) async throws -> CreationThread
     func inspectCameraRollMoment(collectionID: UUID, revision: Int, momentID: UUID, question: String, cacheOnly: Bool) async throws -> CameraRollInspection
     func importCollectionMedia(file: URL, kind: String) async throws -> SavedMediaAsset
+    func cameraRollCollection(id: UUID) async throws -> SavedCameraRollCollection
     func saveCameraRollCollection(_ collection: CameraRollCollection, revision: Int) async throws -> SavedCameraRollCollection
     func repairSavedMedia(asset: SavedMediaAsset, file: URL) async throws -> SavedMediaAsset
     func uploadSavedMediaOriginal(asset: SavedMediaAsset, file: URL) async throws -> SavedMediaAsset

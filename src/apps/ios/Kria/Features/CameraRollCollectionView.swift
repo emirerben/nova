@@ -17,6 +17,9 @@ struct CameraRollCollectionView: View {
     @State private var providers: [String: PhotosPickerItem] = [:]
     @State private var groupDrafts: [String: String] = [:]
     @State private var showsPicker = false
+    @State private var collectionChanged = false
+    @State private var latestCollection: SavedCameraRollCollection?
+    @State private var showsLatestReview = false
     @State private var error: String?
     @State private var status: String?
     @State private var running = false
@@ -76,29 +79,38 @@ struct CameraRollCollectionView: View {
     var body: some View {
         NavigationStack {
             collectionScroll
+            .disabled(running)
             .background(KriaColor.paper)
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) { actionBar }
             .navigationTitle("Collection").navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("New collection") { newCollection() }.accessibilityIdentifier("collection-new")
                         ForEach(recentCollections) { choice in Button(choice.name) { openCollection(choice.id) } }
                         Divider()
                         Button("Edit groups") { showsGroups = true }.disabled(collection.entries.isEmpty)
-                        Button("Analysis options") { showsOptions = true }
+                        Button("Idea options") { showsOptions = true }
                         if tasteAvailable { Button("Idea preferences") { showsTaste = true }.accessibilityIdentifier("editorial-preferences") }
                     } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
                     .accessibilityLabel("Collection options").accessibilityIdentifier("collection-options").disabled(running)
                 }
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { persist(); dismiss() }.disabled(running) }
+                ToolbarItem(placement: .cancellationAction) { Button("Done") { persist(); dismiss() }.disabled(running) }
             }
             .photosPicker(isPresented: $showsPicker, selection: $selection,
                           maxSelectionCount: max(1, CameraRollCollection.maximumCount - collection.entries.count),
                           matching: .any(of: [.images, .videos]), photoLibrary: .shared())
             .sheet(isPresented: $showsStories) {
-                if let stories { CameraRollStoriesView(api: api, collection: collection, result: stories, cacheOnly: cacheOnly, onSelected: onSelected) }
+                if let stories {
+                    CameraRollStoriesView(api: api, collection: collection, result: stories, cacheOnly: cacheOnlyRequired || cacheOnly, onSelected: onSelected, onReviewed: { reviewed in
+                        if var saved = collection.matchingSavedIdeas {
+                            saved.result = reviewed
+                            collection.savedIdeas = saved
+                            persist()
+                        }
+                    })
+                }
             }
             .sheet(isPresented: $showsSaved) {
                 CameraRollSavedPicker(api: api, capacity: CameraRollCollection.maximumCount - collection.entries.count) { addSaved($0) }
@@ -109,19 +121,25 @@ struct CameraRollCollectionView: View {
             .confirmationDialog("Find ideas in this footage?", isPresented: $confirmsUpload, titleVisibility: .visible) {
                 Button("Upload and find ideas") {
                     work = Task {
-                        await upload()
-                        if collection.entries.allSatisfy({ $0.savedAsset != nil }) && !Task.isCancelled { await findStories() }
+                        if await upload(), !Task.isCancelled { await findStories() }
                     }
                 }
                 Button("Cancel", role: .cancel) { }
             } message: { Text("Kria uploads smaller video copies for analysis. Full-quality videos stay on your iPhone.") }
+            .confirmationDialog("Open the updated collection?", isPresented: $showsLatestReview, titleVisibility: .visible) {
+                Button("Open latest collection") { work = Task { await adoptLatestCollection() } }
+                Button("Keep my local collection", role: .cancel) { }
+            } message: {
+                Text("\(latestCollection?.name ?? collection.name) · \(latestCollection?.members?.count ?? 0) items. Your local changes will remain available as a separate collection.")
+            }
             .onChange(of: selection) { _, picked in add(picked); selection = [] }
             .task {
+                cacheOnly = cacheOnlyRequired
                 restore(); await refreshMetadata()
                 if !fixture && !metadataOnly { tasteAvailable = (try? await api.editorialTaste()) != nil }
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active { work = Task { await refreshMetadata() } }
+                if phase == .active && !running { work = Task { await refreshMetadata() } }
                 else { persist() }
             }
             .onDisappear { work?.cancel(); persist() }
@@ -162,10 +180,10 @@ struct CameraRollCollectionView: View {
                     }.frame(maxWidth: .infinity).padding(.vertical, 64)
                 }
                 ForEach(groups) { group in collectionGroup(group) }
-                if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .notDetermined {
-                    Button("Suggest groups from Photos dates") {
-                        Task { _ = await PHPhotoLibrary.requestAuthorization(for: .readWrite); await refreshMetadata() }
-                    }.font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk).frame(minHeight: 44)
+                if let saved = collection.matchingSavedIdeas {
+                    Label("\(saved.result.stories.filter { !$0.rejected }.count) saved ideas", systemImage: "checkmark.circle")
+                        .font(KriaFont.body(14)).foregroundStyle(KriaColor.mutedInk)
+                        .accessibilityIdentifier("collection-saved-ideas")
                 }
             }.padding(24)
         }
@@ -173,7 +191,7 @@ struct CameraRollCollectionView: View {
 
     private func collectionGroup(_ group: EventGroup) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            if groups.count > 1 || group.name != collection.name { groupHeading(group) }
+            if groups.count > 1 { Text(group.name).font(KriaFont.body(16).weight(.semibold)) }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
                 ForEach(group.entries) { entry in
                     Color.clear.aspectRatio(1, contentMode: .fit)
@@ -247,49 +265,70 @@ struct CameraRollCollectionView: View {
                 HStack { ProgressView(); Text("Preparing your footage…").font(KriaFont.body(14)); Spacer(); Button("Cancel") { work?.cancel() } }
                     .frame(minHeight: 48)
             } else {
-                HStack(spacing: 10) {
-                    Image(systemName: "text.bubble").foregroundStyle(KriaColor.zinc)
-                    TextField("Any direction? Optional", text: $query).font(KriaFont.body(14))
-                        .accessibilityIdentifier("collection-story-query")
-                }.padding(.horizontal, 16).frame(minHeight: 48)
-                    .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 16))
-                Button { requestIdeas() } label: { Text("Find story ideas").frame(maxWidth: .infinity) }
-                    .buttonStyle(KriaPrimaryButtonStyle()).disabled(!canFindIdeas)
-                    .accessibilityIdentifier("collection-find-stories")
+                Button {
+                    if collection.matchingSavedIdeas != nil { work = Task { await findStories(reusingSavedIdeas: true) } }
+                    else { requestIdeas() }
+                } label: {
+                    Text(collection.matchingSavedIdeas == nil ? "Find story ideas" : "View saved ideas").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(KriaPrimaryButtonStyle()).disabled(!canFindIdeas || collectionChanged)
+                .accessibilityIdentifier("collection-find-stories")
                 if missingAnalysisCount > 0 && readyVideoCount > 0 {
                     Button { work = Task { await findStories(allowPartial: true) } } label: {
                         Text("Use \(readyVideoCount) ready \(readyVideoCount == 1 ? "video" : "videos")").frame(maxWidth: .infinity)
-                    }.buttonStyle(KriaSecondaryButtonStyle())
+                    }.buttonStyle(KriaSecondaryButtonStyle()).disabled(collectionChanged)
                         .accessibilityIdentifier("collection-use-ready-videos")
                 }
-                DisclosureGroup("Research an angle") {
-                    TextField("Public place or topic", text: $researchTopic)
-                        .font(KriaFont.body(14)).textInputAutocapitalization(.sentences)
-                        .accessibilityIdentifier("collection-research-topic")
-                    Text("Kria finds interesting facts and their sources.")
-                        .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-                }.font(KriaFont.body(13))
+                if collection.matchingSavedIdeas != nil {
+                    Button("Find more ideas") { showsOptions = true }
+                        .font(KriaFont.body(14)).frame(minHeight: 44)
+                }
+                if collectionChanged {
+                    Button("Review latest collection") { work = Task { await loadLatestCollection() } }
+                        .font(KriaFont.body(14)).frame(minHeight: 44)
+                        .accessibilityIdentifier("collection-review-latest")
+                }
             }
         }.padding(.horizontal, 24).padding(.vertical, 16).background(KriaColor.paper)
     }
     private var options: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 24) {
-                Toggle("Use cached analysis only", isOn: $cacheOnly).disabled(cacheOnlyRequired)
-                Text("Reuses previous analysis without new model calls.").font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                DisclosureGroup("About uploads") {
-                    Text("Videos use a smaller analysis copy. Full-quality originals stay on this iPhone. Photos are saved to uploads. iCloud originals may need to download.")
-                        .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk).padding(.top, 8)
+            Form {
+                Section("Direction") {
+                    TextField("Any direction? Optional", text: $query)
+                        .accessibilityIdentifier("collection-story-query")
+                    DisclosureGroup("Research an angle") {
+                        TextField("Public place or topic", text: $researchTopic)
+                            .accessibilityIdentifier("collection-research-topic")
+                    }
                 }
-                Spacer()
-            }.padding(24).navigationTitle("Analysis options").navigationBarTitleDisplayMode(.inline)
+                if !cacheOnlyRequired {
+                    Section {
+                        Toggle("Use saved analysis only", isOn: $cacheOnly)
+                    }
+                }
+                Section {
+                    DisclosureGroup("About uploads") {
+                        Text("Videos use a smaller analysis copy. Full-quality originals stay on this iPhone. iCloud originals may need to download.")
+                    }
+                    if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .notDetermined {
+                        Button("Suggest groups from Photos dates") {
+                            work = Task { _ = await PHPhotoLibrary.requestAuthorization(for: .readWrite); await refreshMetadata() }
+                        }
+                    }
+                }
+                Section {
+                    Button("Find story ideas") { showsOptions = false; requestIdeas() }
+                        .disabled(!canFindIdeas || running)
+                }
+            }.font(KriaFont.body(15)).navigationTitle("Idea options").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showsOptions = false } } }.kriaPage()
-        }.presentationDetents([.medium])
+        }.presentationDetents([.medium, .large])
     }
     @MainActor private func requestIdeas() {
         error = nil; status = nil
         if collection.entries.contains(where: { $0.savedAsset == nil }) {
-            if cacheOnly { error = "This footage needs analysis. Check Analysis options to continue." }
+            if cacheOnlyRequired || cacheOnly { error = CameraRollCollectionFailure.unavailable }
             else { confirmsUpload = true }
         } else { work = Task { await findStories() } }
     }
@@ -297,7 +336,7 @@ struct CameraRollCollectionView: View {
         persist()
         collection = try! CameraRollCollection(name: "My outing", identifiers: [])
         missingAnalysisCount = 0; readyVideoCount = 0
-        revision = 0; providers = [:]; groupDrafts = [:]; stories = nil; status = nil; error = nil
+        revision = 0; providers = [:]; groupDrafts = [:]; stories = nil; status = nil; error = nil; collectionChanged = false; query = ""; researchTopic = ""
         persist()
     }
 
@@ -325,8 +364,10 @@ struct CameraRollCollectionView: View {
 
     @MainActor private func refreshMetadata() async {
         guard !fixture, !running else { return }
+        running = true
         let started = ContinuousClock.now
         defer {
+            running = false
             let elapsed = started.duration(to: .now).components
             metadataElapsedMs = Double(elapsed.seconds) * 1000 + Double(elapsed.attoseconds) / 1e15
             persist()
@@ -377,8 +418,8 @@ struct CameraRollCollectionView: View {
         persist()
     }
 
-    @MainActor private func upload() async {
-        guard let originals, !fixture, !metadataOnly, !cacheOnly, !cacheOnlyRequired else { return }
+    @MainActor private func upload() async -> Bool {
+        guard let originals, !fixture, !metadataOnly, !cacheOnly, !cacheOnlyRequired else { return false }
         running = true; error = nil; status = nil
         defer { running = false }
         do {
@@ -398,8 +439,10 @@ struct CameraRollCollectionView: View {
             collection.serverRevision = revision
             persist()
             status = "Collection saved. Analysis is queued for the selected uploads."
+            return true
         } catch is CancellationError { status = "Paused. Completed uploads are saved; you can resume." }
-        catch { self.error = "Could not finish this collection. Completed uploads are saved. \(error.localizedDescription)" }
+        catch { showCollectionError(error) }
+        return false
     }
 
     @MainActor private func addSaved(_ assets: [SavedMediaAsset]) {
@@ -411,9 +454,11 @@ struct CameraRollCollectionView: View {
         } catch { self.error = "Choose at most \(CameraRollCollection.maximumCount) items." }
     }
 
-    @MainActor private func findStories(allowPartial: Bool = false) async {
+    @MainActor private func findStories(reusingSavedIdeas: Bool = false, allowPartial: Bool = false) async {
         guard !fixture, !metadataOnly else { return }
-        running = true; error = nil; status = nil
+        guard !running else { return }
+        let previous = reusingSavedIdeas ? collection.matchingSavedIdeas : nil
+        running = true; error = nil; status = nil; collectionChanged = false
         missingAnalysisCount = 0; readyVideoCount = 0
         defer { running = false }
         do {
@@ -434,17 +479,67 @@ struct CameraRollCollectionView: View {
             missingAnalysisCount = missing.count
             let videos = collection.entries.filter { ($0.savedAsset?.kind ?? $0.metadata?.kind) == "video" }.count
             readyVideoCount = max(0, videos - missing.count)
-            guard missing.isEmpty || allowPartial else {
+            let savedPartialConsent = previous?.allowPartialAnalysis == true
+                && Set(previous?.result.coverage.unindexed ?? []) == missing
+            let requestedPartial = allowPartial || savedPartialConsent
+            guard missing.isEmpty || requestedPartial else {
                 status = "\(missing.count) videos still need analysis. Wait for them, or use the ready videos."
                 return
             }
-            let topic = researchTopic.trimmingCharacters(in: .whitespacesAndNewlines)
-            let found = try await api.cameraRollStories(id: collection.id, revision: revision, query: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Suggest different content ideas from this outing" : query, cacheOnly: cacheOnly, researchTopic: topic.isEmpty ? nil : topic, allowPartialAnalysis: allowPartial)
+            let topic = previous.map { $0.researchTopic ?? "" } ?? researchTopic.trimmingCharacters(in: .whitespacesAndNewlines)
+            let requestedQuery = previous?.query ?? (query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Suggest different content ideas from this outing" : query)
+            let found = try await api.cameraRollStories(id: collection.id, revision: revision, query: requestedQuery, cacheOnly: previous != nil || cacheOnlyRequired || cacheOnly, researchTopic: topic.isEmpty ? nil : topic, allowPartialAnalysis: requestedPartial)
+            try Task.checkCancellation()
+            if let selection = collection.remoteSelection {
+                collection.savedIdeas = SavedCameraRollIdeas(revision: revision, selection: selection, query: requestedQuery, researchTopic: topic.isEmpty ? nil : topic, result: found, allowPartialAnalysis: requestedPartial)
+                persist()
+            }
             stories = found
             if !untimed.isEmpty { status = "Story ideas currently use videos. Your \(untimed.count) photos remain in the collection." }
             showsStories = true
         } catch is CancellationError { status = "Paused. Your collection is saved." }
-        catch { self.error = error.localizedDescription }
+        catch { showCollectionError(error) }
+    }
+
+    @MainActor private func showCollectionError(_ failure: Error) {
+        collectionChanged = CameraRollCollectionFailure.isChanged(failure)
+        error = CameraRollCollectionFailure.message(failure)
+    }
+
+    @MainActor private func loadLatestCollection() async {
+        guard !running else { return }
+        running = true
+        defer { running = false }
+        do {
+            let latest = try await api.cameraRollCollection(id: collection.id)
+            guard latest.id == collection.id, latest.name != nil, latest.members != nil else { throw APIError.invalidResponse }
+            latestCollection = latest; showsLatestReview = true
+        } catch { showCollectionError(error) }
+    }
+
+    @MainActor private func adoptLatestCollection() async {
+        guard !running, let latest = latestCollection, let name = latest.name, let members = latest.members, let originals else { return }
+        running = true
+        defer { running = false }
+        do {
+            var rebuilt = try CameraRollCollection(id: latest.id, name: name, identifiers: members.map { "saved:\($0.asset_id)" })
+            for member in members {
+                try Task.checkCancellation()
+                let asset = try await api.savedMediaAsset(id: member.asset_id)
+                guard api.mediaLibraryOwner == originals.owner else { throw SourceAssetError.invalidBinding }
+                let id = "saved:\(asset.id)"
+                rebuilt.bind(asset, to: id); rebuilt.setGroup(member.group, for: id)
+            }
+            guard rebuilt.remoteSelection == CameraRollCollectionSelection(name: name, members: members) else { throw APIError.invalidResponse }
+            rebuilt.serverRevision = latest.revision
+            try collection.localCopy().save(in: originals)
+            try rebuilt.save(in: originals)
+            collection = rebuilt; revision = latest.revision
+            missingAnalysisCount = 0; readyVideoCount = 0
+            providers = [:]; groupDrafts = [:]; stories = nil; collectionChanged = false; error = nil
+            status = "Opened the latest collection. Your local changes are saved separately."
+            persist()
+        } catch { showCollectionError(error) }
     }
 
     @MainActor private func persist() {
@@ -497,6 +592,8 @@ struct CameraRollCollectionView: View {
             collection = try CameraRollCollection.load(id: id, in: originals, sharesCaptureContext: ClipCaptureSetting.isEnabled())
             resumedCollection = true
             missingAnalysisCount = 0; readyVideoCount = 0
+            query = collection.savedIdeas?.query ?? ""; researchTopic = collection.savedIdeas?.researchTopic ?? ""
+            collectionChanged = false
             revision = collection.serverRevision ?? 0; providers = [:]; groupDrafts = [:]; stories = nil; status = nil; error = nil
             work = Task { await refreshMetadata() }
         } catch { self.error = "Could not reopen this collection." }
@@ -513,6 +610,7 @@ struct CameraRollCollectionView: View {
         if let latest, let id = UUID(uuidString: latest.deletingPathExtension().lastPathComponent),
            let saved = try? CameraRollCollection.load(id: id, in: originals, sharesCaptureContext: ClipCaptureSetting.isEnabled()) {
             collection = saved; revision = saved.serverRevision ?? 0
+            query = saved.savedIdeas?.query ?? ""; researchTopic = saved.savedIdeas?.researchTopic ?? ""
             resumedCollection = true
         } else if fixture {
             collection = try! CameraRollCollection(name: "Weekend outing", identifiers: ["fixture-video", "fixture-photo"])

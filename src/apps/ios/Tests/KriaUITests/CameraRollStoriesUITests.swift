@@ -15,6 +15,8 @@ final class CameraRollStoriesUITests: XCTestCase {
         proof.lifetime = .keepAlways
         add(proof)
         for _ in 0..<12 where !app.staticTexts["Boat journey"].isHittable { app.swipeDown() }
+        app.buttons["See clips and details"].firstMatch.tap()
+        for _ in 0..<12 where !app.buttons["Not this story"].firstMatch.isHittable { app.swipeUp() }
         app.buttons["Not this story"].firstMatch.tap()
         let removed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.staticTexts["Boat journey"])
         XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 5), .completed)
@@ -29,6 +31,8 @@ final class CameraRollStoriesUITests: XCTestCase {
         app.launchArguments = ["-camera-roll-story-review"]
         app.launch()
         XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        app.buttons["See clips and details"].tap()
+        for _ in 0..<3 where !app.buttons["story-replace-0"].isHittable { app.swipeUp() }
         app.buttons["story-replace-0"].tap()
         app.buttons["story-alternative-33333333-3333-3333-3333-333333333333"].tap()
         XCTAssertTrue(app.staticTexts["The final arrival"].waitForExistence(timeout: 5))
