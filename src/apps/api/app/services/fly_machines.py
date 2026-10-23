@@ -28,6 +28,7 @@ one).
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import httpx
@@ -135,41 +136,120 @@ def get_render_worker_state() -> str | None:
     return state if isinstance(state, str) else None
 
 
-def _post_lifecycle_action(action: str) -> bool:
-    """POST /machines/{id}/{action} ("start" or "stop"). True on 2xx."""
+def _resolve_worker() -> dict[str, Any] | None:
     machines = _list_machines()
     if machines is None:
-        return False
+        return None
     machine = _resolve_worker_machine(machines)
     if machine is None:
-        return False
-    machine_id = machine.get("id")
-    if not machine_id:
+        return None
+    if not machine.get("id"):
         log.error("fly_machines_worker_missing_id", machine=machine)
-        return False
+        return None
+    return machine
 
+
+def _post_lifecycle_action(machine_id: str, action: str) -> httpx.Response | None:
+    """Return the Fly response, or None when no request could complete."""
     headers = _headers()
     if headers is None:
-        return False
+        return None
     url = f"{_API_BASE}/apps/{settings.FLY_APP_NAME}/machines/{machine_id}/{action}"
     try:
-        response = httpx.post(url, headers=headers, timeout=_TIMEOUT)
-        response.raise_for_status()
+        return httpx.post(url, headers=headers, timeout=_TIMEOUT)
     except Exception as exc:  # noqa: BLE001
         log.warning(f"fly_machines_{action}_failed", machine_id=machine_id, error=str(exc))
-        return False
-    log.info(f"fly_machines_{action}_ok", machine_id=machine_id)
-    return True
+        return None
 
 
-def start_render_worker() -> bool:
-    """Ask Fly to start the render worker machine. True on success.
+# Keep one long poll below the lifecycle task's time limit. This is our cap,
+# not a Fly platform limit. Each subsequent attempt re-resolves the worker.
+_WAIT_CALL_MAX_S = 60.0
+_START_RETRY_BACKOFF_S = 5.0
+_START_MAX_ATTEMPTS = 12
 
-    Idempotent from the caller's point of view: starting an already-started
-    machine is a Fly no-op that still returns 2xx. Never raises — see module
-    docstring for the fail-soft rationale.
+
+def _wait_for_stopped(machine: dict[str, Any], budget_s: float) -> None:
+    """Wait for this machine instance, with bounded backoff on failed waits."""
+    deadline = time.monotonic() + budget_s
+
+    def backoff() -> None:
+        remaining = max(0.0, deadline - time.monotonic())
+        if remaining:
+            time.sleep(min(remaining, _START_RETRY_BACKOFF_S))
+
+    headers = _headers()
+    instance_id = machine.get("instance_id")
+    if headers is None or not instance_id or budget_s < 1:
+        backoff()
+        return
+    timeout_s = int(min(budget_s, _WAIT_CALL_MAX_S))
+    try:
+        response = httpx.get(
+            f"{_API_BASE}/apps/{settings.FLY_APP_NAME}/machines/{machine['id']}/wait",
+            headers=headers,
+            params={"state": "stopped", "instance_id": instance_id, "timeout": timeout_s},
+            timeout=httpx.Timeout(timeout_s, connect=min(2.0, timeout_s)),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("fly_machines_wait_failed", machine_id=machine["id"], error=str(exc))
+        backoff()
+        return
+    if response.status_code not in (200, 408):
+        log.warning(
+            "fly_machines_wait_unexpected_status",
+            machine_id=machine["id"],
+            status=response.status_code,
+        )
+        backoff()
+
+
+def start_render_worker(wait_s: float = 0.0) -> bool:
+    """Start the worker, retrying a stopping/412 race within a bounded window.
+
+    Zero preserves one-attempt behavior. The positive retry window includes
+    sleeps and waits; an already-running list/start request can finish after
+    it, bounded by _TIMEOUT. The lifecycle reserves additional time for these
+    requests under its 100-second soft limit. Unknown/ambiguous workers and
+    non-412 start failures never trigger speculative starts or retries.
     """
-    return _post_lifecycle_action("start")
+    deadline = time.monotonic() + max(0.0, wait_s)
+    for attempt in range(1, _START_MAX_ATTEMPTS + 1):
+        if attempt > 1 and time.monotonic() >= deadline:
+            break
+        machine = _resolve_worker()
+        if machine is None:
+            return False
+        remaining = deadline - time.monotonic()
+        if wait_s > 0 and remaining <= 0:
+            break
+        machine_id = str(machine["id"])
+        if machine.get("state") == "stopping":
+            if remaining <= 0:
+                break
+            log.info("fly_machines_start_waiting_for_stop", machine_id=machine_id, attempt=attempt)
+            _wait_for_stopped(machine, remaining)
+            continue
+        response = _post_lifecycle_action(machine_id, "start")
+        if response is not None and 200 <= response.status_code < 300:
+            log.info("fly_machines_start_ok", machine_id=machine_id, attempt=attempt)
+            return True
+        remaining = deadline - time.monotonic()
+        if response is None or response.status_code != 412 or remaining <= 0:
+            log.warning(
+                "fly_machines_start_failed",
+                machine_id=machine_id,
+                status=response.status_code if response is not None else None,
+            )
+            return False
+        log.info(
+            "fly_machines_start_precondition_failed_retrying",
+            machine_id=machine_id,
+            attempt=attempt,
+        )
+        time.sleep(min(remaining, _START_RETRY_BACKOFF_S))
+    log.warning("fly_machines_start_failed", error="retry window or attempts exhausted")
+    return False
 
 
 def stop_render_worker() -> bool:
@@ -180,4 +260,17 @@ def stop_render_worker() -> bool:
     calling this — this function does not re-check idleness itself, it
     only performs the Fly API call.
     """
-    return _post_lifecycle_action("stop")
+    machine = _resolve_worker()
+    if machine is None:
+        return False
+    response = _post_lifecycle_action(str(machine["id"]), "stop")
+    ok = response is not None and 200 <= response.status_code < 300
+    if ok:
+        log.info("fly_machines_stop_ok", machine_id=machine["id"])
+    else:
+        log.warning(
+            "fly_machines_stop_failed",
+            machine_id=machine["id"],
+            status=response.status_code if response is not None else None,
+        )
+    return ok
