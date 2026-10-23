@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.58.0] - 2026-10-23
+
+### Changed
+- fix(slides): give the slide copilot what each ready photo shows (KRI-817) (#1769) <!-- release-pr: 1769 -->
+
 ## [0.81.57.0] - 2026-10-23
 
 ### Fixed
