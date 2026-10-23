@@ -38,6 +38,12 @@ Ways this can fail, each pinned below:
    creator, names the count).
 10. Wired into one planner path only: the first turn (Main Creator) carries the ask, the
     edit-first path (brief extractor, how the recovery turn is read) does not.
+11. Wired into two planner paths but not the third: the deferred extraction
+    (`extract_deferred_brief`, the post-render copilot-first path with approval readiness)
+    reads the same extractor, whose paraphrase drops the numbers, and stores the brief
+    without them. The same call can run without the prior brief (a brief that already holds
+    the ask gets a twin, a changed count a second live ask), or add a moment ask to a message
+    that gave none.
 """
 
 from __future__ import annotations
@@ -73,7 +79,7 @@ from app.kria.style_asks import brief_moment_ask, carry_moment_ask, moment_ask
 from app.models import CreationThread, CreationThreadEvent, CreatorAgentApproval, Job, PlanItem
 from app.pipeline.unified_montage import UnifiedClip, brief_view, plan_unified_montage
 from app.tasks.kria_runtime import run_kria_turn
-from tests.kria.test_creative_brief import _ASK, _MANIFEST
+from tests.kria.test_creative_brief import _ASK, _MANIFEST, _wire_planner
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project, _submit
 from tests.pipeline.test_unified_montage import visual
 
@@ -460,6 +466,93 @@ async def test_the_recovery_turn_carries_them_on_either_reader(
     after = _brief(result.brief_updates, RECORDED_V1, version=2)
     assert _count_length(after) == (6, 2.0)
     assert "r3" not in {req.id for req in after.live()}
+
+
+# -- 11: the deferred extraction carries them too (no database: the planner's own fakes) ----
+
+
+async def _deferred(monkeypatch, *, message, prior, extracted):  # noqa: ANN001, ANN202
+    """`extract_deferred_brief` with an extractor that returns exactly `extracted`."""
+    output = SimpleNamespace(action=AskUser(**_ASK), brief_updates=[])
+    db, item, creator_id, copilot, creator_runs = _wire_planner(
+        monkeypatch, output=output, editor_plan=None, snapshot=None
+    )
+    monkeypatch.setattr(planner, "load_latest_brief", AsyncMock(return_value=prior))
+
+    async def extractor(_inputs, **_kw):  # noqa: ANN001, ANN202
+        return BriefExtractionOutput(brief_updates=list(extracted))
+
+    monkeypatch.setattr(planner, "_call_brief_extractor", extractor)
+    updates, route = await planner.extract_deferred_brief(
+        db, thread_id=item.id, item_id=item.id, creator_id=creator_id, user_message=message
+    )
+    copilot.assert_not_awaited()  # nothing but the brief extraction ran
+    assert not creator_runs
+    return updates, route
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["first_message", "recovery_message"])
+async def test_the_deferred_extraction_carries_what_the_extractor_lost(
+    monkeypatch,  # noqa: ANN001
+    case: str,
+) -> None:
+    withdraw_freeze = BriefUpdate(
+        operation="remove", target_requirement_id="r3", expected_version=1
+    )
+    if case == "first_message":
+        message, prior, extracted = PROMPT, None, _turn1_updates()
+    else:
+        message, prior, extracted = RECOVERY, RECORDED_V1, [withdraw_freeze]
+
+    updates, route = await _deferred(monkeypatch, message=message, prior=prior, extracted=extracted)
+
+    # The extractor's own updates stay first and untouched; the numbers ride behind them.
+    assert list(updates[: len(extracted)]) == list(extracted)
+    (moment,) = updates[len(extracted) :]
+    assert moment.facts == {"moment_count": 6, "moment_length_s": 2.0}
+    after = _brief(updates, prior, version=2 if prior else 1)
+    assert _count_length(after) == (6, 2.0)
+    freeze_kept = "r3" in {req.id for req in after.live()}
+    assert freeze_kept is (case == "first_message")  # the recovery message withdraws r3
+    assert route is not None  # not the clarify early-return
+
+
+@pytest.mark.asyncio
+async def test_the_deferred_extraction_reads_the_brief_it_extends(monkeypatch) -> None:  # noqa: ANN001
+    carried = _brief(carry_moment_ask(None, _turn1_updates(), PROMPT), version=2)
+    moment_id = next(req.id for req in carried.live() if req.kind == "select")
+
+    # The recovery message restates an ask the brief already holds: nothing new, no twin.
+    updates, _route = await _deferred(monkeypatch, message=RECOVERY, prior=carried, extracted=[])
+    assert updates == ()
+
+    # A changed count changes that requirement; the old count does not stay live beside it.
+    updates, _route = await _deferred(
+        monkeypatch, message="make it 8 moments", prior=carried, extracted=[]
+    )
+    (change,) = updates
+    assert (change.operation, change.target_requirement_id) == ("change", moment_id)
+    assert change.expected_version == 2
+    after = _brief(updates, carried, version=3)
+    assert _count_length(after) == (8, 2.0)
+    assert [req.id for req in after.live() if req.kind == "select"] == [moment_id]
+
+
+@pytest.mark.asyncio
+async def test_the_deferred_extraction_adds_no_moment_ask_to_a_message_without_one(
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    title = BriefUpdate(kind="text", scope="title", literal="Colombian dessert, Ecuadorian hands")
+
+    updates, _route = await _deferred(
+        monkeypatch,
+        message='Change the title to "Colombian dessert, Ecuadorian hands"',
+        prior=RECORDED_V1,
+        extracted=[title],
+    )
+
+    assert updates == (title,)
 
 
 # -- 8: the take is cut into six ~2 s moments, in order, and the phone plan holds them -----
