@@ -134,12 +134,25 @@ def build_guided_segments(
             if isinstance(inherited_segment, dict) and source.get("kind") == "video"
             else 0.0
         )
+        # An occurrence that carried a hold plays at 1x whether or not it keeps it: its
+        # source span is shorter than its slot by the hold, which is not a slow retime.
+        inherited_hold = bool(freeze_hold)
         if freeze_hold and below_editor_minimum(duration - freeze_hold):
             freeze_hold = 0.0
+        if freeze_hold:
+            # Only the occurrence that still ENDS on the frozen frame keeps the hold. A split
+            # puts the parent's id on both halves; the leading half ends earlier and would
+            # freeze a frame the creator never chose, so it plays its whole length instead.
+            held_frame = float(inherited_segment.get("source_end_s") or 0.0)
+            if (
+                abs(float(slot.in_s) + (duration - freeze_hold) - held_frame)
+                > 1 / GUIDED_FPS + 1e-6
+            ):
+                freeze_hold = 0.0
         playback_rate_set = "playback_rate" in slot.model_fields_set
         if playback_rate_set:
             playback_rate = float(slot.playback_rate or 1.0)
-        elif freeze_hold:
+        elif inherited_hold:
             playback_rate = 1.0
         elif isinstance(inherited_segment, dict):
             inherited_duration = float(inherited_segment.get("duration_s") or 0.0)
@@ -238,6 +251,11 @@ def build_guided_segments(
             # A speed change or a pinned source window on a held slot is a new program: the
             # hold no longer applies, so the slot plays its whole length.
             segment["source_end_s"] = float(slot.in_s) + duration * playback_rate
+            if (
+                source_duration is not None
+                and segment["source_end_s"] > float(source_duration) + 0.05
+            ):
+                raise GuidedTimelineError("TIMELINE_SOURCE_BOUNDS")
         # New clients send the occurrence's canonical fit. Older clients omit
         # it; preserve a layout already stored on this segment (including its
         # parent when a split child is being written) and otherwise retain the

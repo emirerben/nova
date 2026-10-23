@@ -517,6 +517,36 @@ def _main_track_freeze(clip: Any, track: Any, frame_rate: float) -> bool:
     )
 
 
+def recipe_has_freeze_frame(recipe: Any) -> bool:
+    """Does this recipe hold a main-video frame for a creator's freeze (KRI-828)?"""
+    return any(
+        _main_track_freeze(clip, track, recipe.frame_rate)
+        for track in getattr(recipe, "tracks", None) or []
+        for clip in track.clips
+    )
+
+
+def freeze_frame_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode a main-track ``freezeFrame`` hold (KRI-828)?
+
+    The render worker plans the hold with no app build in hand, so the build that fetches
+    or edits the recipe is qualified here (mirrors `text_bend_client_supported`): below
+    ``freeze_frame_min_client_protocol`` it is told to update instead of receiving a recipe
+    it cannot decode (or opening the held slot as slow motion in an old editor).
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.freeze_frame_min_client_protocol
+
+
 def text_bend_client_supported(*, require_client: bool | None = None) -> bool:
     """Does the requesting app build understand text ``bend`` (KRI-646)?
 

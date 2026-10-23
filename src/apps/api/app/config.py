@@ -726,8 +726,9 @@ class Settings(BaseSettings):
     # `freezeFrame` is in PHONE_RENDER_VERIFIED_FEATURES (device parity, set after a
     # physical-device preview + export check) and, inside an HTTP request, the app build
     # declares `X-Kria-Client-Protocol` >= this. Without it the plan carries no hold and the
-    # receipt keeps KRI-777's honest "Couldn't". An older build that still receives a hold
-    # recipe cannot decode `freezeFrame` and fails the recipe instead of dropping the hold.
+    # receipt keeps KRI-777's honest "Couldn't". The worker plans with no app build in hand,
+    # so an older build that fetches or edits a held recipe gets 426 client_update_required
+    # (`freeze_frame`) from device_render / phone_editor instead of an undecodable recipe.
     freeze_frame_min_client_protocol: int = 16
     # KRI-742: voice dictation in the chat composers. `POST /dictation/transcribe` (Whisper) and
     # the `voice_dictation` capability the iOS mic button reads. Default TRUE; this is the kill

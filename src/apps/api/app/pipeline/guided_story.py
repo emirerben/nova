@@ -551,6 +551,12 @@ def _quantize_quick_mixed_timeline(
             maximum_frames = int(math.floor(bounds.maximum_s * fps + 1e-6))
             frames = min(maximum_frames, max(minimum_frames, frames))
             image_headroom.append((desired_frames - math.floor(desired_frames), index))
+        elif moment.get("freeze_hold_s"):
+            # KRI-828: a held moment is a fixed block. Its source window ends ON the frozen
+            # frame and never grows; frame rounding lands in the hold, never in the footage.
+            original_video_end_s[index] = float(moment["source_end_s"])
+            frames = max(1, int(round(float(moment["duration_s"]) * fps)))
+            floor_video_frames[index] = frames
         else:
             original_video_end_s[index] = float(moment["source_end_s"])
             bounds = mixed_media_hold_bounds("video", mixed_media_timing)
@@ -619,7 +625,13 @@ def _quantize_quick_mixed_timeline(
         moment["duration_s"] = round(duration_s, 6)
         moment["output_start_s"] = round(start_s, 6)
         moment["output_end_s"] = round(end_s, 6)
-        if moment["kind"] == "video" and frames > floor_video_frames[index]:
+        if moment["kind"] == "video" and moment.get("freeze_hold_s"):
+            frame_s = original_video_end_s[index]
+            moment["source_end_s"] = frame_s
+            moment["freeze_hold_s"] = round(
+                duration_s - (frame_s - float(moment["source_start_s"])), 6
+            )
+        elif moment["kind"] == "video" and frames > floor_video_frames[index]:
             moment["source_end_s"] = original_video_end_s[index]
         else:
             moment["source_end_s"] = round(float(moment["source_start_s"]) + duration_s, 6)

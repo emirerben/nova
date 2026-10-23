@@ -300,6 +300,22 @@ def test_a_freeze_fact_without_a_freeze_ask_never_holds(description: str) -> Non
             2.0,
             ("pastayi", "keserken"),
         ),
+        # The creator's number wins over a model-typed duration_s that disagrees.
+        (
+            "Freeze the frame on the bite for 1 second",
+            {"duration_s": 2.5, "freeze_frame": True},
+            1.0,
+            ("bite",),
+        ),
+        # Seconds that are not the hold (video length, a position) never set it.
+        (
+            "Make a 15 second video and freeze when he bites",
+            {"duration_s": 15, "freeze_frame": True},
+            1.0,
+            ("bites",),
+        ),
+        ("Freeze the frame at 14 seconds for 2 seconds", {"freeze_frame": True}, 2.0, ()),
+        ("Freeze it for half a second on the jump", {"freeze_frame": True}, 0.5, ("jump",)),
     ],
 )
 def test_the_creators_freeze_words_name_the_moment_and_the_seconds(
@@ -549,6 +565,59 @@ async def test_editor_save_and_a_trim_elsewhere_keep_the_hold(
     assert clip.hold_duration == pytest.approx(1.0, abs=1 / 30 + 0.001)
     assert clip.source_start + clip.source_duration == pytest.approx(BITE_FRAME_S, abs=0.02)
 
+    # An app build below the freeze protocol is told to update instead of receiving a hold
+    # recipe it cannot decode (the worker plans with no app build in hand).
+    from app.services.client_protocol import (  # noqa: PLC0415
+        clear_request_context,
+        set_client_protocol,
+    )
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        freeze_frame_client_supported,
+        recipe_has_freeze_frame,
+    )
+
+    assert recipe_has_freeze_frame(recipe)
+    try:
+        set_client_protocol(settings.freeze_frame_min_client_protocol - 1)
+        assert not freeze_frame_client_supported()
+        set_client_protocol(settings.freeze_frame_min_client_protocol)
+        assert freeze_frame_client_supported()
+    finally:
+        clear_request_context()
+
+    # Splitting the held moment keeps the freeze only on the half that still ends on the
+    # chosen frame; the leading half plays through (no second freeze on a frame never chosen).
+    left = next(row for row in editable if row["slot_id"] == held_slot["slot_id"])
+    cut_s = round(left["duration_s"] / 2, 3)
+    split = []
+    for row in editable:
+        if row is left:
+            split.append({**row, "duration_s": cut_s})
+            split.append(
+                {
+                    "slot_id": None,
+                    "parent_segment_id": row["slot_id"],
+                    "clip_index": row["clip_index"],
+                    "in_s": round(row["in_s"] + cut_s, 3),
+                    "duration_s": round(row["duration_s"] - cut_s, 3),
+                }
+            )
+        else:
+            split.append(row)
+    split_saved = _saved(revision, split)
+    held_rows = [seg for seg in split_saved["segments"] if seg.get("freeze_hold_s")]
+    assert len(held_rows) == 1, held_rows
+    assert held_rows[0]["segment_id"] != held_slot["slot_id"]
+    assert held_rows[0]["source_end_s"] == pytest.approx(BITE_FRAME_S, abs=0.02)
+    lead = next(seg for seg in split_saved["segments"] if seg["segment_id"] == held_slot["slot_id"])
+    assert lead["source_end_s"] == pytest.approx(held_rows[0]["source_start_s"], abs=0.001)
+    _runtime3, recipe3 = recipe_for(split_saved)
+    held_clips = [c for t in recipe3.tracks for c in t.clips if c.hold_duration]
+    assert len(held_clips) == 1
+    assert held_clips[0].source_start + held_clips[0].source_duration == pytest.approx(
+        BITE_FRAME_S, abs=0.02
+    )
+
     # Trimming ANOTHER moment leaves the held one byte-identical.
     other = next(row for row in editable if row["slot_id"] != held_slot["slot_id"])
     trimmed = [
@@ -566,3 +635,47 @@ async def test_editor_save_and_a_trim_elsewhere_keep_the_hold(
     assert runtime2.resolved_duration_s == pytest.approx(
         runtime.resolved_duration_s - 0.5, abs=0.05
     )
+
+
+# -- quick mixed-media frame budgeting never moves the frozen frame ---------------------------
+
+
+def test_quick_mixed_timing_keeps_the_held_frame_and_puts_rounding_in_the_hold() -> None:
+    """A held video moment in photo+video quick timing keeps its source window ending ON the
+    frozen frame; the frame budget's rounding lands in the hold, never in the footage."""
+    from app.pipeline.guided_story import _quantize_quick_mixed_timeline  # noqa: PLC0415
+
+    moments = [
+        {
+            "beat_id": "a",
+            "kind": "image",
+            "source_start_s": 0.0,
+            "source_end_s": 0.8,
+            "duration_s": 0.8,
+        },
+        {
+            "beat_id": "b",
+            "kind": "video",
+            "source_start_s": 56.0,
+            "source_end_s": 58.44,
+            "duration_s": 3.44,
+            "freeze_hold_s": 1.0,
+        },
+        {
+            "beat_id": "c",
+            "kind": "video",
+            "source_start_s": 10.0,
+            "source_end_s": 12.0,
+            "duration_s": 2.0,
+        },
+    ]
+    windows = [{"beat_id": m["beat_id"]} for m in moments]
+    total = _quantize_quick_mixed_timeline(moments, windows, target_s=6.24)
+    held = moments[1]
+    assert held["source_end_s"] == pytest.approx(58.44)
+    assert held["source_start_s"] == pytest.approx(56.0)
+    assert held["freeze_hold_s"] == pytest.approx(1.0, abs=1 / 30 + 1e-6)
+    assert held["duration_s"] == pytest.approx(
+        held["source_end_s"] - held["source_start_s"] + held["freeze_hold_s"], abs=1e-5
+    )
+    assert total == pytest.approx(6.24, abs=1 / 30)

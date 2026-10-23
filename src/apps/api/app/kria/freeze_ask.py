@@ -203,19 +203,47 @@ class FreezeSpec:
     hold_stated: bool
 
 
+# Words that make a number-of-seconds the HOLD's length ("for 2 seconds", "freeze 2s",
+# "2 saniye boyunca"), as opposed to a position ("at 14 seconds") or the video's length
+# ("a 15 second video").
+_HOLD_LEAD_WORDS = frozenset({"for", "lasting"}) | _FREEZE_WORDS
+_TR_HOLD_TAIL_WORDS = frozenset({"boyunca", "kadar"})
+
+
 def _stated_seconds(tokens: Sequence[str]) -> float | None:
+    """The hold length the creator's own words give, or None.
+
+    Only a number of seconds tied to the freeze counts: led by "for"/"freeze" in English,
+    or followed by "boyunca" / the freeze verb in Turkish. Any other seconds in the ask
+    (a position, the total video length) never set the hold.
+    """
     for index, token in enumerate(tokens):
         if not (_is_unit(tokens, index) or token in _TR_UNITS):
             continue
+        value: float | None = None
+        number_at = index
         digits = "".join(ch for ch in token if ch.isdigit())
         if digits and digits != token:
-            return float(digits)  # "2s", "3seconds"
-        if index > 0:
+            value = float(digits)  # "2s", "3seconds"
+        elif index > 0:
             previous = tokens[index - 1]
+            number_at = index - 1
             if previous.isdigit():
-                return float(previous)
-            if previous in _NUMBER_WORDS:
-                return _NUMBER_WORDS[previous]
+                value = float(previous)
+            elif previous in {"a", "an"} and index > 1 and tokens[index - 2] == "half":
+                value, number_at = 0.5, index - 2  # "half a second"
+            elif previous in _NUMBER_WORDS:
+                value = _NUMBER_WORDS[previous]
+        if value is None:
+            continue
+        lead = tokens[number_at - 1] if number_at > 0 else ""
+        tail = tokens[index + 1] if index + 1 < len(tokens) else ""
+        if (
+            lead in _HOLD_LEAD_WORDS
+            or tail in _TR_HOLD_TAIL_WORDS
+            or tail.startswith((_TR_FREEZE_STEM, _TR_STOP_STEM))
+        ):
+            return value
     return None
 
 
@@ -237,15 +265,11 @@ def freeze_spec(req: BriefRequirement) -> FreezeSpec | None:
     ):
         return None
     stated = _stated_seconds(tokens)
-    typed = req.facts.get("duration_s")
     hold = DEFAULT_FREEZE_HOLD_S
     if stated is not None:
-        # The typed value only counts when the creator's words name seconds too.
-        hold = (
-            float(typed)
-            if isinstance(typed, (int, float)) and not isinstance(typed, bool) and typed > 0
-            else stated
-        )
+        # The creator's own number decides the hold; a typed `duration_s` (model output)
+        # never sets it.
+        hold = stated
     hold = round(min(MAX_FREEZE_HOLD_S, max(MIN_FREEZE_HOLD_S, hold)), 3)
     words = tuple(
         token

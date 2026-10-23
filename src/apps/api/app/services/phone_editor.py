@@ -76,6 +76,7 @@ from app.services.phone_editor_sources import (
 from app.services.phone_rollout import (
     SINGLE_WORD_CAPTIONS_STAMP,
     freehand_drawing_client_supported,
+    freeze_frame_client_supported,
     phone_guided_sfx_supported,
     phone_narrated_caption_edits_supported,
     phone_narrated_title_edits_supported,
@@ -83,6 +84,7 @@ from app.services.phone_rollout import (
     phone_subtitled_title_supported,
     phone_voiceover_editor_lanes_supported,
     phone_voiceover_editor_media_supported,
+    recipe_has_freeze_frame,
     recipe_has_single_word_text,
     single_word_text_client_supported,
     single_word_text_verified,
@@ -845,6 +847,13 @@ def prepare_phone_editor_commit(
         # KRI-646: the recompiled recipe pins bent text (`textLayers[].bend`) that this app
         # build cannot decode or draw; nothing is committed.
         raise HTTPException(426, detail={"code": "client_update_required", "feature": "text_bend"})
+    if not freeze_frame_client_supported() and recipe_has_freeze_frame(
+        device_status(staged, variant_id).request.recipe
+    ):
+        # KRI-828: a held frame an older build cannot decode; nothing is committed.
+        raise HTTPException(
+            426, detail={"code": "client_update_required", "feature": "freeze_frame"}
+        )
     _settle_single_word_captions(staged, variant_id)
     job.assembly_plan = staged.assembly_plan
     job.status = staged.status
