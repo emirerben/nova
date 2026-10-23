@@ -687,6 +687,8 @@ CONFLICT_VOICE_VS_DURATION = "voice_vs_duration"
 CONFLICT_WHICH_VOICE = "which_voice"
 CONFLICT_LENGTH_VS_NATURAL = "length_vs_natural"
 CONFLICT_SOURCE_COVERAGE = "source_coverage"
+# KRI-849: "if you can't tell what he says, ask me instead of guessing" (see ``_unclear_word``).
+CONFLICT_UNCLEAR_WORD = "unclear_word"
 OPT_UPDATE_FOOTAGE = "update_footage"
 # Fixed priority: an answer can change a later detector's inputs, so exactly one question
 # is asked per turn, in this order.
@@ -699,6 +701,7 @@ CONFLICT_PRIORITY = (
     CONFLICT_DURATION_VS_COUNT,
     CONFLICT_VOICE_VS_DURATION,
     CONFLICT_LENGTH_VS_NATURAL,
+    CONFLICT_UNCLEAR_WORD,
 )
 
 OPT_EXTEND = "extend"
@@ -711,6 +714,8 @@ OPT_MATCH_VOICE = "match_voice"
 OPT_SILENT_TAIL = "silent_tail"
 OPT_ACCEPT_NATURAL = "accept_natural"
 OPT_TRIM_TO_REQUESTED = "trim_to_requested"
+OPT_LEAVE_OUT = "leave_out"
+OPT_USE_PREFIX = "use_"
 
 # What an "order I filmed them" requirement means to the contract (brief order keys).
 ATTACHMENT_ORDER_KEY = "attachment"
@@ -755,6 +760,10 @@ class UnresolvedChoice:
     input_digest: str
     # option key -> {"strategy": {...}} rewrites applied when that option is chosen.
     effects: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    # option key -> what the recorded answer carries beyond the option itself (KRI-849: the
+    # span an unclear-word answer is for, and the creator's chosen words). Server-owned: it
+    # is written from the option the creator tapped, never from model output.
+    answer_detail: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
     def candidate(self) -> ConflictCandidate:
         return ConflictCandidate(
@@ -2426,6 +2435,169 @@ def _source_coverage(
     )
 
 
+# ── Unclear word (KRI-849) ────────────────────────────────────────────────────
+
+_UNCLEAR_LEAVE_OUT_ALIASES = (
+    "leave it out",
+    "leave that out",
+    "leave the word out",
+    "leave that word out",
+    "skip it",
+    "skip that word",
+    "i don't know it either, leave that word out of the captions",
+)
+_UNCLEAR_LEAVE_OUT_TR = (
+    "çıkar",
+    "kelimeyi çıkar",
+    "o kelimeyi çıkar",
+    "atla",
+    "boş bırak",
+)
+_UNCLEAR_LABEL_MAX = _NAME_MAX
+
+
+def _unclear_word(
+    strategy: Mapping[str, Any],
+    brief: Any,
+    rows: list[Any],
+    cap: ChoiceCapability,
+    *,
+    snapshot: Mapping[str, Any] | None,
+    clip_paths: Sequence[Any] = (),
+) -> list[UnresolvedChoice] | None:
+    """A Talking draft whose creator said "if you can't tell what he says, ask me".
+
+    The model records that sentence as ``facts["ask_if_unclear"]`` (KRI-667: the server never
+    reads the words). whisper-1 returns no per-word confidence, so the signal is the two
+    independent hearings the approved snapshot row already holds before approval: Gemini's
+    transcript and whisper-1's timed sentences. Where they disagree on a stretch of words (inside
+    the part of the take the creator's start / end lines keep) the creator is asked which words
+    the captions should say, or to leave them out. One question per unsettled span; a hearing
+    pair that cannot be compared, or agrees, asks nothing (the render still never prints a guess:
+    ``caption_unclear.apply_unclear_answers``). Asked only where the phone Talking writer will
+    honour the answer.
+    """
+
+    if cap.creator_id is None:
+        return None
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        brief_caption_spellings,
+        defers_caption_words_to_phone_render,
+    )
+    from app.kria.unclear_word_ask import (  # noqa: PLC0415
+        ask_requirements,
+        detect,
+        model_answer,
+        row_identity,
+        unsettled,
+    )
+    from app.pipeline.caption_unclear import STATE_UNCLEAR  # noqa: PLC0415
+
+    live = _live(brief)
+    asks = ask_requirements(live)
+    if not asks or model_answer(live) is not None:
+        return None  # no ask, or the creator already told us in their own words
+    if not defers_caption_words_to_phone_render(
+        creator_id=cap.creator_id,
+        edit_format=strategy.get("edit_format"),
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=clip_paths,
+    ):
+        return None
+    finding = detect(live, snapshot, strategy=strategy, spellings=brief_caption_spellings(brief))
+    if finding.state != STATE_UNCLEAR:
+        return None
+    identity = row_identity(finding.row)
+    ids = tuple(sorted(str(req.id) for req in asks))
+    choices = [
+        choice
+        for position, span in unsettled(finding.spans, live)
+        if (choice := unclear_word_choice(span, position, ids, identity, finding.ask)) is not None
+    ]
+    return choices or None
+
+
+def _unclear_label(text: str) -> str | None:
+    label = " ".join(str(text).split())
+    return label if label and len(label) <= _UNCLEAR_LABEL_MAX else None
+
+
+def unclear_word_choice(
+    span: Any,
+    position: int,
+    requirement_ids: Sequence[str],
+    identity: Sequence[Any],
+    ask: str,
+) -> UnresolvedChoice | None:
+    """The question for one unclear span: leave it out, or write one of the two things the
+    listens heard (the creator's own pick, never ours). ``None`` when no heard words fit a
+    button; the render then leaves the span out by itself."""
+
+    from app.pipeline.caption_unclear import (  # noqa: PLC0415
+        ACTION_OMIT,
+        ACTION_USE,
+        format_time,
+    )
+
+    heard: list[str] = []
+    for text in (span.heard, span.other):
+        label = _unclear_label(text)
+        if label and label.casefold() not in {h.casefold() for h in heard}:
+            heard.append(label)
+    if not heard:
+        return None
+    at = format_time(span.start_s)
+    window = {"start_s": round(span.start_s, 3), "end_s": round(span.end_s, 3)}
+    options = [
+        _option(
+            OPT_LEAVE_OUT,
+            label=("Leave it out", "Çıkar"),
+            description=(
+                "The captions skip that word.",
+                "Altyazılar o kelimeyi atlar.",
+            ),
+            # Never recommended: a delegation ("you decide") must not choose a word for them.
+            recommended=False,
+            aliases=_UNCLEAR_LEAVE_OUT_ALIASES,
+            tr_aliases=_UNCLEAR_LEAVE_OUT_TR,
+        )
+    ]
+    detail: dict[str, dict[str, Any]] = {OPT_LEAVE_OUT: {**window, "action": ACTION_OMIT}}
+    for number, label in enumerate(heard, start=1):
+        key = f"{OPT_USE_PREFIX}{number}"
+        options.append(
+            _option(
+                key,
+                label=(label, label),
+                description=("Write this in the captions.", "Bunu altyazıya yaz."),
+            )
+        )
+        detail[key] = {**window, "action": ACTION_USE, "text": label}
+    conflict_id = (
+        CONFLICT_UNCLEAR_WORD if position == 0 else f"{CONFLICT_UNCLEAR_WORD}_{position + 1}"
+    )
+    return UnresolvedChoice(
+        kind=CONFLICT_UNCLEAR_WORD,
+        conflict_id=conflict_id,
+        field_path="captions",
+        requirement_ids=tuple(requirement_ids),
+        intro=say(
+            en=(
+                f"I couldn't make out one word around {at} in your clip: the two listens "
+                "heard different words, and I won't guess."
+            ),
+            tr=(
+                f"Klibinde {at} civarında bir kelimeyi anlayamadım: klibini iki kez dinledim, "
+                "farklı kelimeler duydum ve tahmin yürütmeyeceğim."
+            ),
+        ),
+        reason=say(en="What should the captions say?", tr="Altyazıda ne yazsın?"),
+        options=tuple(options),
+        input_digest=_digest(CONFLICT_UNCLEAR_WORD, list(identity), list(span.key), ask),
+        answer_detail=detail,
+    )
+
+
 def collect_conflicts(
     strategy: Any,
     brief: Any,
@@ -2455,6 +2627,7 @@ def collect_conflicts(
         _which_voice,
         _voice_vs_duration,
         functools.partial(_length_vs_natural, snapshot=media_snapshot),
+        functools.partial(_unclear_word, snapshot=media_snapshot, clip_paths=clip_paths),
     ):
         result = detector(data, brief, rows, cap)
         if isinstance(result, list):
@@ -2729,6 +2902,9 @@ def delegated_choice(question: Mapping[str, Any], message: object) -> str | None
         # Handing over a wordless title would drop the title the creator asked for (and we
         # never write on-screen words): not a delegation. The gate asks once more.
         return None
+    if question.get("kind") == CONFLICT_UNCLEAR_WORD:
+        # "You decide" would have us choose a word the creator asked not to be guessed.
+        return None
     options = [o for o in question.get("options") or [] if isinstance(o, Mapping) and o.get("key")]
     if not options:
         return None
@@ -2922,6 +3098,7 @@ _DISCLOSURES = {
     (CONFLICT_TITLE_TEXT, OPT_NO_TITLE): (
         "I'm leaving the title off, since you didn't give me the words."
     ),
+    (CONFLICT_UNCLEAR_WORD, OPT_LEAVE_OUT): "I'm leaving that word out of the captions.",
     (CONFLICT_VOICE_VS_DURATION, OPT_MATCH_VOICE): "I ended the edit where your voice ends.",
     (CONFLICT_VOICE_VS_DURATION, OPT_SILENT_TAIL): (
         "I kept your length: the last seconds play without voice."
@@ -2942,6 +3119,7 @@ _DISCLOSURES_TR = {
     (CONFLICT_ORDER_BASIS, OPT_ATTACHMENT_ORDER): "Klipleri eklediğin sırayla kullanıyorum.",
     (CONFLICT_ORDER_BASIS, OPT_UNORDERED): "Belirli bir sıra vaat etmiyorum.",
     (CONFLICT_TITLE_TEXT, OPT_NO_TITLE): ("Kelimeleri söylemediğin için başlığı koymuyorum."),
+    (CONFLICT_UNCLEAR_WORD, OPT_LEAVE_OUT): "O kelimeyi altyazıdan çıkarıyorum.",
     (CONFLICT_VOICE_VS_DURATION, OPT_MATCH_VOICE): "Düzenlemeyi sesinin bittiği yerde bitirdim.",
     (CONFLICT_VOICE_VS_DURATION, OPT_SILENT_TAIL): (
         "Süreni korudum: son saniyeler sesin olmadan oynuyor."
@@ -3199,6 +3377,8 @@ def resolve_choices(
                 "source": source,
             }
         )
+        if choice.answer_detail.get(option_key):
+            answers[-1]["detail"] = dict(choice.answer_detail[option_key])
         _apply_effect(data, choice, option_key)
         note = _disclosure(choice.kind, option_key)
         if note:
@@ -3371,11 +3551,44 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                 and req.scope == "title"
             ):
                 changed[req.id] = req.model_copy(update={"status": "superseded"})
+    _apply_unclear_answers(brief, answers, changed)
     if not changed:
         return brief
     return brief.model_copy(
         update={"requirements": [changed.get(r.id, r) for r in brief.requirements]}
     )
+
+
+def _apply_unclear_answers(brief: Any, answers: Sequence[Mapping[str, Any]], changed: dict) -> None:
+    """KRI-849: each unclear-word answer becomes a structured entry in the ask requirement's
+    ``facts["unclear_answers"]`` (``[{start_s, end_s, action, text?}]``) on the pinned copy, so
+    the approved brief the writer reads says which span the creator left out or worded."""
+
+    for answer in answers:
+        detail = answer.get("detail")
+        if answer.get("kind") != CONFLICT_UNCLEAR_WORD or not isinstance(detail, Mapping):
+            continue
+        entry = {
+            key: detail[key] for key in ("start_s", "end_s", "action", "text") if key in detail
+        }
+        ids = {str(i) for i in answer.get("requirement_ids") or []}
+        for req in _live(brief):
+            if req.id not in ids or not (req.facts or {}).get("ask_if_unclear"):
+                continue
+            current = changed.get(req.id, req)
+            known = [
+                row
+                for row in (current.facts or {}).get("unclear_answers") or []
+                if isinstance(row, Mapping)
+            ]
+            if any(
+                (row.get("start_s"), row.get("end_s")) == (entry.get("start_s"), entry.get("end_s"))
+                for row in known
+            ):
+                continue
+            changed[req.id] = current.model_copy(
+                update={"facts": {**current.facts, "unclear_answers": [*known, entry]}}
+            )
 
 
 def choice_notices(strategy: Any) -> list[str]:
@@ -3441,6 +3654,7 @@ __all__ = [
     "CONFLICT_PRIORITY",
     "CONFLICT_TEXT_PLACEMENT",
     "CONFLICT_TITLE_TEXT",
+    "CONFLICT_UNCLEAR_WORD",
     "CONFLICT_VOICE_VS_DURATION",
     "CONFLICT_WHICH_VOICE",
     "KEEP_OPEN_REASON",
@@ -3450,11 +3664,13 @@ __all__ = [
     "OPT_ACCEPT_NATURAL",
     "OPT_TRIM_TO_REQUESTED",
     "OPT_FEWER",
+    "OPT_LEAVE_OUT",
     "OPT_MATCH_VOICE",
     "OPT_NO_TITLE",
     "OPT_SILENT_TAIL",
     "OPT_UNORDERED",
     "title_text_choice",
+    "unclear_word_choice",
     "ChoiceCapability",
     "ChoiceResolution",
     "ScopedAnswer",

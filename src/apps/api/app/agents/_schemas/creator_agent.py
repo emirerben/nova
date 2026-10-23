@@ -323,6 +323,12 @@ class ChoiceAnswer(_CreatorModel):
     input_digest: str = Field(min_length=1, max_length=64)
     requirement_ids: list[str] = Field(default_factory=list, max_length=16)
     source: Literal["creator", "creator_delegated"] = "creator"
+    # KRI-849: what an unclear-word answer is for (the span's start_s / end_s, the action and
+    # the creator's chosen words). Server-written from the tapped option; omitted when empty so
+    # every other stored answer keeps its shape.
+    detail: dict[str, str | int | float] | None = Field(
+        default=None, max_length=8, exclude_if=lambda value: not value
+    )
 
 
 class CreativeStrategy(_CreatorModel):

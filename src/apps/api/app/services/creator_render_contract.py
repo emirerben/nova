@@ -489,13 +489,15 @@ FIELD_MATRIX: dict[str, FieldRule] = {
                 "input_digest",
                 "requirement_ids[]",
                 "source",
+                "detail",
             )
         ),
         note=(
             "server-owned creator decisions on material conflicts; the planner gate writes "
             "them, build_render_contract consumes them (order basis, shot placement) and the "
             "chosen duration/clip subset is already rewritten into target_duration_s / "
-            "selected_media_ids"
+            "selected_media_ids; an unclear-word answer's detail (KRI-849) is copied onto the "
+            "approved brief, which the phone Talking caption writer reads"
         ),
     ),
     **_rules(
