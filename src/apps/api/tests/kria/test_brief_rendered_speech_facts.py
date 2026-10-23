@@ -202,7 +202,7 @@ def test_a_named_retake_stays_partial_until_the_exact_line_is_verified(descripti
     assert receipt.status == "partial"
     assert receipt.reason.startswith("Speech cleanup cut the long pauses")
     assert (
-        "I have not confirmed that exact spoken line was removed; check it in the editor"
+        "I can't cut out one exact line yet or confirm it's gone, so it may still be in your video"
         in receipt.reason
     )
 

@@ -35,7 +35,7 @@ struct SpeechCleanupStats: Equatable {
         if removesRetakes {
             return "Clean up speech also removes the detected restarted sentence\(retakes == 1 ? "" : "s")."
         }
-        return "Choose whether to remove the detected pauses and filler sounds. A sentence you restarted stays in; trim it in the editor."
+        return "Choose whether to remove the detected pauses and filler sounds. A sentence you restarted stays in."
     }
 
     /// e.g. "Found 3 pauses and filler sounds (2 filler sounds, 1 long pause) — about 4.2s shorter."
