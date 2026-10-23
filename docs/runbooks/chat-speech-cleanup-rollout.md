@@ -5,6 +5,31 @@ production-derived gate receipts. A configured percentage is not proof that the
 dedicated worker or render contract works. Never change the next cohort until the
 audit prints `PASS` and its immutable receipt has been archived outside the repo.
 
+## Retake-removal add-on (KRI-551)
+
+The explicit-consent retake path is separately dark by default:
+`RETAKE_CUT_ENABLED=false` and `SPEECH_CLEANUP_RETAKES_ENABLED=false`. The new
+preflight behavior is effective only when both are true. It is distinct from an
+already-authorized legacy `RETAKE_CUT_ENABLED` path: do not turn that legacy flag
+on or off as part of this add-on without its own approval.
+
+Before enabling `SPEECH_CLEANUP_RETAKES_ENABLED`, deploy the API and the relevant
+worker with the same policy/version code and leave the new flag false. Confirm the
+resolved configuration on both process groups. Enabling or disabling the effective
+retake policy changes the source-policy fingerprint, so ready analyses and their
+old consent must be retired and collected again; API and worker skew must never
+reuse a prior ready analysis. Existing stamped jobs keep their persisted cut plan.
+
+The first canary requires an updated client whose cleanup card explicitly says a
+restarted sentence can be removed and sends the retake-aware acknowledgement. Run
+one retake-positive source and one no-retake source. Record that the first offers
+the retake count, a new clean choice is accepted only with the acknowledgement,
+and a legacy client can keep the original or receives the actionable update-app
+message. This PR's local evidence is bounded in
+[`kri-551-consented-retakes.md`](../reviews/kri-551-consented-retakes.md); it does
+not replace the original-output and device acceptance gates in
+[`kri-829-original-output-acceptance.md`](../reviews/kri-829-original-output-acceptance.md).
+
 ## Gates and sequence
 
 Deploy migration, API, web, Beat, and the dedicated `speech_analysis` Fly process
@@ -96,6 +121,14 @@ rewrite `SpeechCleanupAnalysis`, PlanItem decisions, Job snapshots, or in-flight
 Jobs: already-dispatched Jobs finish or fail under their stamped `required_v1` /
 `off_v1` contract. Keep the dedicated worker running until its queue and leased work
 are drained; stopping it is not the kill switch.
+
+For the KRI-551 retake-removal add-on, set
+`SPEECH_CLEANUP_RETAKES_ENABLED=false` and restart API plus relevant workers.
+Re-read both resolved configurations. This retires ready analyses through the
+source-policy fingerprint and prevents new retake selections; it does not rewrite
+accepted snapshots or stamped jobs. Leave `RETAKE_CUT_ENABLED` unchanged when it
+is separately enabled for a legacy path, unless that path's own rollback calls for
+it.
 
 ### Removal-cap lever (gentler than the kill switch)
 

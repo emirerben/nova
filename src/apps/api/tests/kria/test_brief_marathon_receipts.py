@@ -157,6 +157,43 @@ def _brief(*reqs: BriefRequirement) -> CreativeBrief:
     return CreativeBrief(version=1, requirements=list(reqs))
 
 
+@pytest.mark.parametrize(
+    "mode,realized", [("pip", True), ("fullscreen", False), ("fullscreen", True)]
+)
+def test_photo_then_video_needs_executed_fullscreen_sequence(mode, realized):
+    requirement = _req(
+        "river",
+        "timing",
+        'When I say "the river", show the river photo first, then the video',
+        triggers=["the river"],
+    )
+    facts = plan_facts_from_phone_variant(
+        _variant(
+            phone_beat_receipt={
+                "matcher": "phrase",
+                "unplaced": [],
+                "closing": {},
+                "placed": [
+                    {
+                        "beat_id": "river",
+                        "trigger": "the river",
+                        "visual_label": "river photo",
+                        "at_s": 12,
+                        "end_s": 13.5,
+                        "display_mode": mode,
+                        "following_clip_id": "river-video",
+                        "following_at_s": 13.5,
+                        "following_end_s": 17,
+                        "sequence_realized": realized,
+                    }
+                ],
+            }
+        )
+    )
+    result = check_requirement(requirement, facts)
+    assert (result.status == "met") is (mode == "fullscreen" and realized)
+
+
 # ------------------------------------------------------------------ draft time
 
 
@@ -173,11 +210,11 @@ def test_the_marathon_brief_is_fully_judged_at_draft_time() -> None:
     assert set(receipts) == {"r1", "r2", "r3", "r4", "r5"}
     assert receipts["r1"].status == "met"
     # The cleanup line is still the honest "choose Clean up speech" partly. KRI-541: "the
-    # restart of the kilometer thirty sentence" is a retake, which cleanup never cuts.
+    # restart of the kilometer thirty sentence" needs specific-line verification.
     assert receipts["r2"].status == "partial"
     assert receipts["r2"].reason == (
         "Choose Clean up speech when you approve and the long pauses are cut; "
-        "a retake or a specific line isn't cut automatically yet, so trim that in the editor"
+        "I have not confirmed that exact spoken line was removed; check it in the editor"
     )
     assert receipts["r3"].status == "met"
     assert receipts["r3"].reason == "Your footage sound plays under your voice"
@@ -374,7 +411,8 @@ def test_a_length_ask_keeps_the_duration_checker() -> None:
     assert not _wants_beats(req)
     receipt = check_requirement(req, _draft_facts())
     assert receipt.status == "partial"
-    assert receipt.reason == "I can't confirm this draft's length yet."
+    assert receipt.reason == "I'll check the full video length, including its ending, after export."
+    assert receipt.verification == "unchecked"
 
 
 def test_a_length_ask_with_a_pop_in_cue_is_still_a_length_ask() -> None:
@@ -408,11 +446,11 @@ def test_a_timing_ask_with_no_number_and_no_cue_stays_unverifiable() -> None:
 
 def test_the_pause_cut_ask_still_goes_to_the_cleanup_checker() -> None:
     receipt = check_requirement(R2, _draft_facts(speech_cleanup_enabled=True))
-    # KRI-541: R2 also names "the restart of the kilometer thirty sentence", a retake the
-    # cleanup never cuts: still the cleanup checker, an honest format-limit "Partly".
+    # KRI-541: R2 names a specific spoken line. A cleanup count cannot prove that exact
+    # line was removed, so this stays an honest format-limit "Partly".
     assert receipt.status == "partial"
     assert receipt.reason.startswith("Speech cleanup cuts the long pauses")
-    assert "trim that in the editor" in receipt.reason
+    assert "I have not confirmed that exact spoken line was removed" in receipt.reason
     assert is_format_limit(receipt.reason)
     offered = check_requirement(R2, _draft_facts())
     assert offered.status == "partial"

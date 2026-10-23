@@ -244,6 +244,9 @@ class ConfirmBody(_StrictBody):
     # existing contract until that rollout reaches them.
     speech_cleanup_analysis_id: uuid.UUID | None = None
     speech_cleanup_choice: Literal["clean", "keep_original", "create_without_cleanup"] | None = None
+    # Sent only after the client explicitly says a clean choice removes
+    # restarted sentences. Absent clients retain the conservative false value.
+    speech_cleanup_retakes_aware: bool = False
     # KRI-306: the creator's finished-video shape (see `app.services.render_shape`).
     # Omitted unless the client was offered a choice; absent = today's behavior.
     output_orientation: Literal["portrait", "landscape"] | None = None
@@ -4695,6 +4698,11 @@ def confirm_digest_input(body: ConfirmBody) -> dict[str, Any]:
     for shape_key in ("output_orientation", "landscape_fit"):
         if digest_input.get(shape_key) is None:
             digest_input.pop(shape_key, None)
+    # The newly disclosed retake consent changes a clean decision and must
+    # therefore participate in idempotency. Omit the conservative false value
+    # so an in-flight request from the preceding schema still replays.
+    if digest_input.get("speech_cleanup_retakes_aware") is False:
+        digest_input.pop("speech_cleanup_retakes_aware", None)
     return digest_input
 
 
@@ -4851,6 +4859,40 @@ async def confirm_creator_plan_controller(
             strict=True,
             creator_request=str(active.get("creator_request") or ""),
         )
+        if body.speech_cleanup_choice == "clean":
+            # The direct Creator confirm endpoint predates the chat and
+            # runtime approval fences. Keep its legacy pending/failed behavior
+            # intact, but it must not accept a new clean choice from the old
+            # wording when this exact current analysis found restarts.
+            from app.services.plan_item_media import (  # noqa: PLC0415
+                current_detector_policy,
+                resolve_item_narration,
+            )
+            from app.services.speech_cleanup_decision import (  # noqa: PLC0415
+                SPEECH_CLEANUP_CONFLICT_COPY,
+                retakes_consent_required,
+            )
+            from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+                current_analysis_async,
+            )
+
+            current_cleanup = await current_analysis_async(db, item.id, for_update=True)
+            resolved = resolve_item_narration(item, detector_policy=current_detector_policy())
+            if retakes_consent_required(
+                current_cleanup,
+                source_policy_fingerprint=(
+                    resolved.source.source_policy_fingerprint
+                    if resolved.source is not None
+                    else None
+                ),
+                submitted_analysis_id=body.speech_cleanup_analysis_id,
+                submitted_choice=body.speech_cleanup_choice,
+                cleanup_retakes_aware=body.speech_cleanup_retakes_aware,
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail=SPEECH_CLEANUP_CONFLICT_COPY["speech_cleanup_retakes_consent_required"],
+                )
         from app.services.creator_execution_contract import (  # noqa: PLC0415
             requests_guided_voiceover,
         )

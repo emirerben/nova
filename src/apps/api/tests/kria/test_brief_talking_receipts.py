@@ -65,7 +65,7 @@ def test_the_sourdough_cut_request_is_an_honest_partly_that_never_blocks_the_dra
     assert receipt.status == "partial"
     assert receipt.reason == (
         "Choose Clean up speech when you approve and the long pauses are cut; "
-        "a retake or a specific line isn't cut automatically yet, so trim that in the "
+        "I have not confirmed that exact spoken line was removed; check it in the "
         "editor; I can't confirm this draft's length yet."
     )
     assert is_judged(req, receipt)
@@ -176,8 +176,8 @@ def test_a_named_line_is_editor_work_even_with_cleanup_on():
 
     assert receipt.status == "partial"
     assert receipt.reason == (
-        "Speech cleanup cuts the long pauses; a retake or a specific line isn't cut "
-        "automatically yet, so trim that in the editor"
+        "Speech cleanup cuts the long pauses; I have not confirmed that exact spoken "
+        "line was removed; check it in the editor"
     )
     assert is_format_limit(receipt.reason)
 
@@ -290,13 +290,15 @@ def test_keep_my_whole_take_still_goes_to_the_whole_take_check():
     assert receipt.status == "met"
 
 
-def test_a_plain_creator_length_on_a_talking_edit_is_met_when_the_take_matches():
+def test_a_strict_creator_length_on_a_talking_edit_requires_a_measured_shorter_file():
     req = _req("timing", "keep it under 45 seconds", duration_s=45)
 
-    receipt = check_requirement(req, _talking(duration_s=45))
+    receipt = check_requirement(req, _talking(duration_s=43, measured_export_duration_s=44.6))
 
     assert receipt.status == "met"
-    [bound] = build_receipts([req], _talking(duration_s=45), include_unchecked=True)
+    [bound] = build_receipts(
+        [req], _talking(duration_s=43, measured_export_duration_s=44.6), include_unchecked=True
+    )
     assert bound.verification == "checked"
     assert not needs_creator_choice(bound)
 
@@ -369,7 +371,7 @@ def test_cleanup_and_a_named_cut_keep_the_named_cut_receipt_when_length_matches(
     receipt = check_requirement(req, _talking(speech_cleanup_enabled=True, duration_s=24))
 
     assert receipt.status == "partial"
-    assert "trim that in the editor" in (receipt.reason or "")
+    assert "I have not confirmed that exact spoken line was removed" in (receipt.reason or "")
     assert "can't promise" not in (receipt.reason or "")
 
 

@@ -344,8 +344,14 @@ async def get_device_render(
         raise HTTPException(
             426, detail={"code": "client_update_required", "feature": "single_word_text"}
         )
+    from app.services.device_render import device_export_maximum  # noqa: PLC0415
+
+    response_fields = status.model_dump()
+    maximum = device_export_maximum(job, variant_id)
+    if maximum is not None:
+        response_fields["request"]["max_export_duration_s"] = maximum
     status = DeviceRenderStatusOut(
-        **status.model_dump(),
+        **response_fields,
         output_verification_required=verification_required,
         retry_requires_approval=(
             status.phase != "published"
@@ -895,6 +901,8 @@ def _verify_export(
     poster_job_id: uuid.UUID | None = None,
     source_bindings: dict | None = None,
     verification_report: dict | None = None,
+    export_measurements: dict | None = None,
+    max_export_duration_s: float | None = None,
 ) -> str | None:
     """Verify the phone's export; with ``poster_job_id``, also publish its poster.
 
@@ -978,6 +986,13 @@ def _verify_export(
             0.1, 2 / recipe.frame_rate
         ):
             raise ValueError("export duration mismatch")
+        maximum = max_export_duration_s
+        if maximum is not None:
+            from app.services.export_duration_policy import check_export_maximum  # noqa: PLC0415
+
+            check_export_maximum(duration, maximum)
+        if export_measurements is not None:
+            export_measurements["measured_export_duration_s"] = duration
         if verification_report is not None:
             from app.services.actual_export_verification import (
                 verify_actual_export,  # noqa: PLC0415
@@ -1135,6 +1150,14 @@ async def _complete_device_export(
         if verification_report is not None
         else {}
     )
+    export_measurements: dict = {}
+    from app.services.device_render import device_export_maximum  # noqa: PLC0415
+
+    maximum = device_export_maximum(job, body.identity.variant_id)
+    if maximum is not None:
+        verify_kwargs["export_measurements"] = export_measurements
+        verify_kwargs["max_export_duration_s"] = maximum
+    duration_refusal = None
     # Do not hold database locks while downloading/probing the MP4. Reacquire the full fence below.
     await db.rollback()
     metadata = None
@@ -1159,6 +1182,9 @@ async def _complete_device_export(
         )
     except FileNotFoundError as exc:
         raise HTTPException(409, "Export upload has not finished") from exc
+    except CreatorRenderContractError as exc:
+        duration_refusal = exc
+        poster_path = None
     except (ValueError, KeyError, subprocess.SubprocessError) as exc:
         if verification_report is None:
             raise HTTPException(422, "Export does not match the approved recipe") from exc
@@ -1171,7 +1197,8 @@ async def _complete_device_export(
     # PLAYBACK_URL_TTL_MIN docstring in generative_jobs.py).
     url = (
         await asyncio.to_thread(storage.signed_get_url, attempt["path"], PLAYBACK_URL_TTL_MIN)
-        if verification_report is None or verification_report.get("status") == "checked"
+        if duration_refusal is None
+        and (verification_report is None or verification_report.get("status") == "checked")
         else None
     )
     job = await _owned_job(db, user_id, job_id)
@@ -1196,6 +1223,20 @@ async def _complete_device_export(
         if not claim_valid(record, attempt_id, verification_token):
             raise HTTPException(409, "Verification claim changed")
         record["attempts"][attempt_id]["verification_task"].update(state="done")
+    if duration_refusal is not None:
+        if verification_report is not None and (
+            record.get("actual_export_policy") != policy
+            or export_source_digest(approved_export_sources(job, status.request)) != sources_digest
+        ):
+            raise HTTPException(409, "Export verification authority changed")
+        save_device_record(job, body.identity.variant_id, record)
+        await _refuse_publication(
+            db,
+            job,
+            _ContractRefusal(duration_refusal, body.identity.variant_id),
+            stage="actual_export",
+        )
+        raise HTTPException(422, str(duration_refusal))
     if verification_report is not None:
         # Fence the source/policy snapshot again after downloading and decoding.
         if (
@@ -1312,6 +1353,15 @@ async def _complete_device_export(
                 else {}
             ),
             **finished_durations(status.request.recipe.duration, attempt.get("brand_tail", "none")),
+            **export_measurements,
+            **(
+                {
+                    "duration_s": export_measurements["measured_export_duration_s"],
+                    "measured_export_generation_id": attempt_id,
+                }
+                if export_measurements
+                else {}
+            ),
         }
         if v.get("variant_id") == body.identity.variant_id
         else v

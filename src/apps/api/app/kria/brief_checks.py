@@ -111,6 +111,11 @@ class BeatFact:
     # Seconds into the render where the pop-in shows (a rendered variant's receipt);
     # None for a draft, which has not been laid out yet.
     at_s: float | None = None
+    display_mode: str = "pip"
+    following_clip_id: str | None = None
+    # None is an approved request, not execution evidence. Only the compiled
+    # sequence receipt can prove that the original video actually follows.
+    sequence_realized: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -277,6 +282,8 @@ class PlanFacts:
     # Seconds the phone appended after the edit (the Kria outro) when the record says so;
     # never in the plan's own length: a 28.0s plan is a ~29.6s file (KRI-210). 0 = unknown.
     outro_s: float = 0.0
+    # Measured complete exported file, not the recipe's edit duration plus an estimate.
+    measured_export_duration_s: float | None = None
     # KRI-190: clips whose label is on a cut shorter than its reading time (the
     # clip itself is too short). A label the viewer cannot read is not "met".
     unreadable_label_clip_ids: tuple[str, ...] = ()
@@ -505,7 +512,14 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
     return {
         "reaction_beats_available": available,
         "reaction_beats": tuple(
-            BeatFact(trigger=b.trigger, visual_id=b.visual_id, sound=b.sound) for b in kept
+            BeatFact(
+                trigger=b.trigger,
+                visual_id=b.visual_id,
+                sound=b.sound,
+                display_mode=b.display_mode,
+                following_clip_id=b.following_clip_id,
+            )
+            for b in kept
         ),
         "dropped_beat_triggers": tuple(
             dict.fromkeys(
@@ -1409,6 +1423,16 @@ def _phone_receipt_facts(receipt: object, *, timed: bool) -> dict[str, Any]:
                 visual_id=str(entry.get("visual_label") or "") or None,
                 sound=str(entry.get("sound_label") or "") or None,
                 at_s=at_s,
+                display_mode=str(entry.get("display_mode") or "pip"),
+                following_clip_id=entry.get("following_clip_id"),
+                sequence_realized=(
+                    entry.get("sequence_realized") is True
+                    and entry.get("display_mode") == "fullscreen"
+                    and _finite_number(entry.get("following_at_s")) is not None
+                    and entry.get("following_at_s") == entry.get("end_s")
+                    if entry.get("following_clip_id")
+                    else None
+                ),
             )
         )
     unheard: list[str] = []
@@ -1454,6 +1478,17 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     changes = _phone_receipt_facts(
         variant.get("phone_beat_receipt"), timed=variant.get("resolved_archetype") == "narrated"
     )
+    measured = _finite_number(variant.get("measured_export_duration_s"))
+    if (
+        measured is not None
+        and measured > 0
+        and variant.get("ok") is True
+        and variant.get("render_status") == "ready"
+        and variant.get("measured_export_generation_id")
+        and variant.get("measured_export_generation_id") == variant.get("render_generation_id")
+    ):
+        changes["measured_export_duration_s"] = measured
+    changes["outro_s"] = _declared_outro_s(variant)
     bed = _finite_number(variant.get("voiceover_bed_level"))
     if bed is not None:
         changes["voiceover_bed_level"] = max(0.0, bed)
@@ -2382,7 +2417,7 @@ _CLEANUP_VERB_RE = re.compile(
     r"|\bkes|\bçikar|\bsil\b|\bolmasin|\bolmadan"
 )
 # A specific stretch of speech named for removal ("the part where I say ...", a retake,
-# a quoted line): speech cleanup cuts pauses and non-word sounds, never spoken words.
+# a quoted line): a generic cleanup record cannot confirm that this exact spoken line was removed.
 # KRI-792: a slip, stumble, mistake or half-finished question the creator says to cut names
 # spoken words too. Only right after the cut verb (Turkish: right before it), so "captions
 # with no spelling mistakes" stays a captions ask. The fallback for a brief without
@@ -3048,7 +3083,7 @@ _CLEANUP_IF_OFFERED = (
 )
 _CLEANUP_UNAVAILABLE = "Speech cleanup isn't available for this project yet, so the pauses stay"
 _NAMED_CUTS_NEED_EDITOR = (
-    "a retake or a specific line isn't cut automatically yet, so trim that in the editor"
+    "I have not confirmed that exact spoken line was removed; check it in the editor"
 )
 _CAPTIONS_WORD_BY_WORD = "words light up as you say them"
 # KRI-541: what speech cleanup did on a finished render.
@@ -3171,7 +3206,7 @@ _REASON_TR: dict[str, str] = {
         "Konuşma temizliği bu proje için henüz yok, o yüzden duraklamalar kalıyor"
     ),
     _NAMED_CUTS_NEED_EDITOR: (
-        "tekrar çekim ya da belirli bir cümle henüz otomatik kesilmiyor, onu editörde kırp"
+        "o belirli konuşulan cümlenin kaldırıldığını doğrulamadım; editörde kontrol et"
     ),
     _CAPTIONS_WORD_BY_WORD: "kelimeler sen söylerken yanıyor",
     _CLEANUP_DONE: "Konuşma temizliği uzun duraklamaları kesti",
@@ -3615,6 +3650,13 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
             problems.extend(_capped_beat_problems(req, facts, names))
             text = _req_text(req)
             if placements:
+                if any(b.following_clip_id and b.sequence_realized is False for b in placements):
+                    problems.append(
+                        say(
+                            en="The full-screen photo followed by its video has not been verified",
+                            tr="Tam ekran fotoğrafın ardından videonun geldiği doğrulanmadı",
+                        )
+                    )
                 if _SOUND_RE.search(text) and not any(b.sound for b in placements):
                     problems.append(
                         say(
@@ -3786,8 +3828,9 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     """Pauses, retakes and filler the creator asked to cut, against the draft.
 
     Speech cleanup (the preflight check the creator confirms at approval) cuts long
-    pauses and non-word sounds out of a Talking or voiceover edit; it never cuts a
-    spoken line, so a retake or "the bit where I say X" is reported as editor work.
+    pauses and non-word sounds out of a Talking or voiceover edit. A retake count or
+    other generic cleanup record cannot confirm that a requested spoken line was removed,
+    so a retake or "the bit where I say X" stays partial for editor verification.
     A length the same sentence names ("keep it under 45 s") follows the cut take.
     Every honest outcome here is a limit of the format, not a simplification.
     """
@@ -3828,7 +3871,7 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
         return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
     notes = [_loc(lead)]
     if _wants_named_cuts(req):
-        # The cut removes pauses and filler sounds; a named line or retake stays.
+        # The generic cut record cannot prove that this requested line was the removed span.
         notes.append(_loc(_NAMED_CUTS_NEED_EDITOR))
         status = "partial"
     if status == "met" and outcome == "applied":
@@ -3874,10 +3917,11 @@ def speech_cleanup_review_note(
     Read off the variant's own cut record, never off a brief, so the reply is honest even when
     the render's brief binding was lost (prod thread ddc6e71b: the creator asked to cut "the part
     where I restart the kilometer thirty sentence", the cleanup cut 14 silences and a filler,
-    the restart stayed, and no receipt said so). Consented cleanup cuts long pauses and filler
-    sounds only; it never detects a retake, so the limit is stated unless a retake cut really
-    could have run (``retake_cut_possible``) or the record shows one. ``text`` is the reply built
-    so far: a requirement receipt that already reports the limit is not repeated.
+    the restart stayed, and no receipt said so). A generic cleanup count cannot prove whether a
+    requested spoken line was removed, so that remains a partial receipt even when it records a
+    retake. The unbound-review limit is stated unless a retake cut really could have run
+    (``retake_cut_possible``) or the record shows one. ``text`` is the reply built so far: a
+    requirement receipt that already reports the limit is not repeated.
     ``None`` for a variant that is not a speech edit or whose cleanup did not run.
     """
     if variant.get("resolved_archetype") not in _RENDERED_EDIT_FORMATS:
@@ -3946,7 +3990,7 @@ def _merge_cleanup_timing(
     if timing.status == "met":
         return cleanup
     if cleanup.status == "met" or not cleanup.reason:
-        return _receipt(req, "partial", timing.reason)
+        return _receipt(req, "partial", timing.reason, verification=timing.verification)
     if not timing.reason or timing.reason == cleanup.reason:
         return cleanup
     return _receipt(req, "partial", f"{cleanup.reason}; {timing.reason}")
@@ -4873,6 +4917,36 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
         # A creator-stamped photo length the plan applied (KRI-824). Any other clip-scoped
         # length (a video clip, an unstamped model number) keeps the clip paths below.
         return _check_asset_hold(req, hold_row)
+    from app.services.length_policy import (  # noqa: PLC0415
+        strict_duration_limit_s,
+        strict_duration_matches,
+    )
+
+    maximum = strict_duration_limit_s(req)
+    if maximum is not None:
+        measured = facts.measured_export_duration_s
+        if measured is None:
+            return _receipt(
+                req,
+                "partial",
+                say(
+                    en="I'll check the full video length, including its ending, after export.",
+                    tr="Kapanış dahil tam video süresini dışa aktardıktan sonra kontrol edeceğim.",
+                ),
+                verification="unchecked",
+            )
+        if strict_duration_matches(measured, maximum):
+            return _receipt(req, "met", None)
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"The finished video is {_round_s(measured)}s including its ending; "
+                f"you asked for under {_round_s(maximum)}s.",
+                tr=f"Kapanışı dahil bitmiş video {_round_s(measured)} saniye; "
+                f"{_round_s(maximum)} saniyenin altında istemiştin.",
+            ),
+        )
     if clip_length_ask(req) is not None:
         # KRI-558: a per-clip length is judged on the clips, never against the total length.
         return _check_clip_lengths(req, facts)

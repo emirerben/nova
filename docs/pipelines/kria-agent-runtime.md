@@ -22,6 +22,23 @@ idempotency, storage resolution, execution, and completion language. A plan is
 never evidence that work happened. Only a settled receipt can support “changed,”
 “rendered,” or other completed-action copy.
 
+## Captions and added text
+
+Captions and subtitles name the same speech lane (including translated speech;
+Turkish `altyazı`). Titles, labels, callouts and decorative words are authored text.
+A request for English subtitles, a supplied title and "no text except the title"
+must preserve both the subtitles and that title, without adding other text or
+asking the creator to resolve a false conflict. The same applies to a follow-up
+removing extra text. Only an explicit caption/subtitle removal, or an explicit
+request to remove all writing including subtitles, turns captions off.
+An explicitly requested smaller heading under a title remains authored text.
+
+Acceptance for the cabin N1 wording: keep `captions=on`, `caption_language=en`
+and the supplied title; no new labels, pinned text or duplicated speech text.
+Check both EN/TR and subsequent edits. Negative controls must detect missing
+subtitles and an unexpected decorative label. Recipe checks establish layer
+separation, not live-model interpretation or a verified TestFlight export.
+
 ## State ownership
 
 | Concern | Authority |
@@ -161,6 +178,20 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
 - **Request.** With the flag on, the Main Creator and the clip-intent planner
   read `render_brief_request(brief)`, and the approval dispatch passes it as
   `creator_request` instead of the draft summary.
+- **Automatic simpler drafts.** The runtime planner removes only typed, unavailable
+  optional text/SFX fields and recompiles the remaining strategy. At draft completion,
+  exact compiler-removed text, unavailable native/Talking clip labels and typed
+  brightness requests can be superseded automatically when they are the only blockers.
+  Receipt/readiness failure alone is insufficient: a missing supported label or
+  spoken trigger still needs repair/clarification. The same transaction
+  appends an omission revision, rebuilds approval readiness, and pins the effective
+  brief. The reply and approval name what was left out and why; they do not claim the
+  creator already agreed. Unknown evidence, source-audio restrictions, selection,
+  ordering, timing conflicts, and unavailable footage remain blocking. Existing
+  explicit simpler-version choices still work. Regression coverage:
+  `test_automatic_strategy_fallback.py`, `test_runtime_automatic_simplification.py`,
+  and the EN/TR phone/cloud cases in `test_approval_readiness_postgres.py`.
+  Evidence and repeatable native verification: [automatic supported-version recovery](../reviews/automatic-render-fallback.md).
 - **Receipts.** Each draft turn attaches `requirement_receipts`
   (`met | partial | not_possible`, reason, `inferred`) to its `draft_applied`
   event payload. Checks: per-clip text coverage, order basis
