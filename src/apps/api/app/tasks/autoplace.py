@@ -1941,6 +1941,10 @@ def analyze_pool_asset(
                 if getattr(asset, "analysis_attempt_token", None) != attempt_token:
                     log.info("autoplace.asset_stale_attempt", asset_id=asset_id, stage="persist")
                     return
+                if pool_deadline.is_expired(asset):  # KRI-820: expiry is one-way
+                    pool_deadline.mark_timed_out(asset)
+                    db.commit()
+                    return
             if failed:
                 if refresh:
                     # Refresh must never degrade a working asset (decision C):

@@ -569,6 +569,10 @@ async def register_verified_source(
         # A full original added to a device-only video (KRI-822) is a second copy of
         # already-analysed footage: the asset's status and facts stay on its proxy.
         asset.status = "pending"
+        # New bytes start a fresh re-dispatch budget (KRI-820).
+        asset.metadata_json = {
+            k: v for k, v in (asset.metadata_json or {}).items() if k != "_analysis_redispatches"
+        }
     source = MediaAssetSource(
         id=uuid.uuid4(),
         user_id=owner_id,

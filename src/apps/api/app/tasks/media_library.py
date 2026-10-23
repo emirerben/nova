@@ -37,6 +37,8 @@ def analyze_media_asset_task(self: Any, asset_id: str, owner_id: str) -> dict[st
         )
         if asset is None:
             return {"asset_id": asset_id, "status": "missing"}
+        if asset.status == "failed":  # KRI-820: a late copy never revives a capped failure
+            return {"asset_id": asset_id, "status": "failed"}
         asset.status = "processing"
         transcribe_audio = asset.kind == "video" and asset.metadata_json.get("has_audio") is True
         db.commit()
