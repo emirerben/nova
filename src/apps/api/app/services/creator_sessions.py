@@ -58,6 +58,7 @@ from app.services.phone_destination import (
     item_visuals_only_on_device,
 )
 from app.services.phone_sources import bind_phone_sources
+from app.services.pool_analysis_deadline import is_expired as is_pool_analysis_expired
 from app.services.sfx_catalog import planner_catalog
 from app.services.tiktok_style_observations import effective_persona_style
 
@@ -474,6 +475,11 @@ async def resolve_item_creator_context(
     for asset in assets:
         if len(media_refs) >= MAX_CREATOR_MEDIA_REFS:
             break
+        if is_pool_analysis_expired(asset):
+            # KRI-820: past its declared analysis bound the asset is a failed,
+            # retryable upload (the reaper persists that within one sweep);
+            # plan with it exactly as with any other failed upload: not at all.
+            continue
         media_id = f"asset-{asset.id}"
         if media_id in seen:
             continue

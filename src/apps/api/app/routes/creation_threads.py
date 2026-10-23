@@ -120,6 +120,7 @@ from app.services.creator_direction_receipts import project_direction_receipt
 from app.services.creator_execution_contract import requests_guided_voiceover
 from app.services.creator_render_projection import build_creator_render_projection
 from app.services.creator_sessions import reconcile_render_state
+from app.services.device_render import variant_delivery_phase
 from app.services.generative_upload_paths import DIRECT_VOICEOVER_PREFIX
 from app.services.guided_speech_cleanup import DISABLED_MESSAGE as CLEANUP_DISABLED_MESSAGE
 from app.services.guided_speech_cleanup import guided_voiceover_cleanup_available
@@ -2147,6 +2148,10 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
     from app.services.user_song_projection import attach_user_song  # noqa: PLC0415
 
     attach_user_song(variants, job, song_filename=getattr(item, "song_filename", None))
+    # KRI-823: the current generation's device delivery phase, on response copies only.
+    for value in variants:
+        if isinstance(value, dict) and value.get("variant_id"):
+            value["delivery_phase"] = variant_delivery_phase(job, value.get("variant_id"))
     # KRI-178/KRI-183: same "primary variant" rule as `creator_sessions.py`
     # -- the first variant dict that carries a `variant_id` at all (there is
     # only ever one live variant on a phone job). Render notes are a
@@ -4193,6 +4198,11 @@ async def list_threads(
                             {
                                 "variant_id": variant.get("variant_id"),
                                 "render_status": variant.get("render_status"),
+                                # KRI-823: the drawer reads the current device
+                                # delivery, not only the job lifecycle.
+                                "delivery_phase": variant_delivery_phase(
+                                    job, variant.get("variant_id")
+                                ),
                             }
                             for variant in variants
                             if isinstance(variant, dict)

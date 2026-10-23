@@ -62,7 +62,10 @@ def _serialize_asset(asset, sources, refs, warnings, facts) -> MediaAssetOut:
         original_declared_sha256=asset.original_declared_sha256,
         original_byte_count=asset.original_byte_count,
         original_availability=asset.original_availability,
-        metadata_json=asset.metadata_json,
+        # Internal reconciler bookkeeping (`_analysis_redispatches`) stays server-side.
+        metadata_json={
+            k: v for k, v in (asset.metadata_json or {}).items() if k != "_analysis_redispatches"
+        },
         creator_context=asset.creator_context,
         analysis=facts,
         sources=[
