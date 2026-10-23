@@ -73,7 +73,8 @@ def test_no_text_row_is_called_clear_while_it_covers_the_object(report):
 )
 def test_supported_scenarios_keep_every_text_off_the_plate_the_whole_time(report, name):
     scenario = _scenario(report, name)
-    assert scenario["verdict"] == "clear", scenario
+    # The full target rows carry the tracker receipt (timed_out / lost / elapsed_ms).
+    assert scenario["verdict"] == "clear", json.dumps(scenario["receipt"]["targets"])
     for row in scenario["rows"]:
         assert row["measured"] == "clear", row
         assert row["claimed"] == "clear", row

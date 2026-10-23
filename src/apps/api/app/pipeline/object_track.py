@@ -31,8 +31,11 @@ STEP_S = 0.1
 # A lost anchor protects the nearest good box grown by this much (canvas-agnostic,
 # source-normalized): the object cannot have gone far in a few tenths of a second.
 _LOST_PAD = 0.08
-_TIMEOUT_BASE_S = 4.0
-_TIMEOUT_PER_ANCHOR_S = 0.06
+# Sized for a loaded worker, not a laptop: a 6 s window (61 anchors) tracks in ~2.3 s
+# locally but timed out at the old 4 s + 0.06 s/anchor budget on a 4-way CI runner, and a
+# timeout is "unverified" (never clear), so a tight budget silently drops the creator's ask.
+_TIMEOUT_BASE_S = 8.0
+_TIMEOUT_PER_ANCHOR_S = 0.2
 _MAX_TIMEOUT_S = 90.0
 
 TrackStatus = Literal["tracked", "unverified", "failed"]
