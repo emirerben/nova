@@ -34,3 +34,5 @@ must not erase the original need for transcript coverage; source-attached karaok
 word offsets are relative to their text element, while caption words are absolute;
 a 300s source and 120 occurrences must retain one source transcript pool rather
 than a full transcript copy for every occurrence. No word-count cap is assumed.
+An automatically projected caption lane sent by iOS must also retain missing
+transcript recovery; merely supplying that lane does not confirm new caption text.

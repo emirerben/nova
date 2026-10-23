@@ -418,7 +418,7 @@ async def test_talking_actual_save_reopen_recipe(talking_project, operation):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("resolution", ["pending", "disable", "own_captions"])
+@pytest.mark.parametrize("resolution", ["pending", "auto_projected", "disable", "own_captions"])
 async def test_missing_speech_words_save_exact_draft_and_recover(
     talking_project, monkeypatch, resolution
 ):
@@ -458,6 +458,11 @@ async def test_missing_speech_words_save_exact_draft_and_recover(
         extra["caption_cues"] = [
             {"id": "creator", "text": "My chosen caption", "start_s": 0, "end_s": 2}
         ]
+    if resolution == "auto_projected":
+        from app.pipeline.speech_cut_state import project_speech_basis
+
+        basis = j.job.assembly_plan["variants"][0]["speech_timing_basis"]
+        extra["caption_cues"] = project_speech_basis(basis["caption_cues"], rows, captions=True)
     response = await _editor_commit_item(
         item_id,
         "original_text",
@@ -472,7 +477,7 @@ async def test_missing_speech_words_save_exact_draft_and_recover(
         native_client=True,
     )
     assert response.ok
-    if resolution == "pending":
+    if resolution in {"pending", "auto_projected"}:
         assert response.render_started is False and "caption" in response.render_recovery.lower()
     else:
         assert response.render_started is not False, response.render_recovery

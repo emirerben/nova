@@ -116,9 +116,18 @@ def prepare_authored_editor_commit(
         if payload.caption_meta is not None and payload.caption_meta.enabled is not None:
             captions_enabled = payload.caption_meta.enabled
         unresolved = False
-        if payload.caption_cues is not None:
+        projected_cues = project_speech_basis(
+            basis.get("caption_cues", []), resolved, captions=True
+        )
+        authored_captions = payload.caption_cues is not None and (
+            canonical_caption_rows(payload.caption_cues) != projected_cues
+            or any(row.kind == "caption_cue" for row in payload.deletions)
+        )
+        if authored_captions:
             # A creator-authored full lane replacement owns its content on this
-            # exact submitted timeline, including a deliberate empty lane.
+            # exact submitted timeline. Merely sending the automatically rebased
+            # lane does not confirm missing source words (the native client
+            # sends that lane whenever source geometry makes it dirty).
             basis["source_windows"] = speech_basis_entry({}, resolved)["slots"]
         elif captions_enabled and (variant.get("caption_cues") or basis.get("caption_cues")):
             coverage = basis.get("source_windows") or old_slots
