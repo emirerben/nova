@@ -86,14 +86,6 @@ _DECISION_FIELDS: dict[str, frozenset[str]] = {
         }
     ),
 }
-# A brief requirement of these kinds makes the decision creator-requested.
-_DECISION_BRIEF_KINDS: dict[str, frozenset[str]] = {
-    "text": frozenset({"text"}),
-    "length": frozenset({"timing"}),
-    "order": frozenset({"order", "select"}),
-    "audio": frozenset({"audio"}),
-    "direction": frozenset({"style"}),
-}
 # Advisory prose and creator answers are not execution decisions of their own:
 # answers are part of the binding digest already.
 _IGNORED_STRATEGY_FIELDS = frozenset({"rationale", "choice_answers"})
@@ -329,20 +321,30 @@ def load_source_identities_sync(db: Any, item: Any, owner: Any) -> list[SourceId
     return source_identities(item, asset_generations=asset_map, library_sources=library_map)
 
 
-def _origin(key: str, brief: Any, *, present: bool) -> Origin:
-    kinds = _DECISION_BRIEF_KINDS.get(key, frozenset())
-    if brief is not None and any(req.kind in kinds for req in brief.live()):
-        return "creator"
-    return "model_default" if present else "system"
+def _creator_authored_editor(document: Any) -> bool:
+    """Only the creator's own editor state, carried unchanged, is creator-authored.
+
+    Kria's chat edits (compiled from model tool arguments), undo baselines and
+    comparison drafts are model or system output the creator approved, never intent.
+    """
+    return (
+        document.client_state_id is not None
+        and not document.changes
+        and document.editor_text_diff is None
+    )
 
 
 def build_decisions(
     document: Any,
-    brief: Any,
     *,
     execution_result: Mapping[str, Any] | None = None,
 ) -> dict[str, Decision]:
-    """Per-key digests of what the creator approved. Origin comes from provenance only."""
+    """Per-key digests of what the creator approved. Origin comes from provenance only.
+
+    A strategy group is written by the planner, so it is ``model_default`` even when a
+    brief requirement asked for something in it: field-level creator attribution
+    belongs to the requirement ledger (KRI-824), not to a whole digested group.
+    """
 
     decisions: dict[str, Decision] = {}
     if document.kind == "strategy" and isinstance(document.strategy, Mapping):
@@ -353,14 +355,12 @@ def build_decisions(
             key = next((k for k, fields in _DECISION_FIELDS.items() if field in fields), None)
             grouped.setdefault(key or "direction", {})[field] = value
         for key, values in sorted(grouped.items()):
-            decisions[key] = Decision(
-                digest=digest(values), origin=_origin(key, brief, present=True)
-            )
+            decisions[key] = Decision(digest=digest(values), origin="model_default")
     elif document.kind == "editor":
-        # A manual editor save is the creator's own edit, not a model proposal.
-        decisions["editor"] = Decision(digest=digest(document.editor_payload), origin="creator")
+        origin: Origin = "creator" if _creator_authored_editor(document) else "model_default"
+        decisions["editor"] = Decision(digest=digest(document.editor_payload), origin=origin)
         if document.editor_text_diff is not None:
-            decisions["text"] = Decision(digest=digest(document.editor_text_diff), origin="creator")
+            decisions["text"] = Decision(digest=digest(document.editor_text_diff), origin=origin)
     result = execution_result or {}
     # Explicit approval-body choices are the creator's answers at the approval card.
     for key, field in (("shape", "render_shape"), ("speech_cleanup", "speech_cleanup")):
@@ -378,11 +378,16 @@ def build_snapshot(
     document: Any,
     sources: list[SourceIdentity],
     execution_result: Mapping[str, Any] | None = None,
+    latest_brief: Any = None,
 ) -> PreparedExecutionSnapshot:
-    """Pure function of stored rows: replaying it makes no new decision."""
+    """Pure function of stored rows: replaying it makes no new decision.
+
+    Without a brief binding (creators outside that cohort) the brief version current
+    at approval, ``latest_brief``, is pinned by version and digest instead.
+    """
 
     binding = document.brief_binding
-    brief = binding.resolve(thread_id) if binding is not None else None
+    brief = binding.resolve(thread_id) if binding is not None else latest_brief
     readiness = (document.brief_coverage or {}).get("approval_readiness")
     readiness = readiness if isinstance(readiness, Mapping) else {}
     route = document.kind
@@ -410,7 +415,7 @@ def build_snapshot(
         sources=sources,
         readiness_capabilities_digest=readiness.get("capabilities_digest"),
         worker_capabilities_digest=worker_capabilities_digest(),
-        decisions=build_decisions(document, brief, execution_result=execution_result),
+        decisions=build_decisions(document, execution_result=execution_result),
         compiled_refs=compiled_refs,
     )
 
@@ -529,12 +534,16 @@ def stamp_job(job: Any, record: Mapping[str, Any]) -> None:
 def pinned_brief_for_job(db: Any, job: Any, thread_id: Any) -> tuple[bool, Any]:
     """(stamped, brief): the approved brief of a stamped Job, never the latest one.
 
-    Returns ``(False, None)`` for an unstamped Job so callers keep the legacy read.
-    A stamped Job whose binding does not match its snapshot yields ``(True, None)``.
+    Returns ``(False, None)`` for an unstamped Job, or a snapshot approved with no
+    brief at all, so callers keep the legacy read. A stamped Job whose pinned brief
+    cannot be recovered exactly yields ``(True, None)``.
     """
 
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.kria.brief import _brief_from_row  # noqa: PLC0415
     from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
-    from app.models import CreatorPreparedExecution  # noqa: PLC0415
+    from app.models import CreativeBriefVersion, CreatorPreparedExecution  # noqa: PLC0415
 
     stamp = read_stamp(job.assembly_plan)
     if stamp is None:
@@ -542,6 +551,20 @@ def pinned_brief_for_job(db: Any, job: Any, thread_id: Any) -> tuple[bool, Any]:
     try:
         row = db.get(CreatorPreparedExecution, uuid.UUID(str(stamp["id"])))
         snapshot = parse(row) if row is not None else None
+        if snapshot is not None and snapshot.binding_digest is None:
+            # No binding: the brief version current at approval is pinned on the snapshot.
+            if snapshot.brief_version == 0:
+                return False, None
+            version_row = db.execute(
+                select(CreativeBriefVersion).where(
+                    CreativeBriefVersion.thread_id == uuid.UUID(str(thread_id)),
+                    CreativeBriefVersion.version == snapshot.brief_version,
+                )
+            ).scalar_one_or_none()
+            pinned = _brief_from_row(version_row)
+            if pinned is None or digest(pinned.model_dump(mode="json")) != snapshot.brief_digest:
+                return True, None
+            return True, pinned
         raw = (job.assembly_plan or {}).get("creator_brief_binding")
         binding = BriefBinding.model_validate(raw) if isinstance(raw, dict) else None
     except (PreparedExecutionError, ValueError, TypeError):

@@ -577,6 +577,10 @@ def _next_prepared_attempt(db, approval, draft, item, job):  # noqa: ANN001, ANN
             prepared.STALE, "This render no longer belongs to the approved edit."
         )
     snapshot = prepared.parse(row)
+    if row.invalidated_at is not None:
+        raise prepared.PreparedExecutionError(
+            row.invalidation_code or prepared.STALE, "The prepared edit was invalidated."
+        )
     prepared.verify(
         snapshot,
         draft=draft,

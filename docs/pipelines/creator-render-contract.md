@@ -630,15 +630,28 @@ Rules:
 - **Retry (KRI-674).** The retry approval references its source attempt's snapshot.
   `claim_render_retry` re-verifies it, mints a new `attempt_id`, moves the Job stamp
   to it (`retry_of_attempt_id` names the previous one) and re-pins the recipe.
-  No planner runs.
-- **Receipts.** A stamped Job's unified-montage receipts read the brief from the
-  Job's binding after checking it against the snapshot's binding digest. Later chat
-  cannot change what an accepted attempt reports. Unstamped Jobs keep the
-  latest-brief read.
+  No planner runs. A snapshot a dispatch claim already invalidated is refused.
+- **Redelivery.** An accepted execution that already carries the
+  `prepared_execution` record for the same snapshot (lost acknowledgement,
+  outcome unknown) returns that record without re-fencing draft, binding,
+  capabilities or sources. Its Job may already be rendering; a deploy or flag
+  flip in between must not cancel it or invalidate the snapshot.
+- **Receipts.** A stamped Job's unified-montage receipts read the approved brief.
+  With a brief binding it comes from the Job's binding, checked against the
+  snapshot's binding digest. Without one (creators outside the binding cohort) the
+  snapshot pins the brief version current at approval (`brief_version` +
+  `brief_digest`), and the reader loads exactly that `creative_brief_versions` row.
+  Later chat cannot change what an accepted attempt reports. Unstamped Jobs, and
+  snapshots approved with no brief at all, keep the latest-brief read.
 - **Scoped decisions.** `decisions` is a map of per-key digests (`text`, `length`,
   `order`, `audio`, `direction`, `editor`, `shape`, `speech_cleanup`), each with an
   `origin` (`creator`, `creator_answer`, `model_default`, `system`) taken from
-  provenance only: `creator` needs a live brief requirement of that kind.
+  provenance only. Strategy groups are planner output, so `model_default` even when
+  a brief requirement asked for something inside them (field-level creator
+  attribution is KRI-824). Editor drafts are `model_default` (Kria chat edits, undo
+  baselines, comparisons) unless the payload is the creator's own editor state
+  carried unchanged (`client_state_id` set, no `changes`, no text diff).
+  Approval-card answers (`render_shape`, `speech_cleanup`) are `creator_answer`.
   `changed_decisions()` names the keys two snapshots disagree on (for KRI-723+).
 - **Retention.** `prune_kria_drafts` keeps a draft body while a non-invalidated
   snapshot references it.

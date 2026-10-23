@@ -30,12 +30,12 @@ same snapshot id. Unstamped (historical or flag-off) work is byte-identical.
 | F7 | Duplicate approve/dispatch | approval row lock + pending check (409); UNIQUE(approval_id); claim idempotent | second POST -> 409, one snapshot; second claim -> ignored, one Job |
 | F8 | Exact retry | retry approval references the SAME snapshot; claim mints a new attempt id; no planner | retry: snapshot id equal, attempt id differs, planner sentinel unused |
 | F9 | Late completion of an old attempt | device publish guard: a stamped Job's record must carry the job's current snapshot + attempt; cloud renders are fenced by `creator_generation_id`, which the attempt stamp records | stale record attempt -> publish refused, last-good kept |
-| F10 | Unknown submit outcome | `outcome_unknown` keeps the accepted execution and its attempt stamp; reconciler redelivers the same claim | covered by the claim redelivery case (attempt id unchanged) |
+| F10 | Unknown submit outcome | `outcome_unknown` keeps the accepted execution and its attempt stamp; reconciler redelivers the same claim without re-fencing | `test_accepted_redelivery_is_not_cancelled_by_a_capability_change` (attempt unchanged, snapshot not invalidated) |
 | F11 | Concurrent devices approve different revisions | head + revision checks at approve; only the head draft mints | approve rev N after rev N+1 exists -> 409, no snapshot |
 | F12 | Foreign thread/source injection | snapshot built only from server rows; BriefBinding.resolve(thread) + creator id + epoch checks unchanged; snapshot owner = approval creator | foreign creator approve -> 404 |
 | F13 | Replay makes a new decision | builder is a pure function of stored rows; no model call | build twice from the same rows -> identical digests |
 | F14 | Legacy rows change | absent stamp => legacy branch; contract model untouched | unstamped Job keeps its assembly plan; contract digest unchanged |
-| F15 | Model value recorded as creator origin | per-decision `origin` from provenance only (`creator` only when the brief/choice answers name it) | model-chosen duration -> `model_default` |
+| F15 | Model value recorded as creator origin | per-decision `origin` from provenance only: strategy groups and Kria editor drafts are `model_default`; `creator` only for the creator's own unchanged editor state, `creator_answer` for approval-card answers | every strategy group of the positive control -> `model_default` |
 | F16 | Clearing one instruction invalidates all | `decisions` is a per-key digest map; `changed_decisions()` names only changed keys | removing the title -> only `text` changes |
 | F17 | Secrets / signed URLs leak | validator rejects `http(s)://`, `X-Goog-Signature`, `token=` anywhere in the snapshot | signed URL in a clip path -> ValueError |
 | F18 | Retention prunes a referenced draft | `prune_kria_drafts` keeps drafts referenced by a live snapshot | prune leaves the referenced draft body |

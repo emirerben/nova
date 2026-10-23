@@ -128,10 +128,9 @@ async def test_positive_control_traces_one_snapshot_from_approval_to_job(monkeyp
         assert snapshot.readiness_digest is not None
         assert [s.slot for s in snapshot.sources] == ["clip:0"]
         assert snapshot.sources[0].role == "original"
-        # F15: the brief asked for the title and the length; the rest is the model's.
-        assert snapshot.decisions["text"].origin == "creator"
-        assert snapshot.decisions["length"].origin == "creator"
-        assert snapshot.decisions["direction"].origin == "model_default"
+        # F15: the planner wrote every strategy group, so none is recorded as creator
+        # intent even where the brief asked for something inside it (KRI-824 owns that).
+        assert {d.origin for d in snapshot.decisions.values()} == {"model_default"}
         # F13: a replay of the same stored rows makes no new decision.
         item = db.get(PlanItem, db.get(CreationThread, thread_id).active_plan_item_id)
         replay = prepared.build_snapshot(
@@ -332,6 +331,98 @@ async def test_later_chat_cannot_change_an_accepted_attempts_receipts(monkeypatc
         # F14: an unstamped (historical) Job keeps the latest-brief read.
         legacy = SimpleNamespace(assembly_plan={})
         assert prepared.pinned_brief_for_job(db, legacy, thread_id) == (False, None)
+
+
+@pytest.mark.asyncio
+async def test_unbound_creator_keeps_receipts_from_the_approved_brief(monkeypatch, broker):
+    """Creative Brief on, brief binding off: the production review path still reports."""
+    from app.tasks.kria_runtime import _approved_generation_requirements_review
+
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", False)
+    _, thread_id, approval = await _approved(monkeypatch)
+    result = _dispatch(approval.id)
+    assert result["status"] == "dispatched", result
+    with sync_session() as db:
+        snapshot = prepared.parse(_snapshot_row(db, approval.id))
+        assert snapshot.binding_digest is None
+        approved = load_latest_brief_sync(db, thread_id)
+        assert snapshot.brief_version == approved.version
+        requirement = approved.live()[0]
+        job = db.get(Job, uuid.UUID(result["job_id"]))
+        assert "creator_brief_binding" not in job.assembly_plan
+        job.assembly_plan = {
+            **job.assembly_plan,
+            "unified_montage": {
+                "brief_version": approved.version,
+                "requirement_receipts": [
+                    {
+                        "requirement_id": requirement.id,
+                        "brief_version": approved.version,
+                        "status": "met",
+                        "verification": "checked",
+                        "stage": "applied",
+                    }
+                ],
+            },
+        }
+        latest = db.scalars(
+            select(CreativeBriefVersion).where(
+                CreativeBriefVersion.thread_id == thread_id,
+                CreativeBriefVersion.version == approved.version,
+            )
+        ).one()
+        # Later chat rewrites the brief after the attempt was accepted.
+        db.add(
+            CreativeBriefVersion(
+                thread_id=thread_id,
+                version=approved.version + 1,
+                requirements=[
+                    {**req, "literal": "Matchday."} if req.get("literal") else req
+                    for req in latest.requirements
+                ],
+            )
+        )
+        db.commit()
+        execution = db.get(CreatorAgentExecution, uuid.UUID(approval.execution_ids[0]))
+        thread = db.get(CreationThread, thread_id)
+        text, receipts = _approved_generation_requirements_review(
+            db, thread, job, {}, execution, "Your edit is ready."
+        )
+        assert [r["requirement_id"] for r in receipts] == [requirement.id]
+        assert text != "Your edit is ready."
+
+
+@pytest.mark.asyncio
+async def test_accepted_redelivery_is_not_cancelled_by_a_capability_change(monkeypatch, broker):
+    """Outcome unknown after dispatch, then a deploy changes capabilities: no cancel."""
+    from app.tasks.kria_runtime import _verify_prepared_execution
+
+    _, thread_id, approval = await _approved(monkeypatch)
+    result = _dispatch(approval.id)
+    assert result["status"] == "dispatched", result
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [*settings.phone_render_verified_features, "kri722Probe"],
+    )
+    with sync_session() as db:
+        stored = db.get(CreatorAgentApproval, approval.id)
+        execution = db.get(CreatorAgentExecution, uuid.UUID(approval.execution_ids[0]))
+        draft = db.get(CreatorEditDraft, approval.draft_id)
+        item = db.get(PlanItem, db.get(CreationThread, thread_id).active_plan_item_id)
+        execution.status = "accepted"  # the acknowledgement was lost
+        record, failure = _verify_prepared_execution(
+            db,
+            approval=stored,
+            draft=draft,
+            document=KriaDraftDocument.model_validate(draft.snapshot_json),
+            item=item,
+            execution=execution,
+        )
+        assert failure is None
+        assert record == execution.result[prepared.RESULT_FIELD]
+        assert _snapshot_row(db, approval.id).invalidated_at is None
+        db.rollback()
 
 
 @pytest.mark.asyncio

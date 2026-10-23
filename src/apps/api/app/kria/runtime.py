@@ -2109,6 +2109,9 @@ async def _mint_prepared_execution(
             document=document,
             sources=await prepared.load_source_identities(db, item, approval.creator_id),
             execution_result=execution.result if execution is not None else None,
+            latest_brief=(
+                await load_latest_brief(db, thread.id) if document.brief_binding is None else None
+            ),
         )
     except ValueError as exc:
         log.warning("kria_prepared_execution_refused", approval_id=str(approval.id), error=str(exc))

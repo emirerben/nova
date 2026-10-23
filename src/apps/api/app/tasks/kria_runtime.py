@@ -3452,9 +3452,10 @@ def _verify_prepared_execution(
     (None, PreparedExecutionError). The first refusal is written to the row for audit.
 
     A fresh claim re-derives every source identity and mints a new attempt id. An
-    accepted redelivery (lost acknowledgement, outcome_unknown) keeps its attempt and
-    rechecks only the draft, binding and capabilities: its sources were already
-    fenced and may since have been changed by its own dispatch.
+    accepted redelivery (lost acknowledgement, outcome_unknown) of the same snapshot
+    keeps its attempt and is not re-fenced: its inputs passed at the original claim and
+    its Job may already be rendering, so a later deploy, flag flip or source change
+    must not cancel work that was already dispatched (as the legacy media fence does).
     """
 
     from app.kria import prepared_execution as prepared  # noqa: PLC0415
@@ -3465,20 +3466,23 @@ def _verify_prepared_execution(
     try:
         if row is None or row.creator_id != approval.creator_id:
             raise prepared.PreparedExecutionError(prepared.STALE, "The prepared edit is missing.")
+        if (
+            execution.status == "accepted"
+            and isinstance(accepted, dict)
+            and accepted.get("id") == str(row.id)
+        ):
+            return dict(accepted), None
         snapshot = prepared.parse(row)
         if row.invalidated_at is not None:
             raise prepared.PreparedExecutionError(
                 row.invalidation_code or prepared.STALE, "The prepared edit was invalidated."
             )
-        redelivery = execution.status == "accepted" and isinstance(accepted, dict)
         prepared.verify(
             snapshot,
             draft=draft,
             document=document,
             thread_id=approval.thread_id,
-            sources=None
-            if redelivery
-            else prepared.load_source_identities_sync(db, item, approval.creator_id),
+            sources=prepared.load_source_identities_sync(db, item, approval.creator_id),
         )
     except prepared.PreparedExecutionError as exc:
         if row is not None and row.invalidated_at is None:
@@ -3491,8 +3495,6 @@ def _verify_prepared_execution(
             changed=exc.changed,
         )
         return None, exc
-    if redelivery and accepted.get("id") == str(row.id):
-        return dict(accepted), None
     return (
         prepared.attempt_record(
             row,

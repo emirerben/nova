@@ -1048,6 +1048,15 @@
       ]
     },
     {
+      "id": "kri-722-prepared-execution",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_prepared_execution_postgres.py tests/kria/test_render_retry_postgres.py",
+      "paths": [
+        "src/apps/api/app/kria/prepared_execution.py",
+        "src/apps/api/tests/kria/test_prepared_execution_postgres.py"
+      ]
+    },
+    {
       "id": "troya-footage-research",
       "needs_native": true,
       "api_tests": "tests/evals/request_following/test_troya_context_journey.py tests/evals/request_following/test_researched_text.py tests/services/test_kria_editor_clip_context.py",
