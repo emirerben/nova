@@ -75,6 +75,44 @@ def device_record(job: Any, variant_id: str) -> dict:
     return copy.deepcopy(record)
 
 
+_DELIVERY_PHASES = frozenset({"awaiting_device", "syncing", "published", "needs_attention"})
+
+
+def variant_delivery_phase(job: Any, variant_id: str | None) -> str | None:
+    """The device delivery phase of the variant's CURRENT generation, else None.
+
+    Pure read for status projections (KRI-823). The device record is reported only
+    when its ``base_generation`` equals the variant's ``render_generation_id`` (the
+    same fence ``routes/device_render._record`` applies), so a late failure from an
+    older generation can never outrank a newer accepted export. Malformed records
+    and cloud jobs (no record) yield None so a list projection can never fail.
+    """
+    if not variant_id:
+        return None
+    try:
+        assembly = job.assembly_plan or {}
+        record = (assembly.get(DEVICE_RENDER_FIELD) or {}).get(variant_id)
+        if not isinstance(record, dict):
+            return None
+        variant = next(
+            (
+                v
+                for v in assembly.get("variants") or []
+                if isinstance(v, dict) and v.get("variant_id") == variant_id
+            ),
+            None,
+        )
+        generation = record.get("base_generation")
+        if variant is None or not generation:
+            return None
+        if str(variant.get("render_generation_id") or "") != str(generation):
+            return None
+        phase = (record.get("status") or {}).get("phase")
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+    return phase if phase in _DELIVERY_PHASES else None
+
+
 def device_status(job: Any, variant_id: str) -> DeviceRenderStatus:
     record = device_record(job, variant_id)
     status = DeviceRenderStatus.model_validate(record["status"])
