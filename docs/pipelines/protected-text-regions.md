@@ -40,7 +40,7 @@ text's whole time on screen.
    (`keep_styled_rows_clear`): a restyle that grows or moves a row onto a face or the object
    is undone, so the placement receipt stays true.
 4. Receipt `variant.protected_text_regions`: per target `clear | collision | unverified |
-   no_selection | invalidated | other_source`, with the mark's provenance and the cut/crop it
+   no_selection | invalidated | other_source | stale`, with the mark's provenance and the cut/crop it
    was projected through. `brief_checks` judges a `keep_text_off` requirement from it: `met`
    only when every text was measured clear of an object the tracker actually saw. A face
    target is `clear` only where the face sampler detected the faces (fallback box, sampler
@@ -68,6 +68,21 @@ real tracker + real Skia ink measured every 0.1 s; writes `.protected-verify/rep
   only.
 - Automatic object detection (no mark) is not attempted.
 - Approval readiness does not yet ask the creator to mark a named object before approving.
-- Editor Save does not yet compare the receipt's provenance (keep_segments, crop,
-  position_x) with the saved edit: a trim / crop / text move after the render keeps the
-  render-time `protected_text_regions` verdict.
+- After the render the text is not re-placed: an edit only makes the receipt `stale` (see
+  below), and the review says the text was not re-checked. Tracked boxes are not stored, so
+  re-measuring needs a re-render.
+- Only the first speaker clip of a multi-speaker Talking edit is protected and measured.
+- A mark is never removed by a later "text on the plate is fine" instruction.
+
+## Edits after the render
+
+The receipt carries `measured_fingerprint` (text rows, caption geometry and appearance,
+caption cues, bars). `brief_checks` recomputes it from the variant; a mismatch (a dragged
+title, moved captions, retyped caption, bars switch from any write path) turns every
+measured verdict into `stale`, never `clear`. A phone editor Save
+(`phone_editor._restale_protected_text`) also compares the cut, crop (`position_x`) and bars
+it recompiles with against the receipt's provenance and marks it `stale` when they differ.
+
+Captions are measured in the look the render draws: the phone text-style policy look
+(`generation_caption_look`) when one applies, and a move changes only its y. Faces are a
+hard limit for captions only when the creator named a face.

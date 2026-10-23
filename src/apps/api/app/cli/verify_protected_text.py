@@ -432,7 +432,7 @@ def run_scenario(sc: Scenario, work_dir: str) -> dict:
         caption_style="sentence",
         canvas=canvas,
         objects=plan.objects,
-        faces=faces,
+        faces=faces if plan.protect_all_faces else [],
         keep_segments=kept,
         **proj,
     )

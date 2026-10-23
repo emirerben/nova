@@ -125,3 +125,55 @@ def test_artifacts_are_written(report):
         stored = json.load(handle)
     assert stored["false_success"] == []
     assert os.path.getsize(os.path.join(out_dir, "montage.png")) > 10_000
+
+
+def test_captions_are_measured_and_moved_in_the_look_the_render_draws() -> None:
+    """F13 with the phone text-style policy on: the captions the render draws use the
+    policy look (its font, colour, spot), so that look is what is measured against the
+    plate, and moving them off it keeps the creator's font and colour (only y changes)."""
+    from app.pipeline.canvas import PORTRAIT
+    from app.pipeline.object_track import ObjectTrack, TrackAnchor
+    from app.pipeline.phone_captions import PhoneCaptionLook
+    from app.pipeline.phone_protected_text import choose_caption_look
+    from app.pipeline.render_geometry import NormalizedBox
+    from app.services.phone_text_styling import phone_text_policy_scope
+
+    plate = NormalizedBox(0.05, 0.40, 0.95, 0.62)
+    track = ObjectTrack(
+        label="plate",
+        media_id="clip-1",
+        generation="g1",
+        seed_t_s=0.0,
+        seed_box=plate,
+        anchors=tuple(TrackAnchor(i * 0.1, plate, "tracked") for i in range(0, 61)),
+    )
+    cues = [
+        {"text": "this is the dulce de leche", "start_s": 0.5, "end_s": 2.5},
+        {"text": "and the oblea goes on top", "start_s": 2.5, "end_s": 5.5},
+    ]
+    # The policy draws the captions mid-frame, right on the plate, in its own font/colour.
+    policy_look = PhoneCaptionLook(
+        font_family="TikTok Sans Bold", text_color="#FFD400", position_y_frac=0.5
+    )
+    common = {
+        "caption_style": "sentence",
+        "canvas": PORTRAIT,
+        "objects": [track],
+        "faces": [],
+        "keep_segments": [(0.0, 6.0)],
+        "display_width": 1080,
+        "display_height": 1920,
+    }
+    with phone_text_policy_scope({"caption_look": policy_look}):
+        look, receipt = choose_caption_look(cues, **common)
+    assert receipt["look"] == "policy"
+    assert receipt["evaluated"][0]["position_y_frac"] == 0.5
+    assert receipt["evaluated"][0]["object_lines"] > 0, "the drawn spot covers the plate"
+    assert receipt["status"] == "moved" and receipt["object_collision"] is False
+    assert look is not None
+    assert (look.font_family, look.text_color) == ("TikTok Sans Bold", "#FFD400")
+    assert look.position_y_frac != 0.5
+
+    # Without a policy the default bottom band is already clear: nothing moves (F18).
+    look, receipt = choose_caption_look(cues, **common)
+    assert receipt["look"] == "default" and receipt["status"] == "preset" and look is None

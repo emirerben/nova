@@ -152,3 +152,81 @@ def test_a_face_the_sampler_never_saw_is_not_called_clear() -> None:
     assert protected_text_receipt(plan, {"title": seen, "closing": error})["verdict"] != "clear"
     hit = {**seen, "face_collision": True}
     assert protected_text_receipt(plan, {"title": hit})["verdict"] == "collision"
+
+
+def _rendered_variant() -> dict:
+    """A phone Talking variant as the worker stamps it: plate measured clear."""
+    from app.kria.protected_targets import PROTECTED_TEXT_FIELD, protected_text_fingerprint
+
+    variant = {
+        "text_elements": [{"id": "title", "text": "Oblea", "y_frac": 0.18}],
+        "caption_editor_style": {"position_y_frac": 0.32},
+        "caption_cues": [{"text": "hola", "start_s": 0.0, "end_s": 1.0}],
+    }
+    variant[PROTECTED_TEXT_FIELD] = {
+        "verdict": "clear",
+        "targets": [
+            {"kind": "object", "label": "plate", "requirement_ids": ["r8"], "status": "clear"}
+        ],
+        "keep_segments": [[0.0, 12.0]],
+        "speaker_position_x": 0.25,
+        "landscape_fit": "fill",
+        "measured_fingerprint": protected_text_fingerprint(variant),
+    }
+    return variant
+
+
+def _plate_status(variant: dict) -> str:
+    from app.kria.brief_checks import _protected_text_facts
+
+    ((req_id, verdict, _labels),) = _protected_text_facts(variant)["protected_text"]
+    assert req_id == "r8"
+    return verdict
+
+
+def test_a_text_or_caption_edit_after_render_is_never_judged_from_the_old_receipt() -> None:
+    """Save/reopen failure mode: the creator drags the title (or the captions, or retypes a
+    caption) onto the plate after the render measured it clear -> not met, says why."""
+    from app.kria.brief_checks import PlanFacts, check_requirement
+
+    assert _plate_status(_rendered_variant()) == "clear"
+    for edit in (
+        {"text_elements": [{"id": "title", "text": "Oblea", "y_frac": 0.6}]},
+        {"caption_editor_style": {"position_y_frac": 0.86}},
+        {"caption_cues": [{"text": "hola amigos", "start_s": 0.0, "end_s": 1.0}]},
+        {"landscape_fit": "fit"},
+    ):
+        edited = {**_rendered_variant(), **edit}
+        assert _plate_status(edited) == "stale", edit
+        facts = PlanFacts(protected_text=(("r8", "stale", ("plate",)),))
+        receipt = check_requirement(KEEP_OFF, facts)
+        assert receipt.status == "partial"
+
+
+def test_an_editor_save_that_changes_crop_bars_or_cut_marks_the_receipt_stale() -> None:
+    """The tracked boxes are not stored, so a changed crop (KRI-547 position_x), bars, or
+    trim is never judged from the first render; an unchanged Save keeps the receipt."""
+    from app.kria.protected_targets import PROTECTED_TEXT_FIELD, protected_text_after_editor_save
+
+    receipt = _rendered_variant()[PROTECTED_TEXT_FIELD]
+    same = {"keep_segments": [(0.0, 12.005)], "landscape_fit": "fill", "speaker_position_x": 0.25}
+    assert protected_text_after_editor_save(receipt, **same) is receipt
+    for change in (
+        {"speaker_position_x": 0.0},
+        {"landscape_fit": "fit"},
+        {"keep_segments": [(0.0, 4.0), (6.0, 12.0)]},
+        {"keep_segments": [(1.5, 12.0)]},
+    ):
+        after = protected_text_after_editor_save(receipt, **{**same, **change})
+        assert after["verdict"] == "stale", change
+        assert after["targets"][0]["status"] == "stale"
+    # A portrait speaker: bars and crop draw the same, so the bars are not compared.
+    portrait = protected_text_after_editor_save(receipt, **{**same, "landscape_fit": None})
+    assert portrait is receipt
+    # A target the creator still has to mark keeps that more specific ask.
+    unmarked = {
+        **receipt,
+        "targets": [{"kind": "object", "label": "plate", "status": "no_selection"}],
+    }
+    kept = protected_text_after_editor_save(unmarked, **{**same, "speaker_position_x": 0.0})
+    assert kept["targets"][0]["status"] == "no_selection"

@@ -1215,9 +1215,51 @@ def _compile_subtitled_editor_commit(
             row["caption_cues"] = caption_cues
         if framing_receipt is not None:
             row[SPEAKER_FRAMING_FIELD] = framing_receipt
+        _restale_protected_text(
+            row,
+            speaker=speaker,
+            keep_segments=keep_segments,
+            landscape_fit=landscape_fit,
+            speaker_position_x=speaker_position_x,
+        )
         _persist_lane_state(
             row, lanes, labels, paths, caption_style=caption_style, duck_receipt=duck_receipt
         )
+
+
+def _restale_protected_text(
+    row: dict,
+    *,
+    speaker: Any,
+    keep_segments: list[tuple[float, float]] | None,
+    landscape_fit: str,
+    speaker_position_x: float | None,
+) -> None:
+    """KRI-827: a Save that changed the cut, the crop or the bars the protected-text
+    receipt was measured with marks it ``stale`` (the review then says the text was not
+    re-checked), so "no text on the plate" is never reported met from the first render's
+    numbers. Text / caption edits are caught by the receipt's own fingerprint."""
+    from app.kria.protected_targets import (  # noqa: PLC0415
+        PROTECTED_TEXT_FIELD,
+        protected_text_after_editor_save,
+    )
+    from app.pipeline.phone_recipe_shared import display_dims  # noqa: PLC0415
+
+    receipt = row.get(PROTECTED_TEXT_FIELD)
+    if not isinstance(receipt, Mapping):
+        return
+    try:
+        width, height = display_dims(speaker.original)
+        landscape = width > height
+        full = [(0.0, float(speaker.original.duration_s))]
+    except Exception:  # noqa: BLE001 - unknown geometry: compare what is known
+        landscape, full = True, []
+    row[PROTECTED_TEXT_FIELD] = protected_text_after_editor_save(
+        receipt,
+        keep_segments=keep_segments if keep_segments is not None else full,
+        landscape_fit=landscape_fit if landscape else None,
+        speaker_position_x=speaker_position_x,
+    )
 
 
 def _commit_voiceover_lanes(

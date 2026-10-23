@@ -187,26 +187,37 @@ def choose_caption_look(
     scale: float = 1.0,
     position_x: float = 0.0,
 ) -> tuple[Any, dict[str, Any]]:
-    """The caption look whose every line is clear of the objects (and faces) while shown.
+    """The caption look whose every line is clear of the objects (and, only when the creator
+    named a face, the faces) while shown.
 
-    ``None`` keeps the default look (already clear, or nothing clears and the receipt says
-    ``object_collision``)."""
+    Measured with the look the render really draws: the phone text-style policy's caption
+    look (`generation_caption_look`: its font, size, width and spot) when one applies, else
+    the default. A move changes only the block's y, so the creator's caption font, colour,
+    outline and anchor stay. ``None`` keeps the drawn look where it is (already clear, or
+    it is the least-colliding spot and the receipt says what it still covers)."""
     from app.pipeline import text_overlay_skia as cloud  # noqa: PLC0415
+    from app.pipeline.canvas import Canvas as PipelineCanvas  # noqa: PLC0415
     from app.pipeline.phone_captions import (  # noqa: PLC0415
-        CAPTION_FONT_FAMILY,
         PhoneCaptionLook,
         caption_ink_box,
         compile_caption_layers,
     )
+    from app.services.phone_text_styling import generation_caption_look  # noqa: PLC0415
 
     if not cues or (not objects and not faces):
         return None, {"status": "skipped"}
-    typeface = cloud._resolve_typeface_for_overlay({"font_family": CAPTION_FONT_FAMILY}).typeface
-    default = PhoneCaptionLook()
+    drawn = generation_caption_look(
+        [dict(cue) for cue in cues],
+        None,
+        canvas=PipelineCanvas(width=canvas.width, height=canvas.height),
+    )
+    base = drawn if drawn is not None else PhoneCaptionLook()
+    typeface = cloud._resolve_typeface_for_overlay({"font_family": base.font_family}).typeface
     evaluated: list[dict[str, Any]] = []
     verified = True
-    for y_frac in (default.position_y_frac, *_CAPTION_Y_CANDIDATES):
-        look = dataclasses.replace(default, position_y_frac=y_frac)
+    candidates = list(dict.fromkeys((base.position_y_frac, *_CAPTION_Y_CANDIDATES)))
+    for y_frac in candidates:
+        look = dataclasses.replace(base, position_y_frac=y_frac)
         layers = compile_caption_layers(
             [dict(cue) for cue in cues],
             canvas_width=canvas.width,
@@ -258,23 +269,36 @@ def choose_caption_look(
             }
         )
         if colliding == 0:
-            moved = abs(y_frac - default.position_y_frac) > 1e-6
+            moved = abs(y_frac - base.position_y_frac) > 1e-6
             return (look if moved else None), {
                 "status": "moved" if moved else "preset",
                 "position_y_frac": y_frac,
+                "look": "policy" if drawn is not None else "default",
                 "object_collision": False,
                 "face_collision": False,
                 "objects_verified": verified and all(t.status == "tracked" for t in objects),
                 "evaluated": evaluated,
             }
-    # Nothing clears: the captions stay at the default look, and the receipt says which of
-    # the object / the face they still cover there (never one standing in for the other).
-    at_default = evaluated[0] if evaluated else {}
-    return None, {
+    # Nothing clears every named target: the spot covering the fewest lines (the drawn spot
+    # on a tie), and the receipt says which of the object / the face they still cover there
+    # (never one standing in for the other).
+    best = min(
+        evaluated,
+        key=lambda e: (
+            e["colliding_lines"],
+            e["object_lines"],
+            e["position_y_frac"] != candidates[0],
+        ),
+    )
+    moved = abs(best["position_y_frac"] - base.position_y_frac) > 1e-6
+    return (
+        dataclasses.replace(base, position_y_frac=best["position_y_frac"]) if moved else None
+    ), {
         "status": "best_effort",
-        "position_y_frac": default.position_y_frac,
-        "object_collision": bool(objects) and at_default.get("object_lines", 1) > 0,
-        "face_collision": at_default.get("face_lines", 1) > 0,
+        "position_y_frac": best["position_y_frac"],
+        "look": "policy" if drawn is not None else "default",
+        "object_collision": bool(objects) and best["object_lines"] > 0,
+        "face_collision": best["face_lines"] > 0,
         "objects_verified": False,
         "evaluated": evaluated,
     }

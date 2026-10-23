@@ -4758,9 +4758,21 @@ def _with_spoken_text_speaker(
 
 
 def _protected_text_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
-    from app.kria.protected_targets import PROTECTED_TEXT_FIELD  # noqa: PLC0415
+    from app.kria.protected_targets import (  # noqa: PLC0415
+        PROTECTED_TEXT_FIELD,
+        protected_text_fingerprint,
+        stale_protected_text,
+    )
 
     receipt = variant.get(PROTECTED_TEXT_FIELD)
+    if (
+        isinstance(receipt, Mapping)
+        and receipt.get("measured_fingerprint")
+        and receipt["measured_fingerprint"] != protected_text_fingerprint(variant)
+    ):
+        # The text, captions or bars changed after the render measured them (an editor
+        # Save, a text edit): the old verdict describes a video the creator no longer has.
+        receipt = stale_protected_text(receipt, "edited_text")
     targets = receipt.get("targets") if isinstance(receipt, Mapping) else None
     if not isinstance(targets, list):
         return {}
@@ -4773,7 +4785,14 @@ def _protected_text_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
             by_req.setdefault(str(req_id), []).append(
                 (label, str(target.get("status") or "unverified"))
             )
-    rank = {"clear": 0, "unverified": 1, "no_selection": 2, "invalidated": 2, "other_source": 2}
+    rank = {
+        "clear": 0,
+        "unverified": 1,
+        "stale": 2,
+        "no_selection": 2,
+        "invalidated": 2,
+        "other_source": 2,
+    }
     rows = []
     for req_id, entries in by_req.items():
         verdict = max((status for _, status in entries), key=lambda s: rank.get(s, 3))
@@ -4805,6 +4824,13 @@ def _with_protected_text(
         reason = say(
             en=f"The clip changed since you marked {named}; mark it again",
             tr=f"{named_tr} işaretlediğinden beri klip değişti; tekrar işaretle",
+        )
+    elif verdict == "stale":
+        reason = say(
+            en=f"You changed the edit after I placed the text, so I can't confirm it still "
+            f"stays off {named}",
+            tr=f"Yazıyı yerleştirdikten sonra düzenlemeyi değiştirdin; hâlâ {named_tr} "
+            "üstünde olmadığını doğrulayamıyorum",
         )
     elif verdict == "other_source":
         reason = say(

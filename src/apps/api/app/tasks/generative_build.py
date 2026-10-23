@@ -8497,7 +8497,10 @@ def _run_phone_subtitled_job(
             # KRI-827: per target, whether every text stayed off it (the brief receipt's
             # evidence), with each mark's provenance (source, generation, seed) so a later
             # crop / trim / swap re-places instead of trusting these numbers.
-            from app.kria.protected_targets import PROTECTED_TEXT_FIELD  # noqa: PLC0415
+            from app.kria.protected_targets import (  # noqa: PLC0415
+                PROTECTED_TEXT_FIELD,
+                protected_text_fingerprint,
+            )
             from app.pipeline.phone_protected_text import (  # noqa: PLC0415
                 protected_text_receipt,
             )
@@ -8519,6 +8522,9 @@ def _run_phone_subtitled_job(
                 "keep_segments": [list(span) for span in speaker_keep_segments],
                 "speaker_position_x": speaker_position_x,
                 "landscape_fit": framed_fit,
+                # What was measured (text rows, caption geometry, bars): a later edit that
+                # changes any of it makes the review call this receipt stale, never clear.
+                "measured_fingerprint": protected_text_fingerprint(new_entry),
             }
         if talking_multi and talking_roles is not None:
             new_entry[PHONE_TALKING_MULTI_CLIP_FIELD] = {
@@ -8890,7 +8896,9 @@ def _phone_protected_plan(
                 caption_style=caption_style,
                 canvas=_STORY_CANVAS,
                 objects=plan.objects,
-                faces=faces,
+                # Faces are a hard limit for the captions only when the creator named a
+                # face; "no text on the plate" alone never moves captions off a face.
+                faces=faces if plan.protect_all_faces else [],
                 keep_segments=kept,
                 display_width=display_width,
                 display_height=display_height,

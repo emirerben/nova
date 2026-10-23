@@ -171,6 +171,91 @@ def selection_for(
     return same[-1] if same else None
 
 
+# What a protected-text receipt measured: the text rows, the caption geometry and the crop.
+# An edit after the render (editor Save, a text PATCH) that changes any of these makes the
+# receipt describe a video the creator no longer has.
+_MEASURED_KEYS = (
+    "text_elements",
+    "caption_editor_style",
+    "caption_margin_v",
+    "caption_size_px",
+    "caption_stroke_width",
+    "voiceover_caption_font",
+    "captions_enabled",
+    "caption_cues",
+    "landscape_fit",
+)
+STALE_STATUSES = frozenset({"clear", "unverified", "collision"})
+
+
+def protected_text_fingerprint(variant: Mapping[str, Any]) -> str:
+    """A digest of what the receipt was measured against (`_MEASURED_KEYS`)."""
+    import hashlib  # noqa: PLC0415
+    import json  # noqa: PLC0415
+
+    payload = {key: variant.get(key) for key in _MEASURED_KEYS}
+    raw = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(raw.encode()).hexdigest()[:24]
+
+
+def stale_protected_text(receipt: Mapping[str, Any], reason: str) -> dict[str, Any]:
+    """The receipt after an edit it no longer describes: every measured verdict becomes
+    ``stale`` (never ``clear``); ``no_selection`` / ``invalidated`` / ``other_source`` keep
+    their own, more specific, ask."""
+    out = dict(receipt)
+    targets = []
+    for target in receipt.get("targets") or []:
+        row = dict(target) if isinstance(target, Mapping) else target
+        if isinstance(row, dict) and row.get("status", "unverified") in STALE_STATUSES:
+            row["status"] = "stale"
+        targets.append(row)
+    out["targets"] = targets
+    out["verdict"] = (
+        "stale"
+        if any(isinstance(t, Mapping) and t.get("status") == "stale" for t in targets)
+        else receipt.get("verdict")
+    )
+    out["stale_reason"] = reason
+    return out
+
+
+def protected_text_after_editor_save(
+    receipt: object,
+    *,
+    keep_segments: Iterable[tuple[float, float]],
+    landscape_fit: str | None,
+    speaker_position_x: float | None,
+) -> object:
+    """The stored receipt after a phone editor Save recompiled the edit: unchanged when the
+    cut, the crop and the bars are what it was measured with, otherwise ``stale`` -- the
+    tracked boxes are not stored, so a changed cut / crop is never judged from the old
+    measurement. ``landscape_fit=None`` (a portrait speaker: bars and crop draw the same)
+    skips the bars check."""
+    if not isinstance(receipt, Mapping):
+        return receipt
+    measured_fit = receipt.get("landscape_fit")
+    measured_x = float(receipt.get("speaker_position_x") or 0.0)
+    measured_keep = [
+        (float(a), float(b))
+        for a, b in (receipt.get("keep_segments") or [])
+        if isinstance(a, int | float) and isinstance(b, int | float)
+    ]
+    keep = [(float(a), float(b)) for a, b in keep_segments]
+    same_cut = len(keep) == len(measured_keep) and all(
+        abs(a - c) <= 0.02 and abs(b - d) <= 0.02
+        for (a, b), (c, d) in zip(keep, measured_keep, strict=True)
+    )
+    if (
+        same_cut
+        and (measured_fit is None or landscape_fit is None or measured_fit == landscape_fit)
+        and abs(float(speaker_position_x or 0.0) - measured_x) <= 1e-3
+    ):
+        return receipt
+    if receipt.get("stale_reason"):
+        return receipt
+    return stale_protected_text(receipt, "edited_geometry")
+
+
 __all__ = [
     "PROTECTED_REGIONS_FIELD",
     "PROTECTED_TEXT_FIELD",
@@ -181,4 +266,7 @@ __all__ = [
     "fold_protected_regions",
     "protected_targets",
     "selection_for",
+    "protected_text_after_editor_save",
+    "protected_text_fingerprint",
+    "stale_protected_text",
 ]
