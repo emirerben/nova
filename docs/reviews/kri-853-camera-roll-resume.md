@@ -52,3 +52,27 @@ Native UI caught a real accessibility-identifier propagation issue: assigning an
 identifier to the outer DisclosureGroup replaced the individual clip control IDs.
 Keep the disclosure's native label and preserve each child control's identifier;
 retain the replacement/order/audio/rejection assertions rather than weakening them.
+
+## Main integration review (before conflict resolution)
+
+Main `ab510e0eb` contains landed #1747 / KRI-731. Preserve its 500-item
+catalogue capacity, explicit partial-analysis choice, distinct-idea handling and
+all named native/API checks. The 50-item statements above describe the original
+base and are superseded by that landed capacity; selected-story render bounds
+remain separate.
+
+New integration failure modes: saved partial ideas lose their cache identity if
+the partial-analysis flag is omitted; reopening can silently widen partial consent
+if a different set of videos becomes unavailable; compact details can hide the
+existing independent-idea rejection controls; fixture resets can destroy the
+process-relaunch case. Persist the explicit partial choice with matching saved
+selection/revision, reuse it only for the same excluded-video set, and require a
+fresh ready-video choice when coverage changes. Preserve all prior assertions and
+add a relaunch/changed-coverage journey before implementing that new branch.
+
+Re-run the real HTTP/PostgreSQL camera-roll gate, native build/unit suite, every
+collection/story UI journey (including landed independent-idea and partial-choice
+tests), smoke, preship, and new exact-head remote CI. Original account/physical
+acceptance remains unverified. No web-editor changes, paid calls, manual release,
+phone changes or cleanup. The earlier head-bound review/CI receipt will be stale
+after integration; record new code trees and results before handoff.
