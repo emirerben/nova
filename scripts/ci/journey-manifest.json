@@ -1448,7 +1448,7 @@
         "tests/kria/test_noise_reduction_ask.py"
       ],
       "xctests": [
-        "KriaTests/NativeEditorSourcesTests"
+        "KriaTests/NativeEditorSourcesTests/testExactSpeechCutsAndProcessedAudioUseFinishedPreview"
       ],
       "paths": [
         "src/apps/api/app/kria/speech_cut_ask.py",
