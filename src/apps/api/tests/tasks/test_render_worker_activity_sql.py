@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
 from app.database import sync_session
@@ -50,32 +50,44 @@ def _activity(db: Session) -> bool:
     )
 
 
-def _quiesce_existing_activity(db: Session) -> None:
-    """Make the global query false before this rolled-back row-level case."""
-    for statement in (
-        "UPDATE creation_threads SET updated_at = :old WHERE status = 'active'",
-        "UPDATE creation_thread_upload_reservations SET expires_at = :old",
-        """UPDATE creator_planning_attempts
-           SET status = 'completed', updated_at = :old
-           WHERE status IN ('queued', 'running')""",
-        """UPDATE creator_agent_turns
-           SET status = 'completed', updated_at = :old
-           WHERE status IN ('pending', 'queued', 'planning', 'executing',
-                            'awaiting_approval', 'observing')""",
-        """UPDATE creator_agent_approvals
-           SET status = 'expired', created_at = :old, expires_at = :old
-           WHERE status IN ('pending', 'approved')""",
-    ):
-        db.execute(text(statement), {"old": _STALE_AT})
-    db.flush()
+def _isolate_activity_tables(db: Session) -> None:
+    """Run the unchanged global guard against transaction-local real tables.
+
+    A shared xdist database can contain another test's in-flight approval.
+    Quiescing its rows both changes that test and creates opposite-order locks.
+    PostgreSQL resolves these temporary names before public; LIKE keeps the
+    current column/default/index/check definitions without touching public data.
+    Foreign-key admission is covered separately; this module keeps its full
+    seed graph and tests the real activity SQL, timestamps and lifecycle states.
+    """
+    models = (
+        User,
+        Persona,
+        ContentPlan,
+        PlanItem,
+        CreationThread,
+        CreationThreadEvent,
+        CreationThreadUploadReservation,
+        CreatorAgentSession,
+        CreatorAgentEvent,
+        CreatorAgentTurn,
+        CreatorAgentApproval,
+        CreatorPlanningAttempt,
+    )
+    quote = db.get_bind().dialect.identifier_preparer.quote
+    for model in models:
+        name = quote(model.__tablename__)
+        db.execute(
+            text(f"CREATE TEMP TABLE {name} (LIKE public.{name} INCLUDING ALL) ON COMMIT DROP")
+        )
 
 
 @contextmanager
 def _isolated_activity_case() -> Iterator[Session]:
-    """Provide a global-query-safe transaction and roll it back."""
+    """Provide isolated PostgreSQL rows and roll back their temporary tables."""
     with sync_session() as db:
         try:
-            _quiesce_existing_activity(db)
+            _isolate_activity_tables(db)
             assert _activity(db) is False
             yield db
         finally:
@@ -288,3 +300,36 @@ def test_activity_sql_distinguishes_approval_lifecycle(
         )
         db.flush()
         assert _activity(db) is expected
+
+
+def test_activity_fixture_never_locks_or_changes_unrelated_public_activity() -> None:
+    """A parallel approval can keep using its committed rows throughout this fixture."""
+    foreign_user, foreign_thread = uuid.uuid4(), uuid.uuid4()
+    timestamp = datetime.now(UTC)
+    with sync_session() as db:
+        db.add(User(id=foreign_user, email=f"activity-independent-{foreign_user}@test.local"))
+        db.add(CreationThread(id=foreign_thread, creator_id=foreign_user, updated_at=timestamp))
+        db.commit()
+    try:
+        with _isolated_activity_case() as isolated:
+            with sync_session() as other:
+                row = other.execute(
+                    select(CreationThread)
+                    .where(CreationThread.id == foreign_thread)
+                    .with_for_update(nowait=True)
+                ).scalar_one()
+                assert row.status == "active"
+                assert row.updated_at == timestamp
+            # The guard remains global across creators inside this case.
+            _thread(isolated, "inactive-owner")
+            _other_owner, active = _thread(isolated, "active-other-owner")
+            isolated.execute(
+                text("UPDATE creation_threads SET updated_at = :now WHERE id = :id"),
+                {"now": datetime.now(UTC), "id": active},
+            )
+            assert _activity(isolated) is True
+    finally:
+        with sync_session() as db:
+            db.execute(delete(CreationThread).where(CreationThread.id == foreign_thread))
+            db.execute(delete(User).where(User.id == foreign_user))
+            db.commit()
