@@ -110,7 +110,9 @@ log = structlog.get_logger()
 # v72 (KRI-814): earlier creator lines never read into the brief are read with the current one.
 # v74 combines delegation v72 with subtitle-semantics v73, retaining all instructions.
 # v75 adds N2 fullscreen photo-then-original sequences to the complete v74 union.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v75"
+# KRI-847: a ceiling ("at most 15 seconds") carries `duration_bound: "at_most"` beside
+# `duration_s`, so a shorter draft meets it instead of missing 15 s +/- 10 % (v76).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v76"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -488,12 +490,17 @@ Merely narrating that footage was captured "from A to B", at sunset and then at 
 two activities is not such an ask. Compatible requirements with the same kind and scope coexist.
 ALWAYS add a `timing` requirement ({"kind": "timing", "scope": "global", "facts": {"duration_s":
 N}}) in the SAME turn's `brief_updates` whenever the creator states a length for the video: any
-number of seconds or minutes ("a 60 second montage", "under 15 seconds", "about half a minute" =>
-30), converted to seconds. Do it even when you also set `target_duration_s`, even for long
+number of seconds or minutes ("a 60 second montage", "about half a minute" => 30), converted to
+seconds. Do it even when you also set `target_duration_s`, even for long
 lengths, and even when the message carries other requirements ("all my clips", "in chronological
 order"): never drop a stated number because other requirements are present. When the creator
 states no length, emit NO timing requirement; a length you chose yourself in `target_duration_s`
-is never the creator's.
+is never the creator's. A ceiling is not an exact length: "under 15 seconds", "less than 15
+seconds", "shorter than 15 seconds", "15 saniyenin altında", "at most 15 s", "max 15 s", "no more
+than 15 seconds", "up to 15 seconds", "15 seconds or less", "en fazla 15 saniye" and "15 saniyeyi
+geçmesin" all become {"duration_s": 15, "duration_bound": "at_most"}; every other length has no
+`duration_bound` (omitting it means exact), and a change to a timing requirement must restate
+`duration_bound` if it still applies.
 The exception is exact text the creator dictates for particular shots ("1. The
 bookshop photo: "..." 2. The bowling video: "..."): add one {"operation":"add", "kind": "text",
 "scope":

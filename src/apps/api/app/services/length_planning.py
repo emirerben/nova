@@ -21,7 +21,12 @@ from app.schemas.edit_proposal import (
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
 )
-from app.services.length_policy import creator_duration_matches, length_owner, natural_length_owner
+from app.services.length_policy import (
+    DurationBound,
+    creator_duration_satisfied,
+    length_owner,
+    natural_length_owner,
+)
 from app.services.single_hero_policy import (
     SingleHeroPolicyError,
     _build_single_hero_recipe,
@@ -219,6 +224,7 @@ def build_length_plan(
     media_snapshot: Mapping[str, Any],
     *,
     creator_target_s: float | None = None,
+    creator_target_bound: DurationBound = "exact",
     selected_ids: Sequence[str] = (),
     order_ids: Sequence[str] = (),
     licensed_music: Mapping[str, Any] | None = None,
@@ -235,6 +241,9 @@ def build_length_plan(
 
     Only ``creator_target_s`` supplied by a trusted boundary becomes a hard
     target. Strategy fields are intentionally never treated as proof here.
+    ``creator_target_bound="at_most"`` (KRI-847, "at most 10 seconds") drops only the lower
+    side of the ten-percent check: footage shorter than the target is a plan, not a shortfall.
+    Every upper tolerance (floors, lifts) stays exactly the exact path's.
 
     A montage may take several moments from one take (KRI-596): ``moment_count``
     moments, or as many ``moment_max_s`` moments as the target needs, when that is
@@ -355,7 +364,9 @@ def build_length_plan(
         if (
             creator_target_s is not None
             and requested < composition_floor
-            and creator_duration_matches(composition_floor, creator_target_s)
+            and creator_duration_satisfied(
+                composition_floor, creator_target_s, creator_target_bound
+            )
         ):
             requested = composition_floor
         natural_floor_expansion = (
@@ -408,7 +419,9 @@ def build_length_plan(
                 creator_target_s if creator_target_s is not None else natural_duration_s
             )
             if required_duration is not None and (
-                not creator_duration_matches(actual_duration, required_duration)
+                not creator_duration_satisfied(
+                    actual_duration, required_duration, creator_target_bound
+                )
                 if creator_target_s is not None
                 else abs(actual_duration - required_duration) > 0.001
             ):
@@ -448,9 +461,13 @@ def build_length_plan(
             # Source bounds and the portable minimum can satisfy a target
             # within its approved tolerance without inventing more footage.
             # Keep the creator's original target in the contract/envelope.
-            if budget > raw_capacity and creator_duration_matches(raw_capacity, creator_target_s):
+            if budget > raw_capacity and creator_duration_satisfied(
+                raw_capacity, creator_target_s, creator_target_bound
+            ):
                 budget = raw_capacity
-            if budget < 3 <= raw_capacity and creator_duration_matches(3, creator_target_s):
+            if budget < 3 <= raw_capacity and creator_duration_satisfied(
+                3, creator_target_s, creator_target_bound
+            ):
                 budget = 3.0
         coverage_floor = round(sum(source["minimum_duration_s"] for source in ordered_sources), 3)
         if budget is not None and budget < coverage_floor <= budget * 1.1:
@@ -561,6 +578,8 @@ def build_length_plan(
         "owner": owner,
         "natural_owner": natural_owner,
         "target_duration_s": creator_target_s,
+        # KRI-847: present only for a ceiling, so a plan for an exact length is unchanged.
+        **({"target_duration_bound": "at_most"} if creator_target_bound == "at_most" else {}),
         "natural_duration_s": natural_duration_s,
         "capacity_raw_s": capacity_raw_s,
         "window_eligible": eligible or single_hero_eligible,

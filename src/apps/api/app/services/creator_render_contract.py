@@ -50,7 +50,12 @@ from app.services.clip_order_sequence import (
     unresolved_questions,
 )
 from app.services.creator_label_reply import label_text_reply
-from app.services.length_policy import creator_duration_s, length_owner
+from app.services.length_policy import (
+    DurationBound,
+    creator_duration,
+    creator_duration_s,
+    length_owner,
+)
 
 CONTRACT_FIELD = "creator_render_requirements"
 REQUIREMENT_VERSION_FIELD = "creator_render_requirements_version"
@@ -1505,6 +1510,28 @@ def build_render_contract(
         unresolved=tuple(unresolved),
     )
     return CreatorRenderContract(**data).rebind()
+
+
+def contract_duration_bound(
+    contract: CreatorRenderContract | None,
+    strategy: Mapping[str, Any] | None,
+    brief: CreativeBrief | None,
+) -> DurationBound:
+    """Whether the contract's ``duration_s`` is the brief's ceiling ("at most 10 seconds").
+
+    KRI-847. The contract model is frozen (an older worker forbids extra keys), so the bound
+    cannot ride on it; the length-policy state carries it (`stamp_length_policy`). This reads
+    the same brief length `build_render_contract` pinned, and is a ceiling only when the
+    contract's number is that length.
+    """
+    if contract is None or contract.duration_s is None or brief is None:
+        return "exact"
+    typed = _strategy(strategy)
+    answers = {a.conflict: a for a in (typed.choice_answers or ())} if typed else {}
+    found = creator_duration(brief=brief, authoritative_answers=answers.values())
+    if found is None or found.bound != "at_most":
+        return "exact"
+    return "at_most" if abs(found.seconds - contract.duration_s) <= 0.001 else "exact"
 
 
 def read_render_contract(assembly: Mapping[str, Any]) -> CreatorRenderContract | None:
