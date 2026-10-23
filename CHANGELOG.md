@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.71.0] - 2026-10-23
+
+### Changed
+- fix(slides): compound reorder + text edits bind to stable slides (KRI-818) (#1775) <!-- release-pr: 1775 -->
+
 ## [0.81.70.0] - 2026-10-23
 
 ### Changed
