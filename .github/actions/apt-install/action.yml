@@ -1,0 +1,44 @@
+name: Install apt packages with a cached .deb directory
+description: >-
+  Runs scripts/ci/apt-install.sh with the downloaded .debs kept in
+  ~/.cache/apt-debs and restored from the Actions cache. Ubuntu's mirror
+  periodically slows to a crawl (25-35 min for ~100 MB on 2026-10-23); a cached
+  .deb whose hash still matches the package lists is never fetched again. The
+  save runs right after the install so a later failing step cannot lose it.
+inputs:
+  packages:
+    description: Space-separated apt package names.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Identify the runner image and package set
+      id: key
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        echo "image=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+        echo "packages=$(printf '%s' "$PACKAGES" | tr -s ' ' '-')" >> "$GITHUB_OUTPUT"
+        echo "dir=$HOME/.cache/apt-debs" >> "$GITHUB_OUTPUT"
+    - name: Restore cached .debs
+      id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.key.outputs.dir }}
+        key: apt-debs-${{ runner.os }}-${{ steps.key.outputs.image }}-${{ steps.key.outputs.packages }}
+    - name: Install packages
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+        APT_ARCHIVES_DIR: ${{ steps.key.outputs.dir }}
+      run: |
+        # shellcheck disable=SC2086
+        sudo env APT_ARCHIVES_DIR="$APT_ARCHIVES_DIR" bash scripts/ci/apt-install.sh $PACKAGES
+        sudo chown -R "$(id -u):$(id -g)" "$APT_ARCHIVES_DIR"
+    - name: Save .debs for the next run
+      if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ steps.key.outputs.dir }}
+        key: ${{ steps.restore.outputs.cache-primary-key }}
