@@ -265,6 +265,8 @@ def _complete_response_turn(
     brief_expected_version: int | None = None,
     requirement_receipts: list[dict[str, Any]] | None = None,
     creative_copy_resolution: dict | None = None,
+    brief_delegated: bool = False,
+    brief_delegation_read_ids: tuple[str, ...] = (),
 ) -> _Completion:
     with sync_session() as db:
         turn = db.execute(
@@ -296,12 +298,19 @@ def _complete_response_turn(
                 db.commit()
                 return _Completion(committed=False, requeue_turn_id=str(turn.id))
         persisted_brief = None
-        if brief_updates:
+        if brief_updates or brief_delegated:
             # KRI-188: a question/recovery turn still records what the creator
             # stated. Written under the thread lock, after the revision fence,
-            # so a requeued turn never persists a version.
+            # so a requeued turn never persists a version. KRI-814: a delegating
+            # request answered with a question, or held for another reason, is
+            # still recorded as read, so the same chat can reach approval later.
             persisted_brief = persist_brief_version_sync(
-                db, thread_id=thread.id, turn_id=turn.id, updates=brief_updates
+                db,
+                thread_id=thread.id,
+                turn_id=turn.id,
+                updates=brief_updates,
+                record_empty=brief_delegated,
+                delegation_read_event_ids=brief_delegation_read_ids,
             )
         if requirement_receipts and persisted_brief is not None:
             # A response/recovery has no produced output generation.  Pin its
@@ -938,6 +947,8 @@ def _complete_draft_turn(
                 lease_epoch=lease_epoch,
                 claimed_thread_revision=claimed_thread_revision,
                 plan=KriaTurnPlan(mode="respond", turn_value="question", response=copy_problem),
+                brief_delegated=planned.brief_delegated,
+                brief_delegation_read_ids=planned.brief_delegation_read_ids,
                 brief_coverage={"stage": "draft", "reason": KEEP_OPEN_REASON},
                 brief_expected_version=planned.brief_expected_version,
             )
@@ -1141,6 +1152,7 @@ def _complete_draft_turn(
                 # KRI-814: a typed delegation is recorded, so readiness reads it as a
                 # delegated request instead of a missing extraction.
                 record_empty=planned.brief_delegated,
+                delegation_read_event_ids=planned.brief_delegation_read_ids,
             )
             if settings.kria_choice_questions_enabled and apply_intent.tool_name == (
                 "draft.apply_strategy"
@@ -1500,6 +1512,8 @@ def _complete_draft_turn(
                 claimed_thread_revision=claimed_thread_revision,
                 plan=recovery,
                 brief_updates=planned.brief_updates,
+                brief_delegated=planned.brief_delegated,
+                brief_delegation_read_ids=planned.brief_delegation_read_ids,
                 requirement_receipts=requirement_receipts,
                 brief_coverage={
                     **(planned.brief_coverage or {}),
@@ -1595,6 +1609,8 @@ def _complete_draft_turn(
                     claimed_thread_revision=claimed_thread_revision,
                     plan=blocked_plan,
                     brief_updates=effective_brief_updates,
+                    brief_delegated=planned.brief_delegated,
+                    brief_delegation_read_ids=planned.brief_delegation_read_ids,
                     requirement_receipts=requirement_receipts,
                     brief_coverage={
                         **(planned.brief_coverage or {}),
@@ -2781,6 +2797,8 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     plan=planned.plan,
                     brief_updates=planned.brief_updates,
                     creative_copy_resolution=planned.creative_copy_resolution,
+                    brief_delegated=planned.brief_delegated,
+                    brief_delegation_read_ids=planned.brief_delegation_read_ids,
                     brief_coverage=planned.brief_coverage,
                     brief_expected_version=planned.brief_expected_version,
                 )

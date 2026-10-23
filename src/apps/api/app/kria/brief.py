@@ -1454,27 +1454,55 @@ def load_latest_brief_sync(db: Any, thread_id: uuid.UUID) -> CreativeBrief | Non
     return _brief_from_row(row)
 
 
-def _delegation_covers_request(db: Any, *, thread_id: uuid.UUID, turn_id: uuid.UUID) -> bool:
-    """True only when the turn's source message is the only creator line in the thread.
+UNRECORDED_REQUEST_MAX_CHARS = 12_000
 
-    Mirrors the pinned full request (`_full_creator_request_sync`): non-empty user lines,
-    re-sent copies excluded. Any earlier line with no brief version was never read into
-    the ledger, so a delegation declared now cannot speak for it.
+
+def render_unrecorded_request(earlier_lines: Iterable[str], latest_message: str) -> str | None:
+    """KRI-814: the creator's earlier lines that never reached a brief version, read with the
+    latest message as one request. None when there is no earlier line or it is over the bound.
+    """
+    lines = [line.strip() for line in earlier_lines if line and line.strip()]
+    if not lines:
+        return None
+    text = (
+        "Creative brief v0 (nothing recorded yet). Earlier creator messages that were never "
+        "read into the brief; every requirement they state counts as newly stated now:\n"
+        + "\n".join(f"- {line}" for line in lines)
+        + f"\nLatest message: {latest_message.strip()}"
+    )
+    return text if len(text) <= UNRECORDED_REQUEST_MAX_CHARS else None
+
+
+def _delegation_covers_request(
+    db: Any, *, thread_id: uuid.UUID, turn_id: uuid.UUID, read_event_ids: Iterable[str] = ()
+) -> bool:
+    """True only when every creator line up to the turn's source message was read.
+
+    The source message itself was read by the extraction that declared the delegation.
+    Every earlier non-empty user line (re-sent copies excluded, as in the pinned full
+    request) must be one the server fed to that same extraction (``read_event_ids``,
+    recorded by the planner when no brief version existed). A line it did not read keeps
+    the readiness hold: a delegation declared now cannot speak for words it never saw.
     """
     turn = db.get(CreatorAgentTurn, turn_id)
     source = db.get(CreationThreadEvent, turn.source_event_id) if turn is not None else None
     if source is None or source.thread_id != thread_id or source.role != "user":
         return False
     earlier = db.execute(
-        select(CreationThreadEvent.content, CreationThreadEvent.payload).where(
+        select(
+            CreationThreadEvent.id, CreationThreadEvent.content, CreationThreadEvent.payload
+        ).where(
             CreationThreadEvent.thread_id == thread_id,
             CreationThreadEvent.role == "user",
             CreationThreadEvent.sequence < source.sequence,
             CreationThreadEvent.content.is_not(None),
         )
     ).all()
-    return not any(
-        str(content).strip() and not is_duplicate_answer(payload) for content, payload in earlier
+    read = {str(event_id) for event_id in read_event_ids}
+    return all(
+        str(event_id) in read
+        for event_id, content, payload in earlier
+        if str(content).strip() and not is_duplicate_answer(payload)
     )
 
 
@@ -1485,6 +1513,7 @@ def persist_brief_version_sync(
     turn_id: uuid.UUID,
     updates: Iterable[BriefUpdate],
     record_empty: bool = False,
+    delegation_read_event_ids: Iterable[str] = (),
 ) -> CreativeBrief | None:
     """Append one version for ``turn_id``; idempotent per turn.
 
@@ -1497,9 +1526,10 @@ def persist_brief_version_sync(
     written as the evidence that the request was read, so approval readiness does not
     mistake it for a missing extraction. A prior brief is returned unchanged: its live
     requirements stay in force. The declaration only describes the turn's own message,
-    so the empty version is written only when that message is the creator's whole
-    request (`_delegation_covers_request`); an earlier line that never reached the brief
-    (failed extraction, brief off) keeps the readiness hold.
+    so the empty version is written only when the extraction also read every earlier
+    creator line (`_delegation_covers_request`, ``delegation_read_event_ids``): a held
+    natural first turn recovers in the same chat, while a line the extraction never saw
+    keeps the readiness hold.
     """
     updates = list(updates)
     existing = db.execute(
@@ -1514,7 +1544,12 @@ def persist_brief_version_sync(
     if not updates and not (
         record_empty
         and prior is None
-        and _delegation_covers_request(db, thread_id=thread_id, turn_id=turn_id)
+        and _delegation_covers_request(
+            db,
+            thread_id=thread_id,
+            turn_id=turn_id,
+            read_event_ids=delegation_read_event_ids,
+        )
     ):
         return prior
     merged = apply_updates(prior, updates, source_turn_id=str(turn_id))
@@ -1558,6 +1593,7 @@ __all__ = [
     "bind_updates",
     "brief_context",
     "load_latest_brief",
+    "render_unrecorded_request",
     "load_latest_brief_sync",
     "merge_requirements",
     "new_requirements",
