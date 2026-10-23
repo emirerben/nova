@@ -35,6 +35,30 @@ final class NativeResearchSourcesTests: XCTestCase {
         XCTAssertFalse(citation.matches(edited, clips: restored.clips))
     }
 
+    /// KRI-816: a Talking edit has no editable clips, so an untouched cited explanation
+    /// must match its spoken lines, and a changed spoken line must flag it.
+    func testTalkingCitationMatchesSpeechBindingWithoutClips() throws {
+        let text = EditorTextElement(id: "kria-1", text: "Troy: Nine settlement layers", startS: 3.43, endS: 6.67)
+        var cited = text
+        cited.raw["source_params"] = .object(["research": .object([
+            "timeline_binding": .array([.object(["clip_index": .number(0), "in_s": .number(0), "duration_s": .number(10.08)])]),
+            "speech_binding": .array([
+                .object(["start_s": .number(0.82), "end_s": .number(3.28), "text": .string("There's so many coming in and out.")]),
+                .object(["start_s": .number(6.82), "end_s": .number(7.18), "text": .string("Wow!")])
+            ]),
+            "original_text": .string(text.text), "start_s": .number(3.43), "end_s": .number(6.67),
+            "sources": .array([.object(["title": .string("UNESCO"), "url": .string("https://whc.unesco.org/en/list/849")])])
+        ])])
+        let citation = try XCTUnwrap(ResearchCitation.from(cited))
+        let cues = [EditorCaptionCue(id: "c0", startS: 0.82, endS: 3.28, text: "There's so many coming in and out."),
+                    EditorCaptionCue(id: "c1", startS: 6.82, endS: 7.18, text: "Wow!")]
+        XCTAssertTrue(citation.matches(cited, clips: [], captions: cues))
+        var changed = cues
+        changed[0].text = "Something else entirely."
+        XCTAssertFalse(citation.matches(cited, clips: [], captions: changed))
+        XCTAssertFalse(citation.matches(cited, clips: [], captions: []))
+    }
+
     func testUnsafeSourceSchemesAndPrivateHostsCannotOpen() {
         for value in ["file:///etc/passwd", "javascript:alert(1)", "https://localhost", "https://127.0.0.1/a", "https://169.254.169.254/", "https://phone.local"] {
             XCTAssertNil(ResearchCitation.publicURL(value), value)

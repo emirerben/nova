@@ -1,0 +1,432 @@
+{
+ "_source": "KRI-816 T06 prod proposal-trace run (terminal_schema, policy_refusal, prompt 2026-10-19-v64); ids scrubbed, catalog and media analysis removed",
+ "user_message": "Let’s do The Historical Journey as a researched explanation video. Start fresh: choose whichever clips work best and use your judgment for pacing and short on-screen explanations. Keep original camera audio, with no music. Include sources for the historical facts.",
+ "creator_request": "Creative brief v2 (everything the creator has asked for, still in force):\n- [r1] [timing/global] 25-second montage facts={duration_s: 25}\n- [r2] [select/global] use all 28 Troya clips exactly once\n- [r3] [order/global] upload order, keeping the horse reveal first, car interior second, and the museum ending facts={closing: inside the museum; first_clip: the wooden horse reveal; key: upload_time}\n- [r4] [audio/global] Keep original camera audio, with no music facts={audio_intent: source_unchanged}\n- [r5] [text/title] Show from 0 to 3 seconds and no other text (\"Troya’da Bir Gün\")\nLatest message: Let’s do The Historical Journey as a researched explanation video. Start fresh: choose whichever clips work best and use your judgment for pacing and short on-screen explanations. Keep original camera audio, with no music. Include sources for the historical facts.",
+ "brief_enabled": true,
+ "reply_language": "en",
+ "capability_manifest": {
+  "media": [
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-00",
+    "duration_s": 5.766667
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-01",
+    "duration_s": 3.366667
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-02",
+    "duration_s": 1.933333
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-03",
+    "duration_s": 7.7
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-04",
+    "duration_s": 2.9
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-05",
+    "duration_s": 2.4
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-06",
+    "duration_s": 5.3
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-07",
+    "duration_s": 10.1
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-08",
+    "duration_s": 2.9
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-09",
+    "duration_s": 4.8
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-10",
+    "duration_s": 4.8
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-11",
+    "duration_s": 2.9
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-12",
+    "duration_s": 26.4
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-13",
+    "duration_s": 9.6
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-14",
+    "duration_s": 2.4
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-15",
+    "duration_s": 8.166667
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-16",
+    "duration_s": 10.1
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-17",
+    "duration_s": 3.366667
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-18",
+    "duration_s": 2.4
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-19",
+    "duration_s": 2.4
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-20",
+    "duration_s": 3.366667
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-21",
+    "duration_s": 2.9
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-22",
+    "duration_s": 1.933333
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-23",
+    "duration_s": 2.4
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-24",
+    "duration_s": 4.333333
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-25",
+    "duration_s": 2.9
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-26",
+    "duration_s": 2.4
+   },
+   {
+    "kind": "video",
+    "label": null,
+    "media_id": "analysis-proxy-t06-27",
+    "duration_s": 4.333333
+   }
+  ],
+  "limits": {
+   "max_commands": 4,
+   "max_media_refs": 50,
+   "max_catalog_refs": 50,
+   "max_output_duration_s": 120.0
+  },
+  "catalog": [],
+  "item_id": "00000000-0000-0000-0000-000000000816",
+  "narration": null,
+  "edit_format": "montage",
+  "capabilities": {
+   "review": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "execution": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "wide_looks": {
+    "reason": "wide_looks cannot render on the iPhone yet",
+    "available": false,
+    "reason_code": "unsupported_on_phone"
+   },
+   "transitions": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "guided_story": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "automatic_cut": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "caption_style": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "motion_scenes": {
+    "reason": "motion_scenes cannot render on the iPhone yet",
+    "available": false,
+    "reason_code": "unsupported_on_phone"
+   },
+   "native_render": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "sound_effects": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "visual_blocks": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "auto_iteration": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "media_overlays": {
+    "reason": "media_overlays cannot render on the iPhone yet",
+    "available": false,
+    "reason_code": "unsupported_on_phone"
+   },
+   "reaction_beats": {
+    "reason": "reaction beats are only available on an iPhone talking-to-camera edit",
+    "available": false,
+    "reason_code": "phone_talking_only"
+   },
+   "dispatch_render": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "set_item_intent": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "guided_voiceover": {
+    "reason": "guided voiceover requires a recorded voiceover",
+    "available": false,
+    "reason_code": "requires_voiceover"
+   },
+   "edit_format:slides": {
+    "reason": "slides is disabled or has no production renderer for this media snapshot",
+    "available": false,
+    "reason_code": "format_unavailable"
+   },
+   "guided_auto_design": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "main_creator_agent": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "phone_source_audio": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "phone_still_images": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "edit_format:montage": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "guided_conversation": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "phone_format:slides": {
+    "reason": "slides does not render on this iPhone yet",
+    "available": false,
+    "reason_code": "phone_format_unavailable"
+   },
+   "phone_visual_videos": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "edit_format:day_vlog": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "edit_format:narrated": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "phone_format:montage": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "select_ready_variant": {
+    "reason": "a ready variant is required before selection",
+    "available": false,
+    "reason_code": "no_ready_variant"
+   },
+   "draft_guided_proposal": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "edit_format:subtitled": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "phone_format:day_vlog": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "phone_format:narrated": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "phone_format:subtitled": {
+    "reason": "talking-to-camera rendering on this iPhone requires exactly one clip and no recorded voiceover",
+    "available": false,
+    "reason_code": "phone_format_unavailable"
+   },
+   "edit_format:single_hero": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "edit_format:talking_head": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "phone_format:single_hero": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "phone_format:talking_head": {
+    "reason": "talking_head does not render on this iPhone yet",
+    "available": false,
+    "reason_code": "phone_format_unavailable"
+   },
+   "edit_format:narrated_ready": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "phone_format:narrated_ready": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "edit_format:narrated_planned": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "guided_direction_confirmation": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "phone_format:narrated_planned": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "phone_format_pending_voiceover:narrated": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "phone_format_pending_voiceover:narrated_ready": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   },
+   "phone_format_pending_voiceover:narrated_planned": {
+    "reason": null,
+    "available": true,
+    "reason_code": null
+   }
+  },
+  "context_hash": "de7cb1a3dbdbdd46884b08a021330a79d61d14cf4661b8acd479623604ef4e0c",
+  "current_edit": null,
+  "has_voiceover": false,
+  "manifest_hash": "387840eeb3298c7ec37f82042f5df8fb7bf5e236a1e866efe47b62c308399f23",
+  "render_program": "guided",
+  "schema_version": 1
+ }
+}
