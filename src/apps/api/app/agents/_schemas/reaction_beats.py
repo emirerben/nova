@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 MAX_REACTION_BEATS = 24
 
@@ -56,6 +56,15 @@ class ReactionBeat(BaseModel):
     # `app.services.creator_capabilities.compile_strategy_to_plan`.
     visual_id: str | None = Field(default=None, max_length=200)
     visual_role: BeatVisualRole = "sticker"
+    # Voiceover edits can make a requested visual a full-frame cutaway.  The
+    # legacy/default card remains picture-in-picture, and the serializer omits
+    # both new fields at their defaults so existing stored strategies retain
+    # their exact wire shape.
+    display_mode: Literal["pip", "fullscreen"] = "pip"
+    # A full-screen voiceover beat can hand back to one selected original
+    # video after the visual.  This is a manifest media id, repaired by the
+    # capability layer; it must never identify a Visuals-pool video.
+    following_clip_id: str | None = Field(default=None, max_length=200)
     # A manifest sound_effect catalog_id, OR the creator's own description
     # ("buzzer", "ding") when no catalog entry matches -- the worker resolves
     # a description via `_resolve_phone_sound_effect`.
@@ -79,6 +88,17 @@ class ReactionBeat(BaseModel):
         if self.visual_id is None and self.sound is None:
             raise ValueError("a reaction beat needs at least one of visual_id or sound")
         return self
+
+    @model_serializer(mode="wrap")
+    def _omit_default_voiceover_fields(self, handler):  # noqa: ANN001, ANN202
+        """Keep pre-N2 reaction-beat payloads byte-for-byte compatible."""
+
+        data = handler(self)
+        if self.display_mode == "pip":
+            data.pop("display_mode", None)
+        if self.following_clip_id is None:
+            data.pop("following_clip_id", None)
+        return data
 
 
 class ClosingMedia(BaseModel):
