@@ -6,6 +6,7 @@ supply links, change cuts/audio, or identify an artifact from a location alone.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -400,52 +401,131 @@ def _window(slot: dict) -> tuple[float, float]:
     return start, end
 
 
+# Spoken edits: an explanation sits in a pause, this far from either spoken word.
+_SPEECH_PAD_S = 0.15
+_MIN_WINDOW_S = 2.0
+
+
+def _speech_lines(snapshot: dict) -> list[dict]:
+    """Spoken lines (caption cues) in output time, sorted. Empty for footage-only edits.
+
+    Cues live in ``snapshot["captions"]["cues"]``; served caption mirrors may also
+    appear as ``caption_cue`` text bars. Both are the recorded speech.
+    """
+    rows = list((snapshot.get("captions") or {}).get("cues") or [])
+    rows += [bar for bar in snapshot.get("text_bars") or [] if bar.get("caption_cue")]
+    lines: dict[tuple[float, float], str] = {}
+    for row in rows:
+        if not isinstance(row, dict) or row.get("removed"):
+            continue
+        try:
+            start, end = float(row.get("start_s")), float(row.get("end_s"))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(start) and math.isfinite(end) and end > start:
+            lines.setdefault((round(start, 3), round(end, 3)), str(row.get("text") or ""))
+    return [{"start_s": a, "end_s": b, "text": text} for (a, b), text in sorted(lines.items())]
+
+
+def _opening_end(snapshot: dict, slots: list[dict]) -> float:
+    """Where the protected opening ends: one rule for windows and for the guard.
+
+    Footage-only edits keep the first clip as the opening once any text sits on
+    it. A spoken edit's first clip is often the whole video, so there the opening
+    is only the title text that starts the video.
+    """
+    bars = [bar for bar in snapshot.get("text_bars") or [] if not bar.get("removed")]
+    if _speech_lines(snapshot):
+        return max(
+            (
+                float(bar.get("end_s", 0))
+                for bar in bars
+                if not bar.get("caption_cue") and float(bar.get("start_s", 0)) < 0.05
+            ),
+            default=0.0,
+        )
+    first_end = _window(slots[0])[1]
+    return first_end if any(float(bar.get("start_s", 0)) < first_end for bar in bars) else 0.0
+
+
+def _speech_windows(snapshot: dict, slots: list[dict], opener_end: float) -> list[tuple]:
+    """Pauses between spoken lines (and after the last), padded off the words."""
+    lines = _speech_lines(snapshot)
+    total = float(snapshot.get("total_duration_s") or _window(slots[-1])[1])
+    total = min(total, max(_window(slot)[1] for slot in slots))
+    windows = []
+    for index, line in enumerate(lines):
+        following = lines[index + 1]["start_s"] - _SPEECH_PAD_S if index + 1 < len(lines) else total
+        start = max(line["end_s"] + _SPEECH_PAD_S, opener_end)
+        windows.append((round(start, 3), round(min(following, total), 3), index + 1, line["text"]))
+    return windows
+
+
+def _adjacent_lines(lines: list[dict], start: float, end: float) -> list[dict]:
+    """The spoken lines just before and after an explanation's pause."""
+    before = [line for line in lines if line["end_s"] <= start][-1:]
+    after = [line for line in lines if line["start_s"] >= end][:1]
+    return [
+        {
+            "start_s": line["start_s"],
+            "end_s": line["end_s"],
+            "text": line["text"],
+            "text_sha256": hashlib.sha256(line["text"].encode("utf-8")).hexdigest(),
+        }
+        for line in before + after
+    ]
+
+
 def research_windows(snapshot: dict) -> list[dict]:
     slots = [slot for slot in snapshot.get("slots") or [] if not slot.get("removed")]
     if not slots:
         raise ResearchUnavailable("There is no footage to explain")
-    first_end = _window(slots[0])[1]
-    opener_end = (
-        first_end
-        if any(
-            float(row.get("start_s", 0)) < first_end
-            for row in snapshot.get("text_bars") or []
-            if not row.get("removed")
-        )
-        else 0
-    )
-    candidates = []
-    for row in snapshot.get("text_bars") or []:
-        if (
-            row.get("removed")
-            or row.get("caption_cue")
-            or row.get("id") in (snapshot.get("copy_constraints") or {})
-        ):
-            continue
-        candidates.append((float(row.get("start_s", 0)), float(row.get("end_s", 0))))
-    for beat in (snapshot.get("editorial_plan") or {}).get("beats", []):
-        if beat.get("output_start_s") is not None and beat.get("output_end_s") is not None:
-            candidates.append((float(beat["output_start_s"]), float(beat["output_end_s"])))
-    # A title-only draft still has later footage to explain. Existing text/beat
-    # windows are useful groupings, not an exhaustive list of available windows.
-    candidates.extend(_window(slot) for slot in slots)
+    opener_end = _opening_end(snapshot, slots)
+    candidates: list[tuple] = []
+    if _speech_lines(snapshot):
+        # KRI-816: a spoken edit's readable windows are its pauses; footage
+        # windows would put the explanation over the words.
+        candidates = _speech_windows(snapshot, slots, opener_end)
+    else:
+        for row in snapshot.get("text_bars") or []:
+            if (
+                row.get("removed")
+                or row.get("caption_cue")
+                or row.get("id") in (snapshot.get("copy_constraints") or {})
+            ):
+                continue
+            candidates.append((float(row.get("start_s", 0)), float(row.get("end_s", 0))))
+        for beat in (snapshot.get("editorial_plan") or {}).get("beats", []):
+            if beat.get("output_start_s") is not None and beat.get("output_end_s") is not None:
+                candidates.append((float(beat["output_start_s"]), float(beat["output_end_s"])))
+        # A title-only draft still has later footage to explain. Existing text/beat
+        # windows are useful groupings, not an exhaustive list of available windows.
+        candidates.extend(_window(slot) for slot in slots)
     result = []
-    for start, end in sorted(set(candidates)):
-        if start < opener_end or end - start < 2:
+    for start, end, *spoken in sorted(set(candidates)):
+        if start < opener_end or end - start < _MIN_WINDOW_S:
             continue
         chosen = [row for row in slots if _window(row)[0] < end and _window(row)[1] > start]
         if not chosen:
             continue
-        result.append(
-            {
-                "id": f"window-{len(result)}",
-                "start_s": start,
-                "end_s": end,
-                "max_characters": math.floor((end - start) * 15),
-                "media_ids": [row["media_id"] for row in chosen],
-                "seen": [row.get("seen") or {} for row in chosen],
-                "visible_text": [row.get("visible_text") or "" for row in chosen],
-            }
+        window = {
+            "id": f"window-{len(result)}",
+            "start_s": start,
+            "end_s": end,
+            "max_characters": math.floor((end - start) * 15),
+            "media_ids": [row["media_id"] for row in chosen],
+            "seen": [row.get("seen") or {} for row in chosen],
+            "visible_text": [row.get("visible_text") or "" for row in chosen],
+        }
+        if spoken:
+            # "The pause after the first spoken line" is choosable and checkable.
+            window["after_spoken_line"] = spoken[0]
+            window["previous_spoken_line"] = spoken[1][:200]
+        result.append(window)
+    if not result and _speech_lines(snapshot):
+        raise ResearchUnavailable(
+            "There is no pause of at least 2 seconds between spoken lines for a readable "
+            "explanation"
         )
     return result
 
@@ -511,7 +591,13 @@ def research_operations(
             if window is None or window["media_ids"] != caption.media_ids:
                 raise ResearchUnavailable("An explanation has no valid output window")
             start, end = window["start_s"], window["end_s"]
-        if start < _window(slots[0])[1] and any(
+        if any(start < line["end_s"] and end > line["start_s"] for line in _speech_lines(snapshot)):
+            raise ResearchUnavailable(
+                "The explanation would cover the spoken words; the edit is unchanged"
+            )
+        speech = _speech_lines(snapshot)
+        opening = _opening_end(snapshot, slots) if speech else _window(slots[0])[1]
+        if start < opening and any(
             float(bar.get("start_s", 0)) < end and float(bar.get("end_s", 0)) > start
             for bar in snapshot.get("text_bars") or []
         ):
@@ -562,6 +648,9 @@ def research_operations(
             ],
             "original_text": caption.text,
             "media_ids": caption.media_ids,
+            # KRI-816: a spoken edit has no editable clips to compare; the cited
+            # text stays bound to the spoken lines around its pause instead.
+            **({"speech_binding": _adjacent_lines(speech, start, end)} if speech else {}),
             "start_s": start,
             "end_s": end,
             "sources": list(sources.values()),

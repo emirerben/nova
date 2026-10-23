@@ -1050,10 +1050,11 @@
     {
       "id": "troya-footage-research",
       "needs_native": true,
-      "api_tests": "tests/evals/request_following/test_troya_context_journey.py tests/evals/request_following/test_researched_text.py tests/services/test_kria_editor_clip_context.py",
+      "api_tests": "tests/evals/request_following/test_troya_context_journey.py tests/evals/request_following/test_researched_text.py tests/evals/request_following/test_kri816_talking_research.py tests/services/test_kria_editor_clip_context.py",
       "xctests": [
         "KriaTests/NativeResearchSourcesTests/testSourcesSurviveDocumentSaveAndFlagChangedCopy",
-        "KriaTests/NativeResearchSourcesTests/testUnsafeSourceSchemesAndPrivateHostsCannotOpen"
+        "KriaTests/NativeResearchSourcesTests/testUnsafeSourceSchemesAndPrivateHostsCannotOpen",
+        "KriaTests/NativeResearchSourcesTests/testTalkingCitationMatchesSpeechBindingWithoutClips"
       ],
       "paths": [
         "src/apps/api/app/schemas/editorial_plan.py",
@@ -1063,6 +1064,8 @@
         "src/apps/api/app/services/kria_editor_ops_text.py",
         "src/apps/api/tests/evals/request_following/test_troya_context_journey.py",
         "src/apps/api/tests/evals/request_following/test_researched_text.py",
+        "src/apps/api/tests/evals/request_following/test_kri816_talking_research.py",
+        "src/apps/api/app/services/phone_subtitled_editor.py",
         "src/apps/ios/Kria/Core/ResearchCitation.swift",
         "src/apps/ios/Kria/Features/NativeResearchSourcesView.swift",
         "src/apps/ios/Tests/KriaTests/NativeResearchSourcesTests.swift"
