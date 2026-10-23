@@ -54,6 +54,54 @@ def _coerce_set_slide_cover(name: str, payload: dict, snapshot: dict, state: Any
     return {"slide_index": index, "slide_id": slide_id}
 
 
+def resolve_text_slide_target(payload: dict, snapshot: dict, state: Any) -> str | None:
+    """``add_text{slide_id|slide_index}`` -> the stable slide id (KRI-818).
+
+    Both name a slide of the post BEFORE this turn's ops (``slide_index`` is the 0-based
+    ``slots`` index shown in CURRENT DRAFT). The id is what the compiler binds the text
+    to, so it lands on that slide wherever a reorder in the same bundle puts it. A
+    target only exists for one-slide text: a window covering several slides is the
+    whole-post copy and cannot also name one slide.
+    """
+    from app.agents.edit_copilot import SLIDE_POST_SURFACE  # noqa: PLC0415
+    from app.agents.editor_ops_v2 import surface_of  # noqa: PLC0415
+
+    if surface_of(snapshot) != SLIDE_POST_SURFACE:
+        state.invalid_value()
+        return None
+    slots = _active_slots(snapshot)
+    by_id = {s.get("media_id"): s for s in slots if isinstance(s.get("media_id"), str)}
+    slide_id = payload.get("slide_id")
+    index = payload.get("slide_index")
+    if index is not None:
+        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(slots):
+            state.invalid_value()
+            return None
+        from_index = slots[index].get("media_id")
+        if slide_id is not None and slide_id != from_index:
+            state.invalid_value()
+            return None
+        slide_id = from_index
+    if not isinstance(slide_id, str) or not slide_id:
+        state.invalid_value()
+        return None
+    slot = by_id.get(slide_id)
+    if slot is None or slot.get("removed"):
+        state.reject(
+            op="add_text", reason="stale_target", detail="that slide is no longer available"
+        )
+        return None
+    start, end = payload.get("start_s"), payload.get("end_s")
+    if (
+        isinstance(start, (int, float))
+        and isinstance(end, (int, float))
+        and float(end) - float(start) > 1.0 + 1e-6
+    ):
+        state.invalid_value()
+        return None
+    return slide_id
+
+
 def _coerce_set_post_caption(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
     raw = payload.get("caption")
     if not isinstance(raw, str):

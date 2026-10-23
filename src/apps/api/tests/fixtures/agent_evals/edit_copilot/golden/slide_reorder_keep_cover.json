@@ -1,0 +1,177 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-10-23-v86",
+  "input": {
+    "utterance": "move the museum slide to the front but keep the current cover",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "surface": "slide_post",
+      "allowed_op_families": [
+        "text",
+        "clip",
+        "timeline",
+        "slides"
+      ],
+      "base_generation": "slide-post-v4",
+      "has_narrated_captions": false,
+      "max_duration_s": 5.0,
+      "remaining_duration_s": 0.0,
+      "slots": [
+        {
+          "key": "horse",
+          "slot_id": "horse",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 0.0,
+          "output_end_s": 1.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "horse",
+          "is_cover": true
+        },
+        {
+          "key": "video",
+          "slot_id": "video",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 1.0,
+          "output_end_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "video",
+          "is_cover": false
+        },
+        {
+          "key": "road",
+          "slot_id": "road",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 2.0,
+          "output_end_s": 3.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "road",
+          "is_cover": false
+        },
+        {
+          "key": "ruins",
+          "slot_id": "ruins",
+          "parent_segment_id": null,
+          "clip_index": 3,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 3.0,
+          "output_end_s": 4.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "ruins",
+          "is_cover": false
+        },
+        {
+          "key": "museum",
+          "slot_id": "museum",
+          "parent_segment_id": null,
+          "clip_index": 4,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 4.0,
+          "output_end_s": 5.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "museum",
+          "is_cover": false
+        }
+      ],
+      "text_bars": [
+        {
+          "id": "kria-horse:horse-title",
+          "text": "The Trojan Horse",
+          "start_s": 0.0,
+          "end_s": 1.0,
+          "role": "generative_intro",
+          "font_family": "Inter-Bold",
+          "color": "#FFFFFF",
+          "size_px": 86,
+          "alignment": "center",
+          "position": "bottom",
+          "stroke_width": 0,
+          "shadow_enabled": true,
+          "effect": "static"
+        }
+      ],
+      "total_duration_s": 5.0,
+      "post": {
+        "caption": "",
+        "cover_index": 0,
+        "platform_profile": "tiktok_photo"
+      },
+      "editor_ops_version": 2
+    },
+    "original_request": null
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"reorder_clip\", \"from_index\": 4, \"to_index\": 0}], \"confidence\": 0.93, \"reply\": \"Moved the museum photo first; the cover stays on the horse.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "reorder_clip",
+        "from_index": 4,
+        "to_index": 0
+      }
+    ],
+    "confidence": 0.93,
+    "reply": "Moved the museum photo first; the cover stays on the horse.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "proposed",
+    "rejection_reasons": [],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": [],
+    "reply_notes": "",
+    "claimed_ops": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "KRI-818: 'keep the cover' with a reorder emits no set_slide_cover (the cover follows its photo)",
+    "lane": "kri-818-slide-stable-targets",
+    "exact_edit_ops": [
+      {
+        "op": "reorder_clip",
+        "from_index": 4,
+        "to_index": 0
+      }
+    ]
+  }
+}

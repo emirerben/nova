@@ -1312,3 +1312,253 @@ class TestPostSizeAndFit:
         )
         assert compiled.draft.aspect is None
         assert "aspect" not in compiled.draft.model_dump(mode="json")
+
+
+# ------------------------------------- KRI-818: compound edits bind to stable slides
+#
+# Troya T12: "move the museum slide (5) first and add 'Inside the Troy Museum' to it,
+# keep the horse title, the ruins drawing and the cover". Failure modes, written first:
+# F1 [reorder 4->0, add_text 0..1 + slide_id museum] lands on the horse (pre-edit slide 1).
+# F2 the same text given in pre-edit numbering ([4,5)) lands somewhere else.
+# F3 [reorder 4->0, add_text 0..1] with NO slide target silently binds to the horse.
+# F4 the order is wrong although the count is right.
+# F5 the cover drifts; a post-edit-numbered "keep the cover" index moves it silently.
+# F6 the horse title / ruins drawing / stickers change.
+# F7 a look-alike (same asset_id) slide satisfies the target.
+# F8 an unknown/removed slide id is accepted.
+# F10 a text aimed at a slide removed in the same bundle silently vanishes or moves.
+# F11 the 4-text limit is counted on the wrong slide; the literal text is reworded.
+# F15 the video surface accepts a slide target.
+
+TROY = ["horse", "video", "road", "ruins", "museum"]
+MUSEUM_TEXT = "Inside the Troy Museum"
+
+
+def _troy(assets: list[SimpleNamespace] | None = None) -> tuple[SlidePostDraft, list]:
+    from app.agents._schemas.drawing import DrawingStroke  # noqa: PLC0415
+    from app.schemas.slide_post import SlideDrawing, SlideSticker  # noqa: PLC0415
+
+    assets = assets or [_asset() for _ in TROY]
+    drawing = SlideDrawing(
+        canvas_aspect=0.5625,
+        strokes=[DrawingStroke(color="#FF3B30", width_frac=0.02, points=[(0.1, 0.1), (0.5, 0.6)])],
+    )
+    sticker = SlideSticker(
+        id="st1", asset_id=str(uuid.uuid4()), x_frac=0.3, y_frac=0.7, width_frac=0.25
+    )
+    edits = {
+        0: SlideEdits(texts=[_text("horse-title", "The Trojan Horse", color="#FFD60A")]),
+        3: SlideEdits(drawing=drawing, stickers=[sticker]),
+    }
+    draft = SlidePostDraft(
+        platform_profile="tiktok_photo",
+        slides=[
+            SlideRef(id=sid, asset_id=a.id, kind="image", edits=edits.get(i))
+            for i, (sid, a) in enumerate(zip(TROY, assets, strict=True))
+        ],
+        cover_index=0,
+        version=4,
+    )
+    return draft, assets
+
+
+def _texts_by_slide(draft: SlidePostDraft) -> dict[str, list[str]]:
+    return {
+        s.id: [t.text for t in (s.edits.effective_texts() if s.edits else [])] for s in draft.slides
+    }
+
+
+def _move_museum_first(**text: Any) -> list[dict]:
+    return [
+        {"op": "reorder_clip", "from_index": 4, "to_index": 0},
+        {"op": "add_text", "text": MUSEUM_TEXT, **text},
+    ]
+
+
+def _assert_t12(compiled, draft: SlidePostDraft) -> None:
+    out = compiled.draft
+    assert [s.id for s in out.slides] == ["museum", "horse", "video", "road", "ruins"]
+    assert _texts_by_slide(out) == {
+        "museum": [MUSEUM_TEXT],
+        "horse": ["The Trojan Horse"],
+        "video": [],
+        "road": [],
+        "ruins": [],
+    }
+    by_id = {s.id: s for s in out.slides}
+    original = {s.id: s for s in draft.slides}
+    # Untouched slides are byte-identical (title id/text/style, drawing, stickers).
+    for sid in ("horse", "video", "road", "ruins"):
+        assert by_id[sid].model_dump() == original[sid].model_dump(), sid
+    assert out.slides[out.cover_index].id == "horse"
+    assert "_slide_id" not in json.dumps(out.model_dump(mode="json"))
+
+
+@pytest.mark.parametrize("window", [(0, 1), (4, 5)], ids=["post_edit_window", "pre_edit_window"])
+def test_t12_reorder_then_text_binds_to_the_named_slide(window: tuple[int, int]) -> None:
+    draft, assets = _troy()
+    ops = _move_museum_first(start_s=window[0], end_s=window[1], slide_id="museum")
+    compiled, output = _edit(draft, assets, ops)
+    assert output.ops[1]["slide_id"] == "museum"
+    _assert_t12(compiled, draft)
+
+
+def test_t12_slide_index_target_resolves_against_the_pre_edit_post() -> None:
+    draft, assets = _troy()
+    compiled, output = _edit(draft, assets, _move_museum_first(start_s=0, end_s=1, slide_index=4))
+    assert output.ops[1]["slide_id"] == "museum" and "slide_index" not in output.ops[1]
+    _assert_t12(compiled, draft)
+
+
+def test_t12_untargeted_one_slide_text_in_a_moving_bundle_fails_closed() -> None:
+    draft, assets = _troy()
+    snapshot = build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID)
+    output = _parse(snapshot, _move_museum_first(start_s=0, end_s=1))
+    assert len(output.ops) == 2
+    with pytest.raises(KriaEditorOpError, match="Which slide"):
+        compile_slide_post_ops(draft, output.ops)
+
+
+def test_untargeted_text_without_a_move_keeps_window_binding() -> None:
+    draft, assets = _troy()
+    compiled, _ = _edit(
+        draft, assets, [{"op": "add_text", "text": MUSEUM_TEXT, "start_s": 4, "end_s": 5}]
+    )
+    assert _texts_by_slide(compiled.draft)["museum"] == [MUSEUM_TEXT]
+
+
+def test_keep_cover_written_in_post_edit_numbering_fails_closed() -> None:
+    draft, assets = _troy()
+    snapshot = build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID)
+    # After the move the horse (the cover) is slide 2; index 1 in PRE-edit numbering is
+    # the video slide. Moving the cover there was never asked for.
+    output = _parse(
+        snapshot,
+        [
+            {"op": "reorder_clip", "from_index": 4, "to_index": 0},
+            {"op": "set_slide_cover", "slide_index": 1},
+        ],
+    )
+    assert len(output.ops) == 2
+    with pytest.raises(KriaEditorOpError, match="cover"):
+        compile_slide_post_ops(draft, output.ops)
+
+
+def test_reorder_without_cover_op_keeps_the_cover_on_its_slide() -> None:
+    draft, assets = _troy()
+    compiled, _ = _edit(draft, assets, [{"op": "reorder_clip", "from_index": 4, "to_index": 0}])
+    assert compiled.draft.slides[compiled.draft.cover_index].id == "horse"
+    assert "Cover is now" not in " ".join(compiled.changes)
+
+
+def test_target_on_a_look_alike_slide_binds_by_slide_id_not_asset() -> None:
+    shared = _asset()
+    # The museum and a second museum photo share an asset (duplicate pick).
+    draft, assets = _troy([_asset(), _asset(), _asset(), shared, shared])
+    compiled, _ = _edit(draft, assets, _move_museum_first(start_s=0, end_s=1, slide_id="museum"))
+    texts = _texts_by_slide(compiled.draft)
+    assert texts["museum"] == [MUSEUM_TEXT] and texts["ruins"] == []
+
+
+def test_unknown_slide_target_is_refused_by_the_parser() -> None:
+    draft, assets = _troy()
+    snapshot = build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID)
+    output = _parse(
+        snapshot,
+        [{"op": "add_text", "text": MUSEUM_TEXT, "start_s": 0, "end_s": 1, "slide_id": "gone"}],
+    )
+    assert output.ops == []
+
+
+def test_slide_target_with_a_spanning_window_is_refused() -> None:
+    draft, assets = _troy()
+    snapshot = build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID)
+    output = _parse(
+        snapshot,
+        [{"op": "add_text", "text": MUSEUM_TEXT, "start_s": 0, "end_s": 5, "slide_id": "museum"}],
+    )
+    assert output.ops == []
+
+
+def test_text_on_a_slide_removed_in_the_same_bundle_fails_honestly() -> None:
+    draft, assets = _troy()
+    snapshot = build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID)
+    output = _parse(
+        snapshot,
+        [
+            {"op": "remove_clip", "slot_index": 4},
+            {"op": "add_text", "text": MUSEUM_TEXT, "start_s": 4, "end_s": 5, "slide_id": "museum"},
+        ],
+    )
+    assert len(output.ops) == 2
+    with pytest.raises(KriaEditorOpError, match="removed"):
+        compile_slide_post_ops(draft, output.ops)
+
+
+def test_untargeted_text_on_a_removed_slide_fails_instead_of_vanishing() -> None:
+    draft, assets = _troy()
+    snapshot = build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID)
+    output = _parse(
+        snapshot,
+        [
+            {"op": "remove_clip", "slot_index": 4},
+            {"op": "add_text", "text": MUSEUM_TEXT, "start_s": 4, "end_s": 5},
+        ],
+    )
+    with pytest.raises(KriaEditorOpError):
+        compile_slide_post_ops(draft, output.ops)
+
+
+def test_text_limit_is_counted_on_the_target_slide_and_literal_text_is_kept() -> None:
+    draft, assets = _troy()
+    full = SlideEdits(texts=[_text(f"m{i}", f"M{i}") for i in range(4)])
+    draft = draft.model_copy(
+        update={
+            "slides": [
+                s.model_copy(update={"edits": full}) if s.id == "museum" else s
+                for s in draft.slides
+            ]
+        }
+    )
+    snapshot = build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID)
+    output = _parse(snapshot, _move_museum_first(start_s=0, end_s=1, slide_id="museum"))
+    with pytest.raises(KriaEditorOpError, match="more than 4 texts"):
+        compile_slide_post_ops(draft, output.ops)
+
+    draft, assets = _troy()
+    literal = "İçeride: Truva Müzesi — “Troy”"
+    compiled, _ = _edit(
+        draft,
+        assets,
+        [
+            {"op": "reorder_clip", "from_index": 4, "to_index": 0},
+            {"op": "add_text", "text": literal, "start_s": 0, "end_s": 1, "slide_id": "museum"},
+        ],
+    )
+    assert _texts_by_slide(compiled.draft)["museum"] == [literal]
+
+
+def test_slide_target_is_refused_on_a_video_snapshot() -> None:
+    video = {
+        "allowed_op_families": ["text", "clip"],
+        "editor_ops_version": 2,
+        "slots": [{"media_id": "m0", "output_start_s": 0.0, "output_end_s": 1.0}],
+        "text_bars": [],
+    }
+    output = _parse(
+        video,
+        [{"op": "add_text", "text": "Hi", "start_s": 0, "end_s": 1, "slide_id": "m0"}],
+    )
+    assert output.ops == []
+
+
+@pytest.mark.asyncio
+async def test_t12_failed_turn_keeps_the_accepted_draft(monkeypatch: pytest.MonkeyPatch) -> None:
+    draft, assets = _troy()
+    before = draft.model_dump(mode="json")
+    snapshot = build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID)
+    _patch_agent(monkeypatch, _parse(snapshot, _move_museum_first(start_s=0, end_s=1)))
+    result = await _run(draft, assets, server_version=4)
+    assert result.outcome == "failed" and result.draft is None
+    assert result.base_version == 4
+    assert draft.model_dump(mode="json") == before
