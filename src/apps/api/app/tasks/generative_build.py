@@ -131,6 +131,7 @@ from app.services.job_phases import (
     record_sub_phase,
 )
 from app.services.job_storage_paths import JOB_POSTER_PATH_PREFIX, owned_job_output_path
+from app.services.music_genre import asked_genres, track_genre_fits
 from app.services.phone_text_styling import (
     current_phone_text_policy,
     generation_style_fields,
@@ -21486,7 +21487,9 @@ def _match_best_track(
 ) -> MusicTrack | None:
     """Top-1 matched track, or None if the library has no confident match.
 
-    ``music_ask`` is the creator's own words about the music (KRI-679), if any.
+    ``music_ask`` is the creator's own words about the music (KRI-679), if any. A genre it
+    names (KRI-848) is a hard limit: the matcher sees only the tracks whose labels say it,
+    and the whole library when none does (the caller reports that the genre was not found).
     ``run_context`` owns a pre-render (chat) match; see ``_run_music_matcher``.
     """
     plan_item_id = run_context.plan_item_id if run_context is not None else None
@@ -21502,9 +21505,11 @@ def _match_best_track(
         if not candidates:
             log.info("generative_no_labeled_tracks", job_id=job_id, plan_item_id=plan_item_id)
             return None
+        genres = asked_genres(music_ask)
+        fitting = [t for t in candidates if track_genre_fits(t, genres)] if genres else []
         ranked = _run_music_matcher(
             clip_metas=clip_metas,
-            candidate_tracks=candidates,
+            candidate_tracks=fitting or candidates,
             n_variants=1,
             job_id=job_id,
             music_ask=music_ask,

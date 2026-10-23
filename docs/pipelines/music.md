@@ -48,6 +48,14 @@ failure is non-fatal — the recipe still saves; the track just won't be visible
 `music_matcher` (`nova.audio.music_matcher`, Gemini Flash, text-only) ranks the full
 published-track library against a clip set using each track's Phase-1 `MusicLabels`.
 
+**Genre asks (KRI-848).** In chat, a genre the creator names ("an upbeat tango song") is
+checked in code, not left to the matcher: `app/services/music_genre.py` reads the genre out
+of the ask, `_match_best_track` ranks only the tracks whose labels say it (the `genre` enum
+or a whole word in `vibe_tags` / `mood` / `ideal_content_profile`; `other` is never a
+wildcard), and the frozen section records `asked_genre` + `genre_fit`. The reply (summary
+and `policy_notices`) then names the song and calls it that genre only when it fits;
+otherwise it says there is none and offers the closest. Recommend-only: nothing is mixed in.
+
 ## Song-sections visualizer
 
 `song_sections` agent output (`MusicTrack.best_sections` + `section_version`, schema:
