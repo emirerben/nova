@@ -17,8 +17,9 @@ from typing import Any
 
 import structlog
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.orm import aliased
 from sqlalchemy.pool import NullPool
 
 from app.agents._runtime import ProviderOutcomeUnknownError
@@ -70,6 +71,7 @@ from app.kria.editor_receipts import (
 from app.kria.language import is_paraphrase_only
 from app.kria.planner import (
     PlannedKriaTurn,
+    answering_through_sequence,
     continuation_superseded_reply,
     extract_deferred_brief,
     localized_editor_state_reply,
@@ -87,6 +89,7 @@ from app.kria.reply_language import (
     thread_reply_language,
 )
 from app.models import (
+    CREATOR_AGENT_RUNNING_TURN_STATUSES,
     ContentPlan,
     CreationThread,
     CreationThreadEvent,
@@ -2615,6 +2618,7 @@ def _claim(
         source_payload = getattr(source, "payload", None)
         if isinstance(source_payload, dict) and source_payload.get("camera_roll_story"):
             claimed_snapshot["camera_roll_story"] = source_payload["camera_roll_story"]
+        claimed_snapshot["source_sequence"] = int(source.sequence)
         live_scope = _scoped_turn_fields(source)
         if live_scope is not None:
             # KRI-441: rides the snapshot dict so the claim tuple keeps its shape.
@@ -2765,6 +2769,23 @@ def _lock_queued_successor(
     )
 
 
+def _turn_running_sync(
+    db,  # noqa: ANN001 - SQLAlchemy sync Session
+    thread_id: uuid.UUID,
+) -> bool:
+    return (
+        db.execute(
+            select(CreatorAgentTurn.id)
+            .where(
+                CreatorAgentTurn.thread_id == thread_id,
+                CreatorAgentTurn.status.in_(CREATOR_AGENT_RUNNING_TURN_STATUSES),
+            )
+            .limit(1)
+        ).first()
+        is not None
+    )
+
+
 def _promote_queued_successor_sync(thread_id: uuid.UUID) -> str | None:
     with sync_session() as db:
         successor = _lock_queued_successor(db, thread_id)
@@ -2773,7 +2794,12 @@ def _promote_queued_successor_sync(thread_id: uuid.UUID) -> str | None:
             db.execute(
                 select(CreationThread).where(CreationThread.id == thread_id).with_for_update()
             )
-            successor.status = "pending"
+            # A turn the creator sent after this finished may already run (a delayed
+            # promotion, or the reconciler's): the follow-up stays queued behind it.
+            if _turn_running_sync(db, thread_id):
+                successor = None
+            else:
+                successor.status = "pending"
         db.commit()
         return str(successor.id) if successor is not None else None
 
@@ -3055,6 +3081,8 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
         if snapshot.get("client_request_id")
         else None
     )
+    # A follow-up sent while this turn plans is queued behind it: plan without it.
+    history_token = answering_through_sequence.set(snapshot.get("source_sequence"))
     try:
         if (
             settings.main_creator_agent_enabled or snapshot.get("camera_roll_story")
@@ -3338,6 +3366,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
         if thought_publisher is not None:
             thought_publisher.fail()
         release_reply_language(language_token)
+        answering_through_sequence.reset(history_token)
 
 
 async def _extract_brief_async(snapshot: dict[str, Any], user_message: str):
@@ -6747,7 +6776,60 @@ def _expire_overdue_approval(approval_id: uuid.UUID) -> str | None:
         return _promote_queued_successor_sync(thread.id)
 
 
+def _release_stranded_successors() -> int:
+    """Promote queued follow-ups left behind a turn that already finished.
+
+    Completion, cancel, failure, deny and approval expiry each commit the finished turn and
+    promote its queued follow-up in a second transaction. A process that dies between the
+    two leaves the follow-up `queued` with nothing running, and every new message is then
+    refused with `queued_successor_exists`. Found by TLC: `formal/kria_turns`.
+    """
+    running = aliased(CreatorAgentTurn)
+    no_running_turn = ~exists().where(
+        running.thread_id == CreatorAgentTurn.thread_id,
+        running.status.in_(CREATOR_AGENT_RUNNING_TURN_STATUSES),
+    )
+    with sync_session() as db:
+        thread_ids = list(
+            db.execute(
+                select(CreatorAgentTurn.thread_id)
+                .where(CreatorAgentTurn.status == "queued", no_running_turn)
+                .limit(50)
+            ).scalars()
+        )
+    released = 0
+    for thread_id in thread_ids:
+        with sync_session() as db:
+            successor = db.execute(
+                select(CreatorAgentTurn)
+                .where(CreatorAgentTurn.thread_id == thread_id, CreatorAgentTurn.status == "queued")
+                .order_by(CreatorAgentTurn.created_at, CreatorAgentTurn.id)
+                .limit(1)
+                .with_for_update(skip_locked=True)
+            ).scalar_one_or_none()
+            if successor is None:
+                continue
+            # Turn -> Thread, as every promotion locks. Under the Thread lock no submit or
+            # promotion can start a turn, so the check below stays true until commit.
+            db.execute(
+                select(CreationThread).where(CreationThread.id == thread_id).with_for_update()
+            )
+            if _turn_running_sync(db, thread_id):
+                continue
+            successor.status = "pending"
+            db.commit()
+            released += 1
+            log.warning(
+                "kria_stranded_successor_released",
+                turn_id=str(successor.id),
+                thread_id=str(thread_id),
+            )
+    return released
+
+
 def _reconcile_kria_turns_body() -> dict[str, int]:
+    # Before the pending sweep below, which then publishes the released turns.
+    _release_stranded_successors()
     with sync_session() as db:
         database_now = db.execute(select(func.now())).scalar_one()
         turns = list(

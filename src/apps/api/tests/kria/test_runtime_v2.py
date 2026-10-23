@@ -53,6 +53,9 @@ class _Result:
     def scalar_one(self):  # noqa: ANN201
         return self._scalar
 
+    def first(self):  # noqa: ANN201
+        return self._scalar
+
     def all(self):  # noqa: ANN201
         # `(role, payload)` rows of the free-text choice lookup (KRI-476): none here.
         return list(self._scalars)
@@ -718,6 +721,7 @@ async def test_cancel_turn_promotes_one_queued_successor_after_commit() -> None:
                 _Result(scalar=11),
                 _Result(scalars=[successor]),
                 _Result(scalar=thread),
+                _Result(),  # no turn is running: the follow-up may start
             ]
         ),
         add=MagicMock(),
@@ -929,6 +933,7 @@ async def test_deny_approval_completes_turn_and_promotes_successor() -> None:
                 _Result(scalar=21),
                 _Result(scalars=[successor]),
                 _Result(scalar=thread),
+                _Result(),  # no turn is running: the follow-up may start
             ]
         ),
         add=MagicMock(side_effect=added.append),

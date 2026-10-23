@@ -1,0 +1,47 @@
+{
+  "functions": {
+    "src/apps/api/app/kria/runtime.py": [
+      "submit_turn",
+      "cancel_turn",
+      "_promote_queued_successor"
+    ],
+    "src/apps/api/app/tasks/kria_runtime.py": [
+      "_complete_response_turn",
+      "_complete_draft_turn",
+      "_complete_read_turn",
+      "_claim",
+      "_owns_turn_lease",
+      "_renew_turn_lease",
+      "_turn_running_sync",
+      "_promote_queued_successor_sync",
+      "_release_stranded_successors",
+      "_reconcile_kria_turns_body",
+      "run_kria_turn"
+    ],
+    "src/apps/api/app/kria/planner.py": [
+      "_load_thread_events"
+    ],
+    "src/apps/api/app/services/creation_thread_titles.py": [
+      "conversation_revision_matches_sync"
+    ]
+  },
+  "sync_commit": "bf7be5f927ba89d40afbd5cefc54462a5074f45b",
+  "hashes": {
+    "src/apps/api/app/kria/runtime.py:submit_turn": "9e655081b3aa2eb9",
+    "src/apps/api/app/kria/runtime.py:cancel_turn": "26087f173ef2acc8",
+    "src/apps/api/app/kria/runtime.py:_promote_queued_successor": "617bf7def90c4a92",
+    "src/apps/api/app/tasks/kria_runtime.py:_complete_response_turn": "c15a0ca27f717772",
+    "src/apps/api/app/tasks/kria_runtime.py:_complete_draft_turn": "42ab038a6db5f8e2",
+    "src/apps/api/app/tasks/kria_runtime.py:_complete_read_turn": "30159dc3c25634a9",
+    "src/apps/api/app/tasks/kria_runtime.py:_claim": "831fcaddd26394f8",
+    "src/apps/api/app/tasks/kria_runtime.py:_owns_turn_lease": "26f84d0fcec2ac15",
+    "src/apps/api/app/tasks/kria_runtime.py:_renew_turn_lease": "d1297403d1bc4c4c",
+    "src/apps/api/app/tasks/kria_runtime.py:_turn_running_sync": "a20885104d5a3048",
+    "src/apps/api/app/tasks/kria_runtime.py:_promote_queued_successor_sync": "3481a1c090e45066",
+    "src/apps/api/app/tasks/kria_runtime.py:_release_stranded_successors": "9d024f25b653a4e3",
+    "src/apps/api/app/tasks/kria_runtime.py:_reconcile_kria_turns_body": "c8d1f4c7e36c51fd",
+    "src/apps/api/app/tasks/kria_runtime.py:run_kria_turn": "939ec2f9cd2516b5",
+    "src/apps/api/app/kria/planner.py:_load_thread_events": "f7365fc503eea097",
+    "src/apps/api/app/services/creation_thread_titles.py:conversation_revision_matches_sync": "f5534e7fbcb48e70"
+  }
+}
