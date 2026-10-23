@@ -386,13 +386,20 @@ enum NativeNarratedSourceTiming {
         var result = document
         for index in result.clips.indices {
             let slot = result.clips[index]
-            guard let total = sources[slot.clipIndex]?.asset.duration,
-                  let target = slot.durationS, target > 0, total > 0.05 else {
-                #if DEBUG
-                NativePreviewDiagnostics.record("narrated-invalid-source", fields: [
-                    "index": String(slot.clipIndex), "sourcePresent": String(sources[slot.clipIndex] != nil),
-                    "duration": String(sources[slot.clipIndex]?.asset.duration ?? -1), "target": String(slot.durationS ?? -1)])
-                #endif
+            // A removed slot plays nothing, so it needs no source and no span.
+            if slot.removed { continue }
+            guard let source = sources[slot.clipIndex] else {
+                // KRI-813: only history documents (clean/undo/redo/chat-staged) reach here -- the resolver already
+                // throws for a current-document source it cannot load. Leave that slot unhydrated, never a dead-end recovery.
+                NativePreviewDiagnostics.record("rate-guard", fields: ["guard": "narrated-unresolved-history-source", "index": String(slot.clipIndex)])
+                continue
+            }
+            guard let total = source.asset.duration, let target = slot.durationS, target > 0,
+                  total > NarratedRateGate.minimumSourceSpanS else {
+                // As on the server: a source with no usable footage is an honest timeline error.
+                NativePreviewDiagnostics.record("rate-guard", fields: [
+                    "guard": "narrated-short-source", "index": String(slot.clipIndex),
+                    "duration": String(source.asset.duration ?? -1), "target": String(slot.durationS ?? -1)])
                 throw RecipeError.invalidTimeline
             }
             let start = total - slot.inS <= 0.05 ? 0 : max(0, slot.inS)

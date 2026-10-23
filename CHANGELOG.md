@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.67.0] - 2026-10-23
+
+### Changed
+- fix(ios): narrated source preview plays slow-to-fill steps at the export rate (KRI-813) (#1776) <!-- release-pr: 1776 -->
+
 ## [0.81.66.0] - 2026-10-23
 
 ### Fixed
