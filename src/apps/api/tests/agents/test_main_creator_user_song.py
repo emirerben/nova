@@ -46,7 +46,8 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v71 (KRI-814) adds the typed `delegates_all_choices` declaration: brief-on hashes only.
 # v72 (KRI-814) re-reads unrecorded earlier creator lines: brief-on hashes only.
 # v74 combines subtitle semantics and delegation; brief-off matches subtitle v73 exactly.
-# v75 (KRI-724) adds the `speech_remove` and `noise_reduction` brief facts: brief-on only.
+# v75 (N2 fullscreen photo-then-original sequences) leaves these four renders unchanged.
+# v76 (KRI-724) adds the `speech_remove` and `noise_reduction` brief facts: brief-on only.
 PRE_CHANGE_PROMPT_SHA = {
     (True, True): "abf3023e7cd3381ecc5222377e5ff002f417cfe7cd516bdccf1883bb66e6d3d5",
     (True, False): "e33c7b44e601b95b61036b2806cc2111d8aa20204994881bf8fe128534b5cf3c",
@@ -121,7 +122,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-23-v75"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-23-v76"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

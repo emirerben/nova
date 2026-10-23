@@ -468,6 +468,8 @@ FIELD_MATRIX: dict[str, FieldRule] = {
                 "occurrence",
                 "visual_id",
                 "visual_role",
+                "display_mode",
+                "following_clip_id",
                 "sound",
                 "hold_s",
             )

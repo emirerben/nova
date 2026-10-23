@@ -2,7 +2,7 @@
 
 The immutable brief owns consent. The model that reads the creator's message records an
 engine/motor noise-reduction ask as ``facts.noise_reduction == "engine"`` on an `audio`
-requirement (Main Creator v75 / Brief Extractor v21); this module only checks that field
+requirement (Main Creator v76 / Brief Extractor v21); this module only checks that field
 (KRI-667), so replacing the soundtrack, muting all sound or keeping the noise never
 authorizes filtering speech. Filters reduce noise; they cannot promise complete separation
 of overlapping voices and engines.

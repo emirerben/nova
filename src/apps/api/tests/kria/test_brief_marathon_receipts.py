@@ -157,6 +157,43 @@ def _brief(*reqs: BriefRequirement) -> CreativeBrief:
     return CreativeBrief(version=1, requirements=list(reqs))
 
 
+@pytest.mark.parametrize(
+    "mode,realized", [("pip", True), ("fullscreen", False), ("fullscreen", True)]
+)
+def test_photo_then_video_needs_executed_fullscreen_sequence(mode, realized):
+    requirement = _req(
+        "river",
+        "timing",
+        'When I say "the river", show the river photo first, then the video',
+        triggers=["the river"],
+    )
+    facts = plan_facts_from_phone_variant(
+        _variant(
+            phone_beat_receipt={
+                "matcher": "phrase",
+                "unplaced": [],
+                "closing": {},
+                "placed": [
+                    {
+                        "beat_id": "river",
+                        "trigger": "the river",
+                        "visual_label": "river photo",
+                        "at_s": 12,
+                        "end_s": 13.5,
+                        "display_mode": mode,
+                        "following_clip_id": "river-video",
+                        "following_at_s": 13.5,
+                        "following_end_s": 17,
+                        "sequence_realized": realized,
+                    }
+                ],
+            }
+        )
+    )
+    result = check_requirement(requirement, facts)
+    assert (result.status == "met") is (mode == "fullscreen" and realized)
+
+
 # ------------------------------------------------------------------ draft time
 
 

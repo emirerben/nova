@@ -3728,7 +3728,7 @@ async def test_kri705_phone_talking_t1_brief_names_all_seven_asks_and_promises_n
       5. a plain "can't" blocks the render (it is a format limit, not a simplification);
       6. English / Turkish copy drifts (the reply must be Turkish for a Turkish chat).
 
-    KRI-724 (`brief_facts`): the same brief as Main Creator v75 records it, r2 with
+    KRI-724 (`brief_facts`): the same brief as Main Creator v76 records it, r2 with
     `speech_remove` and r5 with `noise_reduction`. The planned source cut and the unavailable
     noise filter are answers too: neither holds the draft behind "a simpler version?".
     """

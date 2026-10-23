@@ -1,7 +1,7 @@
 """Read a narrowly scoped request to remove one spoken phrase occurrence.
 
 The model that reads the creator's message records it as ``facts.speech_remove``
-(``{"quote": "Neredesin", "occurrence": 2}``, Main Creator v75 / Brief Extractor v21). This
+(``{"quote": "Neredesin", "occurrence": 2}``, Main Creator v76 / Brief Extractor v21). This
 module only checks that structured field (KRI-667): it never guesses a cut, an ordinal or a
 negation from the description's words, so a brief stored before the field existed authorizes
 no source cut.

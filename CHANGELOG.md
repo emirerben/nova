@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.66.0] - 2026-10-23
+
+### Fixed
+- fix(kria): render voiceover photo-to-video requests full screen (#1756) <!-- release-pr: 1756 -->
+
 ## [0.81.65.0] - 2026-10-23
 
 ### Fixed

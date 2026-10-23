@@ -106,6 +106,34 @@ def test_main_creator_eval(
                 for beat in beats
             ), f"no beat shows {visual_id} on {trigger!r}: {beats}"
 
+    n2_fullscreen = fixture.meta.get("n2_fullscreen")
+    if n2_fullscreen:
+        assert result.output is not None
+        strategy = result.output["action"]["strategy"]
+        beats = strategy.get("reaction_beats") or []
+        bathtub = next(beat for beat in beats if beat["beat_id"] == "bathtub")
+        river = next(beat for beat in beats if beat["beat_id"] == "river")
+        assert bathtub["visual_id"] == n2_fullscreen["bathtub_photo"]
+        assert bathtub["display_mode"] == "fullscreen"
+        assert river["visual_id"] == n2_fullscreen["river_photo"]
+        assert river["display_mode"] == "fullscreen"
+        assert river["occurrence"] == "first"
+        assert river["following_clip_id"] == n2_fullscreen["river_clip"]
+        assert river["trigger"] == "the river"
+        assert n2_fullscreen["loft_clip"] in strategy["selected_media_ids"]
+        assert any(
+            intent["op"] == "include" and "the loft" in intent["attribute"]
+            for intent in strategy.get("clip_intents") or []
+        )
+        assert strategy["opening_title"] == n2_fullscreen["title"]
+        assert strategy["caption_style"] == "clean"
+        assert any(
+            intent["op"] == "order"
+            and intent.get("position") == "last"
+            and "Deniz" in intent["attribute"]
+            for intent in strategy.get("clip_intents") or []
+        )
+
     cues = fixture.meta.get("voiceover_cues")
     if cues:
         # KRI-598: on a runtime-v2 Voiceover edit a cue for an own clip ("X dediğimde Y'yi

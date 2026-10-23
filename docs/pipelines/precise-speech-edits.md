@@ -25,7 +25,7 @@ failed or unsupported requests visible to brief checks rather than claiming succ
 ## Request contract
 
 The server acts only on structured brief facts (KRI-667 language policy: no
-regex reading of the creator's words). Main Creator v75 / Brief Extractor v21
+regex reading of the creator's words). Main Creator v76 / Brief Extractor v21
 record them:
 
 - `{"speech_remove":{"quote":"Neredesin","occurrence":2}}` on the named-cut row

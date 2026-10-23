@@ -26,7 +26,7 @@ from tests.tasks.test_kri707_talking_spoken_text import (
 )
 from tests.tasks.test_phone_subtitled_narrated_dispatch import _setup_subtitled
 
-# T1's brief as Main Creator v75 records it (KRI-667): the phrase cut and the engine-noise
+# T1's brief as Main Creator v76 records it (KRI-667): the phrase cut and the engine-noise
 # ask carry structured facts. Prod's stored v1 rows carry none, so they authorize no cut.
 _BRIEF_FACTS = {
     "r2": {"speech_remove": {"quote": "Neredesin", "occurrence": 2}},
