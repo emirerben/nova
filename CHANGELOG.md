@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.72.0] - 2026-10-23
+
+### Changed
+- fix(kria): drawer shows the current device delivery failure, not stale Rendering (KRI-823) (#1777) <!-- release-pr: 1777 -->
+
 ## [0.81.71.0] - 2026-10-23
 
 ### Changed
