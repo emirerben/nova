@@ -96,6 +96,12 @@ public struct PreviewComposition: @unchecked Sendable {
             track.scaleTimeRange(CMTimeRange(start: time(clip.timelineStart), duration: sourceRange.duration),
                                  toDuration: time(clip.sourceDuration / clip.rate))
             let parameter = AVMutableAudioMixInputParameters(track: track)
+            // Source-camera audio follows the retimed footage. AVFoundation's
+            // spectral algorithm keeps its pitch stable for both preview and
+            // export; narration, music and SFX never enter this branch.
+            if originalGain, abs(clip.rate - 1) > 0.000_001 {
+                parameter.audioTimePitchAlgorithm = .spectral
+            }
             applyAudioGain(parameter, clip: clip, gain: gain, windows: recipe.audio.muteWindows, duck: originalGain ? duck : nil, cut: cut)
             audioParameters.append(parameter)
         }

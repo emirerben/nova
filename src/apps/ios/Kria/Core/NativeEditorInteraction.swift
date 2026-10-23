@@ -293,23 +293,34 @@ enum NativeEditorInteraction {
     ) -> NativeEditorTimelineProjection {
         let speech = slots.contains { $0.id?.hasPrefix("native-phone-talking-source") == true }
         var baseWindows: [NativeEditorClipWindow] = []
+        // A source-window marker opts the whole timeline into the server's
+        // 30fps layout clock: downstream legacy slots and transition edges
+        // must share it or millisecond rounding accumulates frame drift.
+        let usesSourceFrameClock = !speech && slots.contains { !$0.removed && sourcePreservingOutputDuration($0) != nil }
         var cursor: TimeInterval = 0
         var previous: (slot: EditorTimelineSlot, duration: TimeInterval)?
         for (index, slot) in slots.enumerated() where !slot.removed {
+            // KRI-852: source-backed speech must use the same continuous source clock as
+            // its recipe (`speech_cut_state.authored_speech_windows`: duration_s on an
+            // unrounded cursor, segments down to 1 ms); rounding each segment, to the
+            // millisecond or to the 30fps frame clock, accumulates caption drift.
+            // KRI-689: every other timeline follows the server's layout clock, 30fps
+            // once a source-window marker is present, else milliseconds.
             let minimum = slot.id?.hasPrefix("native-phone-talking-source") == true ? 0.001 : 0.1
-            let duration = max(minimum, slot.durationS ?? minimum)
+            let rawDuration = speech
+                ? max(minimum, slot.durationS ?? minimum)
+                : sourcePreservingOutputDuration(slot) ?? max(0.1, slot.durationS ?? 0.1)
+            let duration = usesSourceFrameClock ? roundedFrame(rawDuration) : rawDuration
             let overlap = previous.map { prior -> Double in
                 if speech {
                     guard prior.slot.transitionAfter != "cut" else { return 0 }
                     let raw = min(0.3, prior.slot.transitionDurationS ?? 0.3, prior.duration * 0.3, duration * 0.3)
                     return raw >= 0.1 ? raw : 0
                 }
-                return transitionOverlap(left: prior.slot, leftDuration: prior.duration, rightDuration: duration)
+                return timelineTransitionOverlap(left: prior.slot, leftDuration: prior.duration, rightDuration: duration, frameClock: usesSourceFrameClock)
             } ?? 0
-            // Source-backed speech must use the same continuous source clock
-            // as its recipe; rounding each segment accumulates caption drift.
-            let start = speech ? cursor - overlap : roundedMillis(cursor - overlap)
-            let end = speech ? start + duration : roundedMillis(start + duration)
+            let start = speech ? cursor - overlap : (usesSourceFrameClock ? roundedFrame(cursor - overlap) : roundedMillis(cursor - overlap))
+            let end = speech ? start + duration : (usesSourceFrameClock ? roundedFrame(start + duration) : roundedMillis(start + duration))
             baseWindows.append(
                 NativeEditorClipWindow(
                     sourceIndex: index,
@@ -396,6 +407,40 @@ enum NativeEditorInteraction {
             baseInsertionTime: baseInsertion,
             downstreamShift: shift,
             totalDuration: max(carouselItem.end, projectedWindows.last?.end ?? 0)
+        )
+    }
+
+    private static func timelineTransitionOverlap(
+        left: EditorTimelineSlot, leftDuration: TimeInterval, rightDuration: TimeInterval, frameClock: Bool
+    ) -> TimeInterval {
+        guard left.transitionAfter != "cut" else { return 0 }
+        let requested = left.transitionDurationS ?? 0.3
+        let overlap = min(0.3, requested, leftDuration * 0.3, rightDuration * 0.3)
+        guard overlap >= 0.1 else { return 0 }
+        return frameClock ? roundedFrame(overlap) : roundedMillis(overlap)
+    }
+
+    private static func roundedFrame(_ value: TimeInterval) -> TimeInterval {
+        (value * 30).rounded(.toNearestOrEven) / 30
+    }
+
+    /// `source_end_s` opts a slot into the exact source-window contract. The
+    /// server places that window on its 30fps clock using ties-to-even; retain
+    /// the raw end itself so future rate changes recover the exact source span.
+    /// Legacy duration-only slots retain their millisecond projection.
+    static func sourcePreservingOutputDuration(sourceStart: Double, sourceEnd: Double, rate: Double) -> TimeInterval? {
+        guard sourceStart.isFinite, sourceEnd.isFinite, sourceEnd > sourceStart,
+              rate.isFinite, rate > 0 else { return nil }
+        let duration = (sourceEnd - sourceStart) / rate
+        guard duration.isFinite else { return nil }
+        return max(0.1, (duration * 30).rounded(.toNearestOrEven) / 30)
+    }
+
+    private static func sourcePreservingOutputDuration(_ slot: EditorTimelineSlot) -> TimeInterval? {
+        sourcePreservingOutputDuration(
+            sourceStart: slot.inS,
+            sourceEnd: slot.raw["source_end_s"]?.numberValue ?? .nan,
+            rate: slot.raw["playback_rate"]?.numberValue ?? 1
         )
     }
 

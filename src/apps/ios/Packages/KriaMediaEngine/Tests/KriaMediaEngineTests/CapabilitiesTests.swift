@@ -45,6 +45,14 @@ final class CapabilitiesTests: XCTestCase {
         XCTAssertEqual(DeviceRenderFailureReasonCode.forRouteDecision(reason: decision.reason), .unsupportedRecipe)
     }
 
+    func testSingleFrameMainVideoHoldDoesNotRequireEditorMedia() throws {
+        var recipe = recipe()
+        recipe.tracks[0].clips[0].holdDuration = 1 / recipe.frameRate
+        XCTAssertFalse(recipe.effectiveCapabilities.contains(.editorMedia))
+        recipe.tracks[0].clips[0].holdDuration = 1
+        XCTAssertTrue(recipe.effectiveCapabilities.contains(.editorMedia))
+    }
+
     func testEstimatedOutputScalesWithDurationNotSourceSize() {
         let short = StorageEstimate.forEstimatedOutput(durationS: 5).requiredBytes
         let long = StorageEstimate.forEstimatedOutput(durationS: 55).requiredBytes

@@ -243,7 +243,8 @@
       "KriaUITests/NativeSourceWindowUITests/testRangeSheetSlidesAndResizesTheWindow",
       "KriaUITests/ResearchSourcesUITests/testPreparedResearchSourcesAndPreview",
       "KriaUITests/NativeEditorInspectorUITests/testLongPressDraggingClipReordersKeepsLengthAndUndoesInOneStep",
-      "KriaUITests/NativeEditorInspectorUITests/testQuickSwipeAcrossAClipSeeksInsteadOfReordering"
+      "KriaUITests/NativeEditorInspectorUITests/testQuickSwipeAcrossAClipSeeksInsteadOfReordering",
+      "KriaUITests/NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -374,6 +375,7 @@
     "src/apps/ios/Kria/Core/ResearchCitation.swift": "editor",
     "src/apps/ios/Kria/Features/NativeResearchSourcesView.swift": "editor",
     "src/apps/ios/Kria/Core/EditorialTaste.swift": "creation",
-    "src/apps/ios/Kria/Features/EditorialTasteView.swift": "creation"
+    "src/apps/ios/Kria/Features/EditorialTasteView.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/NativeSpeedUITests.swift": "editor"
   }
 }

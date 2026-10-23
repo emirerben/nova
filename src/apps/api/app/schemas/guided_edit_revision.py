@@ -97,6 +97,8 @@ class GuidedEditorSegment(BaseModel):
     playback_rate: float | None = Field(
         default=None, ge=0.25, le=4.0, exclude_if=lambda value: value is None
     )
+    # Opt-in source-selection authority; omission preserves legacy fixed-window hashes.
+    preserve_source_window: bool | None = Field(default=None, exclude_if=lambda value: not value)
     duration_s: float = Field(gt=0, le=MAX_GUIDED_EDITOR_DURATION_S)
     # The creator turned this occurrence's own (camera) sound off. Omitted when
     # false/None so every revision written before the control keeps its state hash.
@@ -438,7 +440,12 @@ def normalize_guided_editor_revision(
 
     cursor = 0.0
     for segment in normalized["segments"]:
-        segment["source_start_s"] = frame(segment.get("source_start_s") or 0.0)
+        preserve_window = bool(segment.get("preserve_source_window"))
+        segment["source_start_s"] = (
+            float(segment.get("source_start_s") or 0.0)
+            if preserve_window
+            else frame(segment.get("source_start_s") or 0.0)
+        )
         segment["duration_s"] = max(MIN_GUIDED_EDITOR_SEGMENT_S, frame(segment["duration_s"]))
         rate = float(segment.get("playback_rate") or 1.0)
         # A retimed occurrence consumes duration * rate from its pinned source.
@@ -452,7 +459,23 @@ def normalize_guided_editor_revision(
         # revisions may intentionally encode slow motion as a shorter
         # source_end_s with a longer output duration; clamping those here
         # silently changes their saved duration and state hash on a resave.
-        if (
+        if preserve_window:
+            source_end = segment.get("source_end_s")
+            if source.get("kind") != "video" or source_end is None:
+                raise ValueError("source-preserving speed requires a video source window")
+            source_span = float(source_end) - float(segment["source_start_s"])
+            if source_span <= 0 or (
+                source.get("duration_s") is not None
+                and float(source_end) > float(source["duration_s"]) + 1e-6
+            ):
+                raise ValueError("source-preserving speed window is out of bounds")
+            exact_duration = source_span / rate
+            if below_editor_minimum(exact_duration, MIN_GUIDED_EDITOR_SEGMENT_S):
+                raise ValueError("guided editor source window is too short for the editor floor")
+            if abs(float(segment["duration_s"]) - exact_duration) > 1 / GUIDED_EDITOR_FPS + 1e-6:
+                raise ValueError("source-preserving speed duration contradicts its window")
+            segment["duration_s"] = max(MIN_GUIDED_EDITOR_SEGMENT_S, frame(exact_duration))
+        elif (
             segment.get("playback_rate") is not None
             and source.get("kind") == "video"
             and source.get("duration_s") is not None
@@ -466,7 +489,9 @@ def normalize_guided_editor_revision(
             requested_end = min(requested_end, float(source["duration_s"]))
         # Keep legacy payloads byte-identical. A new speed owns source_end;
         # default-speed revisions retain their existing explicit window.
-        if segment.get("playback_rate") is not None:
+        if preserve_window:
+            segment["source_end_s"] = float(segment["source_end_s"])
+        elif segment.get("playback_rate") is not None:
             segment["source_end_s"] = frame(requested_end)
         else:
             segment["source_end_s"] = frame(

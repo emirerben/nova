@@ -118,8 +118,21 @@ def compile_phone_authored_timeline(
             float(row["in_s"]),
             float(row.get("playback_rate") or 1),
         )
+        source_end = row.get("source_end_s")
         still = bool(visual and visual.kind == "image")
-        if not still:
+        if source_end is not None:
+            if still:
+                raise ValueError("authored image cannot have source trim or speed")
+            source_span = float(source_end) - start
+            if source_span <= 0:
+                raise ValueError("authored source endpoint must follow its start")
+            # The saved source edge is authoritative.  The output clock is
+            # frame-rounded, so never sample past that edge; hold the final
+            # frame only when its rounded output slot is fractionally longer.
+            source_span = min(source_span, duration * rate)
+            hold = max(0.0, duration - source_span / rate)
+            hold_duration = hold if hold > 1e-6 else None
+        elif not still:
             start = effective_source_start(
                 start,
                 duration,
@@ -127,6 +140,11 @@ def compile_phone_authored_timeline(
                 source_duration,
                 start_locked=bool(row.get("source_start_locked")),
             )
+            source_span = duration * rate
+            hold_duration = None
+        else:
+            source_span = duration * rate
+            hold_duration = None
         if still and (start != 0 or rate != 1):
             raise ValueError("authored image cannot have source trim or speed")
         width = original.width if original else visual.width
@@ -168,9 +186,10 @@ def compile_phone_authored_timeline(
                 id=row["slot_id"],
                 source_asset_id=asset.id,
                 source_start=start,
-                source_duration=duration * rate,
+                source_duration=source_span,
                 timeline_start=cursor,
                 rate=rate,
+                hold_duration=hold_duration,
                 transition=transition,
                 volume=0 if still or row.get("muted") else 1,
                 source_crop=row.get("source_crop"),

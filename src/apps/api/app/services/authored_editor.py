@@ -226,6 +226,66 @@ def prepare_authored_editor_commit(
 log = structlog.get_logger(__name__)
 
 SOURCE_BOUNDS_TOLERANCE_S = 0.05
+_TIMELINE_FRAME_S = 1 / 30
+
+
+def _canonical_output_duration(source_span: float, rate: float) -> float:
+    """Return the authored output clock on the shared 30 fps timeline grid."""
+    return round((source_span / rate) * 30) / 30
+
+
+def _source_end_for_authored_slot(
+    slot: Any,
+    *,
+    old: dict,
+    source: dict,
+    duration: float,
+    rate: float,
+    minimum_duration: float,
+) -> tuple[float, float | None]:
+    """Resolve the optional exact source edge without changing legacy windows.
+
+    ``source_end_s`` is an absolute source-time edge.  It is deliberately
+    absent from old payloads, whose ``duration_s * playback_rate`` behavior
+    must remain unchanged.  A reopened exact window can omit the field only
+    when its complete geometry is unchanged; a trim must never revive an old
+    endpoint.
+    """
+    import math
+
+    supplied = "source_end_s" in slot.model_fields_set and slot.source_end_s is not None
+    unchanged = (
+        slot.slot_id is not None
+        and slot.clip_index == old.get("clip_index")
+        and math.isclose(float(slot.in_s), float(old.get("in_s", -1)), abs_tol=1e-6)
+        and math.isclose(duration, float(old.get("duration_s", -1)), abs_tol=1e-6)
+        and math.isclose(rate, float(old.get("playback_rate") or 1), abs_tol=1e-6)
+    )
+    source_end = slot.source_end_s if supplied else old.get("source_end_s") if unchanged else None
+    if source_end is None:
+        return duration, None
+    if source.get("kind") != "video":
+        raise HTTPException(422, detail={"code": "phone_edit_unsupported"})
+    source_end = float(source_end)
+    bound = source.get("duration_s")
+    if (
+        not math.isfinite(source_end)
+        or source_end <= slot.in_s
+        or bound is None
+        or source_end > float(bound)
+    ):
+        raise HTTPException(422, detail={"code": "TIMELINE_INVALID_WINDOW"})
+    exact_output = (source_end - slot.in_s) / rate
+    if (
+        below_editor_minimum(exact_output, minimum_duration)
+        or abs(exact_output - duration) > _TIMELINE_FRAME_S + 1e-9
+    ):
+        raise HTTPException(422, detail={"code": "TIMELINE_INVALID_WINDOW"})
+    canonical = _canonical_output_duration(source_end - slot.in_s, rate)
+    if below_editor_minimum(canonical, minimum_duration):
+        raise HTTPException(422, detail={"code": "TIMELINE_INVALID_WINDOW"})
+    return canonical, source_end
+
 
 # Slot ids the chat compile minted for clips that had none (``cs-<client_state_id[:12]>-<index>``,
 # removed in #1698). They were never saved, but chat drafts stored before that fix still carry them
@@ -356,8 +416,15 @@ def resolve_authored_phone_slots(
         if not 0 <= slot.clip_index < len(catalog):
             raise HTTPException(422, detail={"code": "TIMELINE_UNKNOWN_CLIP"})
         source = catalog[slot.clip_index]
+        old = baseline.get(slot.slot_id) or baseline.get(slot.parent_segment_id) or {}
         duration = slot.duration_s
-        rate = slot.playback_rate or 1.0
+        # A partial stale Save may omit newer speed fields. Preserve a saved
+        # authored rate in that case; explicit null remains the creator's 1x
+        # reset. New placements have no baseline and therefore retain 1x.
+        if "playback_rate" in slot.model_fields_set:
+            rate = slot.playback_rate or 1.0
+        else:
+            rate = float(old.get("playback_rate") or 1.0)
         if slot.duration_beats is not None or duration is None:
             raise HTTPException(422, detail={"code": "authored_seconds_required"})
         minimum_duration = (
@@ -374,8 +441,20 @@ def resolve_authored_phone_slots(
         ):
             raise HTTPException(422, detail={"code": "TIMELINE_INVALID_WINDOW"})
         duration = snap_to_editor_minimum(duration, minimum_duration)
+        if source["kind"] == "image" and (
+            not math.isclose(rate, 1.0) or slot.source_end_s is not None
+        ):
+            raise HTTPException(422, detail={"code": "phone_edit_unsupported"})
+        duration, source_end = _source_end_for_authored_slot(
+            slot,
+            old=old,
+            source=source,
+            duration=duration,
+            rate=rate,
+            minimum_duration=minimum_duration,
+        )
         bound = source.get("duration_s")
-        if source["kind"] == "video" and not preserve_intent:
+        if source["kind"] == "video" and source_end is None and not preserve_intent:
             duration = _fit_window_to_source(
                 slot,
                 order=len(resolved),
@@ -397,9 +476,15 @@ def resolve_authored_phone_slots(
                 "media_id": source["media_id"],
                 "order": len(resolved),
                 "duration_s": duration,
+                "source_end_s": source_end,
+                "playback_rate": (
+                    rate
+                    if "playback_rate" in slot.model_fields_set
+                    or old.get("playback_rate") is not None
+                    else None
+                ),
                 "source_start_locked": bool(
-                    slot.source_start_locked
-                    or (baseline.get(slot.slot_id) or {}).get("source_start_locked")
+                    slot.source_start_locked or old.get("source_start_locked")
                 ),
             }
         )

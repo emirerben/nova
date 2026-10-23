@@ -2323,6 +2323,19 @@
               "default": null,
               "title": "Source Duration S"
             },
+            "source_end_s": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source End S"
+            },
             "source_start_locked": {
               "anyOf": [
                 {
