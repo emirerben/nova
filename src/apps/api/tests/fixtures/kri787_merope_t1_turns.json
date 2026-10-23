@@ -1,0 +1,2458 @@
+{
+ "about": "KRI-787 (Merope cafe T1 Talking, prod 042c405c9, Main Creator 2026-10-19-v64, 2026-10-21): thread 32A5B608-6397-4608-889F-DFF5AD9BEC40, plan item b5477ee9, one 68.37 s DJI take. Two approved drafts, two renders refused at dispatch (phone_plan_unsupported): \"I can't verify this ordering rule from the approved media.\" Copied from the run evidence: the chat's events (creator messages, the order_basis question, both drafts' receipts and approval cards, both failure cards), each render's draft strategy (turns.json) and job row (job_debug.json, job2_debug.json: persisted strategy, approved brief + choice answers, render contract, failure). The job-debug export leaves the clip identity (media_id, gcs_path) out of the binding's media snapshot; take_row restores them from item_debug.json. The export also redacts media ids inside the stored contract (order_ids [], no generation_id): its digest is whole. brief_v1 is the brief the turn-2 Main Creator input shows (r2 as first written, r7 live). The creator's account id (also in every storage path) is a synthetic stand-in.",
+ "thread_id": "32a5b608-6397-4608-889f-dff5ad9bec40",
+ "creator_id": "48b4c528-e227-50e3-9e0f-e06af2c18099",
+ "plan_item_id": "b5477ee9-7581-4f75-b1bd-2053d73ee64c",
+ "take": {
+  "media_id": "analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4",
+  "gcs_path": "users/48b4c528-e227-50e3-9e0f-e06af2c18099/creation-threads/32a5b608-6397-4608-889f-dff5ad9bec40/analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4",
+  "duration_s": 68.37
+ },
+ "creator_messages": [
+  "Talking-to-camera edit of Caro at Merope. Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\". Cut her slip \"with bread, no,\" so it says \"waffle cookie with blackberry jam\". Also cut my half question \"how are you gonna\". Captions for both voices, and spell these right: Oblea de la Casa, dulce de leche, leche condensada, Merope. Title: \"Colombian dessert, Ecuadorian hands\". Show \"MEROPE\" in big letters the first time she says Merope. No text on her face or on the plate. About 35 seconds.",
+  "Use the order you added the clips",
+  "Make this simpler version",
+  "Continue without a fixed order"
+ ],
+ "events": [
+  {
+   "sequence": 0,
+   "kind": "thread_created",
+   "actor": "system",
+   "created_at": "2026-10-21T13:19:11.493949+00:00",
+   "turn_id": null,
+   "content": null,
+   "payload": null
+  },
+  {
+   "sequence": 1,
+   "kind": "format_prompt",
+   "actor": "assistant",
+   "created_at": "2026-10-21T13:19:11.493949+00:00",
+   "turn_id": null,
+   "content": "What are we making? Pick a format and we’ll shape it together.",
+   "payload": {
+    "kind": "select_format",
+    "formats": {
+     "slides": "slides",
+     "montage": "montage",
+     "narrated": "narrated_planned",
+     "talking_to_camera": "subtitled"
+    }
+   }
+  },
+  {
+   "sequence": 2,
+   "kind": "action_select_format",
+   "actor": "user",
+   "created_at": "2026-10-21T13:19:14.610222+00:00",
+   "turn_id": null,
+   "content": null,
+   "payload": {
+    "action": "select_format",
+    "format": "talking_to_camera"
+   }
+  },
+  {
+   "sequence": 3,
+   "kind": "media_added",
+   "actor": "user",
+   "created_at": "2026-10-21T13:20:20.069375+00:00",
+   "turn_id": null,
+   "content": null,
+   "payload": {
+    "media": [
+     {
+      "kind": "video",
+      "filename": "8EE7A18C-D5F7-425B-8700-26FC1E9E4239-M2_01_footage.mp4",
+      "media_id": "analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4",
+      "duration_s": 68.37,
+      "size_bytes": 7474391,
+      "content_type": "video/mp4",
+      "upload_contract": {
+       "proxy": {
+        "width": 320,
+        "height": 568,
+        "original": {
+         "kind": "video",
+         "width": 1080,
+         "height": 1920,
+         "sha256": "66b42816bfdab0cb46b935a14a7d08bddd5ef85b6b9b911328d6d3306af0ae99",
+         "has_audio": true,
+         "byte_count": 55291210,
+         "duration_s": 68.367,
+         "orientation_degrees": 0
+        },
+        "duration_s": 68.36666666666666,
+        "frame_rate": 30.0,
+        "timing_version": 1,
+        "orientation_degrees": 0
+       },
+       "purpose": "analysis_proxy"
+      },
+      "library_asset_id": "8c0e9d39-5d8f-420f-8043-31e39cd88bee",
+      "library_source_id": "1fcf8062-5805-4f36-934e-898ade19c1ba"
+     }
+    ],
+    "media_count": 1
+   }
+  },
+  {
+   "sequence": 4,
+   "kind": "user_message",
+   "actor": "user",
+   "created_at": "2026-10-21T13:20:34.632032+00:00",
+   "turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1",
+   "content": "Talking-to-camera edit of Caro at Merope. Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\". Cut her slip \"with bread, no,\" so it says \"waffle cookie with blackberry jam\". Also cut my half question \"how are you gonna\". Captions for both voices, and spell these right: Oblea de la Casa, dulce de leche, leche condensada, Merope. Title: \"Colombian dessert, Ecuadorian hands\". Show \"MEROPE\" in big letters the first time she says Merope. No text on her face or on the plate. About 35 seconds.",
+   "payload": {
+    "turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1",
+    "turn_status": "pending",
+    "request_digest": "ee8e7493aaae72bc58c46f2d99f05936d68435456951ea46ca867fa41f555710",
+    "runtime_version": 2
+   }
+  },
+  {
+   "sequence": 5,
+   "kind": "thread_title_generated",
+   "actor": "system",
+   "created_at": "2026-10-21T13:20:36.008655+00:00",
+   "turn_id": null,
+   "content": null,
+   "payload": {
+    "title": "Caro at Merope Talking-to-Camera Edit"
+   }
+  },
+  {
+   "sequence": 6,
+   "kind": "assistant_response",
+   "actor": "assistant",
+   "created_at": "2026-10-21T13:21:33.956502+00:00",
+   "turn_id": null,
+   "content": "You gave me a specific order for the clips. Unfortunately I can't check that order against your clips, so I can't promise it. Which do you prefer?\n1. Use the order you added the clips (recommended)\n2. Continue without a fixed order\nTap an option, or tell me in your own words.",
+   "payload": {
+    "turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1",
+    "turn_value": "question",
+    "receipt_ids": [],
+    "next_actions": [],
+    "brief_coverage": {
+     "enforced_ids": [],
+     "retrieved_ids": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6",
+      "r7"
+     ],
+     "applicable_ids": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6",
+      "r7"
+     ],
+     "unresolved_ids": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6",
+      "r7"
+     ]
+    },
+    "schema_version": 2,
+    "choice_question": {
+     "kind": "order_basis",
+     "options": [
+      {
+       "key": "attachment_order",
+       "label": "Use the order you added the clips",
+       "aliases": [
+        "upload order",
+        "order i added them",
+        "the order i added them",
+        "order i uploaded them",
+        "attachment order",
+        "as uploaded",
+        "as added",
+        "eklediğim sıra",
+        "eklediğim sırayla",
+        "yüklediğim sıra",
+        "yüklediğim sırayla",
+        "ekleme sırası",
+        "yükleme sırası",
+        "eklenme sırası",
+        "ekleme sırasına göre",
+        "eklediğim gibi",
+        "yüklediğim gibi"
+       ],
+       "description": "The clips play in the order they were added to this project.",
+       "recommended": true
+      },
+      {
+       "key": "unordered",
+       "label": "Continue without a fixed order",
+       "aliases": [
+        "without order",
+        "no order",
+        "skip the order",
+        "continue without order",
+        "no fixed order",
+        "sırasız",
+        "sırasız devam et",
+        "sıra olmasın",
+        "sıra yok",
+        "sıra olmadan",
+        "sıra olmadan devam et",
+        "sabit sıra olmasın",
+        "sabit sıra yok",
+        "sırayı atla",
+        "sıra önemli değil",
+        "fark etmez"
+       ],
+       "description": "I won't promise or check a particular order; the clips still play in a sensible sequence.",
+       "recommended": false
+      }
+     ],
+     "version": 1,
+     "conflict": "order_basis",
+     "question_id": "cc8e5377-44ac-47f6-b9e6-993252dac573",
+     "input_digest": "a48e489839d3d2c2a8a12e1a",
+     "allow_free_text": true
+    }
+   }
+  },
+  {
+   "sequence": 7,
+   "kind": "user_message",
+   "actor": "user",
+   "created_at": "2026-10-21T13:22:33.469126+00:00",
+   "turn_id": "f23395d8-9cfc-44f9-bbe5-a6f86a3fb485",
+   "content": "Use the order you added the clips",
+   "payload": {
+    "turn_id": "f23395d8-9cfc-44f9-bbe5-a6f86a3fb485",
+    "turn_status": "pending",
+    "request_digest": "443cba95404b15bd9ae4821294391b68277a96678d91f5e4a61330f08f2df386",
+    "runtime_version": 2,
+    "choice_selection": {
+     "option_key": "attachment_order",
+     "question_id": "cc8e5377-44ac-47f6-b9e6-993252dac573"
+    }
+   }
+  },
+  {
+   "sequence": 8,
+   "kind": "assistant_response",
+   "actor": "assistant",
+   "created_at": "2026-10-21T13:23:04.283087+00:00",
+   "turn_id": null,
+   "content": "Not everything you asked for made it in:\n- Partly: About 35 seconds (A Talking edit keeps your whole take, so its length follows your clip; your take is 68.4s and you asked for 35s)\n- Partly: Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam' (Choose Clean up speech when you approve and the long pauses are cut)\n- Partly: Cut the half question 'how are you gonna' (Choose Clean up speech when you approve and the long pauses are cut)\n- Done: Title on screen, placed so there is no text on her face or on the plate (\"Colombian dessert, Ecuadorian hands\")\n- Partly: Show MEROPE in big letters the first time she says Merope, placed so there is no text on her face or on the plate (\"MEROPE\") (That exact text isn't in this draft)\nI held this first draft back. Should I try a different approach, or make this simpler version?",
+   "payload": {
+    "turn_id": "f23395d8-9cfc-44f9-bbe5-a6f86a3fb485",
+    "turn_value": "question",
+    "receipt_ids": [],
+    "next_actions": [],
+    "brief_coverage": {
+     "stage": "draft",
+     "reason": "simplification_requires_choice",
+     "enforced_ids": [],
+     "retrieved_ids": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6",
+      "r7"
+     ],
+     "applicable_ids": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6",
+      "r7"
+     ],
+     "unresolved_ids": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6",
+      "r7"
+     ]
+    },
+    "schema_version": 2,
+    "choice_question": {
+     "options": [
+      {
+       "key": "different_approach",
+       "label": "Try a different approach",
+       "recommended": false
+      },
+      {
+       "key": "simpler_version",
+       "label": "Make this simpler version",
+       "aliases": [
+        "simpler version",
+        "make it more basic",
+        "skip, decide for me",
+        "Make this simpler version",
+        "Daha basit sürümü hazırla"
+       ],
+       "recommended": false
+      }
+     ],
+     "version": 1,
+     "conflict": "simplification_requires_choice",
+     "question_id": "6bbd2ed7-5162-495f-a2eb-e26afb5f906a",
+     "allow_free_text": true
+    },
+    "requirement_receipts": [
+     {
+      "stage": "checked",
+      "reason": "A Talking edit keeps your whole take, so its length follows your clip; your take is 68.4s and you asked for 35s",
+      "status": "partial",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 1,
+      "generation_id": null,
+      "requirement_id": "r1",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "checked",
+      "reason": "Choose Clean up speech when you approve and the long pauses are cut",
+      "status": "partial",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 1,
+      "generation_id": null,
+      "requirement_id": "r3",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "checked",
+      "reason": "Choose Clean up speech when you approve and the long pauses are cut",
+      "status": "partial",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 1,
+      "generation_id": null,
+      "requirement_id": "r4",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "checked",
+      "reason": null,
+      "status": "met",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 1,
+      "generation_id": null,
+      "requirement_id": "r6",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "checked",
+      "reason": "That exact text isn't in this draft.",
+      "status": "partial",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 1,
+      "generation_id": null,
+      "requirement_id": "r7",
+      "inferred_labels": [],
+      "target_media_ids": []
+     }
+    ]
+   }
+  },
+  {
+   "sequence": 9,
+   "kind": "user_message",
+   "actor": "user",
+   "created_at": "2026-10-21T13:24:14.338560+00:00",
+   "turn_id": "20678ae6-a47d-43b1-b22f-b48a8c971166",
+   "content": "Make this simpler version",
+   "payload": {
+    "turn_id": "20678ae6-a47d-43b1-b22f-b48a8c971166",
+    "turn_status": "pending",
+    "request_digest": "65c70369a8d139601633fd3c645860c09d545f2c33e36ca36a97ff7d558a055f",
+    "runtime_version": 2,
+    "choice_selection": {
+     "option_key": "simpler_version",
+     "question_id": "6bbd2ed7-5162-495f-a2eb-e26afb5f906a"
+    }
+   }
+  },
+  {
+   "sequence": 10,
+   "kind": "draft_applied",
+   "actor": "assistant",
+   "created_at": "2026-10-21T13:24:43.866203+00:00",
+   "turn_id": null,
+   "content": "Here's the simpler version.\n- Partly: About 35 seconds (A Talking edit keeps your whole take, so its length follows your clip; your take is 68.4s and you asked for 35s)\n- Partly: Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam' (Choose Clean up speech when you approve and the long pauses are cut)\n- Partly: Cut the half question 'how are you gonna' (Choose Clean up speech when you approve and the long pauses are cut)\n- Done: Title on screen, placed so there is no text on her face or on the plate (\"Colombian dessert, Ecuadorian hands\")\nHave a look at these in the video:\n- in the order the clips were added\n- Left out as agreed: Show MEROPE in big letters the first time she says Merope, placed so there is no text on her face or on the plate (\"MEROPE\")",
+   "payload": {
+    "changes": [
+     "Balanced pacing",
+     "Subtitled format"
+    ],
+    "turn_id": "20678ae6-a47d-43b1-b22f-b48a8c971166",
+    "can_undo": false,
+    "draft_id": "dc73ada2-40a0-40ab-9ece-fbbb15f6d975",
+    "receipt_ids": [
+     "10979ee9-d212-48b5-9fb8-23fd631ad032"
+    ],
+    "snapshot_hash": "7e4eb0792115eb20545bef858bed80bcae50d324e79686ac1c4bdde854f1eebc",
+    "draft_revision": 0,
+    "requirement_receipts": [
+     {
+      "stage": "checked",
+      "reason": "A Talking edit keeps your whole take, so its length follows your clip; your take is 68.4s and you asked for 35s",
+      "status": "partial",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 2,
+      "generation_id": null,
+      "requirement_id": "r1",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "checked",
+      "reason": "Choose Clean up speech when you approve and the long pauses are cut",
+      "status": "partial",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 2,
+      "generation_id": null,
+      "requirement_id": "r3",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "checked",
+      "reason": "Choose Clean up speech when you approve and the long pauses are cut",
+      "status": "partial",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 2,
+      "generation_id": null,
+      "requirement_id": "r4",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "checked",
+      "reason": null,
+      "status": "met",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 2,
+      "generation_id": null,
+      "requirement_id": "r6",
+      "inferred_labels": [],
+      "target_media_ids": []
+     }
+    ]
+   }
+  },
+  {
+   "sequence": 11,
+   "kind": "approval_requested",
+   "actor": "system",
+   "created_at": "2026-10-21T13:24:43.866203+00:00",
+   "turn_id": null,
+   "content": null,
+   "payload": {
+    "turn_id": "20678ae6-a47d-43b1-b22f-b48a8c971166",
+    "draft_id": "dc73ada2-40a0-40ab-9ece-fbbb15f6d975",
+    "expires_at": "2026-10-21T13:54:43.960319+00:00",
+    "approval_id": "a7b2152f-ce50-4b5c-8f93-9d1a04e0cc94",
+    "artifact_key": "approval:a7b2152f-ce50-4b5c-8f93-9d1a04e0cc94",
+    "cost_summary": "One render",
+    "draft_revision": 0,
+    "consequence_summary": "Render this draft: Here's the simpler version.\n- Partly: About 35 seconds (A Talking edit keeps your whole take, so its length follows your clip; your take is 68.4s and you asked for 35s)\n- Partly: Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam' (Choose Clean up speech when you approve and the long pauses are cut)\n- Partly: Cut the half question 'how are you gonna' (Choose Clean up speech when you approve and the long pauses are cut)\n- Done: Title on screen, placed so there is no text on her face or on the plate (\"Colombian dessert, Ecuadorian hands\")\nHave a look at these in the video:\n- in the order the clips were added\n- Left out as agreed: Show MEROPE in big letters the first time she says Merope, placed so there is no text on her face or on the plate (\"MEROPE\")"
+   }
+  },
+  {
+   "sequence": 12,
+   "kind": "approval_approved",
+   "actor": "system",
+   "created_at": "2026-10-21T13:25:23.475436+00:00",
+   "turn_id": null,
+   "content": null,
+   "payload": {
+    "turn_id": "20678ae6-a47d-43b1-b22f-b48a8c971166",
+    "draft_id": "dc73ada2-40a0-40ab-9ece-fbbb15f6d975",
+    "approval_id": "a7b2152f-ce50-4b5c-8f93-9d1a04e0cc94",
+    "draft_revision": 0,
+    "render_dispatched": false
+   }
+  },
+  {
+   "sequence": 13,
+   "kind": "render_queued",
+   "actor": "system",
+   "created_at": "2026-10-21T13:25:23.958848+00:00",
+   "turn_id": null,
+   "content": null,
+   "payload": {
+    "job_id": "0701fcc9-748b-4ac9-a640-130c125c0c17",
+    "status": "queued",
+    "turn_id": "20678ae6-a47d-43b1-b22f-b48a8c971166",
+    "variant_id": null,
+    "approval_id": "a7b2152f-ce50-4b5c-8f93-9d1a04e0cc94",
+    "receipt_ids": [
+     "6f7074e8-e2e5-4c23-9412-5d0ddd29adb2"
+    ],
+    "artifact_key": "job:0701fcc9-748b-4ac9-a640-130c125c0c17",
+    "execution_id": "6f7074e8-e2e5-4c23-9412-5d0ddd29adb2",
+    "generation_id": null
+   }
+  },
+  {
+   "sequence": 14,
+   "kind": "plan_block",
+   "actor": "system",
+   "created_at": "2026-10-21T13:25:23.958848+00:00",
+   "turn_id": null,
+   "content": null,
+   "payload": {
+    "blocks": [
+     {
+      "state": "waiting",
+      "detail": null,
+      "intent": false,
+      "changed": false,
+      "skipped": false,
+      "summary": null,
+      "revision": 0,
+      "decided_at": null,
+      "section_id": "title"
+     },
+     {
+      "state": "waiting",
+      "detail": null,
+      "intent": false,
+      "changed": false,
+      "skipped": false,
+      "summary": null,
+      "revision": 0,
+      "decided_at": null,
+      "section_id": "clips"
+     },
+     {
+      "state": "waiting",
+      "detail": null,
+      "intent": false,
+      "changed": false,
+      "skipped": false,
+      "summary": null,
+      "revision": 0,
+      "decided_at": null,
+      "section_id": "captions"
+     },
+     {
+      "state": "waiting",
+      "detail": null,
+      "intent": false,
+      "changed": false,
+      "skipped": false,
+      "summary": null,
+      "revision": 0,
+      "decided_at": null,
+      "section_id": "music"
+     },
+     {
+      "state": "waiting",
+      "detail": null,
+      "intent": false,
+      "changed": false,
+      "skipped": false,
+      "summary": null,
+      "revision": 0,
+      "decided_at": null,
+      "section_id": "sfx"
+     },
+     {
+      "state": "waiting",
+      "detail": null,
+      "intent": false,
+      "changed": false,
+      "skipped": false,
+      "summary": null,
+      "revision": 0,
+      "decided_at": null,
+      "section_id": "overlays"
+     },
+     {
+      "state": "waiting",
+      "detail": null,
+      "intent": false,
+      "changed": false,
+      "skipped": false,
+      "summary": null,
+      "revision": 0,
+      "decided_at": null,
+      "section_id": "look"
+     },
+     {
+      "state": "waiting",
+      "detail": null,
+      "intent": false,
+      "changed": false,
+      "skipped": false,
+      "summary": null,
+      "revision": 0,
+      "decided_at": null,
+      "section_id": "post_caption"
+     }
+    ],
+    "job_id": "0701fcc9-748b-4ac9-a640-130c125c0c17",
+    "turn_id": "20678ae6-a47d-43b1-b22f-b48a8c971166"
+   }
+  },
+  {
+   "sequence": 15,
+   "kind": "assistant_render_failed",
+   "actor": "assistant",
+   "created_at": "2026-10-21T13:28:17.976754+00:00",
+   "turn_id": null,
+   "content": "This edit uses something your iPhone can't render yet. Start a new edit with a different clip or format. Tell me which option you want and I'll continue.",
+   "payload": {
+    "code": "phone_plan_unsupported",
+    "title": "Your video wasn't made",
+    "job_id": "0701fcc9-748b-4ac9-a640-130c125c0c17",
+    "status": "failed",
+    "turn_id": "20678ae6-a47d-43b1-b22f-b48a8c971166",
+    "recovery": "ask_user",
+    "receipt_ids": [
+     "6f7074e8-e2e5-4c23-9412-5d0ddd29adb2"
+    ],
+    "execution_id": "6f7074e8-e2e5-4c23-9412-5d0ddd29adb2",
+    "decline_reason": "needs_choice"
+   }
+  },
+  {
+   "sequence": 16,
+   "kind": "user_message",
+   "actor": "user",
+   "created_at": "2026-10-21T13:34:34.860623+00:00",
+   "turn_id": "5dee6f65-7283-4e0f-9c93-50558b514c59",
+   "content": "Continue without a fixed order",
+   "payload": {
+    "turn_id": "5dee6f65-7283-4e0f-9c93-50558b514c59",
+    "turn_status": "pending",
+    "request_digest": "e5dc8afbae86c6b045575ea2b03ca007795f47e05702e18b151c12d4224d25d9",
+    "runtime_version": 2
+   }
+  },
+  {
+   "sequence": 17,
+   "kind": "draft_applied",
+   "actor": "assistant",
+   "created_at": "2026-10-21T13:34:54.623628+00:00",
+   "turn_id": null,
+   "content": "Not everything you asked for made it in:\n- Partly: About 35 seconds (A Talking edit keeps your whole take, so its length follows your clip; your take is 68.4s and you asked for 35s)\n- Done: Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam'\n- Done: Cut the half question 'how are you gonna'\n- Done: Title on screen, placed so there is no text on her face or on the plate (\"Colombian dessert, Ecuadorian hands\")",
+   "payload": {
+    "changes": [
+     "Balanced pacing",
+     "Subtitled format"
+    ],
+    "turn_id": "5dee6f65-7283-4e0f-9c93-50558b514c59",
+    "can_undo": true,
+    "draft_id": "6776ed89-aed6-46eb-b8bf-eba7e2f564a2",
+    "receipt_ids": [
+     "e101efd8-df2e-4705-b20a-d37c43300a1f"
+    ],
+    "snapshot_hash": "66d62fb16c90b409529a377ef22ebb0dd63f4e3401308cda5aed9c0ed0f97c34",
+    "draft_revision": 1,
+    "requirement_receipts": [
+     {
+      "stage": "checked",
+      "reason": "A Talking edit keeps your whole take, so its length follows your clip; your take is 68.4s and you asked for 35s",
+      "status": "partial",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 2,
+      "generation_id": null,
+      "requirement_id": "r1",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "checked",
+      "reason": null,
+      "status": "met",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 2,
+      "generation_id": null,
+      "requirement_id": "r3",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "checked",
+      "reason": null,
+      "status": "met",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 2,
+      "generation_id": null,
+      "requirement_id": "r4",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "checked",
+      "reason": null,
+      "status": "met",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 2,
+      "generation_id": null,
+      "requirement_id": "r6",
+      "inferred_labels": [],
+      "target_media_ids": []
+     }
+    ]
+   }
+  },
+  {
+   "sequence": 18,
+   "kind": "approval_requested",
+   "actor": "system",
+   "created_at": "2026-10-21T13:34:54.623628+00:00",
+   "turn_id": null,
+   "content": null,
+   "payload": {
+    "turn_id": "5dee6f65-7283-4e0f-9c93-50558b514c59",
+    "draft_id": "6776ed89-aed6-46eb-b8bf-eba7e2f564a2",
+    "expires_at": "2026-10-21T14:04:54.703456+00:00",
+    "approval_id": "a8bede7b-15db-4d62-a85d-0851663de4b8",
+    "artifact_key": "approval:a8bede7b-15db-4d62-a85d-0851663de4b8",
+    "cost_summary": "One render",
+    "draft_revision": 1,
+    "consequence_summary": "Render this draft: Not everything you asked for made it in:\n- Partly: About 35 seconds (A Talking edit keeps your whole take, so its length follows your clip; your take is 68.4s and you asked for 35s)\n- Done: Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam'\n- Done: Cut the half question 'how are you gonna'\n- Done: Title on screen, placed so there is no text on her face or on the plate (\"Colombian dessert, Ecuadorian hands\")"
+   }
+  },
+  {
+   "sequence": 19,
+   "kind": "approval_approved",
+   "actor": "system",
+   "created_at": "2026-10-21T13:39:06.321028+00:00",
+   "turn_id": null,
+   "content": null,
+   "payload": {
+    "turn_id": "5dee6f65-7283-4e0f-9c93-50558b514c59",
+    "draft_id": "6776ed89-aed6-46eb-b8bf-eba7e2f564a2",
+    "approval_id": "a8bede7b-15db-4d62-a85d-0851663de4b8",
+    "draft_revision": 1,
+    "render_dispatched": false
+   }
+  },
+  {
+   "sequence": 20,
+   "kind": "render_queued",
+   "actor": "system",
+   "created_at": "2026-10-21T13:39:06.626117+00:00",
+   "turn_id": null,
+   "content": null,
+   "payload": {
+    "job_id": "f88555bc-ddd3-4320-b078-c58f17a275be",
+    "status": "queued",
+    "turn_id": "5dee6f65-7283-4e0f-9c93-50558b514c59",
+    "variant_id": null,
+    "approval_id": "a8bede7b-15db-4d62-a85d-0851663de4b8",
+    "receipt_ids": [
+     "e9881c4d-f9a6-4348-9165-de74119324a2"
+    ],
+    "artifact_key": "job:f88555bc-ddd3-4320-b078-c58f17a275be",
+    "execution_id": "e9881c4d-f9a6-4348-9165-de74119324a2",
+    "generation_id": null
+   }
+  },
+  {
+   "sequence": 21,
+   "kind": "plan_block",
+   "actor": "system",
+   "created_at": "2026-10-21T13:39:06.626117+00:00",
+   "turn_id": null,
+   "content": null,
+   "payload": {
+    "blocks": [
+     {
+      "state": "waiting",
+      "detail": null,
+      "intent": false,
+      "changed": false,
+      "skipped": false,
+      "summary": null,
+      "revision": 0,
+      "decided_at": null,
+      "section_id": "title"
+     },
+     {
+      "state": "waiting",
+      "detail": null,
+      "intent": false,
+      "changed": false,
+      "skipped": false,
+      "summary": null,
+      "revision": 0,
+      "decided_at": null,
+      "section_id": "clips"
+     },
+     {
+      "state": "waiting",
+      "detail": null,
+      "intent": false,
+      "changed": false,
+      "skipped": false,
+      "summary": null,
+      "revision": 0,
+      "decided_at": null,
+      "section_id": "captions"
+     },
+     {
+      "state": "waiting",
+      "detail": null,
+      "intent": false,
+      "changed": false,
+      "skipped": false,
+      "summary": null,
+      "revision": 0,
+      "decided_at": null,
+      "section_id": "music"
+     },
+     {
+      "state": "waiting",
+      "detail": null,
+      "intent": false,
+      "changed": false,
+      "skipped": false,
+      "summary": null,
+      "revision": 0,
+      "decided_at": null,
+      "section_id": "sfx"
+     },
+     {
+      "state": "waiting",
+      "detail": null,
+      "intent": false,
+      "changed": false,
+      "skipped": false,
+      "summary": null,
+      "revision": 0,
+      "decided_at": null,
+      "section_id": "overlays"
+     },
+     {
+      "state": "waiting",
+      "detail": null,
+      "intent": false,
+      "changed": false,
+      "skipped": false,
+      "summary": null,
+      "revision": 0,
+      "decided_at": null,
+      "section_id": "look"
+     },
+     {
+      "state": "waiting",
+      "detail": null,
+      "intent": false,
+      "changed": false,
+      "skipped": false,
+      "summary": null,
+      "revision": 0,
+      "decided_at": null,
+      "section_id": "post_caption"
+     }
+    ],
+    "job_id": "f88555bc-ddd3-4320-b078-c58f17a275be",
+    "turn_id": "5dee6f65-7283-4e0f-9c93-50558b514c59",
+    "previous_job_id": "0701fcc9-748b-4ac9-a640-130c125c0c17"
+   }
+  },
+  {
+   "sequence": 22,
+   "kind": "assistant_render_failed",
+   "actor": "assistant",
+   "created_at": "2026-10-21T13:39:18.024614+00:00",
+   "turn_id": null,
+   "content": "This edit uses something your iPhone can't render yet. Start a new edit with a different clip or format. Tell me which option you want and I'll continue.",
+   "payload": {
+    "code": "phone_plan_unsupported",
+    "title": "Your video wasn't made",
+    "job_id": "f88555bc-ddd3-4320-b078-c58f17a275be",
+    "status": "failed",
+    "turn_id": "5dee6f65-7283-4e0f-9c93-50558b514c59",
+    "recovery": "ask_user",
+    "receipt_ids": [
+     "e9881c4d-f9a6-4348-9165-de74119324a2"
+    ],
+    "execution_id": "e9881c4d-f9a6-4348-9165-de74119324a2",
+    "decline_reason": "needs_choice"
+   }
+  }
+ ],
+ "brief_v1": {
+  "version": 1,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 35
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "About 35 seconds",
+    "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+   },
+   {
+    "id": "r2",
+    "kind": "order",
+    "facts": {
+     "end": "I'm gonna be here all week",
+     "start": "Hi, I'm Karolina, I'm from Ecuador"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Start at 'Hi, I'm Karolina, I'm from Ecuador' and end right after 'I'm gonna be here all week'",
+    "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+   },
+   {
+    "id": "r3",
+    "kind": "audio",
+    "facts": {
+     "speech_cleanup": true
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam'",
+    "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+   },
+   {
+    "id": "r4",
+    "kind": "audio",
+    "facts": {
+     "speech_cleanup": true
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Cut the half question 'how are you gonna'",
+    "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+   },
+   {
+    "id": "r5",
+    "kind": "style",
+    "facts": {
+     "captions": "on"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Captions for both voices, ensuring correct spellings: Oblea de la Casa, dulce de leche, leche condensada, Merope",
+    "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+   },
+   {
+    "id": "r6",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Colombian dessert, Ecuadorian hands",
+    "description": "Title on screen, placed so there is no text on her face or on the plate",
+    "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+   },
+   {
+    "id": "r7",
+    "kind": "text",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": "MEROPE",
+    "description": "Show MEROPE in big letters the first time she says Merope, placed so there is no text on her face or on the plate",
+    "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+   }
+  ]
+ },
+ "brief_v1_text": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [timing/global] About 35 seconds facts={duration_s: 35}\n- [r2] [order/global] Start at 'Hi, I'm Karolina, I'm from Ecuador' and end right after 'I'm gonna be here all week' facts={end: I'm gonna be here all week; start: Hi, I'm Karolina, I'm from Ecuador}\n- [r3] [audio/global] Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam' facts={speech_cleanup: true}\n- [r4] [audio/global] Cut the half question 'how are you gonna' facts={speech_cleanup: true}\n- [r5] [style/global] Captions for both voices, ensuring correct spellings: Oblea de la Casa, dulce de leche, leche condensada, Merope facts={captions: on}\n- [r6] [text/title] Title on screen, placed so there is no text on her face or on the plate (\"Colombian dessert, Ecuadorian hands\")\n- [r7] [text/global] Show MEROPE in big letters the first time she says Merope, placed so there is no text on her face or on the plate (\"MEROPE\")\nLatest message: Use the order you added the clips",
+ "binding": {
+  "thread_id": "32a5b608-6397-4608-889f-dff5ad9bec40",
+  "brief": {
+   "version": 2,
+   "requirements": [
+    {
+     "id": "r1",
+     "kind": "timing",
+     "facts": {
+      "duration_s": 35
+     },
+     "scope": "global",
+     "status": "open",
+     "literal": null,
+     "description": "About 35 seconds",
+     "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+    },
+    {
+     "id": "r2",
+     "kind": "order",
+     "facts": {
+      "end": "I'm gonna be here all week",
+      "key": "attachment",
+      "start": "Hi, I'm Karolina, I'm from Ecuador"
+     },
+     "scope": "global",
+     "status": "open",
+     "literal": null,
+     "description": "in the order the clips were added",
+     "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+    },
+    {
+     "id": "r3",
+     "kind": "audio",
+     "facts": {
+      "speech_cleanup": true
+     },
+     "scope": "global",
+     "status": "open",
+     "literal": null,
+     "description": "Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam'",
+     "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+    },
+    {
+     "id": "r4",
+     "kind": "audio",
+     "facts": {
+      "speech_cleanup": true
+     },
+     "scope": "global",
+     "status": "open",
+     "literal": null,
+     "description": "Cut the half question 'how are you gonna'",
+     "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+    },
+    {
+     "id": "r5",
+     "kind": "style",
+     "facts": {
+      "captions": "on"
+     },
+     "scope": "global",
+     "status": "open",
+     "literal": null,
+     "description": "Captions for both voices, ensuring correct spellings: Oblea de la Casa, dulce de leche, leche condensada, Merope",
+     "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+    },
+    {
+     "id": "r6",
+     "kind": "text",
+     "facts": {},
+     "scope": "title",
+     "status": "open",
+     "literal": "Colombian dessert, Ecuadorian hands",
+     "description": "Title on screen, placed so there is no text on her face or on the plate",
+     "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+    },
+    {
+     "id": "r7",
+     "kind": "text",
+     "facts": {},
+     "scope": "global",
+     "status": "superseded",
+     "literal": "MEROPE",
+     "description": "Show MEROPE in big letters the first time she says Merope, placed so there is no text on her face or on the plate",
+     "source_turn_id": "d02b5630-d3fd-492c-a749-0a7383cf91a1"
+    }
+   ]
+  },
+  "choice_answers": [
+   {
+    "kind": "order_basis",
+    "option": "attachment_order",
+    "source": "creator",
+    "conflict": "order_basis",
+    "input_digest": "a48e489839d3d2c2a8a12e1a",
+    "requirement_ids": [
+     "r2"
+    ]
+   }
+  ]
+ },
+ "take_row": {
+  "kind": "video",
+  "capture": {
+   "capture_time": "2026-10-16T15:24:17Z"
+  },
+  "shot_id": null,
+  "analysis": {
+   "width": 320,
+   "aspect": 0.5634,
+   "brands": [],
+   "height": 568,
+   "source": "clip_metadata",
+   "pix_fmt": "yuv420p",
+   "subject": "woman presenting a dessert",
+   "duration_s": 68.37,
+   "transcript": "Um yes, we will show. Um. Merhaba arkadaşlar, hello everyone. Uh we are with Caro today. Caro, can you describe, can you uh just tell about yourself, two sentences maybe? Who you are, where you're from? Hi, I'm Carolina from Ecuador. And this is the Oblea de la Casa. It's a traditional uh Colombian dessert. It's waffle cookie with uh red, no with blackberry jam, uh cheese, dulce de leche, uh leche condensada and whipped cream. That's it. Delicious. Yes, and um where we are right now, Meropa, how you gonna? Merope uh it's a Colombian coffee and restaurant, and Merope means uh god of honey. Yeah, we definitely recommend coming to Merope, right? Yeah, exactly. I'm gonna be here all week. Nice, nice. Cheers, thank you. There you go, you should. Okay. A second, take the first bite. Taste this. The coffee is really good here as well. Yeah, it's Colombian. How is it? Thank you. Thank you. Thank you, Caro. Yeah, thank you, Caro. Bye bye.",
+   "description": "And this is the Oblea de la Casa. It's a traditional uh Colombian dessert.",
+   "video_codec": "h264",
+   "best_moments": [],
+   "display_width": 320,
+   "understanding": {
+    "kind": "video",
+    "brands": [
+     "MEROPE"
+    ],
+    "people": {
+     "note": "a woman in a t-shirt and shorts, a man in a black jacket and white t-shirt, and another person briefly in the background",
+     "count": 3,
+     "speaks_to_camera": true
+    },
+    "speech": {
+     "language": "en",
+     "segments": [
+      {
+       "text": "Yes we will show.",
+       "end_s": 1.46,
+       "start_s": 0.0
+      },
+      {
+       "text": "Merhaba arkadaşlar, hello everyone.",
+       "end_s": 4.44,
+       "start_s": 2.72
+      },
+      {
+       "text": "We are with Karo today.",
+       "end_s": 6.54,
+       "start_s": 4.86
+      },
+      {
+       "text": "Karo, can you describe, can you just tell about yourself, two sentences maybe, who you are, where you're from.",
+       "end_s": 11.78,
+       "start_s": 6.88
+      },
+      {
+       "text": "Hi, I'm Carolina, I'm from Ecuador.",
+       "end_s": 13.58,
+       "start_s": 12.04
+      },
+      {
+       "text": "This is the Oblea de la Casa.",
+       "end_s": 16.88,
+       "start_s": 14.54
+      },
+      {
+       "text": "It's a traditional Colombian dessert.",
+       "end_s": 20.62,
+       "start_s": 17.2
+      },
+      {
+       "text": "It's wafer cookie with red, no, with blackberry jam,",
+       "end_s": 26.66,
+       "start_s": 20.62
+      },
+      {
+       "text": "cheese, dulce de leche,",
+       "end_s": 29.12,
+       "start_s": 27.48
+      },
+      {
+       "text": "leche condensada and whipped cream.",
+       "end_s": 34.46,
+       "start_s": 30.18
+      },
+      {
+       "text": "Nice, delicious.",
+       "end_s": 35.54,
+       "start_s": 34.96
+      },
+      {
+       "text": "That's it.",
+       "end_s": 36.28,
+       "start_s": 35.74
+      },
+      {
+       "text": "And where we are right now is Merope, how are you going to...",
+       "end_s": 40.04,
+       "start_s": 36.9
+      },
+      {
+       "text": "Merope, it's a Colombian coffee and restaurant and Merope means god of honey.",
+       "end_s": 45.48,
+       "start_s": 40.04
+      },
+      {
+       "text": "Yeah, we definitely recommend coming to Merope, right?",
+       "end_s": 47.84,
+       "start_s": 45.62
+      },
+      {
+       "text": "Yeah, come back please, I'm gonna be here all week.",
+       "end_s": 50.3,
+       "start_s": 47.84
+      },
+      {
+       "text": "Nice, nice, cheers, thank you.",
+       "end_s": 51.94,
+       "start_s": 50.66
+      },
+      {
+       "text": "There you go, you should do this.",
+       "end_s": 53.1,
+       "start_s": 51.98
+      },
+      {
+       "text": "Take the first bite.",
+       "end_s": 54.42,
+       "start_s": 53.42
+      },
+      {
+       "text": "The coffee is really good here as well.",
+       "end_s": 58.36,
+       "start_s": 56.76
+      },
+      {
+       "text": "Yeah, it's Colombian.",
+       "end_s": 59.2,
+       "start_s": 58.56
+      },
+      {
+       "text": "Thank you, thank you Karo.",
+       "end_s": 65.56,
+       "start_s": 64.28
+      },
+      {
+       "text": "Thank you Karo, bye bye.",
+       "end_s": 67.36,
+       "start_s": 65.92
+      }
+     ],
+     "to_camera": true,
+     "has_speech": true,
+     "transcript": "Um yes, we will show. Um. Merhaba arkadaşlar, hello everyone. Uh we are with Caro today. Caro, can you describe, can you uh just tell about yourself, two sentences maybe? Who you are, where you're from? Hi, I'm Carolina from Ecuador. And this is the Oblea de la Casa. It's a traditional uh Colombian dessert. It's waffle cookie with uh red, no with blackberry jam, uh cheese, dulce de leche, uh leche condensada and whipped cream. That's it. Delicious. Yes, and um where we are right now, Meropa, how you gonna? Merope uh it's a Colombian coffee and restaurant, and Merope means uh god of honey. Yeah, we definitely recommend coming to Merope, right? Yeah, exactly. I'm gonna be here all week. Nice, nice. Cheers, thank you. There you go, you should. Okay. A second, take the first bite. Taste this. The coffee is really good here as well. Yeah, it's Colombian. How is it? Thank you. Thank you. Thank you, Caro. Yeah, thank you, Caro. Bye bye."
+    },
+    "setting": "outdoor patio of a cafe/restaurant",
+    "subject": "woman presenting a dessert",
+    "summary": "A woman from Ecuador introduces a traditional Colombian dessert called \"Oblea de la Casa\" at a Colombian coffee and restaurant named Merope. She describes its ingredients and then a man takes a bite.",
+    "activity": "presenting a dessert and explaining its ingredients, then a man taking a bite of the dessert",
+    "audio_type": "dialogue",
+    "content_type": "talking_head",
+    "on_screen_text": "",
+    "notable_moments": []
+   },
+   "display_height": 568,
+   "on_screen_text": "Um yes, we will show. Um. Merhaba arkadaşlar, hello everyone. Uh we are with Caro today. Caro, can you describe, can you uh just tell about yourself, two sentences maybe? Who you are, where you're from? Hi, I'm Carolina from Ecuador. And this is the Oblea de la Casa. It's a traditional uh Colombian dessert. It's waffle cookie with uh red, no with blackberry jam, uh cheese, dulce de leche, uh leche",
+   "analysis_version": 8,
+   "rotation_degrees": 0
+  },
+  "has_audio": true,
+  "duration_s": 68.37,
+  "upload_contract": {
+   "proxy": {
+    "width": 320,
+    "height": 568,
+    "original": {
+     "kind": "video",
+     "width": 1080,
+     "height": 1920,
+     "sha256": "66b42816bfdab0cb46b935a14a7d08bddd5ef85b6b9b911328d6d3306af0ae99",
+     "has_audio": true,
+     "byte_count": 55291210,
+     "duration_s": 68.367,
+     "orientation_degrees": 0
+    },
+    "duration_s": 68.36666666666666,
+    "frame_rate": 30.0,
+    "timing_version": 1,
+    "orientation_degrees": 0
+   },
+   "purpose": "analysis_proxy"
+  },
+  "media_id": "analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4",
+  "gcs_path": "users/48b4c528-e227-50e3-9e0f-e06af2c18099/creation-threads/32a5b608-6397-4608-889f-dff5ad9bec40/analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4",
+  "manifest_identity": "analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4",
+  "storage_generation": "1"
+ },
+ "renders": [
+  {
+   "job_id": "0701fcc9-748b-4ac9-a640-130c125c0c17",
+   "turn_id": "20678ae6-a47d-43b1-b22f-b48a8c971166",
+   "draft_id": "dc73ada2-40a0-40ab-9ece-fbbb15f6d975",
+   "approval_id": "a7b2152f-ce50-4b5c-8f93-9d1a04e0cc94",
+   "approved_at": "2026-10-21T13:25:23.475436+00:00",
+   "dispatched_at": "2026-10-21T13:25:23.958848+00:00",
+   "job_created_at": "2026-10-21T13:25:23.755436Z",
+   "job_finished_at": "2026-10-21T13:27:47.062883Z",
+   "draft_summary": "Generating your subtitled edit. This will apply your title, place the MEROPE text safely in the corner, and prepare the captions for your specific spellings. I left out on-screen text that wasn't in your words. I'm using the order you added the clips.",
+   "draft_strategy": {
+    "pacing": "balanced",
+    "direction": "native",
+    "rationale": "Proceeding with the simpler subtitled edit. This passes your exact title and label positioning to the native renderer to keep text off faces and the plate, while automated pause removal handles the audio cleanup you requested.",
+    "edit_format": "subtitled",
+    "media_scope": "selected",
+    "caption_style": "auto",
+    "opening_title": "Colombian dessert, Ecuadorian hands",
+    "audio_strategy": "original_audio",
+    "choice_answers": [
+     {
+      "kind": "order_basis",
+      "option": "attachment_order",
+      "source": "creator",
+      "conflict": "order_basis",
+      "input_digest": "a48e489839d3d2c2a8a12e1a",
+      "requirement_ids": [
+       "r2"
+      ]
+     }
+    ],
+    "render_program": "native",
+    "story_structure": [
+     "Carolina introduces herself",
+     "She describes the Oblea de la Casa ingredients"
+    ],
+    "target_duration_s": 35,
+    "selected_media_ids": [
+     "analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4"
+    ],
+    "video_reuse_policy": "once",
+    "optional_treatments": []
+   },
+   "draft_reply": "Here's the simpler version.\n- Partly: About 35 seconds (A Talking edit keeps your whole take, so its length follows your clip; your take is 68.4s and you asked for 35s)\n- Partly: Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam' (Choose Clean up speech when you approve and the long pauses are cut)\n- Partly: Cut the half question 'how are you gonna' (Choose Clean up speech when you approve and the long pauses are cut)\n- Done: Title on screen, placed so there is no text on her face or on the plate (\"Colombian dessert, Ecuadorian hands\")\nHave a look at these in the video:\n- in the order the clips were added\n- Left out as agreed: Show MEROPE in big letters the first time she says Merope, placed so there is no text on her face or on the plate (\"MEROPE\")",
+   "draft_receipts": [
+    {
+     "stage": "checked",
+     "reason": "A Talking edit keeps your whole take, so its length follows your clip; your take is 68.4s and you asked for 35s",
+     "status": "partial",
+     "inferred": [],
+     "verification": "checked",
+     "brief_version": 2,
+     "generation_id": null,
+     "requirement_id": "r1",
+     "inferred_labels": [],
+     "target_media_ids": []
+    },
+    {
+     "stage": "checked",
+     "reason": "Choose Clean up speech when you approve and the long pauses are cut",
+     "status": "partial",
+     "inferred": [],
+     "verification": "checked",
+     "brief_version": 2,
+     "generation_id": null,
+     "requirement_id": "r3",
+     "inferred_labels": [],
+     "target_media_ids": []
+    },
+    {
+     "stage": "checked",
+     "reason": "Choose Clean up speech when you approve and the long pauses are cut",
+     "status": "partial",
+     "inferred": [],
+     "verification": "checked",
+     "brief_version": 2,
+     "generation_id": null,
+     "requirement_id": "r4",
+     "inferred_labels": [],
+     "target_media_ids": []
+    },
+    {
+     "stage": "checked",
+     "reason": null,
+     "status": "met",
+     "inferred": [],
+     "verification": "checked",
+     "brief_version": 2,
+     "generation_id": null,
+     "requirement_id": "r6",
+     "inferred_labels": [],
+     "target_media_ids": []
+    }
+   ],
+   "approval_summary": "Render this draft: Here's the simpler version.\n- Partly: About 35 seconds (A Talking edit keeps your whole take, so its length follows your clip; your take is 68.4s and you asked for 35s)\n- Partly: Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam' (Choose Clean up speech when you approve and the long pauses are cut)\n- Partly: Cut the half question 'how are you gonna' (Choose Clean up speech when you approve and the long pauses are cut)\n- Done: Title on screen, placed so there is no text on her face or on the plate (\"Colombian dessert, Ecuadorian hands\")\nHave a look at these in the video:\n- in the order the clips were added\n- Left out as agreed: Show MEROPE in big letters the first time she says Merope, placed so there is no text on her face or on the plate (\"MEROPE\")",
+   "job_strategy": {
+    "pacing": "balanced",
+    "direction": "native",
+    "rationale": "Proceeding with the simpler subtitled edit. This passes your exact title and label positioning to the native renderer to keep text off faces and the plate, while automated pause removal handles the audio cleanup you requested.",
+    "edit_format": "subtitled",
+    "media_scope": "selected",
+    "caption_style": "auto",
+    "opening_title": "Colombian dessert, Ecuadorian hands",
+    "audio_strategy": "original_audio",
+    "render_program": "native",
+    "story_structure": [
+     "Carolina introduces herself",
+     "She describes the Oblea de la Casa ingredients"
+    ],
+    "target_duration_s": 35,
+    "selected_media_ids": [
+     "analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4"
+    ],
+    "video_reuse_policy": "once",
+    "optional_treatments": []
+   },
+   "job_creator_request": "Full creator request (chronological):\nTalking-to-camera edit of Caro at Merope. Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\". Cut her slip \"with bread, no,\" so it says \"waffle cookie with blackberry jam\". Also cut my half question \"how are you gonna\". Captions for both voices, and spell these right: Oblea de la Casa, dulce de leche, leche condensada, Merope. Title: \"Colombian dessert, Ecuadorian hands\". Show \"MEROPE\" in big letters the first time she says Merope. No text on her face or on the plate. About 35 seconds.\nUse the order you added the clips\nMake this simpler version\n\nCreative brief v2 (everything the creator has asked for, still in force):\n- [r1] [timing/global] About 35 seconds facts={duration_s: 35}\n- [r2] [order/global] in the order the clips were added facts={end: I'm gonna be here all week; key: attachment; start: Hi, I'm Karolina, I'm from Ecuador}\n- [r3] [audio/global] Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam' facts={speech_cleanup: true}\n- [r4] [audio/global] Cut the half question 'how are you gonna' facts={speech_cleanup: true}\n- [r5] [style/global] Captions for both voices, ensuring correct spellings: Oblea de la Casa, dulce de leche, leche condensada, Merope facts={captions: on}\n- [r6] [text/title] Title on screen, placed so there is no text on her face or on the plate (\"Colombian dessert, Ecuadorian hands\")\nLatest message: Make this simpler version\n\nSuperseded requirements (historical only; do not reintroduce). The current creative brief above is authoritative:\n- r7: Show MEROPE in big letters the first time she says Merope, placed so there is no text on her face or on the plate (\"MEROPE\")",
+   "edit_format": "subtitled",
+   "generation_id": "7cf22e7e41dd4c51b01b9dbb23dd2aec",
+   "prod_contract": {
+    "digest": "44d68d308e2b29aa8b3f7992994d4acc65958fc1650ee558725e60a1b1ff2736",
+    "version": 1,
+    "order_ids": [],
+    "duration_s": 35.0,
+    "unresolved": [
+     "I can't verify this ordering rule from the approved media."
+    ],
+    "exact_texts": [
+     {
+      "role": "opening",
+      "text": "Colombian dessert, Ecuadorian hands",
+      "duration_s": null,
+      "shot_index": null
+     },
+     {
+      "role": "any",
+      "text": "Colombian dessert, Ecuadorian hands",
+      "duration_s": null,
+      "shot_index": null
+     }
+    ],
+    "order_basis": "capture_time",
+    "brief_digest": "366d0bf5137cbd3d3e54816ab2c88160619d2d3ea8de95cf13757e78cd570220",
+    "order_required": true,
+    "original_audio": "require",
+    "strategy_digest": "00f28903908c274edb45ad0808d4789e611f8124e0a8fb6d758f9ea09185cff0",
+    "require_voiceover": false
+   },
+   "prod_failure": {
+    "status": "processing_failed",
+    "failure_reason": "phone_plan_unsupported",
+    "error_detail": "I can't verify this ordering rule from the approved media.",
+    "creator_decline": {
+     "alternative": "Tell me which option you want and I'll continue.",
+     "decline_reason": "needs_choice",
+     "failure_reason": "phone_plan_unsupported"
+    }
+   },
+   "prod_card": {
+    "content": "This edit uses something your iPhone can't render yet. Start a new edit with a different clip or format. Tell me which option you want and I'll continue.",
+    "payload": {
+     "code": "phone_plan_unsupported",
+     "title": "Your video wasn't made",
+     "job_id": "0701fcc9-748b-4ac9-a640-130c125c0c17",
+     "status": "failed",
+     "turn_id": "20678ae6-a47d-43b1-b22f-b48a8c971166",
+     "recovery": "ask_user",
+     "receipt_ids": [
+      "6f7074e8-e2e5-4c23-9412-5d0ddd29adb2"
+     ],
+     "execution_id": "6f7074e8-e2e5-4c23-9412-5d0ddd29adb2",
+     "decline_reason": "needs_choice"
+    }
+   },
+   "speech_cleanup": {
+    "requested": true,
+    "contract": "required_v1",
+    "preflight": {
+     "analysis_id": "02db8199-5314-4484-9d3d-15f00ecb8458",
+     "source_kind": "embedded_spine",
+     "detector_version": "mixed-gap-v4",
+     "explicit_choice": "clean",
+     "preflight_snapshot_reused": true,
+     "execution_contract": "required_v1",
+     "final_outcome": null
+    }
+   }
+  },
+  {
+   "job_id": "f88555bc-ddd3-4320-b078-c58f17a275be",
+   "turn_id": "5dee6f65-7283-4e0f-9c93-50558b514c59",
+   "draft_id": "6776ed89-aed6-46eb-b8bf-eba7e2f564a2",
+   "approval_id": "a8bede7b-15db-4d62-a85d-0851663de4b8",
+   "approved_at": "2026-10-21T13:39:06.321028+00:00",
+   "dispatched_at": "2026-10-21T13:39:06.626117+00:00",
+   "job_created_at": "2026-10-21T13:39:06.517992Z",
+   "job_finished_at": "2026-10-21T13:39:06.776852Z",
+   "draft_summary": "I'll build the native Subtitled edit on your device. It will include your title, clean up the speech slips, and add captions with correct spellings for both voices. I'm using the order you added the clips.",
+   "draft_strategy": {
+    "pacing": "balanced",
+    "direction": "native",
+    "rationale": "Switching to the native pipeline so the video can render directly on your phone. This preserves the 35-second target length, exact text, accurate captions for the dessert ingredients, and cuts out the spoken slips you specified.",
+    "edit_format": "subtitled",
+    "media_scope": "selected",
+    "caption_style": "clean",
+    "opening_title": "Colombian dessert, Ecuadorian hands",
+    "audio_strategy": "original_audio",
+    "choice_answers": [
+     {
+      "kind": "order_basis",
+      "option": "attachment_order",
+      "source": "creator",
+      "conflict": "order_basis",
+      "input_digest": "a48e489839d3d2c2a8a12e1a",
+      "requirement_ids": [
+       "r2"
+      ]
+     }
+    ],
+    "render_program": "native",
+    "story_structure": [
+     "Carolina introduces herself",
+     "Carolina describes the Oblea de la Casa and its ingredients"
+    ],
+    "target_duration_s": 35,
+    "selected_media_ids": [
+     "analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4"
+    ],
+    "video_reuse_policy": "once",
+    "optional_treatments": []
+   },
+   "draft_reply": "Not everything you asked for made it in:\n- Partly: About 35 seconds (A Talking edit keeps your whole take, so its length follows your clip; your take is 68.4s and you asked for 35s)\n- Done: Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam'\n- Done: Cut the half question 'how are you gonna'\n- Done: Title on screen, placed so there is no text on her face or on the plate (\"Colombian dessert, Ecuadorian hands\")",
+   "draft_receipts": [
+    {
+     "stage": "checked",
+     "reason": "A Talking edit keeps your whole take, so its length follows your clip; your take is 68.4s and you asked for 35s",
+     "status": "partial",
+     "inferred": [],
+     "verification": "checked",
+     "brief_version": 2,
+     "generation_id": null,
+     "requirement_id": "r1",
+     "inferred_labels": [],
+     "target_media_ids": []
+    },
+    {
+     "stage": "checked",
+     "reason": null,
+     "status": "met",
+     "inferred": [],
+     "verification": "checked",
+     "brief_version": 2,
+     "generation_id": null,
+     "requirement_id": "r3",
+     "inferred_labels": [],
+     "target_media_ids": []
+    },
+    {
+     "stage": "checked",
+     "reason": null,
+     "status": "met",
+     "inferred": [],
+     "verification": "checked",
+     "brief_version": 2,
+     "generation_id": null,
+     "requirement_id": "r4",
+     "inferred_labels": [],
+     "target_media_ids": []
+    },
+    {
+     "stage": "checked",
+     "reason": null,
+     "status": "met",
+     "inferred": [],
+     "verification": "checked",
+     "brief_version": 2,
+     "generation_id": null,
+     "requirement_id": "r6",
+     "inferred_labels": [],
+     "target_media_ids": []
+    }
+   ],
+   "approval_summary": "Render this draft: Not everything you asked for made it in:\n- Partly: About 35 seconds (A Talking edit keeps your whole take, so its length follows your clip; your take is 68.4s and you asked for 35s)\n- Done: Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam'\n- Done: Cut the half question 'how are you gonna'\n- Done: Title on screen, placed so there is no text on her face or on the plate (\"Colombian dessert, Ecuadorian hands\")",
+   "job_strategy": {
+    "pacing": "balanced",
+    "direction": "native",
+    "rationale": "Switching to the native pipeline so the video can render directly on your phone. This preserves the 35-second target length, exact text, accurate captions for the dessert ingredients, and cuts out the spoken slips you specified.",
+    "edit_format": "subtitled",
+    "media_scope": "selected",
+    "caption_style": "clean",
+    "opening_title": "Colombian dessert, Ecuadorian hands",
+    "audio_strategy": "original_audio",
+    "render_program": "native",
+    "story_structure": [
+     "Carolina introduces herself",
+     "Carolina describes the Oblea de la Casa and its ingredients"
+    ],
+    "target_duration_s": 35,
+    "selected_media_ids": [
+     "analysis-proxy-ios-B22C7409-7CF4-4226-9E9F-CC6814A8D942.mp4"
+    ],
+    "video_reuse_policy": "once",
+    "optional_treatments": []
+   },
+   "job_creator_request": "Full creator request (chronological):\nTalking-to-camera edit of Caro at Merope. Start at \"Hi, I'm Karolina, I'm from Ecuador\" and end right after \"I'm gonna be here all week\". Cut her slip \"with bread, no,\" so it says \"waffle cookie with blackberry jam\". Also cut my half question \"how are you gonna\". Captions for both voices, and spell these right: Oblea de la Casa, dulce de leche, leche condensada, Merope. Title: \"Colombian dessert, Ecuadorian hands\". Show \"MEROPE\" in big letters the first time she says Merope. No text on her face or on the plate. About 35 seconds.\nUse the order you added the clips\nMake this simpler version\nContinue without a fixed order\n\nCreative brief v2 (everything the creator has asked for, still in force):\n- [r1] [timing/global] About 35 seconds facts={duration_s: 35}\n- [r2] [order/global] in the order the clips were added facts={end: I'm gonna be here all week; key: attachment; start: Hi, I'm Karolina, I'm from Ecuador}\n- [r3] [audio/global] Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam' facts={speech_cleanup: true}\n- [r4] [audio/global] Cut the half question 'how are you gonna' facts={speech_cleanup: true}\n- [r5] [style/global] Captions for both voices, ensuring correct spellings: Oblea de la Casa, dulce de leche, leche condensada, Merope facts={captions: on}\n- [r6] [text/title] Title on screen, placed so there is no text on her face or on the plate (\"Colombian dessert, Ecuadorian hands\")\nLatest message: Continue without a fixed order\n\nSuperseded requirements (historical only; do not reintroduce). The current creative brief above is authoritative:\n- r7: Show MEROPE in big letters the first time she says Merope, placed so there is no text on her face or on the plate (\"MEROPE\")",
+   "edit_format": "subtitled",
+   "generation_id": "b5ea9f8fc8b54c1e9b0a82bbf622058c",
+   "prod_contract": {
+    "digest": "251d8a9c1df06e7210e943cc4a87c585bbd86a57bb6634a9ff2c808d7629253a",
+    "version": 1,
+    "order_ids": [],
+    "duration_s": 35.0,
+    "unresolved": [
+     "I can't verify this ordering rule from the approved media."
+    ],
+    "exact_texts": [
+     {
+      "role": "opening",
+      "text": "Colombian dessert, Ecuadorian hands",
+      "duration_s": null,
+      "shot_index": null
+     },
+     {
+      "role": "any",
+      "text": "Colombian dessert, Ecuadorian hands",
+      "duration_s": null,
+      "shot_index": null
+     }
+    ],
+    "order_basis": "capture_time",
+    "brief_digest": "366d0bf5137cbd3d3e54816ab2c88160619d2d3ea8de95cf13757e78cd570220",
+    "order_required": true,
+    "original_audio": "require",
+    "strategy_digest": "3351b44ef794b12e569cc0da531fd1cbaa2992a452aedc15b618aa983c9a00fe",
+    "require_voiceover": false
+   },
+   "prod_failure": {
+    "status": "processing_failed",
+    "failure_reason": "phone_plan_unsupported",
+    "error_detail": "I can't verify this ordering rule from the approved media.",
+    "creator_decline": {
+     "alternative": "Tell me which option you want and I'll continue.",
+     "decline_reason": "needs_choice",
+     "failure_reason": "phone_plan_unsupported"
+    }
+   },
+   "prod_card": {
+    "content": "This edit uses something your iPhone can't render yet. Start a new edit with a different clip or format. Tell me which option you want and I'll continue.",
+    "payload": {
+     "code": "phone_plan_unsupported",
+     "title": "Your video wasn't made",
+     "job_id": "f88555bc-ddd3-4320-b078-c58f17a275be",
+     "status": "failed",
+     "turn_id": "5dee6f65-7283-4e0f-9c93-50558b514c59",
+     "recovery": "ask_user",
+     "receipt_ids": [
+      "e9881c4d-f9a6-4348-9165-de74119324a2"
+     ],
+     "execution_id": "e9881c4d-f9a6-4348-9165-de74119324a2",
+     "decline_reason": "needs_choice"
+    }
+   },
+   "speech_cleanup": {
+    "requested": true,
+    "contract": "required_v1",
+    "preflight": {
+     "analysis_id": "02db8199-5314-4484-9d3d-15f00ecb8458",
+     "source_kind": "embedded_spine",
+     "detector_version": "mixed-gap-v4",
+     "explicit_choice": "clean",
+     "preflight_snapshot_reused": true,
+     "execution_contract": "required_v1",
+     "final_outcome": null
+    }
+   }
+  }
+ ],
+ "take_words_about": "Word timings for the whole take. 0-29.35 s: the run's own nova.audio.transcript words (the proposal-trace export ends its list there). After that: the kit's local whisper.cpp words for the same file (_src/work/words_en.srt). They agree with the prod speech segments on take_row (end line 47.84-50.30 s); before 27 s they drift (\"Hi\" at 14.14 s, prod 12.04 s), so they are not used there.",
+ "take_words": [
+  {
+   "text": "Um",
+   "start_s": 0.05,
+   "end_s": 0.44
+  },
+  {
+   "text": "yes,",
+   "start_s": 0.82,
+   "end_s": 1.12
+  },
+  {
+   "text": "we",
+   "start_s": 1.12,
+   "end_s": 1.18
+  },
+  {
+   "text": "will",
+   "start_s": 1.25,
+   "end_s": 1.4
+  },
+  {
+   "text": "sure.",
+   "start_s": 1.4,
+   "end_s": 1.81
+  },
+  {
+   "text": "Um",
+   "start_s": 2.21,
+   "end_s": 2.45
+  },
+  {
+   "text": "Merhaba",
+   "start_s": 3.06,
+   "end_s": 3.48
+  },
+  {
+   "text": "arkadaşlar.",
+   "start_s": 3.48,
+   "end_s": 4.14
+  },
+  {
+   "text": "Hello",
+   "start_s": 4.14,
+   "end_s": 4.47
+  },
+  {
+   "text": "everyone.",
+   "start_s": 4.47,
+   "end_s": 5.09
+  },
+  {
+   "text": "Uh",
+   "start_s": 5.09,
+   "end_s": 5.58
+  },
+  {
+   "text": "we",
+   "start_s": 5.61,
+   "end_s": 5.69
+  },
+  {
+   "text": "are",
+   "start_s": 5.76,
+   "end_s": 5.9
+  },
+  {
+   "text": "with",
+   "start_s": 6.01,
+   "end_s": 6.22
+  },
+  {
+   "text": "Caro",
+   "start_s": 6.22,
+   "end_s": 6.55
+  },
+  {
+   "text": "today.",
+   "start_s": 6.55,
+   "end_s": 6.94
+  },
+  {
+   "text": "Caro,",
+   "start_s": 7.04,
+   "end_s": 7.37
+  },
+  {
+   "text": "can",
+   "start_s": 7.37,
+   "end_s": 7.5
+  },
+  {
+   "text": "you",
+   "start_s": 7.5,
+   "end_s": 7.63
+  },
+  {
+   "text": "describe",
+   "start_s": 7.63,
+   "end_s": 8.16
+  },
+  {
+   "text": "can",
+   "start_s": 8.16,
+   "end_s": 8.35
+  },
+  {
+   "text": "you",
+   "start_s": 8.62,
+   "end_s": 8.8
+  },
+  {
+   "text": "um",
+   "start_s": 8.8,
+   "end_s": 8.88
+  },
+  {
+   "text": "just",
+   "start_s": 9.07,
+   "end_s": 9.24
+  },
+  {
+   "text": "tell",
+   "start_s": 9.24,
+   "end_s": 9.39
+  },
+  {
+   "text": "about",
+   "start_s": 9.39,
+   "end_s": 9.6
+  },
+  {
+   "text": "yourself",
+   "start_s": 9.6,
+   "end_s": 10.02
+  },
+  {
+   "text": "two",
+   "start_s": 10.02,
+   "end_s": 10.15
+  },
+  {
+   "text": "sentences",
+   "start_s": 10.15,
+   "end_s": 10.59
+  },
+  {
+   "text": "maybe,",
+   "start_s": 10.59,
+   "end_s": 10.96
+  },
+  {
+   "text": "who",
+   "start_s": 11.02,
+   "end_s": 11.23
+  },
+  {
+   "text": "you",
+   "start_s": 11.23,
+   "end_s": 11.41
+  },
+  {
+   "text": "are,",
+   "start_s": 11.41,
+   "end_s": 11.64
+  },
+  {
+   "text": "where",
+   "start_s": 11.64,
+   "end_s": 11.83
+  },
+  {
+   "text": "you're",
+   "start_s": 11.83,
+   "end_s": 11.97
+  },
+  {
+   "text": "from?",
+   "start_s": 11.97,
+   "end_s": 12.18
+  },
+  {
+   "text": "Hi,",
+   "start_s": 12.35,
+   "end_s": 12.63
+  },
+  {
+   "text": "I'm",
+   "start_s": 12.63,
+   "end_s": 12.75
+  },
+  {
+   "text": "Carolina",
+   "start_s": 12.75,
+   "end_s": 13.25
+  },
+  {
+   "text": "from",
+   "start_s": 13.25,
+   "end_s": 13.43
+  },
+  {
+   "text": "Ecuador.",
+   "start_s": 13.43,
+   "end_s": 14.07
+  },
+  {
+   "text": "And",
+   "start_s": 14.77,
+   "end_s": 15.01
+  },
+  {
+   "text": "this",
+   "start_s": 15.01,
+   "end_s": 15.2
+  },
+  {
+   "text": "is",
+   "start_s": 15.2,
+   "end_s": 15.35
+  },
+  {
+   "text": "the",
+   "start_s": 15.65,
+   "end_s": 15.93
+  },
+  {
+   "text": "Ole",
+   "start_s": 16.14,
+   "end_s": 16.48
+  },
+  {
+   "text": "de",
+   "start_s": 16.48,
+   "end_s": 16.63
+  },
+  {
+   "text": "la",
+   "start_s": 16.63,
+   "end_s": 16.79
+  },
+  {
+   "text": "Casa.",
+   "start_s": 16.79,
+   "end_s": 17.2
+  },
+  {
+   "text": "It's",
+   "start_s": 17.3,
+   "end_s": 17.52
+  },
+  {
+   "text": "a",
+   "start_s": 17.52,
+   "end_s": 17.55
+  },
+  {
+   "text": "traditional",
+   "start_s": 17.55,
+   "end_s": 19.06
+  },
+  {
+   "text": "Colombian",
+   "start_s": 19.9,
+   "end_s": 20.46
+  },
+  {
+   "text": "dessert.",
+   "start_s": 20.46,
+   "end_s": 21.01
+  },
+  {
+   "text": "It's",
+   "start_s": 21.1,
+   "end_s": 21.36
+  },
+  {
+   "text": "wafer",
+   "start_s": 21.36,
+   "end_s": 21.73
+  },
+  {
+   "text": "cookie",
+   "start_s": 21.73,
+   "end_s": 22.18
+  },
+  {
+   "text": "with",
+   "start_s": 22.8,
+   "end_s": 23.01
+  },
+  {
+   "text": "red",
+   "start_s": 24.38,
+   "end_s": 24.97
+  },
+  {
+   "text": "no,",
+   "start_s": 25.04,
+   "end_s": 25.5
+  },
+  {
+   "text": "with",
+   "start_s": 25.5,
+   "end_s": 25.75
+  },
+  {
+   "text": "blackberry",
+   "start_s": 25.75,
+   "end_s": 26.33
+  },
+  {
+   "text": "jam,",
+   "start_s": 26.33,
+   "end_s": 26.97
+  },
+  {
+   "text": "cheese,",
+   "start_s": 27.52,
+   "end_s": 28.16
+  },
+  {
+   "text": "dulce",
+   "start_s": 28.16,
+   "end_s": 28.48
+  },
+  {
+   "text": "de",
+   "start_s": 28.48,
+   "end_s": 28.61
+  },
+  {
+   "text": "leche,",
+   "start_s": 28.61,
+   "end_s": 29.35
+  },
+  {
+   "text": "leche",
+   "start_s": 29.43,
+   "end_s": 30.06
+  },
+  {
+   "text": "condensada,",
+   "start_s": 30.06,
+   "end_s": 31.91
+  },
+  {
+   "text": "and",
+   "start_s": 31.91,
+   "end_s": 32.78
+  },
+  {
+   "text": "whipped",
+   "start_s": 32.78,
+   "end_s": 33.91
+  },
+  {
+   "text": "cream,",
+   "start_s": 33.91,
+   "end_s": 35.02
+  },
+  {
+   "text": "that's",
+   "start_s": 35.02,
+   "end_s": 35.83
+  },
+  {
+   "text": "it.",
+   "start_s": 35.83,
+   "end_s": 36.22
+  },
+  {
+   "text": "Yes,",
+   "start_s": 36.22,
+   "end_s": 36.7
+  },
+  {
+   "text": "and",
+   "start_s": 36.7,
+   "end_s": 36.97
+  },
+  {
+   "text": "where",
+   "start_s": 36.97,
+   "end_s": 37.45
+  },
+  {
+   "text": "we",
+   "start_s": 37.45,
+   "end_s": 37.64
+  },
+  {
+   "text": "are",
+   "start_s": 37.64,
+   "end_s": 37.92
+  },
+  {
+   "text": "is",
+   "start_s": 37.92,
+   "end_s": 38.11
+  },
+  {
+   "text": "right",
+   "start_s": 38.11,
+   "end_s": 38.59
+  },
+  {
+   "text": "now",
+   "start_s": 38.59,
+   "end_s": 38.94
+  },
+  {
+   "text": "Merope,",
+   "start_s": 38.94,
+   "end_s": 39.55
+  },
+  {
+   "text": "how",
+   "start_s": 39.55,
+   "end_s": 39.63
+  },
+  {
+   "text": "are",
+   "start_s": 39.63,
+   "end_s": 39.73
+  },
+  {
+   "text": "you",
+   "start_s": 39.73,
+   "end_s": 39.88
+  },
+  {
+   "text": "gonna...",
+   "start_s": 39.88,
+   "end_s": 39.98
+  },
+  {
+   "text": "Merope,",
+   "start_s": 39.98,
+   "end_s": 40.54
+  },
+  {
+   "text": "it's",
+   "start_s": 40.54,
+   "end_s": 40.82
+  },
+  {
+   "text": "a",
+   "start_s": 40.82,
+   "end_s": 40.89
+  },
+  {
+   "text": "Colombian",
+   "start_s": 40.89,
+   "end_s": 41.53
+  },
+  {
+   "text": "coffee",
+   "start_s": 41.53,
+   "end_s": 41.88
+  },
+  {
+   "text": "and",
+   "start_s": 41.88,
+   "end_s": 42.2
+  },
+  {
+   "text": "restaurant,",
+   "start_s": 42.2,
+   "end_s": 43.0
+  },
+  {
+   "text": "and",
+   "start_s": 43.0,
+   "end_s": 43.1
+  },
+  {
+   "text": "Merope",
+   "start_s": 43.1,
+   "end_s": 43.66
+  },
+  {
+   "text": "means",
+   "start_s": 43.66,
+   "end_s": 44.3
+  },
+  {
+   "text": "\"god",
+   "start_s": 44.3,
+   "end_s": 44.77
+  },
+  {
+   "text": "of",
+   "start_s": 44.77,
+   "end_s": 45.05
+  },
+  {
+   "text": "honey\".",
+   "start_s": 45.05,
+   "end_s": 45.66
+  },
+  {
+   "text": "Yeah,",
+   "start_s": 45.66,
+   "end_s": 45.9
+  },
+  {
+   "text": "we",
+   "start_s": 45.9,
+   "end_s": 46.06
+  },
+  {
+   "text": "definitely",
+   "start_s": 46.06,
+   "end_s": 46.38
+  },
+  {
+   "text": "recommend",
+   "start_s": 46.38,
+   "end_s": 46.76
+  },
+  {
+   "text": "coming",
+   "start_s": 46.76,
+   "end_s": 46.98
+  },
+  {
+   "text": "to",
+   "start_s": 46.98,
+   "end_s": 47.06
+  },
+  {
+   "text": "Merope,",
+   "start_s": 47.06,
+   "end_s": 47.38
+  },
+  {
+   "text": "right?",
+   "start_s": 47.38,
+   "end_s": 47.74
+  },
+  {
+   "text": "Yeah,",
+   "start_s": 47.74,
+   "end_s": 48.14
+  },
+  {
+   "text": "come",
+   "start_s": 48.14,
+   "end_s": 48.29
+  },
+  {
+   "text": "back",
+   "start_s": 48.29,
+   "end_s": 48.51
+  },
+  {
+   "text": "please,",
+   "start_s": 48.51,
+   "end_s": 48.96
+  },
+  {
+   "text": "I'm",
+   "start_s": 48.96,
+   "end_s": 49.12
+  },
+  {
+   "text": "gonna",
+   "start_s": 49.12,
+   "end_s": 49.4
+  },
+  {
+   "text": "be",
+   "start_s": 49.4,
+   "end_s": 49.51
+  },
+  {
+   "text": "here",
+   "start_s": 49.51,
+   "end_s": 49.64
+  },
+  {
+   "text": "all",
+   "start_s": 49.64,
+   "end_s": 49.9
+  },
+  {
+   "text": "week.",
+   "start_s": 49.9,
+   "end_s": 50.38
+  },
+  {
+   "text": "Nice,",
+   "start_s": 50.38,
+   "end_s": 50.65
+  },
+  {
+   "text": "nice,",
+   "start_s": 50.65,
+   "end_s": 50.92
+  },
+  {
+   "text": "cheers,",
+   "start_s": 50.92,
+   "end_s": 51.28
+  },
+  {
+   "text": "thank",
+   "start_s": 51.28,
+   "end_s": 51.51
+  },
+  {
+   "text": "you.",
+   "start_s": 51.51,
+   "end_s": 51.82
+  },
+  {
+   "text": "There",
+   "start_s": 51.82,
+   "end_s": 51.99
+  },
+  {
+   "text": "you",
+   "start_s": 51.99,
+   "end_s": 52.09
+  },
+  {
+   "text": "go,",
+   "start_s": 52.09,
+   "end_s": 52.22
+  },
+  {
+   "text": "you",
+   "start_s": 52.22,
+   "end_s": 52.34
+  },
+  {
+   "text": "should",
+   "start_s": 52.34,
+   "end_s": 52.51
+  },
+  {
+   "text": "do",
+   "start_s": 52.51,
+   "end_s": 52.57
+  },
+  {
+   "text": "this.",
+   "start_s": 52.57,
+   "end_s": 52.86
+  },
+  {
+   "text": "Asaghan",
+   "start_s": 52.87,
+   "end_s": 53.46
+  },
+  {
+   "text": "take",
+   "start_s": 53.46,
+   "end_s": 53.8
+  },
+  {
+   "text": "the",
+   "start_s": 53.8,
+   "end_s": 54.06
+  },
+  {
+   "text": "first",
+   "start_s": 54.06,
+   "end_s": 54.49
+  },
+  {
+   "text": "bite.",
+   "start_s": 54.49,
+   "end_s": 55.77
+  },
+  {
+   "text": "The",
+   "start_s": 55.77,
+   "end_s": 55.98
+  },
+  {
+   "text": "coffee",
+   "start_s": 55.98,
+   "end_s": 57.1
+  },
+  {
+   "text": "is",
+   "start_s": 57.1,
+   "end_s": 57.48
+  },
+  {
+   "text": "really",
+   "start_s": 57.48,
+   "end_s": 57.69
+  },
+  {
+   "text": "good",
+   "start_s": 57.69,
+   "end_s": 57.83
+  },
+  {
+   "text": "here",
+   "start_s": 57.83,
+   "end_s": 57.97
+  },
+  {
+   "text": "as",
+   "start_s": 57.97,
+   "end_s": 58.12
+  },
+  {
+   "text": "well.",
+   "start_s": 58.12,
+   "end_s": 58.46
+  },
+  {
+   "text": "Yeah,",
+   "start_s": 58.46,
+   "end_s": 58.62
+  },
+  {
+   "text": "it's",
+   "start_s": 58.62,
+   "end_s": 58.8
+  },
+  {
+   "text": "Colombian.",
+   "start_s": 58.8,
+   "end_s": 59.1
+  },
+  {
+   "text": "Thank",
+   "start_s": 59.1,
+   "end_s": 60.5
+  },
+  {
+   "text": "you,",
+   "start_s": 60.5,
+   "end_s": 62.02
+  },
+  {
+   "text": "thank",
+   "start_s": 62.02,
+   "end_s": 63.3
+  },
+  {
+   "text": "you",
+   "start_s": 63.3,
+   "end_s": 64.15
+  },
+  {
+   "text": "Karo.",
+   "start_s": 64.15,
+   "end_s": 66.14
+  },
+  {
+   "text": "Thank",
+   "start_s": 66.14,
+   "end_s": 66.47
+  },
+  {
+   "text": "you",
+   "start_s": 66.47,
+   "end_s": 66.52
+  },
+  {
+   "text": "Karo.",
+   "start_s": 66.52,
+   "end_s": 66.86
+  },
+  {
+   "text": "Bye",
+   "start_s": 66.86,
+   "end_s": 68.14
+  },
+  {
+   "text": "bye.",
+   "start_s": 68.14,
+   "end_s": 68.14
+  }
+ ]
+}

@@ -514,6 +514,12 @@ class Settings(BaseSettings):
 
     # OpenAI (Whisper fallback)
     openai_api_key: str = ""
+    anthropic_api_key: str = ""
+    creator_comparison_capture_enabled: bool = False
+    creator_comparison_capture_dir: str = ""
+    creator_comparison_holdout_capture_dir: str = ""
+    creator_comparison_holdout_token: str = ""
+    creator_comparison_capture_user_ids: list[str] = []
 
     # Gemini
     gemini_api_key: str = ""
@@ -521,7 +527,12 @@ class Settings(BaseSettings):
     # Editor agents intentionally bypass the fleet-wide `gemini_model` setting:
     # both need to compose edits while preserving accumulated constraints.
     # Keep the interactive executor and proactive director independently reversible.
+    main_creator_model: str = "gemini-3.1-pro-preview"
+    main_creator_thinking_level: str = "high"
+    main_creator_output_mode: Literal["json", "native", "json_guarded"] = "json"
     edit_copilot_model: str = "gemini-3.1-pro-preview"
+    edit_copilot_thinking_level: str = "high"
+    edit_copilot_output_mode: Literal["json", "native", "json_guarded"] = "json"
     edit_director_model: str = "gemini-3.1-pro-preview"
     # Eval-only comparison model. It is never contacted by the production
     # Director endpoint, whose explicit review is capped at one paid request.
@@ -806,6 +817,12 @@ class Settings(BaseSettings):
     # Default TRUE; kill switch = false + restart (the field is dropped, no question is
     # asked, the montage behaves exactly as before).
     kria_choice_questions_enabled: bool = True
+    # KRI-802: an app build declaring `X-Kria-Client-Protocol` >= this answers a reply's
+    # choice card and clip picker on one turn, so the planner asks a title-wording question
+    # and a clip picker in the same reply. Lower builds and the web keep one question per
+    # turn. Kill switch: `fly secrets set KRIA_QUESTION_BATCH_MIN_CLIENT_PROTOCOL=999`
+    # (api + worker) + restart; messages sent after it get one question per turn again.
+    kria_question_batch_min_client_protocol: int = 14
     # KRI-470: "one plan, obeyed everywhere". Evaluated ONCE, when a creator
     # render contract is stamped onto a new job (`creator_plan_authority_version`
     # in `Job.all_candidates`); workers branch on that stamp, never on this live

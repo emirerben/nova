@@ -1,0 +1,36 @@
+{
+  "cases": [
+    {
+      "case": "c2",
+      "output_sha256": "55ae38ab32b10c36413ed630e56a868658e47a8f216f0cb3a6c9387b0540dad9",
+      "report_sha256": "93530f369d1ba143d16ab664f4c85b1fbe3f6f6b9f109eff102121b4298bca3a",
+      "status": "checked",
+      "recipe_digest": "44bf86483cb16f5d382e2b0ff29bc0b9c6f6441b237c83a693c6e1ad75f58029",
+      "picture_neighbour_samples": [
+        1,
+        0,
+        0,
+        0,
+        0
+      ],
+      "scope": "retained local native bytes against captured recipe/status and inventory-hashed source proxies; no fresh phone run"
+    },
+    {
+      "case": "c3",
+      "output_sha256": "0b657d6672806c49be02091b291d53daa34d3d0f1c916149b0c645dd208b67c4",
+      "report_sha256": "594ae1db2229fb831881af292b8e777907e6d17b7585c07696d0316d61cbc35c",
+      "status": "checked",
+      "recipe_digest": "44bf86483cb16f5d382e2b0ff29bc0b9c6f6441b237c83a693c6e1ad75f58029",
+      "picture_neighbour_samples": [
+        1,
+        0,
+        0,
+        0,
+        0
+      ],
+      "scope": "retained local native bytes against captured recipe/status and inventory-hashed source proxies; no fresh phone run"
+    }
+  ],
+  "aligned_shift_red": "pre-code one-frame-late candidate falsely checked7/7 neighbour samples; final candidate rejected",
+  "final_existing_and_new_verifier_cases": "50pass plus separately1pass localhost control; no skipped cases"
+}

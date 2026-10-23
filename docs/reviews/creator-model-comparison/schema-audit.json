@@ -1,0 +1,110 @@
+{
+  "main_creator": {
+    "gemini-3.1-pro-preview": {
+      "compatible": false,
+      "blockers": [
+        "$/$defs/BriefUpdate/properties/facts:open_object",
+        "$/$defs/MixedMediaTimingProfile:open_object",
+        "$/$defs/MontageAudioPlan:open_object",
+        "$/$defs/MontageCadenceConstraint:open_object"
+      ],
+      "unions": 42,
+      "optional_parameters": 73,
+      "schema_sha256": "840f292aad7b6b7befe71bd79158e773f1042d7222683024e075e07c8151086d",
+      "provider_acceptance": "unverified_offline"
+    },
+    "claude-sonnet-5-5": {
+      "compatible": false,
+      "blockers": [
+        "$/$defs/BriefUpdate/properties/facts:open_object",
+        "$/$defs/MixedMediaTimingProfile:open_object",
+        "$/$defs/MontageAudioPlan:open_object",
+        "$/$defs/MontageCadenceConstraint:open_object",
+        "optional_parameters:73>24",
+        "union_parameters:42>16"
+      ],
+      "unions": 42,
+      "optional_parameters": 73,
+      "schema_sha256": "840f292aad7b6b7befe71bd79158e773f1042d7222683024e075e07c8151086d",
+      "provider_acceptance": "unverified_offline"
+    },
+    "gpt-6.1-sol": {
+      "compatible": false,
+      "blockers": [
+        "$:optional_properties:2",
+        "$/$defs/AskUser:optional_properties:1",
+        "$/$defs/BriefUpdate:optional_properties:8",
+        "$/$defs/BriefUpdate/properties/facts:open_object",
+        "$/$defs/CreativeCopyDecision:optional_properties:3",
+        "$/$defs/CreativeStrategy:optional_properties:32",
+        "$/$defs/CreatorRenderIntentEvidence:optional_properties:8",
+        "$/$defs/EditorialBeat:optional_properties:1",
+        "$/$defs/LicensedSfxIntent:optional_properties:2",
+        "$/$defs/MixedMediaTimingProfile:open_object",
+        "$/$defs/MixedMediaTimingProfile:optional_properties:7",
+        "$/$defs/MontageAudioPlan:open_object",
+        "$/$defs/MontageAudioPlan:optional_properties:3",
+        "$/$defs/MontageCadenceConstraint:open_object",
+        "$/$defs/MontageCadenceConstraint:optional_properties:2",
+        "$/$defs/ProposeStrategy:optional_properties:2",
+        "$/$defs/ReviewDecision:optional_properties:2",
+        "$/properties/action:oneOf_requires_explicit_projection"
+      ],
+      "unions": 42,
+      "optional_parameters": 73,
+      "schema_sha256": "840f292aad7b6b7befe71bd79158e773f1042d7222683024e075e07c8151086d",
+      "provider_acceptance": "unverified_offline"
+    }
+  },
+  "edit_copilot": {
+    "gemini-3.1-pro-preview": {
+      "compatible": false,
+      "blockers": [
+        "$:open_object",
+        "$/properties/ops/items:open_object",
+        "$/properties/rejection_reasons/items:open_object",
+        "$/properties/clarification_context/anyOf/0:open_object",
+        "$/properties/pending_actions/items:open_object",
+        "$/properties/unmet_requests/items:open_object",
+        "$/properties/length_options/items:open_object"
+      ],
+      "unions": 4,
+      "optional_parameters": 13,
+      "schema_sha256": "3ff26e95d5668e8f838a399045644eb0cd83a08eb8667a6429b1673bf00de85f",
+      "provider_acceptance": "unverified_offline"
+    },
+    "claude-sonnet-5-5": {
+      "compatible": false,
+      "blockers": [
+        "$:open_object",
+        "$/properties/ops/items:open_object",
+        "$/properties/rejection_reasons/items:open_object",
+        "$/properties/clarification_context/anyOf/0:open_object",
+        "$/properties/pending_actions/items:open_object",
+        "$/properties/unmet_requests/items:open_object",
+        "$/properties/length_options/items:open_object"
+      ],
+      "unions": 4,
+      "optional_parameters": 13,
+      "schema_sha256": "3ff26e95d5668e8f838a399045644eb0cd83a08eb8667a6429b1673bf00de85f",
+      "provider_acceptance": "unverified_offline"
+    },
+    "gpt-6.1-sol": {
+      "compatible": false,
+      "blockers": [
+        "$:open_object",
+        "$:optional_properties:13",
+        "$/properties/ops/items:open_object",
+        "$/properties/rejection_reasons/items:open_object",
+        "$/properties/clarification_context/anyOf/0:open_object",
+        "$/properties/pending_actions/items:open_object",
+        "$/properties/unmet_requests/items:open_object",
+        "$/properties/length_options/items:open_object"
+      ],
+      "unions": 4,
+      "optional_parameters": 13,
+      "schema_sha256": "3ff26e95d5668e8f838a399045644eb0cd83a08eb8667a6429b1673bf00de85f",
+      "provider_acceptance": "unverified_offline"
+    }
+  }
+}

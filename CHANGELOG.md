@@ -2,6 +2,71 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.51.0] - 2026-10-23
+
+### Changed
+- test(kria): Merope M2 replay runs through carry_moment_ask, stale xfails retired (KRI-850) (#1767) <!-- release-pr: 1767 -->
+
+## [0.81.50.0] - 2026-10-23
+
+### Changed
+- fix(library): add a device-only saved video to Visuals from its verified original (KRI-822) (#1750) <!-- release-pr: 1750 -->
+
+## [0.81.49.0] - 2026-10-23
+
+### Changed
+- fix(ci): pin auth boundary clock and omit optional apt packages (KRI-342) (#1762) <!-- release-pr: 1762 -->
+
+## [0.81.48.0] - 2026-10-22
+
+### Changed
+- test(kria): offline replay of the Merope T1 Talking run (KRI-787) (#1723) <!-- release-pr: 1723 -->
+
+## [0.81.47.0] - 2026-10-22
+
+### Changed
+- fix(kria): ask the title wording and the clip picker in one reply (KRI-802) (#1744) <!-- release-pr: 1744 -->
+
+## [0.81.46.0] - 2026-10-22
+
+### Changed
+- fix(kria): "keep '<line>' audible" holds the line on a montage, never a pop-in (KRI-803) (#1741) <!-- release-pr: 1741 -->
+
+## [0.81.45.0] - 2026-10-22
+
+### Changed
+- fix(kria): drop an editorial_plan the edit can't run instead of refusing the reply (KRI-806) (#1738) <!-- release-pr: 1738 -->
+
+## [0.81.44.0] - 2026-10-22
+
+### Changed
+- fix(kria): a named phrase cut is never "Done" before anything cuts it (KRI-792) (#1728) <!-- release-pr: 1728 -->
+
+## [0.81.43.0] - 2026-10-22
+
+### Changed
+- fix(export-verifier): accept correct Troya montage, keep wrong-output controls (KRI-810) (#1749) <!-- release-pr: 1749 -->
+
+## [0.81.42.0] - 2026-10-22
+
+### Changed
+- fix(kria): cut phone Talking to the quoted start AND end lines (KRI-790) (#1730) <!-- release-pr: 1730 -->
+
+## [0.81.41.0] - 2026-10-22
+
+### Changed
+- fix(slides): Save after deleting or adding a slide in an AI-bound slide post (KRI-812) (#1751) <!-- release-pr: 1751 -->
+
+## [0.81.40.0] - 2026-10-22
+
+### Fixed
+- fix(kria): a label the clip label can't hold asks with every reason and answers to tap, never "which clip" (KRI-804) (#1745) <!-- release-pr: 1745 -->
+
+## [0.81.39.0] - 2026-10-22
+
+### Changed
+- feat(ai): add verified creator model comparisons (#1701) <!-- release-pr: 1701 -->
+
 ## [0.81.38.0] - 2026-10-22
 
 ### Changed

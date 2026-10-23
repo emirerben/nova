@@ -135,6 +135,7 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func importCollectionMedia(file: URL, kind: String) async throws -> SavedMediaAsset
     func saveCameraRollCollection(_ collection: CameraRollCollection, revision: Int) async throws -> SavedCameraRollCollection
     func repairSavedMedia(asset: SavedMediaAsset, file: URL) async throws -> SavedMediaAsset
+    func uploadSavedMediaOriginal(asset: SavedMediaAsset, file: URL) async throws -> SavedMediaAsset
     var mediaLibraryOwner: String? { get }
     func savedMedia(query: String, kind: String?, cursor: String?) async throws -> SavedMediaPage
     func savedMediaAsset(id: UUID) async throws -> SavedMediaAsset
@@ -1062,7 +1063,9 @@ enum KriaClientProtocolContract {
     /// 12 (KRI-734): withholds unverified local exports from playback/Save/Share
     /// when the server declares `output_verification_required`.
     /// 13: accepts durable background output checks and resumes status polling.
-    static let version = 13
+    /// 14 (KRI-802): answers a reply that asks a choice card and a clip picker together on ONE turn (the first
+    /// answer waits for the second). The server asks those two together only to this protocol.
+    static let version = 14
     static let header = "X-Kria-Client-Protocol"
 }
 

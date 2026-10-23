@@ -1,0 +1,73 @@
+{
+  "status": "offline_ready_paid_blocked",
+  "reconstructed_context_use": "explicit_user_approval_2026-10-19",
+  "anthropic_funding": "user_intends_to_fund_not_yet_confirmed",
+  "new_paid_submissions": 0,
+  "same_approved_envelope_id": "e8a5c866-dd24-426e-8322-0b6a1789488b",
+  "approved_total_usd": 5.66,
+  "revised_manifest_estimates_usd": 5.258154,
+  "copilot_preflight": {
+    "mode": "offline_preflight",
+    "packet_sha256": "0bef82e1243bccc8572cf49037ff08f89f2349f87dbc2fba60faf8a02db4bb51",
+    "calls": 3,
+    "max_provider_submissions": 4,
+    "rows": [
+      {
+        "case": "8e1765fac3c8c081950582127ca02d020f0dc3978b2ec6e7ea8ca6517bcedfa5",
+        "agent": "edit_copilot",
+        "arm": "G0",
+        "source_kind": "reconstructed_real",
+        "split": "development",
+        "input_sha256": "71bc0db75f43a959ee93c74c5b202fe91abf17acb4ebdcdb9d520114d7a427e0",
+        "prompt_sha256": "2005dd3f1e43ecfb4f8e30a7d1ae19a223f3267a7217210de56c10205217f085",
+        "prompt_version": "2026-10-19-v85",
+        "spec_sha256": "eadf5c1b0f3628d356db11e3a9cf6f0d18f9eadaae75b20fb81b529c56a53875",
+        "runtime_sha256": "a761ae6db546379c4e963f959a6a809ffaccf146094a32467caaa85cf439dc9c",
+        "price_version": "multi-provider-2026-10-19.v5",
+        "output_mode": "json_mime",
+        "max_attempts": 2,
+        "fallback_models": [],
+        "estimated_max_usd": 0.515824
+      },
+      {
+        "case": "8e1765fac3c8c081950582127ca02d020f0dc3978b2ec6e7ea8ca6517bcedfa5",
+        "agent": "edit_copilot",
+        "arm": "S",
+        "source_kind": "reconstructed_real",
+        "split": "development",
+        "input_sha256": "71bc0db75f43a959ee93c74c5b202fe91abf17acb4ebdcdb9d520114d7a427e0",
+        "prompt_sha256": "98212813847c22772d7953d354e958b1fb7feebde343289c29387e4b7c1a7df2",
+        "prompt_version": "2026-10-19-v85+typed-presence-v2",
+        "spec_sha256": "7367c306687f67baecaf571811300371b9ec462c288878ea42d569803a7ba61a",
+        "runtime_sha256": "a761ae6db546379c4e963f959a6a809ffaccf146094a32467caaa85cf439dc9c",
+        "price_version": "multi-provider-2026-10-19.v5",
+        "output_mode": "native",
+        "max_attempts": 1,
+        "fallback_models": [],
+        "estimated_max_usd": 0.207564
+      },
+      {
+        "case": "8e1765fac3c8c081950582127ca02d020f0dc3978b2ec6e7ea8ca6517bcedfa5",
+        "agent": "edit_copilot",
+        "arm": "O",
+        "source_kind": "reconstructed_real",
+        "split": "development",
+        "input_sha256": "71bc0db75f43a959ee93c74c5b202fe91abf17acb4ebdcdb9d520114d7a427e0",
+        "prompt_sha256": "98212813847c22772d7953d354e958b1fb7feebde343289c29387e4b7c1a7df2",
+        "prompt_version": "2026-10-19-v85+typed-presence-v2",
+        "spec_sha256": "fad133cf887968c92b50e5b365d388dcf68e4f392b3c20cb8781962122cbce16",
+        "runtime_sha256": "a761ae6db546379c4e963f959a6a809ffaccf146094a32467caaa85cf439dc9c",
+        "price_version": "multi-provider-2026-10-19.v5",
+        "output_mode": "native",
+        "max_attempts": 1,
+        "fallback_models": [],
+        "estimated_max_usd": 0.211648
+      }
+    ],
+    "estimated_max_usd": 0.935036,
+    "quality_verdict": "unassessed",
+    "actual_export": "unassessed",
+    "live_eligibility": "not_checked_offline"
+  },
+  "prior_unknown_reservation_retained": true
+}

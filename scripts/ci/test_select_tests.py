@@ -617,7 +617,7 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-524-creation,kri-557-thinking,kri-577-reliability-gates,kri-760-whole-line-ask,kri-721-approval-readiness",
+                    "kri-524-creation,kri-557-thinking,kri-787-merope-t1-replay,kri-577-reliability-gates,kri-760-whole-line-ask,kri-721-approval-readiness",
                 ),
             ),
             (
@@ -629,7 +629,8 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates,kri-788-order-answer-dispatch,kri-648-phone-text",
+                    "kri-492-length-ownership,kri-524-creation,kri-787-merope-t1-replay,kri-577-reliability-gates,kri-788-order-answer-dispatch,kri-648-phone-text",
+
                 ),
             ),
             (
@@ -778,18 +779,18 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/kria/opening_cut_ask.py",
-                (True, "covered", "kri-628-opening-cut"),
+                (True, "covered", "kri-787-merope-t1-replay,kri-628-opening-cut"),
             ),
             (
                 "src/apps/api/app/pipeline/phone_opening_cut.py",
-                (True, "covered", "kri-628-opening-cut"),
+                (True, "covered", "kri-787-merope-t1-replay,kri-628-opening-cut"),
             ),
             (
                 "src/apps/api/app/services/spoken_quotes.py",
                 (
                     True,
                     "covered",
-                    "kri-628-opening-cut,kri-789-take-trim-not-order,kri-681-named-line-windows",
+                    "kri-628-opening-cut,kri-789-take-trim-not-order,kri-681-named-line-windows,kri-760-whole-line-ask",
                 ),
             ),
             (
@@ -827,6 +828,10 @@ class GitDiffTests(unittest.TestCase):
             (
                 "src/apps/api/tests/fixtures/kri681_tigre_night_m1_clips.json",
                 (True, "covered", "kri-681-named-line-windows"),
+            ),
+            (
+                "src/apps/api/tests/fixtures/kri803_don_julio_m1_clips.json",
+                (True, "covered", "kri-760-whole-line-ask"),
             ),
             (
                 "src/apps/api/app/pipeline/unified_montage.py",
