@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.61.0] - 2026-10-23
+
+### Fixed
+- fix(ios): enforce strict exported duration from approved brief (KRI-629) (#1757) <!-- release-pr: 1757 -->
+
 ## [0.81.60.0] - 2026-10-23
 
 ### Fixed
