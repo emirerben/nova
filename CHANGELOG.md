@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.64.0] - 2026-10-23
+
+### Changed
+- fix(kria): natural delegating requests reach approval and recover in the same chat (KRI-814) (#1771) <!-- release-pr: 1771 -->
+
 ## [0.81.63.0] - 2026-10-23
 
 ### Fixed
