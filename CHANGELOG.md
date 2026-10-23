@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.53.0] - 2026-10-23
+
+### Changed
+- fix(kria): a quoted one-word start/end line cuts a Talking take, and an uncut end is never "met" (KRI-837) (#1766) <!-- release-pr: 1766 -->
+
 ## [0.81.52.0] - 2026-10-23
 
 ### Changed
