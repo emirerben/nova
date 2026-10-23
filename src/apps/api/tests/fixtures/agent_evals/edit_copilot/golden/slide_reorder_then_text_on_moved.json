@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-10-23-v86",
+  "prompt_version": "2026-10-23-v87",
   "input": {
     "utterance": "move the museum slide (5) to the front and put 'Inside the Troy Museum' on it. keep the horse title and the current cover",
     "prior_turns": [],
