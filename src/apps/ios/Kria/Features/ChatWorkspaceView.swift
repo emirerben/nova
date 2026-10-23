@@ -1731,6 +1731,13 @@ private struct CreationWorkspaceView: View {
                     }
                 }
             }
+        case .failed where fullThread == nil && currentProject.deliveryNeedsAttention == true:
+            // KRI-823: the list row already knows this is a delivery failure; wait
+            // for the full thread's Retry card instead of flashing "wasn't made".
+            ProgressView("Opening your project…")
+                .frame(maxWidth: .infinity, minHeight: 120)
+                .accessibilityIdentifier("delivery-resolving")
+                .id("delivery-resolving")
         case .failed where fullThread?.deliveryNeedsAttention == true && deviceRenderKey != nil:
             // KRI-823: a device delivery failure keeps its device Retry/Stop card,
             // the same one the rendering stage hosts, never the generic failure.

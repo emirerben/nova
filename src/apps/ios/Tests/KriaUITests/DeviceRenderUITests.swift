@@ -99,9 +99,24 @@ final class DeviceRenderUITests: XCTestCase {
         XCTAssertTrue(drawerRow(in: app, says: "Ready", timeout: 40), app.debugDescription)
     }
 
+    /// KRI-823 record-only case: a refused phone EDIT (or an expired repair permission) marks only the device
+    /// record; the variant keeps `render_status: awaiting_device` and its last accepted cut. Only `delivery_phase`
+    /// says the delivery needs the creator, so the drawer and detail must follow it, never the generic
+    /// "wasn't made" failure.
+    func testRecordOnlyEditFailureShowsNeedsAttentionWithoutTheGenericFailure() {
+        let app = launchSeeded(scenario: "timed_out", reset: true, recordOnly: true)
+        XCTAssertTrue(drawerRow(in: app, says: "Needs attention"), "Only delivery_phase carries the failure. \(app.debugDescription)")
+        seededRow(in: app).tap()
+
+        let card = app.descendants(matching: .any)["device-render-status"].firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertTrue(card.buttons["device-render-retry"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.staticTexts["Your video wasn’t made"].exists, "The last accepted cut still exists")
+    }
+
     // MARK: - Helpers
 
-    private func launchSeeded(scenario: String, reset: Bool, publishReady: Bool = false) -> XCUIApplication {
+    private func launchSeeded(scenario: String, reset: Bool, publishReady: Bool = false, recordOnly: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"] + (reset ? ["-perf-reset"] : [])
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
@@ -109,6 +124,7 @@ final class DeviceRenderUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_DEVICE_RENDER"] = scenario
         app.launchEnvironment["KRIA_CHAT_DEVICE_SEED_THREAD"] = "1"
         app.launchEnvironment["KRIA_PERF_DISK_STORE"] = "1"
+        if recordOnly { app.launchEnvironment["KRIA_CHAT_DEVICE_RECORD_ONLY"] = "1" }
         if publishReady {
             app.launchEnvironment["KRIA_CHAT_DEVICE_PUBLISH_READY"] = "1"
             // The first launch's local export is gone (an interrupted device); only the server's record remains.

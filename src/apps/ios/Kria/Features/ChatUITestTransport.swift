@@ -1178,11 +1178,20 @@ final class CreationChatFixture: @unchecked Sendable {
                        event(2, "action_select_format", role: "user", ["format": "montage"]), event(3, "generation_started")],
             "active_plan_item_id": id, "active_job_id": id,
             "job": ["id": id, "status": "processing", "variants": [
-                ["variant_id": DeviceRenderUITestFixture.variantID, "render_status": "awaiting_device", "render_destination": "device"],
+                Self.deviceRecordOnly
+                    // A phone EDIT: the last accepted cut is still on the variant while its replacement is delivered.
+                    ? ["variant_id": DeviceRenderUITestFixture.variantID, "render_status": "awaiting_device", "render_destination": "device",
+                       "output_url": "https://fixture.invalid/last-cut.mp4",
+                       "poster_url": Bundle.main.url(forResource: "trulli-street", withExtension: "jpg")?.absoluteString ?? ""]
+                    : ["variant_id": DeviceRenderUITestFixture.variantID, "render_status": "awaiting_device", "render_destination": "device"],
             ]],
             "updated_at": "2026-10-20T10:00:00Z",
         ]
     }
+
+    /// KRI-823 (`KRIA_CHAT_DEVICE_RECORD_ONLY=1`): the failure lands only on the device record, as a refused EDIT
+    /// publication or an expired repair permission do; the variant's `render_status` stays `awaiting_device`.
+    static var deviceRecordOnly: Bool { ProcessInfo.processInfo.environment["KRIA_CHAT_DEVICE_RECORD_ONLY"] == "1" }
 
     /// KRI-823: the server's thread projections carry each variant's current device delivery phase. A failure the
     /// server already recorded (`scenario` on revision 1) or the iPhone reported mirrors onto the variant the way the
@@ -1199,7 +1208,7 @@ final class CreationChatFixture: @unchecked Sendable {
                 && DeviceRenderUITestFixture.published.contains(jobID)
             let phase = ready ? "published" : failed ? "needs_attention" : "awaiting_device"
             variants[index]["delivery_phase"] = phase
-            variants[index]["render_status"] = ready ? "ready" : phase
+            variants[index]["render_status"] = ready ? "ready" : Self.deviceRecordOnly ? "awaiting_device" : phase
             job["variants"] = variants
             job["status"] = ready ? "variants_ready" : "processing"
             var updated = thread

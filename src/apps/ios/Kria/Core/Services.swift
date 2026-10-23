@@ -612,7 +612,8 @@ struct CreationThread: Codable, Identifiable, Sendable {
             activeJobID: activeJobID.flatMap(UUID.init(uuidString:)),
             activePlanItemID: activePlanItemID,
             awaitsConfirmation: awaitsNewPlanConfirmation,
-            editFormat: state?["format"]?.stringValue ?? state?["edit_format"]?.stringValue
+            editFormat: state?["format"]?.stringValue ?? state?["edit_format"]?.stringValue,
+            deliveryNeedsAttention: deliveryNeedsAttention
         )
     }
 
