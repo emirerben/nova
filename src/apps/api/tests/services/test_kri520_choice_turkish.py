@@ -701,7 +701,8 @@ def test_song_order_question_text_is_localized() -> None:
 
 def test_speech_cleanup_conflict_copy_speaks_the_chat_language() -> None:
     codes = list(SPEECH_CLEANUP_CONFLICT_COPY)
-    assert len(codes) == 5 and "speech_cleanup_pending" in SPEECH_CLEANUP_CONFLICT_COPY
+    assert len(codes) == 6 and "speech_cleanup_pending" in SPEECH_CLEANUP_CONFLICT_COPY
+    assert "speech_cleanup_retakes_consent_required" in codes
     assert SPEECH_CLEANUP_CONFLICT_COPY["speech_cleanup_pending"] == (
         "The speech check is still running. I'll ask again once it finishes."
     )

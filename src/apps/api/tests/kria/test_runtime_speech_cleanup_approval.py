@@ -263,6 +263,71 @@ async def test_aware_with_a_valid_choice_stashes_it_without_raising(
 
 
 @pytest.mark.asyncio
+async def test_old_v2_clean_is_refused_when_the_current_analysis_finds_retakes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_mode", "enforce")
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_rollout_percent", 100)
+    row = _row(status="ready", candidate_count=3)
+    row.category_counts = {"filler_sounds": 1, "long_pauses": 1, "retakes": 1}
+    monkeypatch.setattr(
+        "app.services.plan_item_media.resolve_item_narration", lambda *a, **k: _resolution()
+    )
+    monkeypatch.setattr(
+        "app.services.speech_cleanup_preflight.current_analysis_async", AsyncMock(return_value=row)
+    )
+    db = SimpleNamespace(commit=AsyncMock())
+
+    with pytest.raises(RuntimeFailure) as failure:
+        await _apply_strategy_approval_media(
+            db,
+            thread=_thread(),
+            item=_item(),
+            strategy_payload={"audio_strategy": "licensed_music"},
+            body=_body(
+                speech_cleanup_aware=True,
+                speech_cleanup_analysis_id=row.id,
+                speech_cleanup_choice="clean",
+            ),
+            execution=SimpleNamespace(result={}),
+        )
+
+    assert failure.value.code == "speech_cleanup_retakes_consent_required"
+
+
+@pytest.mark.asyncio
+async def test_updated_v2_clean_is_allowed_after_retake_disclosure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_mode", "enforce")
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_rollout_percent", 100)
+    row = _row(status="ready", candidate_count=3)
+    row.category_counts = {"filler_sounds": 1, "long_pauses": 1, "retakes": 1}
+    monkeypatch.setattr(
+        "app.services.plan_item_media.resolve_item_narration", lambda *a, **k: _resolution()
+    )
+    monkeypatch.setattr(
+        "app.services.speech_cleanup_preflight.current_analysis_async", AsyncMock(return_value=row)
+    )
+
+    result = await _apply_strategy_approval_media(
+        SimpleNamespace(commit=AsyncMock()),
+        thread=_thread(),
+        item=_item(),
+        strategy_payload={"audio_strategy": "licensed_music"},
+        body=_body(
+            speech_cleanup_aware=True,
+            speech_cleanup_retakes_aware=True,
+            speech_cleanup_analysis_id=row.id,
+            speech_cleanup_choice="clean",
+        ),
+        execution=SimpleNamespace(result={}),
+    )
+
+    assert result.speech_cleanup_stash == {"analysis_id": str(row.id), "choice": "clean"}
+
+
+@pytest.mark.asyncio
 async def test_not_aware_ready_with_findings_defaults_to_keep_original(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -687,6 +752,20 @@ async def test_followup_approval_reuses_recorded_decision(
     result = await _followup(_body(speech_cleanup_aware=True))
 
     assert result.speech_cleanup_stash == {"analysis_id": str(row.id), "choice": decision}
+
+
+@pytest.mark.asyncio
+async def test_followup_reuses_recorded_clean_for_the_same_retake_analysis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = _row(status="ready", candidate_count=3)
+    row.category_counts = {"filler_sounds": 1, "long_pauses": 1, "retakes": 1}
+    row.decision = "clean"
+    _patch_enforce(monkeypatch, row)
+
+    result = await _followup(_body(speech_cleanup_aware=True))
+
+    assert result.speech_cleanup_stash == {"analysis_id": str(row.id), "choice": "clean"}
 
 
 @pytest.mark.asyncio

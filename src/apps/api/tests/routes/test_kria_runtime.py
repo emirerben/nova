@@ -705,6 +705,7 @@ def test_decide_approval_delegates_and_publishes_denied_turn_successor(
     assert decide.await_args.kwargs["body"].model_dump() == {
         **body,
         "speech_cleanup_aware": False,
+        "speech_cleanup_retakes_aware": False,
         "speech_cleanup_analysis_id": None,
         "speech_cleanup_choice": None,
         "output_orientation": None,
