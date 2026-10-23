@@ -143,7 +143,7 @@ def test_the_n3_restart_is_still_in_the_video_and_the_reply_says_so():
     assert text.startswith(DEFAULT)
     assert "Speech cleanup cut 14 long pauses and 1 filler sound (14.3 s)." in text
     assert _RESTART_LIMIT_EN in text
-    assert "trim it in the editor" in text
+    assert "editor" not in text  # KRI-846: no editor action cuts a spoken line
     # Never claims the restart (or any retake) was handled.
     assert "retakes were" not in text
     assert "removed the restart" not in text.lower()
@@ -158,14 +158,14 @@ def test_the_n3_reply_speaks_turkish_in_a_turkish_chat():
 
     assert "Konuşma temizliği şunları kesti: 14 uzun duraklama, 1 dolgu sesi (14,3 sn)." in text
     assert _RESTART_LIMIT_TR in text
-    assert "editörde kırp" in text
+    assert "editör" not in text  # KRI-846
     assert _RESTART_LIMIT_EN not in text
 
 
 def test_a_bound_brief_that_already_reports_the_restart_limit_is_not_told_twice():
     text = _review(_n3_variant(), brief=_marathon_brief())
 
-    assert text.count("isn't cut automatically yet") == 1
+    assert text.count("can't be cut out yet") == 1
     assert _RESTART_LIMIT_EN not in text
     # The counts are new information, so they stay.
     assert "Speech cleanup cut 14 long pauses and 1 filler sound" in text

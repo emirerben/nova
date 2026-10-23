@@ -56,7 +56,7 @@ struct SpeechCleanupChoiceButtons: View {
 
     var body: some View {
         Group {
-            Text("Choose whether to remove the detected pauses and filler sounds. A sentence you restarted stays in; trim it in the editor.")
+            Text("Choose whether to remove the detected pauses and filler sounds. A sentence you restarted stays in.")
                 .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
             if let summary = stats.summarySentence {
                 Text(summary)

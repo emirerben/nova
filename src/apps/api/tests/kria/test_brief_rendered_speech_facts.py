@@ -195,13 +195,13 @@ def test_cleanup_that_did_not_run_is_an_honest_partial():
         "cut the pauses and the retake",
     ],
 )
-def test_a_named_retake_is_left_for_the_editor(description):
+def test_a_named_retake_stays_in_the_video(description):
     receipt = check_requirement(
         _req("audio", description), plan_facts_from_phone_variant(_variant())
     )
     assert receipt.status == "partial"
     assert receipt.reason.startswith("Speech cleanup cut the long pauses")
-    assert "trim that in the editor" in receipt.reason
+    assert "can't be cut out yet, so it stays in your video" in receipt.reason
 
 
 def test_a_length_in_the_cleanup_ask_is_met_when_the_rendered_take_matches():

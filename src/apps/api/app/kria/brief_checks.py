@@ -3014,9 +3014,12 @@ _CLEANUP_IF_OFFERED = (
     "If Clean up speech is offered when you approve, choose it to cut the long pauses"
 )
 _CLEANUP_UNAVAILABLE = "Speech cleanup isn't available for this project yet, so the pauses stay"
-_NAMED_CUTS_NEED_EDITOR = (
-    "a retake or a specific line isn't cut automatically yet, so trim that in the editor"
-)
+# KRI-846: said as a plain limit, never as editor work. No editor action cuts a spoken line
+# out (talking-source slots can't be trimmed or split, the server refuses any change to their
+# windows with 409 TIMELINE_STALE, and a Narrated editor trims pictures, not the voice), so the
+# line says it stays in. One static string for every
+# speech format: `_loc` translates exact keys only and the review-note dedupe compares text.
+_NAMED_CUTS_STAY = "a retake or a specific line can't be cut out yet, so it stays in your video"
 _CAPTIONS_WORD_BY_WORD = "words light up as you say them"
 # KRI-541: what speech cleanup did on a finished render.
 _CLEANUP_DONE = "Speech cleanup cut the long pauses"
@@ -3137,8 +3140,8 @@ _REASON_TR: dict[str, str] = {
     _CLEANUP_UNAVAILABLE: (
         "Konuşma temizliği bu proje için henüz yok, o yüzden duraklamalar kalıyor"
     ),
-    _NAMED_CUTS_NEED_EDITOR: (
-        "tekrar çekim ya da belirli bir cümle henüz otomatik kesilmiyor, onu editörde kırp"
+    _NAMED_CUTS_STAY: (
+        "tekrar çekim ya da belirli bir cümle henüz kesilemiyor, o yüzden videoda kalıyor"
     ),
     _CAPTIONS_WORD_BY_WORD: "kelimeler sen söylerken yanıyor",
     _CLEANUP_DONE: "Konuşma temizliği uzun duraklamaları kesti",
@@ -3754,7 +3757,7 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
 
     Speech cleanup (the preflight check the creator confirms at approval) cuts long
     pauses and non-word sounds out of a Talking or voiceover edit; it never cuts a
-    spoken line, so a retake or "the bit where I say X" is reported as editor work.
+    spoken line, so a retake or "the bit where I say X" is reported as staying in (KRI-846).
     A length the same sentence names ("keep it under 45 s") follows the cut take.
     Every honest outcome here is a limit of the format, not a simplification.
     """
@@ -3776,7 +3779,7 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         lead, status = _CLEANUP_IF_OFFERED, "partial"
     notes = [_loc(lead)]
     if _wants_named_cuts(req):
-        notes.append(_loc(_NAMED_CUTS_NEED_EDITOR))
+        notes.append(_loc(_NAMED_CUTS_STAY))
         status = "partial"
     cleanup = _receipt(req, status, "; ".join(notes) if status == "partial" else None)
     return _merge_cleanup_timing(req, facts, cleanup)
@@ -3796,7 +3799,7 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
     notes = [_loc(lead)]
     if _wants_named_cuts(req):
         # The cut removes pauses and filler sounds; a named line or retake stays.
-        notes.append(_loc(_NAMED_CUTS_NEED_EDITOR))
+        notes.append(_loc(_NAMED_CUTS_STAY))
         status = "partial"
     if status == "met" and outcome == "applied":
         return _receipt(req, "met", None)
@@ -3887,16 +3890,13 @@ def speech_cleanup_review_note(
                 ),
             )
         ]
-    if not retakes and not retake_cut_possible and _loc(_NAMED_CUTS_NEED_EDITOR) not in text:
+    if not retakes and not retake_cut_possible and _loc(_NAMED_CUTS_STAY) not in text:
         sentences.append(
             say(
-                en=(
-                    "It only cuts pauses and filler sounds, so a sentence you restarted stays "
-                    "in; trim it in the editor."
-                ),
+                en="It only cuts pauses and filler sounds, so a sentence you restarted stays in.",
                 tr=(
                     "Yalnızca duraklamaları ve dolgu seslerini keser; baştan başladığın bir "
-                    "cümle videoda kalır, onu editörde kırp."
+                    "cümle videoda kalır."
                 ),
             )
         )

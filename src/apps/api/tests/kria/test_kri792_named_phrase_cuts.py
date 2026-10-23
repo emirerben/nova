@@ -14,11 +14,11 @@ Failure modes, written before the fix:
    mistake", "the stumble", "the bit about ..."; Turkish "dil sürçmesini kes", "yarım kalan
    soruyu çıkar"), and it is missed.
 3. An apostrophe inside a word (I'm, Karolina's, Atakan'ın, the curly I’m iOS types) is read
-   as a quote mark, so a plain pause cut gets a bogus "trim that in the editor".
+   as a quote mark, so a plain pause cut gets a bogus "stays in your video" line.
 4. The model records the line in `facts.cut_lines`, the description has neither quotes nor
    named-cut words, and the fact is ignored.
 5. `cut_lines` is empty, a bare string or holds non-strings: a crash or a wrong verdict.
-6. A `cut_lines` item that is only a filler sound ("um") is reported as editor work.
+6. A `cut_lines` item that is only a filler sound ("um") is reported as a line that stays in.
 7. A named cut reads "met" in any cleanup state before render (on, offered, unavailable,
    unknown) or after it (cleanup applied, or found nothing to cut).
 8. `cut_lines` on an ask with no `speech_cleanup` fact and no cleanup words reads "met".
@@ -62,10 +62,8 @@ from app.kria.reply_language import reply_language_for
 _FIXTURE = json.loads(
     (Path(__file__).parents[1] / "fixtures" / "kri792_t1_phrase_cuts.json").read_text()
 )
-_EDITOR_NOTE = "a retake or a specific line isn't cut automatically yet, so trim that in the editor"
-_EDITOR_NOTE_TR = (
-    "tekrar çekim ya da belirli bir cümle henüz otomatik kesilmiyor, onu editörde kırp"
-)
+_STAYS_NOTE = "a retake or a specific line can't be cut out yet, so it stays in your video"
+_STAYS_NOTE_TR = "tekrar çekim ya da belirli bir cümle henüz kesilemiyor, o yüzden videoda kalıyor"
 _SLIP = "Cut her slip 'with bread, no,' so it says 'waffle cookie with blackberry jam'"
 _HALF_QUESTION = "Cut the half question 'how are you gonna'"
 
@@ -105,9 +103,9 @@ def _talking(**changes: Any) -> PlanFacts:
     )
 
 
-def _assert_editor_work(receipt: Any) -> None:
+def _assert_stays_in(receipt: Any) -> None:
     assert receipt.status == "partial", receipt
-    assert _EDITOR_NOTE in (receipt.reason or "")
+    assert _STAYS_NOTE in (receipt.reason or "")
     assert is_format_limit(receipt.reason)  # 10: never the "simpler version?" question
     assert not needs_creator_choice(receipt)
 
@@ -132,10 +130,10 @@ def test_the_fixture_is_the_prod_turn_that_said_done():
         pytest.param({}, id="unknown"),
     ],
 )
-def test_the_prod_slip_and_half_question_are_editor_work_in_every_cleanup_state(cleanup):
+def test_the_prod_slip_and_half_question_stay_in_every_cleanup_state(cleanup):
     receipts = _by_id(_prod_brief(), _draft_facts(**cleanup))
-    _assert_editor_work(receipts["r3"])
-    _assert_editor_work(receipts["r4"])
+    _assert_stays_in(receipts["r3"])
+    _assert_stays_in(receipts["r4"])
     # The title the same draft honoured is still "met": only the cut asks changed.
     assert receipts["r6"].status == "met"
 
@@ -149,12 +147,12 @@ def test_the_prod_approval_card_no_longer_says_done_for_the_cuts():
     )
     card = reply_from_receipts(brief, receipts)
     assert f"Done: {_SLIP}" not in card and f"Done: {_HALF_QUESTION}" not in card
-    assert f"Partly: {_SLIP} (Speech cleanup cuts the long pauses; {_EDITOR_NOTE})" in card
-    assert f"Partly: {_HALF_QUESTION} (Speech cleanup cuts the long pauses; {_EDITOR_NOTE})" in card
+    assert f"Partly: {_SLIP} (Speech cleanup cuts the long pauses; {_STAYS_NOTE})" in card
+    assert f"Partly: {_HALF_QUESTION} (Speech cleanup cuts the long pauses; {_STAYS_NOTE})" in card
 
 
 @pytest.mark.parametrize("outcome", ["applied", "no_change"])
-def test_after_the_render_the_cut_asks_stay_editor_work(outcome):
+def test_after_the_render_the_cut_asks_stay_in(outcome):
     variant = {
         "resolved_archetype": "subtitled",
         "render_destination": "device",
@@ -168,12 +166,12 @@ def test_after_the_render_the_cut_asks_stay_editor_work(outcome):
     }
     brief = _prod_brief()
     receipts = _by_id(brief, plan_facts_from_phone_variant(variant))
-    _assert_editor_work(receipts["r3"])
-    _assert_editor_work(receipts["r4"])
+    _assert_stays_in(receipts["r3"])
+    _assert_stays_in(receipts["r4"])
     # The review note does not repeat the limit the receipts already state.
     reply = reply_from_receipts(brief, list(receipts.values()))
     note = speech_cleanup_review_note(variant, text=reply) or ""
-    assert "trim it in the editor" not in note
+    assert "sentence you restarted" not in note
 
 
 # --- 4: the v65 brief records the lines; the fact decides -----------------------------------
@@ -188,16 +186,16 @@ def test_a_recorded_cut_line_decides_when_the_words_name_no_cut():
         speech_cleanup=True,
         cut_lines=["with bread, no,"],
     )
-    _assert_editor_work(check_requirement(recorded, _talking()))
+    _assert_stays_in(check_requirement(recorded, _talking()))
 
 
-def test_the_prod_rows_with_the_v65_fact_are_editor_work_too():
+def test_the_prod_rows_with_the_v65_fact_stay_in_too():
     brief = _prod_brief(
         r3={"cut_lines": ["with bread, no,"]}, r4={"cut_lines": ["how are you gonna"]}
     )
     receipts = _by_id(brief, _draft_facts(speech_cleanup_enabled=True, speech_cleanup_offered=True))
-    _assert_editor_work(receipts["r3"])
-    _assert_editor_work(receipts["r4"])
+    _assert_stays_in(receipts["r3"])
+    _assert_stays_in(receipts["r4"])
 
 
 def test_both_brief_prompts_show_a_slip_as_a_cut_line():
@@ -232,8 +230,8 @@ def test_both_brief_prompts_show_a_slip_as_a_cut_line():
         "Baştaki hatayı kes",
     ],
 )
-def test_a_stretch_named_with_a_word_is_editor_work(description):
-    _assert_editor_work(check_requirement(_req("audio", description), _talking()))
+def test_a_stretch_named_with_a_word_stays_in(description):
+    _assert_stays_in(check_requirement(_req("audio", description), _talking()))
 
 
 # --- 1 + 3: single quote marks vs apostrophes ------------------------------------------------
@@ -247,10 +245,8 @@ def test_a_stretch_named_with_a_word_is_editor_work(description):
         "Cut the long pauses and 'I'm gonna be' at the end",
     ],
 )
-def test_a_single_quoted_line_is_editor_work(description):
-    _assert_editor_work(
-        check_requirement(_req("audio", description, speech_cleanup=True), _talking())
-    )
+def test_a_single_quoted_line_stays_in(description):
+    _assert_stays_in(check_requirement(_req("audio", description, speech_cleanup=True), _talking()))
 
 
 @pytest.mark.parametrize(
@@ -290,7 +286,7 @@ def test_a_bare_string_or_a_long_cut_line_is_a_named_cut(value):
     receipt = check_requirement(
         _req("audio", "Cut the long pauses", speech_cleanup=True, cut_lines=value), _talking()
     )
-    _assert_editor_work(receipt)
+    _assert_stays_in(receipt)
 
 
 # --- 8 + 9: routing --------------------------------------------------------------------------
@@ -331,7 +327,7 @@ def test_keep_my_pauses_with_a_cut_line_is_not_a_pause_cleanup_ask():
 )
 def test_no_mistakes_is_not_a_named_cut(req, status):
     receipt = check_requirement(req, _talking())
-    assert _EDITOR_NOTE not in (receipt.reason or "")
+    assert _STAYS_NOTE not in (receipt.reason or "")
     assert "Speech cleanup" not in (receipt.reason or "") or status == "met"
     if status:
         assert receipt.status == status
@@ -340,9 +336,9 @@ def test_no_mistakes_is_not_a_named_cut(req, status):
 # --- 12: Turkish -----------------------------------------------------------------------------
 
 
-def test_a_turkish_chat_gets_the_turkish_editor_note():
+def test_a_turkish_chat_gets_the_turkish_stays_in_note():
     req = _req("audio", "Dil sürçmesini kes", speech_cleanup=True, cut_lines=["ekmekle, yok,"])
     with reply_language_for("tr"):
         receipt = check_requirement(req, _talking())
     assert receipt.status == "partial"
-    assert _EDITOR_NOTE_TR in (receipt.reason or "")
+    assert _STAYS_NOTE_TR in (receipt.reason or "")

@@ -125,7 +125,7 @@ async def test_the_sourdough_first_draft_is_made_with_honest_receipts(monkeypatc
     assert "- Done: Karaoke captions with the key words highlighted" in content
     assert '- Done: "3 sourdough mistakes"' in content
     assert "- Partly: Cut out the long pauses" in content
-    assert "trim that in the editor" in content
+    assert "can't be cut out yet, so it stays in your video" in content
     by_status = {r["requirement_id"]: r["status"] for r in receipts}
     assert by_status == {"r1": "partial", "r2": "met", "r3": "met"}
     assert by_status["r1"] != "met"

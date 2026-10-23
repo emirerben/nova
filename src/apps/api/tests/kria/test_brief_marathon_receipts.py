@@ -177,7 +177,7 @@ def test_the_marathon_brief_is_fully_judged_at_draft_time() -> None:
     assert receipts["r2"].status == "partial"
     assert receipts["r2"].reason == (
         "Choose Clean up speech when you approve and the long pauses are cut; "
-        "a retake or a specific line isn't cut automatically yet, so trim that in the editor"
+        "a retake or a specific line can't be cut out yet, so it stays in your video"
     )
     assert receipts["r3"].status == "met"
     assert receipts["r3"].reason == "Your footage sound plays under your voice"
@@ -412,7 +412,7 @@ def test_the_pause_cut_ask_still_goes_to_the_cleanup_checker() -> None:
     # cleanup never cuts: still the cleanup checker, an honest format-limit "Partly".
     assert receipt.status == "partial"
     assert receipt.reason.startswith("Speech cleanup cuts the long pauses")
-    assert "trim that in the editor" in receipt.reason
+    assert "can't be cut out yet, so it stays in your video" in receipt.reason
     assert is_format_limit(receipt.reason)
     offered = check_requirement(R2, _draft_facts())
     assert offered.status == "partial"

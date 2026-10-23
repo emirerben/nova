@@ -331,7 +331,7 @@ async def test_prod_the_length_line_judges_the_whole_take(monkeypatch: pytest.Mo
 async def test_prod_named_cuts_get_the_pause_line_then_done(
     monkeypatch: pytest.MonkeyPatch, cleanup_chosen: bool, sequence: int
 ) -> None:
-    """Both original drafts now disclose that named phrase cuts need the editor."""
+    """Both original drafts now say plainly that named phrase cuts can't be made and stay in."""
     chat = await _chat_until_approval(monkeypatch, cleanup_chosen=cleanup_chosen)
     for rid in ("r3", "r4"):
         historical = _prod_receipts(sequence)[rid]
@@ -339,8 +339,15 @@ async def test_prod_named_cuts_get_the_pause_line_then_done(
             assert historical["status"] == "met"  # Original false completion retained.
         receipt = _receipts(chat.approved_draft)[rid]
         assert receipt["status"] == "partial" and receipt["verification"] == "checked"
-        assert "trim that in the editor" in receipt["reason"]
+        assert "can't be cut out yet, so it stays in your video" in receipt["reason"]
         assert receipt["reason"] != historical["reason"]
+    # KRI-846: no editor action cuts a spoken line on the iPhone, so neither the draft reply
+    # nor the approval card (`consequence_summary`) may send the creator there. (This long
+    # reply is compacted to ~70 characters a reason, so the card shows the cleanup lead and
+    # an ellipsis; the full line is the receipt's `reason` above.)
+    for shown in (chat.approved_draft.content, chat.approval.consequence_summary):
+        assert "editor" not in str(shown).lower()
+        assert "editör" not in str(shown).lower()
 
 
 @pytest.mark.asyncio
@@ -415,7 +422,7 @@ async def test_merope_is_placed_on_her_word_or_honestly_explained(
 
 
 @pytest.mark.asyncio
-async def test_a_named_phrase_cut_says_it_needs_the_editor(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_named_phrase_cut_says_it_stays_in(monkeypatch: pytest.MonkeyPatch) -> None:
     chat = await _chat_until_approval(monkeypatch)
     receipts = _receipts(chat.approved_draft)
     for rid in ("r3", "r4"):
