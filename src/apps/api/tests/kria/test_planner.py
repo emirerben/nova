@@ -688,7 +688,9 @@ async def test_generic_montage_context_with_empty_inventory_stays_actionable(
     monkeypatch.setattr(
         planner,
         "check_strategy_for_runtime_v2",
-        lambda _manifest, strategy: CheckedStrategy(strategy=strategy, notices=()),
+        lambda _manifest, strategy, *, simplify_unsupported=False: CheckedStrategy(
+            strategy=strategy, notices=()
+        ),
     )
 
     result = await planner._plan_from_creator_output(
@@ -800,7 +802,9 @@ async def test_phone_clip_vision_answers_do_not_fail_a_resolved_turn(
     monkeypatch.setattr(
         planner,
         "check_strategy_for_runtime_v2",
-        lambda _manifest, strategy: CheckedStrategy(strategy=strategy, notices=()),
+        lambda _manifest, strategy, *, simplify_unsupported=False: CheckedStrategy(
+            strategy=strategy, notices=()
+        ),
     )
 
     result = await planner._plan_from_creator_output(
@@ -859,7 +863,9 @@ async def _degraded_clip_intent_turn(
     monkeypatch.setattr(
         planner,
         "check_strategy_for_runtime_v2",
-        lambda _manifest, strategy: CheckedStrategy(strategy=strategy, notices=()),
+        lambda _manifest, strategy, *, simplify_unsupported=False: CheckedStrategy(
+            strategy=strategy, notices=()
+        ),
     )
     return await planner._plan_from_creator_output(
         SimpleNamespace(),

@@ -15,8 +15,9 @@ struct CameraRollMetadata: Codable, Sendable, Equatable, Identifiable {
 
 struct CameraRollCollection: Codable, Sendable {
     // Measured on iPhone 13 Pro: 53 mixed assets, 33.72 ms, 72.1 MiB process peak.
-    // 50 also fits the existing Main Creator media bound. No file data is loaded.
-    static let maximumCount = 50
+    // Catalogue capacity is independent of the smaller selected-story render bound.
+    // Metadata stays batched and originals load one at a time.
+    static let maximumCount = 500
     static let batchSize = 32
     let id: UUID
     var serverRevision: Int?
