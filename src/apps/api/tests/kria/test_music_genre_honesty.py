@@ -80,6 +80,7 @@ from tests.agents.test_music_matcher import _labels
 
 # Proposed fields on the frozen section (see the module docstring).
 ASKED_KEY = "asked_genre"
+ASKED_ALL_KEY = "asked_genres"
 FIT_KEY = "genre_fit"
 
 TANGO_ASK = "Suggest an upbeat tango song for it"
@@ -98,13 +99,20 @@ _NEGATION_TR = re.compile(r"(yok|bulamadım|bulunmuyor|bulunamadı|değil|en yak
 # ── the catalog (in-memory tracks that carry ai_labels) ──────────────────────
 
 
-def _track(title: str, artist: str, **label_overrides) -> SimpleNamespace:
+def _track(
+    title: str, artist: str, *, rationale: str | None = None, **label_overrides
+) -> SimpleNamespace:
+    """A library track; ``rationale`` is the classifier's one-sentence take on the song,
+    stored beside the labels (``ai_labels == {"labels": ..., "rationale": ...}``)."""
+    ai_labels: dict = {"labels": _labels(**label_overrides)}
+    if rationale is not None:
+        ai_labels["rationale"] = rationale
     return SimpleNamespace(
         id=str(uuid.uuid4()),
         title=title,
         artist=artist,
         duration_s=180.0,
-        ai_labels={"labels": _labels(**label_overrides)},
+        ai_labels=ai_labels,
         lyrics_cached=None,
         beat_timestamps_s=[],
     )
@@ -306,6 +314,46 @@ def _section(result: PlannedKriaTurn) -> dict:
     return section
 
 
+def _draft_reply(result: PlannedKriaTurn, brief: CreativeBrief) -> str:
+    """What the creator reads for this first draft, through the runtime's own receipt code:
+    ``requirements_to_check_at_draft`` -> ``build_receipts`` -> ``reply_from_receipts``."""
+    from app.agents._schemas.creator_agent import CapabilityAvailability, ResolvedCreatorManifest
+    from app.kria.brief_checks import (
+        build_receipts,
+        plan_facts_from_strategy,
+        reply_from_receipts,
+        requirements_to_check_at_draft,
+    )
+
+    arguments = result.plan.intents[0].arguments
+    strategy = arguments["strategy"]
+    manifest = ResolvedCreatorManifest(
+        item_id=str(uuid.uuid4()),
+        edit_format="montage",
+        render_program="guided",
+        media=[{"media_id": row["media_id"], "kind": "video"} for row in _rows()],
+        capabilities={"dispatch_render": CapabilityAvailability(available=True)},
+        context_hash="a" * 64,
+        manifest_hash="b" * 64,
+    )
+    kept = requirements_to_check_at_draft(
+        brief.requirements,
+        creator_id=uuid.uuid4(),
+        strategy=strategy,
+        item_edit_format="montage",
+        clip_paths=(),
+    )
+    receipts = build_receipts(
+        kept, plan_facts_from_strategy(strategy, manifest=manifest), include_unchecked=True
+    )
+    return reply_from_receipts(
+        CreativeBrief(version=brief.version, requirements=kept),
+        receipts,
+        summary=str(arguments["summary"]),
+        notices=result.policy_notices,
+    ).replace("’", "'")
+
+
 def _assert_suggests(result: PlannedKriaTurn, track: SimpleNamespace) -> None:
     section = _section(result)
     assert section["track_id"] == track.id, (
@@ -388,6 +436,24 @@ async def test_the_notice_survives_when_the_receipts_reply_replaces_the_summary(
     ).replace("’", "'")
 
     assert "tango" in reply.lower(), f"the receipts reply drops the song notice: {reply!r}"
+    assert pop.title in reply and pop.artist in reply, reply
+    assert not _claims_genre_for(reply, pop, "tango"), reply
+
+
+@pytest.mark.asyncio
+async def test_the_real_receipts_reply_carries_the_song_notice(monkeypatch) -> None:
+    """The same, through the runtime's own receipt code (no hand-built receipt): the M1
+    draft lists the asks under "Have a look at these" and drops the summary, so the song
+    only reaches the creator through ``policy_notices``."""
+    pop = _pop()
+    _install(monkeypatch, [pop, _lofi()])
+    brief = _dj_brief()
+    result = await _gate(monkeypatch, brief, summary=BASE_SUMMARY)
+
+    reply = _draft_reply(result, brief)
+
+    assert BASE_SUMMARY not in reply, "the summary was kept; this test needs it replaced"
+    assert "tango" in reply.lower() and _says_no_match(reply), reply
     assert pop.title in reply and pop.artist in reply, reply
     assert not _claims_genre_for(reply, pop, "tango"), reply
 
@@ -580,24 +646,97 @@ async def test_an_everyday_word_in_a_non_music_audio_ask_is_not_a_genre(monkeypa
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("ask", "enum_genre"),
+    ("ask", "decoy"),
     [
-        ("Suggest a house track for it", "electronic"),
-        ("Suggest some dance music for it", "electronic"),
-        ("Suggest an ambient song for it", "cinematic"),
+        ("Calm music for the house tour", {"genre": "electronic"}),
+        ("Suggest a song for my dance video", {"genre": "electronic"}),
+        ("A golf swing video with a calm song", {"genre": "other", "vibe_tags": ["swing"]}),
+        ("A power drill review, calm music please", {"genre": "hip_hop"}),
+        ("A metal detector video, a calm song", {"genre": "other", "vibe_tags": ["metal"]}),
+        ("Make it cinematic, with a calm song", {"genre": "cinematic"}),
+        ("A pop-up shop tour, calm music", {"genre": "pop"}),
+        ("A rock concert video, a calm song", {"genre": "other", "vibe_tags": ["rock"]}),
+        ("A soul food video, a calm song", {"genre": "other", "vibe_tags": ["soul"]}),
+        # The music word must touch the genre word: a word between them is a different noun.
+        ("House tour music", {"genre": "electronic"}),
+        ("Rock climbing music for it", {"genre": "other", "vibe_tags": ["rock"]}),
+        ("Soul food playlist", {"genre": "other", "vibe_tags": ["soul"]}),
+        ("Pop up shop music", {"genre": "pop"}),
+        # Accepted miss (fail-safe): "pop love song" is not read as a pop ask.
+        ("Suggest an upbeat pop love song", {"genre": "pop"}),
     ],
-    ids=["house", "dance", "ambient"],
+    ids=[
+        "house-tour",
+        "dance-video",
+        "golf-swing",
+        "power-drill",
+        "metal-detector",
+        "cinematic-with",
+        "pop-up-shop",
+        "rock-concert",
+        "soul-food",
+        "house-tour-music",
+        "rock-climbing-music",
+        "soul-food-playlist",
+        "pop-up-shop-music",
+        "pop-love-song",
+    ],
+)
+async def test_an_everyday_word_must_be_attached_to_the_music_word(monkeypatch, ask, decoy) -> None:
+    """The same sentence names music AND an everyday genre word ("music for the house
+    tour"), but the word is about the video, not the song: not asked."""
+    pop = _pop()
+    other = _track("Decoy", "Some Band", **{"vibe_tags": ["steady"], **decoy})
+    _install(monkeypatch, [pop, other], preference=[pop, other])
+
+    result = await _gate(monkeypatch, _dj_brief(ask))
+
+    section = _section(result)
+    assert section["track_id"] == pop.id, f"suggested {section.get('title')!r}"
+    assert ASKED_KEY not in section and FIT_KEY not in section
+    assert not _says_no_match(_text(result)), _text(result)
+    assert not result.policy_notices
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ask", "enum_genre", "label"),
+    [
+        ("Suggest a house track for it", "electronic", "house"),
+        ("Suggest some dance music for it", "electronic", "dance"),
+        ("Suggest an ambient song for it", "cinematic", "ambient"),
+        ("Suggest an upbeat rock song for it", "other", "rock"),
+        ("Suggest upbeat latin music for it", "other", "latin"),
+        ("Turkish pop şarkı öner", "pop", "pop"),
+        ("Suggest a metal music playlist", "other", "metal"),
+        ("Suggest música rock para el video", "other", "rock"),
+        ("Suggest a canción pop", "pop", "pop"),
+    ],
+    ids=[
+        "house-track",
+        "dance-music",
+        "ambient-song",
+        "rock-song",
+        "latin-music",
+        "tr-pop-sarki",
+        "metal-music",
+        "es-musica-rock",
+        "es-cancion-pop",
+    ],
 )
 async def test_an_everyday_word_next_to_a_music_word_is_a_genre(
-    monkeypatch, ask, enum_genre
+    monkeypatch, ask, enum_genre, label
 ) -> None:
-    pop = _pop()
-    fit = _track("Right Genre", "Some Artist", genre=enum_genre, vibe_tags=["steady"])
-    _install(monkeypatch, [pop, fit], preference=[pop, fit])
+    """The music word right after the genre word ("rock song"), or right before it (Spanish
+    "música rock"): asked, and met by a track that says the word."""
+    calm = _lofi()
+    fit = _track("Right Genre", "Some Artist", genre=enum_genre, vibe_tags=["steady", label])
+    _install(monkeypatch, [calm, fit], preference=[calm, fit])
 
     result = await _gate(monkeypatch, _dj_brief(ask))
 
     _assert_suggests(result, fit)
+    assert _section(result)[FIT_KEY] is True
     assert not _says_no_match(_text(result)), _text(result)
 
 
@@ -647,9 +786,11 @@ async def test_an_everyday_word_in_the_clip_profile_does_not_make_a_track_that_g
         ("No rap, reggaeton or rock", {"genre": "other", "vibe_tags": ["reggaeton"]}),
         ("Not jazz, reggaeton or samba please", {"genre": "other", "vibe_tags": ["samba"]}),
         ("Sin rap ni reggaeton", {"genre": "other", "vibe_tags": ["reggaeton"]}),
-        # When unsure the genre is NOT asked: no filter, no notice, the matcher's pick stays.
-        ("Without rock, a tango song", {"genre": "other", "vibe_tags": ["tango", "upbeat"]}),
-        ("Sin reggaeton, quiero tango", {"genre": "other", "vibe_tags": ["tango", "upbeat"]}),
+        ("Suggest a song, doesn't have to be tango", {"genre": "other", "vibe_tags": ["tango"]}),
+        ("Suggest a song other than tango", {"genre": "other", "vibe_tags": ["tango"]}),
+        ("I hate rap, suggest a calm song", {"genre": "hip_hop", "vibe_tags": ["hype"]}),
+        ("Tango olmadan bir şarkı", {"genre": "other", "vibe_tags": ["tango"]}),
+        ("No more rap please", {"genre": "hip_hop", "vibe_tags": ["hype"]}),
     ],
     ids=[
         "no-rap",
@@ -667,8 +808,11 @@ async def test_an_everyday_word_in_the_clip_profile_does_not_make_a_track_that_g
         "list-after-no",
         "list-after-not",
         "es-ni",
-        "unsure-without-then-tango",
-        "unsure-sin-then-tango",
+        "doesnt-have-to-be",
+        "other-than",
+        "hate",
+        "tr-olmadan",
+        "no-more",
     ],
 )
 async def test_a_negated_genre_is_not_an_asked_genre(monkeypatch, ask, ruled_out) -> None:
@@ -714,8 +858,29 @@ async def test_a_negated_genre_next_to_an_asked_one_only_the_asked_one_counts(mo
         "No rap or reggaeton, but a tango song",
         "Sin reggaeton, pero un tango",
         "Rap olmasın ama bir tango şarkısı öner",
+        # A ruled-out genre ends at the end of its clause unless the next clause is only
+        # more genres: any other word ("a", "quiero", "suggest") ends it.
+        "Without rock, a tango song",
+        "Sin reggaeton, quiero tango",
+        "No rap. Suggest a tango song",
+        # "no vocals" / "not too slow" rule out nothing the song could be.
+        "No vocals, a tango song",
+        "No lyrics please, suggest an upbeat tango song",
+        "Not too slow, an upbeat tango song",
     ],
-    ids=["tango-not-jazz", "no-rap-but-tango", "list-then-but", "es-pero", "tr-ama"],
+    ids=[
+        "tango-not-jazz",
+        "no-rap-but-tango",
+        "list-then-but",
+        "es-pero",
+        "tr-ama",
+        "without-then-a-tango",
+        "es-sin-then-quiero",
+        "sentence-break",
+        "no-vocals",
+        "no-lyrics",
+        "not-too-slow",
+    ],
 )
 async def test_the_asked_genre_is_still_found_beside_a_ruled_out_one(monkeypatch, ask) -> None:
     pop, tango = _pop(), _tango()
@@ -804,17 +969,18 @@ async def test_a_genre_word_inside_another_word_is_not_a_match(monkeypatch) -> N
     ("ask", "enum_genre", "free_text"),
     [
         ("Suggest a hip hop song for it", "hip_hop", ["hype"]),
-        ("Suggest a rap song for it", "hip_hop", ["hype"]),  # alias of hip_hop
-        ("Suggest some folk music for it", "acoustic", ["warm"]),  # alias of acoustic
-        ("Suggest an EDM track for it", "electronic", ["club"]),  # alias of electronic
-        ("Suggest an orchestral score for it", "cinematic", ["epic"]),  # alias of cinematic
+        ("Suggest a rap song for it", "hip_hop", ["hype"]),  # a true synonym of hip_hop
+        ("Suggest an EDM track for it", "electronic", ["club"]),  # a true synonym of electronic
+        ("Suggest a cinematic song for it", "cinematic", ["epic"]),  # the enum's own word
+        ("Suggest an acoustic song for it", "acoustic", ["warm"]),  # the enum's own word
     ],
-    ids=["hip-hop", "rap", "folk", "edm", "orchestral"],
+    ids=["hip-hop", "rap", "edm", "cinematic", "acoustic"],
 )
 async def test_a_genre_the_enum_knows_counts_as_fitting(
     monkeypatch, ask, enum_genre, free_text
 ) -> None:
-    """The genre sits in `labels.genre`, not in any free text: the ask's aliases must map to it."""
+    """The genre sits in `labels.genre`, not in any free text: the enum's own words and its
+    true synonyms (rap, EDM) are met by the enum value alone."""
     pop = _pop()
     fit = _track("Right Genre", "Some Artist", genre=enum_genre, vibe_tags=free_text)
     _install(monkeypatch, [pop, fit], preference=[pop, fit])
@@ -824,6 +990,93 @@ async def test_a_genre_the_enum_knows_counts_as_fitting(
     text = _text(result)
     _assert_suggests(result, fit)
     assert fit.title in text and not _says_no_match(text), text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ask", "name", "family"),
+    [
+        ("Suggest a house track for it", "house", "electronic"),
+        ("Suggest a techno track for it", "techno", "electronic"),
+        ("Suggest some dance music for it", "dance", "electronic"),
+        ("Suggest some folk music for it", "folk", "acoustic"),
+        ("Suggest a country song for it", "country", "acoustic"),
+        ("Suggest an orchestral score for it", "orchestral", "cinematic"),
+        ("Suggest some classical music for it", "classical", "cinematic"),
+        ("Suggest an ambient track for it", "ambient", "cinematic"),
+        ("Suggest a trap song for it", "trap", "hip_hop"),
+        ("Suggest a drill track for it", "drill", "hip_hop"),
+    ],
+    ids=[
+        "house",
+        "techno",
+        "dance",
+        "folk",
+        "country",
+        "orchestral",
+        "classical",
+        "ambient",
+        "trap",
+        "drill",
+    ],
+)
+async def test_a_narrow_alias_is_not_met_by_its_enum_family_alone(
+    monkeypatch, ask, name, family
+) -> None:
+    """The 7-value enum has no "house": every electronic track is house's FAMILY and none
+    is known to be house. The family track is the closest, offered as the closest."""
+    pop = _pop()
+    near = _track("Same Family", "Some Artist", genre=family, vibe_tags=["steady"])
+    _install(monkeypatch, [pop, near], preference=[pop, near])
+
+    result = await _gate(monkeypatch, _dj_brief(ask))
+
+    text = _text(result)
+    section = _section(result)
+    assert section["track_id"] == near.id, f"suggested {section.get('title')!r}"
+    assert section[ASKED_KEY] == name and section[FIT_KEY] is False
+    assert name in text.lower() and _says_no_match(text), text
+    assert near.title in text and near.artist in text, text
+    assert not _claims_genre_for(text, near, name), text
+
+
+@pytest.mark.asyncio
+async def test_a_narrow_alias_with_no_family_track_suggests_the_matchers_pick(monkeypatch) -> None:
+    pop, calm = _pop(), _lofi()
+    _install(monkeypatch, [pop, calm], preference=[pop, calm])
+
+    result = await _gate(monkeypatch, _dj_brief("Suggest a house track for it"))
+
+    text = _text(result)
+    assert _section(result)["track_id"] == pop.id
+    assert _section(result)[FIT_KEY] is False
+    assert "house" in text.lower() and _says_no_match(text) and pop.title in text, text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ask", "enum_genre", "label"),
+    [
+        ("Suggest a house track for it", "electronic", "house"),
+        ("Suggest some folk music for it", "acoustic", "folk"),
+        ("Suggest an orchestral score for it", "cinematic", "orchestral"),
+    ],
+    ids=["house", "folk", "orchestral"],
+)
+async def test_a_narrow_alias_the_label_text_says_is_an_exact_fit(
+    monkeypatch, ask, enum_genre, label
+) -> None:
+    """Family tracks exist and the matcher likes one best, but one track says the word."""
+    pop = _pop()
+    generic = _track("Generic Family", "Some Artist", genre=enum_genre, vibe_tags=["steady"])
+    exact = _track("Says It", "Other Artist", genre=enum_genre, vibe_tags=["steady", label])
+    _install(monkeypatch, [pop, generic, exact], preference=[pop, generic, exact])
+
+    result = await _gate(monkeypatch, _dj_brief(ask))
+
+    _assert_suggests(result, exact)
+    assert _section(result)[FIT_KEY] is True
+    assert not _says_no_match(_text(result)), _text(result)
 
 
 @pytest.mark.asyncio
@@ -837,6 +1090,171 @@ async def test_two_genres_in_one_ask_either_one_fits(monkeypatch) -> None:
     text = _text(result)
     _assert_suggests(result, jazz)
     assert jazz.title in text and not _says_no_match(text), text
+
+
+# ── 4b. the classifier's rationale describes the song too ───────────────────
+# `ai_labels` is {"labels": ..., "rationale": ...}, and the classifier prompt tells the
+# model to keep genre words OUT of vibe_tags, so the rationale ("Driving rock anthem") is
+# where the genre word is most often written.
+
+
+@pytest.mark.asyncio
+async def test_a_genre_word_in_the_song_rationale_counts(monkeypatch) -> None:
+    pop = _pop()
+    tango = _tango(
+        vibe_tags=["upbeat", "sultry"],
+        mood="driving bandoneon, dance-floor drama",
+        ideal_content_profile="nightlife and close-up food b-roll",
+        rationale="Sultry Argentine tango with a driving bandoneon.",
+    )
+    _install(monkeypatch, [pop, tango], preference=[pop, tango])
+
+    result = await _gate(monkeypatch, _dj_brief())
+
+    _assert_suggests(result, tango)
+    assert _section(result)[FIT_KEY] is True
+    assert not _says_no_match(_text(result)), _text(result)
+
+
+@pytest.mark.asyncio
+async def test_an_everyday_genre_word_in_the_rationale_counts_for_the_song(monkeypatch) -> None:
+    pop = _pop()
+    rock = _track(
+        "Loud Road",
+        "Amp Brothers",
+        genre="other",
+        vibe_tags=["driving", "defiant"],
+        rationale="Driving rock anthem with anthemic energy.",
+    )
+    _install(monkeypatch, [pop, rock], preference=[pop, rock])
+
+    result = await _gate(monkeypatch, _dj_brief("Suggest an upbeat rock song for it"))
+
+    _assert_suggests(result, rock)
+    assert _section(result)[FIT_KEY] is True
+
+
+@pytest.mark.asyncio
+async def test_a_genre_word_in_the_title_or_artist_never_counts(monkeypatch) -> None:
+    pop = _pop()
+    named = _track(
+        "Tango Nights", "Tango Brava", genre="pop", vibe_tags=["bright"], mood="sunny pop"
+    )
+    _install(monkeypatch, [pop, named], preference=[pop, named])
+
+    result = await _gate(monkeypatch, _dj_brief())
+
+    assert _section(result)[FIT_KEY] is False
+    assert _says_no_match(_text(result)), _text(result)
+
+
+# ── 4c. what the reply says ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_matcher_failure_does_not_blame_the_library(monkeypatch) -> None:
+    """`_match_best_track` returns None when the model call fails (a 503): the library may
+    well hold a tango track, so the reply says it could not suggest one this time."""
+    _install(monkeypatch, [_pop(), _tango()])
+
+    def failing_run(self, matcher_input, ctx=None):  # noqa: ANN001, ARG001
+        raise RuntimeError("503 UNAVAILABLE")
+
+    monkeypatch.setattr(MusicMatcherAgent, "run", failing_run)
+
+    result = await _gate(monkeypatch, _dj_brief())
+
+    text = _text(result)
+    assert _section(result)["status"] == "fallback_footage"
+    assert "tango" in text.lower() and "this time" in text, text
+    assert "find" not in text.lower() and "don't have" not in text.lower(), text
+
+
+@pytest.mark.asyncio
+async def test_several_genres_none_of_which_fit_are_all_named(monkeypatch) -> None:
+    pop = _pop()
+    _install(monkeypatch, [pop, _lofi()])
+
+    result = await _gate(monkeypatch, _dj_brief("Suggest a tango or a jazz song for it"))
+
+    text = _text(result)
+    section = _section(result)
+    assert "tango or jazz" in text, text
+    assert pop.title in text and not _claims_genre_for(text, pop, "tango")
+    assert section[ASKED_KEY] == "tango" and section[ASKED_ALL_KEY] == ["tango", "jazz"]
+    assert section[FIT_KEY] is False
+
+
+@pytest.mark.asyncio
+async def test_several_genres_none_of_which_fit_are_all_named_in_turkish(monkeypatch) -> None:
+    pop = _pop()
+    _install(monkeypatch, [pop, _lofi()])
+
+    result = await _gate(
+        monkeypatch,
+        _dj_brief("Tango ya da caz şarkısı öner"),
+        summary=BASE_SUMMARY_TR,
+        language="tr",
+    )
+
+    text = _text(result)
+    assert "tango ya da jazz" in text, text
+    assert pop.title in text and "don't have" not in text.lower(), text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ask", "shown"),
+    [
+        ("Suggest some Latin music for it", "Latin"),
+        ("Suggest a K-pop song for it", "K-pop"),
+        ("Suggest an EDM track for it", "EDM"),
+        ("Suggest an R&B song for it", "R&B"),
+    ],
+    ids=["latin", "k-pop", "edm", "r-and-b"],
+)
+async def test_the_genre_is_shown_the_way_it_is_written(monkeypatch, ask, shown) -> None:
+    _install(monkeypatch, [_pop(), _lofi()])
+
+    result = await _gate(monkeypatch, _dj_brief(ask))
+
+    assert shown in _text(result), _text(result)
+    assert _section(result)[ASKED_KEY] == shown
+
+
+@pytest.mark.asyncio
+async def test_turkish_reply_for_a_tango_track_that_fits(monkeypatch) -> None:
+    pop, tango = _pop(), _tango()
+    _install(monkeypatch, [pop, tango], preference=[pop, tango])
+
+    result = await _gate(
+        monkeypatch, _dj_brief("Tango şarkısı öner"), summary=BASE_SUMMARY_TR, language="tr"
+    )
+
+    text = _text(result)
+    _assert_suggests(result, tango)
+    assert f"“{tango.title}” ({tango.artist}), istediğin tango şarkısı için önerim." in text, text
+    assert "Paylaşırken ekleyebilirsin" in text and "yok" not in text.lower(), text
+
+
+@pytest.mark.asyncio
+async def test_turkish_reply_when_no_song_could_be_suggested(monkeypatch) -> None:
+    _install(monkeypatch, [])
+
+    result = await _gate(
+        monkeypatch, _dj_brief("Tango şarkısı öner"), summary=BASE_SUMMARY_TR, language="tr"
+    )
+
+    assert "Bu sefer bir tango şarkısı öneremedim." in _text(result), _text(result)
+
+
+@pytest.mark.asyncio
+async def test_english_reply_when_no_song_could_be_suggested(monkeypatch) -> None:
+    _install(monkeypatch, [])
+
+    result = await _gate(monkeypatch, _dj_brief())
+
+    assert "I couldn't suggest a tango track this time." in _text(result), _text(result)
 
 
 # ── 5. the frozen section on a later turn ───────────────────────────────────

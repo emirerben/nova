@@ -49,12 +49,18 @@ failure is non-fatal — the recipe still saves; the track just won't be visible
 published-track library against a clip set using each track's Phase-1 `MusicLabels`.
 
 **Genre asks (KRI-848).** In chat, a genre the creator names ("an upbeat tango song") is
-checked in code, not left to the matcher: `app/services/music_genre.py` reads the genre out
-of the ask, `_match_best_track` ranks only the tracks whose labels say it (the `genre` enum
-or a whole word in `vibe_tags` / `mood` / `ideal_content_profile`; `other` is never a
-wildcard), and the frozen section records `asked_genre` + `genre_fit`. The reply (summary
-and `policy_notices`) then names the song and calls it that genre only when it fits;
-otherwise it says there is none and offers the closest. Recommend-only: nothing is mixed in.
+checked in code, not left to the matcher (`app/services/music_genre.py`). Reading the ask
+leans to "not asked" whenever it is unsure, because a named genre becomes a hard filter:
+an everyday word ("house", "rock") counts only right next to a music word ("a house
+track"), and a genre after a cue ("no rap, reggaeton or rock", "caz istemiyorum") is never
+asked. `_match_best_track` then ranks only the tracks whose labels say the genre (the
+`genre` enum value it IS, or the word in `vibe_tags` / `mood` / the classifier
+`rationale`; `other` is never a wildcard); a narrow alias like "house" is not met by its
+enum family alone, so the family is only offered as the closest, else the whole library.
+The frozen section records `asked_genre`, `asked_genres` and `genre_fit`, and the reply
+(summary and `policy_notices`) names the song and calls it that genre only when it
+fits; otherwise it says there is none and offers the closest. Recommend-only: nothing is
+mixed in.
 
 ## Song-sections visualizer
 
