@@ -425,6 +425,18 @@ def _verify_contract_pin(
 def verify_device_record_contract(job: Any, record: dict, status: DeviceRenderStatus) -> None:
     """Recheck the receipt authority before publishing a device export."""
     _require_marked_root_authority(job)
+    from app.kria.prepared_execution import variant_fence  # noqa: PLC0415
+
+    # KRI-722: a stamped Job publishes only the recipe pinned under its current
+    # prepared snapshot and attempt. A late completion of an older attempt (or a
+    # recipe pinned before the stamp) is refused; the last-good output is kept.
+    fence = variant_fence(job.assembly_plan, status.request.identity.variant_id)
+    if (fence is not None or record.get("prepared_execution") is not None) and record.get(
+        "prepared_execution"
+    ) != fence:
+        raise CreatorRenderContractError(
+            "A newer approved attempt replaced this render; please use the latest version."
+        )
     contract = _contract_for_variant(job.assembly_plan or {}, status.request.identity.variant_id)
     expected = record.get("contract_digest")
     if expected is None:
@@ -523,6 +535,12 @@ def pin_device_request(
         )
     if narration_binding is not None:
         record["narration_binding"] = copy.deepcopy(narration_binding)
+    from app.kria.prepared_execution import variant_fence  # noqa: PLC0415
+
+    fence = variant_fence(job.assembly_plan, request.identity.variant_id)
+    if fence is not None:
+        # KRI-722: the attempt this recipe belongs to (absent on legacy Jobs).
+        record["prepared_execution"] = fence
     from app.config import settings  # noqa: PLC0415
 
     # Record-only envelope: strict recipe/status schemas stay readable by old workers.
