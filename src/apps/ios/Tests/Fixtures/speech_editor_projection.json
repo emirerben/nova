@@ -1,0 +1,224 @@
+{
+  "provenance": "Synthetic occurrence and fractional-overlap contract. Expected positions are independently computed from source offsets and renderer overlap min(0.3, left*0.3, right*0.3).",
+  "old_slots": [
+    {
+      "slot_id": "native-phone-talking-source",
+      "clip_index": 0,
+      "in_s": 0,
+      "duration_s": 1.0333333333333334,
+      "transition_after": "crossfade",
+      "transition_duration_s": 0.3
+    },
+    {
+      "slot_id": "native-phone-talking-source-1",
+      "clip_index": 0,
+      "in_s": 4,
+      "duration_s": 0.7666666666666667,
+      "transition_after": "cut"
+    },
+    {
+      "slot_id": "native-phone-talking-source-2",
+      "clip_index": 0,
+      "in_s": 8,
+      "duration_s": 0.4,
+      "transition_after": "cut"
+    }
+  ],
+  "new_slots": [
+    {
+      "slot_id": "native-phone-talking-source-1",
+      "clip_index": 0,
+      "in_s": 4,
+      "duration_s": 0.7666666666666667,
+      "transition_after": "crossfade",
+      "transition_duration_s": 0.3
+    },
+    {
+      "slot_id": "native-phone-talking-source",
+      "clip_index": 0,
+      "in_s": 0,
+      "duration_s": 1.0333333333333334,
+      "transition_after": "cut"
+    },
+    {
+      "slot_id": "native-phone-talking-source-2",
+      "clip_index": 0,
+      "in_s": 8,
+      "duration_s": 0.4,
+      "transition_after": "cut"
+    }
+  ],
+  "records": [
+    {
+      "id": "point",
+      "at_s": 0.9
+    },
+    {
+      "id": "span",
+      "start_s": 0.9,
+      "end_s": 1.2
+    }
+  ],
+  "expected": [
+    {
+      "id": "point",
+      "at_s": 0.097
+    },
+    {
+      "id": "span-part-1",
+      "start_s": 0.097,
+      "end_s": 0.397
+    },
+    {
+      "id": "span",
+      "start_s": 1.437,
+      "end_s": 1.57
+    }
+  ],
+  "old_windows": [
+    [
+      0,
+      1.0333333333333334
+    ],
+    [
+      0.8033333333333333,
+      1.57
+    ],
+    [
+      1.57,
+      1.97
+    ]
+  ],
+  "new_windows": [
+    [
+      0,
+      0.7666666666666667
+    ],
+    [
+      0.5366666666666666,
+      1.57
+    ],
+    [
+      1.57,
+      1.97
+    ]
+  ],
+  "exact_source_end": {
+    "old_slots": [
+      {
+        "slot_id": "native-phone-talking-source",
+        "clip_index": 0,
+        "in_s": 1,
+        "duration_s": 0.3666666666666667,
+        "playback_rate": 3,
+        "source_end_s": 2.03
+      }
+    ],
+    "new_slots": [
+      {
+        "slot_id": "native-phone-talking-source",
+        "clip_index": 0,
+        "in_s": 1.03,
+        "duration_s": 0.3666666666666667,
+        "playback_rate": 3,
+        "source_end_s": 2.03
+      }
+    ],
+    "records": [
+      {
+        "id": "cue",
+        "text": "C Tail",
+        "start_s": 0.2,
+        "end_s": 0.36,
+        "words": [
+          {
+            "text": "C",
+            "start_s": 0.2,
+            "end_s": 0.34
+          },
+          {
+            "text": "Tail",
+            "start_s": 0.34,
+            "end_s": 0.36
+          }
+        ]
+      }
+    ],
+    "expected": [
+      {
+        "id": "cue",
+        "text": "C Tail",
+        "start_s": 0.19,
+        "end_s": 0.333,
+        "words": [
+          {
+            "text": "C",
+            "start_s": 0.19,
+            "end_s": 0.33
+          },
+          {
+            "text": "Tail",
+            "start_s": 0.33,
+            "end_s": 0.333
+          }
+        ]
+      }
+    ]
+  },
+  "relative_word_timings": {
+    "old_slots": [
+      {
+        "slot_id": "native-phone-talking-source",
+        "clip_index": 0,
+        "in_s": 0,
+        "duration_s": 4
+      }
+    ],
+    "new_slots": [
+      {
+        "slot_id": "native-phone-talking-source",
+        "clip_index": 0,
+        "in_s": 2,
+        "duration_s": 2
+      }
+    ],
+    "records": [
+      {
+        "id": "karaoke",
+        "text": "One Two",
+        "start_s": 1,
+        "end_s": 4,
+        "word_timings": [
+          {
+            "text": "One",
+            "start_s": 0,
+            "end_s": 0.5,
+            "duration_cs": 50
+          },
+          {
+            "text": "Two",
+            "start_s": 1.2,
+            "end_s": 2.5,
+            "duration_cs": 130
+          }
+        ]
+      }
+    ],
+    "expected": [
+      {
+        "id": "karaoke",
+        "text": "Two",
+        "start_s": 0,
+        "end_s": 2,
+        "word_timings": [
+          {
+            "text": "Two",
+            "start_s": 0.2,
+            "end_s": 1.5,
+            "duration_cs": 130
+          }
+        ]
+      }
+    ]
+  }
+}

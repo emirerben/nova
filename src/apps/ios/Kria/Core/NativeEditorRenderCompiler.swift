@@ -8,6 +8,7 @@ struct NativeEditorRenderProgram: Sendable {
 
 enum NativeEditorRenderError: Error, Equatable {
     case unsupportedLane(String)
+    case missingSpeechCaptionTiming
     case missingFont(String)
     case missingSource(Int)
     /// No clip reached the video track, so nothing would play under the
@@ -81,6 +82,9 @@ enum NativeEditorRenderError: Error, Equatable {
                  songCaptionShift: NativeSongCaptionShift? = nil,
                  skippedMediaOverlayIDs: Set<String> = [],
                  talkingCutaways: [NativePhoneTalkingSource.Cutaway] = []) throws -> NativeEditorRenderProgram {
+        if NativeSpeechTimelineProjection.requiresCaptionTiming(document) {
+            throw NativeEditorRenderError.missingSpeechCaptionTiming
+        }
         for (name, populated) in [
             ("carousel", document.carouselMoment != nil),
         ] where populated { throw NativeEditorRenderError.unsupportedLane(name) }

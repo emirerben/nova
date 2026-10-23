@@ -291,21 +291,36 @@ enum NativeEditorInteraction {
         slots: [EditorTimelineSlot],
         carousel: [String: JSONValue]?
     ) -> NativeEditorTimelineProjection {
+        let speech = slots.contains { $0.id?.hasPrefix("native-phone-talking-source") == true }
         var baseWindows: [NativeEditorClipWindow] = []
         // A source-window marker opts the whole timeline into the server's
         // 30fps layout clock: downstream legacy slots and transition edges
         // must share it or millisecond rounding accumulates frame drift.
-        let usesSourceFrameClock = slots.contains { !$0.removed && sourcePreservingOutputDuration($0) != nil }
+        let usesSourceFrameClock = !speech && slots.contains { !$0.removed && sourcePreservingOutputDuration($0) != nil }
         var cursor: TimeInterval = 0
         var previous: (slot: EditorTimelineSlot, duration: TimeInterval)?
         for (index, slot) in slots.enumerated() where !slot.removed {
-            let rawDuration = sourcePreservingOutputDuration(slot) ?? max(0.1, slot.durationS ?? 0.1)
+            // KRI-852: source-backed speech must use the same continuous source clock as
+            // its recipe (`speech_cut_state.authored_speech_windows`: duration_s on an
+            // unrounded cursor, segments down to 1 ms); rounding each segment, to the
+            // millisecond or to the 30fps frame clock, accumulates caption drift.
+            // KRI-689: every other timeline follows the server's layout clock, 30fps
+            // once a source-window marker is present, else milliseconds.
+            let minimum = slot.id?.hasPrefix("native-phone-talking-source") == true ? 0.001 : 0.1
+            let rawDuration = speech
+                ? max(minimum, slot.durationS ?? minimum)
+                : sourcePreservingOutputDuration(slot) ?? max(0.1, slot.durationS ?? 0.1)
             let duration = usesSourceFrameClock ? roundedFrame(rawDuration) : rawDuration
-            let overlap = previous.map {
-                timelineTransitionOverlap(left: $0.slot, leftDuration: $0.duration, rightDuration: duration, frameClock: usesSourceFrameClock)
+            let overlap = previous.map { prior -> Double in
+                if speech {
+                    guard prior.slot.transitionAfter != "cut" else { return 0 }
+                    let raw = min(0.3, prior.slot.transitionDurationS ?? 0.3, prior.duration * 0.3, duration * 0.3)
+                    return raw >= 0.1 ? raw : 0
+                }
+                return timelineTransitionOverlap(left: prior.slot, leftDuration: prior.duration, rightDuration: duration, frameClock: usesSourceFrameClock)
             } ?? 0
-            let start = usesSourceFrameClock ? roundedFrame(cursor - overlap) : roundedMillis(cursor - overlap)
-            let end = usesSourceFrameClock ? roundedFrame(start + duration) : roundedMillis(start + duration)
+            let start = speech ? cursor - overlap : (usesSourceFrameClock ? roundedFrame(cursor - overlap) : roundedMillis(cursor - overlap))
+            let end = speech ? start + duration : (usesSourceFrameClock ? roundedFrame(start + duration) : roundedMillis(start + duration))
             baseWindows.append(
                 NativeEditorClipWindow(
                     sourceIndex: index,
