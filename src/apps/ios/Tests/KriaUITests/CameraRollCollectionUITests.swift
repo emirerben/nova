@@ -21,8 +21,12 @@ final class CameraRollCollectionUITests: XCTestCase {
         app.terminate()
         app.launchArguments = ["-camera-roll-collection"]
         app.launch()
+        XCTAssertTrue(app.buttons["collection-options"].waitForExistence(timeout: 10))
+        app.buttons["collection-options"].tap()
+        app.buttons["Edit groups"].tap()
         XCTAssertTrue(app.textFields["collection-group-fixture-video"].waitForExistence(timeout: 10))
         XCTAssertTrue((app.textFields["collection-group-fixture-video"].value as? String ?? "").contains("Evening"))
+        app.buttons["collection-groups-done"].tap()
         XCTAssertFalse(app.buttons["collection-remove-fixture-photo"].exists)
         XCTAssertTrue(app.buttons["collection-find-stories"].exists)
         XCTAssertFalse(app.staticTexts["No media has been uploaded for this collection."].exists)
@@ -34,11 +38,62 @@ final class CameraRollCollectionUITests: XCTestCase {
     }
     func testPartiallyIndexedCollectionStillOffersStories() {
         let app = XCUIApplication()
-        app.launchArguments = ["-camera-roll-collection-ready"]
+        app.launchArguments = ["-camera-roll-collection-ready", "-collection-ready-reset"]
         app.launch()
         XCTAssertTrue(app.buttons["collection-find-stories"].waitForExistence(timeout: 10))
         app.buttons["collection-find-stories"].tap()
         XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10), "One clip without timed moments must not block the usable footage")
+    }
+
+    func testSavedIdeasSurviveRelaunchWithoutReselectingFootage() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-camera-roll-collection-ready", "-collection-ready-reset"]
+        app.launch()
+        let find = app.buttons["collection-find-stories"]
+        XCTAssertTrue(find.waitForExistence(timeout: 10))
+        find.tap()
+        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        app.terminate()
+        app.launchArguments = ["-camera-roll-collection-ready"]
+        app.launch()
+        let saved = app.buttons["View saved ideas"]
+        XCTAssertTrue(saved.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.textFields["collection-story-query"].exists)
+        saved.tap()
+        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "KRI-853 saved ideas reopened after process termination"
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
+    func testUnavailableAnalysisIsNotAnEditConflict() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-camera-roll-collection-ready", "-collection-ready-reset", "-collection-cache-miss"]
+        app.launch()
+        let find = app.buttons["collection-find-stories"]
+        XCTAssertTrue(find.waitForExistence(timeout: 10))
+        find.tap()
+        XCTAssertTrue(app.staticTexts["This footage needs analysis. Your collection is saved; new analysis is unavailable right now."].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'edit changed elsewhere'")).firstMatch.exists)
+        XCTAssertTrue(app.textFields["collection-name"].exists)
+    }
+
+    func testRealConflictCanOpenLatestWithoutLosingLocalCollection() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-camera-roll-collection-ready", "-collection-ready-reset", "-collection-conflict"]
+        app.launch()
+        let find = app.buttons["collection-find-stories"]
+        XCTAssertTrue(find.waitForExistence(timeout: 10))
+        find.tap()
+        let latest = app.buttons["collection-review-latest"]
+        XCTAssertTrue(latest.waitForExistence(timeout: 10))
+        latest.tap()
+        app.buttons["Open latest collection"].tap()
+        let updated = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Updated outing"), object: app.textFields["collection-name"])
+        XCTAssertEqual(XCTWaiter.wait(for: [updated], timeout: 10), .completed)
+        app.buttons["collection-options"].tap()
+        XCTAssertTrue(app.buttons["Weekend outing (local changes)"].waitForExistence(timeout: 5))
     }
 
 }

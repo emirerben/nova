@@ -135,7 +135,10 @@
       "KriaUITests/CameraRollStoriesUITests/testReviewReplaceAndRejectWithoutRendering",
       "KriaUITests/CameraRollStoriesUITests/testConfirmExamplesRateIdeaAndForget",
       "KriaUITests/CameraRollStoriesUITests/testResearchFactsAndSourcesStayBehindTheIdea",
-      "KriaUITests/CameraRollCollectionUITests/testPartiallyIndexedCollectionStillOffersStories"
+      "KriaUITests/CameraRollCollectionUITests/testPartiallyIndexedCollectionStillOffersStories",
+      "KriaUITests/CameraRollCollectionUITests/testSavedIdeasSurviveRelaunchWithoutReselectingFootage",
+      "KriaUITests/CameraRollCollectionUITests/testUnavailableAnalysisIsNotAnEditConflict",
+      "KriaUITests/CameraRollCollectionUITests/testRealConflictCanOpenLatestWithoutLosingLocalCollection"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",

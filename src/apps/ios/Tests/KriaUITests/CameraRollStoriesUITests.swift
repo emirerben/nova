@@ -6,6 +6,8 @@ final class CameraRollStoriesUITests: XCTestCase {
         app.launchArguments = ["-camera-roll-story-review"]
         app.launch()
         XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        app.buttons["See clips and details"].tap()
+        for _ in 0..<3 where !app.buttons["story-replace-0"].isHittable { app.swipeUp() }
         app.buttons["story-replace-0"].tap()
         app.buttons["story-alternative-33333333-3333-3333-3333-333333333333"].tap()
         XCTAssertTrue(app.staticTexts["The final arrival"].waitForExistence(timeout: 5))

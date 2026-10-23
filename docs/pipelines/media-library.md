@@ -177,6 +177,20 @@ Candidate selection considers all collection sources, round-robin by each source
 of that candidate projection. Availability requests run in batches of ten, up to 50 sources.
 Partial coverage and uncertainty remain explicit. Still images have no invented video timing.
 
+Unchanged canonical collection saves are no-ops, including identical stale snapshots;
+actual competing edits still require the current revision. Collection failures carry
+scoped codes (`collection_changed`, `collection_media_unavailable`,
+`collection_analysis_unavailable`, `collection_analysis_pending`) so native discovery
+never mistakes an unavailable cached analysis for an editor change.
+
+The native collection keeps footage review before idea selection (KRI-853). Optional
+direction/research/grouping live in options. Account-scoped snapshots retain the exact
+selection, query and last reviewed result; **View saved ideas** revalidates the selection,
+source availability and cached response without new model work. Selection/name/source
+changes invalidate the local shortcut. Opening a genuinely newer server collection is
+explicit and retains the previous local state as a separate collection. Legacy local
+snapshots without saved-idea context remain readable.
+
 Stories support review, exact-interval replacement/order/removal, original/muted audio,
 rejection and selection. Selection prepares the common revisioned draft, with a server-owned
 story/collection/compiler binding. Separate expiring approval freezes the existing guided

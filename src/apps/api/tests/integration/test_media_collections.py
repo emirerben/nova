@@ -368,6 +368,14 @@ async def test_collection_revision_correction_and_resume(collection_world):
     assert len(data["members"]) == 2
     # Retransmission is idempotent, including automatic event assignments.
     assert (await client.put(path, json=body)).json() == data
+    canonical = {"name": data["name"], "members": data["members"]}
+    for revision in (1, 0, 1):
+        unchanged = await client.put(path, json={**canonical, "expected_revision": revision})
+        assert unchanged.status_code == 200, unchanged.text
+        assert unchanged.json() == data
+    future = await client.put(path, json={**canonical, "expected_revision": 999})
+    assert future.status_code == 409
+    assert future.json()["detail"]["code"] == "collection_changed"
     changed = {
         **body,
         "expected_revision": 1,
@@ -707,6 +715,7 @@ async def test_story_candidates_corrections_and_rejection_are_separate_from_rend
     body = {"expected_revision": 1, "query": "Tell the story of this outing"}
     cold = await client.post(f"{path}/stories", json={**body, "cache_only": True})
     assert cold.status_code == 409 and not calls
+    assert cold.json()["detail"]["code"] == "collection_analysis_unavailable"
     result = await client.post(f"{path}/stories", json=body)
     assert result.status_code == 200, result.text
     first = result.json()["stories"][0]
@@ -717,6 +726,19 @@ async def test_story_candidates_corrections_and_rejection_are_separate_from_rend
     for _ in range(2):
         shown = await client.post(f"{path}/stories/{first['id']}/expose", json=exposure)
         assert shown.status_code == 200, shown.text
+    # KRI-853: the native screen saves again before requesting stories on reopen.
+    # Canonical selection returned by GET includes the server-assigned groups.
+    persisted = (await client.get(path)).json()
+    reopened = await client.put(
+        path,
+        json={
+            "name": persisted["name"],
+            "members": persisted["members"],
+            "expected_revision": 1,
+        },
+    )
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["revision"] == 1, "Unchanged resume must preserve cached story identity"
     again = await client.post(f"{path}/stories", json={**body, "cache_only": True})
     assert again.json()["stories"][0]["id"] == first["id"]
     assert len(calls) == 1
