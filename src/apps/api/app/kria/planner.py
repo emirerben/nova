@@ -205,6 +205,28 @@ from app.services.spoken_roles import SpokenSeats
 log = structlog.get_logger()
 
 
+def _held_visual_pool(manifest: Any, strategy: Mapping[str, Any]) -> tuple[str, ...] | None:
+    """KRI-824: the Visual stills (``asset-*`` pool photos) a unified montage places.
+
+    Only the montage family without a recorded voiceover places Visuals beside the
+    footage (``_run_phone_unified_montage_job``), narrowed to an explicit ``selected``
+    scope as the worker narrows it. None for every other format: no Visual plays there,
+    so no held seconds come off the creator's total.
+    """
+    from app.pipeline.unified_montage import selected_visual_ids  # noqa: PLC0415
+
+    if strategy.get("edit_format") != "montage" or strategy.get("audio_strategy") == "voiceover":
+        return None
+    selected = selected_visual_ids(strategy)
+    return tuple(
+        media.media_id
+        for media in getattr(manifest, "media", None) or ()
+        if media.kind == "image"
+        and media.media_id.startswith("asset-")
+        and (selected is None or media.media_id in selected)
+    )
+
+
 def _enrich_best_parts_snapshot(
     strategy: Mapping[str, Any],
     media_snapshot: dict | None,
@@ -213,6 +235,7 @@ def _enrich_best_parts_snapshot(
     closing_quote: Mapping[str, Any] | None = None,
     named_lines: Sequence[Mapping[str, Any]] | None = None,
     camera_sound: bool = False,
+    visual_photo_ids: Sequence[str] | None = None,
 ) -> dict | None:
     """Attach source-bounded footage capacity before the choice collector runs.
 
@@ -225,9 +248,12 @@ def _enrich_best_parts_snapshot(
     ``camera_sound`` (``narration_notes.keeps_camera_sound``, KRI-585): every clip's own
     sound plays, so a welcome the clips' words move forward keeps its line and a pinned
     closing clip that only introduces someone plays its stretch without words.
+    ``visual_photo_ids`` (``_held_visual_pool``, KRI-824): the pool stills this format
+    places beside the footage; a creator-held one is budgeted off the creator's total.
     """
     if not isinstance(media_snapshot, dict):
         return media_snapshot
+    from app.kria.asset_holds import asset_holds, held_visual_seconds  # noqa: PLC0415
     from app.services.creator_render_contract import build_render_contract  # noqa: PLC0415
     from app.services.length_planning import build_length_plan  # noqa: PLC0415
     from app.services.length_policy import creator_duration_s, natural_length_owner  # noqa: PLC0415
@@ -270,6 +296,24 @@ def _enrich_best_parts_snapshot(
         ).items()
     }
 
+    # KRI-824: a photo the creator gave its own seconds gets exactly that window, and a
+    # held Visual (a pool photo outside the clip record) is budgeted off the creator's
+    # total so the footage, never the held photo, gives way.
+    clip_rows = [
+        row for row in media_snapshot.get("clip_assignments") or [] if isinstance(row, Mapping)
+    ]
+    still_holds = {
+        media_id: hold.hold_s
+        for media_id, hold in asset_holds(
+            brief, [str(row.get("media_id")) for row in clip_rows if row.get("kind") == "image"]
+        ).items()
+    }
+    held_visual_s = held_visual_seconds(
+        brief, [str(row.get("media_id")) for row in clip_rows], visual_photo_ids
+    )
+    if creator_target_s is not None and held_visual_s and creator_target_s > held_visual_s:
+        creator_target_s -= held_visual_s
+
     def windows_for(seats: SpokenSeats | None) -> dict[str, Any]:
         quiet_id = seats.quiet_close[0] if seats and seats.quiet_close else None
         if seats is not None and quiet_id in described:
@@ -292,6 +336,7 @@ def _enrich_best_parts_snapshot(
             quiet_moments=dict([quiet]) if quiet else None,
             spoken_order=seats.record() if seats is not None else None,
             named_lines=named,
+            still_holds=still_holds,
         )
 
     # KRI-585: the clips' words seat the welcome's line and a quiet ending. "Fast cuts" is
@@ -3910,6 +3955,7 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
         thread_id=kwargs["thread_id"],
         creator_id=kwargs["creator_id"],
         item_id=kwargs["item_id"],
+        creator_text=kwargs.get("user_message"),
     )
 
 
@@ -3920,8 +3966,13 @@ async def _gate_unresolved_choices(
     thread_id: uuid.UUID,
     creator_id: uuid.UUID,
     item_id: uuid.UUID | None = None,
+    creator_text: str | None = None,
 ) -> PlannedKriaTurn:
     """KRI-476: an unresolved material choice never becomes an approvable draft.
+
+    ``creator_text`` is this turn's creator message: the brief it previews stamps
+    authority from it exactly as the persisted version will (KRI-824), so the length plan
+    approval pins and the worker's bound brief agree.
 
     Runs HERE, after ``media_snapshot`` is attached, because the order/duration
     conflicts depend on the exact snapshot approval later binds (a dry run inside
@@ -4019,7 +4070,9 @@ async def _gate_unresolved_choices(
         brief = await load_latest_brief(db, thread_id)
         if planned.brief_updates:
             with suppress(BriefUpdateBatchError):
-                brief = apply_updates(brief, planned.brief_updates, source_turn_id=None)
+                brief = apply_updates(
+                    brief, planned.brief_updates, source_turn_id=None, creator_text=creator_text
+                )
     events = await _load_thread_events(db, thread_id)
     music_inputs = {
         "media": (planned.media_snapshot or {}).get("clip_assignments"),
@@ -4094,6 +4147,7 @@ async def _gate_unresolved_choices(
         closing_quote=closing_quote,
         named_lines=named_lines,
         camera_sound=camera_sound,
+        visual_photo_ids=_held_visual_pool(planned.brief_manifest, strategy),
     )
     if enriched_snapshot is not planned.media_snapshot:
         planned = replace(planned, media_snapshot=enriched_snapshot)
@@ -4231,6 +4285,7 @@ async def _gate_unresolved_choices(
         closing_quote=closing_quote,
         named_lines=named_lines,
         camera_sound=camera_sound,
+        visual_photo_ids=_held_visual_pool(planned.brief_manifest, resolution.strategy),
     )
     return _with_narration_note(
         replace(
@@ -4730,7 +4785,12 @@ async def _plan_live_turn(
             )
             extracted_delegation = _declares_delegation(extraction_outputs, pre_extracted_updates)
             extracted_read_ids = extraction_inputs.delegation_read_ids
-            effective = apply_updates(prior_brief, pre_extracted_updates, source_turn_id=None)
+            effective = apply_updates(
+                prior_brief,
+                pre_extracted_updates,
+                source_turn_id=None,
+                creator_text=user_message,
+            )
             extraction_complete = True
             fresh = new_requirements(prior_brief, effective)
             if pending_analysis_ids:
@@ -4999,7 +5059,9 @@ async def _plan_live_turn(
     )
     delegation_read_ids = extracted_read_ids if extraction_complete else inputs.delegation_read_ids
     try:
-        effective = apply_updates(prior_brief, updates, source_turn_id=None)
+        effective = apply_updates(
+            prior_brief, updates, source_turn_id=None, creator_text=user_message
+        )
     except BriefUpdateBatchError as exc:
         # A brief update the server cannot apply is a reading failure, not a context
         # limit. The error texts are fixed server strings, never the creator's words.
@@ -5221,7 +5283,7 @@ async def extract_deferred_brief(
         tuple(update for output in extraction_outputs for update in output.brief_updates),
         user_message,
     )
-    effective = apply_updates(prior_brief, updates, source_turn_id=None)
+    effective = apply_updates(prior_brief, updates, source_turn_id=None, creator_text=user_message)
     fresh = new_requirements(prior_brief, effective)
     item = await _refetch_item(db, item_id)
     shape = CurrentPlanShape(has_render=False)

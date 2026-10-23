@@ -386,6 +386,19 @@ def _recognized_frame_aligned_cadence(value: float) -> float | None:
 # klip -> klibi: the final p softens to b before a vowel suffix.
 _TR_MEDIA = r"(?:video\w*|kli[pb]\w*|cekim\w*|goruntu\w*)"
 _TR_PHOTO = r"(?:foto\w*|resim\w*|resm\w*|gorsel\w*)"
+# KRI-824: an exact still length sets every photo's cadence only when the creator speaks
+# about the photos as a group ("photos 0.3 s", "every photo", "fotoğraflar 0,3 saniye").
+# One named photo ("the beach photo 0.5 seconds", "plaj fotoğrafı") is that photo's own
+# stamped hold (``app.kria.asset_holds``), never a profile pinning every other still.
+PHOTO_GROUP_PATTERN = (
+    r"(?:\b(?:photos|images|stills|pictures)\b"
+    r"|\b(?:every|each|all)\s+(?:(?:the|of|my|these|those)\s+){0,2}"
+    r"(?:photo|image|still|picture)s?\b)"
+)
+_TR_PHOTO_GROUP = (
+    r"(?:\b(?:foto|resim|resm|gorsel)\w*l[ae]r\w*"
+    r"|\b(?:her|tum|butun)\s+(?:foto|resim|resm|gorsel)\w*)"
+)
 _TR_PHOTO_FAST = r"(?:hizl\w*|cabuk\w*|kisa\s+sure\w*|kisacik)"
 _TR_VIDEO_LONG = (
     r"(?:daha\s+uzun\b|\buzun\b|uzun\s+sure\w*|daha\s+yavas\w*|\byavas\w*|"
@@ -805,9 +818,16 @@ MIXED_MEDIA_VIDEO_HOLD = MixedMediaHoldBounds(1.5, 2.0, 3.0)
 def mixed_media_hold_bounds(
     kind: MediaKind,
     profile: MixedMediaTimingProfile | None = None,
+    hold_s: float | None = None,
 ) -> MixedMediaHoldBounds:
-    """Return the approved bounds for one media kind."""
+    """Return the approved bounds for one media kind.
 
+    ``hold_s`` is one photo's creator-stated length (KRI-824, ``CreatorStillHold``): that
+    photo's bounds are exactly it, whatever the profile's cadence says.
+    """
+
+    if kind == "image" and hold_s is not None:
+        return MixedMediaHoldBounds(hold_s, hold_s, hold_s)
     if kind == "image" and profile is not None and profile.image_hold_s is not None:
         return MixedMediaHoldBounds(
             profile.image_hold_s, profile.image_hold_s, profile.image_hold_s
@@ -905,7 +925,7 @@ def recognize_mixed_media_timing(text: str) -> MixedMediaTimingProfile | None:
     # and an exact value does not lose the value.
     numeric_matches = list(
         re.finditer(
-            rf"\b{photo}\b.{{0,80}}?\b(0?\.[0-9]+|[1-9][0-9]{{0,2}})\s*(?:s|sec(?:ond)?s?|ms|milliseconds?)\b",
+            rf"{PHOTO_GROUP_PATTERN}.{{0,80}}?\b(0?\.[0-9]+|[1-9][0-9]{{0,2}})\s*(?:s|sec(?:ond)?s?|ms|milliseconds?)\b",
             normalized,
         )
     )
@@ -987,7 +1007,7 @@ def _recognize_turkish_mixed_media_timing(
     # An exact still length ("fotoğraflar 0,3 saniye"), like the English numeric path.
     numeric: list[tuple[float, str]] = []
     for match in re.finditer(
-        rf"\b{_TR_PHOTO}\b(?:(?!\b{_TR_MEDIA})[^!?;]){{0,80}}?{_TR_NUMBER}\s*"
+        rf"{_TR_PHOTO_GROUP}\b(?:(?!\b{_TR_MEDIA})[^!?;]){{0,80}}?{_TR_NUMBER}\s*"
         rf"(?P<unit>ms\b|milisaniye\w*|saniye\w*|sn\b)(?P<tail>{_TR_CLAUSE_TAIL})",
         loose,
     ):
@@ -1300,6 +1320,24 @@ class ProposalGuidance(BaseModel):
     fingerprint: str = Field(min_length=64, max_length=64)
 
 
+class CreatorStillHold(BaseModel):
+    """KRI-824: one photo's on-screen time the creator stated (server-stamped brief).
+
+    Separate from ``MixedMediaTimingProfile``: the profile is the AI's photo cadence for
+    every still; this is one photo's exact length, which the cadence never overrides.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    media_id: str = Field(min_length=1, max_length=200)
+    hold_s: float = Field(ge=0.1, le=10.0)
+    requirement_id: str = Field(min_length=1, max_length=24)
+
+
+# One frame at 30 fps, plus rounding slack: what a held still may differ by on screen.
+CREATOR_STILL_HOLD_TOLERANCE_S = 1 / 30 + 0.001
+
+
 class EditProposalSnapshot(BaseModel):
     # Explicit no-copy policy for footage recommendations. Missing preserves every
     # legacy snapshot/hash. A review summary must never become on-screen text.
@@ -1525,6 +1563,13 @@ class EditProposalSnapshot(BaseModel):
     song_captions: SkipJsonSchema[SongCaptionTrack | None] = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    # KRI-824: photos whose length the creator stated. Empty (every earlier snapshot) is
+    # omitted, so stored snapshots and approval hashes stay byte-identical.
+    creator_still_holds: SkipJsonSchema[list[CreatorStillHold]] = Field(
+        default_factory=list,
+        max_length=MAX_EDIT_PROPOSAL_MEDIA,
+        exclude_if=lambda value: not value,
+    )
 
     @model_validator(mode="after")
     def validate_beat_media(self) -> EditProposalSnapshot:
@@ -1567,12 +1612,18 @@ class EditProposalSnapshot(BaseModel):
             if missing:
                 raise ValueError("fast montage cuts reference missing media IDs")
             quick_mixed_timing = uses_quick_photo_long_video_timing(self.mixed_media_timing)
+            still_holds = {hold.media_id: hold.hold_s for hold in self.creator_still_holds}
+            if not set(still_holds) <= {ref.media_id for ref in self.media if ref.kind == "image"}:
+                raise ValueError("creator still holds must name photos in the proposal")
             if (
                 self.narration is None
                 and self.video_reuse_policy is None
                 and self.montage_cadence is None
                 and not quick_mixed_timing
-                and any(cut.output_duration_s > 1.2 + 0.001 for cut in self.fast_cuts)
+                and any(
+                    cut.output_duration_s > 1.2 + 0.001 and cut.media_id not in still_holds
+                    for cut in self.fast_cuts
+                )
             ):
                 raise ValueError(
                     "fast montage cuts above 1.2s require the mixed-media timing profile"
@@ -1597,6 +1648,17 @@ class EditProposalSnapshot(BaseModel):
             video_windows: dict[str, list[tuple[float, float, float]]] = {}
             for cut in self.fast_cuts:
                 ref = by_id[cut.media_id]
+                if ref.kind == "image" and ref.media_id in still_holds:
+                    # The creator's own length for this photo, never the AI cadence's.
+                    if (
+                        abs(cut.output_duration_s - still_holds[ref.media_id])
+                        > CREATOR_STILL_HOLD_TOLERANCE_S
+                    ):
+                        raise ValueError("a held photo must play the length the creator asked")
+                    if quick_mixed_timing and ref.media_id in image_ids:
+                        raise ValueError("mixed-media photos may only be used once")
+                    image_ids.add(ref.media_id)
+                    continue
                 if ref.kind == "image":
                     bounds = mixed_media_hold_bounds(ref.kind, self.mixed_media_timing)
                     if quick_mixed_timing and not (
