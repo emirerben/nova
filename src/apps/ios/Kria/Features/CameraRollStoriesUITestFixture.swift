@@ -35,7 +35,12 @@ struct CameraRollCollectionReadyUITestHost: View {
         var value = try! CameraRollCollection(id: UUID(uuidString: "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")!, name: CameraRollStoryFixture.input?["name"] as? String ?? "Weekend outing", identifiers: decoded.map { "saved:\($0.id)" })
         value.serverRevision = 1
         for asset in decoded { value.bind(asset, to: "saved:\(asset.id)") }
-        if let owner = api.mediaLibraryOwner { try? value.save(in: MediaLibraryOriginals(owner: owner)) }
+        if let owner = api.mediaLibraryOwner {
+            let originals = MediaLibraryOriginals(owner: owner)
+            if ProcessInfo.processInfo.arguments.contains("-collection-ready-reset") || (try? CameraRollCollection.load(id: value.id, in: originals, sharesCaptureContext: false)) == nil {
+                try? value.save(in: originals)
+            }
+        }
     }
     var body: some View {
         Group {
@@ -143,6 +148,12 @@ private final class CameraRollStoriesFixtureServer: @unchecked Sendable {
             guard file.path.hasPrefix(CameraRollStoryFixture.directory.resolvingSymlinksInPath().path + "/") else { return (404, [:]) }
             return (200, ["url": file.absoluteString, "generation": generation])
         }
+        if request.httpMethod == "GET", request.url?.path.contains("/media-collections/") == true {
+            return (200, ["id": request.url!.lastPathComponent, "revision": 2, "name": "Updated outing", "members": [["asset_id": CameraRollStoryFixture.assetID, "source_id": "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", "group": "Updated outing"]]])
+        }
+        if request.httpMethod == "GET", request.url?.path.contains("/media-assets/") == true {
+            return (200, CameraRollStoryFixture.asset(CameraRollStoryFixture.assetID, source: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"))
+        }
         var data = request.httpBody ?? Data()
         if data.isEmpty, let stream = request.httpBodyStream {
             stream.open(); defer { stream.close() }
@@ -170,9 +181,15 @@ private final class CameraRollStoriesFixtureServer: @unchecked Sendable {
             return (200, ["id": UUID().uuidString, "recorded": true])
         }
         if request.httpMethod == "PUT" {
-            return (200, ["id": request.url!.lastPathComponent, "revision": (body["expected_revision"] as? Int ?? 0) + 1])
+            if ProcessInfo.processInfo.arguments.contains("-collection-conflict"), body["name"] as? String != "Updated outing" {
+                return (409, ["detail": ["code": "collection_changed", "message": "This collection changed. Refresh before continuing."]])
+            }
+            return (200, ["id": request.url!.lastPathComponent, "revision": body["name"] as? String == "Updated outing" ? 2 : 1])
         }
         if request.url?.path.hasSuffix("/index") == true {
+            if ProcessInfo.processInfo.arguments.contains("-collection-coverage-changed") {
+                return (200, ["next_offset": NSNull(), "missing_analysis_asset_ids": [CameraRollStoryFixture.assetID], "unavailable_asset_ids": [], "untimed_asset_ids": []])
+            }
             let missing = (CameraRollStoryFixture.result["coverage"] as? [String: Any])?["unindexed_asset_ids"] ?? ["CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"]
             return (200, ["next_offset": NSNull(), "missing_analysis_asset_ids": missing, "unavailable_asset_ids": [], "untimed_asset_ids": []])
         }
@@ -180,6 +197,9 @@ private final class CameraRollStoriesFixtureServer: @unchecked Sendable {
             if ProcessInfo.processInfo.arguments.contains("-camera-roll-collection-ready"),
                (body["allow_partial_analysis"] as? Bool != true || body["query"] as? String != "Suggest different content ideas from this outing") {
                 return (409, ["detail": "Missing analysis requires an explicit partial choice"])
+            }
+            if ProcessInfo.processInfo.arguments.contains("-collection-cache-miss") {
+                return (409, ["detail": ["code": "collection_analysis_unavailable", "message": "No eligible cached result; new model calls are disabled"]])
             }
             return (200, CameraRollStoryFixture.result)
         }

@@ -57,7 +57,7 @@
     {
       "id": "kri-492-length-ownership",
       "needs_native": true,
-      "api_tests": "tests/services/test_length_policy_state.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_brief_binding.py tests/kria/test_request_binding_journey.py tests/kria/test_render_retry_postgres.py tests/agents/test_main_creator_voice_mode.py tests/kria/test_voice_flag_gating.py tests/services/test_phone_speech_montage_job.py tests/services/test_render_route.py tests/services/test_render_route_invariance.py tests/tasks/test_route_shadow_dispatch.py tests/tasks/test_unified_montage_dispatch.py tests/tasks/test_voice_behind_footage_dispatch.py tests/integration/test_actual_export_verification.py tests/integration/test_actual_export_completion.py tests/routes/test_actual_export_publication.py tests/integration/test_media_collections.py tests/integration/test_camera_roll_execution.py",
+      "api_tests": "tests/services/test_length_policy_state.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_brief_binding.py tests/kria/test_request_binding_journey.py tests/kria/test_render_retry_postgres.py tests/agents/test_main_creator_voice_mode.py tests/kria/test_voice_flag_gating.py tests/services/test_phone_speech_montage_job.py tests/services/test_render_route.py tests/services/test_render_route_invariance.py tests/tasks/test_route_shadow_dispatch.py tests/tasks/test_unified_montage_dispatch.py tests/tasks/test_voice_behind_footage_dispatch.py tests/integration/test_actual_export_verification.py tests/integration/test_actual_export_completion.py tests/routes/test_actual_export_publication.py tests/integration/test_media_collections.py tests/integration/test_camera_roll_execution.py tests/services/test_strict_export_duration.py tests/routes/test_strict_export_duration.py tests/services/test_length_policy.py tests/services/test_length_owner_choices.py tests/services/test_phone_editor_render_contract.py",
       "paths": [
         "src/apps/api/app/services/length_policy.py",
         "src/apps/api/app/services/length_policy_state.py",
@@ -114,7 +114,14 @@
         "src/apps/api/tests/integration/test_actual_export_verification.py",
         "src/apps/api/tests/integration/test_actual_export_completion.py",
         "src/apps/api/tests/routes/test_actual_export_publication.py",
-        "scripts/ios/phone-n2-fullscreen-e2e.py"
+        "scripts/ios/phone-n2-fullscreen-e2e.py",
+        "src/apps/api/app/services/export_duration_policy.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/tests/services/test_strict_export_duration.py",
+        "src/apps/api/tests/routes/test_strict_export_duration.py",
+        "src/apps/api/tests/services/test_length_policy.py",
+        "src/apps/api/tests/services/test_length_owner_choices.py",
+        "src/apps/api/tests/services/test_phone_editor_render_contract.py"
       ]
     },
     {
@@ -1362,6 +1369,21 @@
         "src/apps/api/app/tasks/generative_build.py",
         "src/apps/api/app/services/phone_reaction_grounding.py",
         "src/apps/api/tests/fixtures/kri839_cafe_t2/t2_01_words.json"
+      ]
+    },
+    {
+      "id": "kri-798-render-worker-restart",
+      "needs_native": false,
+      "api_tests": "tests/services/test_fly_machines.py tests/tasks/test_render_worker_lifecycle.py tests/tasks/test_render_worker_activity_sql.py tests/test_render_worker_wake.py",
+      "paths": [
+        "src/apps/api/app/config.py",
+        "src/apps/api/app/services/fly_machines.py",
+        "src/apps/api/app/tasks/maintenance.py",
+        "src/apps/api/app/worker.py",
+        "src/apps/api/tests/services/test_fly_machines.py",
+        "src/apps/api/tests/tasks/test_render_worker_lifecycle.py",
+        "src/apps/api/tests/tasks/test_render_worker_activity_sql.py",
+        "src/apps/api/tests/test_render_worker_wake.py"
       ]
     }
   ]

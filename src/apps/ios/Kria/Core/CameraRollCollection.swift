@@ -20,6 +20,7 @@ struct CameraRollCollection: Codable, Sendable {
     static let maximumCount = 500
     static let batchSize = 32
     let id: UUID
+    var savedIdeas: SavedCameraRollIdeas?
     var serverRevision: Int?
     var name: String
     private(set) var entries: [Entry]
@@ -114,6 +115,12 @@ struct CameraRollCollection: Codable, Sendable {
             last = capture
         }
         return name
+    }
+
+    func localCopy() throws -> Self {
+        var copy = try Self(name: String(name.prefix(140)) + " (local changes)", identifiers: entries.map(\.id))
+        copy.entries = entries
+        return copy
     }
 
     /// Saved below the existing account-scoped originals root, so account erasure removes it too.
