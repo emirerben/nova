@@ -21,6 +21,7 @@ from app.services.active_narration_source import (
     ActiveNarrationSource,
 )
 from app.services.clip_speech import SilenceDetectionResult
+from app.services.plan_item_media import current_detector_policy
 from app.services.speech_cleanup_preflight import (
     SPEECH_CLEANUP_ENGINE_VERSION,
     preflight_enabled_for_source,
@@ -74,6 +75,7 @@ def run_analysis(
     transcript: Transcript | None = None,
     silences: tuple[tuple[float, float], ...] = INCIDENT_SILENCES,
     silence_status: str = "ok",
+    retake_detect_fn=None,
 ) -> SpeechCleanupAnalysisResult:
     return analyze_speech_cleanup(
         request,
@@ -82,6 +84,7 @@ def run_analysis(
             spans=silences,
             status=silence_status,
         ),
+        retake_detect_fn=retake_detect_fn,
     )
 
 
@@ -209,6 +212,120 @@ def test_lexical_fillers_and_pauses_have_typed_category_counts() -> None:
     assert {finding.category for finding in result.findings} == {"filler", "long_pause"}
     assert result.public_receipt.category_counts.filler_sounds == 1
     assert result.public_receipt.category_counts.long_pauses == 1
+
+
+def test_injected_retake_detector_uses_exact_words_and_cuts_only_false_start() -> None:
+    """KRI-551: detector indexes must be the cut planner's word indexes."""
+
+    words = [
+        Word("At", 0.2, 0.4, 0.99),
+        Word("kilometer", 0.4, 0.9, 0.99),
+        Word("30", 0.9, 1.1, 0.99),
+        Word("um,", 1.1, 1.3, 0.99),
+        Word("sorry.", 1.3, 1.7, 0.99),
+        Word("At", 2.0, 2.2, 0.99),
+        Word("kilometer", 2.2, 2.7, 0.99),
+        Word("32", 2.7, 2.9, 0.99),
+        Word("I", 2.9, 3.0, 0.99),
+        Word("slowed", 3.0, 3.4, 0.99),
+        Word("down.", 3.4, 3.8, 0.99),
+    ]
+    seen: list[tuple[tuple[str, ...], str]] = []
+
+    def retakes(timed_words, language):
+        seen.append((tuple(word.text for word in timed_words), language))
+        return ((0, 4),)
+
+    result = run_analysis(
+        analysis_input(duration_s=5.0, source_window_end_s=25.0, mixed_gap_mode="off"),
+        transcript=fake_transcript(words),
+        silences=(),
+        retake_detect_fn=retakes,
+    )
+
+    assert seen == [(tuple(word.text for word in words), "tr")]
+    retakes = [finding for finding in result.findings if finding.category == "retake"]
+    # The allocator may safely absorb adjacent silence, but it must leave the
+    # later intended delivery (which starts at 2.0 s) untouched.
+    assert len(retakes) == 1
+    assert retakes[0].start_s <= 0.2
+    assert retakes[0].end_s < 2.0
+    assert result.public_receipt.category_counts.retakes == 1
+
+
+@pytest.mark.parametrize("language", ["en", "tr"])
+def test_rhetorical_repetition_has_no_retake_when_detector_returns_no_span(language: str) -> None:
+    """A deliberate repeated phrase must never become a cut merely by wiring this path."""
+
+    words = [
+        Word("every", 0.2, 0.4, 0.99),
+        Word("day", 0.4, 0.6, 0.99),
+        Word("every", 0.8, 1.0, 0.99),
+        Word("day", 1.0, 1.2, 0.99),
+        Word("every", 1.4, 1.6, 0.99),
+        Word("day", 1.6, 1.8, 0.99),
+    ]
+    transcript = fake_transcript(words)
+    transcript.language = language
+    result = run_analysis(
+        analysis_input(duration_s=3.0, source_window_end_s=23.0, mixed_gap_mode="off"),
+        transcript=transcript,
+        silences=(),
+        retake_detect_fn=lambda _words, _language: (),
+    )
+
+    assert all(finding.category != "retake" for finding in result.findings)
+
+
+@pytest.mark.parametrize(
+    "detector_result",
+    [((-1, 2),), ((0, 99),), ((4, 2),), ((True, 2),), ((float("nan"), 2),)],
+)
+def test_invalid_injected_retake_spans_fail_open(detector_result) -> None:
+    words = [Word(f"word-{index}", index * 0.3, index * 0.3 + 0.2, 0.99) for index in range(6)]
+
+    result = run_analysis(
+        analysis_input(duration_s=3.0, source_window_end_s=23.0, mixed_gap_mode="off"),
+        transcript=fake_transcript(words),
+        silences=(),
+        retake_detect_fn=lambda _words, _language: detector_result,
+    )
+
+    assert result.public_receipt.category_counts.retakes == 0
+    assert result.cut_plan.removed == ()
+
+
+def test_retake_detector_failure_fails_open_without_losing_normal_analysis() -> None:
+    words = [Word(f"word-{index}", index * 0.3, index * 0.3 + 0.2, 0.99) for index in range(6)]
+
+    result = run_analysis(
+        analysis_input(duration_s=3.0, source_window_end_s=23.0, mixed_gap_mode="off"),
+        transcript=fake_transcript(words),
+        silences=(),
+        retake_detect_fn=lambda _words, _language: (_ for _ in ()).throw(
+            RuntimeError("unavailable")
+        ),
+    )
+
+    assert result.public_receipt.category_counts.retakes == 0
+    assert result.cut_plan.removed == ()
+
+
+def test_retake_policy_flag_changes_the_source_fingerprint_policy(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "retake_cut_enabled", False)
+    monkeypatch.setattr(settings, "speech_cleanup_retakes_enabled", True)
+    disabled = current_detector_policy()
+    monkeypatch.setattr(settings, "retake_cut_enabled", True)
+    enabled = current_detector_policy()
+
+    assert "retakes=disabled" in disabled
+    assert "retakes=enabled" in enabled
+    assert disabled != enabled
+
+    monkeypatch.setattr(settings, "speech_cleanup_retakes_enabled", False)
+    separately_disabled = current_detector_policy()
+    assert "retakes=disabled" in separately_disabled
+    assert separately_disabled != enabled
 
 
 def test_exact_detector_inputs_and_verbatim_prompt_are_owned_by_engine() -> None:

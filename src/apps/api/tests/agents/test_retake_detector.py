@@ -118,6 +118,14 @@ def test_normalize_drops_malformed_entries() -> None:
     assert normalize_retake_spans(entries, n_words=22) == []
 
 
+@pytest.mark.parametrize("invalid", [True, False, 1.9, 2.0, "2", float("nan"), float("inf")])
+@pytest.mark.parametrize("field", ["start_word", "end_word"])
+def test_normalize_never_coerces_malformed_indexes_into_speech_cuts(invalid, field) -> None:
+    entry = {"start_word": 1, "end_word": 4, "reason": "abandoned delivery"}
+    entry[field] = invalid
+    assert normalize_retake_spans([entry], n_words=22) == []
+
+
 def test_normalize_merges_overlapping_and_adjacent_spans() -> None:
     entries = [
         _span(5, 9, "second flub"),

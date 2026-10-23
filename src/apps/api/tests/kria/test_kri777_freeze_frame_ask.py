@@ -323,28 +323,34 @@ def test_a_moment_or_effect_timing_is_never_compared_to_the_total(req):
     assert "you asked for" not in (receipt.reason or ""), receipt.reason
 
 
+_DRAFT_LENGTH = "This draft is about 4.7s; you asked for {seconds}s."
+# KRI-629: an exclusive "under N" cap is the whole export's length, ending included, so it is
+# judged on the measured file after export rather than on the draft.
+_EXPORT_LENGTH = "I'll check the full video length, including its ending, after export."
+
+
 @pytest.mark.parametrize(
-    ("description", "seconds"),
+    ("description", "seconds", "reason"),
     [
-        ("About 14 seconds", 14),
-        ("under 60 seconds", 60),
-        ("15 seconds at most", 15),
-        ("60 seconds at least", 60),
-        ("30 seconds on TikTok", 30),
-        ("Make it 20 seconds on Instagram reels", 20),
-        ("a 20 second video of my trip", 20),
-        ("About 14 seconds, it's at a café", 14),  # "it's" folds to "it s at"
-        ("toplamda 14 saniye", 14),
-        ("Videoda 14 saniye olsun", 14),
-        ("yaklaşık 14 saniye", 14),
+        ("About 14 seconds", 14, _DRAFT_LENGTH),
+        ("under 60 seconds", 60, _EXPORT_LENGTH),
+        ("15 seconds at most", 15, _DRAFT_LENGTH),
+        ("60 seconds at least", 60, _DRAFT_LENGTH),
+        ("30 seconds on TikTok", 30, _DRAFT_LENGTH),
+        ("Make it 20 seconds on Instagram reels", 20, _DRAFT_LENGTH),
+        ("a 20 second video of my trip", 20, _DRAFT_LENGTH),
+        ("About 14 seconds, it's at a café", 14, _DRAFT_LENGTH),  # "it's" -> "it s at"
+        ("toplamda 14 saniye", 14, _DRAFT_LENGTH),
+        ("Videoda 14 saniye olsun", 14, _DRAFT_LENGTH),
+        ("yaklaşık 14 saniye", 14, _DRAFT_LENGTH),
     ],
 )
-def test_a_real_length_is_still_the_videos_length(description, seconds):
+def test_a_real_length_is_still_the_videos_length(description, seconds, reason):
     req = _req(description, duration_s=seconds)
 
     assert not times_one_moment(req), description
     receipt = check_requirement(req, PlanFacts(duration_s=4.7, edit_format="montage"))
-    assert receipt.reason == f"This draft is about 4.7s; you asked for {seconds}s."
+    assert receipt.reason == reason.format(seconds=seconds)
 
 
 def test_the_length_readers_never_take_the_freeze_for_the_video_length():

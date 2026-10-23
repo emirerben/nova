@@ -157,6 +157,7 @@ func isNonRetryableFailureCode(_ code: String?) -> Bool {
 let speechCleanupConflictCodes: Set<String> = [
     "speech_cleanup_pending", "speech_cleanup_choice_required", "speech_cleanup_failed",
     "speech_cleanup_choice_not_allowed", "speech_cleanup_analysis_changed",
+    "speech_cleanup_retakes_consent_required",
 ]
 
 /// After a speech-cleanup 409 + refresh: true when the approval card did not
@@ -378,10 +379,15 @@ struct CreationConfirmationStage: View {
                 Button("Create without cleanup") { action("create_without_cleanup", payload) }
                     .buttonStyle(CanonicalPrimaryButtonStyle()).disabled(isBusy || !hasVideo)
             } else if cleanup["requires_choice"]?.booleanValue == true {
+                let stats = SpeechCleanupStats(analysis: analysis)
                 SpeechCleanupChoiceButtons(
-                    stats: SpeechCleanupStats(analysis: analysis),
+                    stats: stats,
                     isDisabled: isBusy || !hasVideo,
-                    clean: { perform("generate", payload.merging(["speech_cleanup_choice": .string("clean")]) { _, new in new }) },
+                    clean: {
+                        var cleanPayload = payload.merging(["speech_cleanup_choice": .string("clean")]) { _, new in new }
+                        if stats.removesRetakes { cleanPayload["speech_cleanup_retakes_aware"] = .bool(true) }
+                        perform("generate", cleanPayload)
+                    },
                     keepOriginal: { perform("generate", payload.merging(["speech_cleanup_choice": .string("keep_original")]) { _, new in new }) }
                 )
             } else {

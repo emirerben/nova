@@ -27,6 +27,7 @@ import XCTest
             speechCleanupAware: true, speechCleanupAnalysisID: nil, speechCleanupChoice: nil
         )
         XCTAssertEqual(capturedBody["speech_cleanup_aware"] as? Bool, true)
+        XCTAssertNil(capturedBody["speech_cleanup_retakes_aware"], "False must be omitted so a strict older API accepts the unchanged request shape")
         XCTAssertNil(capturedBody["speech_cleanup_analysis_id"], "Nil fields must be omitted, never encoded as null")
         XCTAssertNil(capturedBody["speech_cleanup_choice"])
         XCTAssertEqual(capturedBody["expected_thread_revision"] as? Int, 3)
@@ -52,6 +53,24 @@ import XCTest
             XCTAssertEqual(capturedBody["speech_cleanup_choice"] as? String, choice)
             XCTAssertEqual(capturedBody["speech_cleanup_aware"] as? Bool, true, choice)
         }
+    }
+
+    func testCleanAfterRestartDisclosureSerializesRetakesAwareness() async throws {
+        let threadID = UUID(uuidString: "B8D594F1-5D75-4C52-BF94-9EA05B9C0D9B")!
+        let approvalID = UUID(uuidString: "C8D594F1-5D75-4C52-BF94-9EA05B9C0D9C")!
+        var capturedBody: [String: Any] = [:]
+        NativeEditorURLProtocol.handler = { request in
+            capturedBody = (try? JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request))) as? [String: Any] ?? [:]
+            return (200, Data("{}".utf8))
+        }
+        try await NativeEditorTestSupport.api().decideApproval(
+            threadID: threadID, approvalID: approvalID, decision: "approve",
+            expectedThreadRevision: 3, expectedDraftRevision: 1, fingerprint: "fp-1",
+            speechCleanupAware: true, speechCleanupRetakesAware: true,
+            speechCleanupAnalysisID: "analysis-1", speechCleanupChoice: "clean",
+            outputOrientation: nil, landscapeFit: nil, automaticRepairAttempts: 0
+        )
+        XCTAssertEqual(capturedBody["speech_cleanup_retakes_aware"] as? Bool, true)
     }
 
     func testDenyAlsoAlwaysSendsSpeechCleanupAwareTrue() async throws {
@@ -119,10 +138,11 @@ import XCTest
         XCTAssertNil(submitTurnConflictMessage(detail: nil, approvalExpired: true))
     }
 
-    func testAllFiveSpeechCleanupConflictCodesAreRecognized() {
+    func testAllSpeechCleanupConflictCodesAreRecognized() {
         for code in [
             "speech_cleanup_pending", "speech_cleanup_choice_required", "speech_cleanup_failed",
             "speech_cleanup_choice_not_allowed", "speech_cleanup_analysis_changed",
+            "speech_cleanup_retakes_consent_required",
         ] {
             XCTAssertTrue(speechCleanupConflictCodes.contains(code), code)
         }

@@ -971,8 +971,11 @@ extension BackgroundUploadRetryTests {
     }
 
     func testAClipBeingPreparedBlocksContinueAndIsNotCountedTwiceOnceRecorded() async throws {
+        // This admission scenario needs readable media. Invalid-video handling has
+        // separate coverage; do not make these reservation waits depend on it.
+        let video = try Data(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4")))
         let h = harness(answerImmediately: false)
-        try h.select("asset-1")
+        try h.select("asset-1", contents: video)
         let reached = await waitUntil { h.received == 1 }   // the reservation is in flight: prepared, but no record yet
         XCTAssertTrue(reached)
 

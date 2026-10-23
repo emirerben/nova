@@ -8,10 +8,12 @@ independent proof that the creator asked for a particular output duration.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterable, Mapping
 from typing import Literal
 
-from app.kria.brief import CreativeBrief
+from app.kria.brief import BriefRequirement, CreativeBrief
+from app.kria.brief_route import loose_text
 from app.kria.freeze_ask import times_one_moment
 from app.schemas.edit_proposal import recognize_total_duration_s
 from app.services.choice_questions import (
@@ -21,6 +23,116 @@ from app.services.choice_questions import (
 )
 
 LengthOwner = Literal["creator", "song", "voiceover", "take", "footage"]
+
+
+def strict_duration_matches(actual_s: float, max_s: float) -> bool:
+    """Whether a measured export satisfies an explicit exclusive upper bound."""
+
+    return bool(
+        math.isfinite(actual_s)
+        and math.isfinite(max_s)
+        and actual_s > 0
+        and max_s > 0
+        and actual_s < max_s
+    )
+
+
+_EN_STRICT_DURATION = re.compile(
+    r"\b(?:under\s*|less than\s+|shorter than\s+)"
+    r"(?P<seconds>\d{1,3}(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b"
+)
+_TR_STRICT_DURATION = re.compile(
+    r"\b(?P<seconds>\d{1,3}(?:[.,]\d+)?)\s+saniye(?:nin|den)?\s+"
+    r"(?:altinda|kisa)\b"
+)
+_SCOPED_DURATION_CLAUSE = re.compile(
+    r"\b(?:(?:each|every|per|her)\s+)?(?:clip|clips|moment|moments|shot|shots|cut|cuts|"
+    r"klip(?:ler)?|an(?:lar)?|sahne|kesit)\s*$"
+)
+_NEGATED_DURATION_PREDICATE = re.compile(
+    r"\b(?:dont|don't|do not|never)\b(?:\s+(?!and\b)\w+){0,4}\s+"
+    r"(?:keep|make|stay|be|run)\b(?:\s+\w+){0,3}\s*$"
+)
+_TITLE_COPY_AFTER_DURATION = re.compile(r"^\s*(?:title|text|baslik|yazi)\b")
+_TR_NEGATED_DURATION_AFTER = re.compile(r"^\s+(?:olmasin|olmasini\s+istemiyorum)\b")
+
+
+def _unquoted_duration_text(text: str) -> str:
+    """Remove quoted copy, where duration-like words are not an edit instruction."""
+
+    from app.services.spoken_quotes import quoted_spans  # noqa: PLC0415
+
+    out = str(text or "")
+    for start, end, _phrase in reversed(quoted_spans(out)):
+        out = out[:start] + " " + out[end:]
+    return loose_text(out)
+
+
+def _duration_clause_is_negated_or_scoped(text: str, match: re.Match[str]) -> bool:
+    """Reject only the matched clause when it negates or scopes the bound to a piece."""
+
+    clause_start = max(text.rfind(".", 0, match.start()), text.rfind(";", 0, match.start())) + 1
+    before = text[clause_start : match.start()]
+    return bool(
+        re.search(r"\b(?:not|degil)\s*$", before)
+        or _NEGATED_DURATION_PREDICATE.search(before)
+        or _SCOPED_DURATION_CLAUSE.search(before)
+    )
+
+
+def strict_duration_limit_s(requirement: BriefRequirement) -> float | None:
+    """Read a narrow, creator-recorded whole-export exclusive duration limit.
+
+    Approximate and inclusive language remains deliberately outside this helper: it
+    is guidance, not a strict render constraint. The numeric wording must agree with
+    the structured fact so an inferred or stale fact cannot create a hard cap.
+    """
+
+    if (
+        requirement.kind != "timing"
+        or requirement.scope != "global"
+        or times_one_moment(requirement)
+    ):
+        return None
+    recorded = requirement.facts.get("duration_s")
+    if isinstance(recorded, bool) or not isinstance(recorded, int | float):
+        return None
+    limit = float(recorded)
+    if not math.isfinite(limit) or limit <= 0:
+        return None
+    # A timing requirement may store the creator's words in `literal` alone.
+    # When it has a description, that is the instruction; its literal is copy.
+    text = _unquoted_duration_text(requirement.description or requirement.literal or "")
+    matches = sorted(
+        [*_EN_STRICT_DURATION.finditer(text), *_TR_STRICT_DURATION.finditer(text)],
+        key=lambda match: match.start(),
+    )
+    for match in matches:
+        # A rejected or piece-scoped clause is not the whole-export instruction.
+        # Keep looking for the current positive clause, while retaining the
+        # existing fact-match check for the first eligible whole-export limit.
+        if _duration_clause_is_negated_or_scoped(text, match):
+            continue
+        if _TITLE_COPY_AFTER_DURATION.match(text[match.end() :]):
+            continue
+        if _TR_NEGATED_DURATION_AFTER.match(text[match.end() :]):
+            continue
+        stated = float(match.group("seconds").replace(",", "."))
+        return limit if math.isclose(stated, limit, rel_tol=0.0, abs_tol=1e-9) else None
+    return None
+
+
+def creator_max_export_duration_s(*, brief: CreativeBrief | None) -> float | None:
+    """The tightest active strict whole-export limit, if the creator set one."""
+
+    if brief is None:
+        return None
+    limits = [
+        limit
+        for requirement in brief.live()
+        if (limit := strict_duration_limit_s(requirement)) is not None
+    ]
+    return min(limits) if limits else None
 
 
 def creator_duration_matches(actual_s: float, requested_s: float) -> bool:

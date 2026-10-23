@@ -2,6 +2,66 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.67.0] - 2026-10-23
+
+### Changed
+- fix(ios): narrated source preview plays slow-to-fill steps at the export rate (KRI-813) (#1776) <!-- release-pr: 1776 -->
+
+## [0.81.66.0] - 2026-10-23
+
+### Fixed
+- fix(kria): render voiceover photo-to-video requests full screen (#1756) <!-- release-pr: 1756 -->
+
+## [0.81.65.0] - 2026-10-23
+
+### Fixed
+- fix(speech): require explicit consent for preflight retake removal (KRI-551) (#1753) <!-- release-pr: 1753 -->
+
+## [0.81.64.0] - 2026-10-23
+
+### Changed
+- fix(kria): natural delegating requests reach approval and recover in the same chat (KRI-814) (#1771) <!-- release-pr: 1771 -->
+
+## [0.81.63.0] - 2026-10-23
+
+### Fixed
+- fix(ios): preserve camera-roll ideas on resume and simplify review (KRI-853) (#1772) <!-- release-pr: 1772 -->
+
+## [0.81.62.0] - 2026-10-23
+
+### Fixed
+- fix(worker): retry stopping workers and protect active creation (KRI-798) (#1754) <!-- release-pr: 1754 -->
+
+## [0.81.61.0] - 2026-10-23
+
+### Fixed
+- fix(ios): enforce strict exported duration from approved brief (KRI-629) (#1757) <!-- release-pr: 1757 -->
+
+## [0.81.60.0] - 2026-10-23
+
+### Fixed
+- fix: preserve speech subtitles when extra text is restricted (#1755) <!-- release-pr: 1755 -->
+
+## [0.81.59.0] - 2026-10-23
+
+### Changed
+- test(ios): use readable media for upload preparation guard (#1774) <!-- release-pr: 1774 -->
+
+## [0.81.58.0] - 2026-10-23
+
+### Changed
+- fix(slides): give the slide copilot what each ready photo shows (KRI-817) (#1769) <!-- release-pr: 1769 -->
+
+## [0.81.57.0] - 2026-10-23
+
+### Fixed
+- fix(kria): render supported edits when optional requests are unavailable (#1752) <!-- release-pr: 1752 -->
+
+## [0.81.56.0] - 2026-10-23
+
+### Fixed
+- fix(camera-roll): support 500 uploads and distinct content ideas (KRI-731) (#1747) <!-- release-pr: 1747 -->
+
 ## [0.81.55.0] - 2026-10-23
 
 ### Changed

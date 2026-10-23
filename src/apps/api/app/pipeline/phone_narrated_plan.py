@@ -898,7 +898,7 @@ def compile_phone_narrated_plan(
 
 # Tracks and capabilities owned by the editor's sound-effect / Visuals lanes
 # (`phone_subtitled_plan`'s lane compilers write exactly these).
-_EDITOR_LANE_TRACK_IDS = frozenset({"subtitled-overlays", "sfx"})
+_EDITOR_LANE_TRACK_IDS = frozenset({"subtitled-fullscreen", "subtitled-overlays", "sfx"})
 _EDITOR_LANE_CAPABILITIES = frozenset(
     {"visualBlocks", "alphaOverlay", "visualVideos", "soundEffects"}
 )
@@ -919,6 +919,22 @@ def _media_last(tracks: list[TimelineTrack]) -> list[TimelineTrack]:
 
 def _has_editor_media(tracks: list[TimelineTrack]) -> bool:
     return any(track.id == EDITOR_MEDIA_TRACK_ID and track.clips for track in tracks)
+
+
+def _tracks_need_visual_videos(tracks: list[TimelineTrack], manifest: dict[str, object]) -> bool:
+    """Whether a retained Visuals-pool video still needs the device feature.
+
+    A lane save deliberately strips its own capabilities before it recompiles
+    them. Editor media is retained during that swap, though, so derive this
+    one capability from the retained manifest rather than dropping the video
+    requirement with an unrelated lane.
+    """
+    source_ids = {clip.source_asset_id for track in tracks for clip in track.clips}
+    return any(
+        getattr(asset, "media_kind", None) == "video"
+        for asset_id, asset in manifest.items()
+        if asset_id in source_ids
+    )
 
 
 def replace_editor_media(
@@ -985,6 +1001,10 @@ def replace_editor_media(
         if media_track.clips:
             tracks.append(media_track)
             required |= _EDITOR_MEDIA_CAPABILITIES
+    if _tracks_need_visual_videos(tracks, manifest):
+        required.add("visualVideos")
+    else:
+        required.discard("visualVideos")
 
     fields = {name: getattr(recipe, name) for name in type(recipe).model_fields}
     fields.update(
@@ -1020,6 +1040,7 @@ def replace_editor_lanes(
     """
     from app.pipeline.phone_subtitled_lanes import _lane_error  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
+        _compile_fullscreen_track,
         _compile_overlay_track,
         _compile_sfx_track,
     )
@@ -1046,10 +1067,33 @@ def replace_editor_lanes(
     timeline_end = timeline_end_s(video.clips)
     required = set(recipe.required_capabilities) - _EDITOR_LANE_CAPABILITIES
     tracks = list(kept_tracks)
-    if lanes.overlays:
+    fullscreen_cards = [card for card in lanes.overlays if card.display_mode == "fullscreen"]
+    pip_cards = [card for card in lanes.overlays if card.display_mode != "fullscreen"]
+    if fullscreen_cards:
+        try:
+            fullscreen_track, has_video = _compile_fullscreen_track(
+                fullscreen_cards,
+                visuals=visuals,
+                speaker_end=timeline_end,
+                assets=assets,
+                manifest=manifest,
+            )
+        except UnsupportedPhonePlan:
+            raise
+        except Exception as exc:  # noqa: BLE001 - untrusted lane content
+            raise _lane_error("overlays", str(exc), capability="visualBlocks") from exc
+        if fullscreen_track.clips:
+            # Full-screen cards replace the visible picture only. They sit
+            # over the narrated footage and below PiP cards, while narration,
+            # captions, and the fixed voiceover timeline stay untouched.
+            tracks.append(fullscreen_track)
+            required |= {"visualBlocks", "alphaOverlay", "audioMix"}
+            if has_video:
+                required |= {"visualVideos"}
+    if pip_cards:
         try:
             overlay_track, has_video = _compile_overlay_track(
-                lanes.overlays,
+                pip_cards,
                 visuals=visuals,
                 speaker_end=timeline_end,
                 assets=assets,
@@ -1083,6 +1127,10 @@ def replace_editor_lanes(
         # The kept editor media layer (KRI-287) still needs what the lane
         # strip above removed.
         required |= _EDITOR_MEDIA_CAPABILITIES
+    if _tracks_need_visual_videos(tracks, manifest):
+        required.add("visualVideos")
+    else:
+        required.discard("visualVideos")
 
     fields = {name: getattr(recipe, name) for name in type(recipe).model_fields}
     fields.update(
