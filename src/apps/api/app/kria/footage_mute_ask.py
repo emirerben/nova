@@ -6,10 +6,11 @@ own sound as a bed under the voice (narrated: ~25 % by default), so without this
 render quietly kept the bed and the receipt told the creator to "lower it in the editor's
 mix", a control narrated edits do not have.
 
-The ask is read deterministically off the approved brief's own words, with the same
-recogniser `app.kria.brief_checks` judges the receipt by (`wants_bed_muted`), so the render
-and its receipt can never disagree. "Keep it low" (`wants_bed_under_voice`) is not a mute:
-it stays at the format's quiet bed.
+The ask is the brief writer's typed ``audio_intent: source_muted``, corroborated by the
+approved requirement's own words (`app.kria.brief_checks.renders_bed_mute`: names the
+footage sound, says mute/remove, never keep / lower / raise it). The receipt reads the same
+function, so render and receipt can never disagree. "Keep it low", "remove only the wind
+noise" or "drop the song, keep the crowd" are not mutes: the format's bed stays.
 
 Only the pinned, approved brief is read (`content_plan_build` dispatch). A model suggestion
 (copilot, planner) never reaches this reader, so it can never mute a creator's footage.
@@ -37,13 +38,9 @@ class FootageMuteAsk:
 
 def footage_mute_ask(requirements: Iterable[BriefRequirement]) -> FootageMuteAsk | None:
     """The live requirements asking to mute the footage sound (None when none do)."""
-    from app.kria.brief_checks import wants_bed_muted, wants_bed_under_voice  # noqa: PLC0415
+    from app.kria.brief_checks import renders_bed_mute  # noqa: PLC0415
 
-    ids = tuple(
-        req.id
-        for req in requirements
-        if req.live and wants_bed_muted(req) and not wants_bed_under_voice(req)
-    )
+    ids = tuple(req.id for req in requirements if renders_bed_mute(req))
     return FootageMuteAsk(requirement_ids=ids) if ids else None
 
 

@@ -18,6 +18,9 @@ F6  "Keep the crowd noise low" (not a mute) is muted anyway; a mute without a vo
 F7  A montage Voiceover receipt says the footage "still plays softly" although the recipe
     plays it at 0.
 F8  Turkish copy drifts from English.
+F9  A non-mute ask silences the footage because the mute DECIDES the render: "remove the
+    wind noise" (noise reduction), "no music, keep the original audio", "drop the song,
+    I want the crowd noise", or a "keep it lower" ask the model mis-tags source_muted.
 
 The journey writes its evidence (request, brief, capabilities, recipes before/after,
 receipts) to ``$KRI821_REPORT`` when set (CI: a tmp file).
@@ -348,3 +351,48 @@ def test_montage_voiceover_receipt_reads_the_pinned_footage_level():
     receipt = _receipt(loud, MUTE, control="chat")
     assert receipt.status == "partial" and "full volume" in receipt.reason
     _report["montage_voiceover_receipt"] = _receipt(row, MUTE).model_dump(mode="json")
+
+
+def _req(text: str, *, typed: bool = False, rid: str = "rx") -> BriefRequirement:
+    facts = {"audio_intent": "source_muted"} if typed else {}
+    return BriefRequirement(id=rid, kind="audio", scope="global", description=text, facts=facts)
+
+
+@pytest.mark.parametrize(
+    ("text", "typed"),
+    [
+        # F9: approved asks that keep (or only denoise) the footage sound never mute it.
+        ("Remove only the wind noise from the original camera audio", False),
+        ("Remove the wind noise", False),
+        ("No music, keep the original audio", False),
+        ("No music, keep the original audio", True),
+        ("Remove the background music but keep the crowd noise", False),
+        ("Drop the song, I want the crowd noise", False),
+        ("keep the crowd noise lower, no music", True),
+        ("Keep the crowd sound low under my voice, no music", True),
+        ("Mute my voice", True),
+        ("No music at all", True),
+        # Wording alone (no typed source_muted) never decides the render.
+        ("Mute the camera sound", False),
+    ],
+)
+def test_non_mute_asks_never_silence_the_footage(text, typed):
+    brief = _brief(_req(text, typed=typed))
+    assert brief_footage_mute(brief) is None, text
+    assert approved_bed_level(brief, 0.4) == 0.4
+
+
+@pytest.mark.parametrize(
+    ("text", "typed"),
+    [
+        (REQUEST, True),
+        ("Mute the camera sound", True),
+        ("Remove the original audio from the clips", True),
+        ("No crowd noise, just my voice", True),
+        ("Kalabalık sesi olmasın, sadece benim sesim", True),
+    ],
+)
+def test_explicit_mute_asks_render_silent_footage(text, typed):
+    brief = _brief(_req(text, typed=typed))
+    assert brief_footage_mute(brief) is not None, text
+    assert approved_bed_level(brief, 0.4) == 0.0

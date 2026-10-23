@@ -7397,15 +7397,15 @@ def _voiceover_original_audio_capability(variant: dict) -> dict[str, Any] | None
 
     if variant.get("resolved_archetype") not in _VOICEOVER_ORIGINAL_AUDIO_ARCHETYPES:
         return None
+    if in_http_request():
+        protocol = current_client_protocol()
+        if protocol is None or protocol < settings.voiceover_original_audio_min_client_protocol:
+            return None  # old builds keep their exact payload shape, cloud or phone
     if variant.get("render_destination") != "device":
         return {"editable": False, "reason": "original_audio_phone_only"}
     if not _stamped_original_audio_level(variant):
         # Rendered before the level was stamped: the row would open at a wrong level.
         return {"editable": False, "reason": "original_audio_level_unknown"}
-    if in_http_request():
-        protocol = current_client_protocol()
-        if protocol is None or protocol < settings.voiceover_original_audio_min_client_protocol:
-            return None
     return {"editable": True, "reason": None}
 
 

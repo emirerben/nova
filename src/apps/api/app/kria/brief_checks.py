@@ -2983,7 +2983,7 @@ _FOOTAGE_SOUND_STRICT = (
     rf"|video|camera) {_SOUND_NOUN}"
     r"|(?:sound|audio|noise)s? (?:of|from|in) the (?:footage|clips?|video|crowd)"
     r"|kalabalik\w*|orijinal ses\w*|ortam ses\w*|[çc]ekim\w* ses\w*"
-    r"|klip\w* ses\w*|video\w* ses\w*)"
+    r"|klip\w* ses\w*|video\w* ses\w*|kamera\w* ses\w*)"
 )
 # "background noise" counts for a keep-it-quiet ask, not for a mute (that may mean
 # noise reduction on the voice recording).
@@ -2995,10 +2995,12 @@ _BED_NOISE_RE = re.compile(rf"\b{_FOOTAGE_SOUND_LOOSE}\b|\bg[üu]r[üu]lt[üu]")
 _BED_NAMED_RE = re.compile(rf"\b{_FOOTAGE_SOUND_STRICT}\b")
 # Quiet wording about the bed. Bare adjectives ("soft", "calm") only count with
 # under/beneath, which are in the list themselves.
+# The `pos` group marks position words ("under my voice"), which say where the bed plays,
+# not how loud: "mute the crowd noise under my voice" is still a mute (KRI-821).
 _BED_QUIET_RE = re.compile(
-    r"\b(?:quiet(?:er)?|low(?:er)?|down|under|beneath|below|underneath|duck(?:ed|ing)?"
-    r"|in the background|turned down)\b"
-    r"|\bkisik|\bkis(?:il|ili|in)|\bd[üu][şs][üu]k|\balt[iı]nda|\barka planda|\bsessiz"
+    r"\b(?:quiet(?:er)?|low(?:er)?|down|(?P<pos>under|beneath|below|underneath)"
+    r"|duck(?:ed|ing)?|in the background|turned down)\b"
+    r"|\bkisik|\bkis(?:il|ili|in)|\bd[üu][şs][üu]k|\b(?P<pos_tr>alt[iı]nda)|\barka planda|\bsessiz"
 )
 # The opposite direction ("raise the crowd noise", "not too quiet").
 _BED_UP_RE = re.compile(
@@ -3034,24 +3036,44 @@ def _wants_bed_under_voice(req: BriefRequirement) -> bool:
     )
 
 
+def _asks_bed_level(text: str) -> bool:
+    """Level wording about the bed ("lower", "quiet"), not just where it plays ("under")."""
+    return any(
+        m.group("pos") is None and m.group("pos_tr") is None for m in _BED_QUIET_RE.finditer(text)
+    )
+
+
 def _wants_bed_muted(req: BriefRequirement) -> bool:
-    """Mute or remove the footage's own sound, with no "keep it low" wording."""
+    """Mute or remove the footage's own sound, with no keep / lower / raise wording.
+
+    KRI-821: the typed ``source_muted`` is the brief writer's reading, never enough alone:
+    the approved requirement text must itself name the footage sound and say mute/remove,
+    and must not ask to keep it, lower it or raise it. Untyped (pre-v77) briefs are read by
+    the same words for their receipt only; `footage_mute_ask` renders a mute from typed
+    asks alone.
+    """
     if req.kind not in _BEAT_KINDS or _wants_beats(req) or _wants_cleanup(req):
         return False
     intent = _typed_audio_intent(req)
+    if intent is not None and (req.kind != "audio" or intent != SOURCE_MUTED_INTENT):
+        return False
     text = _req_text(req)
-    if intent is not None:
-        # The typed fact is the model's reading; the requirement text is what the creator
-        # approved. A mute renders only when that approved text says mute/remove too, so a
-        # "keep it lower" requirement tagged source_muted never silences the footage.
-        return (
-            req.kind == "audio"
-            and intent == SOURCE_MUTED_INTENT
-            and bool(_BED_MUTE_RE.search(text))
-        )
     return bool(
-        _BED_NAMED_RE.search(text) and _BED_MUTE_RE.search(text) and not _BED_QUIET_RE.search(text)
+        _BED_NAMED_RE.search(text)
+        and _BED_MUTE_RE.search(text)
+        and not _KEEP_VERB_RE.search(text)
+        and not _BED_UP_RE.search(text)
+        and not _asks_bed_level(text)
     )
+
+
+def renders_bed_mute(req: BriefRequirement) -> bool:
+    """KRI-821: this live requirement makes the render play the footage at 0 under the voice.
+
+    Only a typed ``source_muted`` the approved text corroborates (`_wants_bed_muted`); a
+    wording-only reading never decides the render.
+    """
+    return req.live and _typed_audio_intent(req) == SOURCE_MUTED_INTENT and _wants_bed_muted(req)
 
 
 # KRI-821: public names for the readers that decide what the render does with the bed
@@ -4252,9 +4274,10 @@ def _check_voice_bed(req: BriefRequirement, facts: PlanFacts) -> RequirementRece
     if _wants_bed_muted(req) and not _wants_bed_under_voice(req):
         if level is not None and level <= 0:
             return _receipt(req, "met", None)
-        if level is None:
-            # KRI-821: an approved mute renders the bed at 0 on every voiceover lane
+        if level is None and renders_bed_mute(req):
+            # KRI-821: an approved typed mute renders the bed at 0 on every voiceover lane
             # (`footage_mute_ask.approved_bed_level`; a montage voiceover fully ducks it).
+            # A wording-only (pre-v77) mute renders nothing, so it is never claimed here.
             return _receipt(
                 req,
                 "met",
