@@ -1,6 +1,29 @@
 import XCTest
 
 final class CameraRollStoriesUITests: XCTestCase {
+    @MainActor func testThreeIdeasRemainIndependentWhenOneIsRejected() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-camera-roll-story-review", "-camera-roll-multiple-ideas"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        let third = app.staticTexts["An evening crossing"]
+        for _ in 0..<12 where !third.isHittable { app.swipeUp() }
+        XCTAssertTrue(third.isHittable, "The third idea must be reachable in the real review screen")
+        XCTAssertTrue(app.staticTexts["The light at the end"].exists)
+        let proof = XCTAttachment(screenshot: app.screenshot())
+        proof.name = "Third distinct content idea is available before project selection"
+        proof.lifetime = .keepAlways
+        add(proof)
+        for _ in 0..<12 where !app.staticTexts["Boat journey"].isHittable { app.swipeDown() }
+        app.buttons["Not this story"].firstMatch.tap()
+        let removed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.staticTexts["Boat journey"])
+        XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 5), .completed)
+        XCTAssertTrue(app.staticTexts["The light at the end"].exists)
+        XCTAssertTrue(app.staticTexts["An evening crossing"].exists)
+        XCTAssertFalse(app.staticTexts["No story to suggest"].exists)
+        XCTAssertFalse(app.staticTexts["Rendering"].exists)
+    }
+
     @MainActor func testReviewReplaceAndRejectWithoutRendering() {
         let app = XCUIApplication()
         app.launchArguments = ["-camera-roll-story-review"]
