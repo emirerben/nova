@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.60.0] - 2026-10-23
+
+### Fixed
+- fix: preserve speech subtitles when extra text is restricted (#1755) <!-- release-pr: 1755 -->
+
 ## [0.81.59.0] - 2026-10-23
 
 ### Changed
