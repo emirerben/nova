@@ -156,6 +156,28 @@ final class LiveAudioMixTests: XCTestCase {
         XCTAssertLessThan(rms(pcm, 10.01, 10.1), 0.002, "no audio may play after the recipe ends")
     }
 
+    @MainActor func testRetimedCameraAudioExportPreservesTonePitch() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let picture = try await video(directory, "picture")
+        let source = try await mux(picture, try tone(directory, "camera", 440), directory.appendingPathComponent("camera.mov"))
+        let recipe = EditRecipe(canvas: Canvas(width: 96, height: 160),
+            assets: [MediaAsset(id: "camera", relativePath: "camera.mov")],
+            tracks: [TimelineTrack(id: "v", kind: .video, clips: [
+                TimelineClip(id: "fast", sourceAssetID: "camera", sourceDuration: 2, rate: 2),
+            ])], audio: AudioMixRecipe(originalVolume: 1))
+        let output = directory.appendingPathComponent("fast.mp4")
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none)
+            .export(recipe: recipe, assetURLs: ["camera": source], outputURL: output)
+        let exported = AVURLAsset(url: output)
+        let duration = try await exported.load(.duration).seconds
+        let frequency = estimatedFrequency(try await decode(exported, nil), from: 0.15, to: 0.85)
+        XCTAssertEqual(duration, 1, accuracy: 1.0 / 48_000)
+        XCTAssertEqual(frequency, 440, accuracy: 25,
+                       "a 2x camera clip must retain the source pitch")
+    }
+
     @MainActor func testGainEditNeedsAFullRebuildThatMatchesExportedTrimAndPlacement() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -355,6 +377,19 @@ final class LiveAudioMixTests: XCTestCase {
         var sum = 0.0
         for index in start..<end { sum += Double(pcm[index]) * Double(pcm[index]) }
         return (sum / Double(end - start)).squareRoot()
+    }
+
+    /// Rising zero crossings give a stable pitch estimate for this generated
+    /// sine fixture without depending on a platform FFT implementation.
+    private func estimatedFrequency(_ pcm: [Float], from: Double, to: Double) -> Double {
+        let start = max(1, Int((from * 48_000).rounded()) * 2)
+        let end = min(Int((to * 48_000).rounded()) * 2, pcm.count)
+        guard end > start else { return 0 }
+        var crossings = 0
+        for index in stride(from: start, to: end, by: 2) where pcm[index - 2] <= 0 && pcm[index] > 0 {
+            crossings += 1
+        }
+        return Double(crossings) / max(0.000_001, to - from)
     }
 
     private func tone(_ directory: URL, name: String = "voice", frequency: Double = 431) throws -> URL {

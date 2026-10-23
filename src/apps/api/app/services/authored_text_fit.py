@@ -55,12 +55,15 @@ def _segments(rows: list[dict]) -> list[dict]:
         segments.append(
             {
                 "segment_id": slot_id,
+                "parent_segment_id": row.get("parent_segment_id"),
                 "media_id": str(row.get("media_id") or row.get("clip_index")),
                 "output_start_s": cursor,
                 "output_end_s": cursor + duration,
                 "duration_s": duration,
                 "source_start_s": source_start,
-                "source_end_s": source_start + duration * rate,
+                "source_end_s": float(row["source_end_s"])
+                if row.get("source_end_s") is not None
+                else source_start + duration * rate,
             }
         )
         cursor += duration
