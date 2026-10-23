@@ -7,6 +7,7 @@ persisted approval. Workers report only durable receipts and observed Job truth.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import time
 import uuid
 from collections.abc import Mapping, Sequence
@@ -5759,6 +5760,12 @@ def _approved_generation_requirements_review(
         # KRI-537: the variant's phone_beat_receipt and voiceover_bed_level are the render's
         # evidence for pop-in and mix asks; the text-lane facts alone cannot see them.
         facts = plan_facts_from_phone_variant(variant)
+        # KRI-821: a mix receipt names only a control this variant (and app build) has.
+        from app.routes.generative_jobs import original_audio_recovery  # noqa: PLC0415
+
+        facts = dataclasses.replace(
+            facts, original_audio_control=original_audio_recovery(job, variant)
+        )
     known = {receipt.requirement_id for receipt in receipts}
     receipts.extend(
         build_receipts(

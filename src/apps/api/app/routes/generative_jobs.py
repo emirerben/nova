@@ -7332,11 +7332,73 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         **_device_clamped_editor_capabilities(job, variant),
         "drawings": _drawing_capabilities(job, variant),
     }
+    if "original_audio" not in capabilities:
+        original_audio = _voiceover_original_audio_capability(variant)
+        if original_audio is not None:
+            capabilities["original_audio"] = original_audio
+            if variant.get("render_destination") == "device":
+                # The phone Voiceover compiler owns no voice/music balance lane: Save
+                # recompiles only the footage level, so the music mix stays closed.
+                capabilities["mix"] = False
     # Present only when ON: a builds/flag-off payload stays byte-identical to what it was before
     # Bend (recorded editor snapshots and replays), and the app reads a missing key as off.
     if _text_bend_capability(variant):
         capabilities["text_bend"] = True
     return capabilities
+
+
+_VOICEOVER_ORIGINAL_AUDIO_ARCHETYPES = frozenset({"narrated", "voiceover"})
+
+
+def original_audio_recovery(job: Job, variant: dict) -> str | None:
+    """How a receipt may tell the creator to change the footage level (KRI-821).
+
+    Computed from the live capability map at call time, never cached on the variant:
+    "editor" only when THIS request's app build gets an editable ``original_audio`` (so a
+    worker, with no app build to read, never names the editor row); "chat" for a phone
+    Voiceover edit whose Save recompiles the level (the copilot's ``set_mix original_level``
+    commits through the same route); None otherwise (cloud render: no such knob).
+    """
+    from app.services.client_protocol import in_http_request  # noqa: PLC0415
+
+    if variant.get("resolved_archetype") not in _VOICEOVER_ORIGINAL_AUDIO_ARCHETYPES:
+        return None
+    if variant.get("render_destination") != "device":
+        return None
+    if in_http_request():
+        try:
+            capability = _editor_capabilities(job, variant).get("original_audio")
+        except Exception:  # noqa: BLE001 - a receipt never fails on a capability read
+            capability = None
+        if isinstance(capability, dict) and capability.get("editable") is True:
+            return "editor"
+    return "chat"
+
+
+def _voiceover_original_audio_capability(variant: dict) -> dict[str, Any] | None:
+    """KRI-821: Sounds > Original audio on a Voiceover edit (narrated or montage `voiceover`).
+
+    Only the phone recipe plays the footage's own sound at a creator-set level
+    (``audio.original_volume``, recompiled on Save by `phone_editor._apply_original_level`
+    or the authored timeline). A cloud render has no such knob: it is closed with
+    ``original_audio_phone_only``, the reason the commit route also gives. An app build
+    below ``voiceover_original_audio_min_client_protocol`` gets no key at all (missing means
+    unavailable). None = this variant has no Voiceover footage bed.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if variant.get("resolved_archetype") not in _VOICEOVER_ORIGINAL_AUDIO_ARCHETYPES:
+        return None
+    if variant.get("render_destination") != "device":
+        return {"editable": False, "reason": "original_audio_phone_only"}
+    if in_http_request():
+        protocol = current_client_protocol()
+        if protocol is None or protocol < settings.voiceover_original_audio_min_client_protocol:
+            return None
+    return {"editable": True, "reason": None}
 
 
 def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
@@ -11099,7 +11161,19 @@ def _prepare_editor_commit(
         # narrated's knob is the item-page bed-level dispatch; subtitled has no
         # bed. Reject loudly instead of funneling into the montage regenerate,
         # whose caption reject would land a silent no-op "ready".
-        if variant.get("resolved_archetype") in CAPTION_EDIT_ARCHETYPES:
+        # KRI-821: a phone narrated edit plays the footage's own sound at a level the
+        # device recipe owns (`audio.original_volume`), so an `original_level`-only mix
+        # (Sounds > Original audio) recompiles on Save. Music levels and cloud stay refused.
+        phone_narrated_original_only = (
+            variant.get("resolved_archetype") == "narrated"
+            and variant.get("render_destination") == "device"
+            and payload.mix.music_level is None
+            and payload.mix.original_level is not None
+        )
+        if (
+            variant.get("resolved_archetype") in CAPTION_EDIT_ARCHETYPES
+            and not phone_narrated_original_only
+        ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Background sound for this edit is adjusted on the item page.",
@@ -11702,6 +11776,8 @@ def _prepare_editor_commit(
                 # and the cloud renderer (original-sound volume / footage under the
                 # song). Guided cloud edits stay refused by the guided gate.
                 updated["original_audio_level"] = float(payload.mix.original_level)
+                # KRI-821: the creator set it (a render-time level is the format's own).
+                updated["original_audio_level_source"] = "editor"
         if payload.music_track_id is not None:
             updated["music_track_id"] = payload.music_track_id
             if track_changed:

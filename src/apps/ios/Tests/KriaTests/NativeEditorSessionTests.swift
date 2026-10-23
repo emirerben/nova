@@ -376,6 +376,31 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(levels.allSatisfy { $0 > 0 })
     }
 
+    /// KRI-821: a phone Voiceover (narrated) edit reopens Sounds > Original audio at the level its render (or
+    /// the creator's last Save) pinned, and its Save carries only `mix.original_level` (the server recompiles
+    /// `audio.original_volume`; the narration keeps its own level).
+    func testNarratedOriginalAudioReopensAtTheSavedLevelAndSavesOnlyThatLevel() async throws {
+        let (session, fake, _) = try await userSongSession(
+            mode: "background", caps: ["volume": true, "window": true, "remove": true],
+            originalAudio: true, savedOriginalLevel: 0
+        ) { variant in
+            variant["resolved_archetype"] = .string("narrated")
+            variant["source_audio_preserved"] = .bool(true)
+        }
+        XCTAssertTrue(session.hasOriginalAudioControl)
+        XCTAssertEqual(session.originalAudioLevel, 0, accuracy: 0.001, "a muted render reopens muted, not at full volume")
+        XCTAssertFalse(session.hasUnsavedChanges)
+
+        session.setOriginalAudioLevel(0.3)
+        XCTAssertTrue(session.isDirty(.mix))
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
+            sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: false, mix: true),
+            revisionNumber: 2, revisionHash: "h2", expectedDuration: nil)
+        await session.save()
+        let request = try XCTUnwrap(fake.lastRequest)
+        XCTAssertEqual(request.mix, ["original_level": .number(0.3)])
+    }
+
     /// A lip-sync song keeps its start (each take's offset depends on it): the start setter is a no-op that
     /// never dirties the edit, while volume and remove still work.
     func testLipSyncSongLocksStartButKeepsVolumeAndRemove() async throws {

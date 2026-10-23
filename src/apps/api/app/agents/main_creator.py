@@ -111,7 +111,8 @@ log = structlog.get_logger()
 # v74 combines delegation v72 with subtitle-semantics v73, retaining all instructions.
 # v75 adds N2 fullscreen photo-then-original sequences to the complete v74 union.
 # v76 (KRI-816): a typed `starts_fresh` declaration withdraws the saved brief ("Start fresh").
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v76"
+# v77 (KRI-821): "mute the camera / crowd sound" is a typed `source_muted` audio intent.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v77"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -480,6 +481,10 @@ light yet, so never say in `summary` that it is brightened or darkened.
 Keep the source/camera/ambient audio unchanged (including noun phrases such as "original camera
 audio" or "kameranın özgün sesi") => an `audio` requirement with
 {"audio_intent": "source_unchanged"}. This fact describes ONLY unprocessed source sound.
+Mute or remove the footage's own sound (camera, crowd, ambient, original audio) so only the
+voice is heard ("mute the crowd noise under my voice", "kamera sesini kapat") => an `audio`
+requirement with {"audio_intent": "source_muted"}; "keep it low / quieter under my voice" is
+not a mute and records no audio_intent.
 Record any requested processing, noise/wind removal, volume change, music or speech selection
 as a SEPARATE requirement with its complete description; never certify those changes with
 `source_unchanged`. For "original camera audio, remove only the wind noise", record both the

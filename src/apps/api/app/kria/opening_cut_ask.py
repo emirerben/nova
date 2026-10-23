@@ -391,3 +391,54 @@ __all__ = [
     "unread_line_sides",
     "wants_take_window",
 ]
+
+
+@dataclass(frozen=True)
+class NamedCutAsk:
+    """A spoken line the creator named to cut out of the take (KRI-821), and the brief
+    requirements that asked for it."""
+
+    quote: str
+    requirement_ids: tuple[str, ...]
+
+
+def _said_in_requirement(req: BriefRequirement, line: str) -> bool:
+    """The line's words appear, in order, in the requirement's own text.
+
+    ``cut_lines`` is what the model that read the message recorded; the requirement text is
+    what the creator approved. A line the requirement does not carry is never cut.
+    """
+    line_tokens = fold_tokens(line)
+    text_tokens = fold_tokens(" ".join(x for x in (req.description, req.literal) if x))
+    width = len(line_tokens)
+    return bool(width) and any(
+        text_tokens[i : i + width] == line_tokens for i in range(len(text_tokens) - width + 1)
+    )
+
+
+def named_cut_asks(requirements: Iterable[BriefRequirement]) -> tuple[NamedCutAsk, ...]:
+    """Every live requirement's named cut lines (``facts["cut_lines"]``, KRI-792), each once."""
+    from app.kria.brief_checks import named_cut_lines  # noqa: PLC0415
+
+    order: list[tuple[str, ...]] = []
+    found: dict[tuple[str, ...], tuple[str, list[str]]] = {}
+    for req in requirements:
+        if not req.live:
+            continue
+        for line in named_cut_lines(req):
+            key = tuple(fold_tokens(line))
+            if not key or not _said_in_requirement(req, line):
+                continue
+            if key not in found:
+                order.append(key)
+                found[key] = (line, [])
+            if req.id not in found[key][1]:
+                found[key][1].append(req.id)
+    return tuple(
+        NamedCutAsk(quote=found[key][0], requirement_ids=tuple(found[key][1])) for key in order
+    )
+
+
+def brief_named_cuts(brief: CreativeBrief | None) -> tuple[NamedCutAsk, ...]:
+    """`named_cut_asks` over a brief's live requirements (empty without one)."""
+    return named_cut_asks(brief.live()) if brief is not None else ()

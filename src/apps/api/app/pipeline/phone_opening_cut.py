@@ -20,12 +20,14 @@ from collections.abc import Sequence
 from typing import Any
 
 from app.pipeline.silence_cut import CutPlan, Removal
-from app.services.speech_segments import ground_line
+from app.services.speech_segments import ground_excerpt, ground_line
 
 OPENING_CUT_REASON = "opening_cut"
 END_CUT_REASON = "end_cut"
+# KRI-821: a line the creator named to cut out of the middle of the take.
+NAMED_CUT_REASON = "named_cut"
 # Removals the quoted lines make; every other removal is speech cleanup's.
-TAKE_WINDOW_REASONS = frozenset({OPENING_CUT_REASON, END_CUT_REASON})
+TAKE_WINDOW_REASONS = frozenset({OPENING_CUT_REASON, END_CUT_REASON, NAMED_CUT_REASON})
 # The cut lands this far before the line's first word, never into the word before it.
 LEAD_S = 0.15
 # ...and this far after the end line's last word, never into the word after it.
@@ -208,12 +210,81 @@ def apply_opening_cut(
     return cut, receipt
 
 
+def cut_span(plan: CutPlan, start_s: float, end_s: float, *, duration_s: float) -> CutPlan:
+    """``plan`` with ``[start_s, end_s]`` removed too (keep/removed re-partitioned)."""
+
+    def _outside(a: float, b: float) -> list[tuple[float, float]]:
+        pieces = [(a, min(b, start_s)), (max(a, end_s), b)]
+        return [(x, y) for x, y in pieces if y - x > _EPS]
+
+    keep = [piece for s, e in plan.keep_segments for piece in _outside(s, e)]
+    removed = [
+        dataclasses.replace(r, start_s=x, end_s=y)
+        for r in plan.removed
+        for x, y in _outside(r.start_s, r.end_s)
+    ]
+    removed.append(Removal(start_s=start_s, end_s=end_s, reason=NAMED_CUT_REASON))
+    removed.sort(key=lambda r: r.start_s)
+    return dataclasses.replace(
+        plan, keep_segments=keep, removed=removed, time_saved_s=_saved(removed, duration_s)
+    )
+
+
+def apply_named_line_cuts(
+    plan: CutPlan,
+    words: Sequence[Any],
+    cuts: Sequence[tuple[str, Sequence[str]]],
+    *,
+    duration_s: float,
+) -> tuple[CutPlan, list[dict[str, Any]]]:
+    """KRI-821: cut each line the creator named out of the take, and a receipt per line.
+
+    ``cuts`` is ``(quote, requirement_ids)`` per named line (`opening_cut_ask.
+    brief_named_cuts`). Each line is grounded in the take's own word timings and the span
+    ``[first word - LEAD_S, last word + TAIL_S]`` is removed, never reaching into the
+    neighbouring words. Never guessed: a line the take doesn't say (``not_found``), says
+    more than once (``said_more_than_once``: which one to cut is the creator's call) or a
+    cut that would leave less than ``MIN_KEPT_S`` (``too_short``) leaves the plan untouched
+    and its receipt says why.
+    """
+    words = list(words)
+    receipts: list[dict[str, Any]] = []
+    cut = plan
+    for quote, requirement_ids in cuts:
+        receipt = _receipt(quote, requirement_ids)
+        receipts.append(receipt)
+        grounded = ground_line(words, quote, duration_s=duration_s)
+        if grounded is None:
+            receipt["reason"] = "not_found"
+            continue
+        again = ground_excerpt(
+            words, quote, duration_s=duration_s, min_after_s=grounded.word_end_s + _EPS
+        )
+        if again is not None and again.word_start_s >= grounded.word_end_s - _EPS:
+            receipt["reason"] = "said_more_than_once"
+            continue
+        start_s = round(_start_before_word(words, grounded.word_start_s), 3)
+        end_s = round(_end_after_word(words, grounded.word_end_s, duration_s), 3)
+        candidate = cut_span(cut, start_s, end_s, duration_s=duration_s)
+        receipt.update(start_s=start_s, end_s=end_s)
+        if _kept(candidate) < MIN_KEPT_S:
+            receipt["reason"] = "too_short"
+            continue
+        removed_s = round(_kept(cut) - _kept(candidate), 3)
+        cut = candidate
+        receipt.update(status="applied", removed_s=removed_s, exact=bool(grounded.exact))
+    return cut, receipts
+
+
 __all__ = [
     "END_CUT_REASON",
+    "NAMED_CUT_REASON",
     "OPENING_CUT_REASON",
     "TAKE_WINDOW_REASONS",
+    "apply_named_line_cuts",
     "apply_opening_cut",
     "apply_take_window",
     "cut_after",
     "cut_before",
+    "cut_span",
 ]

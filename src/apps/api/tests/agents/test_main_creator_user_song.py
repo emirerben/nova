@@ -47,10 +47,11 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v72 (KRI-814) re-reads unrecorded earlier creator lines: brief-on hashes only.
 # v74 combines subtitle semantics and delegation; brief-off matches subtitle v73 exactly.
 # v76 (KRI-816) teaches the typed `starts_fresh` declaration: brief-on hashes only.
+# v77 (KRI-821) teaches the typed `source_muted` audio intent: brief-on hashes only.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "d4f97b4743ce1778137b63821599db9da309f35296c16237433c59ec08e5b72a",
+    (True, True): "e1a11f1624982015ee6a42fe5deea5745f5d318c7d766e87c9f13222d8cf8365",
     (True, False): "e33c7b44e601b95b61036b2806cc2111d8aa20204994881bf8fe128534b5cf3c",
-    (False, True): "894beb67411cb6daa5e66a985d289665da3a55149011470334b2d9d43565d703",
+    (False, True): "d850d26b949364cda26852c9534785ae8ac59997bb800ead29aa0fac9982cc78",
     (False, False): "6e32911313c9667767209df7d6d929db36873990e5dceb2d27549ba179569c1d",
 }
 
@@ -121,7 +122,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-23-v76"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-23-v77"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

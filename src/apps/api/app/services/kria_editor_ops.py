@@ -697,8 +697,15 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
     if caps.get("automatic_cut") is True and variant.get("speech_cut_candidates"):
         families.append("automatic_cut")
     music_ops = caps.get("music_operations") or {}
+    original_audio = caps.get("original_audio")
     if (
         caps.get("mix") is True
+        # KRI-821: a phone Voiceover edit's footage level (`set_mix original_level`).
+        or (
+            variant.get("resolved_archetype") in {"narrated", "voiceover"}
+            and isinstance(original_audio, dict)
+            and original_audio.get("editable") is True
+        )
         or caps.get("swap_song") is True
         or any(
             value is True or (isinstance(value, dict) and value.get("editable") is True)

@@ -199,8 +199,15 @@ def test_the_prod_rows_with_the_v65_fact_stay_in_too():
         r3={"cut_lines": ["with bread, no,"]}, r4={"cut_lines": ["how are you gonna"]}
     )
     receipts = _by_id(brief, _draft_facts(speech_cleanup_enabled=True, speech_cleanup_offered=True))
-    _assert_stays_in(receipts["r3"])
-    _assert_stays_in(receipts["r4"])
+    # KRI-821: a phone Talking render now cuts a named line it finds said once, so the
+    # draft promises that (still partial: only the render can say it found the line).
+    for rid in ("r3", "r4"):
+        receipt = receipts[rid]
+        assert receipt.status == "partial", receipt
+        assert _STAYS_NOTE not in (receipt.reason or "")
+        assert "I'll cut the line you named out of your take" in (receipt.reason or "")
+        assert is_format_limit(receipt.reason)
+        assert not needs_creator_choice(receipt)
 
 
 def test_both_brief_prompts_show_a_slip_as_a_cut_line():
