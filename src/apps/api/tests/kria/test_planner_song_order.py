@@ -460,7 +460,9 @@ def _patch_policy(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(
         planner,
         "check_strategy_for_runtime_v2",
-        lambda _m, strategy: CheckedStrategy(strategy=strategy, notices=()),
+        lambda _m, strategy, *, simplify_unsupported=False: CheckedStrategy(
+            strategy=strategy, notices=()
+        ),
     )
 
 
@@ -579,7 +581,10 @@ async def test_the_planner_recompiles_the_kept_lipsync_strategy(monkeypatch) -> 
     kept = _propose().strategy.model_copy(update={"song_sync": "lipsync"})
     seen = []
 
-    def _check(_m, strategy):  # noqa: ANN001, ANN202
+    policy_modes = []
+
+    def _check(_m, strategy, *, simplify_unsupported=False):  # noqa: ANN001, ANN202
+        policy_modes.append(simplify_unsupported)
         seen.append(strategy)
         return CheckedStrategy(strategy=strategy, notices=("extra notice.",))
 
@@ -597,6 +602,7 @@ async def test_the_planner_recompiles_the_kept_lipsync_strategy(monkeypatch) -> 
 
     monkeypatch.setattr(planner, "adapt_creator_action", _spy)
     await _call(SimpleNamespace(), _propose())
+    assert policy_modes == [True, False]
     assert seen[-1] is kept
     assert adapted["action"].strategy is kept
     assert "extra notice." in adapted["action"].summary

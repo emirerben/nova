@@ -127,7 +127,9 @@ async def _turn(monkeypatch: pytest.MonkeyPatch, events: list, *, song_sync: str
     monkeypatch.setattr(
         planner,
         "check_strategy_for_runtime_v2",
-        lambda _m, strategy: CheckedStrategy(strategy=strategy, notices=()),
+        lambda _m, strategy, *, simplify_unsupported=False: CheckedStrategy(
+            strategy=strategy, notices=()
+        ),
     )
     clips = [
         IntentClip(

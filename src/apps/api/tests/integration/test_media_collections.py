@@ -227,8 +227,9 @@ async def test_collection_capability_and_routes_share_account_and_rollback_gates
     assert (await client.get(f"/me/media-collections/{uuid.uuid4()}")).status_code == 404
 
 
-async def test_story_candidates_cover_all_fifty_added_sources_in_bounded_passes(
-    collection_world, monkeypatch
+@pytest.mark.parametrize("collection_size", [50, 500])
+async def test_story_candidates_cover_large_collections_in_bounded_passes(
+    collection_world, monkeypatch, collection_size
 ):
     from app import storage
     from app.agents.camera_roll_stories import (
@@ -241,18 +242,20 @@ async def test_story_candidates_cover_all_fifty_added_sources_in_bounded_passes(
 
     client, _, _, owner, _ = collection_world
     asset_ids, source_ids = [], []
+    assets, sources, moments = [], [], []
     async with AsyncSessionLocal() as db:
-        for index in range(50):
+        for index in range(collection_size):
             asset = MediaAsset(
+                id=uuid.uuid4(),
                 user_id=owner.id,
                 kind="video",
                 status="ready",
                 original_availability="device_only",
                 metadata_json={"duration_s": 180},
             )
-            db.add(asset)
-            await db.flush()
+            assets.append(asset)
             source = MediaAssetSource(
+                id=uuid.uuid4(),
                 user_id=owner.id,
                 asset_id=asset.id,
                 role="analysis_proxy",
@@ -263,10 +266,9 @@ async def test_story_candidates_cover_all_fifty_added_sources_in_bounded_passes(
                 content_type="video/mp4",
                 status="available",
             )
-            db.add(source)
-            await db.flush()
+            sources.append(source)
             for part in range(3):
-                db.add(
+                moments.append(
                     MediaSourceMoment(
                         id=uuid.uuid4(),
                         user_id=owner.id,
@@ -277,7 +279,7 @@ async def test_story_candidates_cover_all_fifty_added_sources_in_bounded_passes(
                         start_s=150 + part * 7,
                         end_s=155 + part * 7,
                         text=f"Source {index} ferry arrival part {part}"
-                        + (" finalharbour" if index == 49 else ""),
+                        + (" finalharbour" if index == collection_size - 1 else ""),
                         uncertain=True,
                         evidence_json={
                             "index_spec": _index_spec("video"),
@@ -289,9 +291,14 @@ async def test_story_candidates_cover_all_fifty_added_sources_in_bounded_passes(
                 )
             asset_ids.append(str(asset.id))
             source_ids.append(str(source.id))
+        db.add_all(assets)
+        await db.flush()
+        db.add_all(sources)
+        await db.flush()
+        db.add_all(moments)
         await db.commit()
     path = f"/me/media-collections/{uuid.uuid4()}"
-    response = await client.put(path, json=selection(asset_ids, source_ids, count=50))
+    response = await client.put(path, json=selection(asset_ids, source_ids, count=collection_size))
     assert response.status_code == 200, response.text
     searched = await client.get(
         f"{path}/moments", params={"expected_revision": 1, "query": "finalharbour"}
@@ -309,9 +316,12 @@ async def test_story_candidates_cover_all_fifty_added_sources_in_bounded_passes(
 
     def ideas(self, input, *, ctx):
         assert len(input.candidates) <= 100
-        assert {value.source for value in input.candidates} == set(source_ids), (
-            "Every added source must remain eligible"
-        )
+        selected_sources = {value.source for value in input.candidates}
+        assert len(selected_sources) == min(collection_size, 100)
+        assert selected_sources <= set(source_ids)
+        if collection_size <= 100:
+            assert selected_sources == set(source_ids), "Every added source must remain eligible"
+        assert source_ids[-1] in selected_sources
         candidates.extend(value.id for value in input.candidates)
         return CameraRollStoriesOutput(
             stories=[
@@ -334,10 +344,10 @@ async def test_story_candidates_cover_all_fifty_added_sources_in_bounded_passes(
 
     monkeypatch.setattr(CameraRollStoriesAgent, "run", ideas)
     stories = await client.post(
-        f"{path}/stories", json={"expected_revision": 1, "query": "Ferry arrival"}
+        f"{path}/stories", json={"expected_revision": 1, "query": "finalharbour"}
     )
     assert stories.status_code == 200, stories.text
-    assert len(checked) == 50
+    assert len(checked) == min(collection_size, 100)
     late = max(searched.json()["moments"], key=lambda value: value["end_s"])
     assert late["id"] not in candidates
     story = stories.json()["stories"][0]
@@ -353,6 +363,12 @@ async def test_story_candidates_cover_all_fifty_added_sources_in_bounded_passes(
     )
     assert corrected.status_code == 200, corrected.text
     assert corrected.json()["moments"][0]["id"] == late["id"]
+    last_page = await client.post(
+        f"{path}/index", json={"expected_revision": 1, "offset": collection_size - 4, "limit": 32}
+    )
+    assert last_page.status_code == 200, last_page.text
+    assert last_page.json()["next_offset"] is None
+    assert set(last_page.json()["missing_analysis_asset_ids"]) == set(asset_ids[-4:])
 
 
 @pytest.mark.asyncio
@@ -1223,3 +1239,253 @@ async def test_research_ideas_keep_public_search_private_and_reuse_reviewed_evid
     source_url = "https://travel-blog.example/terminal"
     ungrounded = await client.post(f"{path}/stories", json={**body, "query": "A third direction"})
     assert ungrounded.status_code == 503 and len(calls) == 12
+
+
+async def test_visual_end_overshoot_retains_in_bounds_footage_without_trimming_speech(
+    collection_world,
+):
+    client, assets, sources, owner, _ = collection_world
+    async with AsyncSessionLocal() as db:
+        asset = await db.get(MediaAsset, uuid.UUID(assets[0]))
+        asset.metadata_json = {**asset.metadata_json, "duration_s": 1.933333}
+        rows = (
+            await db.scalars(
+                select(MediaAssetAnalysis).where(
+                    MediaAssetAnalysis.user_id == owner.id,
+                    MediaAssetAnalysis.source_id == uuid.UUID(sources[0]),
+                )
+            )
+        ).all()
+        for row in rows:
+            if row.analyzer == "nova.media.transcript":
+                row.result_json = {"words": [{"start": 0, "end": 3, "word": "Unfinished."}]}
+            else:
+                row.result_json = {
+                    "understanding": {
+                        "notable_moments": [
+                            {"start_s": 0, "end_s": 3, "description": "People examine rugs"},
+                            {"start_s": 2, "end_s": 4, "description": "Wrong out-of-bounds scene"},
+                            {"start_s": 1, "end_s": 0.5, "description": "Wrong reversed scene"},
+                        ]
+                    }
+                }
+        await db.commit()
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    assert (await client.put(path, json=selection(assets, sources, count=1))).status_code == 200
+    indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
+    assert indexed.status_code == 200, indexed.text
+    assert indexed.json()["missing_analysis_asset_ids"] == []
+    found = await client.get(f"{path}/moments", params={"expected_revision": 1, "query": "rugs"})
+    assert [(m["start_s"], m["end_s"], m["kind"]) for m in found.json()["moments"]] == [
+        (0, 1.933333, "visual")
+    ]
+    wrong = await client.get(f"{path}/moments", params={"expected_revision": 1, "query": "Wrong"})
+    assert wrong.json()["moments"] == []
+    speech = await client.get(
+        f"{path}/moments", params={"expected_revision": 1, "query": "Unfinished"}
+    )
+    assert speech.json()["moments"] == [], "A whole word cannot be trimmed to fit a clip"
+
+
+async def test_incomplete_collection_waits_before_any_story_call_and_recovers(
+    collection_world, monkeypatch
+):
+    from app.agents.camera_roll_stories import CameraRollStoriesAgent, CameraRollStoriesOutput
+
+    client, assets, sources, _owner, _ = collection_world
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    assert (await client.put(path, json=selection(assets, sources))).status_code == 200
+    assert (
+        await client.post(f"{path}/index", json={"expected_revision": 1, "limit": 1})
+    ).status_code == 200
+    calls = []
+    invalidate_coverage = False
+
+    def no_early_call(self, input, *, ctx):
+        calls.append(input)
+        if invalidate_coverage:
+            from app.database import sync_session
+            from app.models import MediaSourceMoment
+
+            with sync_session() as db:
+                db.execute(
+                    delete(MediaSourceMoment).where(
+                        MediaSourceMoment.asset_id == uuid.UUID(assets[1])
+                    )
+                )
+                db.commit()
+        return CameraRollStoriesOutput(stories=[])
+
+    monkeypatch.setattr(CameraRollStoriesAgent, "run", no_early_call)
+    request = {"expected_revision": 1, "query": "A useful guide to the whole outing"}
+    waiting = await client.post(f"{path}/stories", json=request)
+    assert waiting.status_code == 409, waiting.text
+    assert "analysis" in waiting.json()["detail"].lower()
+    assert calls == [], "A partial collection must not acquire a story provider call"
+    partial = await client.post(f"{path}/stories", json={**request, "allow_partial_analysis": True})
+    assert partial.status_code == 200, partial.text
+    assert len(calls) == 1 and partial.json()["coverage"]["unindexed_asset_ids"] == [assets[1]]
+    still_waiting = await client.post(f"{path}/stories", json={**request, "cache_only": True})
+    assert still_waiting.status_code == 409, (
+        "An explicit partial cache is not full-collection coverage"
+    )
+    assert len(calls) == 1
+    assert (
+        await client.post(f"{path}/index", json={"expected_revision": 1, "offset": 1})
+    ).status_code == 200
+    ready = await client.post(f"{path}/stories", json=request)
+    assert ready.status_code == 200, ready.text
+    assert len(calls) == 2 and len(calls[-1].candidates) >= 2
+    # An untimed photo is a supported collection member, not a video awaiting
+    # analysis. It must not make the video-only story adapter wait forever.
+    client, assets, sources, owner, _ = collection_world
+    async with AsyncSessionLocal() as db:
+        photo = MediaAsset(
+            user_id=owner.id,
+            kind="image",
+            status="ready",
+            original_availability="device_only",
+            metadata_json={},
+        )
+        db.add(photo)
+        await db.flush()
+        source = MediaAssetSource(
+            user_id=owner.id,
+            asset_id=photo.id,
+            role="original",
+            object_path=f"users/{owner.id}/photo.jpg",
+            object_generation="42",
+            uploaded_sha256="f" * 64,
+            byte_count=1234,
+            content_type="image/jpeg",
+            status="available",
+        )
+        db.add(source)
+        await db.commit()
+        photo_id, source_id = str(photo.id), str(source.id)
+    body = selection(assets, sources)
+    body["expected_revision"] = 1
+    body["members"].append({"asset_id": photo_id, "source_id": source_id})
+    assert (await client.put(path, json=body)).status_code == 200
+    mixed = await client.post(f"{path}/stories", json={**request, "expected_revision": 2})
+    assert mixed.status_code == 200, mixed.text
+    assert len(calls) == 3 and len(calls[-1].candidates) >= 2
+
+    # Facts can be invalidated while the provider is working. Full coverage
+    # must still hold at the final offer boundary, even when selected IDs survive.
+    invalidate_coverage = True
+    changed = await client.post(
+        f"{path}/stories",
+        json={**request, "expected_revision": 2, "query": "Another guide to this outing"},
+    )
+    assert changed.status_code == 409, changed.text
+    assert len(calls) == 4
+
+
+@pytest.mark.parametrize("copy_clone", [False, True])
+async def test_distinct_ideas_can_share_footage_without_sharing_review_state(
+    collection_world, monkeypatch, copy_clone
+):
+    """Real planner/parser/persistence, with only the provider transport replayed."""
+    import copy
+
+    from app.models import CreatorAgentApproval
+    from app.services import media_collection_stories
+    from tests.evals.runners.eval_runner import CassetteModelClient
+
+    client, assets, sources, owner, _ = collection_world
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    assert (await client.put(path, json=selection(assets, sources))).status_code == 200
+    assert (await client.post(f"{path}/index", json={"expected_revision": 1})).status_code == 200
+    plans = [
+        (
+            "A crossing guide",
+            "Follow the recorded crossing to its final view",
+            "The final view from the ferry",
+            "A crossing and its arrival.",
+        ),
+        (
+            "The light at the end",
+            "Notice the illuminated house against the evening scene",
+            "The house is still lit",
+            "The light stands out after dark.",
+        ),
+        (
+            "An evening on the water",
+            "An atmosphere edit of the evening crossing",
+            "On the ferry after dark",
+            "An evening crossing.",
+        ),
+    ]
+    proposals = [
+        dict(
+            title=title,
+            moment_ids=["m1"],
+            content_plan=dict(
+                audience="Evening travellers",
+                angle=angle,
+                opening_text=opening,
+                caption=caption,
+                why_it_works="The recorded view supports this particular point.",
+                beat_reasons=["The house and ferry supply the setting"],
+            ),
+        )
+        for title, angle, opening, caption in plans
+    ]
+    if copy_clone:
+        proposals[1] = copy.deepcopy(proposals[0])
+        proposals[1]["title"] = "A new title is not a new idea"
+        proposals[1]["moment_ids"] = ["m2"]
+        proposals[1]["content_plan"]["why_it_works"] = "Different private reasoning."
+        # Cosmetic case/spacing and different footage cannot turn identical
+        # proposed copy into another content idea.
+        proposals[1]["content_plan"]["opening_text"] = "  THE FINAL VIEW FROM THE FERRY  "
+    transport = CassetteModelClient(json.dumps({"stories": proposals}))
+    monkeypatch.setattr(media_collection_stories, "default_client", lambda: transport)
+    body = {"expected_revision": 1, "query": "Suggest different content ideas for this crossing"}
+    response = await client.post(f"{path}/stories", json=body)
+    assert response.status_code == 200, response.text
+    offered = response.json()["stories"]
+    expected_titles = [plans[0][0], plans[2][0]] if copy_clone else [p[0] for p in plans]
+    assert [idea["title"] for idea in offered] == expected_titles
+    assert len({idea["id"] for idea in offered}) == len(expected_titles)
+    assert len({tuple(m["id"] for m in idea["moments"]) for idea in offered}) == 1
+    assert all(idea["requires_render_approval"] for idea in offered)
+    assert transport.invocations == 1
+    first = offered[0]
+    changed = await client.patch(
+        f"{path}/stories/{first['id']}",
+        json=dict(
+            expected_revision=1,
+            expected_story_revision=1,
+            client_event_id="change-only-one-idea",
+            content_plan={**first["content_plan"], "opening_text": "My corrected opening"},
+        ),
+    )
+    assert changed.status_code == 200, changed.text
+    rejected = await client.post(
+        f"{path}/stories/{first['id']}/reject",
+        json=dict(
+            expected_revision=1, expected_story_revision=2, client_event_id="reject-one-idea"
+        ),
+    )
+    assert rejected.status_code == 200, rejected.text
+    cached = await client.post(f"{path}/stories", json={**body, "cache_only": True})
+    assert cached.status_code == 200, cached.text
+    remaining = cached.json()["stories"]
+    assert remaining[0]["rejected"] and remaining[0]["revision"] == 2
+    assert remaining[1:] == offered[1:], "Other ideas must retain copy, source windows and state"
+    assert transport.invocations == 1
+    async with AsyncSessionLocal() as db:
+        assert (
+            await db.scalar(select(func.count()).select_from(Job).where(Job.user_id == owner.id))
+            == 0
+        )
+        assert (
+            await db.scalar(
+                select(func.count())
+                .select_from(CreatorAgentApproval)
+                .where(CreatorAgentApproval.creator_id == owner.id)
+            )
+            == 0
+        )

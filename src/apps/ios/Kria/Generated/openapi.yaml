@@ -1064,7 +1064,7 @@
           },
           "offset": {
             "default": 0,
-            "maximum": 50.0,
+            "maximum": 500.0,
             "minimum": 0.0,
             "title": "Offset",
             "type": "integer"
@@ -1340,7 +1340,7 @@
             "items": {
               "$ref": "#/components/schemas/CollectionMember"
             },
-            "maxItems": 50,
+            "maxItems": 500,
             "title": "Members",
             "type": "array"
           },
@@ -5793,6 +5793,11 @@
       "MediaAssetUploadBody": {
         "additionalProperties": false,
         "properties": {
+          "attach_original": {
+            "default": false,
+            "title": "Attach Original",
+            "type": "boolean"
+          },
           "client_upload_id": {
             "maxLength": 160,
             "minLength": 1,
@@ -10373,6 +10378,11 @@
       "StoryGenerationBody": {
         "additionalProperties": false,
         "properties": {
+          "allow_partial_analysis": {
+            "default": false,
+            "title": "Allow Partial Analysis",
+            "type": "boolean"
+          },
           "cache_only": {
             "default": false,
             "title": "Cache Only",

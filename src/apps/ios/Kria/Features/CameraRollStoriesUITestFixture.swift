@@ -11,7 +11,7 @@ struct CameraRollStoriesUITestHost: View {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [CameraRollStoriesURLProtocol.self]
         api = KriaAPI(baseURL: URL(string: "https://camera-roll-stories.invalid")!, tokenStore: ChatUITestTokenStore(), session: URLSession(configuration: config))
-        result = try! JSONDecoder().decode(CameraRollStories.self, from: JSONSerialization.data(withJSONObject: ["stories": [CameraRollStoryFixture.story], "coverage": ["moments": CameraRollStoryFixture.moments, "incomplete_speech_asset_ids": [], "unindexed_asset_ids": []]]))
+        result = try! JSONDecoder().decode(CameraRollStories.self, from: JSONSerialization.data(withJSONObject: ["stories": CameraRollStoryFixture.reviewStories, "coverage": ["moments": CameraRollStoryFixture.moments, "incomplete_speech_asset_ids": [], "unindexed_asset_ids": []]]))
         var value = try! CameraRollCollection(name: "Weekend outing", identifiers: ["fixture-source"])
         value.serverRevision = 1
         let asset: [String: Any] = ["id": CameraRollStoryFixture.assetID, "kind": "video", "status": "ready", "original_availability": "cloud_backed", "metadata_json": ["filename": "Outing.mp4"], "sources": [], "usage": [], "storage_warnings": []]
@@ -76,6 +76,19 @@ private enum CameraRollStoryFixture {
     }
     static var result: [String: Any] {
         input?["result"] as? [String: Any] ?? ["stories": [story], "coverage": ["moments": moments, "incomplete_speech_asset_ids": [], "unindexed_asset_ids": ["CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"]]]
+    }
+    static var reviewStories: [[String: Any]] {
+        guard ProcessInfo.processInfo.arguments.contains("-camera-roll-multiple-ideas") else { return [story] }
+        let options = [
+            ("11111111-1111-1111-1111-111111111111", "Boat journey"),
+            ("22222222-1111-1111-1111-111111111111", "The light at the end"),
+            ("33333333-1111-1111-1111-111111111111", "An evening crossing")
+        ]
+        return options.map { id, title in
+            var value = story
+            value["id"] = id; value["title"] = title
+            return value
+        }
     }
     static let assetID = "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"
     static var moments: [[String: Any]] {
@@ -163,7 +176,13 @@ private final class CameraRollStoriesFixtureServer: @unchecked Sendable {
             let missing = (CameraRollStoryFixture.result["coverage"] as? [String: Any])?["unindexed_asset_ids"] ?? ["CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"]
             return (200, ["next_offset": NSNull(), "missing_analysis_asset_ids": missing, "unavailable_asset_ids": [], "untimed_asset_ids": []])
         }
-        if request.url?.path.hasSuffix("/stories") == true { return (200, CameraRollStoryFixture.result) }
+        if request.url?.path.hasSuffix("/stories") == true {
+            if ProcessInfo.processInfo.arguments.contains("-camera-roll-collection-ready"),
+               (body["allow_partial_analysis"] as? Bool != true || body["query"] as? String != "Suggest different content ideas from this outing") {
+                return (409, ["detail": "Missing analysis requires an explicit partial choice"])
+            }
+            return (200, CameraRollStoryFixture.result)
+        }
         if request.httpMethod == "PATCH" {
             if let id = body["moment_id"] as? String, let index = body["replace_index"] as? Int,
                let replacement = CameraRollStoryFixture.moments.first(where: { ($0["id"] as? String)?.lowercased() == id.lowercased() }) {

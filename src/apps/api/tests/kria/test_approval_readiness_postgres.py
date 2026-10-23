@@ -228,7 +228,9 @@ async def prepare(
         },
     ],
 )
-async def test_unproven_or_unsupported_request_has_no_approval(monkeypatch, language, extra, phone):
+async def test_unknown_requests_block_but_unsupported_style_gets_simpler_draft(
+    monkeypatch, language, extra, phone
+):
     if language == "tr":
         extra = {
             **extra,
@@ -241,6 +243,26 @@ async def test_unproven_or_unsupported_request_has_no_approval(monkeypatch, lang
     _, thread_id, approvals, events = await prepare(
         monkeypatch, language=language, extra=extra, phone=phone
     )
+    if extra["kind"] == "style":
+        assert len(approvals) == 1
+        reply = next(event for event in events if event.event_type == "draft_applied")
+        assert extra["description"] in reply.content
+        assert ("Left out:" if language == "en" else "Çıkarıldı:") in reply.content
+        assert "Should I" not in reply.content and "yapayım mı" not in reply.content
+        with sync_session() as db:
+            draft = db.scalars(
+                select(CreatorEditDraft).where(
+                    CreatorEditDraft.thread_id == thread_id, CreatorEditDraft.is_head.is_(True)
+                )
+            ).one()
+            snapshot = draft.snapshot_json
+            assert snapshot["strategy"]["opening_title"] == "Gameday."
+            assert snapshot["brief_coverage"]["automatic_omission_ids"] == ["r3"]
+            report = snapshot["brief_coverage"]["approval_readiness"]
+            assert report["ready"] is True
+            assert {r["requirement_id"] for r in report["requirements"]} == {"r1", "r2"}
+            assert approvals[0].consequence_summary.endswith(reply.content)
+        return
     assert not approvals, "An unproven requested change was offered for approval"
     response = events[-1]
     coverage = (response.payload or {}).get("brief_coverage") or {}
