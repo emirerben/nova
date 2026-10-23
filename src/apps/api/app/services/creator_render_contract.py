@@ -43,7 +43,6 @@ from app.services.choice_questions import (
     one_clip_edit,
     pin_anchors,
 )
-from app.services.clip_facts import CURRENT_ORDER_KEY
 from app.services.clip_order_sequence import (
     apply_sequence,
     sequence_rows,
@@ -1296,10 +1295,6 @@ def build_render_contract(
                     # an unverifiable media-order rule (and must never pin capture time).
                     continue
                 key = requirement.facts.get("key")
-                if str(key or "").casefold() == CURRENT_ORDER_KEY:
-                    # "Reverse the order": the editor re-sequenced the clips in place; a
-                    # fresh plan has no previous order to re-apply, so nothing to pin.
-                    continue
                 answered = order_answer is not None and (
                     requirement.id in order_answer.requirement_ids or key == ATTACHMENT_ORDER_KEY
                 )

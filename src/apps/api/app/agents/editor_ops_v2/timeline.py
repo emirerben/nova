@@ -205,7 +205,8 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
     ties keep their current relative order. ``custom`` takes the model's
     ``order`` (current slot indexes in their new sequence) for asks no server
     fact grounds ("reverse it", "swap 2 and 5"); it must name every clip still
-    in the edit exactly once, and removed slots keep their place.
+    in the edit exactly once (listing removed slots too is accepted), and
+    removed slots keep their place.
     """
     from app.agents import edit_copilot as ec  # noqa: PLC0415
     from app.services.clip_facts import (  # noqa: PLC0415
@@ -215,7 +216,9 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
 
     criterion = payload.get("criterion")
     direction = payload.get("direction", "asc")
-    if criterion not in _ORDER_CRITERIA or direction not in _ORDER_DIRECTIONS:
+    if criterion not in _ORDER_CRITERIA or (
+        criterion != "custom" and direction not in _ORDER_DIRECTIONS
+    ):
         state.invalid_value()
         return None
     slots = [s for s in ec._snapshot_list(snapshot, ec._SLOT_INDEX_KEYS) if isinstance(s, dict)]
@@ -230,7 +233,7 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
         if (
             not isinstance(order, list)
             or any(isinstance(i, bool) or not isinstance(i, int) for i in order)
-            or sorted(order) != live
+            or sorted(order) not in (live, list(range(len(slots))))
         ):
             state.invalid_value(
                 say(
@@ -239,6 +242,8 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
                 )
             )
             return None
+        # The model may list removed slots too (it reads every slot); they keep their place.
+        order = [index for index in order if index in live]
         permutation = list(range(len(slots)))
         for position, index in zip(live, order, strict=True):
             permutation[position] = index

@@ -58,7 +58,7 @@ from app.schemas.text_style_intent import (
     normalize_label_position,
     normalize_title_animation,
 )
-from app.services.clip_facts import CAPTURE_ORDER_KEYS, CURRENT_ORDER_KEY
+from app.services.clip_facts import CAPTURE_ORDER_KEYS
 from app.services.clip_order_sequence import row_relations, sequence_rows
 from app.services.kria_editor_ops_diff import effective_entrance
 from app.services.length_policy import creator_duration_matches, length_owner, natural_length_owner
@@ -313,8 +313,6 @@ class PlanFacts:
     has_clip_structure: bool = False
     # True when an editor payload carries restyled/edited on-screen text elements.
     editor_text_edited: bool = False
-    # The editor compiled a custom clip order ("Reorder clips"): a `current_order` ask met.
-    editor_reordered: bool = False
     # Compiled text spans, when the editor payload includes timing and identity.
     # Each row is (element id, role, start_s, end_s); an empty tuple means timing
     # was not available and must remain unchecked.
@@ -1294,7 +1292,6 @@ def plan_facts_from_editor_payload(
     )
     return PlanFacts(
         ordering_basis="capture_time" if ordered_by_capture else None,
-        editor_reordered=any(str(change) == "Reorder clips" for change in changes or ()),
         duration_s=_editor_payload_duration(payload),
         editor_text_edited=bool(
             isinstance(payload, Mapping)
@@ -2158,12 +2155,6 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
             ),
         )
     key = str(req.facts.get("key") or req.facts.get("by") or "").casefold()
-    if key == CURRENT_ORDER_KEY:
-        # Applied in place by the editor's custom order; a fresh plan has nothing to
-        # re-apply, so this is never a failed order.
-        if facts.editor_reordered:
-            return _receipt(req, "met", None)
-        return _receipt(req, "partial", _CANT_CHECK_ORDER_RULE)
     required = facts.strict_order and _order_is_required(req)
     unmet = "not_possible" if required else "partial"
     if not facts.ordering_basis:

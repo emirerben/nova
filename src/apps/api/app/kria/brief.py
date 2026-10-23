@@ -46,7 +46,6 @@ from app.kria.reply_language import detect_chat_language
 from app.models import CreationThreadEvent, CreativeBriefVersion, CreatorAgentTurn
 from app.schemas.clip_intents import asks_clip_description
 from app.schemas.text_style_intent import normalize_title_animation
-from app.services.clip_facts import CURRENT_ORDER_KEY
 from app.services.kria_editor_ops_diff import font_family_key
 
 RequirementKind = Literal["text", "order", "select", "timing", "audio", "style"]
@@ -877,7 +876,7 @@ def _structural_reqs_editable(
     text = message or ""
     for req in reqs:
         if req.kind == "order":
-            if not req.facts.get("key") or _asks_move(text) or is_current_order_requirement(req):
+            if not req.facts.get("key") or _asks_move(text):
                 continue
             return False
         if req.kind == "select":
@@ -902,14 +901,6 @@ def is_capture_order_requirement(req: BriefRequirement | BriefUpdate) -> bool:
     facts = req.facts or {}
     key = str(facts.get("key") or facts.get("by") or "").casefold()
     return key in _CAPTURE_ORDER_KEYS and set(facts) <= _ORDER_ONLY_FACTS
-
-
-def is_current_order_requirement(req: BriefRequirement | BriefUpdate) -> bool:
-    """An order requirement that re-sequences the clips already in the current edit."""
-    if req.kind != "order":
-        return False
-    # The editor's `reorder_clips_by` custom order does it in place, so it never re-plans.
-    return str((req.facts or {}).get("key") or "").casefold() == CURRENT_ORDER_KEY
 
 
 def is_filming_time_label_requirement(req: BriefRequirement | BriefUpdate) -> bool:
