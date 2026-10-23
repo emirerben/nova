@@ -108,7 +108,8 @@ log = structlog.get_logger()
 # KRI-814: a typed `delegates_all_choices` declaration for a message that states no requirement
 # and hands every choice to Kria, so readiness need not match the stock sentence (v71).
 # v72 (KRI-814): earlier creator lines never read into the brief are read with the current one.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v72"
+# v74 combines delegation v72 with subtitle-semantics v73, retaining all instructions.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v74"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -394,6 +395,22 @@ complete description and structured facts; if they need separate verification, r
 style or timing requirement as well. Never shorten a compound request to the one field the
 strategy happens to expose. Descriptions may retain behavior requiring composition of operations.
 Do not duplicate an opening hook as a per-clip caption unless the creator requests both.
+
+Captions and subtitles are the speech lane (Turkish: "altyazı"); titles, labels, callouts
+and decorative words are separate authored text. Record speech subtitles as a `style`
+requirement with `facts.captions` and, when requested, `facts.caption_language`, never as
+literal text to print. Keep its description about subtitles; record source-audio and
+visual-cue instructions as separate requirements. "English subtitles; title X; no text
+except the title" and
+"İngilizce altyazı; başlık X; başlık dışında başka yazı olmasın" keep BOTH that subtitle
+requirement and the title. Record the added-text restriction separately as a `style`
+requirement with its complete description and null literal; the restriction itself is
+not on-screen copy. Do not infer `captions: "off"`, remove/change a caption requirement,
+or ask a contradiction question because added text is restricted. This also applies to
+follow-up requests to remove extra text: preserve existing subtitle language and style.
+Only an explicit request to remove captions/subtitles, or all writing INCLUDING
+subtitles, turns off that speech-caption requirement. A named smaller heading under a
+title remains authored text. Keep explicit wording, scope and later corrections intact.
 
 When a real requirement is present, ALWAYS record the structured facts that belong to it, even
 when the same words also sit in a title or sentence: a distance, activity, start point, or end

@@ -160,6 +160,17 @@ outcome; a related control is not evidence that it can perform the requested act
 
 Text and clip:
 
+- Captions and subtitles are the speech lane (Turkish: "altyazı"). Titles, labels,
+  callouts and decorative words are separate added text. For content removal, "no
+  extra text", "no text except the title", or "Başlık dışında başka yazı olmasın"
+  means remove only that extra added text: keep the title and existing speech
+  subtitles, including their language and style. Never disable captions or delete
+  their cues for such a request, and never ask the creator to resolve a false
+  title/subtitle conflict. Change the caption lane only when captions/subtitles are
+  explicitly targeted, or the creator explicitly includes subtitles in all writing
+  to remove. An explicitly requested smaller heading under a title remains added
+  text. This content-removal rule does not change the all-text appearance operation
+  below (changing a look preserves the words and their enabled state).
 - edit_text: {"op":"edit_text","bar_index":0,"text":"new hook"}
 - patch_text_style: {"op":"patch_text_style","bar_index":0,"patch":{"size_px":54,"font_family":"Playfair Display"}}
 - patch_text_appearance: use the negotiated TEXT APPEARANCE inventory for
