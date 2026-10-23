@@ -1142,6 +1142,43 @@ def iter_object_range(
             break
 
 
+def iter_object_generation(
+    object_path: str,
+    *,
+    generation: str,
+    size: int,
+    chunk_size: int = 8 * 1024 * 1024,
+) -> Iterator[bytes]:
+    """Stream exactly one pinned generation in bounded chunks, never staging it on disk."""
+    if chunk_size <= 0 or size < 0:
+        raise ValueError("invalid object stream")
+    if _uses_local_storage():
+        if _local_metadata(object_path).generation != str(generation):
+            raise FileNotFoundError(object_path)
+        yield from iter_object_range(object_path, chunk_size=chunk_size)
+        return
+    blob = (
+        _get_client().bucket(settings.storage_bucket).blob(object_path, generation=int(generation))
+    )
+    cursor = 0
+    while cursor < size:
+        end = min(cursor + chunk_size, size) - 1
+        chunk = blob.download_as_bytes(start=cursor, end=end)
+        if not chunk:
+            break
+        yield chunk
+        cursor += len(chunk)
+
+
+def probe_input_for_generation(object_path: str, *, generation: str) -> str:
+    """An ffprobe input for one pinned generation: ranged reads, no full download."""
+    if _uses_local_storage():
+        if _local_metadata(object_path).generation != str(generation):
+            raise FileNotFoundError(object_path)
+        return str(local_object_path(object_path))
+    return signed_get_url_for_generation(object_path, generation=generation)
+
+
 def object_exists(object_path: str) -> bool:
     """Check whether a GCS object exists. Used for GCS path validation."""
     if _uses_local_storage():

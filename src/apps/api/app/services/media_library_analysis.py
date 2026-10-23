@@ -102,6 +102,10 @@ def _requested_source(asset_id: str, owner_id: str, source_id: str | None) -> _S
               AND s.role IN ('original', 'analysis_proxy')
               AND s.uploaded_sha256 ~ '^[0-9A-Fa-f]{{64}}$'
             ORDER BY CASE WHEN s.status = 'available' THEN 0 ELSE 1 END,
+                     -- KRI-822: a device-only video's facts stay on its analysis proxy
+                     -- even after its full original is attached for Visuals.
+                     CASE WHEN a.original_availability = 'device_only'
+                          AND s.role = 'analysis_proxy' THEN 0 ELSE 1 END,
                      s.created_at DESC, s.id DESC LIMIT 1
         """),
                 {"asset_id": asset_id, "owner_id": owner_id, "source_id": source_id},

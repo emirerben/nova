@@ -144,7 +144,13 @@ async def assets_out(db: AsyncSession, assets: list[MediaAsset]) -> list[MediaAs
             and source.uploaded_sha256
             and len(source.uploaded_sha256) == 64
         ]
-        eligible.sort(key=lambda source: source.status != "available")
+        # KRI-822: a device-only video's facts come from its proxy, not an attached original.
+        eligible.sort(
+            key=lambda source: (
+                source.status != "available",
+                asset.original_availability == "device_only" and source.role != "analysis_proxy",
+            )
+        )
         if eligible:
             source = eligible[0]
             fact_sources.append(
@@ -164,6 +170,9 @@ async def assets_out(db: AsyncSession, assets: list[MediaAsset]) -> list[MediaAs
     results = []
     for asset in assets:
         asset_sources = source_map.get(asset.id, [])
+        if asset.original_availability == "device_only":
+            # Pre-KRI-822 clients bind the first available source for phone Footage.
+            asset_sources = sorted(asset_sources, key=lambda source: source.role == "original")
         asset_warnings = []
         for source in asset_sources:
             last_use = source.last_used_at or source.created_at
