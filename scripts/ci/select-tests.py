@@ -62,6 +62,41 @@ JOURNEY_POLICY_PATHS = (
 )
 
 
+# Mac legs of ci.yml's journey-native matrix. `unit` always runs: it builds,
+# executes the unit suite, the UI smoke subset and the named-unit gate. The
+# fixture-driven journeys are split across two more legs that compile from the
+# same cache, balanced on 2026-10-23 measurements (unit ~17 min, creation
+# ~17 min, screens ~20 min; one serial Mac took 40-55 min). A native journey
+# missing here has no workflow step of its own and is proven by its named
+# unit tests on the unit leg. test_ci_throughput.py keeps this map and the
+# workflow's step conditions in agreement.
+LEG_JOURNEYS = {
+    "creation": (
+        "kri-524-creation",
+        "kri-492-length-ownership",
+        "kri-669-gameday",
+        "kri-729-camera-roll-recommendations",
+    ),
+    "screens": (
+        "kri-648-phone-text",
+        "kri-756-suggestion-chips",
+        "kri-802-question-batch",
+        "kri-384-ios-library",
+    ),
+}
+
+
+def native_legs(ids):
+    """Matrix legs to start: `unit`, plus each leg owning a selected journey."""
+    selected = set(ids)
+    known = {journey["id"] for journey in JOURNEYS}
+    if selected - known:
+        raise ValueError(f"Unknown journey ids: {sorted(selected - known)}")
+    return ["unit"] + [
+        leg for leg, journeys in LEG_JOURNEYS.items() if selected & set(journeys)
+    ]
+
+
 def journey_native_for_ids(ids):
     """Whether selected journeys require Xcode/iPhone validation."""
     selected = set(ids)
@@ -157,7 +192,9 @@ def unmapped_journey_paths(base, head, paths=None):
     if paths is None:
         paths = journey_diff_paths(base, head)
     return [
-        path for path in paths if journey_affected(path) and not journey_ids_for_path(path)
+        path
+        for path in paths
+        if journey_affected(path) and not journey_ids_for_path(path)
     ]
 
 
@@ -603,11 +640,14 @@ def main():
     journey, coverage, journey_ids = journey_details(
         event, os.environ.get("CI_BASE", ""), os.environ.get("CI_HEAD", "")
     )
-    native = journey_native_for_ids(journey_ids.split(",") if journey_ids else ())
+    selected_ids = journey_ids.split(",") if journey_ids else ()
+    native = journey_native_for_ids(selected_ids)
+    legs = native_legs(selected_ids)
     output += (
         f"native_validation={str(native_validation(event, suites, native)).lower()}\n"
     )
     output += f"ios_ui_groups={groups}\nios_ui_shards={shards}\njourney={str(journey).lower()}\njourney_coverage={coverage}\njourney_ids={journey_ids}\njourney_needs_native={str(native).lower()}\n"
+    output += f"native_legs={json.dumps(legs)}\n"
     print(reason + "\n" + output)
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
@@ -617,6 +657,7 @@ def main():
             stream.write(
                 f"## CI selection\n\n{reason}\n\niOS UI groups: {groups}"
                 f" ({shards} native leg{'s' if shards > 1 else ''})\n\n"
+                f"iPhone validation legs: {', '.join(legs)}\n\n"
                 + "\n".join(
                     f"- {s}: {'run' if s in suites else 'not applicable'}"
                     for s in SUITES

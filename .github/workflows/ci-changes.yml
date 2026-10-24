@@ -25,6 +25,9 @@ on:
         value: ${{ jobs.select.outputs.native_validation }}
       journey_needs_native:
         value: ${{ jobs.select.outputs.journey_needs_native }}
+      native_legs:
+        description: JSON list of iPhone validation matrix legs to start.
+        value: ${{ jobs.select.outputs.native_legs }}
 
 jobs:
   select:
@@ -43,6 +46,7 @@ jobs:
       journey_ids: ${{ steps.select.outputs.journey_ids }}
       native_validation: ${{ steps.select.outputs.native_validation }}
       journey_needs_native: ${{ steps.select.outputs.journey_needs_native }}
+      native_legs: ${{ steps.select.outputs.native_legs }}
     steps:
       - uses: actions/checkout@v4
         with:

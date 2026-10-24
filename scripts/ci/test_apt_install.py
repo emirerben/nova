@@ -26,7 +26,7 @@ esac
 
 @unittest.skipUnless(shutil.which("timeout"), "needs coreutils timeout")
 class AptInstallTests(unittest.TestCase):
-    def run_script(self, plan, *packages, attempts=4):
+    def run_script(self, plan, *packages, attempts=4, archives=False):
         with tempfile.TemporaryDirectory() as tmp:
             stub = Path(tmp, "apt-get")
             stub.write_text(STUB)
@@ -41,6 +41,9 @@ class AptInstallTests(unittest.TestCase):
                 "APT_DOWNLOAD_TIMEOUT": "1",
                 "APT_RETRY_DELAY": "0",
             }
+            env.pop("APT_ARCHIVES_DIR", None)
+            if archives:
+                env["APT_ARCHIVES_DIR"] = str(Path(tmp, "debs"))
             result = subprocess.run(
                 ["bash", str(SCRIPT), *packages],
                 env=env,
@@ -50,6 +53,7 @@ class AptInstallTests(unittest.TestCase):
             )
             calls_file = Path(tmp, "calls")
             calls = calls_file.read_text().splitlines() if calls_file.exists() else []
+            self.partial_exists = Path(tmp, "debs", "partial").is_dir()
         return result, calls
 
     def test_hung_update_is_killed_and_retried(self):
@@ -105,6 +109,26 @@ class AptInstallTests(unittest.TestCase):
                 f"{ACQUIRE} install -y --no-install-recommends --download-only ffmpeg",
             ],
         )
+
+    def test_archives_dir_keeps_debs_where_ci_can_cache_them(self):
+        # CI restores ~/.cache/apt-debs between runs; both apt phases must read
+        # and write that directory so a slow mirror only costs the first run.
+        result, calls = self.run_script(["ok", "ok", "ok"], "ffmpeg", archives=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(self.partial_exists, "apt needs <archives>/partial")
+        archives = [c for c in calls if "Dir::Cache::archives=" in c]
+        self.assertEqual(len(archives), 2)
+        self.assertRegex(
+            archives[0],
+            rf"^{ACQUIRE} -o Dir::Cache::archives=\S+/debs install -y "
+            r"--no-install-recommends --download-only ffmpeg$",
+        )
+        self.assertRegex(
+            archives[1],
+            r"^-o Dir::Cache::archives=\S+/debs -o APT::Keep-Downloaded-Packages=true "
+            r"install -y --no-install-recommends --no-download ffmpeg$",
+        )
+        self.assertEqual(calls[0], f"{ACQUIRE} update")
 
     def test_install_failure_is_propagated_without_retrying_dpkg(self):
         result, calls = self.run_script(["ok", "ok", "fail"], "ffmpeg")
