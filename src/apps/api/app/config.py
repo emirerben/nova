@@ -828,6 +828,12 @@ class Settings(BaseSettings):
     # turn. Kill switch: `fly secrets set KRIA_QUESTION_BATCH_MIN_CLIENT_PROTOCOL=999`
     # (api + worker) + restart; messages sent after it get one question per turn again.
     kria_question_batch_min_client_protocol: int = 14
+    # KRI-815: with footage and no voiceover, Kria chat writes a footage-grounded voiceover
+    # script (`voiceover_script` on the reply) instead of a narrated draft that can only fail at
+    # approval. Independent of TRANSCRIPT_HELPER_ENABLED. Kill switch: false + restart (api +
+    # worker): a narrated draft without a voiceover still never reaches approval; Kria asks the
+    # creator to record or import one, with no script.
+    kria_voiceover_script_enabled: bool = True
     # KRI-470: "one plan, obeyed everywhere". Evaluated ONCE, when a creator
     # render contract is stamped onto a new job (`creator_plan_authority_version`
     # in `Job.all_candidates`); workers branch on that stamp, never on this live

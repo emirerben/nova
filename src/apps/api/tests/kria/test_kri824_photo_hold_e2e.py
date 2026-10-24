@@ -467,18 +467,21 @@ def test_a_creator_total_takes_time_from_default_cuts_not_the_held_photo() -> No
     assert creator_duration_s(brief=brief) == pytest.approx(12.0)
 
     # The approved (phone) path: the held photo's 2 s come off the footage the length plan
-    # sizes, never off the photo. (Unheld Visuals sit outside the length plan, with or
-    # without a hold: a pre-existing gap, so the phone contract is not checked here.)
-    without = _render(_turn(None, [total], "12 seconds total", "t0"), _strategy(), verify=False)
-    rendered = _render(brief, _strategy(), verify=False)
+    # sizes, never off the photo. KRI-825: every placed Visual is in that one budget, so
+    # the file is the approved 12 s and the phone contract verifies.
+    without = _render(_turn(None, [total], "12 seconds total", "t0"), _strategy())
+    rendered = _render(brief, _strategy())
     assert rendered["cloud_still_s"][BEACH.media_id] == pytest.approx(2.0)
+    assert rendered["plan"].duration_s == pytest.approx(12.0, abs=1 / 30)
 
     def footage_s(result: dict) -> float:
         photos = {p.media_id for p in PHOTOS}
         cuts = result["plan"].snapshot.fast_cuts
         return sum(c.output_duration_s for c in cuts if c.media_id not in photos)
 
-    assert footage_s(rendered) == pytest.approx(footage_s(without) - 2.0, abs=0.05)
+    # The beach photo grew from the AI's pacing to 2 s; the footage gave exactly that.
+    grew = 2.0 - without["cloud_still_s"][BEACH.media_id]
+    assert footage_s(rendered) == pytest.approx(footage_s(without) - grew, abs=0.05)
 
     # Without an approved window plan the planner reconciles the total itself: it shrinks
     # the AI-sized cuts and leaves the held photo whole.

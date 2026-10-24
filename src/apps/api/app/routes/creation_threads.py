@@ -421,6 +421,10 @@ class CreationCapabilitiesOut(BaseModel):
     # (KRIA_SUGGESTION_CHIPS_ENABLED or the cohort list). Clients gate on this bool; a 404 or
     # empty chips list means "render nothing". No NEXT_PUBLIC twin.
     suggestion_chips: bool = False
+    # KRI-815: a reply may carry `voiceover_script` (a footage-grounded script with a
+    # record/import continuation) when KRIA_VOICEOVER_SCRIPT_ENABLED. False/absent = the app
+    # shows the reply's text only; the script is in that text too, so nothing is lost.
+    voiceover_script_cards: bool = False
 
 
 class CreateBody(StrictBody):
@@ -3923,6 +3927,7 @@ async def capabilities(
         "live_plan_review_enabled": bool(settings.live_plan_review_enabled),
         "live_plan_review_version": CONTRACT_VERSION if settings.live_plan_review_enabled else 1,
         "suggestion_chips": bool(settings.suggestion_chips_for(user.id)),
+        "voiceover_script_cards": bool(settings.kria_voiceover_script_enabled),
     }
 
 

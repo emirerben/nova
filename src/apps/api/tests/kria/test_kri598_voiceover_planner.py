@@ -871,3 +871,15 @@ async def test_the_latest_scope_words_decide_through_the_planner(
     )
 
     assert (planned.plan.mode == "respond") is asks, planned.plan
+
+
+async def test_a_photos_only_length_on_a_v2_voiceover_is_not_refused(
+    prod_profile, monkeypatch
+) -> None:
+    """KRI-825 review: "show every photo 1 second" says nothing about the videos, so it
+    is no exact photo-and-video timing contract to refuse on a native voiceover edit."""
+
+    turn = {**TURN3, "user_message": "Show every photo 1 second."}
+    planned = await _plan(monkeypatch, _raw(_strategy()), turn=turn)
+
+    assert "photo and video timing" not in (planned.plan.response or "")

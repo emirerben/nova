@@ -699,7 +699,7 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/prompts/main_creator.txt",
-                (True, "covered", "kri-586-hook-copy"),
+                (True, "covered", "kri-586-hook-copy,kri-815-voiceover-script"),
             ),
             (
                 "src/apps/api/tests/fixtures/agent_evals/main_creator/kri586_generate_after_choice.json",
