@@ -797,6 +797,10 @@ class PlannedKriaTurn:
     brief_coverage: dict | None = None
     brief_expected_version: int | None = None
     media_snapshot: dict | None = None
+    # KRI-898: the app build that sent this message (`client_protocol` stamped on the turn at
+    # submit); the choice gate asks about a freeze only when that build can play one.
+    # ``None`` = unknown (web, an older stored turn, a test), so no freeze is planned.
+    client_protocol: int | None = None
     # KRI-219 latency: the editor copilot served this in-place edit BEFORE the slow
     # Main Creator requirement extraction; the completed turn schedules that
     # extraction off the critical path (`extract_deferred_brief`).
@@ -4181,6 +4185,8 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
     """Fence planning against source replacement while providers are running."""
     from app.kria.brief_binding import media_identity, snapshot_media  # noqa: PLC0415
 
+    # KRI-898: the sending app build rides the planned turn to the choice gate only.
+    client_protocol = kwargs.pop("client_protocol", None)
     item = await db.get(PlanItem, kwargs["item_id"])
     before = snapshot_media(item) if item is not None else {}
     planned = await _plan_live_turn(db, **kwargs)
@@ -4206,7 +4212,7 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
                 ),
             ),
         )
-    planned = replace(planned, media_snapshot=after)
+    planned = replace(planned, media_snapshot=after, client_protocol=client_protocol)
     return await _gate_unresolved_choices(
         db,
         planned,
@@ -4481,6 +4487,7 @@ async def _gate_unresolved_choices(
             max_duration_s=float(MAX_PROPOSAL_DURATION_S),
             creator_id=creator_id,
             voice_route=settings.voice_behind_footage_enabled,
+            client_protocol=planned.client_protocol,
         ),
     )
     if resolution.question is not None:

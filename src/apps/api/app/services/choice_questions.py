@@ -767,6 +767,9 @@ class ChoiceCapability:
     # KRI-479: the continuous-voice route can actually render for new jobs
     # (`Settings.voice_behind_footage_enabled`). False => no voice question is ever asked.
     voice_route: bool = False
+    # KRI-898: the app build that sent the message (stamped at submit). A freeze is only
+    # asked about for a build that can play the hold; ``None`` = unknown, never asked.
+    client_protocol: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1835,7 +1838,9 @@ def _freeze_frame(
     groups: dict[tuple, dict[str, Any]] = {}
     for spec in specs:
         req = by_id.get(spec.requirement_id)
-        if req is None or not freeze_plannable(req, strategy, planned):
+        if req is None or not freeze_plannable(
+            req, strategy, planned, client_protocol=cap.client_protocol
+        ):
             continue
         moments = match_moments(
             spec.target_words, [(str(row["media_id"]), row.get("analysis")) for row in videos]
