@@ -604,6 +604,29 @@
       ]
     },
     {
+      "id": "kri-845-clip-detail-evidence",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri845_clip_detail_evidence.py tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/evals/test_clip_metadata_evals.py tests/evals/test_clip_request_resolver_evals.py tests/agents/test_clip_metadata.py tests/services/test_kri520_clip_intent_copy.py tests/pipeline/test_clip_cache.py tests/schemas/test_clip_intents.py",
+      "paths": [
+        "src/apps/api/app/agents/clip_metadata.py",
+        "src/apps/api/app/agents/clip_request_resolver.py",
+        "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
+        "src/apps/api/app/pipeline/clip_cache.py",
+        "src/apps/api/app/schemas/clip_intents.py",
+        "src/apps/api/app/schemas/clip_understanding.py",
+        "src/apps/api/app/services/clip_understanding.py",
+        "src/apps/api/app/services/creator_sessions.py",
+        "src/apps/api/prompts/analyze_clip.txt",
+        "src/apps/api/prompts/clip_request_resolver.txt",
+        "src/apps/api/tests/fixtures/agent_evals/clip_metadata/golden/kri845_cafe_tray_clip_props_actions_good.json",
+        "src/apps/api/tests/fixtures/agent_evals/clip_metadata/golden/kri845_fast_pan_blurry_table_good.json",
+        "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri845_cafe_look_alike_skip.json",
+        "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri845_dj_menus_and_blurry_table.json",
+        "src/apps/api/tests/fixtures/kri845_m1_clip_detail.json",
+        "src/apps/api/tests/kria/test_kri845_clip_detail_evidence.py"
+      ]
+    },
+    {
       "id": "kri-585-spoken-order",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri585_spoken_order_montage.py tests/pipeline/test_unified_montage_spoken_order.py tests/services/test_spoken_roles.py",
@@ -1519,6 +1542,21 @@
       ]
     },
     {
+      "id": "kri-838-caption-language",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri838_caption_language_replay.py tests/pipeline/test_caption_translate.py tests/pipeline/test_caption_language_id.py tests/pipeline/test_caption_language.py tests/kria/test_kri838_caption_language_asks.py tests/tasks/test_subtitled_caption_language.py tests/tasks/test_narrated_caption_language.py",
+      "paths": [
+        "src/apps/api/app/pipeline/caption_translate.py",
+        "src/apps/api/app/pipeline/caption_language.py",
+        "src/apps/api/tests/fixtures/kri838_caption_language/README.md",
+        "src/apps/api/tests/fixtures/kri838_caption_language/caro_t2_auto_en_words.json",
+        "src/apps/api/tests/fixtures/kri838_caption_language/caro_t2_forced_tr_words.json",
+        "src/apps/api/tests/fixtures/kri838_caption_language/lucas_t3_auto_words.json",
+        "src/apps/api/tests/fixtures/kri838_caption_language/lucas_t3_forced_es_words.json",
+        "src/apps/api/tests/fixtures/kri838_caption_language/prompts.json"
+      ]
+    },
+    {
       "id": "kri-798-render-worker-restart",
       "needs_native": false,
       "api_tests": "tests/services/test_fly_machines.py tests/tasks/test_render_worker_lifecycle.py tests/tasks/test_render_worker_activity_sql.py tests/test_render_worker_wake.py",
@@ -1582,6 +1620,16 @@
         "src/apps/api/app/services/phone_noise_reduction.py",
         "src/apps/api/tests/tasks/test_phone_explicit_speech_cut.py",
         "src/apps/api/tests/services/test_processed_audio_asset.py"
+      ]
+    },
+    {
+      "id": "kri-843-mixed-language-talking",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_kri843_mixed_language_transcript.py tests/services/test_speech_cleanup_language_crosscheck.py tests/tasks/test_speech_cleanup_analysis.py",
+      "paths": [
+        "src/apps/api/app/services/mixed_language_transcript.py",
+        "src/apps/api/app/pipeline/speech_cleanup_analysis.py",
+        "src/apps/api/tests/fixtures/kri843_don_julio_t1_passes.json"
       ]
     }
   ]

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any, ClassVar, Literal
 
 import structlog
@@ -78,12 +79,38 @@ _SUMMARY_LIMIT = 400
 _SETTING_LIMIT = 200
 _ACTIVITY_LIMIT = 200
 _PEOPLE_NOTE_LIMIT = 200
+# KRI-845: what is IN the clip, what the people DO, how the footage LOOKS. Free text on purpose.
+_PROPS_MAX = 8
+_PROP_CHARS = 60
+_ACTIONS_MAX = 6
+_ACTION_CHARS = 100
+_VISUAL_QUALITY_LIMIT = 120
 
 
 def _clean_open_text(value: object, limit: int) -> str:
     if not isinstance(value, str):
         return ""
     return " ".join(value.split())[:limit]
+
+
+def _clean_phrase_list(value: object, *, max_items: int, item_chars: int) -> list[str]:
+    """A short list of phrases from whatever the model sent; never raises.
+
+    A comma/semicolon string is split (models sometimes flatten a list), anything that is not a
+    string is dropped, repeats (case-insensitive) collapse, and the list is capped.
+    """
+    if isinstance(value, str):
+        value = re.split(r"[,;]", value)
+    if not isinstance(value, list):
+        return []
+    phrases: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = _clean_open_text(item, item_chars)
+        if text and text.casefold() not in seen:
+            seen.add(text.casefold())
+            phrases.append(text)
+    return phrases[:max_items]
 
 
 def _coerce_people_count(value: object) -> int | None:
@@ -134,6 +161,11 @@ class ClipMetadataOutput(BaseModel):
     people_count: int | None = Field(default=None, ge=0, le=99)
     speaks_to_camera: bool = False
     people_note: str = ""
+    # KRI-845: the objects, movements and focus/steadiness the clip shows, so a creator's
+    # "the black-tray clip" / "the blurry shot" can be told from its look-alikes.
+    props: list[str] = Field(default_factory=list)
+    actions: list[str] = Field(default_factory=list)
+    visual_quality: str = ""
 
     @field_validator("brands")
     @classmethod
@@ -177,6 +209,21 @@ class ClipMetadataOutput(BaseModel):
     @classmethod
     def _clean_people_note(cls, v: object) -> str:
         return _clean_open_text(v, _PEOPLE_NOTE_LIMIT)
+
+    @field_validator("props", mode="before")
+    @classmethod
+    def _clean_props(cls, v: object) -> list[str]:
+        return _clean_phrase_list(v, max_items=_PROPS_MAX, item_chars=_PROP_CHARS)
+
+    @field_validator("actions", mode="before")
+    @classmethod
+    def _clean_actions(cls, v: object) -> list[str]:
+        return _clean_phrase_list(v, max_items=_ACTIONS_MAX, item_chars=_ACTION_CHARS)
+
+    @field_validator("visual_quality", mode="before")
+    @classmethod
+    def _clean_visual_quality(cls, v: object) -> str:
+        return _clean_open_text(v, _VISUAL_QUALITY_LIMIT)
 
     @field_validator("people_count", mode="before")
     @classmethod
@@ -383,7 +430,10 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
         # value never breaks parsing.
         # 2026-10-13.1 (KRI-625) — added `unusable_spans` (covered lens, camera at
         # the ground, motion blur) so moment pickers avoid them. Optional field.
-        prompt_version="2026-10-13.1",
+        # 2026-10-23.1 (KRI-845) — added `props`, `actions` and `visual_quality` (what is in
+        # the clip, what the people do, how the footage looks) so the clip resolver can tell
+        # look-alike clips apart and find a blurry one. Optional, defaulted, clamped.
+        prompt_version="2026-10-23.1",
         model="gemini-2.5-flash",
         # Gemini pricing as of 2026 — input ~$0.075/M, output ~$0.30/M (2.5 Flash).
         cost_per_1k_input_usd=0.000075,
@@ -592,6 +642,10 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
                 people_count=data.get("people_count"),
                 speaks_to_camera=data.get("speaks_to_camera"),
                 people_note=data.get("people_note"),
+                # KRI-845 — same threading rule.
+                props=data.get("props"),
+                actions=data.get("actions"),
+                visual_quality=data.get("visual_quality"),
             )
         except ValidationError as exc:
             raise SchemaError(f"clip_metadata: output validation — {exc}") from exc

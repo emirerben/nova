@@ -58,6 +58,13 @@ from app.kria.style_asks import (
     text_look_facts,
     value_matches,
 )
+from app.pipeline.caption_language import (
+    ASK_END,
+    LANGUAGE_NAMES,
+    LANGUAGE_WORDS,
+    can_deliver_caption_language,
+    caption_language_verdict,
+)
 from app.pipeline.caption_spelling import extract_spelling_asks, is_mishearing
 from app.pipeline.explicit_speech_cut import speech_cut_tokens
 from app.pipeline.sequence_text_evidence import complete_sequences, sequence_lineage
@@ -524,6 +531,10 @@ class PlanFacts:
     # clip at its natural speed (the phone recipe has no retime for story footage). A
     # clip-speed ask is then a known miss; any other plan claims nothing about speed.
     speed_unsupported: bool = False
+    # KRI-840: the plan shows the creator's Visuals full screen at evenly spaced slots across the
+    # talk (`overlay_display` "fullscreen*", or a render's overlay receipt of that layout), not
+    # at a spoken word. A word-timed full-screen ask that only this covers is a "partial".
+    fullscreen_sequence: bool = False
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -585,6 +596,23 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
         "closing_badge_requested": bool(raw_closing and raw_closing.badge_visual_id),
         "closing_badge_id": closing.badge_visual_id if closing is not None else None,
     }
+
+
+def _draft_fullscreen_sequence(
+    strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest
+) -> bool:
+    """KRI-840: whether approving this draft lays the Visuals out full screen in even slots."""
+    from app.agents._schemas.creator_agent import FULLSCREEN_OVERLAY_DISPLAYS  # noqa: PLC0415
+    from app.services.creator_capabilities import (  # noqa: PLC0415
+        CAPABILITY_MEDIA_OVERLAY_FULLSCREEN,
+    )
+
+    capability = manifest.capabilities.get(CAPABILITY_MEDIA_OVERLAY_FULLSCREEN)
+    return bool(
+        capability is not None
+        and capability.available
+        and strategy.get("overlay_display") in FULLSCREEN_OVERLAY_DISPLAYS
+    )
 
 
 def _video_clip_count(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) -> int:
@@ -678,6 +706,7 @@ def plan_facts_from_strategy(
     extra: dict[str, Any] = {}
     if manifest is not None:
         extra = _beat_facts(strategy, manifest)
+        extra["fullscreen_sequence"] = _draft_fullscreen_sequence(strategy, manifest)
         extra["video_clip_count"] = _video_clip_count(strategy, manifest)
         extra["take_duration_s"] = _selected_video_seconds(strategy, manifest)
         spoken_cap = manifest.capabilities.get("phone_voiceover_spoken_text")
@@ -1618,6 +1647,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     changes.update(_spoken_text_facts(variant))
     changes.update(_protected_text_facts(variant))
     changes.update(_beat_room_facts(variant.get("phone_beat_receipt")))
+    changes.update(_overlay_sequence_facts(variant.get("phone_overlay_receipt")))
     changes.update(_rendered_caption_facts(variant))
     rendered = _rendered_clip_durations(variant)
     if rendered is not None:
@@ -1757,6 +1787,23 @@ def _engine_noise_reduction_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
             requirement_ids=tuple(ids), status=status, reason=reason
         )
     }
+
+
+def _overlay_sequence_facts(receipt: object) -> dict[str, Any]:
+    """KRI-840: ``fullscreen_sequence`` off a variant's ``phone_overlay_receipt``.
+
+    The "use all my Visuals full screen" layout spaces its cutaways evenly across the talk
+    (``matcher: "sequence"``); a receipt that placed any of them full screen says so.
+    """
+    if not isinstance(receipt, Mapping) or receipt.get("matcher") != "sequence":
+        return {}
+    placed = receipt.get("placed")
+    if any(
+        isinstance(entry, Mapping) and entry.get("display") == "fullscreen"
+        for entry in (placed if isinstance(placed, list) else [])
+    ):
+        return {"fullscreen_sequence": True}
+    return {}
 
 
 def _rendered_caption_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
@@ -2747,9 +2794,9 @@ def _caption_language_fact(req: BriefRequirement) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     code = value.strip().casefold().replace("_", "-").split("-")[0]
-    if code in _LANGUAGE_NAMES:
+    if code in LANGUAGE_NAMES:
         return code
-    return _LANGUAGE_WORDS.get(loose_text(value).strip())
+    return LANGUAGE_WORDS.get(loose_text(value).strip())
 
 
 def _wants_whole_take(req: BriefRequirement) -> bool:
@@ -3782,7 +3829,7 @@ def _never_heard_problem(triggers: Iterable[str]) -> str:
 # with "no_safe_spot" when no spot clears the face and the captions, and the beat lane
 # with "overlap" (or arbitration with "duplicate") when another pop-in holds the spot.
 _NO_ROOM_REASONS = frozenset({"no_safe_spot"})
-_OVERLAP_REASONS = frozenset({"overlap", "duplicate"})
+_OVERLAP_REASONS = frozenset({"overlap", "duplicate", "fullscreen_overlap"})
 
 
 def _beat_room_facts(receipt: object) -> dict[str, Any]:
@@ -3907,11 +3954,60 @@ def _placement_reason(placements: Sequence[BeatFact]) -> str | None:
     )
 
 
+# KRI-840: the recorded ``facts["display_mode"]`` -> how the ask wants its photos shown.
+_DISPLAY_ASKS = {"fullscreen": "fullscreen", "pip": "pip", "corner": "pip"}
+
+
+def _display_ask(req: BriefRequirement) -> str | None:
+    """How the model recorded the photo should show: "fullscreen" or "pip", else None.
+
+    Read from the recorded fact only (KRI-667): an ask that names no display gets no display
+    verdict, however it is worded.
+    """
+    value = req.facts.get("display_mode")
+    if not isinstance(value, str):
+        return None
+    return _DISPLAY_ASKS.get("".join(ch for ch in value.casefold() if ch.isalnum()))
+
+
+def _display_problem(asked: str, triggers: Iterable[str]) -> str:
+    names = _names(f'"{trigger}"' for trigger in triggers)
+    if asked == "fullscreen":
+        return say(
+            en=f"For {names}, the photo shows as a small card in the corner, not full screen",
+            tr=f"{names} için fotoğraf tam ekran değil, köşede küçük bir kart olarak çıkıyor",
+        )
+    return say(
+        en=f"For {names}, the photo shows full screen, not as a small card in the corner",
+        tr=f"{names} için fotoğraf köşede küçük bir kart değil, tam ekran çıkıyor",
+    )
+
+
+def _sequence_problem(req: BriefRequirement, facts: PlanFacts) -> str | None:
+    """A full-screen ask at a spoken word that only the even-slot layout covers (KRI-840)."""
+    if not facts.fullscreen_sequence or _display_ask(req) != "fullscreen" or not _wants_beats(req):
+        return None
+    return say(
+        en=(
+            "Your Visuals play full screen, but spread evenly across the talk, "
+            "not timed to the word you said"
+        ),
+        tr=(
+            "Görsellerin tam ekran çıkıyor ama konuşmaya eşit aralıklarla dağılıyor, "
+            "söylediğin kelimeye göre zamanlanmıyor"
+        ),
+    )
+
+
 def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Word-triggered pop-ins and the closing shot, from the repaired strategy."""
     wants_beats = _wants_beats(req)
     wants_closing = _closing_photo_ask(req, facts)
+    asked_display = _display_ask(req) if wants_beats else None
+    sequence_problem = _sequence_problem(req, facts)
     if facts.reaction_beats is None:
+        if sequence_problem:
+            return _receipt(req, "partial", sequence_problem + ".")
         return _receipt(req, "partial", _CANT_CHECK_BEATS)
     beats = facts.reaction_beats
     problems: list[str] = []
@@ -3952,11 +4048,13 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                         ),
                     )
                     if facts.dropped_beat_triggers
-                    else say(
+                    else sequence_problem
+                    or say(
                         en="This draft has no pop-ins timed to your words",
                         tr="Bu taslakta sözlerine göre çıkan görsel yok",
                     )
                 )
+                delivered = bool(sequence_problem) and not facts.dropped_beat_triggers
         else:
             unheard = _unheard_for(facts, names)
             matched = [b for b in beats if any(_trigger_heard(n, b.trigger) for n in names)]
@@ -4000,11 +4098,13 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
             ]
             if missing:
                 problems.append(
-                    say(
+                    sequence_problem
+                    or say(
                         en=f"No pop-in for {_names(missing)}",
                         tr=f"Şunlar için çıkan görsel yok: {_names(missing)}",
                     )
                 )
+                delivered = delivered or bool(sequence_problem)
             if unresolved:
                 problems.append(
                     say(
@@ -4040,6 +4140,13 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                             tr="Çıkan görsellerin hiçbiri fotoğraf ya da çıkartma göstermiyor",
                         )
                     )
+                if asked_display is not None:
+                    shown = [b for b in placements if b.visual_id]
+                    wrong = [b for b in shown if b.display_mode != asked_display]
+                    # Pop-ins matched to the ask's own words must all show as asked; judged as
+                    # a whole (no word matched), one that does is enough.
+                    if wrong and ((names and by_name) or len(wrong) == len(shown)):
+                        problems.append(_display_problem(asked_display, [b.trigger for b in wrong]))
     if wants_closing:
         if facts.closing_visual_id is None:
             if facts.closing_requested:
@@ -5627,47 +5734,22 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
 _LEADING_ARTICLE_RE = re.compile(r"^(?:the|a|an|my|our|that|this|these|those|some|bu)\s+")
 _EXCERPT_CHARS = 110
 
-_LANGUAGE_NAMES: dict[str, tuple[str, str]] = {
-    "en": ("English", "İngilizce"),
-    "tr": ("Turkish", "Türkçe"),
-    "de": ("German", "Almanca"),
-    "es": ("Spanish", "İspanyolca"),
-    "fr": ("French", "Fransızca"),
-    "it": ("Italian", "İtalyanca"),
-    "ar": ("Arabic", "Arapça"),
-    "nl": ("Dutch", "Felemenkçe"),
-    "pt": ("Portuguese", "Portekizce"),
-}
-# Every spelling a creator types (diacritics stripped, see `loose_text`) -> language code.
-_LANGUAGE_WORDS: dict[str, str] = {
-    "english": "en",
-    "ingilizce": "en",
-    "turkish": "tr",
-    "turkce": "tr",
-    "german": "de",
-    "almanca": "de",
-    "spanish": "es",
-    "ispanyolca": "es",
-    "french": "fr",
-    "fransizca": "fr",
-    "italian": "it",
-    "italyanca": "it",
-    "arabic": "ar",
-    "arapca": "ar",
-    "dutch": "nl",
-    "hollandaca": "nl",
-    "felemenkce": "nl",
-    "portuguese": "pt",
-    "portekizce": "pt",
-}
-_LANG_ALT = "|".join(sorted(_LANGUAGE_WORDS, key=len, reverse=True))
+# The language table (names and every creator spelling) is shared with the dispatcher and the
+# worker: app/pipeline/caption_language.py (KRI-838).
+_LANG_ALT = "|".join(sorted(LANGUAGE_WORDS, key=len, reverse=True))
 _CAPTION_WORD = r"(?:sub\s*titles?|captions?|altyazi\w*)"
 # Most specific first: "translate the captions to English" names the target outright.
 _CAPTION_LANGUAGE_PATTERNS = (
     re.compile(rf"\btranslat\w*\s+(?:\w+\s+){{0,3}}?(?:in|into|to)\s+({_LANG_ALT})\b"),
     re.compile(rf"\b({_LANG_ALT})\s+{_CAPTION_WORD}"),
     re.compile(rf"\b{_CAPTION_WORD}\s+(?:in|into|to|as)\s+({_LANG_ALT})\b"),
-    re.compile(rf"\baltyazi\w*\s+({_LANG_ALT})\b"),
+    # "altyazılar Türkçe", and (KRI-838) the bare English wordings the patterns above miss:
+    # "make the subtitles Spanish", "subtitles should be Spanish". Only when the language
+    # closes the ask (`ASK_END`): "captions Spanish food intro", "subtitles Italian
+    # restaurant style" and "captions Dutch oven" name a topic, not the captions' language.
+    re.compile(
+        rf"\b{_CAPTION_WORD}\s+(?:(?:\w+\s+){{0,2}}?(?:be|are|is)\s+)?({_LANG_ALT})\b{ASK_END}"
+    ),
     re.compile(rf"\b({_LANG_ALT})\s+(?:olarak|cevir\w*)"),
 )
 _SPELLING_RE = re.compile(r"\b(?:spell\w*|exact\w*|yazim\w*|dogru yaz\w*)\b")
@@ -5890,13 +5972,33 @@ def _requested_caption_language(req: BriefRequirement) -> str | None:
     for pattern in _CAPTION_LANGUAGE_PATTERNS:
         found = pattern.search(wording)
         if found:
-            return _LANGUAGE_WORDS[found.group(1)]
+            return LANGUAGE_WORDS[found.group(1)]
     return None
 
 
 def _language_name(code: str) -> str:
-    english, turkish = _LANGUAGE_NAMES.get(code, (code.upper(), code.upper()))
+    english, turkish = LANGUAGE_NAMES.get(code, (code.upper(), code.upper()))
     return say(en=english, tr=turkish)
+
+
+def _read_caption_language(
+    lines: Sequence[str], asked: str, names: Sequence[str] = ()
+) -> str | None:
+    """The language the caption TEXT is in when it settles the ask, else None (KRI-838).
+
+    A render's ``caption_language`` is a label the worker stamped; the lines are what the
+    creator sees. whisper hinted to Turkish on English speech wrote English, and the label
+    said "tr", so a label-only check called English captions Turkish ("Done"). The text
+    outranks the label: the asked language when the lines are clearly in it, the language
+    they are clearly in otherwise, None when they are too short or mixed to say (the label
+    then stands). The creator's own spelling targets carry no language evidence.
+    """
+    verdict, detected = caption_language_verdict(lines, asked, ignore_terms=tuple(names))
+    if verdict == "confirmed":
+        return asked
+    if verdict == "contradicted":
+        return detected
+    return None
 
 
 def _check_caption_language(
@@ -5905,6 +6007,11 @@ def _check_caption_language(
     """The captions' language against the one the creator asked for. Spelling of names
     stays unchecked, and the reason says so when the ask was about spelling."""
     rendered = str(facts.caption_language or "").casefold().split("-")[0]
+    if facts.caption_texts:
+        rendered = (
+            _read_caption_language(facts.caption_texts, asked, _spelled_names(req) or ())
+            or rendered
+        )
     note = ""
     if _SPELLING_RE.search(loose_text(_req_text(req))):
         note = " " + say(
@@ -6019,7 +6126,7 @@ def _asked_caption_language(req: BriefRequirement) -> str | None:
     for pattern in _LOOSE_CAPTION_LANGUAGE_PATTERNS:
         match = pattern.search(wording)
         if match:
-            return _LANGUAGE_WORDS[match.group(1)]
+            return LANGUAGE_WORDS[match.group(1)]
     return None
 
 
@@ -6102,7 +6209,7 @@ def _clean_name(name: str) -> str | None:
     if not words:
         return None
     core = loose_text(" ".join(words))
-    if core in _LANGUAGE_WORDS or _CAPTION_RE.search(core):
+    if core in LANGUAGE_WORDS or _CAPTION_RE.search(core):
         return None
     return " ".join(words)
 
@@ -6337,7 +6444,10 @@ def _check_caption_words(req: BriefRequirement, facts: PlanFacts) -> Requirement
     unsure: list[str] = []
     rendered = str(facts.caption_language or "").casefold().split("-")[0]
     asked = _asked_caption_language(req)
+    names = _spelled_names(req)
     if asked is not None:
+        # The lines outrank the label (KRI-838): English words under a "tr" stamp are not Turkish.
+        rendered = _read_caption_language(lines, asked, names or ()) or rendered
         if not rendered:
             unsure.append(
                 say(
@@ -6372,7 +6482,6 @@ def _check_caption_words(req: BriefRequirement, facts: PlanFacts) -> Requirement
                 tr="Altyazılar kelime kelime değil, tam cümleler olarak açık.",
             )
         )
-    names = _spelled_names(req)
     if _asks_spelling(req):
         if not names:
             unsure.append(
@@ -6468,14 +6577,25 @@ def _caption_words_plan(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     names = _spelled_names(req)
     if asked is not None:
         language = _language_name(asked)
-        parts.append(
-            say(en=f"they'll be in {language}", tr=f"altyazılar {language} olacak")
-            if names or _asks_spelling(req)
-            else say(
-                en=f"they'll be in {language}, and I'll check that in the finished video",
-                tr=f"altyazılar {language} olacak, bunu bitmiş videoda kontrol edeceğim",
+        if not can_deliver_caption_language(asked):
+            # KRI-838: Nova cannot write captions in this language yet. Say so before the
+            # creator approves, never promise it and render the spoken language.
+            parts.append(
+                say(
+                    en=f"I can't make {language} captions yet, so they'll be in the language "
+                    "that's spoken",
+                    tr=f"Altyazıları şimdilik {language} yapamıyorum, konuşulan dilde olacaklar",
+                )
             )
-        )
+        else:
+            parts.append(
+                say(en=f"they'll be in {language}", tr=f"altyazılar {language} olacak")
+                if names or _asks_spelling(req)
+                else say(
+                    en=f"they'll be in {language}, and I'll check that in the finished video",
+                    tr=f"altyazılar {language} olacak, bunu bitmiş videoda kontrol edeceğim",
+                )
+            )
     if names:
         one = len(names) == 1
         parts.append(
@@ -7707,7 +7827,7 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # render's own pop-in receipt and mix level (`plan_facts_from_phone_variant`): judge
         # those asks.
         and not (
-            facts.reaction_beats is not None
+            (facts.reaction_beats is not None or _sequence_problem(req, facts) is not None)
             and (_wants_beats(req) or _closing_photo_ask(req, facts))
         )
         and not (_wants_bed_under_voice(req) or _wants_bed_muted(req))
