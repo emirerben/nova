@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.80.0] - 2026-10-24
+
+### Changed
+- fix(kria): deliver camera mute and named-line cuts instead of unusable recovery advice (KRI-821) (#1798) <!-- release-pr: 1798 -->
+
 ## [0.81.79.0] - 2026-10-24
 
 ### Changed
