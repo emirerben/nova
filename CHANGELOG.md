@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.82.0] - 2026-10-24
+
+### Changed
+- test(kria): pin carry_moment_ask in extract_deferred_brief (KRI-865) (#1779) <!-- release-pr: 1779 -->
+
 ## [0.81.81.0] - 2026-10-24
 
 ### Changed
