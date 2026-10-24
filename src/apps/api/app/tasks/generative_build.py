@@ -7639,6 +7639,13 @@ def _run_phone_subtitled_job(
                     snapshot, extract_spelling_asks(_creator_request_text(all_candidates))
                 ),
             )
+            # KRI-849: "if you can't tell what he says, ask me": leave the unclear word out.
+            cues, unclear_words_receipt = _apply_unclear_words(
+                cues,
+                snapshot,
+                cut_plan,
+                extract_spelling_asks(_creator_request_text(all_candidates)),
+            )
 
             # The speaker's span exactly as the compiler plays it: the cleanup
             # cut, else the phone-measured clip (which can run a hair shorter
@@ -8455,6 +8462,8 @@ def _run_phone_subtitled_job(
         if media_lanes_enabled:
             new_entry["overlay_transcript"] = raw_words
             new_entry["phone_lane_receipt"] = lane_receipt
+        if unclear_words_receipt is not None:
+            new_entry["caption_unclear"] = unclear_words_receipt  # KRI-849
         if sfx_duck is not None:
             new_entry[SFX_DUCK_RECEIPT_FIELD] = sfx_duck
         if take_window_receipts:
@@ -9118,6 +9127,52 @@ def _apply_creator_spellings(cues: list, targets: tuple[str, ...]) -> list:
     except Exception:  # noqa: BLE001 - observability only
         pass
     return out
+
+
+def _apply_unclear_words(
+    cues: list, snapshot: dict, cut_plan: Any, quoted: tuple[str, ...] = ()
+) -> tuple[list, dict | None]:
+    """KRI-849: the caption cues with the word the creator asked to be asked about left out (or
+    written as they chose), per the approved brief pinned on the job. Returns ``(cues,
+    receipt)``; the receipt is ``None`` without the ask. The render never fails on it: when the
+    step raises, a minimal fallback still drops the words in the windows the binding names and
+    the receipt says ``error`` (the finished-video line then says it could not be checked)."""
+    from app.kria import unclear_word_ask  # noqa: PLC0415
+    from app.pipeline.silence_cut import remap_words  # noqa: PLC0415
+    from app.pipeline.transcribe import Word  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    def to_captions(start_s: float, end_s: float) -> tuple[float, float] | None:
+        if cut_plan is None:
+            return start_s, end_s
+        moved = remap_words(
+            [Word(text="-", start_s=start_s, end_s=end_s, confidence=1.0)], cut_plan
+        )
+        return (moved[0]["start_s"], moved[0]["end_s"]) if moved else None
+
+    binding = snapshot.get("creator_brief_binding")
+    try:
+        out, receipt = unclear_word_ask.apply_to_cues(
+            cues,
+            binding,
+            spellings=_phone_caption_spellings(snapshot, quoted),
+            map_window=to_captions,
+        )
+    except Exception as exc:  # noqa: BLE001 - the render goes on; the fallback below is the net
+        log.warning("phone_unclear_words.failed", error=str(exc)[:200])
+        try:
+            out, receipt = unclear_word_ask.fallback_omit(cues, binding, map_window=to_captions)
+        except Exception as inner:  # noqa: BLE001 - nothing readable: say so, change nothing
+            log.warning("phone_unclear_words.fallback_failed", error=str(inner)[:200])
+            out, receipt = cues, {"state": "error", "spans": []}
+    if receipt is not None:
+        try:
+            record_pipeline_event(
+                "captions", "unclear_words", {"variant_id": "subtitled", **receipt}
+            )
+        except Exception:  # noqa: BLE001 - observability only
+            pass
+    return out, receipt
 
 
 def _phone_spoken_text_asks(snapshot: dict) -> tuple:

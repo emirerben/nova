@@ -1407,6 +1407,25 @@
       ]
     },
     {
+      "id": "kri-849-unclear-word",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri849_dj_t1_unclear_word_replay.py tests/kria/test_kri849_unclear_word_postgres.py tests/agents/test_kri849_unclear_word_prompt.py tests/evals/test_main_creator_evals.py",
+      "paths": [
+        "src/apps/api/app/pipeline/caption_unclear.py",
+        "src/apps/api/app/kria/unclear_word_ask.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/fixtures/kri849_dj_t1/dj_t1.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri849_dj_t1_ask_if_unclear.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri849_dj_t1_unclear_answer_omit.json",
+        "src/apps/api/tests/kria/test_kri849_dj_t1_unclear_word_replay.py",
+        "src/apps/api/tests/agents/test_kri849_unclear_word_prompt.py",
+        "src/apps/api/tests/kria/test_kri849_unclear_word_postgres.py"
+      ]
+    },
+    {
       "id": "kri-802-question-batch",
       "needs_native": true,
       "api_tests": "tests/kria/test_kri802_question_batch.py tests/kria/test_kri802_question_batch_postgres.py",

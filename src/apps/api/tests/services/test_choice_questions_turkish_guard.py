@@ -24,18 +24,21 @@ from pathlib import Path
 import app.services.choice_questions as cq
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.reply_language import reply_language_for
+from app.pipeline.caption_unclear import UnclearSpan
 from app.services.choice_questions import (
     CONFLICT_DURATION_VS_COUNT,
     CONFLICT_LENGTH_VS_NATURAL,
     CONFLICT_ORDER_BASIS,
     CONFLICT_PRIORITY,
     CONFLICT_SOURCE_COVERAGE,
+    CONFLICT_UNCLEAR_WORD,
     CONFLICT_VOICE_VS_DURATION,
     CONFLICT_WHICH_VOICE,
     ChoiceCapability,
     build_choice_question,
     choice_question_text,
     collect_conflicts,
+    unclear_word_choice,
 )
 from tests.kria.test_choice_voice_gate import VOICE, _voice_rows
 
@@ -213,6 +216,16 @@ def _cases() -> dict[str, tuple[str, list]]:
             _brief(),
             _coverage(code, **plan),
         )
+    # KRI-849: the unclear-word question. Built from a span the way the detector hands it over
+    # (the detector itself needs the phone-rendering settings; its end-to-end cases are in
+    # tests/kria/test_kri849_dj_t1_unclear_word_replay.py). The two heard texts are the clip's own
+    # words, not copy: no English function words in them, or they would sit in quotes.
+    span = UnclearSpan(
+        8.8, 9.7, "salma y limón", "sal marina", 0, 2, ("salma", "y", "limon", "|", "sal", "marina")
+    )
+    choice = unclear_word_choice(span, 0, ("r3",), ["take"], "the third sauce he names")
+    assert choice is not None and choice.kind == CONFLICT_UNCLEAR_WORD
+    cases["unclear_word"] = (CONFLICT_UNCLEAR_WORD, [choice])
     return cases
 
 
