@@ -6,7 +6,8 @@ import XCTest
 /// `videoStartOffset` muxes the video track later than the audio (a leading empty edit), the shape of
 /// an original whose picture starts ~21 ms after its sound (KRI-811).
 enum SolidVideoFixture {
-    @MainActor static func make(directory: URL, name: String, color: CGColor, seconds: Double, size: (Int, Int) = (96, 160), fps: Int32 = 30, videoStartOffset: Double = 0) async throws -> URL {
+    @MainActor static func make(directory: URL, name: String, color: CGColor, seconds: Double, size: (Int, Int) = (96, 160), fps: Int32 = 30, videoStartOffset: Double = 0,
+                                frameColor: ((Int) -> CGColor)? = nil) async throws -> URL {
         let (width, height) = size
         let (w, h) = (width, height)
         let videoURL = directory.appendingPathComponent("\(name)-video.mp4")
@@ -24,7 +25,7 @@ enum SolidVideoFixture {
             CVPixelBufferLockBaseAddress(pixel, [])
             let context = try XCTUnwrap(CGContext(data: CVPixelBufferGetBaseAddress(pixel), width: w, height: h, bitsPerComponent: 8,
                 bytesPerRow: CVPixelBufferGetBytesPerRow(pixel), space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue))
-            context.setFillColor(color); context.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            context.setFillColor(frameColor?(index) ?? color); context.fill(CGRect(x: 0, y: 0, width: w, height: h))
             CVPixelBufferUnlockBaseAddress(pixel, [])
             XCTAssertTrue(adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(index), timescale: fps)))
         }

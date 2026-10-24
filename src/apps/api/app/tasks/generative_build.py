@@ -6260,6 +6260,7 @@ def _plan_phone_unified_montage(
         plan_unified_montage,
         skia_font_covers,
     )
+    from app.services.phone_rollout import freeze_frame_supported  # noqa: PLC0415
 
     return plan_unified_montage(
         clips,
@@ -6279,6 +6280,8 @@ def _plan_phone_unified_montage(
         # KRI-585: what the clips say orders them only where the approved plan
         # recorded it (and the reply said so), never against a pinned order.
         speech_order=speech_order_approved(strategy, contract, approved_length_plan),
+        # KRI-828: the creator's freeze is planned only where the phone can hold a frame.
+        freeze_frames=freeze_frame_supported(),
     )
 
 

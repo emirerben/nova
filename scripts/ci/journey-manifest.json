@@ -150,6 +150,7 @@
         "src/apps/api/app/pipeline/phone_guided_plan.py",
         "src/apps/api/app/pipeline/authored_timeline.py",
         "src/apps/api/app/agents/edit_copilot.py",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_reverse_order_en.json",
         "src/apps/api/app/kria/brief.py",
         "src/apps/api/app/kria/editor_receipts.py",
         "src/apps/api/app/kria/registry.py",

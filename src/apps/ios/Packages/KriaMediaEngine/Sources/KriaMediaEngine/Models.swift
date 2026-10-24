@@ -210,13 +210,19 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if clips.contains(where: { $0.transition?.kind == .crossfade }) { result.insert(.crossfade) }
         if clips.contains(where: { $0.transition != nil && $0.transition?.kind != .crossfade }) { result.insert(.clipTransitions) }
         // A main-video hold of at most one frame is only composition rounding
-        // from a source-preserving speed edit. It needs no editor-media
-        // feature; longer holds and every overlay control still do.
-        if clips.contains(where: {
-            $0.overlayDissolveSeed != nil || $0.overlayAboveText != nil
-                || ($0.holdDuration ?? 0) > 1 / frameRate + 0.000_001
-                || $0.overlayPopIn != nil || $0.overlayPreserveAlpha != nil
-                || $0.overlayFadeIn != nil || $0.overlayFadeOut != nil
+        // from a source-preserving speed edit. It needs no feature. A longer
+        // main-video hold is the creator's freeze frame (KRI-828): the clip's
+        // last frame holds, `.freezeFrame`. Overlay holds and every overlay
+        // control are editor media.
+        let longHold: (TimelineClip) -> Bool = { ($0.holdDuration ?? 0) > 1 / frameRate + 0.000_001 }
+        if tracks.contains(where: { $0.kind == .video && $0.clips.contains(where: longHold) }) { result.insert(.freezeFrame) }
+        if tracks.contains(where: { track in
+            track.clips.contains(where: {
+                $0.overlayDissolveSeed != nil || $0.overlayAboveText != nil
+                    || (track.kind != .video && longHold($0))
+                    || $0.overlayPopIn != nil || $0.overlayPreserveAlpha != nil
+                    || $0.overlayFadeIn != nil || $0.overlayFadeOut != nil
+            })
         }) { result.insert(.editorMedia) }
         if clips.contains(where: { $0.look != nil }) { result.insert(.goldenHourLook) }
         if clips.contains(where: { $0.sourceCrop != nil }) { result.insert(.sourceCrop) }
@@ -483,7 +489,7 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          animatedText, authoredText, crossfade, clipTransitions, goldenHourLook, audioMix,
          variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export,
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
-         soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText
+         soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText, freezeFrame
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }

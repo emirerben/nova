@@ -404,6 +404,15 @@ def compile_phone_guided_plan(
                 "a lip-sync clip cannot change speed independently of its song"
             )
         source_duration = moment.source_end_s - moment.source_start_s
+        # KRI-828: the creator's freeze holds the moment's last source frame after it plays.
+        freeze_hold = float(moment.freeze_hold_s or 0.0)
+        if freeze_hold and (still or rate != 1 or moment.media_id in lipsync_takes):
+            # The engine holds a moving clip's last frame at 1x. A transition on either side
+            # needs nothing extra: the incoming overlap rides the motion like any clip's, and
+            # an outgoing one dissolves out of the held frame (the slot's own duration owns
+            # both). A hold at another speed or under a lip-synced song is a different program.
+            raise UnsupportedPhonePlan("a freeze frame needs a moving clip at normal speed")
+        moving_duration = moment.duration_s - freeze_hold
         incoming = None
         expected_start = cursor
         if index and boundaries[index - 1] not in {"none", "cut"}:
@@ -449,7 +458,7 @@ def compile_phone_guided_plan(
                 not still
                 and not math.isclose(
                     source_duration / rate,
-                    moment.duration_s,
+                    moving_duration,
                     abs_tol=_FRAME_S + _TIMING_ROUNDING_TOLERANCE_S,
                 )
             )
@@ -483,8 +492,12 @@ def compile_phone_guided_plan(
             )
             cursor = moment.output_end_s
             continue
-        if moment.playback_rate is None and not math.isclose(
-            source_duration, moment.duration_s, abs_tol=_TIMING_ROUNDING_TOLERANCE_S
+        if (
+            moment.playback_rate is None
+            and not freeze_hold
+            and not math.isclose(
+                source_duration, moment.duration_s, abs_tol=_TIMING_ROUNDING_TOLERANCE_S
+            )
         ):
             # A v2 revision quantizes `duration_s` and an approval-inherited
             # `source_end_s` independently, so the two can disagree by one
@@ -525,7 +538,18 @@ def compile_phone_guided_plan(
                     )
                 source_duration = refit_duration
         elif moment.source_end_s > source.duration_s or source_start >= source.duration_s:
-            if moment.playback_rate is not None:
+            if freeze_hold:
+                # The frozen frame is the creator's moment: never slide it. A device file
+                # a hair shorter than the proxy trims the end by at most the export margin
+                # plus a frame; anything more needs a new selection.
+                available = max(0.0, source.duration_s - _EXPORT_SAFETY_MARGIN_S)
+                if (
+                    source_start + source_duration - available > _FRAME_S + _EXPORT_SAFETY_MARGIN_S
+                    or available - source_start < 0.1
+                ):
+                    raise UnsupportedPhonePlan("a freeze frame must stay on its selected frame")
+                source_duration = round(available - source_start, 6)
+            elif moment.playback_rate is not None:
                 # Never slide an explicitly selected action to compensate for a
                 # different device duration, including an explicit reset to 1x.
                 # A tiny end-only measurement mismatch
@@ -605,7 +629,11 @@ def compile_phone_guided_plan(
             display_w, display_h = display_dims(source)
             transform = fit_transform(display_w, display_h, canvas, landscape_fit)
         hold_duration = None
-        if moment.playback_rate is not None:
+        if freeze_hold:
+            # The source window plays at 1x, then its last frame holds for the rest of the
+            # slot: the creator's seconds plus any end the device file trimmed.
+            hold_duration = round(moment.duration_s - source_duration, 6)
+        elif moment.playback_rate is not None:
             # The saved source edges remain exact; the render clock is whole
             # frames. Never read beyond that selection or overlap the next
             # slot: trim at most one output frame, or hold its final frame.

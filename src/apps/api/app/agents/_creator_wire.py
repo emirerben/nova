@@ -220,7 +220,7 @@ def copilot_schema():
             return number
         if name in list_strings:
             return arr(string)
-        if name == "slide_indexes":
+        if name in {"slide_indexes", "order"}:
             return arr(integer)
         if name == "selector":
             return selector

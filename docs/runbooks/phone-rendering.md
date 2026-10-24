@@ -3289,3 +3289,63 @@ The app reads `capabilities.text_bend` (creation) and `editor_capabilities.text_
 `phone-simple-cut-v3` is a forward-only verifier policy. New v3 code accepts the pinned older supported verifier versions; an older server cannot interpret a newly pinned v3 policy and refuses it rather than publishing unchecked output. After v3 policies exist, rolling the API back below v3 can therefore leave those exports blocked. Do not downgrade the pin/minimum verifier or relabel an old report to recover them; preserve the attempt and restore a compatible server before the normal output-check retry.
 
 The existing Fly Deploy workflow checks all managed process groups, including stopped Machines, for one converged image digest before declaring deployment successful. That post-deploy check does not establish compatibility during a rolling deploy and does not make old binaries understand v3. Observe the actual merged revision's successful convergence separately; before that, KRI-832 remains pending. No source-only receipt or local replay proves production convergence or complete rollback compatibility.
+
+## Freeze frames (KRI-828)
+
+"Freeze the frame for one second on Atakan's bite" on a phone montage renders a real hold.
+
+- **Reading the ask.** `kria.freeze_ask.freeze_spec` needs the requirement to be a freeze ask
+  (`freeze_frame` fact or the creator's words) AND its approved words to read as one; a model
+  fact on other words ("hold on the sunset for 2 seconds") never freezes. Seconds: read from
+  the creator's own words (`_stated_seconds`, decimals included: "1.5 seconds", "1,5 saniye");
+  the model's typed `duration_s` is never read. Unstated => 1 s. A stated length outside
+  0.2-10 s holds the nearest bound and the receipt says `partial` with the asked number.
+- **Changing it in chat (KRI-899).** `freeze_ask.live_freezes` reads EVERY live freeze ask in
+  brief order. One that names a moment is its own freeze (a second moment holds too, on its own
+  cut). One that names no moment ("make the freeze 2 seconds instead", "make it longer",
+  "donmayı 2 saniye yap") changes the latest freeze: its seconds (anywhere in the words), or
+  x2 / x0.5 for longer / shorter. It needs no freeze word of its own when the model filed it
+  with the freeze fact (the earlier freeze is the corroboration), but a video-length ask ("make
+  the video 20 seconds") never takes over a freeze. Two asks grounded to the same analysed
+  moment hold it once, at the later ask's length (`_ground_freezes`). Every answered id gets the
+  same receipt; the draft defers exactly these ids (`planned_freeze_ids`). On a rendered edit
+  `brief.route_requirements` sends any freeze ask to the planner (re-plan + re-render): the
+  editor copilot has no freeze op.
+- **Where.** `unified_montage._ground_freeze` matches the creator's words for the moment to
+  the clips' analysed `best_moments[].description` (time only, never text) and freezes at that
+  moment's midpoint. The nearest cut of that clip is re-anchored to END on the frame (same
+  length of motion, never overlapping another cut of the take). No match or a tie =>
+  `not_grounded`: no hold, receipt "I couldn't tell which moment to freeze". Frame-exact action
+  grounding is KRI-723.
+- **Timing.** Without a creator length the hold adds its seconds on top of the moments. With
+  one (`target_s`), `_reserve_freeze_hold` takes the overshoot out of the ends of the other
+  plain video cuts, then (only as far as the 10 % length tolerance needs) out of the motion
+  before the frozen frame; photos, chosen windows and held spoken lines never shrink (M2:
+  "about 14 s" has room, so 6 x 2 s + photo + 1 s). `times_one_moment` keeps the 1 s from ever
+  becoming the video's length (KRI-777).
+- **Plan -> recipe.** `FastMontageCut.freeze_hold_s` -> `GuidedStoryMoment.freeze_hold_s`
+  (`duration_s` = source span + hold) -> phone recipe main-track clip at rate 1 with
+  `hold_duration` = hold (capability `freezeFrame`, never `editorMedia`). A transition on
+  either side is kept (the outgoing one dissolves out of the held frame). A freeze at another
+  speed or under a lip-sync song is refused (`UnsupportedPhonePlan`).
+- **Audio.** The clip's own sound plays under the moving part and is silent under the hold
+  (engine `Composition.swift`; cloud mixes the source window only). Music beds keep playing.
+- **Cloud.** `_render_moments` clones the last frame (`tpad=stop_mode=clone`) for the hold.
+- **Editor.** Revisions carry `freeze_hold_s` per segment and slot rows add `freeze_frame_s`
+  (the frozen frame). The frame never moves: trimming the slot's end shortens the hold,
+  trimming its start shortens the motion, a slot that no longer reaches the frame (leading half
+  of a split, a trim through the whole hold) plays with no hold. Server Save
+  (`build_guided_segments`) and the iOS preview (`NativeEditorRenderCompiler`) apply the same
+  rule; neither derives a slow rate for it. Dragging the held slot's end out lengthens the hold
+  (up to 10 s, the same bound as a chat ask).
+- **Receipt.** `met` only when the plan record's `freeze_frames[].status == "held"` (and, on a
+  finished video, its timeline still carries a hold); otherwise KRI-777's "Couldn't".
+- **Rollout (dark).** Planned only when `freezeFrame` is in `PHONE_RENDER_VERIFIED_FEATURES`
+  and, in an HTTP request, the build declares `X-Kria-Client-Protocol` >= 16
+  (`freeze_frame_min_client_protocol`). Order: ship the protocol-16 app build, verify preview +
+  exported MP4 on a physical device, then add `freezeFrame` to the Fly secret (api + worker).
+  Older builds cannot decode `freezeFrame` and fail such a recipe instead of dropping the hold.
+- Proof: `tests/kria/test_kri828_freeze_frame_m2.py` (M2 replay -> recipe, cloud MP4, editor
+  round trip), `tests/kria/test_kri899_freeze_length_changes.py` (chat corrections, second
+  freeze, router, editor end-drag), `KriaMediaEngineTests/FreezeFrameExportTests` (native
+  export).

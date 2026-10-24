@@ -1003,6 +1003,12 @@ def route_requirements(
         return "replan"
     if not reqs:
         return "editor_ops"
+    from app.kria.freeze_ask import asks_freeze_frame  # noqa: PLC0415 - freeze_ask reads briefs
+
+    if any(req.kind is not None and asks_freeze_frame(req) for req in reqs):  # type: ignore[arg-type]
+        # KRI-899: a freeze (or a change to one) is grounded and timed by the planner
+        # (`unified_montage._ground_freezes`); the editor copilot has no freeze operation.
+        return "replan"
     for req in reqs:
         if req.kind in {"text", "style"} and current_plan.can_edit_text is False:
             # Captions are editable text on a separate lane. Title-specific
