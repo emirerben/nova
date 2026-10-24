@@ -327,7 +327,8 @@ class ChoiceAnswer(_CreatorModel):
     source: Literal["creator", "creator_delegated"] = "creator"
     # KRI-844: the text the answer picked, when the option is a piece of the creator's own
     # footage (the spoken line of a take they chose to open / end on). Omitted when unset, so
-    # every stored answer stays byte-identical.
+    # every stored answer stays byte-identical. KRI-724: also the word / line a
+    # ``speech_occurrence`` answer picked a time of.
     value: str | None = Field(default=None, max_length=300, exclude_if=lambda value: value is None)
 
 
@@ -465,7 +466,8 @@ class CreativeStrategy(_CreatorModel):
     # ``ordering_choice``: the planner gate writes it from the thread's stored
     # ``choice_selection`` events and every model-authored value is discarded. Omitted
     # from the dump when unset so stored strategies stay byte-identical.
-    choice_answers: SkipJsonSchema[list[ChoiceAnswer] | None] = Field(default=None, max_length=8)
+    # KRI-724: one answer per spoken-occurrence ask can join the other conflicts' answers.
+    choice_answers: SkipJsonSchema[list[ChoiceAnswer] | None] = Field(default=None, max_length=16)
     # Server-folded cancellation suppresses saved-brief title fallbacks as well.
     omitted_copy_targets: SkipJsonSchema[list[Literal["opening_title", "closing_title"]] | None] = (
         Field(default=None, max_length=2)

@@ -8133,6 +8133,7 @@ def _run_phone_subtitled_job(
                     position_x=speaker_position_x or 0.0,
                     protected=protected_plan,
                     caption_look=protected_caption_look,
+                    removals=cut_plan.removed if cut_plan is not None else (),
                 )
 
             def _closing_rows_for(photo_card: Any) -> tuple[list[dict], dict[str, Any] | None]:
@@ -9444,11 +9445,14 @@ def _phone_opening_cut(
     if not raw_binding:
         return cut_plan, None
     try:
-        brief = BriefBinding.model_validate(raw_binding).resolve()
+        bound = BriefBinding.model_validate(raw_binding)
+        brief = bound.resolve()
         ask = brief_take_window(brief)
-        # KRI-821: lines the creator named to cut out of the middle of the take.
+        # KRI-821: lines the creator named to cut out of the middle of the take; KRI-724: at
+        # the occurrence the creator picked before approval (the binding's frozen answers).
         named = [
-            (cut.quote, cut.requirement_ids, cut.occurrence) for cut in brief_named_cuts(brief)
+            (cut.quote, cut.requirement_ids, cut.occurrence, cut.pin)
+            for cut in brief_named_cuts(brief, bound.choice_answers)
         ]
     except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
         log.warning("phone_opening_cut.binding_unreadable", error=str(exc)[:200])
@@ -9478,7 +9482,7 @@ def _phone_opening_cut(
             field: _missed_line(quote, ids, reason) for field, quote, ids in lines if quote
         }
         if named:
-            missed["named_cuts"] = [_missed_line(quote, ids, reason) for quote, ids, _ in named]
+            missed["named_cuts"] = [_missed_line(quote, ids, reason) for quote, ids, *_ in named]
         return missed
 
     source_words = words if cut_plan is not None else off_words
@@ -9980,7 +9984,9 @@ def _phone_spoken_text_asks(snapshot: dict) -> tuple:
     if not raw_binding:
         return ()
     try:
-        return brief_spoken_texts(BriefBinding.model_validate(raw_binding).resolve())
+        bound = BriefBinding.model_validate(raw_binding)
+        # KRI-724: with the occurrence the creator picked (the binding's frozen answers).
+        return brief_spoken_texts(bound.resolve(), bound.choice_answers)
     except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
         log.warning("phone_spoken_text.binding_unreadable", error=str(exc)[:200])
         return ()
@@ -10001,6 +10007,7 @@ def _phone_talking_spoken_text_rows(
     position_x: float = 0.0,
     protected: Any = None,
     caption_look: Any = None,
+    removals: Any = (),
 ) -> tuple[list[dict], dict[str, Any]]:
     """KRI-707: one text row per ``asks`` entry the take says, from the word's start
     (cut-timeline ``words``), placed off the speaker's face and clear of the
@@ -10031,6 +10038,14 @@ def _phone_talking_spoken_text_rows(
             **_protected_placement_kwargs(protected),
         )
 
+    from app.pipeline.speech_cut_state import remap_time  # noqa: PLC0415
+
+    removed = list(removals or ())
+
+    def to_timeline(source_s: float) -> float | None:
+        # KRI-724: a picked occurrence's source time on the cut timeline ``words`` are on.
+        return remap_time(source_s, removed)
+
     rows, receipt = spoken_text_rows(
         asks,
         words=words,
@@ -10041,6 +10056,7 @@ def _phone_talking_spoken_text_rows(
         place=place,
         shown_rows=shown_rows,
         caption_look=caption_look,
+        to_timeline=to_timeline,
     )
     try:
         record_pipeline_event("phone", "subtitled_spoken_text", receipt)
