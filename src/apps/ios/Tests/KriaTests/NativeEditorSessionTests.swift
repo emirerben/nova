@@ -5027,6 +5027,55 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.commitCount, 1)
     }
 
+    /// Failure modes: an edit this iPhone declined (`unsupported_recipe`) or an outdated app put up
+    /// "Retry device render", and every retry re-pinned the same recipe into the same decline (a loop
+    /// with no way out). The banner must offer the conversation (or Update Kria), and the retry entry
+    /// point must refuse those reasons even when a stale banner calls it.
+    func testDeclinedEditOffersChatInsteadOfARetryThatLoops() async {
+        let threadID = UUID(), jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 4, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+        fake.phoneDestination = true
+        let request = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
+        let statusBox = SessionTestStatus(DeviceRenderStatusResponse(phase: "needs_attention", request: request, reasonCode: "unsupported_recipe"))
+        let retries = SessionTestCounter()
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let renderSessions = DeviceRenderSessions(fetch: { _, _ in
+            await MainActor.run { fake.deviceFetchCount += 1 }
+            return await statusBox.response
+        }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: SessionTestExport(), sources: SessionTestSources(), publisher: SessionTestPublisher())
+        }, retryFailure: { _, _ in
+            await retries.increment()
+            throw APIError.conflict(detail: ConflictDetail("This edit needs a change.", code: "requires_change"))
+        })
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 4))
+        session.useDeviceRendering(renderSessions)
+        await session.load(api: fake, threadID: threadID)
+        session.selectClip(session.draft.clips[0].id)
+        session.trimSelected(edge: .trailing, to: 1.5)
+        await session.save()
+        guard case .deviceRenderRetryNeeded = session.saveState else {
+            return XCTFail("setup: the declined render shows the device banner: \(session.saveState)")
+        }
+        XCTAssertEqual(session.deviceRenderNextStep, .reviewInChat)
+        XCTAssertEqual(NativeEditorSaveBanner.deviceTitle(.reviewInChat), "Saved — this edit needs a change")
+        let reads = fake.deviceFetchCount
+        await session.retryDeviceRender()
+        let retried = await retries.value
+        XCTAssertEqual(retried, 0, "no /retry for an edit only a change can fix")
+        XCTAssertEqual(fake.deviceFetchCount, reads, "no reconcile loop either")
+
+        await statusBox.set(DeviceRenderStatusResponse(phase: "needs_attention", request: request, reasonCode: "renderer_outdated"))
+        let key = DeviceRenderKey(projectID: threadID, jobID: jobID, variantID: "variant")
+        await renderSessions.reconcile(key, capabilities: PhoneRenderingCapabilities(enabled: true, recipeVersions: [], verifiedFeatures: []))
+        let outdated = await waitUntil(timeout: .seconds(5)) { session.deviceRenderNextStep == .updateApp }
+        XCTAssertTrue(outdated, "an outdated app is told to update: \(String(describing: renderSessions.presentations[key]))")
+        await session.retryDeviceRender()
+        let stillNone = await retries.value
+        XCTAssertEqual(stillNone, 0)
+    }
+
     /// Failure mode: "Saved — iPhone render needs a retry" was stored once and stayed after the chat
     /// poll (or a Resume in the render sheet) healed the render, so the banner and its retry button
     /// sat over a render that was already fine. The banner must follow the live render.
@@ -6278,6 +6327,11 @@ private struct SessionTestSources: DeviceSourceResolving {
 private actor SessionTestPublisher: DeviceRenderPublishing {
     func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { true }
     func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication { .published }
+}
+
+private actor SessionTestCounter {
+    private(set) var value = 0
+    func increment() { value += 1 }
 }
 
 private actor SessionTestFlag {

@@ -234,11 +234,14 @@ enum DeviceRenderGate: Equatable {
     }
     func isInactive(_ key: DeviceRenderKey) -> Bool { inactiveKeys.contains(key) }
     /// Nothing about this render changes until the thread itself moves, so
-    /// polling callers may stop reconciling it on every tick.
+    /// polling callers may stop reconciling it on every tick. `superseded` is not
+    /// settled: it only says this phone's request is no longer the server's, and
+    /// the next read is what finds out what is (a newer request to render, or a
+    /// needs_attention answer with its way forward).
     func isSettled(_ key: DeviceRenderKey) -> Bool {
         if inactiveKeys.contains(key) { return true }
         guard let presentation = presentations[key] else { return false }
-        return presentation.phase == .synced || presentation.phase == .superseded
+        return presentation.phase == .synced
             || (presentation.phase == .cancelled && presentation.reasonCode == Self.jobCancelledReason)
     }
     /// The last capability set the server actually enabled, kept so a failed
@@ -263,6 +266,10 @@ enum DeviceRenderGate: Equatable {
     @ObservationIgnored private var retryTasks: [DeviceRenderKey: Task<Void, Never>] = [:]
     @ObservationIgnored private var retryAttempts: [DeviceRenderKey: Int] = [:]
     @ObservationIgnored private var declines: [DeviceRenderKey: DeclineReport] = [:]
+    /// A reconcile asked for while another held the ticket (value: whether it was a
+    /// retry). It runs as soon as the holder finishes, so a read asked for after a
+    /// newer request was pinned (an editor Save racing the chat poll) is never lost.
+    @ObservationIgnored private var rereads: [DeviceRenderKey: Bool] = [:]
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var pathMonitor: NWPathMonitor?
     @ObservationIgnored private var wasOnline = true
@@ -338,10 +345,25 @@ enum DeviceRenderGate: Equatable {
         if offered.enabled, lastEnabledCapabilities != offered { lastEnabledCapabilities = offered }
         let capabilities = offered == .disabled ? (lastEnabledCapabilities ?? offered) : offered
         self.capabilities[key] = capabilities
-        guard tickets[key] == nil else { return }
+        guard tickets[key] == nil else {
+            // The read in flight may predate a request pinned since (an editor Save while
+            // the chat poll's read was out): read again once it finishes.
+            rereads[key] = (rereads[key] ?? false) || retry
+            return
+        }
         let ticket = UUID()
         tickets[key] = ticket
-        defer { if tickets[key] == ticket { tickets[key] = nil } }
+        defer {
+            if tickets[key] == ticket {
+                tickets[key] = nil
+                if let again = rereads.removeValue(forKey: key) {
+                    Task { [weak self] in
+                        guard let self, let capabilities = self.capabilities[key] else { return }
+                        await self.reconcile(key, capabilities: capabilities, retry: again)
+                    }
+                }
+            }
+        }
         let status: DeviceRenderStatusResponse
         do {
             status = try await fetch(key.jobID, key.variantID)
@@ -468,19 +490,28 @@ enum DeviceRenderGate: Equatable {
             presentations[key] = DeviceRenderPresentation(phase: .preparing, waiting: reason)
             scheduleRetry(key, after: reason == .checking ? nil : Self.waitRecheck)
             return
+        case .decline where resumesSync:
+            // The video for this exact request is already rendered: what this phone can
+            // render no longer matters, only the upload is left (the server checks the
+            // bytes, never the phone's capabilities).
+            break
         case .decline(let reasonCode, let detail):
             settle(key)
             // Preserve a finished export and its receipt; the creator can still watch and share it.
             observations.removeValue(forKey: key)?.cancel()
             let keepsExport = saved?.request == request && saved?.outputURL != nil
+            // The creator's turn, with its own way forward: a change in chat
+            // (`unsupported_recipe`) or an app update (`renderer_outdated`).
             presentations[key] = DeviceRenderPresentation(
                 phase: keepsExport ? .localReady : .needsAttention,
                 localFile: !unchecked && saved?.request == request ? saved?.outputURL : nil,
-                message: keepsExport ? "Your video is ready on this iPhone. It can’t sync from this iPhone yet." : nil,
-                reasonCode: keepsExport ? nil : reasonCode,
+                message: keepsExport ? "Your video is ready on this iPhone. This iPhone can’t sync this version of the edit." : nil,
+                reasonCode: reasonCode,
                 outputVerificationPending: unchecked
             )
-            if !keepsExport { sendDecline(key, identity: request.identity, reasonCode: reasonCode, detail: detail) }
+            // Always tell the server, also when a finished export is kept here: otherwise
+            // it waits on this phone until the reaper (polls keep the record fresh).
+            sendDecline(key, identity: request.identity, reasonCode: reasonCode, detail: detail)
             return
         }
         settle(key)
@@ -579,12 +610,16 @@ enum DeviceRenderGate: Equatable {
     }
 
     /// Keeps whatever the render was showing and waits. Quiet waits sit on top
-    /// of the current state; a synced render has nothing left to wait for.
+    /// of the current state. A synced video stays exactly as it is, but the read
+    /// still happens again: the read that failed may have been the one meant to
+    /// pick up a newer request (an editor Save), and the chat poll stops reading
+    /// a settled render.
     private func wait(_ reason: DeviceRenderWait, for key: DeviceRenderKey) {
         var presentation = presentations[key] ?? DeviceRenderPresentation(phase: .preparing)
-        guard presentation.phase != .synced else { return }
-        presentation.waiting = reason
-        presentations[key] = presentation
+        if presentation.phase != .synced {
+            presentation.waiting = reason
+            presentations[key] = presentation
+        }
         scheduleRetry(key)
     }
 
@@ -693,6 +728,14 @@ enum DeviceRenderGate: Equatable {
                 presentations[key] = presentation
                 return false
             }
+            if case let APIError.conflict(detail) = error, detail.code == "requires_update" {
+                // This build declined the recipe as too new; a re-pin would be declined
+                // again. Updating Kria is the way forward, never another retry.
+                presentation.reasonCode = DeviceRenderAttentionCopy.updateReason
+                presentation.message = detail.message
+                presentations[key] = presentation
+                return false
+            }
             presentation.message = RequestFailureCause(error) == .connection
                 ? "Kria couldn’t retry this edit. Check your connection and try again."
                 : "Kria couldn’t retry this edit. \(error.localizedDescription)"
@@ -783,6 +826,7 @@ enum DeviceRenderGate: Equatable {
     /// must keep calling the coordinator's plain `cancel()`.
     func cancel(_ key: DeviceRenderKey) async {
         tickets[key] = nil
+        rereads[key] = nil
         settle(key)
         observations.removeValue(forKey: key)?.cancel()
         try? await entries[key]?.cancelByUser()
@@ -803,6 +847,7 @@ enum DeviceRenderGate: Equatable {
 
     func stopAll() async {
         tickets.removeAll()
+        rereads.removeAll()
         for observer in observations.values { observer.cancel() }
         observations.removeAll()
         for task in retryTasks.values { task.cancel() }

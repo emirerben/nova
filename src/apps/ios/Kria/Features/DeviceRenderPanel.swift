@@ -169,8 +169,9 @@ enum DeviceRenderAttentionCopy {
         "insufficient_storage": "This iPhone is low on storage. Free up space, then try again.",
         "thermal": "This iPhone needs to cool down before rendering again.",
         // Structural, not transient: retrying compiles the same recipe again and fails the
-        // same way, so the "Try again" button is hidden for this reason (see `showsRetryButton`).
-        "unsupported_recipe": "This edit uses something this iPhone can’t render yet. Start a new edit with a different style instead — trying again won’t change the result.",
+        // same way, so "Try again" is hidden and the card offers the conversation instead
+        // (a change-required reason, see `changeReasons`).
+        "unsupported_recipe": "This edit uses something this iPhone can’t render yet. Your project is saved. Review it in chat and Kria will make a version this iPhone can render.",
         // Distinct from `unsupported_recipe`: the renderer itself is out of date for this
         // recipe (version/schema mismatch), not a specific feature it can't produce.
         // "Start a new edit" wouldn't fix that -- updating the app would.
@@ -200,11 +201,30 @@ enum DeviceRenderAttentionCopy {
 
     /// Reasons only a change to the edit fixes: Kria re-pins the same recipe on
     /// retry, and the server refuses it again (`/device-render/retry` answers
-    /// `requires_change`). The way forward is the conversation.
-    static let changeReasons: Set<String> = ["contract_changed", "requires_change"]
+    /// `requires_change`). The way forward is the conversation. A recipe this
+    /// iPhone declined (`unsupported_recipe`) is one of them from the moment the
+    /// decline is recorded, not only after a refused retry.
+    static let changeReasons: Set<String> = ["contract_changed", "requires_change", "unsupported_recipe"]
 
+    /// The build is older than the recipe: the way forward is updating Kria.
+    static let updateReason = "renderer_outdated"
+
+    /// What the creator can do next about a render that cannot finish on its own.
+    enum NextStep: Equatable { case retry, resume, reviewInChat, updateApp }
+
+    static func nextStep(_ presentation: DeviceRenderPresentation) -> NextStep {
+        if needsChange(presentation) { return .reviewInChat }
+        if presentation.waiting?.isQuiet ?? true, presentation.reasonCode == updateReason { return .updateApp }
+        return isPaused(presentation) ? .resume : .retry
+    }
+
+    /// Where "Update Kria" goes.
+    static let appStoreURL = URL(string: "https://apps.apple.com/")!
+
+    /// A quiet network wait (a failed status read) sits on top of the card and keeps
+    /// its way forward; only heat, storage or checking replace it.
     static func needsChange(_ presentation: DeviceRenderPresentation?) -> Bool {
-        guard let presentation, presentation.waiting == nil, let reasonCode = presentation.reasonCode else { return false }
+        guard let presentation, presentation.waiting?.isQuiet ?? true, let reasonCode = presentation.reasonCode else { return false }
         return changeReasons.contains(reasonCode)
     }
 
@@ -329,8 +349,8 @@ struct DeviceRenderStatusCard: View {
                         .accessibilityIdentifier("device-render-save-message")
                 }
             }
-            if presentation.phase == .needsAttention, presentation.reasonCode == "renderer_outdated" {
-                Link("Update Kria", destination: Self.appStoreURL)
+            if presentation.phase == .needsAttention, presentation.reasonCode == DeviceRenderAttentionCopy.updateReason {
+                Link("Update Kria", destination: DeviceRenderAttentionCopy.appStoreURL)
                     .buttonStyle(KriaSecondaryButtonStyle())
                     .accessibilityIdentifier("device-render-update-app")
             }
@@ -398,8 +418,6 @@ struct DeviceRenderStatusCard: View {
             saveMessage = error.localizedDescription
         }
     }
-
-    private static let appStoreURL = URL(string: "https://apps.apple.com/")!
 
     /// Waiting on the phone itself (heat, storage) or on an unknown server
     /// state: nothing is rendering, so no spinner or Stop button.

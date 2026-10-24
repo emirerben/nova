@@ -332,7 +332,8 @@ struct NativeEditorView: View {
             }
             VStack(spacing: 0) {
                 NativeEditorSaveBanner(session: session,
-                    retryApproved: session.deviceRenderKey.map { model.deviceRenders.retryNeedsApproval($0) } == true ? { reviewRetryInChat() } : nil)
+                    retryApproved: session.deviceRenderKey.map { model.deviceRenders.retryNeedsApproval($0) } == true ? { reviewRetryInChat() } : nil,
+                    reviewInChat: { reviewRetryInChat() })
                 NativeEditorExportBanner(exporter: exporter)
                 NativeEditorRefreshIndicator(session: session, onBackToChat: conversation == nil ? requestBack : onBack)
                 if let message = session.cloudEditorUnavailableMessage {

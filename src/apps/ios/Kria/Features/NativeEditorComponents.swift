@@ -71,6 +71,9 @@ struct NativeEditorTopBar: View {
 struct NativeEditorSaveBanner: View {
     @ObservedObject var session: NativeEditorSession
     var retryApproved: (() -> Void)? = nil
+    /// Opens the conversation for an edit this iPhone declined. Nil falls back to the retry.
+    var reviewInChat: (() -> Void)? = nil
+    @Environment(\.openURL) private var openURL
 
     @ViewBuilder var body: some View {
         switch session.saveState {
@@ -87,12 +90,17 @@ struct NativeEditorSaveBanner: View {
                     .accessibilityIdentifier("native-editor-retry-render")
             }
         case .deviceRenderRetryNeeded(let message):
+            let step = session.deviceRenderNextStep
             VStack(spacing: 0) {
-                banner(title: session.deviceRenderIsPaused ? "Saved — rendering paused" : "Saved — iPhone render needs a retry",
-                       detail: message, systemImage: session.deviceRenderIsPaused ? "pause.circle" : "arrow.clockwise", tint: .orange)
-                Button(retryApproved == nil ? (session.deviceRenderIsPaused ? "Resume rendering" : "Retry device render") : "Review retry in chat") {
-                    if let retryApproved { retryApproved() }
-                    else { Task { await session.retryDeviceRender() } }
+                banner(title: Self.deviceTitle(step), detail: message, systemImage: Self.deviceImage(step), tint: .orange)
+                Button(deviceButton(step)) {
+                    switch step {
+                    case .reviewInChat where reviewInChat != nil: reviewInChat?()
+                    case .updateApp: openURL(DeviceRenderAttentionCopy.appStoreURL)
+                    default:
+                        if let retryApproved { retryApproved() }
+                        else { Task { await session.retryDeviceRender() } }
+                    }
                 }
                     .font(KriaFont.body(12).weight(.semibold))
                     .foregroundStyle(KriaColor.ink)
@@ -123,6 +131,32 @@ struct NativeEditorSaveBanner: View {
             )
         default:
             EmptyView()
+        }
+    }
+
+    static func deviceTitle(_ step: DeviceRenderAttentionCopy.NextStep) -> String {
+        switch step {
+        case .resume: "Saved — rendering paused"
+        case .reviewInChat: "Saved — this edit needs a change"
+        case .updateApp: "Saved — update Kria to render this edit"
+        case .retry: "Saved — iPhone render needs a retry"
+        }
+    }
+
+    static func deviceImage(_ step: DeviceRenderAttentionCopy.NextStep) -> String {
+        switch step {
+        case .resume: "pause.circle"
+        case .reviewInChat: "bubble.left"
+        case .updateApp: "arrow.down.app"
+        case .retry: "arrow.clockwise"
+        }
+    }
+
+    private func deviceButton(_ step: DeviceRenderAttentionCopy.NextStep) -> String {
+        switch step {
+        case .reviewInChat where reviewInChat != nil: "Review in chat"
+        case .updateApp: "Update Kria"
+        default: retryApproved == nil ? (step == .resume ? "Resume rendering" : "Retry device render") : "Review retry in chat"
         }
     }
 

@@ -1747,3 +1747,85 @@ async def test_a_later_save_retires_the_published_alias(fixture, monkeypatch):
     saved, _ = publish_phone_export(fixture, monkeypatch)
     fixture.job.assembly_plan["variants"][0]["render_generation_id"] = "next-save"
     assert await reopen_saved_draft(fixture.job, saved) == "editor_draft_unavailable"
+
+
+# ---- renderer_outdated: retry from the declining build would only loop ---------------------
+# Failure modes this guards (written before the code):
+#  1. The build that declined retries: a re-pin is declined the same way, forever (loop).
+#  2. A newer build is refused: the creator updated Kria and is stuck on "Update Kria".
+#  3. A record declined before the protocol was recorded is refused: no way forward.
+#  4. A newer build opens the project: it should render on its own, not wait for a tap.
+#  5. The same build opens the project: it must not be re-pinned (that is the loop again).
+
+
+def _decline_outdated(fixture, protocol="12"):
+    return fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/failures",
+        json=failure_body(fixture, reason_code="renderer_outdated"),
+        headers={"X-Kria-Client-Protocol": protocol},
+    )
+
+
+def _retry(fixture, protocol):
+    return fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/retry",
+        json={"identity": fixture.request.identity.model_dump(mode="json")},
+        headers={"X-Kria-Client-Protocol": protocol},
+    )
+
+
+def test_outdated_decline_retry_from_the_same_build_answers_requires_update(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    assert _decline_outdated(fixture).status_code == 200
+    assert device_record(fixture.job, "first")[routes.DECLINED_PROTOCOL_FIELD] == 12
+
+    response = _retry(fixture, "12")
+
+    assert response.status_code == 409
+    assert response.json()["problem"]["code"] == "requires_update"
+    status = device_status(fixture.job, "first")
+    assert status.phase == "needs_attention"
+    assert status.request.identity == fixture.request.identity
+
+
+def test_outdated_decline_retry_from_a_newer_build_re_pins(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    assert _decline_outdated(fixture).status_code == 200
+
+    response = _retry(fixture, "13")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["identity"]["recipe_revision"] == 2
+
+
+def test_outdated_decline_without_a_recorded_build_still_retries(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    assert _decline_outdated(fixture).status_code == 200
+    record = device_record(fixture.job, "first")
+    record.pop(routes.DECLINED_PROTOCOL_FIELD)
+    save_device_record(fixture.job, "first", record)
+
+    assert _retry(fixture, "12").status_code == 200
+
+
+@pytest.mark.parametrize("protocol,resumed", [("12", False), ("13", True)], ids=str)
+def test_opening_an_outdated_decline_re_pins_only_for_a_newer_build(
+    fixture, monkeypatch, protocol, resumed
+):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    assert _decline_outdated(fixture).status_code == 200
+
+    response = fixture.client.get(
+        f"/me/jobs/{fixture.job.id}/device-render?variant_id=first",
+        headers={"X-Kria-Client-Protocol": protocol},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    if resumed:
+        assert payload["phase"] == "awaiting_device"
+        assert payload["request"]["identity"]["recipe_revision"] == 2
+    else:
+        assert payload["phase"] == "needs_attention"
+        assert payload["reason_code"] == "renderer_outdated"
+        assert payload["request"]["identity"]["recipe_revision"] == 1

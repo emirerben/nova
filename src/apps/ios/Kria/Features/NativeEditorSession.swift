@@ -871,16 +871,27 @@ struct NativeEditorTemporaryVideo {
     }
 
     static func deviceRenderRetryMessage(_ presentation: DeviceRenderPresentation) -> String {
-        if DeviceRenderAttentionCopy.isPaused(presentation) {
+        switch DeviceRenderAttentionCopy.nextStep(presentation) {
+        case .resume:
             return "Your edit is saved. Rendering is paused on this iPhone; resume it when you’re ready."
+        case .reviewInChat:
+            return "Your edit is saved. This iPhone can’t render this version; review it in chat and Kria will make one it can."
+        case .updateApp:
+            return "Your edit is saved. This edit needs a newer version of Kria. Update the app to finish it."
+        case .retry:
+            break
         }
         return presentation.message ?? "Your edit is saved, but this iPhone needs to retry rendering it."
     }
 
     /// The device render behind the retry banner is the creator's own pause.
-    var deviceRenderIsPaused: Bool {
-        guard let key = deviceRenderKey, let presentation = deviceRenders?.presentations[key] else { return false }
-        return DeviceRenderAttentionCopy.isPaused(presentation)
+    var deviceRenderIsPaused: Bool { deviceRenderNextStep == .resume }
+
+    /// What the retry banner offers: a retry, a Resume, the conversation for an edit
+    /// this iPhone declined (a retry would be declined the same way), or an app update.
+    var deviceRenderNextStep: DeviceRenderAttentionCopy.NextStep {
+        guard let key = deviceRenderKey, let presentation = deviceRenders?.presentations[key] else { return .retry }
+        return DeviceRenderAttentionCopy.nextStep(presentation)
     }
     /// Upload records outlive this screen. The session only observes their
     /// results and turns a ready source into one local document transaction.
@@ -7973,6 +7984,9 @@ struct NativeEditorTemporaryVideo {
     func retryDeviceRender() async {
         guard !isSaving, let key = deviceRenderKey, let deviceRenders,
               let generation = pendingPreviewGeneration else { return }
+        // A change-required or outdated-app reason: a retry re-pins the same recipe and
+        // this iPhone declines it again. The banner offers chat or Update Kria instead.
+        guard [.retry, .resume].contains(deviceRenderNextStep) else { return }
         if deviceRenders.presentations[key]?.requiresServerRetry == true {
             let retried = await deviceRenders.retryNeedsAttention(key)
             guard retried else { return }

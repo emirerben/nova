@@ -821,7 +821,7 @@ private actor RetryGate {
     func testUnsupportedRecipeHidesRetryWithGuidanceCopyOtherReasonsStayRetryable() {
         XCTAssertFalse(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: "unsupported_recipe"))
         let message = DeviceRenderAttentionCopy.message(phase: .needsAttention, reasonCode: "unsupported_recipe", fallback: nil)
-        XCTAssertTrue(message?.localizedCaseInsensitiveContains("start a new edit") ?? false)
+        XCTAssertTrue(message?.localizedCaseInsensitiveContains("in chat") ?? false)
         for code in ["thermal", "insufficient_storage", "export_failed", "cancelled_by_user"] {
             XCTAssertTrue(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: code), code)
         }

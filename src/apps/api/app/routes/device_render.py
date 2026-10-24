@@ -414,6 +414,58 @@ async def _settle_recorded_refusal(
         return device_record(job, variant_id), device_status(job, variant_id)
 
 
+# The client protocol of the build that declined a recipe as `renderer_outdated`.
+# Only a newer build can render it, so `/retry` from the same build would only loop.
+DECLINED_PROTOCOL_FIELD = "declined_client_protocol"
+
+
+def _caller_is_newer_than_decliner(record: dict) -> bool:
+    """True when this request comes from a build newer than the one that said "outdated".
+
+    A record declined before the field existed has no protocol to compare: let the
+    caller try (the old behavior), since refusing would leave it no way forward.
+    """
+    from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+
+    declined = record.get(DECLINED_PROTOCOL_FIELD)
+    if not isinstance(declined, int) or isinstance(declined, bool):
+        return True
+    return (current_client_protocol() or 0) > declined
+
+
+def _auto_resume_updated(
+    job: Job, variant_id: str, record: dict, status: DeviceRenderStatus
+) -> bool:
+    """The phone said this build is too old for the recipe; the creator updated Kria.
+
+    Re-deliver the same pinned, already-consented recipe under a fresh identity so the
+    updated phone renders it on its own instead of showing "Update Kria" again. Only a
+    build newer than the one that declined triggers this (the declining protocol is
+    recorded with the report).
+    """
+    from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+
+    if (
+        current_client_protocol() is None
+        or status.phase != "needs_attention"
+        or status.reason_code != "renderer_outdated"
+        or not isinstance(record.get(DECLINED_PROTOCOL_FIELD), int)
+        or not _caller_is_newer_than_decliner(record)
+    ):
+        return False
+    try:
+        retry_device_render(job, variant_id)
+    except (CreatorRenderContractError, ValueError) as exc:
+        if isinstance(exc, CreatorRenderContractError):
+            record_contract_decline(job, variant_id, exc, stage="retry")
+        return False
+    fresh = device_record(job, variant_id)
+    fresh["auto_resumed_at"] = datetime.now(UTC).isoformat()
+    save_device_record(job, variant_id, fresh)
+    apply_retry_variant_reset(job, variant_id)
+    return True
+
+
 def _auto_resume_reaped(
     job: Job, variant_id: str, record: dict, status: DeviceRenderStatus
 ) -> bool:
@@ -455,7 +507,9 @@ async def _device_render_status(
     except KeyError as exc:
         raise HTTPException(404, "Device recipe unavailable") from exc
     record, status = await _settle_recorded_refusal(db, job, variant_id, status.request.identity)
-    if _auto_resume_reaped(job, variant_id, record, status):
+    if _auto_resume_reaped(job, variant_id, record, status) or _auto_resume_updated(
+        job, variant_id, record, status
+    ):
         await db.commit()
         record, status = _record(job, device_status(job, variant_id).request.identity)
     repair_before = copy.deepcopy(record.get("repair_authority"))
@@ -1107,6 +1161,14 @@ async def report_device_failure(
         )
     except ValueError as exc:
         raise HTTPException(409, "Render no longer accepts a failure report") from exc
+    if body.reason_code == "renderer_outdated":
+        # Remember which build declined, so `/retry` from it answers requires_update and
+        # a newer build re-pins on its own (`_auto_resume_updated`).
+        from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+
+        failed = device_record(job, body.identity.variant_id)
+        failed[DECLINED_PROTOCOL_FIELD] = current_client_protocol() or 0
+        save_device_record(job, body.identity.variant_id, failed)
     if not has_accepted_artifact(job, body.identity.variant_id):
         apply_device_failure_variant_update(
             job, body.identity.variant_id, reason_code=body.reason_code, detail=body.detail
@@ -1166,6 +1228,14 @@ async def _retry_device_export(
             decline.get("message") if isinstance(decline, dict) else None
         ) or "This edit needs a change before it can render again. Your edit is saved."
         raise _DeviceConflict("requires_change", message)
+    if status.reason_code == "renderer_outdated" and not _caller_is_newer_than_decliner(record):
+        # The build that declined this recipe would decline the re-pin the same way:
+        # the way forward is updating Kria, never another retry (no loop).
+        raise _DeviceConflict(
+            "requires_update",
+            "This edit needs a newer version of Kria. Update the app to finish it. "
+            "Your edit is saved.",
+        )
     try:
         new_status = retry_device_render(job, identity.variant_id)
     except CreatorRenderContractError as exc:

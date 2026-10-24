@@ -31,6 +31,19 @@ import KriaMediaEngine
 //     and the project keep treating it as stopped.
 // 15. `/retry` answering `requires_change` (or a `contract_changed` record) keeps
 //     offering Try again, which the server refuses identically forever.
+// Dead ends a formal-model check found after those fixes, written down before this fix:
+// 16. A recipe this iPhone declined (`unsupported_recipe`) reads "needs your attention"
+//     with no button until a retry was refused; the editor's Retry loops into the same
+//     decline. It must read "needs a change" with the chat button from the start.
+// 17. The phone loses a capability after the video for the request is already rendered:
+//     it keeps the file, says "can't sync yet" and never tells the server, which waits
+//     forever (polls keep the record fresh). The export it holds must just upload.
+// 18. `/retry` on an outdated-app decline from the same build re-pins, the phone declines
+//     the re-pin, and Retry loops. `requires_update` must land on "Update Kria".
+// 19. A read asked for while another read was in flight (an editor Save racing the chat
+//     poll) is dropped; the old request installs and nothing reads the new one.
+// 20. A failed read on a synced video never reads again (the chat poll stops reading a
+//     settled render), so a request pinned since (an editor Save) is never picked up.
 // Each test below drives `DeviceRenderSessions` with the real coordinator,
 // receipt store and status decoder; only the network and the encoder are fakes.
 
@@ -94,6 +107,35 @@ private actor Retries {
         let ack = try JSONSerialization.data(withJSONObject: ["identity": identityJSON["identity"]!, "phase": "awaiting_device"])
         return try JSONDecoder().decode(DeviceRenderRetryAck.self, from: ack)
     }
+}
+
+/// Fails the first upload for good (not transient), then publishes.
+private actor FlakyPublisher: DeviceRenderPublishing {
+    private var publishes = 0
+    func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { true }
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
+        publishes += 1
+        if publishes == 1 { throw APIError.invalidResponse }
+        return .published
+    }
+}
+
+/// The first read waits until released and answers the request it was asked for;
+/// every later read answers the request pinned since.
+private actor ReadGate {
+    private let first: DeviceRenderRequest, then: DeviceRenderRequest
+    private var held: CheckedContinuation<Void, Never>?
+    private var reads = 0
+    private(set) var waiting = false
+    init(first: DeviceRenderRequest, then: DeviceRenderRequest) { self.first = first; self.then = then }
+    func read() async throws -> DeviceRenderStatusResponse {
+        reads += 1
+        guard reads == 1 else { return DeviceRenderStatusResponse(phase: "awaiting_device", request: then) }
+        waiting = true
+        await withCheckedContinuation { held = $0 }
+        return DeviceRenderStatusResponse(phase: "awaiting_device", request: first)
+    }
+    func release() { held?.resume(); held = nil }
 }
 
 /// Backoff sleeps park here until the test fires them.
@@ -253,7 +295,7 @@ private final class Phone: @unchecked Sendable {
             await sessions.reconcile(key, capabilities: enabled)
             XCTAssertEqual(sessions.presentations[key]?.phase, .superseded, "\(answer)")
             XCTAssertNil(sessions.request(for: key), "the old coordinator no longer owns this key")
-            XCTAssertTrue(sessions.isSettled(key))
+            XCTAssertFalse(sessions.isSettled(key), "the chat poll keeps reading: the next read says what replaced it")
             XCTAssertEqual(DeviceRenderButtonTitle.for(presentation: sessions.presentations[key]!), "Newer edit available")
             await sessions.stopAll()
         }
@@ -658,6 +700,127 @@ private final class Phone: @unchecked Sendable {
         XCTAssertTrue(DeviceRenderAttentionCopy.needsChange(changed))
         XCTAssertFalse(DeviceRenderAttentionCopy.offersOriginalRecovery(changed))
         await sessions.stopAll()
+    }
+
+    // MARK: 16–19: no dead end after a decline, a lost capability or a lost read
+
+    func testDeclinedRecipeAsksForAChangeInChatAsSoonAsItIsDeclined() async throws {
+        let job = UUID(), declines = Declines()
+        let recipe = KriaMediaEngine.EditRecipe(assets: [MediaAsset(id: "source", relativePath: "source")],
+            tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "source", sourceDuration: 1)])],
+            requiredCapabilities: [.freehandDrawing])
+        let request = request(job, recipe: recipe)
+        let unverified = PhoneRenderingCapabilities(enabled: true, recipeVersions: [2],
+            verifiedFeatures: MediaCapability.allCases.filter { $0 != .freehandDrawing }.map(\.rawValue))
+        let sessions = sessions(Server([awaiting(request)]), declines: declines)
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: unverified)
+        let declined = try XCTUnwrap(sessions.presentations[key])
+        XCTAssertTrue(DeviceRenderAttentionCopy.needsChange(declined), "the chat button shows before any retry was refused")
+        XCTAssertEqual(DeviceRenderAttentionCopy.nextStep(declined), .reviewInChat)
+        XCTAssertFalse(DeviceRenderAttentionCopy.showsRetryButton(phase: declined.phase, reasonCode: declined.reasonCode))
+        // The server's recorded answer keeps the same way forward.
+        let recorded = DeviceRenderPresentation(phase: .needsAttention, reasonCode: "unsupported_recipe", requiresServerRetry: true)
+        XCTAssertEqual(DeviceRenderAttentionCopy.nextStep(recorded), .reviewInChat)
+        let outdated = DeviceRenderPresentation(phase: .needsAttention, reasonCode: "renderer_outdated", requiresServerRetry: true)
+        XCTAssertEqual(DeviceRenderAttentionCopy.nextStep(outdated), .updateApp)
+        let reported = await eventually { await declines.codes == ["unsupported_recipe"] }
+        XCTAssertTrue(reported)
+        await sessions.stopAll()
+    }
+
+    func testLostCapabilityAfterTheExportUploadsTheVideoItAlreadyHas() async throws {
+        let job = UUID(), declines = Declines(), exporter = Exporter()
+        let recipe = KriaMediaEngine.EditRecipe(assets: [MediaAsset(id: "source", relativePath: "source")],
+            tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "source", sourceDuration: 1)])],
+            requiredCapabilities: [.freehandDrawing])
+        let request = request(job, recipe: recipe)
+        let publisher = FlakyPublisher()
+        let output = directory()
+        let sessions = DeviceRenderSessions(
+            fetch: { _, _ in .init(phase: "awaiting_device", request: request) },
+            factory: { _, _ in try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: NoSources(), publisher: publisher) },
+            reportDecline: { _, identity, code, _ in try await declines.send(identity, code) },
+            environment: Phone().environment, sleep: { _ in }
+        )
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        let parked = await eventually { sessions.presentations[key]?.phase == .localReady }
+        XCTAssertTrue(parked, "the export finished; the first upload failed")
+
+        // The server stops listing the feature as verified for this phone.
+        let unverified = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2],
+            verifiedFeatures: MediaCapability.allCases.filter { $0 != .freehandDrawing }.map(\.rawValue))
+        await sessions.reconcile(key, capabilities: unverified)
+        let synced = await eventually { sessions.presentations[key]?.phase == .synced }
+        XCTAssertTrue(synced, "the rendered video uploads: \(String(describing: sessions.presentations[key]))")
+        let codes = await declines.codes
+        XCTAssertEqual(codes, [], "nothing to decline: the video for this request exists")
+        let exports = await exporter.calls
+        XCTAssertEqual(exports, 1, "never rendered again")
+        await sessions.stopAll()
+    }
+
+    func testOutdatedRetryRefusalLandsOnUpdateKria() async throws {
+        let job = UUID(), request = request(job)
+        let server = Server([.success(DeviceRenderStatusResponse(phase: "needs_attention", request: request, reasonCode: "export_failed"))])
+        let sessions = sessions(server, retry: { _, _ in
+            throw APIError.conflict(detail: ConflictDetail("This edit needs a newer version of Kria.", code: "requires_update"))
+        })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        let retried = await sessions.retryNeedsAttention(key)
+        XCTAssertFalse(retried)
+        let refused = try XCTUnwrap(sessions.presentations[key])
+        XCTAssertEqual(refused.reasonCode, "renderer_outdated")
+        XCTAssertEqual(DeviceRenderAttentionCopy.nextStep(refused), .updateApp)
+        XCTAssertFalse(DeviceRenderAttentionCopy.showsRetryButton(phase: refused.phase, reasonCode: refused.reasonCode))
+        await sessions.stopAll()
+    }
+
+    func testReadAskedForDuringAnotherReadRunsAfterItAndInstallsTheNewerRequest() async throws {
+        let job = UUID(), first = request(job), second = request(job, revision: 2)
+        let gate = ReadGate(first: first, then: second)
+        let output = directory()
+        let sessions = DeviceRenderSessions(
+            fetch: { _, _ in try await gate.read() },
+            factory: { _, _ in try DeviceRenderCoordinator(directory: output, exporter: StalledExporter(), sources: NoSources(), publisher: Publisher()) },
+            environment: Phone().environment, sleep: { _ in try await Task.sleep(for: .seconds(3600)) }
+        )
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        // The chat poll's read is out when the editor saves (the server now pins revision 2).
+        let chat = Task { await sessions.reconcile(key, capabilities: enabled) }
+        let inFlight = await eventually { await gate.waiting }
+        XCTAssertTrue(inFlight)
+        await sessions.reconcile(key, capabilities: enabled)   // the editor's refresh: the ticket is held
+        await gate.release()
+        await chat.value
+        let installed = await eventually { sessions.request(for: key)?.identity == second.identity }
+        XCTAssertTrue(installed, "the read asked for during the old one runs after it")
+        await sessions.stopAll()
+    }
+
+    func testFailedReadOnASyncedVideoStillReadsAgainAndPicksUpANewerRequest() async throws {
+        let job = UUID(), clock = Clock(), first = request(job), second = request(job, revision: 2)
+        let server = Server([awaiting(first)])
+        let sessions = sessions(server, clock: clock)
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        let synced = await eventually { sessions.presentations[key]?.phase == .synced }
+        XCTAssertTrue(synced)
+        let finished = try XCTUnwrap(sessions.presentations[key])
+
+        // The editor saves (the server pins revision 2); its read fails offline.
+        await server.then([.failure(URLError(.notConnectedToInternet)), awaiting(second)])
+        await sessions.reconcile(key, capabilities: enabled)
+        XCTAssertEqual(sessions.presentations[key], finished, "the synced video stays as it is")
+        let scheduled = await eventually { await clock.pending == 1 }
+        XCTAssertTrue(scheduled, "the failed read is read again on its own")
+        await clock.fire()
+        let installed = await eventually { sessions.request(for: key)?.identity == second.identity }
+        XCTAssertTrue(installed, "the re-read picks up the request pinned since")
+        await sessions.stopAll()
+        await clock.fire()
     }
 
     func testMissingOriginalOffersRecoveryNotAPausedRolloutAndDeviceUnavailableSaysSo() {

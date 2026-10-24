@@ -47,9 +47,16 @@ Phone render lifecycle (killer-screens train):
 - Phone-facing 409s carry `problem.code` beside the legacy `detail`:
   `superseded` (with `active_job_id` when a newer Job owns the project),
   `render_cancelled`, `editor_empty`, `contract_changed`, `requires_change`,
-  `published`, `not_awaiting_retry`, `output_unverified`.
+  `requires_update`, `published`, `not_awaiting_retry`, `output_unverified`.
 - A contract refusal found on `GET` is persisted once (`contract_changed`).
 - A reaped render restarts on its own when a phone build reopens the project.
+- A recipe the phone declines is the creator's turn, never "needs attention":
+  `unsupported_recipe` shows "This edit needs a change" (chat), and `/retry`
+  answers `requires_change`. `renderer_outdated` shows "Update Kria"; the record
+  stores `declined_client_protocol`, `/retry` from that build answers
+  `requires_update`, and a newer build re-pins it on `GET` by itself.
+- A phone that loses a verified capability after its export finished uploads
+  the export it has; it declines (and tells the server) only otherwise.
 - Verification that could not run is requeued for the same bytes for up to
   24h (`verification_unavailable` after that); a real rejection is
   `output_check_failed`. A check whose record the fence moved past is closed as
