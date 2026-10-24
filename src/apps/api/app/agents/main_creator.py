@@ -47,7 +47,7 @@ from app.schemas.edit_proposal import (
     resolve_video_reuse_policy,
     turkish_media_scope,
 )
-from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
+from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS, ending_clip_candidates
 from app.services.length_policy import creator_duration_s
 
 log = structlog.get_logger()
@@ -121,7 +121,9 @@ log = structlog.get_logger()
 # v78 (KRI-821): a named cut of a repeated line records which take (`cut_line_occurrences`).
 # v79 combines main's v77 (KRI-815 + KRI-816) with KRI-821's v78.
 # v80 combines main's v79 (KRI-815/816/821) with KRI-827's keep_text_off (branch v78).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v80"
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v83"
+# v76 (KRI-841): `ending_clip` (a video added after the talk, with its own sound, Talking only) and
+# the brief fact that records it next to `last_clip` (brief_extractor v21 shares the section).
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -266,6 +268,29 @@ spoken moment adds NO beats; say in `summary` that only sounds tied to the momen
 named are added on iPhone. This edit always stays `edit_format: "subtitled"`. Beats never
 replace a title: when the creator asks for a hook/opening title or closing text, still set
 `opening_title` / `closing_title` by the title rules above, alongside the beats.
+""".strip("\n")
+
+# KRI-841: a video appended AFTER the talk, with its own sound, on a phone `subtitled` (Talking)
+# edit. Appended to the `$reaction_beats_section` slot (the slot after `$clip_intents_section`, so
+# "" adds no bytes) ONLY when `ending_clip_candidates(manifest)` names a video the phone can end
+# on -- a Visuals video the device plays, or another footage clip with multi-clip Talking. The
+# repair (`creator_capabilities.repair_creator_ending_clip`) never trusts the model's choice alone.
+_ENDING_CLIP_PROMPT_SECTION = """
+VIDEO AT THE VERY END (iPhone Talking only)
+When the creator asks to ADD a video after the talk, at the very end, playing its own sound
+("At the very end, add the cheers video with its own sound", "En sona Atakan'ın ilk ısırık
+videosunu kendi sesiyle ekle"), set `ending_clip`: {"media_id": "<the matching media_context
+VIDEO entry's exact media_id>", "keep_audio": true}. Find the video by matching what the creator
+named against the VIDEO entries in `media_context` (its `filename`, its `creator_context`, or its
+`analysis_only_not_copy` evidence), then copy THAT entry's exact `media_id`; never invent, shorten
+or guess an id. It is a Visuals video or, when the project has several clips, one of the
+project's own clips other than the one the creator speaks in (keep that clip in
+`selected_media_ids` too). `keep_audio` is true unless the creator asks for it silent. The talk
+plays to its end and this video follows it, so never also use that video in `reaction_beats`,
+`closing_media` or as a cutaway: it plays only at the end, with its own sound. `closing_media`
+stays for a photo held over the last seconds of the talk, and a plain "end on ..." about the talk
+itself is not an `ending_clip`. Say in `summary`, in plain words, that the video is added after
+the talk with its own sound.
 """.strip("\n")
 
 # KRI-519: the same beats on a phone Voiceover edit, grounded against the recorded
@@ -471,11 +496,17 @@ stays its own `timing` requirement.
 A clip the creator wants FIRST or LAST ("start with the video that is blue", "end on the
 sunset") goes in that SAME order requirement as `first_clip` / `last_clip`: the creator's own
 words for the clip ({"key": "capture_time", "first_clip": "the video that is blue"}); the
-`description` alone is not enough. How on-screen text should look goes in the `facts` of its text
-requirement, only what the creator said: `animation` ("typewriter", "fade", "pop" or "slide") for
-"animated with typewriter"; `position` ("top_left", "top", "top_right", "middle", "bottom_left",
-"bottom", "bottom_right") for "bottom left"; `placeholder` true when they ask for placeholder
-text to fill in later ("placeholder location").
+`description` alone is not enough. On a talking-to-camera edit (one speaker's take plays first), a
+VIDEO the creator asks to ADD after the talk, at the very end, to play with its own sound ("at the
+very end, add the cheers video with its own sound", "en sona Atakan'ın ilk ısırık videosunu kendi
+sesiyle ekle") is not a clip order: record it as a `style` requirement with {"ending_clip": "<the
+creator's words for that video>", "keep_audio": true} (`keep_audio` false only when they want it
+silent), whatever language they write in, and never as `last_clip` or `closing`. On a montage,
+adding or ending on a clip keeps `last_clip` as above. How on-screen text should look goes in the
+`facts` of its text requirement, only what the creator said: `animation` ("typewriter", "fade",
+"pop" or "slide") for "animated with typewriter"; `position` ("top_left", "top", "top_right",
+"middle", "bottom_left", "bottom", "bottom_right") for "bottom left"; `placeholder` true when they
+ask for placeholder text to fill in later ("placeholder location").
 For requested heading stacks, preserve `heading_level` (1 title, 2 smaller subtitle,
 3 subordinate detail), `stack_id` (shared only by explicitly connected lines), `below_text`
 (exact predecessor words) and `smaller_than` (exact larger text words when smaller is asked)
@@ -744,9 +775,17 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             # there is real content to show. KRI-519: a Voiceover manifest gets
             # the Voiceover wording of the same contract.
             reaction_beats_section=(
-                "\n" + _reaction_beats_section(input.capability_manifest)
-                if _reaction_beats_available(input.capability_manifest)
-                else ""
+                (
+                    "\n" + _reaction_beats_section(input.capability_manifest)
+                    if _reaction_beats_available(input.capability_manifest)
+                    else ""
+                )
+                # KRI-841: shares the slot, so a manifest with no video to end on is unchanged.
+                + (
+                    "\n" + _ENDING_CLIP_PROMPT_SECTION
+                    if ending_clip_candidates(input.capability_manifest)
+                    else ""
+                )
             ),
             # KRI-188: "" (flag off) adds no bytes; same line-suffix trick.
             brief_section=("\n" + _BRIEF_PROMPT_SECTION if input.brief_enabled else ""),
