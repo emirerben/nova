@@ -24,6 +24,18 @@ F7  The render plan no longer fits the approved windows, and the render silently
 F9  The render searches again (cost + different wording) although research was approved.
 F11 Sourced text becomes caption cues / speech instead of on-screen text.
 F14 Kill switch off changes anything: no research call, no pinned field, approval as before.
+F15 Research outlasts the 15 s turn lease (planning's heartbeat has stopped), so the draft
+    commit finds the turn lost and writes no reply and no approval card.
+F16 A turn deferred to the background task re-plans with different wording, so its cache
+    key never matches the task's result: it defers again until the run cap, paying for
+    research every time, and the creator ends on "send your message again".
+F17 A continued run researches inline while the background task for the same draft is
+    still running (search, copy and review paid twice).
+F18 A transient timeout in the background task is cached as a final failure, so every
+    later run (and the creator's resend) shows "sources could not be confirmed" for an hour.
+F19 A newer instruction ("keep each explanation under 6 words") reuses wording researched
+    under the old one, because the cache key ignores the full request and requirements.
+(Lyric caption rows under an approved explanation: test_creation_composition.py.)
 
 Artifact: ``.dev/kri-881/report.json`` (approval-time wording and sources, render-time text
 elements, model call counts and a verdict per arm).
@@ -35,7 +47,10 @@ import asyncio
 import contextlib
 import copy
 import json
+import threading
+import time
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -222,15 +237,34 @@ BLOG_ONLY = [("Troy is over 5,000 years old.", BLOG, "Troy travel blog")]
 
 
 class _Recorded(ModelClient):
-    """Answers each research agent from the recorded outputs and counts every call."""
+    """Answers each research agent from the recorded outputs and counts every call.
 
-    def __init__(self, calls: dict[str, int], grounding: list[tuple[str, str, str]]) -> None:
+    ``search_delay_s`` makes the search as slow as a real grounded call; ``search_failures``
+    makes the first N searches end with an unknown provider outcome (a timeout).
+    """
+
+    def __init__(
+        self,
+        calls: dict[str, int],
+        grounding: list[tuple[str, str, str]],
+        *,
+        search_delay_s: float = 0.0,
+        search_failures: int = 0,
+    ) -> None:
         self.calls = calls
         self.grounding = grounding
+        self.search_delay_s = search_delay_s
+        self.search_failures = search_failures
 
     def invoke(self, *, model: str, prompt: str, **_: object) -> ModelInvocation:  # noqa: ARG002
         if prompt.startswith("Research this public topic"):
             self.calls["search"] += 1
+            if self.search_delay_s:
+                time.sleep(self.search_delay_s)
+            if self.calls["search"] <= self.search_failures:
+                from app.agents._runtime import ProviderOutcomeUnknownError  # noqa: PLC0415
+
+                raise ProviderOutcomeUnknownError("grounded search timed out")
             try:
                 evidence = researched_text.evidence_from_response(_grounding(self.grounding))
                 raw = evidence.model_dump_json()
@@ -290,9 +324,9 @@ class _Recorded(ModelClient):
         raise AssertionError("unexpected model call: " + prompt[:80])
 
 
-def _record(monkeypatch, grounding) -> dict[str, int]:  # noqa: ANN001
+def _record(monkeypatch, grounding, **behaviour) -> dict[str, int]:  # noqa: ANN001, ANN003
     calls = {"search": 0, "copy": 0, "review": 0, "composer": 0}
-    client = _Recorded(calls, grounding)
+    client = _Recorded(calls, grounding, **behaviour)
     monkeypatch.setattr(researched_text, "GroundedGeminiClient", lambda: client)
     monkeypatch.setattr(researched_text, "default_client", lambda: client)
     monkeypatch.setattr(text_lane, "default_client", lambda: client)
@@ -309,13 +343,37 @@ def _flags(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
     monkeypatch.setattr(settings, "kria_creative_brief_user_ids", [])
     monkeypatch.setattr(settings, "kria_brief_binding_user_ids", [])
-    # The result cache is Redis; each arm must research for itself. (Before KRI-881 there
-    # is no research preview at all, and the arms fail on their assertions.)
+    # The result cache, in-flight markers and turn anchors are Redis: each arm gets its own
+    # empty in-memory one, so the real cache code runs and every arm researches for itself.
+    # (Before KRI-881 there is no research preview at all, and the arms fail on their
+    # assertions.)
     with contextlib.suppress(ImportError):
         from app.kria import research_preview  # noqa: PLC0415
 
-        monkeypatch.setattr(research_preview, "cache_get", lambda *_a: None)
-        monkeypatch.setattr(research_preview, "cache_put", lambda *_a: None)
+        fake = _FakeRedis()
+        monkeypatch.setattr(research_preview, "_redis", lambda: fake)
+
+
+class _FakeRedis:
+    """The few Redis calls the research cache makes, in memory (thread-safe enough)."""
+
+    def __init__(self) -> None:
+        self.data: dict[str, bytes] = {}
+
+    def get(self, key: str) -> bytes | None:
+        return self.data.get(key)
+
+    def set(self, key: str, value: str, ex: int | None = None, nx: bool = False) -> bool | None:  # noqa: ARG002
+        if nx and key in self.data:
+            return None
+        self.data[key] = value.encode() if isinstance(value, str) else value
+        return True
+
+    def exists(self, key: str) -> int:
+        return int(key in self.data)
+
+    def delete(self, key: str) -> int:
+        return int(self.data.pop(key, None) is not None)
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -349,17 +407,34 @@ def _seed(render: dict) -> tuple[uuid.UUID, uuid.UUID]:
     return user_id, thread_id
 
 
-async def _turn(monkeypatch):  # noqa: ANN001, ANN202
+def _reworded(planned, run: int):  # noqa: ANN001, ANN202
+    """The same draft as the Main Creator re-writes it on another run: new wording."""
+    intent = planned.plan.intents[0]
+    arguments = copy.deepcopy(intent.arguments)
+    arguments["strategy"]["rationale"] = f"Run {run}: a walk through Troy, told again."
+    arguments["summary"] = f"Run {run}: The Historical Journey"
+    plan = planned.plan.model_copy(
+        update={
+            "intents": [
+                intent.model_copy(update={"arguments": arguments}),
+                *planned.plan.intents[1:],
+            ]
+        }
+    )
+    return replace(planned, plan=plan)
+
+
+async def _turn(monkeypatch, *, reword_each_run: bool = False):  # noqa: ANN001, ANN202
     render = _render()
     user_id, thread_id = _seed(render)
     stamped = apply_updates(None, UPDATES, source_turn_id=None, creator_text=MESSAGE)
     brief = CreativeBrief(version=len(stamped.requirements), requirements=stamped.requirements)
     gated = await run_gate(monkeypatch, render, brief=brief)
+    runs: list[int] = []
 
     async def _planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-        from dataclasses import replace  # noqa: PLC0415
-
-        return replace(
+        runs.append(len(runs) + 1)
+        planned = replace(
             gated,
             brief_updates=UPDATES,
             brief_route="replan",
@@ -367,6 +442,7 @@ async def _turn(monkeypatch):  # noqa: ANN001, ANN202
                 row["media_id"] for row in render["media_snapshot"]["clip_assignments"]
             ),
         )
+        return _reworded(planned, len(runs)) if reword_each_run else planned
 
     monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planned)
     accepted = await _submit(user_id, thread_id, MESSAGE, 2)
@@ -692,3 +768,148 @@ def test_t06_main_creator_research_update_survives_parse_and_is_authorized() -> 
 
     with pytest.raises(ResearchUnavailable):
         ResearchRequest(topic="Troy", request_quote="please invent facts").authorize(MESSAGE)
+
+
+# -- budget arms: the lease, the background task and its cache ------------------------------
+
+
+def _defer_to_background(monkeypatch) -> list[dict]:  # noqa: ANN001
+    """Run 1 has no budget left for inline research; capture the task instead of a broker."""
+    from app.kria import research_preview  # noqa: PLC0415
+    from app.tasks import kria_runtime  # noqa: PLC0415
+
+    tasks: list[dict] = []
+    monkeypatch.setattr(
+        kria_runtime.prepare_kria_research, "apply_async", lambda **kw: tasks.append(kw)
+    )
+    monkeypatch.setattr(run_kria_turn, "apply_async", lambda **_kw: None)
+    monkeypatch.setattr(research_preview, "INLINE_MIN_S", 10_000.0)
+    monkeypatch.setattr(research_preview, "_WAIT_POLL_S", 0.1)
+    return tasks
+
+
+@pytest.mark.asyncio
+async def test_research_longer_than_the_turn_lease_still_reaches_the_approval_card(
+    monkeypatch,
+) -> None:
+    """F15: recorded models answer instantly, so the lease never lapsed in the other arms.
+    Here the search takes longer than the whole lease."""
+    from app.tasks import kria_runtime  # noqa: PLC0415
+
+    monkeypatch.setattr(settings, "kria_turn_lease_seconds", 2)
+    monkeypatch.setattr(kria_runtime, "_LEASE_HEARTBEAT_SECONDS", 0.5)
+    calls = _record(monkeypatch, INSTITUTIONAL, search_delay_s=4.0)
+    result, accepted, thread_id = await _turn(monkeypatch)
+
+    assert result["status"] == "awaiting_approval", result
+    assert (calls["search"], calls["copy"], calls["review"]) == (1, 1, 1)
+    approvals, binding = _approved_binding(accepted.turn_id)
+    assert len(approvals) == 1 and binding.prepared_research["status"] == "ready"
+    assert "Sourced on-screen explanations" in str(_reply(thread_id).content)
+    _REPORT["lease_outlasted"] = {"verdict": "pass", "calls": calls}
+
+
+@pytest.mark.asyncio
+async def test_a_deferred_turn_drafts_exactly_what_the_background_task_researched(
+    monkeypatch,
+) -> None:
+    """F16/F17: the continued run re-plans with new wording, starts while the task is still
+    researching, and has budget to research inline. It drafts the researched strategy and
+    waits for the task: one search, one copy, one review, one approval card."""
+    from app.kria import research_preview  # noqa: PLC0415
+
+    calls = _record(monkeypatch, INSTITUTIONAL)
+    tasks = _defer_to_background(monkeypatch)
+    first, accepted, thread_id = await _turn(monkeypatch, reword_each_run=True)
+
+    assert first["status"] == "continued", first
+    assert len(tasks) == 1 and sum(calls.values()) == 0
+    assert _approved_binding(accepted.turn_id)[0] == []
+
+    monkeypatch.setattr(research_preview, "INLINE_MIN_S", 100.0)
+    outcome: list[str] = []
+
+    def _background() -> None:
+        time.sleep(0.5)
+        outcome.append(research_preview.run_task_body(tasks[0]["args"][0]))
+
+    worker = threading.Thread(target=_background)
+    worker.start()
+    second = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+    worker.join()
+
+    assert outcome == ["ready"]
+    assert second["status"] == "awaiting_approval", second
+    assert (calls["search"], calls["copy"], calls["review"]) == (1, 1, 1)
+    assert len(tasks) == 1  # never enqueued twice
+    approvals, binding = _approved_binding(accepted.turn_id)
+    assert len(approvals) == 1
+    strategy = KriaDraftDocument.model_validate(_draft_snapshot(approvals[0].draft_id)).strategy
+    # The draft the sources were checked for, not the re-plan's new wording.
+    assert strategy["rationale"].startswith("Run 1:")
+    assert binding.prepared_research["status"] == "ready"
+    assert "Sourced on-screen explanations" in str(_reply(thread_id).content)
+    _REPORT["deferred_then_continued"] = {"verdict": "pass", "calls": calls}
+
+
+@pytest.mark.asyncio
+async def test_a_background_timeout_is_not_cached_and_the_next_run_researches_again(
+    monkeypatch,
+) -> None:
+    """F18: a slow provider once is not a final answer for the next hour."""
+    from app.kria import research_preview  # noqa: PLC0415
+
+    calls = _record(monkeypatch, INSTITUTIONAL, search_failures=1)
+    tasks = _defer_to_background(monkeypatch)
+    first, accepted, thread_id = await _turn(monkeypatch)
+    assert first["status"] == "continued", first
+
+    assert research_preview.run_task_body(tasks[0]["args"][0]) == "timed_out"
+    assert calls["search"] == 1
+
+    monkeypatch.setattr(research_preview, "INLINE_MIN_S", 100.0)
+    second = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+
+    assert second["status"] == "awaiting_approval", second
+    assert (calls["search"], calls["copy"], calls["review"]) == (2, 1, 1)
+    content = str(_reply(thread_id).content)
+    assert "could not be confirmed" not in content
+    assert "Sourced on-screen explanations" in content
+    _REPORT["timeout_not_cached"] = {"verdict": "pass", "calls": calls}
+
+
+@pytest.mark.asyncio
+async def test_a_newer_instruction_is_researched_again_not_served_from_the_cache(
+    monkeypatch,
+) -> None:
+    """F19: the same draft under a newer instruction is a different research basis."""
+    from app.kria import research_preview  # noqa: PLC0415
+
+    calls = _record(monkeypatch, INSTITUTIONAL)
+    tasks = _defer_to_background(monkeypatch)
+    first, _accepted, _thread_id = await _turn(monkeypatch)
+    assert first["status"] == "continued", first
+    payload = tasks[0]["args"][0]
+    assert research_preview.run_task_body(payload) == "ready"
+    assert research_preview.run_task_body(payload) == "cached"
+    assert calls["search"] == 1
+
+    newer = copy.deepcopy(payload)
+    newer["creator_request"] = f"{payload['creator_request']}\nKeep each explanation under 6 words."
+    brief = CreativeBrief.model_validate(newer["brief"])
+    newer["brief"] = apply_updates(
+        brief,
+        [
+            BriefUpdate(
+                kind="text",
+                scope="global",
+                description="Keep each explanation under 6 words",
+            )
+        ],
+        source_turn_id=None,
+        creator_text=newer["creator_request"],
+    ).model_dump(mode="json")
+
+    assert research_preview.run_task_body(newer) == "ready"
+    assert calls["search"] == 2
+    _REPORT["newer_instruction"] = {"verdict": "pass", "calls": calls}

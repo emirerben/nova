@@ -27,10 +27,15 @@ request_quote}``):
 Sourced text is on-screen text only: ``add_text`` rows with ``research`` provenance, never
 caption cues, narration or recorded speech.
 
-Budget: research runs outside every lock. With enough of the turn left it runs inline;
-otherwise it runs in its own task (`tasks.prepare_kria_research`) and the turn answers
-"checking sources" and re-runs (KRI-709 continuation). Results are cached by the basis they
-were researched for, so the re-run picks them up.
+Budget: research runs outside every lock, under the turn's lease heartbeat. With enough
+of the turn left it runs inline; otherwise it runs in its own task
+(`tasks.prepare_kria_research`) and the turn re-runs (KRI-709 continuation). The deferring
+run anchors its drafted strategy to the turn, so the re-run drafts exactly what is being
+researched (a re-plan's wording never matches) and waits for the task instead of paying
+for the same research twice. Results are cached by everything they were researched for
+(the ask, the full creator request, the live requirements, the reply language, the draft
+and its media). Only finished results are cached, first one wins: a timeout is never
+cached, so the next run researches again.
 
 Kill switch: ``KRIA_RESEARCH_PREVIEW_ENABLED=false`` + restart (api + worker). Off, nothing
 here runs and the render researches after approval exactly as before.
@@ -64,7 +69,12 @@ INLINE_MIN_S = 100.0
 # Kept for the draft commit after research returns.
 _COMPLETION_RESERVE_S = 20.0
 _CACHE_TTL_S = 3600
-_CACHE_PREFIX = "kria:research-preview:v1:"
+_CACHE_PREFIX = "kria:research-preview:v2:"
+# The background task's own hard limit plus slack: an in-flight marker never outlives it.
+_INFLIGHT_TTL_S = 210
+# A continued turn runs within minutes of the run that deferred it.
+_ANCHOR_TTL_S = 1800
+_WAIT_POLL_S = 2.0
 
 
 class ResearchNotFinished(Exception):
@@ -94,14 +104,38 @@ def research_requirement(
     return None
 
 
+def _requirement_terms(brief: CreativeBrief | None) -> list[dict[str, Any]]:
+    """The live requirements' content (the research copy writer reads every one)."""
+    if brief is None:
+        return []
+    return [
+        req.model_dump(mode="json", include={"kind", "scope", "literal", "description", "facts"})
+        for req in brief.live()
+    ]
+
+
 def basis_digest(
-    request: ResearchRequest, strategy: Mapping[str, Any] | None, media_snapshot: Mapping[str, Any]
+    request: ResearchRequest,
+    strategy: Mapping[str, Any] | None,
+    media_snapshot: Mapping[str, Any],
+    *,
+    creator_request: str,
+    brief: CreativeBrief | None,
+    language: str | None,
 ) -> str:
-    """What a prepared result was researched for: the ask, the draft and its media."""
+    """What a prepared result was researched for.
+
+    The ask, the full creator request (the copy writer's instruction), every live
+    requirement (a later "keep it under 6 words" changes the wording), the reply language,
+    the draft and its media. Anything else changing means researching again.
+    """
     from app.kria.brief_binding import media_identity  # noqa: PLC0415
 
     payload = {
         "request": request.model_dump(mode="json"),
+        "creator_request": creator_request,
+        "requirements": _requirement_terms(brief),
+        "language": language,
         "strategy": dict(strategy or {}),
         "media": media_identity(dict(media_snapshot)),
         "length_plan": dict(media_snapshot).get("length_plan"),
@@ -123,6 +157,7 @@ class ResearchInputs:
     strategy: dict
     media_snapshot: dict
     creator_request: str
+    language: str | None = None
 
     @property
     def found(self) -> tuple[BriefRequirement, ResearchRequest]:
@@ -133,7 +168,19 @@ class ResearchInputs:
 
     @property
     def basis(self) -> str:
-        return basis_digest(self.found[1], self.strategy, self.media_snapshot)
+        return basis_digest(
+            self.found[1],
+            self.strategy,
+            self.media_snapshot,
+            creator_request=self.creator_request,
+            brief=self.brief,
+            language=self.language,
+        )
+
+    @property
+    def terms(self) -> dict[str, Any]:
+        """The basis inputs the draft turn cannot re-derive from what it persists."""
+        return {"creator_request": self.creator_request, "language": self.language}
 
     def payload(self) -> dict[str, Any]:
         return {
@@ -145,6 +192,7 @@ class ResearchInputs:
             "strategy": self.strategy,
             "media_snapshot": self.media_snapshot,
             "creator_request": self.creator_request,
+            "language": self.language,
         }
 
     @classmethod
@@ -158,6 +206,7 @@ class ResearchInputs:
             strategy=dict(raw.get("strategy") or {}),
             media_snapshot=dict(raw.get("media_snapshot") or {}),
             creator_request=str(raw.get("creator_request") or ""),
+            language=raw.get("language"),
         )
 
 
@@ -304,14 +353,87 @@ def cache_get(thread_id: str, basis: str) -> PreparedResearch | None:
 
 
 def cache_put(thread_id: str, prepared: PreparedResearch) -> None:
+    """Keep a finished result. The first one wins: a late duplicate never replaces it.
+
+    Only finished research reaches here (ready, or a deterministic limit); a timeout is
+    never cached, so the next run researches again.
+    """
     try:
         _redis().set(
             _cache_key(thread_id, prepared.basis_digest),
             prepared.model_dump_json(),
             ex=_CACHE_TTL_S,
+            nx=True,
         )
     except Exception:  # noqa: BLE001
         log.warning("kria_research_cache_write_failed", exc_info=True)
+
+
+def _inflight_key(thread_id: str, basis: str) -> str:
+    return f"{_CACHE_PREFIX}inflight:{thread_id}:{basis}"
+
+
+def claim_inflight(thread_id: str, basis: str) -> bool:
+    """Mark the background task for this basis as running; False when one already is."""
+    try:
+        return bool(_redis().set(_inflight_key(thread_id, basis), "1", ex=_INFLIGHT_TTL_S, nx=True))
+    except Exception:  # noqa: BLE001 - without Redis, enqueue (the task id still names it)
+        log.warning("kria_research_inflight_claim_failed", exc_info=True)
+        return True
+
+
+def is_inflight(thread_id: str, basis: str) -> bool:
+    try:
+        return bool(_redis().exists(_inflight_key(thread_id, basis)))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def release_inflight(thread_id: str, basis: str) -> None:
+    try:
+        _redis().delete(_inflight_key(thread_id, basis))
+    except Exception:  # noqa: BLE001
+        log.warning("kria_research_inflight_release_failed", exc_info=True)
+
+
+def _anchor_key(turn_id: uuid.UUID) -> str:
+    return f"{_CACHE_PREFIX}anchor:{turn_id}"
+
+
+def anchor_get(turn_id: uuid.UUID) -> dict[str, Any] | None:
+    """The strategy draft a deferring run of this turn sent to research, if any."""
+    try:
+        raw = _redis().get(_anchor_key(turn_id))
+    except Exception:  # noqa: BLE001
+        log.warning("kria_research_anchor_read_failed", exc_info=True)
+        return None
+    if not raw:
+        return None
+    try:
+        anchor = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(anchor, dict) or not isinstance(anchor.get("arguments"), dict):
+        return None
+    return anchor
+
+
+def anchor_put(turn_id: uuid.UUID, *, arguments: Mapping[str, Any], basis: str) -> None:
+    try:
+        _redis().set(
+            _anchor_key(turn_id),
+            json.dumps({"arguments": dict(arguments), "basis": basis}, default=str),
+            ex=_ANCHOR_TTL_S,
+        )
+    except Exception:  # noqa: BLE001
+        log.warning("kria_research_anchor_write_failed", exc_info=True)
+
+
+def anchor_clear(turn_id: uuid.UUID) -> None:
+    try:
+        _redis().delete(_anchor_key(turn_id))
+    except Exception:  # noqa: BLE001
+        log.warning("kria_research_anchor_clear_failed", exc_info=True)
 
 
 # -- creator-facing copy ---------------------------------------------------------------------
@@ -393,12 +515,12 @@ def blocker_receipt(prepared: PreparedResearch, requirement: BriefRequirement) -
 def pending_reply() -> str:
     return say(
         en=(
-            "I'm checking sources for the historical facts so you can see the exact sourced "
-            "wording before you approve. If this takes too long, send your message again, "
-            "or ask for a version without sources."
+            "I'm checking sources for the facts you asked me to source, so you can see the "
+            "exact sourced wording before you approve. If this takes too long, send your "
+            "message again, or ask for a version without sources."
         ),
         tr=(
-            "Onaylamadan önce kaynaklı metni görebilmen için tarihi bilgilerin kaynaklarını "
+            "Onaylamadan önce kaynaklı metni görebilmen için kaynak istediğin bilgileri "
             "kontrol ediyorum. Uzun sürerse mesajını tekrar gönder ya da kaynaksız bir sürüm iste."
         ),
     )
@@ -425,11 +547,14 @@ def for_draft(
     brief: CreativeBrief | None,
     strategy: Mapping[str, Any] | None,
     media_snapshot: Mapping[str, Any],
+    terms: Mapping[str, Any] | None,
 ) -> DraftResearch | None:
     """The planning step's result for the brief the draft turn actually persisted.
 
     A result researched for anything else (the brief or draft changed in between) is
-    reported as a precise limit, never pinned to the wrong clips.
+    reported as a precise limit, never pinned to the wrong clips. ``terms`` carries the
+    basis inputs the planning step read and the persisted draft does not hold (the full
+    creator request, the reply language).
     """
     if prepared is None:
         return None
@@ -438,11 +563,19 @@ def for_draft(
         return None
     requirement, request = found
     result = PreparedResearch.model_validate(prepared)
-    if result.basis_digest != basis_digest(request, strategy, media_snapshot):
+    expected = basis_digest(
+        request,
+        strategy,
+        media_snapshot,
+        creator_request=str((terms or {}).get("creator_request") or ""),
+        brief=brief,
+        language=(terms or {}).get("language"),
+    )
+    if result.basis_digest != expected:
         result = _failed(
             request,
             requirement.id,
-            basis_digest(request, strategy, media_snapshot),
+            expected,
             "The draft changed while its sources were checked.",
         )
     return DraftResearch(
@@ -465,6 +598,7 @@ def load_inputs_sync(planned: Any, snapshot: Mapping[str, Any], *, turn_id: uuid
     )
     from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
     from app.kria.registry import KRIA_TOOLS  # noqa: PLC0415
+    from app.kria.reply_language import current_reply_language  # noqa: PLC0415
     from app.models import CreationThreadEvent, CreatorAgentTurn, PlanItem  # noqa: PLC0415
     from app.services.choice_questions import answered_brief  # noqa: PLC0415
     from app.services.phone_montage_preflight import _ready_visuals  # noqa: PLC0415
@@ -520,6 +654,7 @@ def load_inputs_sync(planned: Any, snapshot: Mapping[str, Any], *, turn_id: uuid
             strategy=strategy,
             media_snapshot=media,
             creator_request=request or "",
+            language=current_reply_language(),
         )
     return inputs, visuals
 
@@ -551,42 +686,78 @@ def visuals_for_task(inputs: ResearchInputs) -> list:
 def run_task_body(payload: Mapping[str, Any]) -> str:
     """`tasks.prepare_kria_research`: research one draft with a full budget and cache it."""
     from app.agents._runtime import RunContext  # noqa: PLC0415
+    from app.kria.reply_language import reply_language_for  # noqa: PLC0415
 
     inputs = ResearchInputs.from_payload(payload)
     basis = inputs.basis
-    if cache_get(inputs.thread_id, basis) is not None:
-        return "cached"
-    ctx = RunContext(
-        creator_id=inputs.creator_id,
-        plan_item_id=inputs.item_id,
-        request_id=f"research-preview:{basis[:24]}",
-        usage_purpose="kria_research_preview",
-    )
     try:
-        prepared = prepare(inputs, visuals=visuals_for_task(inputs), ctx=ctx)
-    except ResearchNotFinished as exc:
-        requirement, request = inputs.found
-        prepared = _failed(
-            request, requirement.id, basis, f"Checking the sources timed out ({exc})"[:500]
+        if cache_get(inputs.thread_id, basis) is not None:
+            return "cached"
+        ctx = RunContext(
+            creator_id=inputs.creator_id,
+            plan_item_id=inputs.item_id,
+            request_id=f"research-preview:{basis[:24]}",
+            usage_purpose="kria_research_preview",
         )
-    if prepared is None:
-        return "not_applicable"
-    cache_put(inputs.thread_id, prepared)
-    log.info("kria_research_preview_prepared", status=prepared.status, basis=basis[:12])
-    return prepared.status
+        try:
+            with reply_language_for(inputs.language):
+                prepared = prepare(inputs, visuals=visuals_for_task(inputs), ctx=ctx)
+        except ResearchNotFinished as exc:
+            # Transient (provider slow or outcome unknown): never cached, so the waiting
+            # turn run (or the creator's resend) researches again.
+            log.info("kria_research_preview_timed_out", basis=basis[:12], reason=str(exc)[:200])
+            return "timed_out"
+        if prepared is None:
+            return "not_applicable"
+        cache_put(inputs.thread_id, prepared)
+        log.info("kria_research_preview_prepared", status=prepared.status, basis=basis[:12])
+        return prepared.status
+    finally:
+        release_inflight(inputs.thread_id, basis)
 
 
 def enqueue(inputs: ResearchInputs) -> None:
+    """Start the background research for this basis unless one is already running."""
     from app.tasks.kria_runtime import prepare_kria_research  # noqa: PLC0415
 
+    basis = inputs.basis
+    if not claim_inflight(inputs.thread_id, basis):
+        log.info("kria_research_preview_already_running", basis=basis[:12])
+        return
     try:
         prepare_kria_research.apply_async(
             args=[inputs.payload()],
-            task_id=f"kria-research-{inputs.basis[:40]}",
+            task_id=f"kria-research-{basis[:40]}-{uuid.uuid4().hex[:8]}",
             queue="agent-control",
         )
     except Exception:  # noqa: BLE001 - the next turn run enqueues again
+        release_inflight(inputs.thread_id, basis)
         log.warning("kria_research_enqueue_failed", exc_info=True)
+
+
+def _with_arguments(planned: Any, arguments: Mapping[str, Any]) -> Any:
+    """``planned`` drafting the anchored strategy (and its summary) instead of its own."""
+    intents = planned.plan.intents
+    plan = planned.plan.model_copy(
+        update={
+            "intents": [
+                intents[0].model_copy(update={"arguments": dict(arguments)}),
+                *intents[1:],
+            ]
+        }
+    )
+    return replace(planned, plan=plan)
+
+
+def _wait_for_task(thread_id: str, basis: str, *, until: float) -> PreparedResearch | None:
+    """Wait (the turn's lease heartbeat keeps running) for the background task's result."""
+    while True:
+        prepared = cache_get(thread_id, basis)
+        if prepared is not None or not is_inflight(thread_id, basis):
+            return prepared
+        if time.monotonic() + _WAIT_POLL_S > until:
+            return None
+        time.sleep(_WAIT_POLL_S)
 
 
 def with_research(
@@ -606,7 +777,19 @@ def with_research(
     from app.kria.contracts import KriaTurnPlan  # noqa: PLC0415
 
     try:
+        # Only a draft with a research requirement reaches Redis (or reads anything more).
         loaded = load_inputs_sync(planned, snapshot, turn_id=turn_id)
+        anchor = anchor_get(turn_id) if loaded is not None else None
+        if anchor is not None:
+            # A previous run of this turn sent its draft to research. Re-planning never
+            # writes the same wording, so draft exactly what is being researched, as long
+            # as everything else it was researched for still holds.
+            anchored = _with_arguments(planned, anchor["arguments"])
+            reloaded = load_inputs_sync(anchored, snapshot, turn_id=turn_id)
+            if reloaded is not None and reloaded[0].basis == anchor.get("basis"):
+                planned, loaded = anchored, reloaded
+            else:
+                log.info("kria_research_preview_anchor_stale", turn_id=str(turn_id))
     except Exception:  # noqa: BLE001
         log.exception("kria_research_preview_inputs_failed", turn_id=str(turn_id))
         return planned
@@ -615,9 +798,15 @@ def with_research(
     inputs, visuals = loaded
     basis = inputs.basis
     prepared = cache_get(inputs.thread_id, basis)
+    if prepared is None and is_inflight(inputs.thread_id, basis):
+        # The background task is researching this exact draft: wait for it rather than
+        # paying for the same search, copy and review again.
+        prepared = _wait_for_task(inputs.thread_id, basis, until=deadline - _COMPLETION_RESERVE_S)
     if prepared is None:
         remaining = deadline - time.monotonic()
         try:
+            if is_inflight(inputs.thread_id, basis):
+                raise ResearchNotFinished("the background research is still running")
             if remaining < INLINE_MIN_S:
                 raise ResearchNotFinished("not enough of the turn left")
             prepared = prepare(
@@ -633,6 +822,7 @@ def with_research(
             )
         except ResearchNotFinished as exc:
             log.info("kria_research_preview_deferred", turn_id=str(turn_id), reason=str(exc))
+            anchor_put(turn_id, arguments=planned.plan.intents[0].arguments, basis=basis)
             enqueue(inputs)
             return replace(
                 planned,
@@ -645,10 +835,15 @@ def with_research(
         if prepared is None:
             return planned
         cache_put(inputs.thread_id, prepared)
+    anchor_clear(turn_id)
     log.info(
         "kria_research_preview",
         turn_id=str(turn_id),
         status=prepared.status,
         explanations=len(prepared.texts),
     )
-    return replace(planned, prepared_research=prepared.model_dump(mode="json"))
+    return replace(
+        planned,
+        prepared_research=prepared.model_dump(mode="json"),
+        prepared_research_terms=inputs.terms,
+    )

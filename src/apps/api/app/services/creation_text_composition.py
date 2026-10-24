@@ -754,13 +754,22 @@ def compose_creation_text(
             pinned_research_operations,
         )
 
+        # Placed against the lane research saw before approval: song-lyric caption rows
+        # are hidden there (`creation_model_snapshot`), so they are never removed or
+        # treated as text the explanation must avoid; indexes map back to the full lane.
+        lyric_lane = _song_caption_lane(snapshot) is not None
+        research_texts = (
+            [row for row in texts if not is_caption_text_bar(row)] if lyric_lane else texts
+        )
         try:
             pinned_ops = pinned_research_operations(
                 pinned_research,
-                {"slots": slots, "text_bars": texts, "copy_constraints": constraints},
+                {"slots": slots, "text_bars": research_texts, "copy_constraints": constraints},
             )
         except ResearchUnavailable as exc:
             raise CreationTextCompositionError(str(exc)) from exc
+        if lyric_lane:
+            pinned_ops = _to_full_bar_indexes(pinned_ops, texts)
         pinned_texts = replay_text_composition(
             plan,
             TextCompositionProgram(base_digest=_digest(texts, slots), operations=pinned_ops),

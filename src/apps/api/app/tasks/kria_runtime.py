@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import threading
 import time
 import uuid
-from collections.abc import Mapping, Sequence
-from contextlib import ExitStack
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -1442,6 +1443,7 @@ def _complete_draft_turn(
                             media_snapshot=planned.media_snapshot
                             if planned.media_snapshot is not None
                             else snapshot_media(item),
+                            terms=planned.prepared_research_terms,
                         )
                         if draft_research is not None and not draft_research.ready:
                             phone_blockers = [
@@ -2334,6 +2336,36 @@ def _research_preview_payload(draft_research: Any) -> dict[str, Any]:
     return research_preview.preview_payload(draft_research.prepared)
 
 
+@contextmanager
+def _lease_heartbeat_thread(
+    turn_id: uuid.UUID, *, lease_owner: str, lease_epoch: int
+) -> Iterator[None]:
+    """Renew the turn lease from a thread while blocking work runs outside planning.
+
+    Same contract as `_plan_with_live_agent`'s heartbeat: a failed renewal is retried on
+    the next beat, and a lost lease ends the beat (the commit then writes nothing).
+    """
+    stop = threading.Event()
+
+    def _beat() -> None:
+        while not stop.wait(_LEASE_HEARTBEAT_SECONDS):
+            try:
+                alive = _renew_turn_lease(turn_id, lease_owner=lease_owner, lease_epoch=lease_epoch)
+            except Exception:  # noqa: BLE001 - the lease outlasts a missed renewal
+                log.warning("kria_turn_lease_renewal_failed", turn_id=str(turn_id), exc_info=True)
+                continue
+            if not alive:
+                return
+
+    beat = threading.Thread(target=_beat, name=f"kria-lease-{turn_id}", daemon=True)
+    beat.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        beat.join(timeout=_LEASE_HEARTBEAT_SECONDS + 5)
+
+
 def _renew_turn_lease(turn_id: uuid.UUID, *, lease_owner: str, lease_epoch: int) -> bool:
     """Renew only the exact live epoch using database time as the authority."""
 
@@ -3152,12 +3184,17 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
             # every lock; "checking sources" continues the turn when it needs more time.
             from app.kria import research_preview  # noqa: PLC0415
 
-            planned = research_preview.with_research(
-                planned,
-                snapshot,
-                turn_id=identifier,
-                deadline=turn_started + float(run_kria_turn.soft_time_limit or 200),
-            )
+            # Planning's own heartbeat stopped with it; research takes 20-90 s and the
+            # lease is 15 s, so keep renewing it or the draft commit finds the turn lost.
+            with _lease_heartbeat_thread(
+                identifier, lease_owner=lease_owner, lease_epoch=lease_epoch
+            ):
+                planned = research_preview.with_research(
+                    planned,
+                    snapshot,
+                    turn_id=identifier,
+                    deadline=turn_started + float(run_kria_turn.soft_time_limit or 200),
+                )
             if planned.plan.mode == "respond" and planned.continuable:
                 # KRI-709: the planner stopped on a time budget with its answers saved.
                 # Run the same turn again instead of asking the creator to say "go

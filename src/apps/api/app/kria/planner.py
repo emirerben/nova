@@ -803,6 +803,8 @@ class PlannedKriaTurn:
     prepared_collection_story: dict | None = None
     # KRI-881: research done before approval (`app.kria.research_preview`), server-owned.
     prepared_research: dict | None = None
+    # The basis inputs research read that the persisted draft does not hold.
+    prepared_research_terms: dict | None = None
 
 
 def _fresh_if_declared(prior, updates, outputs):  # noqa: ANN001, ANN202

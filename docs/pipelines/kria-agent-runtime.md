@@ -676,11 +676,19 @@ exactly that wording on exactly those clips.
   builds the worker's own plan (`phone_montage_preflight.preflight_montage_plan`, shared with
   KRI-775), the composer's model view (`creation_text_composition.creation_model_snapshot`)
   and runs `researched_text.run_researched_revision` unchanged (search, copy, review).
-- **Budget.** Inline when at least `INLINE_MIN_S` (100 s) of the turn is left; otherwise
-  `tasks.prepare_kria_research` (soft 170 s / hard 200 s) runs it and the turn answers
-  "checking sources" and continues (KRI-709, bounded by `kria_turn_auto_continue_max_runs`).
-  Results are cached in Redis by `basis_digest` (research ask + strategy + media identity +
-  length plan), so the continued turn picks them up.
+- **Budget.** Research runs under a thread heartbeat that renews the 15 s turn lease
+  (`_lease_heartbeat_thread`; planning's own heartbeat has stopped). Inline when at least
+  `INLINE_MIN_S` (100 s) of the turn is left; otherwise `tasks.prepare_kria_research`
+  (soft 170 s / hard 200 s) runs it and the turn continues (KRI-709, bounded by
+  `kria_turn_auto_continue_max_runs`). The deferring run anchors its `draft.apply_strategy`
+  arguments to the turn in Redis; the continued run drafts that anchored strategy (a
+  re-plan never writes the same wording) when its basis still matches, and waits for the
+  in-flight task instead of researching the same draft again (one task per basis, via an
+  in-flight marker).
+- **Cache.** Redis, keyed by `basis_digest`: research ask + full creator request + live
+  requirements + reply language + strategy + media identity + length plan. Only finished
+  results are cached and the first one wins (`SET NX`); a timeout is never cached, so the
+  next run (or the creator's resend) researches again.
 - **Ready.** The reply lists each explanation (`0:11–0:20 · "Troy: …" · Source: whc.unesco.org`),
   the `draft_applied` payload carries `research_preview` (explanations + `{title, url}`
   sources), and `BriefBinding.prepared_research` pins the result under the binding digest
@@ -691,7 +699,9 @@ exactly that wording on exactly those clips.
   binding and `compose_creation_text(prepared_research=…)` replays it through
   `researched_text.pinned_research_operations`: same consecutive clips, inside their render
   windows, same placement rules, approved text protected from the composer. No search, no
-  rewrite. A plan it no longer fits fails the job naming the explanation.
+  rewrite. Song-lyric caption rows are hidden from placement exactly as they were for the
+  preview, so they are never removed or treated as text to avoid. A plan it no longer fits
+  fails the job naming the explanation.
 - **Never speech.** Sourced text is `add_text` rows with `research` provenance, never caption
   cues, narration or voiceover inputs.
 - **Scope.** Unified phone montage only, and the non-readiness draft path (KRI-721 readiness
