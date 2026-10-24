@@ -8664,6 +8664,14 @@ def _named_cut_spans(receipts: Sequence[Mapping[str, Any]]) -> list[tuple[float,
     ]
 
 
+def _mark_named_cuts_failed(receipts: Sequence[dict[str, Any]] | None) -> None:
+    """Turn every applied named-line receipt into ``cut_failed`` (the voice stayed whole)."""
+    for row in receipts or []:
+        if row.get("status") == "applied":
+            row.update(status="not_applied", reason="cut_failed")
+            row.pop("removed_s", None)
+
+
 def _record_named_cut_receipts(stage: str, receipts: Sequence[Mapping[str, Any]]) -> None:
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -9403,10 +9411,7 @@ def _phone_narrated_named_cut_narration(
         )
     except (GuidedSpeechCleanupError, ValueError) as exc:
         log.warning("narrated_named_cuts.cut_failed", job_id=job_id, error=str(exc)[:200])
-        for row in receipts:
-            if row.get("status") == "applied":
-                row.update(status="not_applied", reason="cut_failed")
-                row.pop("removed_s", None)
+        _mark_named_cuts_failed(receipts)
         return None, transcript, receipts
     return narration, transcript, receipts
 
@@ -9914,9 +9919,17 @@ def _run_phone_narrated_job(
                 log.warning("narrated_named_cuts.ground_failed", error=str(exc)[:200])
                 named_cut_receipts = _missed_named_cuts(named_cut_asks, "cut_failed")
             named_removals = _named_cut_spans(named_cut_receipts)
-        cleaned_narration = _phone_narrated_cleaned_narration(
-            job_id, snapshot, named_removals=named_removals
-        )
+        try:
+            cleaned_narration = _phone_narrated_cleaned_narration(
+                job_id, snapshot, named_removals=named_removals
+            )
+        except SpeechCleanupFailure as exc:
+            if not named_removals:
+                raise
+            # A named cut fails open: keep the voice whole, the cleanup cut still applies.
+            log.warning("narrated_named_cuts.cut_failed", job_id=job_id, error=str(exc)[:200])
+            _mark_named_cuts_failed(named_cut_receipts)
+            cleaned_narration = _phone_narrated_cleaned_narration(job_id, snapshot)
         effective_voiceover_gcs_path = cleaned_narration.gcs_path
     elif named_cut_asks:
         cleaned_narration, raw_transcript, named_cut_receipts = _phone_narrated_named_cut_narration(
@@ -26264,10 +26277,7 @@ def _cut_named_lines(
         )
     except SpeechCleanupAudioApplyError as exc:
         log.warning("narrated_named_cuts.cut_failed", job_id=job_id, error=str(exc)[:200])
-        for row in receipts:
-            if row.get("status") == "applied":
-                row.update(status="not_applied", reason="cut_failed")
-                row.pop("removed_s", None)
+        _mark_named_cuts_failed(receipts)
         _record_named_cut_receipts("narrated", receipts)
         return cleaned_local, transcript, receipts
     if snapshot is not None:

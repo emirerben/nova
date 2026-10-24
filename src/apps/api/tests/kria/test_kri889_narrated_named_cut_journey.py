@@ -512,6 +512,44 @@ def test_phone_cleanup_on_cuts_the_line_and_the_pauses_in_one_verified_file(monk
     assert "bread" not in " ".join(cue["text"] for cue in variant["caption_cues"])
 
 
+def test_phone_cleanup_on_named_cut_that_cannot_be_pinned_fails_open(monkeypatch, store):
+    """F19: more named lines than one pinned file can carry (the provenance holds 8) must
+    never fail the job: the cleanup cut still plays, the voice stays whole, and every
+    receipt says the cut failed (the same promise as the cloud and cleanup-off paths)."""
+    from app import storage
+
+    generation = storage.object_metadata(VOICE).generation
+    payload = _cleanup_snapshot(generation)
+    snapshot_view = hydrate_speech_cleanup_snapshot(payload)
+    lines = ["So", "waffle", "cookie", "blackberry", "jam", "really", "good", "See", "soon"]
+    reqs = [_req(f"n{i}", f"Cut '{line}'", [line]) for i, line in enumerate(lines)]
+    job, snapshot, item, _heard = _phone_job(
+        monkeypatch,
+        store,
+        binding=_binding_for(*reqs),
+        cleanup={
+            "speech_cleanup_contract": "required_v1",
+            "_speech_cleanup_internal": {"preflight_snapshot": payload},
+        },
+    )
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    [variant] = job.assembly_plan["variants"]
+    assert len(variant["named_cuts"]) == len(lines)
+    assert {(r["status"], r.get("reason")) for r in variant["named_cuts"]} == {
+        ("not_applied", "cut_failed")
+    }
+    assert variant["silence_cut_outcome"] == "applied"
+    _record, _recipe, _asset, narration = _pinned(job, item, store)
+    assert narration is not None and narration.named_cuts is None
+    assert narration.speech_cleanup is not None
+    assert narration.speech_cleanup.cut_sha256 == effective_cut_fingerprint(snapshot_view, [])
+    played = _read(store / narration.gcs_path)
+    _assert_audio(played, [(r.start_s, r.end_s) for r in snapshot_view.cut_plan.removed], set())
+
+
 def test_phone_named_cuts_kill_switch_is_byte_identical(monkeypatch, store):
     """F18: flag off with a named line = exactly the run with no brief at all."""
 
