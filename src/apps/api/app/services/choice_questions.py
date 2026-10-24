@@ -704,6 +704,10 @@ CONFLICT_LENGTH_VS_NATURAL = "length_vs_natural"
 CONFLICT_SOURCE_COVERAGE = "source_coverage"
 # KRI-825: the photos the creator gave a length cannot all play inside their total.
 CONFLICT_HOLDS_VS_LENGTH = "holds_vs_length"
+# KRI-724: which of the times a word / line is said in a one-take Talking video the creator
+# means ("the first time SHE says Merope"; "cut 'thank you Karo'" said twice). Same value as
+# `opening_cut_ask.SPEECH_OCCURRENCE_KIND`, which the worker reads the answer by.
+CONFLICT_SPEECH_OCCURRENCE = "speech_occurrence"
 # KRI-844 (a quoted start / end line the one phone Talking take does not hold).
 CONFLICT_TAKE_LINE_START = "take_line_start"
 CONFLICT_TAKE_LINE_END = "take_line_end"
@@ -719,6 +723,7 @@ CONFLICT_PRIORITY = (
     CONFLICT_TITLE_TEXT,
     CONFLICT_TAKE_LINE_START,
     CONFLICT_TAKE_LINE_END,
+    CONFLICT_SPEECH_OCCURRENCE,
     CONFLICT_FREEZE_FRAME,
     CONFLICT_SOURCE_COVERAGE,
     CONFLICT_HOLDS_VS_LENGTH,
@@ -767,6 +772,9 @@ class ChoiceCapability:
     # KRI-479: the continuous-voice route can actually render for new jobs
     # (`Settings.voice_behind_footage_enabled`). False => no voice question is ever asked.
     voice_route: bool = False
+    # KRI-724: ask which spoken occurrence a one-take Talking ask means
+    # (`Settings.speech_occurrence_question_enabled`). False => never asked.
+    speech_occurrence: bool = False
     # KRI-898: the app build that sent the message (stamped at submit). A freeze is only
     # asked about for a build that can play the hold; ``None`` = unknown, never asked.
     client_protocol: int | None = None
@@ -1704,6 +1712,210 @@ def title_text_choice(requirement_ids: Iterable[str]) -> UnresolvedChoice:
         ),
         input_digest=_digest(CONFLICT_TITLE_TEXT, ids),
     )
+
+
+# ── Which spoken occurrence (KRI-724) ─────────────────────────────────────────
+
+_TALKING_FORMATS = frozenset({"subtitled", "talking_head"})
+# At most this many occurrences are offered; the last slot(s) hold "every time" / the waiver.
+_MAX_OCCURRENCES_OFFERED = MAX_CHOICE_OPTIONS - 1
+
+
+def _clock(seconds: float) -> str:
+    whole = int(max(0.0, seconds) + 0.5)
+    return f"{whole // 60}:{whole % 60:02d}"
+
+
+def _occurrence_context(words: Sequence[Mapping[str, Any]], start_s: float, end_s: float) -> str:
+    """A few words around one occurrence, as said in the take ("…Merope, it's a Colombian…")."""
+    index = [i for i, w in enumerate(words) if w["start_s"] < end_s and w["end_s"] > start_s]
+    if not index:
+        return ""
+    first, last = max(0, index[0] - 3), min(len(words), index[-1] + 5)
+    text = " ".join(str(w["text"]) for w in words[first:last])
+    lead = "…" if first > 0 else ""
+    tail = "…" if last < len(words) else ""
+    return f"{lead}{text}{tail}"[:90]
+
+
+def _occurrence_label(words: Sequence[Mapping[str, Any]], start_s: float, end_s: float) -> str:
+    context = _occurrence_context(words, start_s, end_s)
+    # Curly quotes: the label is itself quoted ("Reply "..."") in the plain-text question.
+    return f"{_clock(start_s)} “{context}”" if context else _clock(start_s)
+
+
+def _speech_occurrence(
+    strategy: Mapping[str, Any],
+    brief: Any,
+    rows: list[Any],
+    cap: ChoiceCapability,
+    *,
+    snapshot: Mapping[str, Any] | None = None,
+) -> list[UnresolvedChoice]:
+    """A spoken-word ask the take's words can't settle on their own, asked before approval.
+
+    One-take phone Talking only. The words carry no speaker, so a text "the first time SHE
+    says Merope" is asked about even when the word is said once; a named cut line said more
+    than once with no ordinal is asked about too (today it is not cut at all). Occurrences come
+    from the take's timed sentences through the worker's own matchers
+    (`phone_spoken_text.spoken_word_occurrences`, `phone_opening_cut.line_occurrences`),
+    inside the start / end cut the draft will make (`estimate_take_window`), so a moment that
+    gets cut is never offered. No option is recommended: "you choose" never picks a voice.
+    """
+    if not cap.speech_occurrence:
+        return []
+    if strategy.get("edit_format") not in _TALKING_FORMATS:
+        return []
+    if strategy.get("audio_strategy") == "voiceover":
+        return []  # a voiceover is the creator's own voice: the other slice (KRI-889)
+    from app.kria.opening_cut_ask import (  # noqa: PLC0415
+        OCCURRENCE_WAIVE,
+        estimate_take_window,
+        named_cut_asks,
+        occurrence_option_key,
+        take_speech,
+    )
+    from app.kria.spoken_text_ask import spoken_text_asks  # noqa: PLC0415
+    from app.pipeline.phone_opening_cut import line_occurrences  # noqa: PLC0415
+    from app.pipeline.phone_spoken_text import spoken_word_occurrences  # noqa: PLC0415
+    from app.services.spoken_quotes import fold_tokens  # noqa: PLC0415
+
+    take = take_speech(snapshot, strategy)
+    if take is None:
+        return []
+    live = _live(brief)
+    words = list(take.words)
+    window = estimate_take_window(live, snapshot, strategy=strategy)
+    low = (window.start_s if window and window.start_s is not None else 0.0) - 1e-6
+    high = (window.end_s if window and window.end_s is not None else take.duration_s) + 1e-6
+
+    def inside(spans: Iterable[tuple[float, float]]) -> list[tuple[float, float]]:
+        return sorted((a, b) for a, b in spans if a >= low and b <= high)
+
+    def options_for(
+        spans: list[tuple[float, float]], *, every: bool, waive: tuple[str, str]
+    ) -> tuple[tuple[ConflictOption, ...], str]:
+        limit = _MAX_OCCURRENCES_OFFERED - (1 if every else 0)
+        offered = spans[:limit]
+        built: list[ConflictOption] = []
+        for ordinal, (start, end) in enumerate(offered, start=1):
+            label = _occurrence_label(words, start, end)
+            built.append(
+                ConflictOption(
+                    key=occurrence_option_key(ordinal, len(spans), start),
+                    label=label,
+                    aliases=tuple(_ordinal_names(ordinal)),
+                )
+            )
+        if every and len(offered) == len(spans):
+            built.append(
+                _option(
+                    occurrence_option_key(None, len(spans)),
+                    label=("Every time", "Her seferinde"),
+                    aliases=("all of them", "every time", "both"),
+                    tr_aliases=("hepsi", "hepsini", "ikisi de"),
+                )
+            )
+        built.append(_option(OCCURRENCE_WAIVE, label=waive))
+        more = say(
+            en=f" I'm showing the first {len(offered)}.",
+            tr=f" İlk {len(offered)} tanesini gösteriyorum.",
+        )
+        return tuple(built), more if len(offered) < len(spans) else ""
+
+    found: list[UnresolvedChoice] = []
+    for ask in spoken_text_asks(live):
+        if not ask.speaker:
+            continue  # "the first time I / anyone say(s) it" is the first match (KRI-707)
+        spans = inside(
+            (start, end) for _t, start, end in spoken_word_occurrences(words, ask.triggers)
+        )
+        if not spans:
+            continue
+        trigger = ask.triggers[0]
+        options, more = options_for(
+            spans, every=False, waive=("Leave the text off", "Yazıyı koyma")
+        )
+        effects = {o.key: {"value": trigger} for o in options}
+        times = len(spans)
+        found.append(
+            UnresolvedChoice(
+                kind=CONFLICT_SPEECH_OCCURRENCE,
+                conflict_id=f"{CONFLICT_SPEECH_OCCURRENCE}:{ask.requirement_id}"[:80],
+                field_path="brief_requirements",
+                requirement_ids=(ask.requirement_id,),
+                intro=say(
+                    en=(
+                        f'You asked for "{ask.text}" when {ask.speaker} says "{trigger}". '
+                        f'"{trigger}" is said {times} time{"s" if times != 1 else ""} in the '
+                        "part of your take I'm keeping, and I can't tell who is speaking." + more
+                    ),
+                    tr=(
+                        f'"{trigger}" denildiğinde "{ask.text}" yazısını istedin. Koruduğum '
+                        f'kısımda "{trigger}" {times} kez geçiyor ve kimin konuştuğunu ayırt '
+                        "edemiyorum." + more
+                    ),
+                ),
+                reason=say(
+                    en="Which one should it appear on?",
+                    tr="Yazı hangisinde çıksın?",
+                ),
+                options=options,
+                input_digest=_digest(
+                    CONFLICT_SPEECH_OCCURRENCE,
+                    ask.requirement_id,
+                    take.media_id,
+                    _norm_text(ask.text),
+                    [_norm_text(t) for t in ask.triggers],
+                    _norm_text(ask.speaker or ""),  # a restated speaker reopens the question
+                    [round(a, 2) for a, _b in spans],
+                ),
+                effects=effects,
+            )
+        )
+    for cut in named_cut_asks(live):
+        if cut.occurrence is not None:
+            continue  # the creator named which one (KRI-821)
+        spans = inside(
+            (g.word_start_s, g.word_end_s)
+            for g in line_occurrences(words, cut.quote, duration_s=take.duration_s)
+        )
+        if len(spans) < 2:
+            continue
+        options, more = options_for(spans, every=True, waive=("Don't cut it", "Kesme"))
+        effects = {o.key: {"value": cut.quote} for o in options}
+        folded = "_".join(fold_tokens(cut.quote))
+        found.append(
+            UnresolvedChoice(
+                kind=CONFLICT_SPEECH_OCCURRENCE,
+                conflict_id=(f"{CONFLICT_SPEECH_OCCURRENCE}:{cut.requirement_ids[0]}:{folded}")[
+                    :80
+                ],
+                field_path="brief_requirements",
+                requirement_ids=tuple(cut.requirement_ids),
+                intro=say(
+                    en=(
+                        f'You asked me to cut "{cut.quote}". It is said {len(spans)} times in '
+                        "the part of your take I'm keeping." + more
+                    ),
+                    tr=(
+                        f'"{cut.quote}" kısmını kesmemi istedin. Koruduğum kısımda '
+                        f"{len(spans)} kez geçiyor." + more
+                    ),
+                ),
+                reason=say(en="Which one should I cut?", tr="Hangisini keseyim?"),
+                options=options,
+                input_digest=_digest(
+                    CONFLICT_SPEECH_OCCURRENCE,
+                    list(cut.requirement_ids),
+                    take.media_id,
+                    _norm_text(cut.quote),
+                    [round(a, 2) for a, _b in spans],
+                ),
+                effects=effects,
+            )
+        )
+    return found
 
 
 # ── Freeze frame (KRI-900) ────────────────────────────────────────────────────
@@ -3169,6 +3381,7 @@ def collect_conflicts(
         _text_placement,
         functools.partial(_title_text, clip_paths=clip_paths),
         functools.partial(_take_line, clip_paths=clip_paths),
+        functools.partial(_speech_occurrence, snapshot=media_snapshot),
         functools.partial(_freeze_frame, clip_paths=clip_paths, snapshot=media_snapshot),
         functools.partial(_source_coverage, snapshot=media_snapshot),
         functools.partial(_holds_vs_length, snapshot=media_snapshot),
@@ -3446,9 +3659,11 @@ def delegated_choice(question: Mapping[str, Any], message: object) -> str | None
     if question.get("conflict") == "creative_copy":
         # Delegating authorship is not permission to use unreviewed wording.
         return None
-    if question.get("kind") == CONFLICT_TITLE_TEXT:
+    if question.get("kind") in {CONFLICT_TITLE_TEXT, CONFLICT_SPEECH_OCCURRENCE}:
         # Handing over a wordless title would drop the title the creator asked for (and we
         # never write on-screen words): not a delegation. The gate asks once more.
+        # KRI-724: nor is "you choose" a pick of whose voice / which take: only the creator
+        # knows who says the word.
         return None
     options = [o for o in question.get("options") or [] if isinstance(o, Mapping) and o.get("key")]
     if not options:
@@ -3714,6 +3929,8 @@ def _disclosure(kind: object, option: object) -> str | None:
     english = _DISCLOSURES.get(key)  # type: ignore[arg-type]
     if english is not None:
         return say(en=english, tr=_DISCLOSURES_TR.get(key, english))  # type: ignore[arg-type]
+    if kind == CONFLICT_SPEECH_OCCURRENCE:
+        return _occurrence_disclosure(option)
     if kind == CONFLICT_FREEZE_FRAME:
         parsed = parse_freeze_option(option)
         basis = parsed[0] if parsed else None
@@ -3742,6 +3959,31 @@ def _disclosure(kind: object, option: object) -> str | None:
             tr=f"Videoyu {seconds} saniye yapıyorum.",
         )
     return None
+
+
+def _occurrence_disclosure(option: object) -> str | None:
+    """KRI-724: what the creator's pick of a spoken occurrence does, in plain words."""
+    from app.kria.opening_cut_ask import (  # noqa: PLC0415
+        OCCURRENCE_WAIVE,
+        parse_occurrence_option,
+    )
+
+    if option == OCCURRENCE_WAIVE:
+        return say(en="I'm skipping that one, as you chose.", tr="Seçtiğin gibi onu atlıyorum.")
+    pin = parse_occurrence_option(option)
+    if pin is None:
+        return None
+    if pin.ordinal is None:
+        return say(
+            en="I'm cutting it every time it's said.",
+            tr="Her söylendiğinde kesiyorum.",
+        )
+    if pin.approx_s is None:
+        return None
+    return say(
+        en=f"I'm using the one at {_clock(pin.approx_s)} in your take.",
+        tr=f"Çekimindeki {_clock(pin.approx_s)} anındakini kullanıyorum.",
+    )
 
 
 def _emits_answered_value(
@@ -3973,7 +4215,7 @@ def resolve_choices(
                 "input_digest": choice.input_digest,
                 "requirement_ids": list(choice.requirement_ids),
                 "source": source,
-                # KRI-844: the text the option picks (a line of the creator's own footage).
+                # KRI-844 / KRI-724: the text the option picks (the creator's own words).
                 **({"value": picked} if isinstance(picked, str) and picked else {}),
             }
         )
@@ -4187,6 +4429,12 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                 and req.scope == "title"
             ):
                 changed[req.id] = req.model_copy(update={"status": "superseded"})
+            elif kind == CONFLICT_SPEECH_OCCURRENCE and option == "waive":
+                # KRI-724: an explicit waiver ("leave the text off" / "don't cut it") is an
+                # agreed simpler obligation: the line leaves the cut list, or the ask goes.
+                waived = _without_cut_line(changed.get(req.id, req), answer.get("value"))
+                if waived is not None:
+                    changed[req.id] = waived
             elif kind in TAKE_LINE_KINDS:
                 # KRI-844: the line of the take the creator picked rides the requirement that
                 # quoted the line, next to (never instead of) the quote. A declined side has
@@ -4208,6 +4456,45 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
     return brief.model_copy(
         update={"requirements": [changed.get(r.id, r) for r in brief.requirements]}
     )
+
+
+def _without_cut_line(req: Any, line: object) -> Any:
+    """``req`` without the waived spoken ``line`` (KRI-724); superseded when nothing is left.
+
+    A text ask (its trigger is the waived word) and a cut ask whose only purpose was that
+    line are superseded; a cut ask naming other lines keeps them, and one that also asks
+    for pause / filler / retake cleanup keeps that cleanup with no named line."""
+    from app.kria.brief_checks import named_cut_lines  # noqa: PLC0415
+    from app.services.spoken_quotes import fold_tokens  # noqa: PLC0415
+
+    lines = named_cut_lines(req)
+    want = tuple(fold_tokens(str(line or "")))
+    kept = [x for x in lines if tuple(fold_tokens(x)) != want]
+    if lines and not kept and _asks_cleanup_besides(req, str(line or "")):
+        return req.model_copy(update={"facts": {**req.facts, "cut_lines": []}})
+    if not lines or not kept:
+        return req.model_copy(update={"status": "superseded"})
+    if len(kept) == len(lines):
+        return None
+    return req.model_copy(update={"facts": {**req.facts, "cut_lines": kept}})
+
+
+def _asks_cleanup_besides(req: Any, line: str) -> bool:
+    """``req`` asks for speech cleanup (pauses, fillers, retakes) beyond the named ``line``."""
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        _CLEANUP_NOUN_RE,
+        _fold,
+        _req_text,
+        _wants_cleanup,
+    )
+
+    if not _wants_cleanup(req):
+        return False
+    text = _req_text(req)
+    folded_line = _fold(line).strip()
+    if folded_line:
+        text = text.replace(folded_line, " ")
+    return bool(_CLEANUP_NOUN_RE.search(text))
 
 
 def choice_notices(strategy: Any) -> list[str]:
