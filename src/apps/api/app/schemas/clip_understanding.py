@@ -28,6 +28,11 @@ _MAX_MOMENTS = 8
 _MAX_SEGMENTS = 60
 _MAX_FACTS = 12
 _FACT_VALUE_LIMIT = 200
+_MAX_PROPS = 8
+_PROP_LIMIT = 60
+_MAX_ACTIONS = 6
+_ACTION_LIMIT = 100
+_VISUAL_QUALITY_LIMIT = 120
 
 
 # Transcripts and descriptions are third-party text that ends up in agent
@@ -189,6 +194,27 @@ class ClipUnderstanding(BaseModel):
     # from ``app.services.clip_exposure``. Empty (and omitted from dumps and prompt views)
     # unless CLIP_EXPOSURE_FACT is on and the clip was measured.
     visibility: str = Field(default="", exclude_if=lambda value: not value)
+    # KRI-845: what is in the clip (objects with their colour/material/size), what the people do
+    # with them, and how the footage itself looks (focus, blur, steadiness). The analyzer's own
+    # words, so a creator's "the black-tray clip" or "the blurry shot" can be matched against more
+    # than a one-line summary. Empty (and omitted from dumps and prompt views) on every record
+    # stored before the analyzer wrote them: a missing value means "not judged", never "sharp".
+    props: list[str] = Field(default_factory=list, exclude_if=lambda value: not value)
+    actions: list[str] = Field(default_factory=list, exclude_if=lambda value: not value)
+    visual_quality: str = Field(default="", exclude_if=lambda value: not value)
+
+    @field_validator("props", "actions", mode="before")
+    @classmethod
+    def _phrases(cls, v: object, info: Any) -> list[str]:
+        """Lenient: a malformed entry is dropped, never a reason to lose the record."""
+        if not isinstance(v, list):
+            return []
+        if info.field_name == "props":
+            limit, cap = _PROP_LIMIT, _MAX_PROPS
+        else:
+            limit, cap = _ACTION_LIMIT, _MAX_ACTIONS
+        phrases = [p for p in (_clean_text(x, limit) for x in v) if p]
+        return list(dict.fromkeys(phrases))[:cap]
 
     @field_validator("facts", mode="before")
     @classmethod
@@ -220,6 +246,11 @@ class ClipUnderstanding(BaseModel):
     @classmethod
     def _text(cls, v: object) -> str:
         return _clean_text(v, _TEXT_LIMIT)
+
+    @field_validator("visual_quality", mode="before")
+    @classmethod
+    def _quality(cls, v: object) -> str:
+        return _clean_text(v, _VISUAL_QUALITY_LIMIT)
 
     @field_validator("brands", mode="before")
     @classmethod
@@ -295,6 +326,12 @@ class ClipUnderstanding(BaseModel):
                     )
                 speech["segments"] = rows
             view["speech"] = speech
+        if self.props:
+            view["props"] = self.props
+        if self.actions:
+            view["actions"] = self.actions
+        if self.visual_quality:
+            view["visual_quality"] = self.visual_quality
         if self.brands:
             view["brands"] = self.brands
         if self.content_type:

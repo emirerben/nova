@@ -2713,6 +2713,7 @@ def _dispatch_item_render(
                     CONTRACT_FIELD,
                     REQUIREMENT_VERSION_FIELD,
                     build_render_contract,
+                    contract_duration_bound,
                     stamp_plan_authority,
                 )
 
@@ -2777,6 +2778,8 @@ def _dispatch_item_render(
                         mode=existing_length.get(
                             "check_mode", settings.creator_duration_check_mode
                         ),
+                        # KRI-847: "under 10 seconds" is a ceiling, not 10 s +/- 10 %.
+                        duration_bound=contract_duration_bound(contract, strategy_payload, brief),
                     )
         from app.services.creator_direction_snapshot import ensure_job_snapshot  # noqa: PLC0415
 

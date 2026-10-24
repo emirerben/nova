@@ -228,6 +228,18 @@ def run_phone_speech_montage_job(
     # explicit duration bound at approval, never the schema's implicit default.
     if contract is None:
         target = target or _strategy_target_s(strategy)
+    # KRI-847: "at most N" is not a length the result must reach.
+    target_is_ceiling = False
+    if contract is not None and contract.duration_s is not None:
+        from app.services.length_policy_state import read_length_policy  # noqa: PLC0415
+
+        state = read_length_policy(snapshot, contract)
+        target_is_ceiling = state is not None and state.requested_duration_bound == "at_most"
+    elif contract is None and brief is not None:
+        from app.services.length_policy import creator_duration  # noqa: PLC0415
+
+        proven = creator_duration(brief=brief)
+        target_is_ceiling = proven is not None and proven.bound == "at_most"
 
     with pipeline_trace_for(job_id):
         resolution = plan_speech_montage(
@@ -236,6 +248,7 @@ def run_phone_speech_montage_job(
             run_planner=run_planner,
             load_words=load_words,
             target_duration_s=target,
+            target_is_ceiling=target_is_ceiling,
             required_source_ids=contract.audio_source_ids if contract else (),
             speech_required=speech_required,
             voice_media_ids=voice_ids,

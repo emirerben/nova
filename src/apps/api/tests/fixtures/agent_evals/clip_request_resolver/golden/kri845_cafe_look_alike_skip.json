@@ -1,0 +1,157 @@
+{
+  "agent": "nova.plan.clip_request_resolver",
+  "prompt_version": "2026-10-23.1",
+  "input": {
+    "creator_request": "Caro'nun elinde siyah tepsiyle geldiği klip ilk olsun. Caro'nun eğilip tabağı masaya bıraktığı kısa klibi kullanma.",
+    "intents": [
+      {
+        "intent_id": "order_first_tray",
+        "op": "order",
+        "attribute": "Caro'nun elinde siyah tepsiyle geldiği klip",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": "first"
+      },
+      {
+        "intent_id": "exclude_bending",
+        "op": "include",
+        "attribute": "Caro'nun eğilip tabağı masaya bıraktığı kısa klip",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null
+      }
+    ],
+    "clips": [
+      {
+        "alias": "m001",
+        "kind": "video",
+        "record": {
+          "subject": "server putting down a plate",
+          "summary": "A server hands over a plate of food to an off-camera customer.",
+          "props": [
+            "beige plate with an oblea"
+          ],
+          "actions": [
+            "carries a plate in both hands toward the camera",
+            "bends forward and lowers the plate down out of frame"
+          ],
+          "visual_quality": "sharp and steady",
+          "content_type": "broll",
+          "audio_type": "ambient",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 2.0,
+              "description": "plate goes down"
+            }
+          ]
+        }
+      },
+      {
+        "alias": "m002",
+        "kind": "video",
+        "record": {
+          "subject": "server bringing a plate",
+          "summary": "A server approaches a table and places a plate of food.",
+          "props": [
+            "black round tray",
+            "beige plate with an oblea"
+          ],
+          "actions": [
+            "stands holding a black round tray",
+            "leans forward and picks up a plate",
+            "holds the plate out toward the camera",
+            "walks off to the right with the plate and the tray"
+          ],
+          "visual_quality": "sharp and steady",
+          "content_type": "broll",
+          "audio_type": "ambient",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 3.0,
+              "description": "server handles a plate"
+            }
+          ]
+        }
+      },
+      {
+        "alias": "m003",
+        "kind": "video",
+        "record": {
+          "subject": "woman waving goodbye",
+          "summary": "A woman laughs and waves at the camera.",
+          "actions": [
+            "laughs and waves with both hands",
+            "walks off to the right"
+          ],
+          "visual_quality": "sharp and steady",
+          "content_type": "broll",
+          "audio_type": "ambient",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 3.0,
+              "description": "waves goodbye"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "raw_text": "{\"intents\": [{\"intent_id\": \"order_first_tray\", \"assignments\": [{\"media\": \"m002\", \"value\": \"\", \"evidence\": \"props: black round tray; actions: stands holding a black round tray\", \"confidence\": 0.95}], \"needs_vision\": [], \"question\": null, \"caption\": null}, {\"intent_id\": \"exclude_bending\", \"assignments\": [{\"media\": \"m001\", \"value\": \"\", \"evidence\": \"actions: bends forward and lowers the plate down out of frame (no tray)\", \"confidence\": 0.9}], \"needs_vision\": [], \"question\": null, \"caption\": null}]}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "order_first_tray",
+        "assignments": [
+          {
+            "media": "m002",
+            "value": "",
+            "evidence": "props: black round tray; actions: stands holding a black round tray",
+            "confidence": 0.95
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      },
+      {
+        "intent_id": "exclude_bending",
+        "assignments": [
+          {
+            "media": "m001",
+            "value": "",
+            "evidence": "actions: bends forward and lowers the plate down out of frame (no tray)",
+            "confidence": 0.9
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "KRI-845 (prod thread A9100235, Merope cafe M1): the skip \"Caro bends and puts the plate on the table\" is m001 (M1_05, 2.2 s: carries a plate in both hands, bends over, lowers it out of frame, NO tray), NOT m002 (M1_08, 5.0 s: already holds the only black round tray, leans forward to pick up a plate and walks off with plate and tray) which the creator pinned FIRST. She bends in both clips; the tray and the direction (lowers vs picks up) separate them. Before KRI-845 both read \"a server places / hands over a plate of food\". Clip behaviour is the footage ground truth in tests/fixtures/kri845_m1_clip_detail.json; the cafe base fields are reconstructed around the run notes' quotes and props/actions are authored. Hand-authored expectation; no live run was made (no paid calls).",
+    "expect_assignment_set": {
+      "order_first_tray": [
+        "m002"
+      ],
+      "exclude_bending": [
+        "m001"
+      ]
+    },
+    "expect_not_assigned": {
+      "exclude_bending": [
+        "m002"
+      ]
+    },
+    "alias_to_clip": {
+      "m001": "M1_05",
+      "m002": "M1_08",
+      "m003": "M1_03"
+    }
+  }
+}

@@ -18,10 +18,10 @@ from typing import Any
 import structlog
 
 from app.config import settings
+from app.pipeline.caption_language import LANGUAGE_NAMES
 
 log = structlog.get_logger()
 
-_LANG_NAMES = {"tr": "Turkish", "en": "English"}
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]|[\u202a-\u202e\u2066-\u2069]")
 _PROMPTISH = re.compile(
     r"(?i)\b(system|assistant|developer|ignore|instruction|prompt|tool|jailbreak)\b|```"
@@ -67,8 +67,10 @@ _LEGACY_SYSTEM_PROMPT = (
 
 
 def _language_name(language: str | None) -> str:
+    # KRI-838: every caption language (the shared table), not just tr/en -- a translated
+    # Spanish caption set is corrected as "Spanish", not as "es".
     code = (language or "").strip().lower()
-    return _LANG_NAMES.get(code, code or "the spoken language")
+    return LANGUAGE_NAMES[code][0] if code in LANGUAGE_NAMES else (code or "the spoken language")
 
 
 def _fold(value: str) -> str:

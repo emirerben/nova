@@ -14,8 +14,9 @@ The subtitled phone recipe is one speaker clip + Whisper captions today
   - ``sound_effects``: one shared audio track of catalog sound effects,
     optionally trimmed to a sub-range of the catalog effect's own source
     audio (KRI-182 step 1).
-  - ``ending_clip``: an optional MUTED video clip from the Visuals pool
-    appended after the speaker clip on the same main video track.
+  - ``ending_clip``: an optional video clip from the Visuals pool appended
+    after the speaker clip on the same main video track. Muted unless the
+    creator asked for its own sound (``volume``, KRI-841).
 
 ``PhoneSubtitledLaneRequest`` is the server-authored, unresolved shape
 persisted on ``Job.assembly_plan[PHONE_SUBTITLED_LANES_FIELD]``.
@@ -149,13 +150,29 @@ class SubtitledSoundEffect(_LaneModel):
 
 
 class SubtitledEndingClip(_LaneModel):
-    """An optional muted Visuals-pool video appended after the speaker clip."""
+    """An optional Visuals-pool video appended after the speaker clip.
+
+    Muted (``volume=0``) unless the creator asked for its own sound (KRI-841:
+    "add the bite video at the very end with its own sound"); the admin lane
+    never sets it, so that path stays muted.
+    """
 
     media_id: str = Field(min_length=1, max_length=160, pattern=_ID_PATTERN)
     gcs_path: str = Field(min_length=1)
     generation: str = Field(min_length=1, max_length=160, pattern=_ID_PATTERN)
     trim_start_s: float = Field(default=0.0, ge=0)
     max_duration_s: float | None = Field(default=None, gt=0)
+    volume: float = Field(default=0.0, ge=0, le=2)
+
+    @model_serializer(mode="wrap")
+    def _muted_shape(self, handler: SerializerFunctionWrapHandler) -> dict:
+        # A muted ending keeps the pre-KRI-841 persisted shape (persisted lane
+        # rows and the admin request stay byte-identical, and an older reader
+        # never meets the new key unless the creator asked for sound).
+        payload = handler(self)
+        if self.volume == 0:
+            payload.pop("volume", None)
+        return payload
 
 
 class PhoneSubtitledLaneRequest(_LaneModel):

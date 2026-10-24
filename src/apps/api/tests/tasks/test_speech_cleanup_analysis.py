@@ -1015,6 +1015,29 @@ def test_worker_asks_gemini_when_the_item_has_no_reference(monkeypatch, source_k
     late.assert_not_called()  # the run already had its second opinion
 
 
+def test_a_gemini_sample_reference_covers_only_the_sample(monkeypatch) -> None:
+    """KRI-843: Gemini hears the narration's first 30 s only, so on a mixed-language take the
+    engine keeps whisper's own words past them; a clip's own transcript covers all of it."""
+    captured: list[SpeechCleanupAnalysisInput] = []
+    monkeypatch.setattr(
+        task_module,
+        "run_speech_cleanup_engine",
+        lambda analysis_input: captured.append(analysis_input) or _misheard_result("en"),
+    )
+    _gemini_reference_on(monkeypatch, Mock(return_value=_GEMINI_EN))
+
+    task_module._run_engine(_work(source_kind="embedded_spine"), Path("narration.wav"))
+    task_module._run_engine(
+        _work(source_kind="embedded_spine", reference_transcript=_GEMINI_EN),
+        Path("narration.wav"),
+    )
+
+    assert [(value.reference_source, value.reference_covers_s) for value in captured] == [
+        ("gemini_audio", task_module.SPEECH_CLEANUP_GEMINI_REFERENCE_SAMPLE_S),
+        ("clip_analysis", None),
+    ]
+
+
 def test_an_item_reference_needs_no_gemini_call(monkeypatch) -> None:
     captured: list[SpeechCleanupAnalysisInput] = []
     monkeypatch.setattr(

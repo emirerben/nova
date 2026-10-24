@@ -56,6 +56,8 @@ from app.schemas.clip_intents import ClipIntent
 from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS, PINNED_TEXT_MAX_CHARS
 from app.services.creator_capabilities import (
     CAPABILITY_REACTION_BEATS,
+    ENDING_CLIP_NOT_ALSO_A_POP_IN_NOTICE,
+    ENDING_CLIP_NOTICES,
     TALKING_CLIP_INTENTS_DROPPED_NOTICE,
     CreatorSfxUnavailableError,
     compile_strategy_to_plan,
@@ -205,6 +207,43 @@ _KNOWN_TR: dict[str, str] = {
     "Couldn't find the closing badge you named; left it off.": (
         "Söylediğin kapanış rozetini bulamadım; koymadım."
     ),
+    # KRI-841: a video appended after the talk with its own sound.
+    ENDING_CLIP_NOTICES["not_talking"]: (
+        "Bu videoyu kendi sesiyle sona ekleyemedim: sadece iPhone'daki konuşmalı düzenlemeler "
+        "başka bir videoyla bitebilir."
+    ),
+    ENDING_CLIP_NOTICES["not_found"]: (
+        "Son için söylediğin videoyu bulamadım; normal bitişi bıraktım."
+    ),
+    ENDING_CLIP_NOTICES["not_video"]: (
+        "Bunu kendi sesiyle sona ekleyemedim: bu bir fotoğraf, video değil. Fotoğraf kapanış "
+        "fotoğrafı olarak girebilir."
+    ),
+    ENDING_CLIP_NOTICES["visual_videos_off"]: (
+        "Bu videoyu sona ekleyemedim: bu iPhone Visuals'taki videoları henüz oynatamıyor."
+    ),
+    ENDING_CLIP_NOTICES["media_lanes_disabled"]: (
+        "Bu videoyu sona ekleyemedim: bu iPhone oluşturması konuşmanın çevresine resim ve "
+        "video koyamıyor henüz."
+    ),
+    ENDING_CLIP_NOTICES["audio_mix_not_verified"]: (
+        "Bunu kendi sesiyle sona ekleyemedim: bu iPhone sesini videoya karıştıramıyor henüz."
+    ),
+    ENDING_CLIP_NOTICES["muted_footage_ending_unsupported"]: (
+        "Bu klibi sessiz olarak sona ekleyemedim: kendi kliplerinden biri videoyu ancak kendi "
+        "sesiyle bitirebilir."
+    ),
+    ENDING_CLIP_NOTICES["not_selected"]: (
+        "Bu klibi sona ekleyemedim: bu düzenlemeden çıkarmamı istemiştin."
+    ),
+    ENDING_CLIP_NOTICES["only_clip"]: ("Bu klibi sona ekleyemedim: bu düzenlemedeki tek klip bu."),
+    ENDING_CLIP_NOTICES["multi_clip_off"]: (
+        "Bu klibi sona ekleyemedim: başka bir klibinle bitirmek için birden çok klipli "
+        "konuşmalı düzenleme gerekiyor ve o henüz yok."
+    ),
+    ENDING_CLIP_NOT_ALSO_A_POP_IN_NOTICE: (
+        "Sonda istediğin video sadece orada oynuyor, söylediğin bir kelimede ayrıca çıkmıyor."
+    ),
     (
         "Sound effects can't render on your iPhone yet. Ask for this edit without the sound effect."
     ): "Ses efektleri iPhone'unda henüz hazırlanamıyor. Bu düzenlemeyi ses efektsiz iste.",
@@ -217,6 +256,16 @@ _KNOWN_TR_PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], str]]
     (
         re.compile(r"Couldn't find \"(.+)\"'s photo/sticker; left it out\."),
         lambda m: f'"{m.group(1)}" için fotoğraf ya da çıkartma bulamadım; koymadım.',
+    ),
+    (
+        re.compile(  # kri667: matches our own fixed English notice, not creator text
+            r"Full screen isn't available for this edit yet, so \"(.+)\" shows as a small card "
+            r"in the corner instead\."
+        ),
+        lambda m: (
+            f'Bu düzenlemede tam ekran henüz yok; "{m.group(1)}" köşede küçük bir kart olarak '
+            "çıkacak."
+        ),
     ),
     (
         re.compile(r"(Day vlog|Single-hero) shape needs music; kept a regular montage\."),

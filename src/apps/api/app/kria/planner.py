@@ -178,6 +178,12 @@ from app.services.kria_editor_ops import (
     editor_state_has_lanes,
     resolve_editor_base,
 )
+from app.services.music_genre import (
+    GENRE_FIT,
+    asked_genres,
+    genre_record,
+    music_genre_notice,
+)
 from app.services.song_order import (
     build_song_order_question,
     fold_song_orders,
@@ -280,7 +286,7 @@ def _enrich_best_parts_snapshot(
     )
     from app.services.creator_render_contract import build_render_contract  # noqa: PLC0415
     from app.services.length_planning import build_length_plan  # noqa: PLC0415
-    from app.services.length_policy import creator_duration_s, natural_length_owner  # noqa: PLC0415
+    from app.services.length_policy import creator_duration, natural_length_owner  # noqa: PLC0415
 
     if natural_length_owner(strategy) not in {"footage", "voiceover", "song"}:
         return media_snapshot
@@ -292,7 +298,8 @@ def _enrich_best_parts_snapshot(
     )
     del rows
     creator_target = strategy.get("creator_duration_s")
-    creator_target_s = creator_duration_s(brief=brief) or (
+    proven = creator_duration(brief=brief)
+    creator_target_s = (proven.seconds if proven is not None else None) or (
         float(creator_target)
         if isinstance(creator_target, (int, float)) and creator_target > 0
         else None
@@ -378,6 +385,8 @@ def _enrich_best_parts_snapshot(
             {**strategy, "voiceover_duration_s": recording},
             media_snapshot,
             creator_target_s=creator_target_s,
+            # KRI-847: a brief ceiling ("at most 10 seconds") caps the plan instead of fixing it.
+            creator_target_bound=proven.bound if proven is not None else "exact",
             selected_ids=selected,
             order_ids=contract.order_ids if contract is not None else (),
             closing_quote=closing_quote,
@@ -723,11 +732,14 @@ async def _freeze_licensed_music_section(
         for row in playable
         if row.get("media_id")
     ]
+    # KRI-848: a genre the creator named is recorded with whether the song's labels say it.
+    genres = asked_genres(music_ask)
     track = await asyncio.to_thread(
         _match_best_track, metas, job_id=None, music_ask=music_ask, run_context=run_context
     )
+    no_song = {"status": "fallback_footage", **genre_record(genres, None)}
     if track is None:
-        return {"status": "fallback_footage"}
+        return no_song
     cfg = track_config_with_rank_one(track)
     start = cfg.get("best_start_s")
     end = cfg.get("best_end_s")
@@ -739,7 +751,7 @@ async def _freeze_licensed_music_section(
         or not isinstance(end, (int, float))
         or not 0 <= start < end <= catalog_duration < float("inf")
     ):
-        return {"status": "fallback_footage"}
+        return no_song
     section = _fit_music_section_to_length(
         {
             "status": "selected",
@@ -750,6 +762,7 @@ async def _freeze_licensed_music_section(
             "end_s": float(end),
             "catalog_duration_s": catalog_duration,
             "beat_timestamps_s": list(getattr(track, "beat_timestamps_s", None) or []),
+            **genre_record(genres, track),
         },
         target_s,
     )
@@ -4343,6 +4356,9 @@ async def _gate_unresolved_choices(
         else None
     )
     frozen_music = _prior_frozen_music(events, music_input_digest, music_pool_digest)
+    if isinstance(frozen_music, dict) and GENRE_FIT not in frozen_music and asked_genres(music_ask):
+        # KRI-848: frozen before the song's genre was checked, so nobody has looked at it.
+        frozen_music = None
     if frozen_music is None:
         frozen_music = await _freeze_licensed_music_section(
             db,
@@ -4431,21 +4447,26 @@ async def _gate_unresolved_choices(
         apply_intent = apply_intent.model_copy(update={"arguments": arguments})
         plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
         planned = replace(planned, plan=plan)
+    # KRI-848: say which song is suggested and whether its labels fit the genre asked for.
+    # The receipts reply replaces the summary whenever a judged ask is unmet and keeps only
+    # the policy notices, so the song notice rides both.
+    song_notice = music_genre_notice(frozen_music)
+    if song_notice and song_notice not in planned.policy_notices:
+        planned = replace(planned, policy_notices=(*planned.policy_notices, song_notice))
+    model_summary = str(arguments.get("summary") or "")
     plan_notices = [
         notice
         for notice in (
             closing_quote_notice(
                 length_plan.get("closing_quote") if isinstance(length_plan, dict) else closing_quote
             ),
-            _moment_count_notice(
-                strategy, brief, length_plan, summary=str(arguments.get("summary") or "")
-            ),
+            _moment_count_notice(strategy, brief, length_plan, summary=model_summary),
+            song_notice,
         )
         if notice
     ]
     if plan_notices:
-        summary = " ".join([str(arguments.get("summary") or ""), *plan_notices]).strip()
-        arguments = {**arguments, "summary": summary[:1000]}
+        arguments = {**arguments, "summary": _summary_with_notices(model_summary, plan_notices)}
         apply_intent = apply_intent.model_copy(update={"arguments": arguments})
         plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
         planned = replace(planned, plan=plan)
@@ -4516,11 +4537,9 @@ async def _gate_unresolved_choices(
             camera_sound=camera_sound,
             closing_quote=closing_quote,
         )
-    summary = " ".join([str(arguments.get("summary") or ""), *resolution.notices]).strip()
+    summary = _summary_with_notices(model_summary, [*plan_notices, *resolution.notices])
     rewritten = apply_intent.model_copy(
-        update={
-            "arguments": {**arguments, "strategy": resolution.strategy, "summary": summary[:1000]}
-        }
+        update={"arguments": {**arguments, "strategy": resolution.strategy, "summary": summary}}
     )
     final_brief = answered_brief(brief, resolution.strategy)
     final_snapshot = _enrich_best_parts_snapshot(
@@ -4548,6 +4567,23 @@ async def _gate_unresolved_choices(
 
 # The apply-strategy summary holds 1000 characters (``ApplyStrategyArguments``).
 _SUMMARY_BUDGET = 1000
+
+
+def _summary_with_notices(summary: str, notices: Sequence[str]) -> str:
+    """The draft summary followed by the server's own notices, inside the summary budget.
+
+    A notice tells the creator something the draft cannot keep quiet (KRI-848: which song,
+    and that it is not the genre asked for), so when the two do not fit it is the model's
+    own text that is cut, never a notice.
+    """
+    tail = " ".join(notice for notice in notices if notice)
+    if not tail:
+        return summary.strip()[:_SUMMARY_BUDGET]
+    room = max(0, _SUMMARY_BUDGET - len(tail) - 1)
+    head = summary.strip()
+    if len(head) > room:
+        head = head[:room].rstrip()
+    return " ".join(part for part in (head, tail) if part)[:_SUMMARY_BUDGET]
 
 
 def _with_narration_note(
