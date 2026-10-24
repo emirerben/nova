@@ -392,6 +392,8 @@ def beat_miss_sentence(trigger: str, reason: str | None) -> str:
     problem; `visual_is_video` means the video can't pop in on this render
     (KRI-521); `sound_not_found` means the sound was; `no_safe_
     spot`/`too_short`/`overlap` means there was no safe window to show it;
+    `fullscreen_overlap` (KRI-840) means another full-screen photo held the screen;
+    `fullscreen_not_enabled` means full screen was switched off after approval;
     anything else (`bind_failed`, `compile_dropped`, `error: ...`) is an
     internal render-pipeline hiccup, reported honestly but generically.
     """
@@ -405,6 +407,12 @@ def beat_miss_sentence(trigger: str, reason: str | None) -> str:
         return f'Couldn\'t find a sound for "{trigger}" in the library'
     if reason in _MISS_REASON_NO_ROOM:
         return f'No room to show "{trigger}" without covering your face or the captions'
+    if reason == "fullscreen_overlap":
+        # KRI-840: another full-screen photo was already on screen at that moment.
+        return f'Another full-screen photo was already on screen when you said "{trigger}"'
+    if reason == "fullscreen_not_enabled":
+        # An edit approved before full screen was switched off: say so, not "hiccup".
+        return f"Full screen isn't available for this edit right now, so \"{trigger}\" wasn't shown"
     if reason == "occurrence_cap":
         # KRI-550: one entry per hit past `phone_reaction_grounding`'s caps; the
         # earlier hits of the same word did get their photo or sound.

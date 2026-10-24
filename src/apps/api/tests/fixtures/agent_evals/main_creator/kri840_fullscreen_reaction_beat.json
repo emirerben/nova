@@ -1,0 +1,412 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-10-23-v71",
+  "input": {
+    "user_message": "When he says \"Argentinian\", show the grill photo full screen for a moment. When he says chimichurri, show the chimichurri photo as a small card in the corner.",
+    "creator_request": "When he says \"Argentinian\", show the grill photo full screen for a moment. When he says chimichurri, show the chimichurri photo as a small card in the corner.",
+    "creator_context": "{'summary': '', 'tone': 'casual', 'audience': '', 'content_pillars': [], 'style': {}}",
+    "creator_direction": "",
+    "item_context": "{'idea': 'Waiter at Don Julio explains the table sauces', 'theme': '', 'creator_notes': '', 'filming_guide': [], 'current_edit_format': 'subtitled', 'current_audio_mode': 'original', 'has_recorded_voiceover': False}",
+    "media_context": [
+      {
+        "media_id": "phone-a",
+        "kind": "video",
+        "duration_s": 12.9,
+        "creator_note": "waiter explains the sauces, talking to camera"
+      },
+      {
+        "media_id": "asset-7c1d5c0e-4f3e-4c58-9a35-5a2b1d0c9e01",
+        "kind": "image",
+        "duration_s": null,
+        "creator_context": null,
+        "filename": "don_julio_grill.jpg",
+        "analysis_only_not_copy": {}
+      },
+      {
+        "media_id": "asset-7c1d5c0e-4f3e-4c58-9a35-5a2b1d0c9e02",
+        "kind": "image",
+        "duration_s": null,
+        "creator_context": null,
+        "filename": "chimichurri.jpg",
+        "analysis_only_not_copy": {}
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-kri840",
+      "edit_format": "subtitled",
+      "render_program": "native",
+      "has_voiceover": false,
+      "narration": null,
+      "current_edit": null,
+      "media": [
+        {
+          "media_id": "phone-a",
+          "kind": "video",
+          "duration_s": 12.9,
+          "label": null
+        },
+        {
+          "media_id": "asset-7c1d5c0e-4f3e-4c58-9a35-5a2b1d0c9e01",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-7c1d5c0e-4f3e-4c58-9a35-5a2b1d0c9e02",
+          "kind": "image",
+          "label": null
+        }
+      ],
+      "catalog": [],
+      "capabilities": {
+        "set_item_intent": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "guided_story": {
+          "available": false,
+          "reason_code": "native_render_required",
+          "reason": "this edit format or audio contract requires the native renderer"
+        },
+        "native_render": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "draft_guided_proposal": {
+          "available": false,
+          "reason_code": "native_render_required",
+          "reason": "this edit format or audio contract requires the native renderer"
+        },
+        "dispatch_render": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "select_ready_variant": {
+          "available": false,
+          "reason_code": "no_ready_variant",
+          "reason": "a ready variant is required before selection"
+        },
+        "caption_style": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "caption styling is disabled by the server"
+        },
+        "automatic_cut": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "automatic speech cuts are disabled by the server"
+        },
+        "guided_voiceover": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "guided voiceover is disabled by the server"
+        },
+        "main_creator_agent": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "execution": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "execution is disabled by the server"
+        },
+        "review": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "review is disabled by the server"
+        },
+        "auto_iteration": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "auto_iteration is disabled by the server"
+        },
+        "guided_conversation": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "guided_direction_confirmation": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "guided_auto_design": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "transitions": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "transitions is disabled by the server"
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "wide_looks cannot render on the iPhone yet"
+        },
+        "media_overlays": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "visual_blocks": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "motion_scenes": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "motion_scenes cannot render on the iPhone yet"
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "sound_effects cannot render on the iPhone yet"
+        },
+        "phone_source_audio": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_still_images": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_visual_videos": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "media_overlays:video_cards": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format_pending_voiceover:narrated_ready": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format_pending_voiceover:narrated_planned": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format_pending_voiceover:narrated": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:montage": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:talking_head": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "talking_head does not render on this iPhone yet"
+        },
+        "phone_format:day_vlog": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:single_hero": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:subtitled": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:narrated": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "narrated does not render on this iPhone yet"
+        },
+        "phone_format:narrated_planned": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "narrated_planned does not render on this iPhone yet"
+        },
+        "phone_format:narrated_ready": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "narrated_ready does not render on this iPhone yet"
+        },
+        "phone_format:slides": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "slides does not render on this iPhone yet"
+        },
+        "reaction_beats": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:montage": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:talking_head": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:day_vlog": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:single_hero": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:subtitled": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:narrated": {
+          "available": false,
+          "reason_code": "format_unavailable",
+          "reason": "narrated is disabled or has no production renderer for this media snapshot"
+        },
+        "edit_format:narrated_planned": {
+          "available": false,
+          "reason_code": "format_unavailable",
+          "reason": "narrated_planned is disabled or has no production renderer for this media snapshot"
+        },
+        "edit_format:narrated_ready": {
+          "available": false,
+          "reason_code": "format_unavailable",
+          "reason": "narrated_ready is disabled or has no production renderer for this media snapshot"
+        },
+        "edit_format:slides": {
+          "available": false,
+          "reason_code": "format_unavailable",
+          "reason": "slides is disabled or has no production renderer for this media snapshot"
+        },
+        "media_overlays:fullscreen": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "manifest_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "brief_enabled": true
+  },
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"When he says \\\"Argentinian\\\", show the grill photo full screen for a moment.\",\n      \"facts\": {\n        \"triggers\": [\n          \"Argentinian\"\n        ],\n        \"display_mode\": \"fullscreen\"\n      }\n    },\n    {\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"When he says chimichurri, show the chimichurri photo as a small card in the corner.\",\n      \"facts\": {\n        \"triggers\": [\n          \"chimichurri\"\n        ],\n        \"display_mode\": \"pip\"\n      }\n    }\n  ],\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"native\",\n      \"edit_format\": \"subtitled\",\n      \"audio_strategy\": \"original_audio\",\n      \"media_scope\": \"selected\",\n      \"story_structure\": [\n        \"Keep the waiter's take as the spine\",\n        \"Cut to the grill photo on Argentinian\",\n        \"Show the chimichurri photo as a corner card\"\n      ],\n      \"pacing\": \"balanced\",\n      \"target_duration_s\": 13,\n      \"render_program\": \"native\",\n      \"selected_media_ids\": [\n        \"phone-a\"\n      ],\n      \"optional_treatments\": [\n        \"overlays\"\n      ],\n      \"caption_style\": \"auto\",\n      \"reaction_beats\": [\n        {\n          \"beat_id\": \"grill\",\n          \"trigger\": \"Argentinian\",\n          \"visual_id\": \"asset-7c1d5c0e-4f3e-4c58-9a35-5a2b1d0c9e01\",\n          \"visual_role\": \"photo\",\n          \"display_mode\": \"fullscreen\",\n          \"hold_s\": 1.2\n        },\n        {\n          \"beat_id\": \"chimichurri\",\n          \"trigger\": \"chimichurri\",\n          \"visual_id\": \"asset-7c1d5c0e-4f3e-4c58-9a35-5a2b1d0c9e02\",\n          \"visual_role\": \"photo\"\n        }\n      ],\n      \"rationale\": \"The grill photo fills the screen for a moment on Argentinian and the chimichurri photo stays a small corner card, with the waiter's voice and captions running the whole time.\"\n    },\n    \"summary\": \"The grill photo fills the screen for a moment when he says Argentinian, and the chimichurri photo pops up as a small card in the corner.\",\n    \"render_intent_evidence\": {\n      \"opening_title\": null,\n      \"font_family\": null,\n      \"text_color\": null\n    }\n  }\n}",
+  "output": {
+    "brief_updates": [
+      {
+        "kind": "style",
+        "scope": "global",
+        "literal": null,
+        "description": "When he says \"Argentinian\", show the grill photo full screen for a moment.",
+        "facts": {
+          "triggers": [
+            "Argentinian"
+          ],
+          "display_mode": "fullscreen"
+        }
+      },
+      {
+        "kind": "style",
+        "scope": "global",
+        "literal": null,
+        "description": "When he says chimichurri, show the chimichurri photo as a small card in the corner.",
+        "facts": {
+          "triggers": [
+            "chimichurri"
+          ],
+          "display_mode": "pip"
+        }
+      }
+    ],
+    "action": {
+      "kind": "propose_strategy",
+      "strategy": {
+        "direction": "native",
+        "edit_format": "subtitled",
+        "audio_strategy": "original_audio",
+        "media_scope": "selected",
+        "story_structure": [
+          "Keep the waiter's take as the spine",
+          "Cut to the grill photo on Argentinian",
+          "Show the chimichurri photo as a corner card"
+        ],
+        "pacing": "balanced",
+        "target_duration_s": 13,
+        "render_program": "native",
+        "selected_media_ids": [
+          "phone-a"
+        ],
+        "optional_treatments": [
+          "overlays"
+        ],
+        "caption_style": "auto",
+        "reaction_beats": [
+          {
+            "beat_id": "grill",
+            "trigger": "Argentinian",
+            "visual_id": "asset-7c1d5c0e-4f3e-4c58-9a35-5a2b1d0c9e01",
+            "visual_role": "photo",
+            "display_mode": "fullscreen",
+            "hold_s": 1.2
+          },
+          {
+            "beat_id": "chimichurri",
+            "trigger": "chimichurri",
+            "visual_id": "asset-7c1d5c0e-4f3e-4c58-9a35-5a2b1d0c9e02",
+            "visual_role": "photo"
+          }
+        ],
+        "rationale": "The grill photo fills the screen for a moment on Argentinian and the chimichurri photo stays a small corner card, with the waiter's voice and captions running the whole time."
+      },
+      "summary": "The grill photo fills the screen for a moment when he says Argentinian, and the chimichurri photo pops up as a small card in the corner.",
+      "render_intent_evidence": {
+        "opening_title": null,
+        "font_family": null,
+        "text_color": null
+      }
+    }
+  },
+  "meta": {
+    "source": "hand_authored_not_live_recorded",
+    "fullscreen_reaction_beats": {
+      "fullscreen": {
+        "grill": 1.5
+      },
+      "corner": [
+        "chimichurri"
+      ],
+      "brief_display": {
+        "Argentinian": "fullscreen",
+        "chimichurri": "pip"
+      }
+    },
+    "notes": "KRI-840: HAND-AUTHORED cassette, NOT live-recorded (no model/API call was made). Don Julio T2: a full-screen photo at a spoken word is a reaction beat with display_mode fullscreen and hold_s for 'a moment' (<= 1.5), never overlay_display; the corner card stays pip (omitted). The brief records display_mode for both asks. Live re-record pending behind the paid-eval approval."
+  }
+}
