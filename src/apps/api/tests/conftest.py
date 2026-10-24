@@ -69,6 +69,26 @@ def _fresh_async_engine_pool() -> None:
         database.engine.sync_engine.dispose(close=False)
 
 
+@pytest.fixture(autouse=True)
+def _caption_translation_never_reaches_a_provider(monkeypatch) -> None:
+    """KRI-838: the caption translator is a paid OpenAI call that fails open.
+
+    A render test that asks for captions in another language reaches it whenever the
+    hinted text is not already in that language; without this, such a test would try to
+    open a real connection. The blocked call raises, which is exactly the provider-down
+    path (the original words come back, honestly labelled). Tests that want a
+    translation stub ``_llm_translate_lines`` themselves; the module's own provider
+    tests keep the real function from before this fixture runs.
+    """
+
+    from app.pipeline import caption_translate  # noqa: PLC0415
+
+    def _blocked(*args, **kwargs):
+        raise RuntimeError("caption translation provider call blocked in tests")
+
+    monkeypatch.setattr(caption_translate, "_llm_translate_lines", _blocked)
+
+
 @pytest.fixture(scope="module")
 def _build_task_table_lock():
     """Serialize modules that destructively share the build_task table.

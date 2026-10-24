@@ -1309,6 +1309,17 @@ class Settings(BaseSettings):
     subtitled_caption_correction_enabled: bool = True
     caption_correction_model: str = "gpt-4o"
 
+    # Caption translation (KRI-838): a whisper language hint does not reliably translate (a
+    # Turkish hint on English speech wrote the English again in local tests), so when the
+    # creator asks for captions in another language and the hinted text is not in it, one
+    # structured model call translates the caption lines (app/pipeline/caption_translate.py).
+    # Fail-open: any failure keeps the spoken-language words and the variant is stamped
+    # with the language the text really is. Kill switch: set False and restart api +
+    # worker (the pre-approval promise reads the same flag). Empty model = the caption
+    # correction model above. ~$0.005/render, only on renders that ask for a language.
+    caption_translation_enabled: bool = True
+    caption_translation_model: str = ""
+
     # Caption punctuation restoration: whisper-1's word-level timestamps strip
     # punctuation/capitalization (it lives only in the full-text transcript).
     # align_punctuated_text() in transcribe.py restores it onto the timed word

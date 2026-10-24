@@ -58,6 +58,13 @@ from app.kria.style_asks import (
     text_look_facts,
     value_matches,
 )
+from app.pipeline.caption_language import (
+    ASK_END,
+    LANGUAGE_NAMES,
+    LANGUAGE_WORDS,
+    can_deliver_caption_language,
+    caption_language_verdict,
+)
 from app.pipeline.caption_spelling import extract_spelling_asks, is_mishearing
 from app.pipeline.explicit_speech_cut import speech_cut_tokens
 from app.pipeline.sequence_text_evidence import complete_sequences, sequence_lineage
@@ -2787,9 +2794,9 @@ def _caption_language_fact(req: BriefRequirement) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     code = value.strip().casefold().replace("_", "-").split("-")[0]
-    if code in _LANGUAGE_NAMES:
+    if code in LANGUAGE_NAMES:
         return code
-    return _LANGUAGE_WORDS.get(loose_text(value).strip())
+    return LANGUAGE_WORDS.get(loose_text(value).strip())
 
 
 def _wants_whole_take(req: BriefRequirement) -> bool:
@@ -5711,47 +5718,22 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
 _LEADING_ARTICLE_RE = re.compile(r"^(?:the|a|an|my|our|that|this|these|those|some|bu)\s+")
 _EXCERPT_CHARS = 110
 
-_LANGUAGE_NAMES: dict[str, tuple[str, str]] = {
-    "en": ("English", "İngilizce"),
-    "tr": ("Turkish", "Türkçe"),
-    "de": ("German", "Almanca"),
-    "es": ("Spanish", "İspanyolca"),
-    "fr": ("French", "Fransızca"),
-    "it": ("Italian", "İtalyanca"),
-    "ar": ("Arabic", "Arapça"),
-    "nl": ("Dutch", "Felemenkçe"),
-    "pt": ("Portuguese", "Portekizce"),
-}
-# Every spelling a creator types (diacritics stripped, see `loose_text`) -> language code.
-_LANGUAGE_WORDS: dict[str, str] = {
-    "english": "en",
-    "ingilizce": "en",
-    "turkish": "tr",
-    "turkce": "tr",
-    "german": "de",
-    "almanca": "de",
-    "spanish": "es",
-    "ispanyolca": "es",
-    "french": "fr",
-    "fransizca": "fr",
-    "italian": "it",
-    "italyanca": "it",
-    "arabic": "ar",
-    "arapca": "ar",
-    "dutch": "nl",
-    "hollandaca": "nl",
-    "felemenkce": "nl",
-    "portuguese": "pt",
-    "portekizce": "pt",
-}
-_LANG_ALT = "|".join(sorted(_LANGUAGE_WORDS, key=len, reverse=True))
+# The language table (names and every creator spelling) is shared with the dispatcher and the
+# worker: app/pipeline/caption_language.py (KRI-838).
+_LANG_ALT = "|".join(sorted(LANGUAGE_WORDS, key=len, reverse=True))
 _CAPTION_WORD = r"(?:sub\s*titles?|captions?|altyazi\w*)"
 # Most specific first: "translate the captions to English" names the target outright.
 _CAPTION_LANGUAGE_PATTERNS = (
     re.compile(rf"\btranslat\w*\s+(?:\w+\s+){{0,3}}?(?:in|into|to)\s+({_LANG_ALT})\b"),
     re.compile(rf"\b({_LANG_ALT})\s+{_CAPTION_WORD}"),
     re.compile(rf"\b{_CAPTION_WORD}\s+(?:in|into|to|as)\s+({_LANG_ALT})\b"),
-    re.compile(rf"\baltyazi\w*\s+({_LANG_ALT})\b"),
+    # "altyazılar Türkçe", and (KRI-838) the bare English wordings the patterns above miss:
+    # "make the subtitles Spanish", "subtitles should be Spanish". Only when the language
+    # closes the ask (`ASK_END`): "captions Spanish food intro", "subtitles Italian
+    # restaurant style" and "captions Dutch oven" name a topic, not the captions' language.
+    re.compile(
+        rf"\b{_CAPTION_WORD}\s+(?:(?:\w+\s+){{0,2}}?(?:be|are|is)\s+)?({_LANG_ALT})\b{ASK_END}"
+    ),
     re.compile(rf"\b({_LANG_ALT})\s+(?:olarak|cevir\w*)"),
 )
 _SPELLING_RE = re.compile(r"\b(?:spell\w*|exact\w*|yazim\w*|dogru yaz\w*)\b")
@@ -5974,13 +5956,33 @@ def _requested_caption_language(req: BriefRequirement) -> str | None:
     for pattern in _CAPTION_LANGUAGE_PATTERNS:
         found = pattern.search(wording)
         if found:
-            return _LANGUAGE_WORDS[found.group(1)]
+            return LANGUAGE_WORDS[found.group(1)]
     return None
 
 
 def _language_name(code: str) -> str:
-    english, turkish = _LANGUAGE_NAMES.get(code, (code.upper(), code.upper()))
+    english, turkish = LANGUAGE_NAMES.get(code, (code.upper(), code.upper()))
     return say(en=english, tr=turkish)
+
+
+def _read_caption_language(
+    lines: Sequence[str], asked: str, names: Sequence[str] = ()
+) -> str | None:
+    """The language the caption TEXT is in when it settles the ask, else None (KRI-838).
+
+    A render's ``caption_language`` is a label the worker stamped; the lines are what the
+    creator sees. whisper hinted to Turkish on English speech wrote English, and the label
+    said "tr", so a label-only check called English captions Turkish ("Done"). The text
+    outranks the label: the asked language when the lines are clearly in it, the language
+    they are clearly in otherwise, None when they are too short or mixed to say (the label
+    then stands). The creator's own spelling targets carry no language evidence.
+    """
+    verdict, detected = caption_language_verdict(lines, asked, ignore_terms=tuple(names))
+    if verdict == "confirmed":
+        return asked
+    if verdict == "contradicted":
+        return detected
+    return None
 
 
 def _check_caption_language(
@@ -5989,6 +5991,11 @@ def _check_caption_language(
     """The captions' language against the one the creator asked for. Spelling of names
     stays unchecked, and the reason says so when the ask was about spelling."""
     rendered = str(facts.caption_language or "").casefold().split("-")[0]
+    if facts.caption_texts:
+        rendered = (
+            _read_caption_language(facts.caption_texts, asked, _spelled_names(req) or ())
+            or rendered
+        )
     note = ""
     if _SPELLING_RE.search(loose_text(_req_text(req))):
         note = " " + say(
@@ -6103,7 +6110,7 @@ def _asked_caption_language(req: BriefRequirement) -> str | None:
     for pattern in _LOOSE_CAPTION_LANGUAGE_PATTERNS:
         match = pattern.search(wording)
         if match:
-            return _LANGUAGE_WORDS[match.group(1)]
+            return LANGUAGE_WORDS[match.group(1)]
     return None
 
 
@@ -6186,7 +6193,7 @@ def _clean_name(name: str) -> str | None:
     if not words:
         return None
     core = loose_text(" ".join(words))
-    if core in _LANGUAGE_WORDS or _CAPTION_RE.search(core):
+    if core in LANGUAGE_WORDS or _CAPTION_RE.search(core):
         return None
     return " ".join(words)
 
@@ -6421,7 +6428,10 @@ def _check_caption_words(req: BriefRequirement, facts: PlanFacts) -> Requirement
     unsure: list[str] = []
     rendered = str(facts.caption_language or "").casefold().split("-")[0]
     asked = _asked_caption_language(req)
+    names = _spelled_names(req)
     if asked is not None:
+        # The lines outrank the label (KRI-838): English words under a "tr" stamp are not Turkish.
+        rendered = _read_caption_language(lines, asked, names or ()) or rendered
         if not rendered:
             unsure.append(
                 say(
@@ -6456,7 +6466,6 @@ def _check_caption_words(req: BriefRequirement, facts: PlanFacts) -> Requirement
                 tr="Altyazılar kelime kelime değil, tam cümleler olarak açık.",
             )
         )
-    names = _spelled_names(req)
     if _asks_spelling(req):
         if not names:
             unsure.append(
@@ -6552,14 +6561,25 @@ def _caption_words_plan(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     names = _spelled_names(req)
     if asked is not None:
         language = _language_name(asked)
-        parts.append(
-            say(en=f"they'll be in {language}", tr=f"altyazılar {language} olacak")
-            if names or _asks_spelling(req)
-            else say(
-                en=f"they'll be in {language}, and I'll check that in the finished video",
-                tr=f"altyazılar {language} olacak, bunu bitmiş videoda kontrol edeceğim",
+        if not can_deliver_caption_language(asked):
+            # KRI-838: Nova cannot write captions in this language yet. Say so before the
+            # creator approves, never promise it and render the spoken language.
+            parts.append(
+                say(
+                    en=f"I can't make {language} captions yet, so they'll be in the language "
+                    "that's spoken",
+                    tr=f"Altyazıları şimdilik {language} yapamıyorum, konuşulan dilde olacaklar",
+                )
             )
-        )
+        else:
+            parts.append(
+                say(en=f"they'll be in {language}", tr=f"altyazılar {language} olacak")
+                if names or _asks_spelling(req)
+                else say(
+                    en=f"they'll be in {language}, and I'll check that in the finished video",
+                    tr=f"altyazılar {language} olacak, bunu bitmiş videoda kontrol edeceğim",
+                )
+            )
     if names:
         one = len(names) == 1
         parts.append(
