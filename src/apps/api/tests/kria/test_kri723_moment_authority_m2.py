@@ -22,12 +22,21 @@ F4  Requested order is confused with source order: a hello wave the creator poin
 F6  The creator's window is altered after approval (re-centred, trimmed, re-selected), or a
     tampered envelope renders anyway.
 F7  A stale / incomplete / out-of-bounds / overlapping answer is accepted.
-F9  The question loops: a creator who answers in free text is asked again and again.
+F9  An unanswered card turns into guessed windows: a creator who replies in free text gets
+    an approvable draft of ordinal windows (owner decision: ask BEFORE approval). The card
+    itself always offers skip / "you pick", so asking again is never a dead end.
 F10 The answer's echo carries times or digits a model could read as new timing asks.
 F11 A reworded moment keeps its stale pin; unchanged moments lose theirs.
 F12 Old clients (and every edit without named moments) change behaviour beyond an honest
     receipt: their length plan stays v1 and byte-identical, and they are never blocked.
 F17 Turkish chats get an English question.
+F18 A licensed-music montage (the default; the frozen section owns the length) asks, then
+    drops the answer for ordinal windows.
+F19 A pointed window that ends a frame past the take (inside the answer's slack) is clamped
+    in the window but not in the record, so the approved plan fails at render.
+F20 Pins that cannot all be placed silently fall back to ordinal windows (no conflict).
+F21 Pins leak past the dark question gate: an app that cannot answer gets a v2 envelope (an
+    older worker refuses it) with no kill switch.
 
 Offline: the real server gate, length plan, phone unified montage worker and receipts on
 prod's recorded M2 brief, strategy and clip record. No model call anywhere (the gate makes
@@ -321,10 +330,11 @@ async def test_ordinal_energy_windows_never_read_as_the_named_moments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """F1 + F12: an app that cannot answer gets today's six windows (v1, byte-identical) and a
-    buildable draft, but the receipt never claims the actions: an honest format limit."""
+    buildable draft, but the receipt never claims the actions: an honest format limit. The
+    grounded bite is not pinned either: pins stay dark with the question."""
     render = RENDERS[0]
     result = await gate(monkeypatch, render, answers=False)
-    assert result.plan.mode == "act"
+    assert result.plan.mode == "act", result.plan.response
     media = gate_media(result)
     assert media["length_plan"]["version"] == 1 and "moments" not in media["length_plan"]
     assert len(take_windows(media)) == 6
@@ -437,20 +447,21 @@ async def test_skip_and_you_pick_are_recorded_never_claimed(
     assert take_windows(gate_media(result))[:4] == list(POINTED.values())[:4]
 
 
-# -- C6: asked once ---------------------------------------------------------------------------
+# -- C6: asked until answered ------------------------------------------------------------------
 
 
-async def test_a_free_text_reply_is_not_asked_again(monkeypatch: pytest.MonkeyPatch) -> None:
-    """F9: the creator ignored the card: the draft proceeds with an honest receipt."""
+async def test_a_free_text_reply_never_becomes_guessed_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F9: the creator ignored the card: the same card comes back, no approvable draft."""
     render = RENDERS[0]
     question = question_of(await gate(monkeypatch, render))
     events = [
         ("assistant", {MOMENT_ORDER_QUESTION_KEY: question, "turn_value": "question"}),
         ("user", {"event_type": "user_message", "content": "just make it"}),
     ]
-    result = await gate(monkeypatch, render, events=events)
-    assert result.plan.mode == "act", result.plan.response
-    assert gate_media(result)["length_plan"]["version"] == 1
+    again = question_of(await gate(monkeypatch, render, events=events))
+    assert again["question_id"] == question["question_id"]
 
 
 # -- C8: a reworded moment is re-asked, the rest keep their pins --------------------------------
@@ -490,3 +501,108 @@ async def test_a_turkish_chat_is_asked_in_turkish(monkeypatch: pytest.MonkeyPatc
     question_of(result)
     assert "an" in result.plan.response.casefold()
     assert "moment" not in result.plan.response.casefold(), result.plan.response
+
+
+# -- C9: a licensed-music bed, the take's last frame, unplaceable pins ---------------------------
+
+
+def _licensed_music(render: dict) -> dict:
+    """The default audio: a frozen catalog section owns the length (``natural_owner`` song)."""
+    render = copy.deepcopy(render)
+    render["strategy"]["audio_strategy"] = "licensed_music"
+    render["strategy"]["selected_music_section"] = {
+        "status": "selected",
+        "track_id": "kri723-bed",
+        "start_s": 10.0,
+        "end_s": 22.0,
+    }
+    return render
+
+
+async def test_a_licensed_music_montage_plays_the_pointed_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F18: the song owns the length; the creator's windows still play, in their order."""
+    render = _licensed_music(RENDERS[0])
+    first = await gate(monkeypatch, render)
+    question = question_of(first)
+    result = await gate(monkeypatch, render, events=answered_events(question, answer_for(question)))
+    assert result.plan.mode == "act", result.plan.response
+    plan = gate_media(result)["length_plan"]
+    assert plan["natural_owner"] == "song", plan["natural_owner"]
+    assert plan["version"] == 2 and not plan["conflicts"]
+    assert take_windows(gate_media(result)) == list(POINTED.values())
+    assert {m["origin"] for m in plan["moments"]} == {"creator_answer"}
+    record("C9-licensed-music", windows=plan["windows"], moments=plan["moments"])
+
+
+async def test_a_window_pointed_to_the_last_frame_renders(monkeypatch: pytest.MonkeyPatch) -> None:
+    """F19: the answer ends 0.05 s past the take (accepted slack); the approved plan renders and
+    its record holds the window that plays."""
+    render = RENDERS[0]
+    question = question_of(await gate(monkeypatch, render))
+    pointed = dict(POINTED)
+    pointed["Caro's bye-bye wave"] = (TAKE_S - 2.0, TAKE_S + 0.05)
+    answer = answer_for(question, pointed)
+    validate_moment_order_answer(answer, question)
+    result = await gate(monkeypatch, render, events=answered_events(question, answer))
+    assert result.plan.mode == "act", result.plan.response
+    media = gate_media(result)
+    last = media["length_plan"]["moments"][-1]
+    # The plan's source measures 68.367 s (the question showed 68.37): the window ends there,
+    # and the record holds exactly that window.
+    assert last["source_end_s"] == take_windows(media)[-1][1]
+    assert take_windows(media)[-1][1] == pytest.approx(TAKE_S, abs=0.01)
+    outcome = run_worker(
+        monkeypatch,
+        render,
+        brief=m2_brief_with_moment_ask(render),
+        media=media,
+        strategy=gate_strategy(result),
+    )
+    assert outcome.refusal is None, outcome.refusal
+    receipts = {row["requirement_id"]: row for row in outcome.receipts}
+    assert receipts["r1"]["status"] == "met", receipts["r1"]
+
+
+async def test_pins_that_cannot_fit_block_with_a_question(monkeypatch: pytest.MonkeyPatch) -> None:
+    """F20: the creator points at four moments so wide the two left to Kria cannot get their
+    asked 2 s anywhere: a blocking question, never ordinal windows."""
+    render = RENDERS[0]
+    question = question_of(await gate(monkeypatch, render))
+    pointed = {
+        "Caro arriving with the black tray": (0.0, 17.0),
+        "her hello wave": (17.5, 34.0),
+        "the plate pushed close to the camera": (34.5, 51.0),
+        "Caro's bye-bye wave": (51.5, TAKE_S),
+    }
+    answer = answer_for(question, pointed)
+    by_words = {_words(row["words"]): row for row in question["moments"]}
+    for words in ("Atakan's first bite", "his thumbs-up"):
+        answer["answers"].insert(
+            3, {"moment_key": by_words[_words(words)]["moment_key"], "action": "delegate"}
+        )
+    validate_moment_order_answer(answer, question)
+    result = await gate(monkeypatch, render, events=answered_events(question, answer))
+    assert result.plan.mode == "respond", result.plan
+    assert "moments" in result.plan.response, result.plan.response
+
+
+# -- C10: a photo beside the take --------------------------------------------------------------
+
+
+async def test_a_photo_beside_the_take_is_never_asked_about(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F22: the length plan pins moments only in an all-video edit, so a selected photo next to
+    the take must not get a question whose answer would then be dropped for ordinal windows."""
+    render = copy.deepcopy(RENDERS[0])
+    photo = {"media_id": "kri723-photo", "kind": "image", "duration_s": 0.0, "analysis": {}}
+    render["media_snapshot"]["clip_assignments"].append(photo)
+    selected = render["strategy"].get("selected_media_ids")
+    if selected:
+        selected.append(photo["media_id"])
+    result = await gate(monkeypatch, render)
+    assert getattr(result.plan, "moment_order_question", None) is None, result.plan
+    media = gate_media(result)
+    assert (media.get("length_plan") or {}).get("version", 1) == 1

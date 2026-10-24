@@ -2438,10 +2438,24 @@ def _source_coverage(
             "single_hero_order_conflict",
             "insufficient_media",
             "duration_out_of_bounds",
+            "named_moments_unplaceable",
         }
     ):
         return None
-    if "single_hero_order_conflict" in codes:
+    if "named_moments_unplaceable" in codes:
+        # KRI-723: the creator's pointed moments leave no room for the rest at this length.
+        reason = say(
+            en=(
+                "Your moments can't all get their own part of this clip at this length. "
+                "Ask for a different length, or name fewer moments."
+            ),
+            tr=(
+                "Saydığın anların hepsi bu uzunlukta klipte kendi yerini alamıyor. Başka bir "
+                "uzunluk iste ya da daha az an say."
+            ),
+        )
+        label = "Update the selected clips"
+    elif "single_hero_order_conflict" in codes:
         reason = say(
             en=(
                 "The selected order conflicts with the single-hero composition. "

@@ -572,9 +572,10 @@ def select_pinned_moment_windows(
     ``pins`` are ``named_moments.Pin.json()`` rows. A ``creator_answer`` window is the
     creator's exact interval: never re-centred, trimmed or moved. A ``grounded`` moment gets
     a ``width_s`` window as close to its evidenced interval as the creator's windows allow;
-    an ``ai_pick_by_request`` one (the creator said "you pick") the strongest analysed moment
-    still free, else the middle of the widest free stretch. ``None`` when a window cannot be
-    placed without overlapping another (the caller keeps the plain windows).
+    an ``ai_pick_by_request`` one (the creator said "you pick") or an ``unlocated`` one (an app
+    that could not ask) the strongest analysed moment still free, else the middle of the
+    widest free stretch. ``None`` when a window cannot be placed without overlapping another
+    (the caller turns that into a length conflict, never guessed windows).
     """
     media_id, duration, analysis = _source_fields(source)
     if not media_id or duration <= 0 or not pins:
@@ -589,6 +590,8 @@ def select_pinned_moment_windows(
         if start is None or end is None or not 0 <= start < end:
             return None
         end = min(end, duration)
+        if end - start < MIN_INCLUDED_PART_S:
+            return None
         parts[index] = BestPart(media_id, round(start, 3), round(end, 3), 0.0, "creator_answer")
         taken.append((start, end))
     ranked = sorted(
@@ -602,24 +605,54 @@ def select_pinned_moment_windows(
         ),
         key=lambda row: (-row[0], row[1]),
     )
+    # Evidence first: a grounded moment claims its interval before any free pick can.
     for index, pin in enumerate(pins):
-        origin = pin.get("origin")
-        if origin == "grounded":
-            start, end = _number(pin.get("source_start_s")), _number(pin.get("source_end_s"))
-            if start is None or end is None:
-                return None
-            found = _next_moment(duration, [(1.0, start, end)], taken, width, 0.0)
-            reason = "grounded_moment"
-        elif origin == "ai_pick_by_request":
-            found = _next_moment(duration, ranked, taken, width, MOMENT_GAP_S) or _fill(
-                duration, taken, width, MOMENT_GAP_S
-            )
-            reason = "ai_pick_by_request"
-        else:
+        if pin.get("origin") != "grounded":
             continue
+        start, end = _number(pin.get("source_start_s")), _number(pin.get("source_end_s"))
+        if start is None or end is None:
+            return None
+        found = _next_moment(duration, [(1.0, start, end)], taken, width, 0.0)
         if found is None:
             return None
         at = found[0]
+        parts[index] = BestPart(
+            media_id, round(at, 3), round(at + width, 3), 0.0, "grounded_moment"
+        )
+        taken.append((at, at + width))
+    anchors = [part is not None for part in parts]
+    # Then each free pick, in the creator's order, inside its share of the stretch between the
+    # moments around it (so unlocated moments keep the asked order, like ordinal windows did);
+    # anywhere free when that stretch cannot hold it.
+    for index, pin in enumerate(pins):
+        origin = pin.get("origin")
+        if origin not in ("ai_pick_by_request", "unlocated"):
+            continue
+        before = [part for part in parts[:index] if part is not None]
+        lo = before[-1].source_end_s if before else 0.0
+        later = [i for i in range(index + 1, len(pins)) if anchors[i]]
+        hi = parts[later[0]].source_start_s if later else duration  # type: ignore[union-attr]
+        run = sum(
+            1
+            for i in range(index, later[0] if later else len(pins))
+            if pins[i].get("origin") in ("ai_pick_by_request", "unlocated")
+        )
+        found = None
+        if hi - lo >= width:
+            share = lo + (hi - lo) / max(run, 1)
+            bounds = [*taken, *([(0.0, lo)] if lo > 0 else []), (max(share, lo + width), duration)]
+            found = _next_moment(duration, ranked, bounds, width, MOMENT_GAP_S) or _fill(
+                duration, bounds, width, MOMENT_GAP_S
+            )
+        found = (
+            found
+            or _next_moment(duration, ranked, taken, width, MOMENT_GAP_S)
+            or _fill(duration, taken, width, MOMENT_GAP_S)
+        )
+        if found is None:
+            return None
+        at = found[0]
+        reason = "ai_pick_by_request" if origin == "ai_pick_by_request" else "unlocated_moment"
         parts[index] = BestPart(media_id, round(at, 3), round(at + width, 3), 0.0, reason)
         taken.append((at, at + width))
     placed = tuple(part for part in parts if part is not None)

@@ -678,32 +678,17 @@ def _moment_or_quote_windows(
         or any(source["kind"] != "video" for source in sources)
     ):
         return None
+    creator_each_s, creator_length_s = moment_each_s, creator_target_s
     if natural_owner == "song":
         moment_count = moment_max_s = moment_each_s = None
         if creator_target_s is None:
             creator_target_s = natural_duration_s
-    if pinned_moments and natural_owner == "footage" and len(sources) == 1:
-        # KRI-723: the creator's named moments of the one take, each where it really is.
-        fixed = sum(
-            (_number(pin.get("source_end_s")) or 0.0) - (_number(pin.get("source_start_s")) or 0.0)
-            for pin in pinned_moments
-            if pin.get("origin") == "creator_answer"
+    if pinned_moments and len(sources) == 1:
+        # KRI-723: the creator's named moments of the one take, each where it really is,
+        # whoever owns the length (a licensed-music bed follows the creator's windows).
+        return _pinned_moment_windows(
+            sources[0], pinned_moments, creator_target_s, creator_each_s, creator_length_s
         )
-        flexible = sum(1 for pin in pinned_moments if pin.get("origin") != "creator_answer")
-        # The creator's own length for each moment wins; else what their total leaves.
-        width = moment_each_s or DEFAULT_MOMENT_S
-        if (
-            moment_each_s is None
-            and creator_target_s is not None
-            and flexible
-            and creator_target_s - fixed > 0
-        ):
-            width = (creator_target_s - fixed) / flexible
-        pinned_windows = select_pinned_moment_windows(
-            sources[0], pinned_moments, width_s=max(width, 0.8)
-        )
-        if pinned_windows is not None:
-            return pinned_windows
     pinned: tuple[str, float, float] | None = None
     if isinstance(closing_quote, Mapping) and closing_quote.get("status") == "found":
         media_id = closing_quote.get("media_id")
@@ -762,6 +747,57 @@ def _moment_or_quote_windows(
     )
 
 
+def _pinned_moment_windows(
+    source: Mapping[str, Any],
+    pins: Sequence[Mapping[str, Any]],
+    target_s: float | None,
+    each_s: float | None,
+    creator_length_s: float | None,
+) -> BestPartsResult:
+    """The pinned windows, or a blocking conflict: a creator's answer is never dropped for
+    ordinal windows (KRI-723)."""
+    fixed = sum(
+        (_number(pin.get("source_end_s")) or 0.0) - (_number(pin.get("source_start_s")) or 0.0)
+        for pin in pins
+        if pin.get("origin") == "creator_answer"
+    )
+    flexible = sum(1 for pin in pins if pin.get("origin") != "creator_answer")
+    # The creator's own length for each moment wins; else what the total leaves.
+    width = each_s or DEFAULT_MOMENT_S
+    if each_s is None and target_s is not None and flexible and target_s - fixed > 0:
+        width = (target_s - fixed) / flexible
+    width = max(width, 0.8)
+    widths = [width]
+    if each_s is None and creator_length_s is None:
+        # No length of the creator's to keep: shorter flexible windows may still fit.
+        while widths[-1] > 0.8:
+            widths.append(max(0.8, widths[-1] * 0.75))
+    for candidate in widths:
+        placed = select_pinned_moment_windows(source, pins, width_s=candidate)
+        if placed is not None:
+            return placed
+    duration = _number(source.get("duration_s")) or 0.0
+    requested = round(fixed + flexible * widths[-1], 3)
+    return BestPartsResult(
+        (),
+        round(target_s if target_s is not None else requested, 3),
+        0.0,
+        round(duration, 3),
+        (
+            BestPartsConflict(
+                NAMED_MOMENTS_UNPLACEABLE,
+                requested,
+                round(duration, 3),
+                "The named moments cannot all get their own window in this clip.",
+            ),
+        ),
+    )
+
+
+# KRI-723: the creator's moments cannot all be placed (``choice_questions`` asks about it).
+NAMED_MOMENTS_UNPLACEABLE = "named_moments_unplaceable"
+
+
 def _moments_record(
     pins: Sequence[Mapping[str, Any]], windows: Sequence[Mapping[str, Any]]
 ) -> list[dict[str, Any]] | None:
@@ -776,7 +812,12 @@ def _moments_record(
     for index, (pin, window) in enumerate(zip(pins, windows, strict=True)):
         if window.get("reason") not in _MOMENT_WINDOW_REASONS.get(str(pin.get("origin")), ()):
             return None
-        out.append({**dict(pin), "media_id": window["media_id"], "window_index": index})
+        row = {**dict(pin), "media_id": window["media_id"], "window_index": index}
+        if pin.get("origin") == "creator_answer":
+            # The window that plays IS the creator's interval (ends at the take's end).
+            row["source_start_s"] = window["source_start_s"]
+            row["source_end_s"] = window["source_end_s"]
+        out.append(row)
     return out
 
 
@@ -784,6 +825,7 @@ _MOMENT_WINDOW_REASONS = {
     "creator_answer": ("creator_answer",),
     "grounded": ("grounded_moment",),
     "ai_pick_by_request": ("ai_pick_by_request",),
+    "unlocated": ("unlocated_moment",),
 }
 
 
@@ -931,6 +973,9 @@ def read_length_plan(
                 # into unused original footage; never overlap another cut,
                 # repeat frames, change speed or relax source-identity checks.
                 shifted_start = round(end - approved_duration, 6)
+                # A creator-pointed window (KRI-723) is never moved: only its end is clamped.
+                if window.get("reason") == "creator_answer":
+                    shifted_start = -1.0
                 if shifted_start >= 0 and not _overlaps_other_approved_window(
                     windows, window, shifted_start, end
                 ):

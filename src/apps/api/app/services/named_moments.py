@@ -55,7 +55,10 @@ _DURATION_SLACK_S = 0.1
 ORIGIN_GROUNDED = "grounded"
 ORIGIN_ANSWER = "creator_answer"
 ORIGIN_DELEGATED = "ai_pick_by_request"
-ORIGINS = frozenset({ORIGIN_GROUNDED, ORIGIN_ANSWER, ORIGIN_DELEGATED})
+# A moment nobody located (an app that cannot answer the question): it plays the strongest
+# free analysed stretch and its receipt says "couldn't find it", never met.
+ORIGIN_UNLOCATED = "unlocated"
+ORIGINS = frozenset({ORIGIN_GROUNDED, ORIGIN_ANSWER, ORIGIN_DELEGATED, ORIGIN_UNLOCATED})
 
 # The answer as models read it (KRI-575 / KRI-694): no digits, no times, no request words.
 MOMENT_ORDER_ANSWER_MESSAGE = "I showed you where each of my moments is."
@@ -205,7 +208,13 @@ def named_moments(
     selected = {str(v) for v in strategy.get("selected_media_ids") or []}
     if selected:
         videos = {media_id: row for media_id, row in videos.items() if media_id in selected}
-    if len(videos) != 1:
+    # The length plan pins moments only in an all-video edit: never ask what it cannot play.
+    if len(videos) != 1 or any(
+        isinstance(r, Mapping)
+        and r.get("kind", "video") != "video"
+        and (not selected or str(r.get("media_id")) in selected)
+        for r in media_snapshot.get("clip_assignments") or []
+    ):
         return None
     take, row = next(iter(videos.items()))
     moments: list[NamedMoment] = []
@@ -535,19 +544,25 @@ def decide(
     found = sum(1 for g in groundings.values() if g.status == "grounded")
     if len(answered) == len(by_key):
         order = [key for key in fold.order if key in by_key]
+        # Answers to an earlier question (a moment reworded back) keep their place too.
+        order += [key for key in by_key if key not in order]
         return _pins(moment_set, order, answered, groundings, found)
+    if not can_ask:
+        # Dark with the question (moment_order_min_client_protocol): an app that cannot answer
+        # keeps today's v1 windows byte-identical, with an honest receipt.
+        return MomentDecision(found=found, total=len(by_key))
     missing = [
         key for key in by_key if key not in answered and groundings[key].status != "grounded"
     ]
     if not missing:
         return _pins(moment_set, list(by_key), answered, groundings, found)
-    if can_ask and moment_set.digest not in fold.asked:
-        return MomentDecision(
-            question=_question(moment_set, groundings, answered, default_window_s),
-            found=found,
-            total=len(by_key),
-        )
-    return MomentDecision(found=found, total=len(by_key))
+    # Asked until every moment is pointed at, skipped or left to Kria (owner decision
+    # 2026-10-24): an unanswered card never turns into guessed windows.
+    return MomentDecision(
+        question=_question(moment_set, groundings, answered, default_window_s),
+        found=found,
+        total=len(by_key),
+    )
 
 
 def _pins(
@@ -568,6 +583,8 @@ def _pins(
         elif reply is not None and reply.action == "delegate":
             pins.append(Pin(key, moment.words, moment.row, ORIGIN_DELEGATED))
         elif reply is not None:
+            # A proxy's clock may run a frame past the original: the window ends at the take.
+            end = reply.end_s if reply.end_s is None else min(reply.end_s, moment_set.duration_s)
             pins.append(
                 Pin(
                     key,
@@ -575,10 +592,12 @@ def _pins(
                     moment.row,
                     ORIGIN_ANSWER,
                     reply.start_s,
-                    reply.end_s,
+                    end,
                     {"kind": "creator_answer"},
                 )
             )
+        elif groundings[key].status != "grounded" or groundings[key].found is None:
+            pins.append(Pin(key, moment.words, moment.row, ORIGIN_UNLOCATED))
         else:
             interval = groundings[key].found
             assert interval is not None

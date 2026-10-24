@@ -1214,8 +1214,9 @@ def _pinned_cuts(
     spans: Sequence[tuple[str, float, float, bool]],
     record: Sequence[Mapping[str, Any]] | None,
 ) -> list[tuple[int, str]]:
-    """(cut index, the creator's words) of each LOCATED named moment (KRI-723): the take's
-    cuts play the record's windows in order, so its j-th cut is the j-th moment."""
+    """(cut index, the creator's words) of each moment the CREATOR pointed at (KRI-723): the
+    take's cuts play the record's windows in order, so its j-th cut is the j-th moment. A
+    grounded moment's freeze keeps KRI-828's analysed-moment frame instead."""
     if not record:
         return []
     rows = sorted(record, key=lambda m: int(m.get("window_index", 0)))
@@ -1224,7 +1225,7 @@ def _pinned_cuts(
     return [
         (cuts[j], str(row.get("words") or ""))
         for j, row in enumerate(rows)
-        if j < len(cuts) and row.get("origin") in ("creator_answer", "grounded")
+        if j < len(cuts) and row.get("origin") == "creator_answer"
     ]
 
 

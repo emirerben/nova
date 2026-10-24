@@ -676,8 +676,12 @@ read `met`.
   interval) = `ambiguous`; none = `unlocated`. Model prose, even with timestamps, never counts.
 - **Ask before approval.** In `_gate_unresolved_choices`, an unlocated/ambiguous moment on a
   turn stamped `answers_moment_questions` (app protocol >= `moment_order_min_client_protocol`,
-  **999 = dark until the iOS card ships**) returns `moment_order_question` instead of a draft.
-  Asked once per moment-set digest; a free-text reply proceeds with today's windows.
+  **999 = dark until the iOS card ships**) returns `moment_order_question` instead of a draft,
+  and keeps returning it until every moment is pointed at, skipped or left to Kria (a
+  free-text reply never turns into guessed windows). Pins are dark with the question: an app
+  that cannot answer keeps today's v1 windows byte-identical with an honest `not_located`
+  receipt, so 999 is a real kill switch. A selected photo beside the take is never asked
+  about (the length plan pins only all-video edits).
 - **Answer.** `SubmitTurnBody.moment_order` (`point` / `skip` / `delegate` per moment, in the
   creator's final order). `runtime._validate_moment_order`: 409 `moment_order_stale` (old
   question, re-uploaded take), 404 `moment_order_media_not_found` (not this thread's take),
@@ -686,7 +690,10 @@ read `met`.
   that file generation, so a reworded moment or re-uploaded take is re-asked.
 - **Envelope v2.** `build_length_plan(pinned_moments=...)` gives each moment one window in the
   creator's order (a pointed window exactly as given; a grounded one centred on its evidence;
-  "you pick" from the strongest free moment) and records `moments[]` (+ `skipped_moments`).
+  "you pick" / unlocated from the strongest free moment) and records `moments[]` (+
+  `skipped_moments`), whoever owns the length (a licensed-music section included). A pointed
+  window ends at the take's end (the record holds what plays). Pins that cannot all be placed
+  are a blocking `named_moments_unplaceable` conflict, never a fall-back to ordinal windows.
   Only such an envelope is v2; every other plan stays byte-identical v1. Readers use
   `supported_length_plan_version()`; `read_length_plan` refuses a v2 whose creator-pointed
   window was changed.
