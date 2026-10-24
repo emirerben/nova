@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.91.0] - 2026-10-24
+
+### Changed
+- fix(speech-cleanup): transcribe a mixed-language Talking take per stretch, not in one language (KRI-843) (#1782) <!-- release-pr: 1782 -->
+
 ## [0.81.90.0] - 2026-10-24
 
 ### Fixed
