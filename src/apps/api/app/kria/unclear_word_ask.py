@@ -68,11 +68,7 @@ def model_answer(
     typed words (the last live requirement carrying one wins). Applies to every span unless a
     structured answer names the span."""
     requirements = list(requirements)
-    if (
-        scope is not None
-        and _pinned_answers(requirements)
-        and not _pinned_answers(requirements, scope=scope)
-    ):
+    if scope is not None and not _pinned_answers(requirements, scope=scope):
         return None
     found: cu.UnclearAnswer | None = None
     for req in ask_requirements(requirements):

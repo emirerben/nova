@@ -142,3 +142,20 @@ source. The backstop also checks the current question digest rather than accepti
 The 851-case combined replay/Postgres integration passes, including the same-source positive
 controls and replacement/legacy negatives; legacy rendering without a valid target declines
 instead of removing unrelated words. No new client protocol or model prompt is needed.
+
+## Integration review: typed answers without a prior window (2026-10-24)
+
+Five red gate/writer cases reproduced a remaining gap: a legacy typed-only fact had no
+stored window, so replacement footage could inherit its wording and a new tap could be
+ignored. An unbound fact now has no caption authority. Fresh typed words are accepted
+only when the exact words occur in a creator reply to the still-open server question
+for the current source, request and window. Omission replies use the existing exact
+option/alias matcher. The server records the confirmed window and discards the unbound
+text; it never retroactively stamps legacy wording onto whatever footage is current.
+A newer scoped tap wins over an older typed reply. Existing corrections to an already
+confirmed same-source window remain supported. Free-form paraphrases that cannot be
+bound to the question stay unresolved rather than becoming guessed caption text.
+
+The positive writer cases now ask a real question before the creator types their answer,
+and the PostgreSQL acceptance case submits a second real turn before expecting approval.
+The replacement negatives start with typed-only facts and no earlier tapped window.

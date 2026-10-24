@@ -4070,6 +4070,49 @@ def _kept_note(
     )
 
 
+def _typed_unclear_reply(
+    choice: UnresolvedChoice, brief: Any, history: Sequence[tuple[str, Any]]
+) -> tuple[dict[str, Any], int] | None:
+    """Bind exact creator wording only to the source/window question they answered.
+
+    A carried model fact alone has no source authority. Its text must occur in a real
+    user reply after this exact server-authored question, whose digest covers the source,
+    request and window. Replaying that event keeps the same confirmation across turns.
+    """
+    if choice.kind != CONFLICT_UNCLEAR_WORD:
+        return None
+    from app.kria.unclear_word_ask import model_answer  # noqa: PLC0415
+    from app.pipeline.caption_unclear import ACTION_OMIT  # noqa: PLC0415
+
+    answer = model_answer(_live(brief))
+    if answer is None:
+        return None
+    confirmed = None
+    for index, (role, payload) in enumerate(history):
+        if role != "user" or not isinstance(payload, dict):
+            continue
+        question = latest_open_choice_question(history[:index])
+        if not (
+            question
+            and question.get("kind") == CONFLICT_UNCLEAR_WORD
+            and question.get("conflict") == choice.conflict_id
+            and question.get("input_digest") == choice.input_digest
+            and not payload.get("choice_selection")
+        ):
+            continue
+        text = str(payload.get(CONTENT_KEY) or "").strip()
+        matches = (
+            match_open_choice(question, text) == OPT_LEAVE_OUT
+            if answer.action == ACTION_OMIT
+            else text == answer.text
+        )
+        if not matches:
+            continue
+        window = choice.answer_detail[OPT_LEAVE_OUT]
+        confirmed = ({**window, "action": answer.action, "text": answer.text}, index)
+    return confirmed
+
+
 def resolve_choices(
     strategy: Any,
     brief: Any,
@@ -4118,6 +4161,20 @@ def resolve_choices(
         valid = bool(
             prior and prior.input_digest == choice.input_digest and prior.option_key in keys
         )
+        typed = _typed_unclear_reply(choice, brief, history)
+        if typed and (not valid or typed[1] > prior.index):
+            answers.append(
+                {
+                    "conflict": choice.conflict_id,
+                    "kind": choice.kind,
+                    "option": "typed",
+                    "input_digest": choice.input_digest,
+                    "requirement_ids": list(choice.requirement_ids),
+                    "source": "creator",
+                    "detail": typed[0],
+                }
+            )
+            continue
         answer_superseded = False
         if valid and _answer_superseded(history, prior, choice, data):
             superseded.append(choice.conflict_id)
@@ -4419,7 +4476,7 @@ def _apply_unclear_answers(brief: Any, answers: Sequence[Mapping[str, Any]], cha
             ):
                 continue
             facts = {**current.facts, "unclear_answers": [*known, entry]}
-            if previous and not known:
+            if not known or answer.get("option") == "typed":
                 facts.pop("unclear_answer", None)
             changed[req.id] = current.model_copy(update={"facts": facts})
 

@@ -123,8 +123,8 @@ async def _run_turn(
         manifest_hash="b" * 64,
     )
 
-    async def _planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-        return PlannedKriaTurn(
+    async def _planned(snapshot, message, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+        planned = PlannedKriaTurn(
             plan=plan,
             manifest_hash="a" * 64,
             context_hash="b" * 64,
@@ -133,6 +133,30 @@ async def _run_turn(
             brief_clip_ids=("clip-1",),
             brief_manifest=manifest,
         )
+        if message == FIXTURE["creator_request"]:
+            return planned  # First turn deliberately exercises the completion backstop.
+        from dataclasses import replace  # noqa: PLC0415
+
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: PLC0415
+        from sqlalchemy.pool import NullPool  # noqa: PLC0415
+
+        from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+        from app.kria.planner import _gate_unresolved_choices  # noqa: PLC0415
+
+        engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+                item = await db.get(PlanItem, uuid.UUID(str(snapshot["item_id"])))
+                return await _gate_unresolved_choices(
+                    db,
+                    replace(planned, media_snapshot=snapshot_media(item)),
+                    thread_id=thread_id,
+                    creator_id=user_id,
+                    item_id=item.id,
+                    creator_text=message,
+                )
+        finally:
+            await engine.dispose()
 
     for name, value in {
         "kria_runtime_v2_enabled": True,
@@ -234,6 +258,12 @@ async def test_the_draft_turn_says_what_the_render_will_do_about_the_unclear_wor
 ) -> None:
     try:
         accepted, result, thread_id, rows = await _run_turn(monkeypatch, unclear_answer="omit")
+        assert result["status"] != "awaiting_approval", result
+        with sync_session() as db:
+            thread = db.get(CreationThread, thread_id)
+            user_id, revision = thread.creator_id, thread.revision
+        accepted = await _submit(user_id, thread_id, "leave that word out", revision)
+        result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
         assert result["status"] == "awaiting_approval", result
         with sync_session() as db:
             event = db.execute(

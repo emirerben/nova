@@ -345,6 +345,18 @@ async def answered(
     return strategy, answered_brief(brief, strategy)
 
 
+async def freshly_typed(monkeypatch, row, value, message=None):
+    first = await gate(monkeypatch, brief_for(), row)
+    question = asked(first)
+    assert question is not None
+    brief = brief_for(unclear_answer=value)
+    events = [question_event(question), message_event(message or value, "fresh-typed")]
+    result = await gate(monkeypatch, brief, row, events)
+    assert result.plan.mode == "act", result.plan.response
+    strategy = copy.deepcopy(result.plan.intents[0].arguments["strategy"])
+    return strategy, answered_brief(brief, strategy)
+
+
 def approved_binding(
     row: dict, brief: CreativeBrief, strategy: dict | None = None, *, latest: str = "Leave it out"
 ) -> dict:
@@ -667,10 +679,7 @@ async def test_the_creators_typed_leave_it_out_is_recorded_by_the_model_and_obey
     """2 (typed path): the Main Creator records ``unclear_answer="omit"`` (cassette
     ``kri849_dj_t1_unclear_answer_omit.json``): no question, and the writer leaves the span out."""
     row = take_row()
-    brief = brief_for(unclear_answer="omit")
-    result = await gate(monkeypatch, brief, row)
-    assert asked(result) is None and result.plan.mode == "act"
-    strategy = copy.deepcopy(result.plan.intents[0].arguments["strategy"])
+    strategy, brief = await freshly_typed(monkeypatch, row, "omit", "leave that word out")
     assert approval_blocker(strategy, brief, row, []) is None
 
     binding = approved_binding(
@@ -687,10 +696,7 @@ async def test_the_creator_typing_the_word_writes_exactly_those_words(
 ) -> None:
     """2: ``unclear_answer`` = the exact words typed ("Sal de mar") lands in the window."""
     row = take_row()
-    brief = brief_for(unclear_answer="sal de mar")
-    result = await gate(monkeypatch, brief, row)
-    assert asked(result) is None
-    strategy = copy.deepcopy(result.plan.intents[0].arguments["strategy"])
+    strategy, brief = await freshly_typed(monkeypatch, row, "sal de mar")
     binding = approved_binding(row, brief, strategy, latest="sal de mar")
     variant = write_captions(monkeypatch, binding)
     text = caption_text(variant)
@@ -1280,13 +1286,12 @@ async def test_a_tapped_answer_is_honoured_when_the_render_pass_cannot_be_compar
 async def test_a_typed_omit_is_honoured_when_the_render_pass_cannot_be_compared(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    row, brief = take_row(), brief_for(unclear_answer="omit")
-    result = await gate(monkeypatch, brief, row)
-    strategy = copy.deepcopy(result.plan.intents[0].arguments["strategy"])
+    row = take_row()
+    strategy, brief = await freshly_typed(monkeypatch, row, "omit", "leave it out")
     binding = approved_binding(row, brief, strategy, latest="leave it out")
     variant = write_captions(monkeypatch, binding, words=drifted_words())
     assert guesses_in(variant) == []
-    assert variant["caption_unclear"]["spans"][0]["source"] == "model"
+    assert variant["caption_unclear"]["spans"][0]["source"] == "answer"
 
 
 def test_an_unanswered_ask_leaves_the_approval_window_out_when_the_render_cannot_be_compared(
@@ -1586,3 +1591,51 @@ def test_the_window_keeps_discarded_speech_out_of_the_question() -> None:
     assert both.state == "unclear" and both.spans
     late = spans(heard=heard, other=other, window=(5.0, 10.0))  # the span sits before the window
     assert late.state == "agree"
+
+
+@pytest.mark.parametrize("changed", ["clip", "generation", "hash", "request"])
+async def test_unbound_typed_word_never_moves_to_a_new_target(monkeypatch, changed):
+    row, brief, strategy = (
+        take_row(),
+        brief_for(unclear_answer="old creator wording"),
+        strategy_for(),
+    )
+    old_question = asked(await gate(monkeypatch, brief_for(), take_row()))
+    assert old_question is not None
+    events = [question_event(old_question), message_event("old creator wording", "old-reply")]
+    if changed == "clip":
+        row["media_id"] = "replacement-take"
+        strategy["selected_media_ids"] = [row["media_id"]]
+    elif changed == "generation":
+        row["storage_generation"] = "replacement-generation"
+    elif changed == "hash":
+        row["upload_contract"]["proxy"]["original"]["sha256"] = "b" * 64
+    else:
+        brief = brief.model_copy(
+            update={
+                "requirements": [
+                    req.model_copy(
+                        update={"facts": {**req.facts, "ask_if_unclear": "the waiter's name"}}
+                    )
+                    if req.facts.get("ask_if_unclear")
+                    else req
+                    for req in brief.requirements
+                ]
+            }
+        )
+    result = await gate(monkeypatch, brief, row, events, strategy=strategy)
+    assert result.plan.mode == "respond" and not result.plan.intents
+    assert approval_blocker(strategy, brief, row, events) is not None
+    variant = write_captions(monkeypatch, approved_binding(row, brief, strategy))
+    assert "old creator wording" not in caption_text(variant)
+
+
+async def test_a_fresh_pick_does_not_inherit_a_legacy_typed_only_answer(monkeypatch):
+    row = take_row()
+    row["storage_generation"] = "replacement-generation"
+    strategy, brief = await answered(
+        monkeypatch, row, "use_2", brief=brief_for(unclear_answer="old creator wording")
+    )
+    variant = write_captions(monkeypatch, approved_binding(row, brief, strategy))
+    assert "sal marina" in caption_text(variant)
+    assert "old creator wording" not in caption_text(variant)
