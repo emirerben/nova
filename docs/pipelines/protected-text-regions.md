@@ -18,6 +18,36 @@ text's whole time on screen.
   and Gemini metadata never place a region.
 - A face target protects every detected face, not only the dominant one.
 
+## Asking for the mark before approval (KRI-901)
+
+- A phone Talking (`subtitled`) act turn whose live brief keeps text off an object with no
+  current mark does not offer approval: the runtime (`tasks/kria_runtime.
+  _protected_region_gate_sync`) rolls back the speculative draft and replies "Mark the plate
+  on one frame so I can keep the text off it. Or tell me the text can go anywhere." with
+  `protected_region_question {question_id, label, requirement_ids, media_ids}` (one object
+  per question, brief order; every clip of the edit, since the speaker is only known at
+  render). A mark is current while its clip is still in the item with the same storage
+  generation; a re-upload asks again. Faces are never asked for.
+- Only app builds that show the card are asked: submit stamps `marks_protected_regions`
+  on the user event when `X-Kria-Client-Protocol >= PROTECTED_REGION_MARK_MIN_CLIENT_PROTOCOL`
+  (default 17; kill switch `999`, api + worker). Older builds and the web approve as before
+  and the receipt reads `no_selection`.
+- The answer turn (`protected_region` on the turn) forces a re-plan, reaches the brief
+  extractor as a neutral "I marked the plate on a frame." (never a new instruction) and is
+  a structured answer for duplicate-send detection.
+- Approval readiness (flag-gated) agrees: an unmarked object is `needs_choice` with the same
+  sentence; once marked, a requirement whose only unchecked ask is `keep_text_off` is
+  `executable` with `evidence_owner="protected_text_render"` on a phone Talking edit (the
+  render receipt must still read `clear`); any other edit format is `unsupported` ("Keeping
+  text off a marked object only works on a Talking edit made on the phone.").
+- iOS: `ObjectMarkCard` (clip chips, the upright frame from this iPhone's original via
+  `KriaCropFrameLoader`, a moment slider, a free-shape box with the crop editor's
+  move/resize math). `ProtectedRegionAnswer.box(from:)` is the one (x, y, w, h) to
+  `[left, top, right, bottom]` conversion, clamped with a 2% floor. Verified by
+  `ObjectMarkUITests`, `tests/kria/test_kri901_mark_before_approval_postgres.py` and the
+  `app_mark_rotated_take` scenario of `make verify-protected-text` (a portrait take stored
+  rotated, marked the way the card converts it).
+
 ## Render (`app/pipeline/phone_protected_text.py`)
 
 1. `resolve_protected_plan`: targets + marks; a mark on another clip is `other_source`, on
@@ -55,19 +85,18 @@ Without a `keep_text_off` fact or a mark nothing runs and the render is unchange
 
 `make verify-protected-text` (also `tests/pipeline/test_protected_object_text_e2e.py`):
 synthetic clips with a known plate path (static, moving into the title band, fast pass,
-occluded, decoy, full frame, cleanup cut, landscape crop, tracker timeout, swapped source),
+occluded, decoy, full frame, cleanup cut, landscape crop, tracker timeout, the app's mark on a
+rotated portrait take, swapped source),
 real tracker + real Skia ink measured every 0.1 s; writes `.protected-verify/report.json` +
 `montage.png`; exits 1 on any row claimed clear while covering the plate.
 
 ## Not yet
 
-- The iOS mark card (draw a box on a source frame) and on-device re-placement after an
-  editor crop / trim / speed change: the API, contract and render are ready; until the app
-  sends `protected_region`, an object ask honestly reads `no_selection`.
+- On-device re-placement after an editor crop / trim / speed change.
+- A web mark card (the web never gets the question; its object asks read `no_selection`).
 - Cloud (non-phone) caption placement and guided-story per-moment text still protect faces
   only.
 - Automatic object detection (no mark) is not attempted.
-- Approval readiness does not yet ask the creator to mark a named object before approving.
 - After the render the text is not re-placed: an edit only makes the receipt `stale` (see
   below), and the review says the text was not re-checked. Tracked boxes are not stored, so
   re-measuring needs a re-render.

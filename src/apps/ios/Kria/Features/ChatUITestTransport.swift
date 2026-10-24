@@ -129,6 +129,8 @@ final class CreationChatFixture: @unchecked Sendable {
     private var editorTurnIDs: [String: String] = [:]
     /// KRIA_CHAT_QUESTION_BATCH: turns that carried an answer, so a test can pin "both answers, one turn".
     private var batchAnswerTurns = 0
+    /// KRIA_CHAT_MARK_OBJECT=reject: the first mark was refused.
+    private var markRejected = false
     /// Live plan & review (`KRIA_CHAT_PLAN_REVIEW=1`): the contract-v2 server model (`GET /plan`, scoped turns, undo).
     private let review = ReviewPlanFixture()
     private var reviewEnabled: Bool { ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_REVIEW"] == "1" }
@@ -270,6 +272,12 @@ final class CreationChatFixture: @unchecked Sendable {
                 capabilities["media"] = ["song": ["max": 1, "max_file_bytes": 52_428_800, "content_types": ["audio/mpeg", "audio/mp4"]]]
                 capabilities["song_order_questions"] = true
                 if mode != "off" { capabilities["song_range_questions"] = true }
+            }
+            // KRIA_CHAT_MARK_OBJECT (KRI-901): the first turn is answered with "Mark the plate on one frame". "1" = the
+            // server advertises protected_region_marks; "off" = an older server (the question text still shows, no card);
+            // "reject" = like "1", but the first mark is refused (422 protected_region_invalid).
+            if let mode = ProcessInfo.processInfo.environment["KRIA_CHAT_MARK_OBJECT"], mode != "off" {
+                capabilities["protected_region_marks"] = true
             }
             // KRIA_CHAT_CHOICE_QUESTION: "1" = server advertises choice_questions; "legacy" = it still sends the
             // choice_question payload but does not advertise the capability (old-server text fallback).
@@ -498,6 +506,10 @@ final class CreationChatFixture: @unchecked Sendable {
                     if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] != nil || ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] != nil {
                         media += (2...4).map { ["media_id": "fixture-clip-\($0)", "kind": "video", "filename": "sample-\($0).mov"] }
                     }
+                    if ProcessInfo.processInfo.environment["KRIA_CHAT_MARK_OBJECT"] != nil {
+                        // KRI-901: a second clip whose original is not on this iPhone.
+                        media.append(["media_id": "fixture-clip-2", "kind": "video", "filename": "sample-2.mov"])
+                    }
                     if ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_RANGE"] != nil || ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_RANGE_Q"] != nil {
                         media.append(["media_id": "fixture-song", "kind": "audio", "role": "song", "filename": "fixture-song.mp3", "duration_s": 90])
                     }
@@ -560,6 +572,20 @@ final class CreationChatFixture: @unchecked Sendable {
                 return response(["problem": ["code": refusal.code, "message": refusal.message]], status: refusal.status)
             }
             if let range = body["song_range"] as? [String: Any] { userPayload["song_range"] = range }
+            // KRI-901: checked like the server's `_stamp_protected_region` (the clip must be the thread's own, the
+            // box at least 2% a side), then stored with a server generation.
+            if let region = body["protected_region"] as? [String: Any] {
+                let box = (region["box"] as? [Double]) ?? []
+                if !["fixture-clip", "fixture-clip-2"].contains(region["media_id"] as? String ?? "") {
+                    return response(["problem": ["code": "protected_region_media_not_found", "message": "That clip isn't part of this video. Mark the object on one of your clips."]], status: 404)
+                }
+                let rejectFirst = ProcessInfo.processInfo.environment["KRIA_CHAT_MARK_OBJECT"] == "reject" && !markRejected
+                if box.count != 4 || box.contains(where: { !(0...1).contains($0) }) || box[2] - box[0] < 0.02 || box[3] - box[1] < 0.02 || rejectFirst {
+                    markRejected = true
+                    return response(["problem": ["code": "protected_region_invalid", "message": "That mark is too small or outside the frame. Draw a box around the object."]], status: 422)
+                }
+                userPayload["protected_region"] = region.merging(["generation": "1"]) { $1 }
+            }
             if let order = body["song_order"] as? [String: Any] { userPayload["song_order"] = order }
             if let selection = body["choice_selection"] as? [String: Any] { userPayload["choice_selection"] = selection }
             if let scope = body["scope"] as? [String] {
@@ -624,6 +650,23 @@ final class CreationChatFixture: @unchecked Sendable {
                 editorTurnIDs[id] = turnID
                 editorTurnTicks[id] = 0
                 if thoughtsEnabled { thoughtRequestIDs[id] = turnID }
+            } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_MARK_OBJECT"] != nil {
+                if let region = body["protected_region"] as? [String: Any] {
+                    // Echo exactly what the server received (the wire shape the UI test pins), then offer approval.
+                    let box = ((region["box"] as? [Double]) ?? []).map { String(format: "%.4f", $0) }.joined(separator: ",")
+                    let at = String(format: "%.1f", region["source_t_s"] as? Double ?? -1)
+                    append("assistant_response", text: "Got it. mark[\(region["label"] ?? "")|\(region["media_id"] ?? "")|\(at)|\(box)]",
+                           payload: ["turn_id": turnID, "turn_value": "response"])
+                    append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
+                    append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
+                } else {
+                    append("assistant_response", text: "Mark the plate on one frame so I can keep the text off it. Or tell me the text can go anywhere.", payload: [
+                        "turn_id": turnID, "turn_value": "question",
+                        "protected_region_question": ["question_id": "mark-q-\(events.count)", "label": "plate",
+                                                      "requirement_ids": ["r6", "r7"],
+                                                      "media_ids": ["fixture-clip", "fixture-clip-2"]] as [String: Any],
+                    ])
+                }
             } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_RANGE_Q"] != nil {
                 if let range = body["song_range"] as? [String: Any] {
                     // The server stores the range on the song, then the planner continues. Echo what it received.
@@ -1383,8 +1426,8 @@ enum SongTimelineFixture {
     /// KRI-575: a tiny generated clip (8 s, 10 fps, a new colour every second, no audio) standing in for the local
     /// original of `fixture-clip`, so the preview's playing state can be asserted. The other clips have no original
     /// on the device, which is the "isn't on this iPhone" state.
-    static func clipURL(mediaID: String) -> URL? {
-        guard ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] == "1", mediaID == "fixture-clip" else { return nil }
+    static func clipURL(mediaID: String, force: Bool = false) -> URL? {
+        guard force || ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] == "1", mediaID == "fixture-clip" else { return nil }
         let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("song-timeline-fixture-clip.mp4")
         if FileManager.default.fileExists(atPath: url.path) { return url }
         let width = 180, height = 320, fps = 10, seconds = 8

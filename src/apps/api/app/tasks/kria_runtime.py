@@ -202,6 +202,62 @@ def _full_creator_request_sync(db, *, thread_id: uuid.UUID, through_sequence: in
     return request if len(request) <= 12_000 else None
 
 
+def _protected_region_gate_sync(  # noqa: ANN001
+    db,
+    *,
+    thread: CreationThread,
+    turn: CreatorAgentTurn,
+    item: PlanItem,
+    brief: Any,
+    edit_format: str,
+    render_requested: bool,
+) -> tuple[KriaTurnPlan, dict[str, Any]] | None:
+    """KRI-901: the "Mark the plate" question, when this act turn must ask it.
+
+    Asked only when every part holds: the turn would request render approval, the brief is
+    bound at approval (the mark rides the binding), the edit renders on the phone Talking
+    writer (the only one that keeps text off a marked object), the message came from an app
+    that shows the card (`marks_protected_regions`, stamped at submit), and a live
+    ``keep_text_off`` object has no current mark. One object per question, brief order.
+    """
+    from app.kria.protected_targets import (  # noqa: PLC0415
+        PROTECTED_TEXT_EDIT_FORMATS,
+        build_protected_region_question,
+        clip_generations,
+        mark_request_text,
+        unmarked_object_targets,
+    )
+
+    if not render_requested or not settings.brief_binding_for(thread.creator_id):
+        return None
+    if edit_format not in PROTECTED_TEXT_EDIT_FORMATS:
+        return None
+    source = db.get(CreationThreadEvent, turn.source_event_id)
+    payload = getattr(source, "payload", None)
+    if not isinstance(payload, dict) or payload.get("marks_protected_regions") is not True:
+        return None
+    if brief is None:
+        brief = load_latest_brief_sync(db, thread.id)
+    generations = clip_generations(getattr(item, "clip_assignments", None) or [])
+    missing = unmarked_object_targets(
+        brief,
+        _protected_regions_sync(db, thread_id=thread.id, through_sequence=int(source.sequence)),
+        generations,
+    )
+    if not missing:
+        return None
+    question = build_protected_region_question(
+        missing[0], question_id=f"mark-{turn.id.hex[:16]}", media_ids=list(generations)
+    )
+    plan = KriaTurnPlan(
+        mode="respond",
+        turn_value="question",
+        response=mark_request_text(missing[0].label),
+        protected_region_question=question,
+    )
+    return plan, question
+
+
 def _protected_regions_sync(db, *, thread_id: uuid.UUID, through_sequence: int) -> list[dict]:  # noqa: ANN001
     """KRI-827: the creator's marks of what to keep text off, from their own turns only."""
     from app.kria.protected_targets import fold_protected_regions  # noqa: PLC0415
@@ -378,6 +434,12 @@ def _complete_response_turn(
                     else {}
                 ),
                 **({"choice_question": plan.choice_question} if plan.choice_question else {}),
+                # KRI-901: the "Mark the plate" card.
+                **(
+                    {"protected_region_question": plan.protected_region_question}
+                    if plan.protected_region_question
+                    else {}
+                ),
                 # KRI-815: the script card + its record/import continuation (spoken words only).
                 **({"voiceover_script": plan.voiceover_script} if plan.voiceover_script else {}),
                 # KRI-738: tappable lengths; the prose above still lists them for old clients.
@@ -1535,6 +1597,14 @@ def _complete_draft_turn(
                 if _readiness_source is not None
                 else None
             )
+            # KRI-901: the marks this approval would pin, so a marked object is executable.
+            _readiness_marks = (
+                _protected_regions_sync(
+                    db, thread_id=thread.id, through_sequence=int(_readiness_source.sequence)
+                )
+                if _readiness_source is not None
+                else []
+            )
             readiness_report = assess_readiness(
                 brief,
                 document.strategy or {},
@@ -1545,6 +1615,8 @@ def _complete_draft_turn(
                 editor_payload=document.editor_payload,
                 editor_text_diff=document.editor_text_diff,
                 creator_request=_readiness_request,
+                protected_regions=_readiness_marks,
+                edit_format=document.edit_format,
             )
             if not readiness_report["ready"]:
                 reply_text = readiness_reply(brief, readiness_report)
@@ -1702,6 +1774,8 @@ def _complete_draft_turn(
                     else _readiness_media(item),
                     manifest=planned.readiness_manifest,
                     creator_request=_readiness_request,
+                    protected_regions=_readiness_marks,
+                    edit_format=document.edit_format,
                 )
             requirement_receipts = [
                 {**receipt, "brief_version": brief.version} for receipt in requirement_receipts
@@ -1746,6 +1820,43 @@ def _complete_draft_turn(
                 else ""
             )
             reply_text = "\n".join(part for part in (lead, kept, omissions, speed_notice) if part)
+        mark_gate = _protected_region_gate_sync(
+            db,
+            thread=thread,
+            turn=turn,
+            item=item,
+            brief=brief,
+            edit_format=str((document.strategy or {}).get("edit_format") or document.edit_format),
+            render_requested=render_intent is not None,
+        )
+        if mark_gate is not None:
+            # KRI-901: "No text on the plate" with no mark on the plate: the render could only
+            # report `no_selection` afterwards, so ask for the mark before approval. Same
+            # rollback-then-respond pattern as the choice gate below (the old draft stays the
+            # head). Re-fires on each act turn until a mark exists or the ask is dropped.
+            mark_plan, mark_question = mark_gate
+            db.rollback()
+            completed = _complete_response_turn(
+                turn_id,
+                lease_owner=lease_owner,
+                lease_epoch=lease_epoch,
+                claimed_thread_revision=claimed_thread_revision,
+                plan=mark_plan,
+                brief_updates=planned.brief_updates
+                if automatic_omission
+                else effective_brief_updates,
+                brief_delegated=planned.brief_delegated,
+                brief_delegation_read_ids=planned.brief_delegation_read_ids,
+                requirement_receipts=requirement_receipts,
+                brief_coverage={
+                    **(planned.brief_coverage or {}),
+                    "stage": "draft",
+                    "reason": "protected_region_mark_needed",
+                    "protected_region_requirement_ids": mark_question["requirement_ids"],
+                },
+                brief_expected_version=planned.brief_expected_version,
+            )
+            return replace(completed, response_only=True)
         if (
             settings.brief_binding_for(thread.creator_id)
             and (
@@ -2561,6 +2672,10 @@ def _answers_clip_question(source: Any) -> bool:
         return False
     if isinstance(payload.get("clip_selection"), dict):
         return bool(settings.kria_clip_selection_questions_enabled)
+    if isinstance(payload.get("protected_region"), dict):
+        # KRI-901: a mark answers the mark card: re-plan (the gate re-reads the marks), never
+        # an editor follow-up that reads "I marked the plate" as a text edit.
+        return True
     # A tapped choice_question option ANSWERS the open question: it must re-plan (the
     # planner folds the stored answer), never be read as a follow-up edit request.
     return isinstance(payload.get("choice_selection"), dict) and bool(

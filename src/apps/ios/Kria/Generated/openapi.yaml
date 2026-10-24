@@ -1468,6 +1468,11 @@
           "phone_rendering": {
             "$ref": "#/components/schemas/DeviceRenderCapabilities"
           },
+          "protected_region_marks": {
+            "default": false,
+            "title": "Protected Region Marks",
+            "type": "boolean"
+          },
           "runtime_versions": {
             "items": {
               "enum": [

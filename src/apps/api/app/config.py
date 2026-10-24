@@ -837,6 +837,12 @@ class Settings(BaseSettings):
     # turn. Kill switch: `fly secrets set KRIA_QUESTION_BATCH_MIN_CLIENT_PROTOCOL=999`
     # (api + worker) + restart; messages sent after it get one question per turn again.
     kria_question_batch_min_client_protocol: int = 14
+    # KRI-901: an app build declaring `X-Kria-Client-Protocol` >= this shows the "Mark the
+    # plate" card, so a phone Talking edit whose brief keeps text off an unmarked object asks
+    # for the mark before approval. Lower builds and the web are never asked (approval as
+    # before; the receipt says `no_selection`). Kill switch: `fly secrets set
+    # PROTECTED_REGION_MARK_MIN_CLIENT_PROTOCOL=999` (api + worker) + restart.
+    protected_region_mark_min_client_protocol: int = 17
     # KRI-815: with footage and no voiceover, Kria chat writes a footage-grounded voiceover
     # script (`voiceover_script` on the reply) instead of a narrated draft that can only fail at
     # approval. Independent of TRANSCRIPT_HELPER_ENABLED. Kill switch: false + restart (api +

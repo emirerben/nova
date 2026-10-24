@@ -125,6 +125,12 @@ def _answers_batched_questions() -> bool:
     return protocol is not None and protocol >= settings.kria_question_batch_min_client_protocol
 
 
+def _marks_protected_regions() -> bool:
+    """KRI-901: the app sending this request can answer a "Mark the plate" card."""
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.protected_region_mark_min_client_protocol
+
+
 def request_digest(body: SubmitTurnBody) -> str:
     # `editor_state` is deliberately outside the digest: a retry of the same
     # client_event_id carries a fresher snapshot of the editor, and the FIRST stored
@@ -1060,6 +1066,9 @@ async def submit_turn(
             # the planner may ask them together. Not part of `request_digest`; older builds
             # and the web store nothing (existing payloads byte-identical).
             **({"answers_batched_questions": True} if _answers_batched_questions() else {}),
+            # KRI-901: this app shows the mark card, so the runtime may ask for a mark before
+            # approval. Not part of `request_digest`; older builds and the web store nothing.
+            **({"marks_protected_regions": True} if _marks_protected_regions() else {}),
             # KRI-756: {"suggestion": {...}} when the message equals an offered chip. Not
             # part of `request_digest`; flag off => {} (existing payloads byte-identical).
             **(
@@ -2619,6 +2628,11 @@ async def decide_approval(
                             editor_payload=copy_document.editor_payload,
                             editor_text_diff=copy_document.editor_text_diff,
                             creator_request=copy_document.brief_binding.creator_request,
+                            # KRI-901: the marks the approval pinned.
+                            protected_regions=list(
+                                copy_document.brief_binding.protected_regions or []
+                            ),
+                            edit_format=copy_document.edit_format,
                         )
                     ready = (
                         digest(media_identity(snapshot_media(copy_item)))

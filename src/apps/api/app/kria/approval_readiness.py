@@ -20,6 +20,7 @@ from app.config import settings
 from app.kria.brief import CreativeBrief
 from app.kria.brief_binding import media_identity, snapshot_media
 from app.kria.brief_checks import (
+    _has_checker,
     _wants_source_sound_kept,
     build_receipts,
     plan_facts_from_editor_payload,
@@ -129,8 +130,13 @@ def assess_readiness(
     editor_payload: dict | None = None,
     editor_text_diff: list[dict] | None = None,
     creator_request: str | None = None,
+    protected_regions: list[Any] | None = None,
+    edit_format: str | None = None,
 ) -> dict[str, Any]:
-    """Account for every live ID using existing policy, checkers and contract."""
+    """Account for every live ID using existing policy, checkers and contract.
+
+    ``protected_regions`` are the creator's marks this approval would pin (KRI-901) and
+    ``edit_format`` the draft's format when the strategy does not carry it."""
     requirements = brief.live() if brief is not None else []
     strategy = strategy or {}
     policy_problem = None
@@ -292,6 +298,15 @@ def assess_readiness(
                 "evidence_owner": owner,
             }
         )
+    if not policy_problem:
+        rows = _with_protected_marks(
+            rows,
+            requirements,
+            brief,
+            marks=protected_regions or [],
+            media=media,
+            edit_format=str(edit_format or strategy.get("edit_format") or ""),
+        )
     report = {
         "schema_version": 1,
         "ready": not policy_problem
@@ -321,6 +336,75 @@ def assess_readiness(
     # Pydantic values in capability records are serialized without model text.
     report["digest"] = digest(_identity(report))
     return report
+
+
+def _with_protected_marks(
+    rows: list[dict[str, Any]],
+    requirements: list[Any],
+    brief: CreativeBrief | None,
+    *,
+    marks: list[Any],
+    media: Mapping[str, Any],
+    edit_format: str,
+) -> list[dict[str, Any]]:
+    """KRI-901: "no text on her face or on the plate" before approval.
+
+    No pre-render checker can prove where text lands, so the ask is a commitment the phone
+    Talking render measures (`phone_protected_text`; its receipt must still read ``clear``):
+    executable only there and only once every named object has a current creator mark. An
+    unmarked object asks for the mark; any other renderer cannot keep text off an object and
+    says so. A requirement's other asks keep their own checker's verdict."""
+    from app.kria.protected_targets import (  # noqa: PLC0415
+        KEEP_TEXT_OFF_KEY,
+        PROTECTED_TEXT_EDIT_FORMATS,
+        _fact_entries,
+        clip_generations,
+        mark_request_text,
+        mark_unsupported_text,
+        unmarked_object_targets,
+    )
+
+    by_id = {req.id: req for req in requirements}
+    unmarked = unmarked_object_targets(
+        brief, marks, clip_generations(media.get("clip_assignments") or [])
+    )
+    out = []
+    for row in rows:
+        req = by_id.get(row["requirement_id"])
+        if req is None or not _fact_entries(req.facts.get(KEEP_TEXT_OFF_KEY)):
+            out.append(row)
+            continue
+        if row["disposition"] == "unsupported":
+            out.append(row)
+            continue
+        missing = [t for t in unmarked if req.id in t.requirement_ids]
+        if edit_format not in PROTECTED_TEXT_EDIT_FORMATS:
+            row = {**row, "disposition": "unsupported", "reason": mark_unsupported_text()}
+        elif missing:
+            row = {
+                **row,
+                "disposition": "needs_choice",
+                "reason": mark_request_text(missing[0].label),
+            }
+        elif row["disposition"] == "evidence_missing" and not _has_checker(
+            req.model_copy(
+                update={"facts": {k: v for k, v in req.facts.items() if k != KEEP_TEXT_OFF_KEY}}
+            )
+        ):
+            row = {
+                **row,
+                "disposition": "executable",
+                "evidence_owner": "protected_text_render",
+                "reason": say(
+                    en="The phone render keeps the text off what you named and checks it.",
+                    tr=(
+                        "Telefon oluşturması yazıyı belirttiğin yerlerden uzak tutup "
+                        "kontrol ediyor."
+                    ),
+                ),
+            }
+        out.append(row)
+    return out
 
 
 def _identity(report: dict[str, Any]) -> dict[str, Any]:
@@ -410,6 +494,8 @@ async def assess_saved_document(db, item, document, *, require_same_assessment=T
         editor_payload=document.editor_payload,
         editor_text_diff=document.editor_text_diff,
         creator_request=document.brief_binding.creator_request,
+        protected_regions=list(document.brief_binding.protected_regions or []),
+        edit_format=document.edit_format,
     )
     if digest(media_identity(snapshot_media(item))) != report["media_digest"]:
         raise ApprovalReadinessError(

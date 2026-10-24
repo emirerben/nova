@@ -171,6 +171,100 @@ def selection_for(
     return same[-1] if same else None
 
 
+# KRI-901: the one renderer that keeps text off a marked object (`phone_protected_text` runs
+# inside the phone Talking writer). Anywhere else a mark would be ignored, so it is never asked
+# for and never promised.
+PROTECTED_TEXT_EDIT_FORMATS = frozenset({"subtitled"})
+PROTECTED_REGION_QUESTION_KEY = "protected_region_question"
+PROTECTED_REGION_ANSWER_KEY = "protected_region"
+
+
+def _mark_is_current(mark: ProtectedRegionSelection, generations: Mapping[str, str | None]) -> bool:
+    """A mark still points at the clip the creator drew it on: the clip is still in the edit
+    and its storage generation is the one stamped at submit (a re-upload / swap is a new
+    clip, so the mark is missing again, never reused on other bytes)."""
+    if mark.media_id not in generations:
+        return False
+    current = generations[mark.media_id]
+    return mark.generation is None or current is None or str(current) == mark.generation
+
+
+def clip_generations(clip_assignments: Iterable[Any]) -> dict[str, str | None]:
+    """``media_id -> storage generation`` of an item's clips, in plan order."""
+    out: dict[str, str | None] = {}
+    for row in clip_assignments or ():
+        if not isinstance(row, Mapping) or not row.get("media_id"):
+            continue
+        generation = row.get("storage_generation", row.get("generation"))
+        out[str(row["media_id"])] = str(generation) if generation is not None else None
+    return out
+
+
+def unmarked_object_targets(
+    brief: CreativeBrief | None,
+    marks: Iterable[ProtectedRegionSelection | Mapping[str, Any]],
+    generations: Mapping[str, str | None],
+) -> tuple[ProtectedTarget, ...]:
+    """The objects the live brief asks to keep text off that have no current creator mark,
+    in brief order. A face is sampled automatically and is never asked for; a mark no fact
+    names asks nothing either (drawing the box was the ask)."""
+    selections: list[ProtectedRegionSelection] = []
+    for raw in marks:
+        try:
+            mark = (
+                raw
+                if isinstance(raw, ProtectedRegionSelection)
+                else ProtectedRegionSelection.model_validate(dict(raw))
+            )
+        except ValueError:
+            continue
+        if _mark_is_current(mark, generations):
+            selections.append(mark)
+    return tuple(
+        target
+        for target in protected_targets(brief)
+        if target.kind == "object"
+        and target.requirement_ids
+        and selection_for(target, selections) is None
+    )
+
+
+def mark_request_text(label: str) -> str:
+    """The one sentence that asks for a mark (the gate's reply and the readiness reason)."""
+    from app.kria.reply_language import say  # noqa: PLC0415
+
+    return say(
+        en=f"Mark the {label} on one frame so I can keep the text off it. "
+        "Or tell me the text can go anywhere.",
+        tr=f"Yazıyı uzak tutabilmem için {label} bir karede işaretle. "
+        "Ya da yazının her yere gelebileceğini söyle.",
+    )
+
+
+def mark_unsupported_text() -> str:
+    from app.kria.reply_language import say  # noqa: PLC0415
+
+    return say(
+        en="Keeping text off a marked object only works on a Talking edit made on the phone.",
+        tr="Yazıyı işaretli bir nesneden uzak tutmak yalnızca telefonda yapılan "
+        "Konuşma düzenlemesinde çalışır.",
+    )
+
+
+def build_protected_region_question(
+    target: ProtectedTarget, *, question_id: str, media_ids: Iterable[str]
+) -> dict[str, Any]:
+    """``protected_region_question`` on an assistant reply: which object to mark and on which
+    clips (every clip of the edit, plan order; the speaker is only known at render, so the
+    creator picks the clip and a mark on a non-speaking clip reads ``other_source``)."""
+    return {
+        "question_id": question_id,
+        "label": target.label,
+        "requirement_ids": list(target.requirement_ids),
+        "media_ids": [str(m) for m in media_ids],
+    }
+
+
 # What a protected-text receipt measured: the text rows, the caption geometry and the crop.
 # An edit after the render (editor Save, a text PATCH) that changes any of these makes the
 # receipt describe a video the creator no longer has.
@@ -258,11 +352,19 @@ def protected_text_after_editor_save(
 
 __all__ = [
     "PROTECTED_REGIONS_FIELD",
+    "PROTECTED_REGION_ANSWER_KEY",
+    "PROTECTED_REGION_QUESTION_KEY",
+    "PROTECTED_TEXT_EDIT_FORMATS",
     "PROTECTED_TEXT_FIELD",
     "ProtectedRegionSelection",
     "ProtectedTarget",
     "KEEP_TEXT_OFF_KEY",
     "binding_protected_regions",
+    "build_protected_region_question",
+    "clip_generations",
+    "mark_request_text",
+    "mark_unsupported_text",
+    "unmarked_object_targets",
     "fold_protected_regions",
     "protected_targets",
     "selection_for",

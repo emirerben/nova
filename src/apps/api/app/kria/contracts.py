@@ -63,6 +63,11 @@ class KriaTurnPlan(_KriaModel):
     song_range_question: SongRangeQuestion | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    # KRI-901: "mark the plate on one frame" before approval (`protected_targets.
+    # build_protected_region_question`). Same omit-when-unset rule.
+    protected_region_question: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: not value
+    )
     # KRI-282: conflict-choice payload (options to tap). Same omit-when-unset rule.
     choice_question: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: not value)
     # KRI-738: tappable lengths for a "how short/long?" question. Plain text answers (the tap

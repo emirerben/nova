@@ -780,7 +780,7 @@
     {
       "id": "kri-827-protected-text-regions",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_protected_object_text_e2e.py tests/tasks/test_kri827_protected_text_worker.py tests/kria/test_kri827_protected_targets.py tests/kria/test_kri827_protected_region_turn_postgres.py",
+      "api_tests": "tests/pipeline/test_protected_object_text_e2e.py tests/tasks/test_kri827_protected_text_worker.py tests/kria/test_kri827_protected_targets.py tests/kria/test_kri827_protected_region_turn_postgres.py tests/kria/test_kri901_mark_before_approval_postgres.py",
       "paths": [
         "src/apps/api/app/kria/protected_targets.py",
         "src/apps/api/app/pipeline/object_track.py",

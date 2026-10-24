@@ -221,6 +221,10 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     /// `suggestion` names the suggestion chip the message was sent from (KRI-756, server capability
     /// `suggestion_chips`); nil = omitted. Attribution only: it never changes what the turn does.
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?) async throws -> TurnAccepted
+    /// `protectedRegion` answers a "Mark the plate" card (KRI-901, server capability `protected_region_marks`): a box on
+    /// one frame of one of the creator's clips. nil = omitted. A 404 `protected_region_media_not_found` / 422
+    /// `protected_region_invalid` carries the server's copy for the card.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?, protectedRegion: ProtectedRegionAnswer?) async throws -> TurnAccepted
     /// A short-lived signed URL for the thread's attached song, so the song timeline can draw and play it
     /// (KRI-561). `generation` pins the song the question was built against; a 409 `song_changed` means it was
     /// replaced. A 404 means the server does not offer it.
@@ -428,6 +432,11 @@ extension KriaAPIClient {
     /// Substitutes that predate suggestion chips send the message without the attribution.
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?) async throws -> TurnAccepted {
         try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange)
+    }
+
+    /// Substitutes that predate the mark card send the message without the mark.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?, protectedRegion: ProtectedRegionAnswer?) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: suggestion)
     }
 
     func creationCapabilities() async throws -> CreationCapabilities { throw APIError.unsupported }
@@ -1110,7 +1119,10 @@ enum KriaClientProtocolContract {
     /// 16 (KRI-828): decodes the `freezeFrame` recipe capability (a creator's freeze frame: a main-track
     /// `holdDuration` longer than one frame, the clip's last frame held). The server plans a freeze only for
     /// this protocol inside an HTTP request; older builds cannot decode the case and fail the recipe.
-    static let version = 16
+    /// 17 (KRI-901): shows the "Mark the plate" card (`protected_region_question`) and answers it with
+    /// `protected_region` on the next turn. The server asks for a mark before approval only from this protocol;
+    /// older builds keep approving as before.
+    static let version = 17
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1425,7 +1437,10 @@ struct KriaAPI: KriaAPIClient {
         try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: nil)
     }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?) async throws -> TurnAccepted {
-        let body = SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: suggestion)
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: suggestion, protectedRegion: nil)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?, protectedRegion: ProtectedRegionAnswer?) async throws -> TurnAccepted {
+        let body = SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: suggestion, protectedRegion: protectedRegion)
         return try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(body), decode: TurnAccepted.self)
     }
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread {
@@ -2123,8 +2138,8 @@ private enum ServerDateCoding {
     }
 }
 struct SubmitTurnRequest: Encodable {
-    let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil; var clipSelection: ClipSelectionSubmission? = nil; var songOrder: SongOrderSubmission? = nil; var choiceSelection: ChoiceSelectionSubmission? = nil; var songRange: SongRangeAnswer? = nil; var suggestion: SuggestionTap? = nil
-    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order"; case choiceSelection = "choice_selection"; case songRange = "song_range"; case suggestion }
+    let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil; var clipSelection: ClipSelectionSubmission? = nil; var songOrder: SongOrderSubmission? = nil; var choiceSelection: ChoiceSelectionSubmission? = nil; var songRange: SongRangeAnswer? = nil; var suggestion: SuggestionTap? = nil; var protectedRegion: ProtectedRegionAnswer? = nil
+    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order"; case choiceSelection = "choice_selection"; case songRange = "song_range"; case suggestion; case protectedRegion = "protected_region" }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(message, forKey: .message); try c.encode(clientEventID, forKey: .clientEventID)
@@ -2135,6 +2150,7 @@ struct SubmitTurnRequest: Encodable {
         try c.encodeIfPresent(choiceSelection, forKey: .choiceSelection)
         try c.encodeIfPresent(songRange, forKey: .songRange)
         try c.encodeIfPresent(suggestion, forKey: .suggestion)
+        try c.encodeIfPresent(protectedRegion, forKey: .protectedRegion)
     }
 }
 
