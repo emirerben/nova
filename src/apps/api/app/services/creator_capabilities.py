@@ -767,6 +767,37 @@ def resolve_creator_manifest(
         and resolved_narration is not None
         and capabilities.get(f"phone_format:{normalized_format}", _unavailable("x", "x")).available
     )
+    from app.services.phone_rollout import (
+        phone_voiceover_source_audio_supported,
+        phone_voiceover_spoken_text_supported,
+    )
+
+    # Advertised only while its authoring flag is on: with the flag off the
+    # manifest (and its confirmation-fence hashes) stays byte-identical to
+    # before these lanes existed, and readers treat a missing entry as
+    # unavailable.
+    for name, enabled, supported in (
+        (
+            "phone_voiceover_spoken_text",
+            settings.phone_voiceover_spoken_text_enabled,
+            phone_voiceover_spoken_text_supported,
+        ),
+        (
+            "phone_voiceover_source_audio",
+            settings.phone_voiceover_source_audio_enabled,
+            phone_voiceover_source_audio_supported,
+        ),
+    ):
+        if not enabled:
+            continue
+        capabilities[name] = (
+            _available()
+            if is_phone_voiceover and supported()
+            else _unavailable(
+                "voiceover_feature_unavailable",
+                "This Voiceover feature needs a supported app and server release.",
+            )
+        )
     if is_phone_voiceover and phone_voiceover_reaction_beats_supported():
         capabilities[CAPABILITY_REACTION_BEATS] = _available()
         # N2: the existing full-screen rollout switch and the verified
@@ -953,6 +984,10 @@ def _repair_creator_reaction_beats(
     where video cards render, KRI-521) and every `sound` against the sound-effect
     catalog (canonical id when it matches, otherwise left as the creator's own
     words for the worker to resolve by description).
+    Repair (e), KRI-840: a beat asked `display_mode="fullscreen"` keeps it only where
+    `media_overlays:fullscreen` is available (phone Talking, native Voiceover) and the beat
+    has a visual; otherwise it becomes a corner card ("pip"), with a notice when a photo is
+    affected.
     """
 
     if strategy.reaction_beats is None and strategy.closing_media is None:
@@ -989,6 +1024,11 @@ def _repair_creator_reaction_beats(
     )
     fullscreen_cap = manifest.capabilities.get(CAPABILITY_MEDIA_OVERLAY_FULLSCREEN)
     fullscreen_available = fullscreen_cap is not None and fullscreen_cap.available
+    # KRI-840: "show it full screen at the word" is a full-frame cutaway on a native
+    # Voiceover edit and on phone Talking (both advertise `media_overlays:fullscreen`).
+    # Anywhere else the photo stays a corner card -- never dropped, which would read as
+    # "couldn't find the photo".
+    phone_talking = strategy.edit_format == "subtitled"
     # `media_scope="all"` on a native voiceover expands to every own video
     # during normalisation below. Resolve a following clip against that same
     # effective selection now, because reaction-beat repair intentionally runs
@@ -1064,12 +1104,14 @@ def _repair_creator_reaction_beats(
                 continue
             updates["following_clip_id"] = following.media_id
         elif beat.display_mode == "fullscreen":
-            if not (native_voiceover and fullscreen_available and visual_id is not None):
+            if visual_id is None:
+                updates["display_mode"] = "pip"  # a sound-only beat has nothing to fill the screen
+            elif not (fullscreen_available and (native_voiceover or phone_talking)):
+                updates["display_mode"] = "pip"
                 notices.append(
-                    f'Full-screen visual for "{beat.trigger}" is not available for this edit; '
-                    "left it out."
+                    "Full screen isn't available for this edit yet, so "
+                    f'"{beat.trigger}" shows as a small card in the corner instead.'
                 )
-                continue
         beats.append(beat.model_copy(update=updates))
     resolved_beats = beats or None
 

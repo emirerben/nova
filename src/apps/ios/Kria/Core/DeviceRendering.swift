@@ -366,7 +366,7 @@ struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
             let isAudioAsset: Bool
             switch asset.source {
             case .library(let catalog, _, _): isAudioAsset = catalog == .music || catalog == .soundEffect
-            case .voiceover, .song: isAudioAsset = true
+            case .voiceover, .song, .processedAudio: isAudioAsset = true
             default: isAudioAsset = false
             }
             guard isAudioAsset, let verified = urls[asset.id] else { continue }

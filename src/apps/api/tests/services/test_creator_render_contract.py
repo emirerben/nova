@@ -609,7 +609,6 @@ def test_declared_phone_declines_match_the_real_entry_points(adapter):
     gate_declines = {
         ("phone_speech_montage", "require_voiceover"): "requirement_conflict",
         ("phone_voiceover_montage", "audio_source_ids"): "requirement_conflict",
-        ("phone_narrated", "audio_source_ids"): "requirement_conflict",
         ("phone_guided_unified_montage", "audio_source_ids"): "evidence_missing",
     }
     declaration = ADAPTER_DECLARATIONS[adapter]
@@ -1239,3 +1238,56 @@ def test_described_shot_label_nobody_placed_is_refused_naming_the_words():
     assert contract is not None and list(contract.unresolved) == [
         '"Banyo" yazısının hangi klibe gideceğini anlayamadım, o yüzden bu yazıyı doğrulayamıyorum.'
     ]
+
+
+def test_voiceover_selected_sources_need_explicit_supported_dispatch():
+    from app.services.creator_render_contract import check_phone_dispatch_contract
+
+    contract = CreatorRenderContract(generation_id="g").rebind(
+        require_voiceover=True, audio_source_ids=("talk",)
+    )
+    kwargs = dict(snapshot_generation_id="g", has_voiceover_candidate=True)
+    with pytest.raises(CreatorRenderContractError, match="combine"):
+        check_phone_dispatch_contract(contract, **kwargs)
+    assert check_phone_dispatch_contract(contract, allow_voiceover_source_audio=True, **kwargs)
+    with pytest.raises(CreatorRenderContractError, match="combine"):
+        check_phone_dispatch_contract(
+            contract, allow_voiceover_source_audio=True, user_song={"id": "song"}, **kwargs
+        )
+
+
+def test_spoken_text_pin_is_skipped_only_for_supported_native_narrated_voiceover(monkeypatch):
+    import app.services.phone_rollout as rollout
+    from app.kria.brief import BriefRequirement, CreativeBrief
+
+    brief = CreativeBrief(
+        requirements=[
+            BriefRequirement(
+                id="r6",
+                kind="text",
+                scope="global",
+                literal="20 dk",
+                description="show 20 dk when I say yirmi dakika",
+                facts={"triggers": ["yirmi dakika"]},
+            )
+        ]
+    )
+    native = {
+        "edit_format": "narrated",
+        "audio_strategy": "voiceover",
+        "render_program": "native",
+    }
+    monkeypatch.setattr(rollout, "phone_voiceover_spoken_text_supported", lambda **_kwargs: True)
+    supported = build_render_contract(native, generation_id="g", brief=brief)
+    assert supported is not None and supported.exact_texts == ()
+
+    monkeypatch.setattr(rollout, "phone_voiceover_spoken_text_supported", lambda **_kwargs: False)
+    unsupported = build_render_contract(native, generation_id="g", brief=brief)
+    assert unsupported is not None
+    assert [(row.role, row.text) for row in unsupported.exact_texts] == [("any", "20 dk")]
+
+    montage = build_render_contract(
+        {**native, "edit_format": "montage"}, generation_id="g", brief=brief
+    )
+    assert montage is not None
+    assert [(row.role, row.text) for row in montage.exact_texts] == [("any", "20 dk")]

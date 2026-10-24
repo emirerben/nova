@@ -902,6 +902,24 @@ with "Videos can't pop up on your words in this edit yet…", and a video card
 that still reaches the bind step drops alone with beat reason
 `visual_is_video`. The closing shot and badge stay photo-only.
 
+**Full-screen beats (KRI-840).** "When I say Argentinian, show the grill photo
+full screen for a moment" is a beat with `display_mode: "fullscreen"` (default
+`"pip"`, omitted from every dump so stored strategies keep their bytes) and
+`hold_s` ~1.2. Where `media_overlays:fullscreen` holds (phone Talking,
+`PHONE_SUBTITLED_FULLSCREEN_OVERLAYS_ENABLED`), grounding
+(`allow_fullscreen=True`) builds a `display_mode="fullscreen"` card on the
+word: its own slot (a corner card never shortens it, two full-screen photos
+never overlap), no face/caption-safe corner, default hold 1.5 s. The recipe is
+the KRI-297 `subtitled-fullscreen` track, so the speaker's voice and the
+captions run unbroken. The even-slot `fullscreen_images` sequence slides its
+cutaways around beat windows (`fullscreen_occupied`). Elsewhere (Voiceover, flag
+off) manifest repair downgrades the beat to a corner card with a notice, and the
+receipts say so: `phone_beat_receipt.placed[].display_mode == "fullscreen"`
+only for a real cutaway; `brief_checks` compares the ask's recorded
+`facts["display_mode"]` with it, so a corner card is never reported as full
+screen. Rollback: `fly secrets set PHONE_SUBTITLED_FULLSCREEN_OVERLAYS_ENABLED=false`
++ restart api + worker (never roll the code back: stored strategies carry the field).
+
 **The creator's beats win their Visuals and windows; Phase 2 fills the
 rest (KRI-183).** Beats ground FIRST. Every beat card's media id (photos,
 stickers, closing shot, badge) is then excluded from Phase 2's candidate set

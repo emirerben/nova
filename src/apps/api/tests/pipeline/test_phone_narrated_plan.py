@@ -129,6 +129,56 @@ def test_footage_gain_matches_montage_mix_math(mix, expected_gain):
     assert recipe.audio.original_volume == pytest.approx(expected_gain)
 
 
+def test_explicit_source_audio_selection_marks_only_selected_camera_audio():
+    recipe = compile_phone_narrated_plan(
+        _three_steps(),
+        _three_bindings(),
+        _narration(duration_s=12.0),
+        voiceover_duration_s=12.0,
+        mix=0.4,
+        source_audio_media_ids=("c1",),
+    )
+
+    video = next(track for track in recipe.tracks if track.id == "narrated")
+    assert [clip.volume for clip in video.clips] == [0.0, 1.0, 0.0]
+    # Per-source selection is a unit marker; narration still owns the bed gain.
+    assert recipe.audio.original_volume == pytest.approx(0.6)
+
+
+@pytest.mark.parametrize(
+    ("media_ids", "match"),
+    [
+        (("missing",), "unknown media"),
+        (("c3",), "not used"),
+    ],
+)
+def test_source_audio_selection_rejects_unknown_or_unheard_sources(media_ids, match):
+    bindings = (*_three_bindings(), _binding("c3"))
+    with pytest.raises(ValueError, match=match):
+        compile_phone_narrated_plan(
+            _three_steps(),
+            bindings,
+            _narration(duration_s=12.0),
+            voiceover_duration_s=12.0,
+            source_audio_media_ids=media_ids,
+        )
+
+
+def test_source_audio_selection_rejects_known_silent_source():
+    silent = _binding("c1").model_copy(
+        update={"original": _binding("c1").original.model_copy(update={"has_audio": False})}
+    )
+    bindings = (_binding("c0"), silent, _binding("c2"))
+    with pytest.raises(ValueError, match="silent media"):
+        compile_phone_narrated_plan(
+            _three_steps(),
+            bindings,
+            _narration(duration_s=12.0),
+            voiceover_duration_s=12.0,
+            source_audio_media_ids=("c1",),
+        )
+
+
 def test_recipe_passes_phone_pilot_validation(monkeypatch):
     steps = _three_steps()
     bindings = _three_bindings()
@@ -859,6 +909,25 @@ def test_added_text_compiles_as_the_next_title_layer_before_the_captions():
     assert [layer.id for layer in swapped.text_layers[:2]] == ["title-0", "title-1"]
     assert [_layer_text(layer) for layer in swapped.text_layers[:2]] == [_TITLE, "Part two"]
     assert swapped.text_layers[2:] == pinned.text_layers[1:]
+
+
+def test_compile_resolved_text_elements_keeps_opening_title_first():
+    base = _titled_recipe()
+    [title] = _title_rows(base)
+    extra = {**title, "id": "creator-note", "text": "Part two", "start_s": 3.0, "end_s": 5.0}
+
+    recipe = compile_phone_narrated_plan(
+        _three_steps(),
+        _three_bindings(),
+        _narration(duration_s=12.0),
+        voiceover_duration_s=12.0,
+        opening_title=_TITLE,
+        opening_title_end_s=1.6,
+        resolved_text_elements=[extra],
+    )
+
+    assert [layer.id for layer in _title_layers(recipe)] == ["title-0", "title-1"]
+    assert [_layer_text(layer) for layer in _title_layers(recipe)] == [_TITLE, "Part two"]
 
 
 def test_replacing_the_title_needs_a_narrated_video_track():
