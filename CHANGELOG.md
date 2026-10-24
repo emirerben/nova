@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.81.0] - 2026-10-24
+
+### Changed
+- feat(text): keep text off the creator's named face and marked object across cut and crop (KRI-827) (#1800) <!-- release-pr: 1800 -->
+
 ## [0.81.80.0] - 2026-10-24
 
 ### Changed
