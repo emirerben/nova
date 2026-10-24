@@ -131,14 +131,17 @@ def find_pinned_word(
     approx = pin.approx_s
     if approx is not None and to_timeline is not None:
         approx = to_timeline(approx)
+        if approx is None:
+            # The picked moment was cut out: never fall back to the ordinal (another
+            # occurrence the render hears would take its place).
+            return None, "pinned_occurrence_cut"
     hits = spoken_word_occurrences(words, ask.triggers)
     # The ordinal decides first; the picked time (when it survived the cut) is the fallback.
     picked = select_occurrence(
         [(start, end) for _t, start, end in hits], dataclasses.replace(pin, approx_s=approx)
     )
     if picked is None:
-        cut_out = pin.approx_s is not None and approx is None
-        return None, "pinned_occurrence_cut" if cut_out else "pinned_occurrence_missing"
+        return None, "pinned_occurrence_missing"
     return next(hit for hit in hits if (hit[1], hit[2]) == picked), None
 
 

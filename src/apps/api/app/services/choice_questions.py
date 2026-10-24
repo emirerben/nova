@@ -3811,19 +3811,40 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
 def _without_cut_line(req: Any, line: object) -> Any:
     """``req`` without the waived spoken ``line`` (KRI-724); superseded when nothing is left.
 
-    A text ask (its trigger is the waived word) and a cut ask whose only line it was are
-    superseded; a cut ask naming other lines keeps them."""
+    A text ask (its trigger is the waived word) and a cut ask whose only purpose was that
+    line are superseded; a cut ask naming other lines keeps them, and one that also asks
+    for pause / filler / retake cleanup keeps that cleanup with no named line."""
     from app.kria.brief_checks import named_cut_lines  # noqa: PLC0415
     from app.services.spoken_quotes import fold_tokens  # noqa: PLC0415
 
     lines = named_cut_lines(req)
     want = tuple(fold_tokens(str(line or "")))
     kept = [x for x in lines if tuple(fold_tokens(x)) != want]
+    if lines and not kept and _asks_cleanup_besides(req, str(line or "")):
+        return req.model_copy(update={"facts": {**req.facts, "cut_lines": []}})
     if not lines or not kept:
         return req.model_copy(update={"status": "superseded"})
     if len(kept) == len(lines):
         return None
     return req.model_copy(update={"facts": {**req.facts, "cut_lines": kept}})
+
+
+def _asks_cleanup_besides(req: Any, line: str) -> bool:
+    """``req`` asks for speech cleanup (pauses, fillers, retakes) beyond the named ``line``."""
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        _CLEANUP_NOUN_RE,
+        _fold,
+        _req_text,
+        _wants_cleanup,
+    )
+
+    if not _wants_cleanup(req):
+        return False
+    text = _req_text(req)
+    folded_line = _fold(line).strip()
+    if folded_line:
+        text = text.replace(folded_line, " ")
+    return bool(_CLEANUP_NOUN_RE.search(text))
 
 
 def choice_notices(strategy: Any) -> list[str]:

@@ -436,6 +436,9 @@ _OCCURRENCE_KEY = re.compile(  # kri667: parses our own option keys, never creat
 )
 # The nearest-time fallback never reaches further than this from the picked time.
 _MAX_PIN_DRIFT_S = 1.0
+# When the counts agree the ordinal is trusted over the (sentence-estimated) picked time, but
+# never for an occurrence further than this from it (a different set of occurrences).
+_MAX_ORDINAL_DRIFT_S = 2.0
 
 
 @dataclass(frozen=True)
@@ -499,16 +502,21 @@ def select_occurrence(
     """The occurrence ``pin`` names among ``windows`` (time-ordered), or None.
 
     The ordinal decides when the render hears the same number of occurrences the question
-    offered; otherwise the occurrence nearest ``approx_s`` (``pin.approx_s`` mapped onto the
-    same timeline as ``windows``), only when it is closer than both ``_MAX_PIN_DRIFT_S`` and
-    half the gap to its neighbours. Never the first match by default.
+    offered AND (when the picked time is known) that occurrence sits within
+    ``_MAX_ORDINAL_DRIFT_S`` of it: an equal count is not the same set of occurrences (one
+    cut out, another heard only by the render). Otherwise the occurrence nearest ``approx_s``
+    (``pin.approx_s`` mapped onto the same timeline as ``windows``), only when it is closer
+    than both ``_MAX_PIN_DRIFT_S`` and half the gap to its neighbours. Never the first match
+    by default. A caller whose mapped time is gone (cut out) must not call this.
     """
     ordered = sorted(windows)
     if not ordered or pin.ordinal is None:
         return None
-    if len(ordered) == pin.of:
-        return ordered[pin.ordinal - 1]
     target = pin.approx_s if approx_s is None else approx_s
+    if len(ordered) == pin.of:
+        by_ordinal = ordered[pin.ordinal - 1]
+        if target is None or abs(by_ordinal[0] - target) <= _MAX_ORDINAL_DRIFT_S:
+            return by_ordinal
     if target is None:
         return None
     index = min(range(len(ordered)), key=lambda i: abs(ordered[i][0] - target))

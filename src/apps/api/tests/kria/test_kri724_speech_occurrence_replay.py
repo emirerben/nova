@@ -32,6 +32,11 @@ Failure modes, written before the code:
 10. Flag off: no question, the strategy and brief pass through unchanged.
 11. A voiceover edit: never asked (another slice).
 12. A named cut said twice: the creator picks one, only that one is cut.
+13. "Don't cut it" on a line named inside a pause-cleanup ask drops the whole ask, so the
+    pauses stay in and nothing reports it. (Only the line leaves; the cleanup stays live.)
+14. The render hears as many occurrences as the question offered, but not the same ones
+    (the pick is cut out / misheard, another is heard only at render): the ordinal lands on
+    an occurrence the creator never picked and the receipt says "met".
 """
 
 from __future__ import annotations
@@ -574,3 +579,99 @@ def test_a_line_said_twice_is_cut_only_where_the_creator_picked():
     )
     [cut] = receipts["named_cuts"]
     assert cut["status"] == "applied" and len(cut["spans"]) == 2
+
+
+# -- 13: a waived line inside a cleanup ask keeps the cleanup -----------------------------
+
+
+def test_dont_cut_it_keeps_the_pause_cleanup_of_the_same_ask():
+    from app.kria.opening_cut_ask import brief_named_cuts
+    from app.services.choice_questions import _asks_speech_cleanup
+
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(
+                id="r1",
+                kind="timing",
+                scope="global",
+                description="Cut the long pauses and the part where I say 'thank you Karo'",
+                facts={"cut_lines": ["thank you Karo"]},
+            )
+        ],
+    )
+    [choice] = _ask(brief, _snapshot())
+    final, binding, _resolution = _approve(brief, _answer(choice, "waive"))
+    [r1] = final.requirements
+    assert r1.status != "superseded" and r1.facts["cut_lines"] == []
+    assert _asks_speech_cleanup(final)
+    assert brief_named_cuts(final, binding.choice_answers) == ()
+
+
+def test_dont_cut_it_on_a_line_only_ask_still_supersedes_it():
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(
+                id="r8",
+                kind="audio",
+                scope="global",
+                description="Cut where she says 'thank you Karo'",
+                facts={"speech_cleanup": True, "cut_lines": ["thank you Karo"]},
+            )
+        ],
+    )
+    [choice] = _ask(brief, _snapshot())
+    final, _binding, _resolution = _approve(brief, _answer(choice, "waive"))
+    assert final.requirements[0].status == "superseded"
+
+
+# -- 14: an equal count is not the same set of occurrences --------------------------------
+
+
+def _merope(start_s: float) -> dict:
+    return {"text": "Merope", "start_s": start_s, "end_s": start_s + 0.45}
+
+
+def _swapped() -> list[dict]:
+    """Caro's word misheard, one more "Merope" heard at 52 s: still four occurrences."""
+    return sorted([*_without(CARO_S), _merope(52.0)], key=lambda w: w["start_s"])
+
+
+def test_an_equal_count_of_other_meropes_is_never_placed_as_caros():
+    (hit, missed) = find_pinned_word(_swapped(), _ASK)
+    assert hit is None and missed == "pinned_occurrence_missing"
+
+
+def test_a_cut_out_pick_never_falls_back_to_the_ordinal():
+    def cut_out(source_s: float):
+        return None if 39.5 <= source_s <= 40.6 else source_s
+
+    (hit, missed) = find_pinned_word(_swapped(), _ASK, to_timeline=cut_out)
+    assert hit is None and missed == "pinned_occurrence_cut"
+
+
+def test_the_ordinal_still_beats_a_sentence_estimate_nearer_yasin():
+    # Control for 14: same set, estimate drifted toward Yasin's word -> still Caro's.
+    pin = OccurrencePin(ordinal=2, of=4, approx_s=39.1)
+    ask = SpokenTextAsk("r7", "MEROPE", ("Merope",), speaker="she", pin=pin)
+    (hit, missed) = find_pinned_word(WORDS, ask)
+    assert missed is None and hit[1] == pytest.approx(CARO_S)
+
+
+def test_a_named_cut_with_an_equal_count_of_other_takes_cuts_nothing():
+    from app.pipeline.phone_opening_cut import apply_named_line_cuts
+
+    words = [
+        Word(text=t, start_s=s, end_s=s + 0.3, confidence=1.0)
+        for t, s in [("thank", 2.0), ("you", 2.3), ("Karo", 2.6), ("ok", 6.0)]
+        + [("thank", 20.0), ("you", 20.3), ("Karo", 20.6), ("bye", 25.0)]
+    ]
+    # The creator picked the second of two, at 12 s; the render hears two others (2 s, 20 s).
+    pin = OccurrencePin(ordinal=2, of=2, approx_s=12.0)
+    plan, receipts = apply_named_line_cuts(
+        no_op_plan(30.0), words, [("thank you Karo", ("r8",), None, pin)], duration_s=30.0
+    )
+    [receipt] = receipts
+    assert receipt["status"] != "applied" and receipt["reason"] == "pinned_occurrence_missing"
+    assert plan.keep_segments == no_op_plan(30.0).keep_segments
