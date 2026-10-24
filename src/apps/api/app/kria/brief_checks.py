@@ -78,7 +78,12 @@ from app.schemas.text_style_intent import (
 from app.services.clip_facts import CAPTURE_ORDER_KEYS
 from app.services.clip_order_sequence import row_relations, sequence_rows
 from app.services.kria_editor_ops_diff import effective_entrance
-from app.services.length_policy import creator_duration_matches, length_owner, natural_length_owner
+from app.services.length_policy import (
+    creator_duration_satisfied,
+    duration_bound,
+    length_owner,
+    natural_length_owner,
+)
 from app.services.phone_noise_reduction import engine_noise_reduction_available
 from app.text_fold import capitalize, uses_turkish_case
 from app.text_fold import lower as text_lower
@@ -6352,7 +6357,9 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
         return _receipt(req, "partial", _CANT_CHECK_TIMING)
     if facts.duration_s is None:
         return _receipt(req, "partial", _CANT_CONFIRM_LENGTH)
-    if creator_duration_matches(facts.duration_s, float(target)):
+    # KRI-847: "at most 10 seconds" is the same +/- 10 % check without its lower side.
+    bound = duration_bound(req.facts)
+    if creator_duration_satisfied(facts.duration_s, float(target), bound):
         return _receipt(req, "met", None)
     if (
         natural_owner == "take"
@@ -6373,17 +6380,20 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
                 "bir kapanış var)"
             ),
         )
+    asked = _round_s(float(target))
+    asked_en = f"at most {asked}s" if bound == "at_most" else f"{asked}s"
+    asked_tr = f"en fazla {asked} saniye" if bound == "at_most" else f"{asked} saniye"
     return _receipt(
         req,
         "partial",
         say(
             en=(
                 f"This draft is about {_round_s(facts.duration_s)}s{outro}; "
-                f"you asked for {_round_s(float(target))}s."
+                f"you asked for {asked_en}."
             ),
             tr=(
                 f"Bu taslak yaklaşık {_round_s(facts.duration_s)} saniye{outro}; sen "
-                f"{_round_s(float(target))} saniye istedin."
+                f"{asked_tr} istedin."
             ),
         ),
     )
@@ -7372,8 +7382,8 @@ def narrated_alignment_recovery() -> str:
 # length ask is judged against the same draft, so a brief with two of them (café M2: a freeze
 # the brief scoped as a length, and "about 14 seconds") states the draft's length twice.
 _DRAFT_LENGTH_RE = re.compile(  # kri667: our own length sentence, never creator words
-    r"^(?:This draft is about \S+s\b.*; you asked for \S+s\."
-    r"|Bu taslak yaklaşık \S+ saniye\b.*; sen \S+ saniye istedin\.)$"
+    r"^(?:This draft is about \S+s\b.*; you asked for (?:at most )?\S+s\."
+    r"|Bu taslak yaklaşık \S+ saniye\b.*; sen (?:en fazla )?\S+ saniye istedin\.)$"
 )
 # A sentence already ends: its stop, then any closing quotes or brackets.
 _SENTENCE_END_RE = re.compile(  # kri667: punctuation only, reads no meaning
@@ -8851,12 +8861,18 @@ def _talking_honest_receipt(
                 return receipt
             en_tail = f"your take is {_round_s(take)}s"
             tr_tail = f"çekimin {_round_s(take)} saniye"
+        # KRI-847: a ceiling is worded as one ("at most 10s"), never as an exact length.
+        ceiling = duration_bound(req.facts) == "at_most"
+        asked_en = f"at most {_round_s(target)}s" if ceiling else f"{_round_s(target)}s"
+        asked_tr = (
+            f"en fazla {_round_s(target)} saniye" if ceiling else f"{_round_s(target)} saniye"
+        )
         return _receipt(
             req,
             "partial",
             say(
-                en=f"{prefix}; {en_tail} and you asked for {_round_s(target)}s",
-                tr=f"{_REASON_TR[prefix]}; {tr_tail}, sen {_round_s(target)} saniye istedin",
+                en=f"{prefix}; {en_tail} and you asked for {asked_en}",
+                tr=f"{_REASON_TR[prefix]}; {tr_tail}, sen {asked_tr} istedin",
             ),
         )
     # Footage sound level; KRI-842: one clip's sound is as much a mix change a Talking edit lacks.

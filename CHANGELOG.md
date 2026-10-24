@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.100.0] - 2026-10-24
+
+### Changed
+- fix(kria): a creator's length ceiling is met by a shorter draft (KRI-847) (#1795) <!-- release-pr: 1795 -->
+
+## [0.81.99.0] - 2026-10-24
+
+### Changed
+- feat(narrated): cut a named line or retake out of the voiceover, phone and cloud (KRI-889) (#1806) <!-- release-pr: 1806 -->
+
 ## [0.81.98.0] - 2026-10-24
 
 ### Changed
