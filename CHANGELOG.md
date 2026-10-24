@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.79.0] - 2026-10-24
+
+### Changed
+- feat(kria): footage-grounded voiceover script before asking for a recording (KRI-815) (#1791) <!-- release-pr: 1791 -->
+
 ## [0.81.78.0] - 2026-10-24
 
 ### Changed
