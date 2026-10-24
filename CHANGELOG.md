@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.85.0] - 2026-10-24
+
+### Changed
+- ci: split iPhone validation into three Mac legs and cache apt .debs (KRI-880) (#1793) <!-- release-pr: 1793 -->
+
 ## [0.81.84.0] - 2026-10-24
 
 ### Changed
