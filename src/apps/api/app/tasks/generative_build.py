@@ -6268,7 +6268,10 @@ def _plan_phone_unified_montage(
         plan_unified_montage,
         skia_font_covers,
     )
-    from app.services.phone_rollout import freeze_frame_supported  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        freeze_frame_planned_for,
+        stamped_client_protocol,
+    )
 
     return plan_unified_montage(
         clips,
@@ -6289,7 +6292,12 @@ def _plan_phone_unified_montage(
         # recorded it (and the reply said so), never against a pinned order.
         speech_order=speech_order_approved(strategy, contract, approved_length_plan),
         # KRI-828: the creator's freeze is planned only where the phone can hold a frame.
-        freeze_frames=freeze_frame_supported(),
+        # KRI-898: and only for the app build that approved (stamped on the Job at dispatch;
+        # the pre-approval check stamps the drafting build). Unstamped => no hold, the
+        # receipt says "Couldn't", the rest of the video renders.
+        freeze_frames=freeze_frame_planned_for(
+            stamped_client_protocol(all_candidates.get("creator_client_protocol"))
+        ),
     )
 
 
