@@ -1,6 +1,24 @@
 import XCTest
 
 final class CameraRollCollectionUITests: XCTestCase {
+    func testCompletedTimingReviewStillOffersExplicitReadyVideoChoice() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-camera-roll-collection-ready", "-collection-ready-reset", "-collection-unusable-timing"]
+        app.launch()
+        XCTAssertTrue(app.buttons["collection-find-stories"].waitForExistence(timeout: 10))
+        app.buttons["collection-find-stories"].tap()
+        let ready = app.buttons["collection-use-ready-videos"]
+        XCTAssertTrue(ready.waitForExistence(timeout: 10), "One timing-review clip cannot block choosing the other ready video")
+        XCTAssertTrue(app.staticTexts["1 video needs a usable source window. You can use the ready videos."].exists)
+        XCTAssertFalse(app.staticTexts["Boat journey"].exists, "Partial inclusion still requires a separate creator choice")
+        ready.tap()
+        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["1 video needs source or analysis review before inclusion."].exists)
+        let evidence = XCTAttachment(screenshot: app.screenshot())
+        evidence.name = "Explicit partial choice retains ready footage while timing-review source stays visible"
+        evidence.lifetime = .keepAlways
+        add(evidence)
+    }
     func testReviewCorrectionRemovalAndResumeDoNotUpload() {
         let app = XCUIApplication()
         app.launchArguments = ["-camera-roll-collection", "-collection-fixture-reset"]
@@ -48,7 +66,7 @@ final class CameraRollCollectionUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Boat journey"].exists, "Full-collection ideas must wait for missing analysis")
         ready.tap()
         XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["1 video wasn’t included because analysis isn’t ready."].exists)
+        XCTAssertTrue(app.staticTexts["1 video needs source or analysis review before inclusion."].exists)
     }
 
     func testSavedIdeasSurviveRelaunchWithoutReselectingFootage() {

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from typing import Literal
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -26,6 +27,59 @@ def execution_digest(value):
     ).hexdigest()
 
 
+class PreparedSourceContext(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    moment_id: UUID
+    asset_id: UUID
+    source_id: UUID
+    generation: str
+    start_s: float = Field(ge=0, le=0, allow_inf_nan=False)
+    end_s: float = Field(ge=1, le=20, allow_inf_nan=False)
+    evidence_scope: Literal["whole_source_context"]
+    context_contract: Literal["whole-source-context-v1"]
+    semantic_localization: Literal["none"]
+    timing_basis: Literal["verified_source_bounds"]
+    uncertain: Literal[True]
+    fact_version: str = Field(pattern=r"^[a-f0-9]{64}$")
+    index_spec: str = Field(pattern=r"^[a-f0-9]{64}$")
+    quality: dict
+
+
+def _source_contexts(moments: list[dict]) -> list[PreparedSourceContext]:
+    result = []
+    for raw in moments:
+        evidence = raw.get("evidence") or {}
+        scope = raw.get("evidence_scope", evidence.get("evidence_scope", "timed_moment"))
+        if scope != "whole_source_context":
+            if evidence.get("evidence_scope") == "whole_source_context":
+                raise ValueError("Story source context scope changed")
+            continue
+        result.append(
+            PreparedSourceContext(
+                moment_id=raw["id"],
+                asset_id=raw["asset_id"],
+                source_id=raw["source_id"],
+                generation=raw["generation"],
+                start_s=raw["start_s"],
+                end_s=raw["end_s"],
+                uncertain=raw["uncertain"],
+                evidence_scope=scope,
+                **{
+                    key: evidence.get(key)
+                    for key in (
+                        "context_contract",
+                        "semantic_localization",
+                        "timing_basis",
+                        "fact_version",
+                        "index_spec",
+                        "quality",
+                    )
+                },
+            )
+        )
+    return result
+
+
 class PreparedCollectionStory(BaseModel):
     model_config = ConfigDict(extra="forbid")
     story_id: UUID
@@ -39,6 +93,9 @@ class PreparedCollectionStory(BaseModel):
         default=None, exclude_if=lambda value: value is None
     )
     research: StoryResearch | None = Field(default=None, exclude_if=lambda value: value is None)
+    source_contexts: list[PreparedSourceContext] = Field(
+        default_factory=list, max_length=8, exclude_if=lambda value: not value
+    )
 
 
 def selected_story_requirement(prepared: PreparedCollectionStory):
@@ -108,6 +165,11 @@ async def prepare_story_snapshot(db, owner, story, item):
     current = {str(value.id): value for value in evidence.moments}
     if any(value["id"] not in current for value in story.moments_json):
         raise HTTPException(409, "Story source changed; refresh the collection")
+    contexts = _source_contexts(
+        [current[value["id"]].model_dump(mode="json") for value in story.moments_json]
+    )
+    if contexts != _source_contexts(story.moments_json):
+        raise HTTPException(409, "Story source context evidence changed; review it again")
     eligible = await media_collections.eligible_sources(
         db, owner, media_collections.members(collection)
     )
@@ -246,6 +308,7 @@ async def prepare_story_snapshot(db, owner, story, item):
         compiled_digest=execution_digest(compiled),
         content_plan=content_plan,
         research=story_out(story).research,
+        source_contexts=contexts,
     )
 
 
@@ -313,6 +376,16 @@ async def plan_selected_story(db, *, reference, thread_id, item_id, creator_id):
             + " / ".join(json.dumps(value, ensure_ascii=False) for value in wording)
             + ". No added music or narration."
         )
+    if prepared.source_contexts:
+        summary += (
+            " Whole clip; no timed highlight detected."
+            if len(prepared.source_contexts) == 1
+            else " Whole clips; no timed highlights detected."
+        )
+        if any(
+            value.quality.get("overlapping_unusable_spans") for value in prepared.source_contexts
+        ):
+            summary += " Cached quality notes flag a source span for review."
     from app.config import settings
     from app.kria.brief import load_latest_brief
 
@@ -401,6 +474,8 @@ def install_approved_story(db, *, item, owner, raw, strategy, dry_run=False):
         raise ValueError("Approved story research changed")
     if prepared.content_plan != story_out(story).content_plan:
         raise ValueError("Approved story content plan changed")
+    if prepared.source_contexts != _source_contexts(story.moments_json):
+        raise ValueError("Approved story context evidence changed")
     if (
         execution_digest(compile_proposal_execution_plan(prepared.snapshot))
         != prepared.compiled_digest
@@ -486,5 +561,6 @@ async def validate_prepared_story_for_approval(db, *, owner, item, raw):
         current.compiled_digest != prepared.compiled_digest
         or current.research != prepared.research
         or current.content_plan != prepared.content_plan
+        or current.source_contexts != prepared.source_contexts
     ):
         raise HTTPException(409, "Chosen story source, wording or compiler changed")

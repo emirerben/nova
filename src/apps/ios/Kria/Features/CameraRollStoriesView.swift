@@ -32,7 +32,7 @@ struct CameraRollStoriesView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                 if !result.coverage.unindexed.isEmpty {
-                    Label("\(result.coverage.unindexed.count) \(result.coverage.unindexed.count == 1 ? "video wasn’t" : "videos weren’t") included because analysis isn’t ready.", systemImage: "info.circle")
+                    Label("\(result.coverage.unindexed.count) \(result.coverage.unindexed.count == 1 ? "video needs" : "videos need") source or analysis review before inclusion.", systemImage: "info.circle")
                         .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
                 } else if !result.coverage.incompleteSpeech.isEmpty {
                     Label("Some audio needs checking", systemImage: "info.circle")
@@ -179,6 +179,9 @@ struct CameraRollStoriesView: View {
                         }
                         VStack(alignment: .leading, spacing: 6) {
                             Text(moment.text).font(KriaFont.body(14).weight(.medium)).lineLimit(3)
+                            if moment.evidenceScope == "whole_source_context" {
+                                Text("Whole clip · no timed highlight detected").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                            }
                             Text("\(sourceLabel(moment)) · \(moment.start, specifier: "%.1f")–\(moment.end, specifier: "%.1f")s")
                                 .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                             if let reasons = story.contentPlan?.beatReasons, reasons.indices.contains(index) {

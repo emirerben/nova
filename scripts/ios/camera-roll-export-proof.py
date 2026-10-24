@@ -170,6 +170,13 @@ def prepare(args):
             clips[1]["source_asset_id"],
             clips[0]["source_asset_id"],
         )
+        # Keep the substituted sources' windows valid when a short full-source
+        # context clip follows a late window in a longer source. Picture/order
+        # must be wrong in the exported result, not rejected as out-of-bounds.
+        clips[0]["source_start"], clips[1]["source_start"] = (
+            clips[1]["source_start"],
+            clips[0]["source_start"],
+        )
         cases["wrong_order"] = wrong_order
     for name, candidate in cases.items():
         directory = args.output / "cases" / name

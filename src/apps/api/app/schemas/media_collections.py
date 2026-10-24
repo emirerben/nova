@@ -54,6 +54,8 @@ class CollectionIndexOut(BaseModel):
     unavailable_asset_ids: list[UUID]
     truncated_asset_ids: list[UUID]
     untimed_asset_ids: list[UUID] = Field(default_factory=list)
+    context_asset_ids: list[UUID] = Field(default_factory=list)
+    unusable_timing_asset_ids: list[UUID] = Field(default_factory=list)
 
 
 class MediaMomentOut(BaseModel):
@@ -66,6 +68,7 @@ class MediaMomentOut(BaseModel):
     kind: Literal["visual", "speech"]
     text: str
     uncertain: bool
+    evidence_scope: Literal["timed_moment", "whole_source_context"] = "timed_moment"
     evidence: dict
 
 

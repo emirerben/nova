@@ -73,6 +73,36 @@ _RECOVERABLE_CASES = {"held", "empty-caption", "whitespace-caption", "lost-telem
     + [
         pytest.param(False, True, False, None, False, None, id="legacy-readiness-off"),
         pytest.param(True, False, False, "", False, None, id="empty-caption-readiness-off"),
+        pytest.param(
+            "whole-source-context",
+            False,
+            False,
+            _ACCEPTED_CAPTION,
+            True,
+            None,
+            id="whole-source-context",
+        ),
+        pytest.param(
+            "whole-source-context",
+            False,
+            False,
+            "",
+            True,
+            None,
+            id="whole-source-context-empty-caption",
+        ),
+    ]
+    + [
+        pytest.param(
+            "whole-source-context",
+            False,
+            changed,
+            _ACCEPTED_CAPTION,
+            True,
+            None,
+            id=f"whole-source-{changed}",
+        )
+        for changed in ("prepared-context", "prepared-context-missing", "story-context")
     ]
     # Seed the historical hold, then use the real HTTP/worker/approval chain.
     # This is recovery of an existing selection, not success in a new project.
@@ -111,6 +141,7 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
     recovery_case,
 ):
     client, assets, sources, owner, _app = collection_world
+    source_context = with_content_plan == "whole-source-context"
     if recovery_case:
         from app.routes import creation_threads
 
@@ -141,11 +172,17 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         for index in range(2):
             previous_source = await db.get(MediaAssetSource, uuid.UUID(sources[index]))
             asset = await db.get(MediaAsset, uuid.UUID(assets[index]))
+            duration = 8.166667 if source_context and index == 0 else 180
+            asset.metadata_json = {**asset.metadata_json, "duration_s": duration}
             original_hash, original_bytes = "a" * 64, 1000
             uploaded_hash, uploaded_bytes = (
                 previous_source.uploaded_sha256,
                 previous_source.byte_count,
             )
+            if source_context:
+                # Reusable facts are keyed by verified bytes, not the source row.
+                # Different replayed content needs a distinct synthetic identity.
+                uploaded_hash = hashlib.sha256(f"context-source-{asset.id}".encode()).hexdigest()
             if proof_input:
                 file = Path(proof_input) / f"source-{index}.mp4"
                 with file.open("rb") as stream:
@@ -184,6 +221,31 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
                 source.status,
             )
             for analysis in analyses:
+                import copy
+
+                result = copy.deepcopy(analysis.result_json)
+                if source_context and index == 0:
+                    result = (
+                        {"words": []}
+                        if analysis.analyzer == "nova.media.transcript"
+                        else {
+                            "duration_s": duration,
+                            "description": "Synthetic red test source.",
+                            "understanding": {"notable_moments": []},
+                            "best_moments": [],
+                            "unusable_spans": [
+                                {
+                                    "start_s": 1,
+                                    "end_s": 2,
+                                    "reason": "Synthetic cached quality note",
+                                }
+                            ],
+                        }
+                    )
+                elif source_context and analysis.analyzer != "nova.media.transcript":
+                    for moment in result.get("understanding", {}).get("notable_moments", []):
+                        if "ferry" in moment.get("description", "").lower():
+                            moment["description"] = "Synthetic blue test source."
                 key = facts._key(
                     ref, "transcript" if analysis.analyzer == "nova.media.transcript" else None
                 )
@@ -198,7 +260,7 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
                         schema_version=key.schema_version,
                         source_identity=key.source_identity,
                         status="ready",
-                        result_json=analysis.result_json,
+                        result_json=result,
                     )
                 )
             sources[index] = str(source.id)
@@ -206,14 +268,14 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
             record.update(
                 gcs_path=source.object_path,
                 storage_generation="42",
-                duration_s=180,
+                duration_s=duration,
                 library_asset_id=assets[index],
                 library_source_id=sources[index],
             )
             proxy = record["upload_contract"]["proxy"]
-            proxy["duration_s"] = 180
+            proxy["duration_s"] = duration
             proxy["original"].update(
-                duration_s=180,
+                duration_s=duration,
                 sha256=original_hash,
                 byte_count=original_bytes,
                 width=640,
@@ -227,11 +289,54 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
     monkeypatch.setattr(storage, "object_metadata", lambda path: metadata_by_path[path])
     path = f"/me/media-collections/{uuid.uuid4()}"
     collection_id = uuid.UUID(path.rsplit("/", 1)[1])
-    await client.put(path, json=selection(assets, sources))
+    selected_members = selection(assets, sources)
+    additional_context = None
+    if recovery_case == "held":
+        # An existing partial idea may predate another member's completed facts.
+        # Enrich that member during index refresh without changing membership or
+        # any of the two accepted source windows.
+        async with AsyncSessionLocal() as db:
+            extra_asset = MediaAsset(
+                user_id=owner.id,
+                kind="video",
+                status="ready",
+                metadata_json={"duration_s": 8.166667, "filename": "extra-synthetic.mp4"},
+            )
+            db.add(extra_asset)
+            await db.flush()
+            extra_source = MediaAssetSource(
+                user_id=owner.id,
+                asset_id=extra_asset.id,
+                role="analysis_proxy",
+                object_path=f"users/{owner.id}/extra-{extra_asset.id}.mp4",
+                object_generation="42",
+                uploaded_sha256=hashlib.sha256(str(extra_asset.id).encode()).hexdigest(),
+                byte_count=1234,
+                content_type="video/mp4",
+                status="available",
+            )
+            db.add(extra_source)
+            await db.flush()
+            additional_context = (extra_asset.id, extra_source.id)
+            selected_members["members"].append(
+                {"asset_id": str(extra_asset.id), "source_id": str(extra_source.id)}
+            )
+            metadata_by_path[extra_source.object_path] = SimpleNamespace(generation="42", size=1234)
+            await db.commit()
+    await client.put(path, json=selected_members)
     await client.post(f"{path}/index", json={"expected_revision": 1})
     moments = (
-        await client.get(f"{path}/moments", params={"query": "ferry", "expected_revision": 1})
+        await client.get(
+            f"{path}/moments",
+            params={"query": "synthetic" if source_context else "ferry", "expected_revision": 1},
+        )
     ).json()["moments"]
+    if source_context:
+        assert len(moments) == 2, moments
+        moments.sort(key=lambda value: value.get("evidence_scope") == "whole_source_context")
+        assert moments[-1]["source_id"] == sources[0]
+        assert (moments[-1]["start_s"], moments[-1]["end_s"]) == (0, 8.166667)
+        assert moments[-1]["evidence_scope"] == "whole_source_context"
     if fractional_end:
         async with AsyncSessionLocal() as db:
             moment = await db.get(MediaSourceMoment, uuid.UUID(moments[0]["id"]))
@@ -615,6 +720,25 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         draft = db.get(CreatorEditDraft, approval.draft_id)
         assert draft.snapshot_json["prepared_collection_story"]["story_id"] == str(story_id)
         frozen = draft.snapshot_json["prepared_collection_story"]
+        if source_context:
+            assert "whole clip" in approval.consequence_summary.lower()
+            assert "no timed highlight" in approval.consequence_summary.lower()
+            contexts = frozen["source_contexts"]
+            assert len(contexts) == 1
+            assert contexts[0]["source_id"] == sources[0]
+            assert contexts[0]["moment_id"] == moments[-1]["id"]
+            assert contexts[0]["evidence_scope"] == "whole_source_context"
+            assert contexts[0]["uncertain"] is True
+            assert contexts[0]["quality"] == moments[-1]["evidence"]["quality"]
+            assert (
+                contexts[0]["quality"]["overlapping_unusable_spans"][0]["reason"]
+                == "Synthetic cached quality note"
+            )
+            assert "cached quality notes" in approval.consequence_summary.lower()
+        else:
+            assert "source_contexts" not in frozen, (
+                "Legacy prepared metadata/digest stays unchanged"
+            )
         if readiness_enabled:
             readiness = draft.snapshot_json["brief_coverage"]["approval_readiness"]
             assert readiness["ready"] is True and readiness["brief_version"] > 0
@@ -656,6 +780,73 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         fingerprint = approval_fingerprint(approval)
         approval_id, draft_revision = approval.id, approval.draft_revision
         thread_revision = db.get(CreationThread, thread_id).revision
+    if recovery_case == "held":
+        # Refreshing the index after approval preparation cannot invalidate a
+        # previously selected timed story or replace its pinned windows/caption.
+        async with AsyncSessionLocal() as db:
+            extra_asset_id, extra_source_id = additional_context
+            extra_source = await db.get(MediaAssetSource, extra_source_id)
+            ref = facts._Source(
+                str(extra_asset_id),
+                str(extra_source_id),
+                str(owner.id),
+                "video",
+                extra_source.role,
+                extra_source.object_path,
+                extra_source.object_generation,
+                extra_source.uploaded_sha256,
+                extra_source.status,
+            )
+            for analyzer, result in (
+                (
+                    None,
+                    {
+                        "duration_s": 8.166667,
+                        "description": "Synthetic extra source context",
+                        "understanding": {"notable_moments": []},
+                    },
+                ),
+                ("transcript", {"words": []}),
+            ):
+                key = facts._key(ref, analyzer)
+                db.add(
+                    MediaAssetAnalysis(
+                        user_id=owner.id,
+                        asset_id=extra_asset_id,
+                        source_id=extra_source_id,
+                        analyzer=key.analyzer,
+                        model=key.model,
+                        prompt_version=key.prompt_version,
+                        schema_version=key.schema_version,
+                        source_identity=key.source_identity,
+                        status="ready",
+                        result_json=result,
+                    )
+                )
+            await db.commit()
+        refreshed = await client.post(f"{path}/index", json={"expected_revision": 1})
+        assert refreshed.status_code == 200, refreshed.text
+        assert refreshed.json()["context_asset_ids"] == [str(extra_asset_id)]
+        with sync_session() as db:
+            assert (
+                len(
+                    db.scalars(
+                        select(MediaSourceMoment).where(
+                            MediaSourceMoment.source_id == extra_source_id
+                        )
+                    ).all()
+                )
+                == 1
+            )
+            assert all(
+                db.get(MediaSourceMoment, uuid.UUID(value["id"])) is not None for value in moments
+            )
+            assert (
+                db.get(CreatorEditDraft, approval.draft_id).snapshot_json[
+                    "prepared_collection_story"
+                ]
+                == frozen
+            )
     if change_before_approval:
         if change_before_approval is True:
             changed = await client.put(
@@ -679,6 +870,13 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
                     metadata_by_path[row.object_path] = SimpleNamespace(
                         generation="replaced-generation", size=row.byte_count
                     )
+                elif change_before_approval == "story-context":
+                    import copy
+
+                    row = db.get(MediaCollectionStory, story_id)
+                    value = copy.deepcopy(row.moments_json)
+                    value[-1]["evidence"]["quality"]["source_visibility"] = "Unapproved replacement"
+                    row.moments_json = value
                 else:
                     import copy
 
@@ -689,6 +887,10 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
                         value.pop("prepared_collection_story")
                     elif change_before_approval == "prepared-window":
                         prepared["snapshot"]["fast_cuts"][0]["source_start_s"] += 0.5
+                    elif change_before_approval == "prepared-context":
+                        prepared["source_contexts"][0]["quality"] = {}
+                    elif change_before_approval == "prepared-context-missing":
+                        prepared.pop("source_contexts")
                     else:
                         prepared["content_plan"]["caption"] = "Unapproved replacement caption"
                     row.snapshot_json = value
@@ -714,7 +916,13 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
                 if change_before_approval == "approval"
                 else "camera_roll_story_stale",
                 "approval_requirements_not_ready"
-                if change_before_approval in {"prepared-window", "prepared-missing"}
+                if change_before_approval
+                in {
+                    "prepared-window",
+                    "prepared-missing",
+                    "prepared-context",
+                    "prepared-context-missing",
+                }
                 else "camera_roll_story_stale",
             }
         with sync_session() as db:
@@ -805,6 +1013,8 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
             ["Where does this crossing lead?", "Worth the trip?"] if with_content_plan else []
         )
         assert job.assembly_plan["prepared_collection_story"]["story_id"] == str(story_id)
+        if source_context:
+            assert job.assembly_plan["prepared_collection_story"]["source_contexts"] == contexts
         if with_content_plan:
             assert job.assembly_plan["prepared_collection_story"]["research"] == prepared_research
         assert item.edit_proposal["status"] == "approved"
@@ -831,6 +1041,40 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
                 json.dumps(draft.snapshot_json["prepared_collection_story"], indent=2)
             )
             bindings = bind_phone_sources(item.clip_assignments, item.clip_gcs_paths)
+            if source_context:
+                from app.pipeline.guided_story import GuidedStoryExecutionPlan
+                from app.pipeline.phone_guided_plan import compile_phone_guided_plan
+                from app.services.media_collection_preparation import PreparedCollectionStory
+
+                bound = PreparedCollectionStory.model_validate(
+                    draft.snapshot_json["prepared_collection_story"]
+                )
+                # Compiler-only comparison; the stripped copy is never approved
+                # or persisted (the negative control above refuses doing that).
+                before_metadata = bound.model_copy(update={"source_contexts": []})
+                recipes = [
+                    compile_phone_guided_plan(
+                        GuidedStoryExecutionPlan.model_validate(
+                            compile_proposal_execution_plan(value.snapshot)
+                        ),
+                        bindings,
+                    ).model_dump_json()
+                    for value in (before_metadata, bound)
+                ]
+                assert recipes[0] == recipes[1], (
+                    "Scope/quality provenance cannot change render choices"
+                )
+                (output / "metadata-render-equivalence.json").write_text(
+                    json.dumps(
+                        {
+                            "byte_equivalent": True,
+                            "native_recipe_sha256": hashlib.sha256(recipes[1].encode()).hexdigest(),
+                            "source_context_count": len(bound.source_contexts),
+                            "compiled_digest": bound.compiled_digest,
+                        },
+                        indent=2,
+                    )
+                )
             (output / "bindings.json").write_text(
                 json.dumps([value.model_dump(mode="json") for value in bindings], indent=2)
             )
@@ -898,7 +1142,8 @@ async def test_ready_source_without_timed_evidence_stays_unindexed_without_retry
     assert (await client.put(path, json=selection(assets, sources))).status_code == 200
     indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
     assert indexed.status_code == 200, indexed.text
-    assert assets[0] in indexed.json()["missing_analysis_asset_ids"]
+    assert assets[0] in indexed.json()["unusable_timing_asset_ids"]
+    assert indexed.json()["missing_analysis_asset_ids"] == []
     found = await client.get(f"{path}/moments", params={"query": "ferry", "expected_revision": 1})
     assert found.status_code == 200, found.text
     assert assets[0] in found.json()["unindexed_asset_ids"]
@@ -920,3 +1165,153 @@ async def test_ready_source_without_timed_evidence_stays_unindexed_without_retry
         assert len(rows) == 2 and all(row.status == "ready" for row in rows)
     # collection_world rejects every download/provider analysis attempt. No
     # highlights are fabricated and the original READY facts stay unchanged.
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        "complete",
+        "pending-video",
+        "pending-transcript",
+        "pending-without-duration",
+        "no-analysis",
+        "wrong-spec",
+        "wrong-source",
+        "wrong-generation",
+        "zero",
+        "negative",
+        "nan",
+        "infinite",
+        "out-of-bounds",
+        "missing-probe",
+        "too-long",
+        "too-short",
+        "probe-only",
+    ],
+)
+async def test_completed_untimed_source_gets_truthful_bounded_context_only(
+    collection_world,  # noqa: F811
+    monkeypatch,
+    condition,
+):
+    from types import SimpleNamespace
+
+    from app import storage
+
+    client, assets, sources, owner, _app = collection_world
+    duration = 8.166667
+    if condition in {"too-long", "too-short"}:
+        duration = 21 if condition == "too-long" else 0.5
+    async with AsyncSessionLocal() as db:
+        asset = await db.get(MediaAsset, uuid.UUID(assets[0]))
+        metadata = {**asset.metadata_json, "duration_s": duration}
+        if condition == "pending-without-duration":
+            metadata["duration_s"] = None
+        if condition in {"zero", "negative", "nan", "infinite"}:
+            metadata["duration_s"] = {"zero": 0, "negative": -1, "nan": "nan", "infinite": "inf"}[
+                condition
+            ]
+        asset.metadata_json = metadata
+        rows = (
+            await db.scalars(
+                select(MediaAssetAnalysis).where(
+                    MediaAssetAnalysis.source_id == uuid.UUID(sources[0])
+                )
+            )
+        ).all()
+        for row in rows:
+            transcript = row.analyzer == "nova.media.transcript"
+            row.result_json = (
+                {"words": []}
+                if transcript
+                else {
+                    "duration_s": duration if condition != "out-of-bounds" else 10,
+                    "description": "Synthetic red test footage; no localized scene was detected.",
+                    "understanding": {
+                        "summary": "Synthetic red test footage",
+                        "notable_moments": [],
+                    },
+                    "important_moments": [],
+                    "best_moments": [],
+                }
+            )
+            if condition == "missing-probe" and not transcript:
+                row.result_json = {k: v for k, v in row.result_json.items() if k != "duration_s"}
+            if condition == "probe-only" and not transcript:
+                row.result_json = {**row.result_json, "source": "probe_only"}
+            if (
+                condition in {"pending-video", "pending-without-duration"}
+                and not transcript
+                or condition == "pending-transcript"
+                and transcript
+            ):
+                row.status = "analyzing"
+            if condition == "no-analysis":
+                await db.delete(row)
+            if condition == "wrong-spec":
+                row.schema_version += "/other-spec"
+            if condition == "wrong-source":
+                row.source_identity += "/other-source"
+        await db.commit()
+    if condition == "wrong-generation":
+        monkeypatch.setattr(
+            storage,
+            "object_metadata",
+            lambda path: SimpleNamespace(generation="replaced", size=1234),
+        )
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    body = selection(assets, sources, count=1)
+    assert (await client.put(path, json=body)).status_code == 200
+    indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
+    assert indexed.status_code == 200, indexed.text
+    found = await client.get(
+        f"{path}/moments", params={"query": "synthetic", "expected_revision": 1}
+    )
+    assert found.status_code == 200, found.text
+    if condition == "complete":
+        assert indexed.json()["missing_analysis_asset_ids"] == []
+        assert indexed.json()["context_asset_ids"] == [assets[0]]
+        assert indexed.json()["unusable_timing_asset_ids"] == []
+        moments = found.json()["moments"]
+        assert len(moments) == 1
+        moment = moments[0]
+        assert (moment["start_s"], moment["end_s"]) == (0, duration)
+        assert moment["evidence_scope"] == "whole_source_context" and moment["uncertain"] is True
+        assert moment["evidence"]["semantic_localization"] == "none"
+        assert moment["evidence"]["timing_basis"] == "verified_source_bounds"
+        assert moment["source_id"] == sources[0] and moment["generation"] == "42"
+        assert "Synthetic red" in moment["text"]
+        assert found.json()["unindexed_asset_ids"] == []
+        async with AsyncSessionLocal() as db:
+            asset = await db.get(MediaAsset, uuid.UUID(assets[0]))
+            asset.metadata_json = {**asset.metadata_json, "duration_s": duration - 1}
+            await db.commit()
+        stale = await client.get(
+            f"{path}/moments", params={"query": "synthetic", "expected_revision": 1}
+        )
+        assert stale.status_code == 200 and stale.json()["moments"] == []
+        assert stale.json()["unindexed_asset_ids"] == [assets[0]], (
+            "Cached context cannot outlive its verified bounds"
+        )
+        refreshed = await client.post(f"{path}/index", json={"expected_revision": 1})
+        assert refreshed.status_code == 200
+        assert refreshed.json()["unusable_timing_asset_ids"] == [assets[0]]
+        assert refreshed.json()["missing_analysis_asset_ids"] == []
+    else:
+        assert found.json()["moments"] == [], (
+            "Unknown or conflicting evidence cannot become a usable moment"
+        )
+        if condition in {
+            "pending-video",
+            "pending-transcript",
+            "pending-without-duration",
+            "no-analysis",
+            "wrong-spec",
+            "wrong-source",
+        }:
+            assert indexed.json()["missing_analysis_asset_ids"] == [assets[0]]
+        elif condition != "wrong-generation":
+            assert indexed.json()["unusable_timing_asset_ids"] == [assets[0]]
+            assert indexed.json()["missing_analysis_asset_ids"] == []
+    # Every storage download/provider analysis attempt is rejected by the fixture.
+    # Original data never enters this synthetic database.

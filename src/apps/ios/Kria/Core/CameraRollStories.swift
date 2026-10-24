@@ -10,7 +10,8 @@ struct CameraRollMoment: Codable, Identifiable, Sendable {
     let kind: String
     let text: String
     let uncertain: Bool
-    enum CodingKeys: String, CodingKey { case id, generation, kind, text, uncertain; case assetID = "asset_id", sourceID = "source_id", start = "start_s", end = "end_s" }
+    var evidenceScope: String? = nil
+    enum CodingKeys: String, CodingKey { case id, generation, kind, text, uncertain; case assetID = "asset_id", sourceID = "source_id", start = "start_s", end = "end_s", evidenceScope = "evidence_scope" }
 }
 struct CameraRollContentPlan: Codable, Sendable {
     let version: Int
@@ -75,7 +76,8 @@ struct CameraRollIndexPass: Decodable, Sendable {
     let missing: [UUID]
     let unavailable: [UUID]
     let untimed: [UUID]
-    enum CodingKeys: String, CodingKey { case nextOffset = "next_offset", missing = "missing_analysis_asset_ids", unavailable = "unavailable_asset_ids", untimed = "untimed_asset_ids" }
+    var unusableTiming: [UUID]? = nil
+    enum CodingKeys: String, CodingKey { case nextOffset = "next_offset", missing = "missing_analysis_asset_ids", unavailable = "unavailable_asset_ids", untimed = "untimed_asset_ids", unusableTiming = "unusable_timing_asset_ids" }
 }
 struct CameraRollInspection: Decodable, Sendable { let answer: String; let confidence: Double; let evidence: String }
 

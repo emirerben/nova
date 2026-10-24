@@ -1,169 +1,224 @@
-# Camera-roll selection, approval and held-selection recovery (KRI-733 / KRI-731)
+# Camera-roll readiness, held selection and whole-source context (KRI-733 / KRI-731)
 
-## Original incident and root cause
+## Problems and causal evidence
 
-Choosing an existing collection idea completed with “I need to establish the
-requested changes before offering approval.” No draft/approval/Job was created.
-The server-generated selection message was not a generic open request, but the
-special selected-story planner supplied neither a brief requirement nor its
-resolved readiness manifest. Common readiness correctly held the incomplete
-handoff: brief version0, no requirements, null brief/prepared evidence digests.
+A selected camera-roll idea completed with “I need to establish the requested
+changes before offering approval.” No draft/approval/Job was created. The special
+planner omitted brief requirements and the resolved readiness manifest; its
+server-generated selection message was not an open creator request. Production
+readiness correctly held the incomplete handoff. Earlier execution fixtures had
+disabled brief/binding settings. A zero-I/O assessment and a real HTTP/SQL/worker
+fixture reproduced this before repair. The incomplete integration arrived in
+#1685 after #1683 added readiness; #1747 capacity/multiple ideas and #1772 resume
+changes did not repair it. Stable selection identity then replayed that completed
+hold forever.
 
-A zero-I/O assessment and the real HTTP/SQL/worker fixture reproduced this before
-repair. Earlier fixtures explicitly disabled production brief/binding settings.
-The incomplete integration arrived in #1685 after #1683 added readiness; #1747's
-capacity/multiple ideas and #1772's resume changes did not repair this boundary.
-Previous simulator evidence never established the full physical iPhone journey.
+A separate excluded source had completed matching clip/transcript analysis but
+no timed events: 8.166667s, global description/understanding, empty notable/best
+moments, no transcript words/segments and zero source moment rows. The coordinator
+identified its exact source/generation/spec read-only. This was not a pending
+queue or the historical failed story-query row. The extractor accepted only
+localized visual moments or speech, so a valid no-events result was unusable.
 
-## Acceptance recorded before implementation
+This PR repairs those boundaries locally. Original account data, selected ideas,
+production indexes and the original held session were not changed or retried.
 
-- Production brief/readiness gates remain enabled. Selecting an owned idea binds
-  the accepted source windows/order, text, audio, research and caption to one
-  immutable preparation and an ordinary, expiring approval. No implicit render.
-- Changed story/collection/source generation, prepared windows/copy/evidence or
-  approval identity refuses dispatch. Missing evidence cannot fall back to a
-  generic title-word check or empty delegation. Normal readiness remains enforced.
-- The accepted posting caption stays exact, including whitespace/newlines and an
-  explicitly empty caption. It cannot trigger generated fallback copy and does
-  not become an extra on-screen text requirement.
-- An ordinary duplicate selection stays a replay. A separate creator action may
-  recover only the exact completed empty-brief/pre-draft hold, without modifying
-  that turn. Equivalent native attachment retries remain harmless. Changed media,
-  messages, drafts, approvals, cancelled/other refusals or historical/current Jobs
-  must block recovery. Concurrent/lost-response retries return one successor.
-- A mixed-version server's HTTP200 response containing the original held turn, or
-  an invalid successor identity, is not recovery. A valid distinct successor may
-  open the saved project while planning is still asynchronous.
-- Export synthetic timed footage through the production native exporter. Compare
-  correct output with wrong-window, wrong-audio and wrong-order controls without
-  dropping text, loosening checks, touching original media or calling providers.
-- Diagnose completed-analysis/no-timed-interval sources separately from pending
-  analysis. Do not retry providers or fabricate highlights to satisfy indexing.
+## Acceptance recorded before each repair
+
+- Keep production readiness/brief gates enabled. Bind reviewed source windows,
+  order, text, sound, research and caption to immutable preparation and an ordinary
+  expiring approval. Selection never grants render consent.
+- Changed collection/story/source generation, prepared execution/copy/evidence or
+  approval identity refuses dispatch. Missing evidence cannot use empty delegation,
+  a generic title-word check, relaxed capability checks or an open-request bypass.
+- Posting caption remains exact, including outer/internal whitespace, newlines
+  and explicit empty text, without generated fallback or extra on-screen copy.
+- Ordinary duplicate selection remains replay. A separate creator action may
+  recover only the completed empty-brief/pre-draft hold, with unchanged project
+  and media, no new messages, drafts, approvals, prepared executions or Jobs.
+  Concurrent/lost-response retries produce one successor and one Job after consent.
+  Cancelled/other refusals and used projects cannot be blindly requeued.
+- Native recovery cannot treat an old server's HTTP200 replay of the original
+  held turn or a malformed successor identity as success. Valid distinct
+  successors/replays remain asynchronous; no wait for rendering is required.
+- Completed no-events facts may support explicitly scoped whole-source context,
+  never an invented scene/highlight or guessed timestamp/location. Require matching
+  completed video AND transcript facts, verified finite positive bounds, ownership,
+  source/hash/generation/spec and existing quality/availability/admission checks.
+  Preserve the 1–20s candidate and 60s story limits; never silently shorten a longer
+  source to make it fit. Unsupported timing remains honest and creator-reviewable.
+- Whole-source scope, uncertainty, bounds, identities and cached quality provenance
+  must reach approval and frozen execution, not just the candidate screen. Changed
+  or missing context evidence must refuse. Metadata is optional/excluded for old
+  timed stories; adding context during index refresh must preserve accepted windows,
+  caption and approval. A concise review note is sufficient, not a warning wall.
+- Distinguish missing matching analysis from timing review, including absent duration
+  while analysis is pending. A mixed collection retains the existing explicit
+  “Use ready videos” choice. No silent partial consent or whole-collection blockade.
+- Inspect actual synthetic native exports and controls for wrong window, sound and
+  source order. Do not drop text, relax thresholds or substitute a preparation-only
+  fixture for output evidence. No original phone/media operation or provider retry.
 
 ## Implementation
 
-The planner supplies a concrete selected-story requirement, complete prepared
-execution digest and resolved manifest. Readiness recompiles the exact snapshot,
-strategy and attached source generations; approval/installation recheck the same
-content-plan identity. Accepted requirements get checked receipts, matching
-enforced IDs and no unresolved accepted IDs. Generic missing-brief guards remain.
+The selected-story planner supplies a concrete selection requirement, full prepared
+execution digest and resolved manifest. Readiness recompiles and checks exact
+strategy, source generations and prepared evidence. Ready accepted requirements
+also get checked receipts, matching enforced IDs and no unresolved accepted IDs.
+Approval/installation verify the same content-plan identity. Caption lookup prefers
+accepted story copy and suppresses speculative caption generation, preserving blank
+and whitespace-only choices. Generic missing-brief guards remain unchanged.
 
-Caption lookup prefers the accepted story over generated/variant fallback.
-Preservation includes outer/internal whitespace, blank captions and newlines;
-speculative caption generation is skipped for that explicit choice.
+The endpoint reads immutable source events/turns even if selection telemetry was
+lost. “Try this idea again” is a separate native action tied to the held turn and
+expected current revision. Recovery revalidates source preparation and submits one
+deterministic successor, retaining the original completed turn. It requires a new
+ordinary approval. Replayed successors must have the exact recovery/story binding.
+The native API and view both require a valid distinct successor before clearing the
+prompt/navigation; lost-response retries retain the same successor identity.
 
-The selection endpoint reads the immutable source event/turn even if selection
-telemetry acknowledgement was lost. It exposes recovery only for the specific
-historical empty-brief hold with unchanged current thread/media, no creative
-brief, draft, approval, prepared execution or Job. The native review screen offers
-“Try this idea again” as a separate tap. Recovery checks the expected revision,
-revalidates the source snapshot, and submits one deterministic successor tied to
-the original turn. The original turn stays completed. The ordinary worker must
-prepare a fresh approval; recovery itself grants no render consent. Replayed
-successors must retain the exact immutable recovery/story binding.
+Indexing now adds a `whole_source_context` evidence subtype inside the existing
+visual/speech storage contract when there are no timed moments but matching facts
+are complete. Existing timed interval extraction, index spec and identities remain
+unchanged. The context contract has its own `whole-source-context-v1` marker.
+Bounds come from cached source-probe duration and asset duration; at most one 30 fps
+quantization frame may differ, and the conservative existing bound is retained.
+The full verified source must fit 1–20s. No subwindow/highlight is fabricated.
+Known probe-only/stub results, invalid/conflicting timing, missing/stale facts and
+unavailable generations cannot become usable context. Existing quality/visibility
+notes remain fallible evidence; darkness or stillness is not an automatic defect.
+Cached context is refused if its bounds later change.
 
-New optional recovery fields are mirrored by the shared contract generator. The
-single generated browser type mirror is contract maintenance; no web-editor
+`evidence_scope` reaches retrieval, story candidates and native details. Cached
+whole-source descriptions remain explicitly unlocalized/uncertain. Both relevance
+and story prompts explain this distinction; their prompt versions are bumped to
+2026-10-24.1 and free replay evals pass. Source descriptions do not silently become
+on-screen text. The approval metadata stores typed `source_contexts` with source,
+asset, moment, generation, fact/index identity, bounds, uncertainty and quality.
+The selected-story digest binds it; approval/installation compare it with current
+and stored evidence. The review says “Whole clip; no timed highlight detected,”
+plus a short cached-quality note when applicable. Empty metadata is excluded for
+legacy timed preparations, retaining their digest contract.
+
+Native indexing separates missing analysis and unusable timing. Their union drives
+ready-video counts and explicit partial consent; changed coverage requires a new
+choice. The remaining clip stays visible for review. Completed valid short context
+is included normally. Unsupported long/unverified sources need a usable window;
+this slice adds no new window-picker/planning UI. Generated shared contracts are
+updated; only a generated browser type mirror is contract maintenance. No web-editor
 implementation or browser testing is included.
 
-## Executed integration and native evidence
+## Executed regression evidence
 
-The retained enabled-gate red fixture completed without approval before the
-handoff fix. The recovery regression then reproduced the separate stable-event
-problem: duplicate attachment/selection requests returned the original hold.
+Retained red runs establish the original enabled-gate hold, stable-selection replay,
+missing approval provenance, original-turn/malformed native recovery responses,
+missing ready-video action for timing-review collections, and pending analysis
+misclassified when duration was absent. Their corresponding positive paths pass.
+The responsible planner/readiness/approval/dispatch code is real; only provider and
+storage transports are replayed. All DB/media data in this lane is synthetic.
 
-- `bash scripts/check-api.sh test tests/integration/test_camera_roll_execution.py -q`
-  — **36 passed**:17 original selection/approval cases,18 recovery cases and one
-  completed-analysis/no-interval diagnosis. Provider/storage transport is replayed;
-  the responsible planner, readiness checker, approval and dispatch code are real.
-- Recovery cases cover exact/empty/whitespace captions; repeated native attachment
-  HTTP requests; concurrent retries; missing selection telemetry; changed thread,
-  media, story, collection and storage generation; prepared/approved drafts;
-  pending/running/completed Jobs; unrelated refusals; cancelled turns; reused
-  recovery identity and disabled readiness. Successful cases reach a new approval
-  and one Job after explicit consent; duplicate dispatch creates no second Job.
-- Simulator app compilation succeeded with Xcode's generic iOS Simulator target.
-  This is compile evidence, not a physical app or UI journey claim.
+- Focused readiness/binding/plan-feed/collection/taste suites plus mandatory free
+  `tests/evals/` replays: **2386 passed,15 skipped,7 expected failures**. No live or
+  judge option; no provider/model spend. Command: `bash scripts/check-api.sh test
+  tests/kria/test_approval_readiness_postgres.py
+  tests/kria/test_natural_delegation_readiness_postgres.py
+  tests/kria/test_request_binding_journey.py tests/kria/test_plan_blocks.py
+  tests/tasks/test_phone_plan_blocks.py tests/integration/test_camera_roll_execution.py
+  tests/integration/test_media_collections.py tests/integration/test_editorial_taste.py
+  tests/evals/ -q`. Counts overlap with the following cases.
+- **58 execution/diagnosis cases** are included:17 original selection/approval,
+  18 recovery,17 completed/pending/context-bound admission, five context approval/
+  changed-evidence cases and one completed-facts/no-verified-window diagnosis.
+  Exact/empty/whitespace captions, source/story/collection/approval changes,
+  prepared window/copy/missing evidence, cancelled/unrelated holds, pending/running/
+  completed Jobs, duplicate dispatch, lost telemetry, concurrent retry and disabled
+  readiness are covered. No second Job is created by retry.
+- An additional targeted compatibility replay completes held selection → new approval,
+  then finishes a third member's no-events facts and creates an actual whole-source
+  index row. The two accepted timed moments, frozen preparation/caption and approval
+  remain unchanged and dispatch succeeds. This is analysis enrichment with unchanged
+  collection membership/revision, not regenerating the accepted idea.
+- **Eight native simulator tests passed**:three client transport/decoding tests and
+  five UI journeys covering whole-source labelling/bounds, explicit timing-review
+  partial choice, pending analysis, changed coverage consent and ordinary review/
+  correction. The timing-review UI control failed before the fix. Result bundle:
+  `.dev/context-ui-green.xcresult`. These are not physical iPhone tests.
+- Tools/mobile/OpenAPI generation checks, scoped ruff/format and diff checks pass.
+  Preship is required on the committed head; no quality gate is disabled or lowered.
 
-Synthetic sources were generated by `scripts/ios/camera-roll-export-proof.py
-synthetic`:180-second red/blue clips invert after100s and change audio frequency
-each second. The accepted recipe contains two7-second windows starting at155s,
-with opening/closing text. Inputs and detailed reports are retained privately in
-`.dev/qa-story-timed-native-proof-host/`; no original uploads were used.
+The shared local Postgres server hit its client limit during a preliminary matrix;
+the pending fixtures also initially used an invalid fact status. Those harness
+issues/logs are retained. Final verification uses a separate task-local PostgreSQL
+server on 127.0.0.1:55489; no other connections or databases were changed/stopped.
 
-The first export failed because the proof harness omitted compiler-pinned font
-assets. The preparer now copies and verifies the exact bundled font fingerprint.
-The next sandboxed export failed in active-text rasterization. The same production
-engine/recipe, unchanged text and thresholds passed with Mac graphics access
-outside that sandbox, with task-local Swift build/cache paths. Both failed logs
-are retained. No renderer source change, fallback or title removal was used.
+## Actual native output and binding
 
-Host command: `KRIA_AUDIO_PARITY_DIR=<proof-directory>
+Two retained output families use the production AVFoundation exporter on the Mac,
+with the native engine tree **5921e31a21c932455b679e9d124c873376ca9599**. No engine,
+renderer fallback, text removal or threshold relaxation was needed. The first
+harness lacked compiler-pinned fonts; it now copies and verifies their fingerprints.
+A sandboxed text rasterization error then passed with Mac graphics access and the
+same engine/text/thresholds. Failed logs are retained. Swift build/cache paths are
+inside the task.
+
+The initial two 180s timed-source family produced a correct 14s export (25 checks)
+and wrong-window/audio/order controls, all correctly classified. Correct MP4:
+`4be845a79f5d9606a1ecb379e392f00a8d507e9d76e39bc705189f4810d03ac3`.
+Bundle: `.dev/qa-story-timed-native-proof-host/`.
+
+The inclusion family uses an actual 8.166667s synthetic short file and a 180s file.
+The recipe uses the long file 155–162s, then the ENTIRE short file 0–8.1666666667s at 1x.
+Actual output is 15.166667s, H.264/AAC,1080x1920. Bundle:
+`.dev/qa-whole-source-native-proof/`.
+
+| Actual synthetic output | Result | MP4 SHA256 |
+| --- | --- | --- |
+| Correct whole-source inclusion | checked,27 checks | 8ec9e2102be438a7357312d327a4cf75e0f9a830f6206cf9a3cca9bc022e1b8c |
+| Wrong first source window | rejected,27 checks | 5fc3d2e9ab61723cc2db3efd785fba02b0e1a2eb88a6d78013f4c81d6912e922 |
+| Source sound wrongly muted | rejected,27 checks | 3f5d4b266b0a44ef50a8b3a1e27de92419a1d05d3cacce9f0504a9b0689bfa7b |
+| Wrong source order, valid windows | rejected,27 checks | 8c01990923656149a80dcd8935023ffbffb4451fd46bdfe900cb5bea36e9213e |
+
+Wrong-order controls preserve valid bounds on the short source, so rejection comes
+from actual wrong picture/audio, not an exporter admission error. Both text layers
+are retained. Actual frames were inspected: yellow opening with the reviewed text,
+then red short-source footage; wrong-order output opens red with the same text.
+The coordinator independently inspected the MP4s and actual source durations.
+
+Source hashes: short **7ff451c6be7ff559e775c4607ad86605b32e6c9f0c34d1ead52b618890739c37**
+(87158 bytes); long **10bc5d3d5585ea3791dd63ca4d0b0a58d15f5c85c8de847d2536e61d9c8b7194**
+(1875648 bytes). The actual exported recipe file SHA256 is
+**30178966e84f12aef523ba7e4a39d24aed27760d5645855deafb558ea16f7924**.
+The current compiler produces the identical canonical recipe:
+**8d53bb52c4f56512baf65d5ae0e5996a14fb5c2e6ce2b26642dd271b766f04db**.
+Canonicalization changes only JSON object-key order and the required-capabilities
+set order; every ordered clip/text/audio list, identity and value is retained.
+
+A fresh metadata-bound HTTP/SQL approval fixture also proves adding/dropping the
+provenance outside the snapshot changes no native recipe bytes (the stripped copy
+is compiler-only and is never approved/persisted; the approval control refuses it).
+Receipt: `.dev/qa-whole-source-bound-copy/metadata-render-equivalence.json`.
+Binding receipt: `.dev/whole-source-render-binding.json`. Thus no duplicate exports
+were needed for the later metadata-only repair. Independent fixture runs use new
+identities; this is composed integration/compiler/output evidence, not a claim that
+one physical app journey or original account session was exercised.
+
+Host export command: `KRIA_AUDIO_PARITY_DIR=<proof-directory>
 CLANG_MODULE_CACHE_PATH=<task-cache> SWIFTPM_MODULECACHE_OVERRIDE=<task-cache>
 swift test --package-path src/apps/ios/Packages/KriaMediaEngine
 --scratch-path .dev/native-proof-build --cache-path .dev/native-proof-cache
 --config-path .dev/native-proof-config --security-path .dev/native-proof-security
 --disable-sandbox --filter AudioParityFixtureTests`.
-Comparison: `src/apps/api/.venv/bin/python scripts/ios/camera-roll-export-proof.py
-compare --output .dev/qa-story-timed-native-proof-host`.
+Compare: `src/apps/api/.venv/bin/python scripts/ios/camera-roll-export-proof.py compare
+--output .dev/qa-whole-source-native-proof`. Inputs come from the real frozen fixture,
+with synthetic media generated by the same harness and an 8.166667s FFmpeg cut.
 
-| Synthetic actual output | Comparison | MP4 SHA256 |
-| --- | --- | --- |
-| Correct14-second native export | checked,25 checks | 4be845a79f5d9606a1ecb379e392f00a8d507e9d76e39bc705189f4810d03ac3 |
-| First window wrongly starts at0s | rejected,25 checks | ceddfc38b9191d2e4307d10ae0f72113c1be5ecd5662d64619233dd3a95ae1aa |
-| Source sound wrongly muted | rejected,25 checks | ac91e3f7aada17c7a02e7023da42d95f312e1a277250f2fbb0d54a3eac9feeda |
-| Source order wrongly reversed | rejected,25 checks | 356b4beea56e230a9c98e36e3a2cce7d7a353c2a2f8fa0de65a49c9f81fc3cf0 |
+## Limits and remaining acceptance
 
-Picture and audio controls fail independently in the actual-output verifier.
-The correct opening frame was visually inspected: late-window yellow footage
-with “Where does this crossing lead?”; the wrong-window frame is blue with the
-same text. The coordinator independently inspected the retained MP4 and confirmed
-both text layers remained in the host recipe. This establishes synthetic recipe
-fidelity, not realistic content quality or physical iPhone fulfillment.
-
-## Excluded-video diagnosis and remaining acceptance
-
-The coordinator identified the actual excluded selected source read-only:8.166667s,
-matching current READY clip metadata and READY transcript, exact source generation,
-no notable/best moments, no transcript words/segments, and zero usable intervals.
-There are no source moment rows. This is completed analysis with no timed evidence,
-not a pending queue or the historical failed story-query row. The regression keeps
-both facts READY and the source unindexed without provider retry or invented timing.
-
-The current UI conflates unindexed sources with “analysis isn't ready.” This PR
-has not made that source usable or repaired the wording. A faithful inclusion
-path, such as explicitly creator-selected bounded footage, remains separate work;
-a wording-only change would not fulfill clip inclusion.
-
-This is a local fix. No original production selection was recovered or changed;
-no physical upload → multiple ideas → approval → export → editable Save/reopen
-journey has been verified here. Creative quality, actual TestFlight availability
-and rollout remain open under KRI-731/KRI-733. No paid/provider calls, account
-flags, production memory, original media, deployment or merge were performed.
-Main4499189663c31e1274ff249a9afc53cd2cdc75d5 remains integrated additively;
-other authors' freeze-frame/editor work is preserved.
-
-## Final continuation verification
-
-- The focused readiness/binding/plan-feed/collection/taste suite now passes
-  **201 tests**, including the36 execution/diagnosis cases above (counts overlap).
-  Command: `bash scripts/check-api.sh test tests/kria/test_approval_readiness_postgres.py
-  tests/kria/test_natural_delegation_readiness_postgres.py
-  tests/kria/test_request_binding_journey.py tests/kria/test_plan_blocks.py
-  tests/tasks/test_phone_plan_blocks.py tests/integration/test_camera_roll_execution.py
-  tests/integration/test_media_collections.py tests/integration/test_editorial_taste.py -q`.
-- Three native client transport/decoding tests pass on a separate iOS26.5
-  simulator: original-turn HTTP200 and malformed successor responses are refused;
-  distinct successor/replay responses preserve asynchronous planning. The two
-  refusal controls failed before adding the client guard. The review-screen
-  handler also checks the successor before clearing its prompt or navigating.
-  Command: `xcodebuild -project src/apps/ios/Kria.xcodeproj -scheme Kria
-  -destination 'platform=iOS Simulator,id=<separate-test-simulator>'
-  -parallel-testing-enabled NO -only-testing:KriaTests/CameraRollRecoveryTests
-  CODE_SIGNING_ALLOWED=NO test`, with task-local derived data/package paths.
-  Result bundles: `.dev/recovery-client-red.xcresult` and
-  `.dev/recovery-client-green.xcresult`; this is client integration, not a UI tap
-  or physical phone journey.
-- `python -m app.cli.kria_contracts --check`: tools/mobile/OpenAPI match.
-  Scoped ruff, format and `git diff --check` pass. Normal preship checks remain
-  required before publication; no gate is disabled or lowered by this change.
+This is a local fix. The original production hold/index/media are untouched. No
+physical iPhone upload → several useful ideas → approval → export → editable
+Save/reopen journey has been verified here. Real creative quality, TestFlight
+availability and rollout remain open under KRI-731/KRI-733. Unsupported long or
+unverified sources still require a usable creator window; no highlights or timing
+are fabricated to fill that gap. No paid/provider calls, account flags, production
+memory, merge or deployment were performed. Main4499189663c31e1274ff249a9afc53cd2cdc75d5
+is integrated additively; other authors' freeze-frame/editor work is preserved.

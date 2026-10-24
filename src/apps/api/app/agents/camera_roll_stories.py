@@ -50,7 +50,7 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.media.camera_roll_stories",
         prompt_id="camera_roll_stories",
-        prompt_version="2026-10-22.3",
+        prompt_version="2026-10-24.1",
         model="gemini-2.5-flash",
         max_attempts=1,
         timeout_s=20,
@@ -115,6 +115,11 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "question, twist or invented narrative. Explain the actual value: what viewers learn, "
             "recognize, find funny or enjoy seeing. Name the intended audience in ordinary words. "
             "Do not force a question, comparison, engagement-bait ending or a dramatic hook. "
+            "Candidates with evidence_scope whole_source_context cover the full analysed "
+            "short clip, not a detected highlight. Their overall description is fallible, "
+            "unlocalized context: do not claim an event happens at a timestamp or that every "
+            "frame shows it. Never invent visual understanding, a scene, identity or location "
+            "to use a context-only clip; unknown content needs creator review. "
             "Use only candidate id references (m1, m2, etc.) in moment_ids, never source "
             "references (s1, s2). Each reference may appear only once per story. "
             "Order those moments to serve that idea, using complete intervals at "
