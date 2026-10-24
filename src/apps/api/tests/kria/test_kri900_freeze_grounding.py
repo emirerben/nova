@@ -35,6 +35,8 @@ Ways this can fail (written before the fix), each pinned below:
 19. The second the receipt asks for ("freeze at 58.2 seconds") becomes the HOLD length.
 20. A typed second is ignored, so the creator gets the same "tell me the second" receipt again.
 21. The frame question is asked again after the creator typed the second.
+22. A length correction worded with "at" ("make the freeze at 2 seconds") becomes a typed
+    frame: it replaces the creator's picked frame and drops the length they asked for.
 
 Set ``KRI900_KEEP_DIR`` to keep the evidence: ``report.json`` (question, answer, plan row,
 recipe hold, receipt per case), the cloud MP4 and ``held_vs_source.png``.
@@ -409,14 +411,25 @@ async def test_no_freeze_holds_nothing_and_says_so(monkeypatch: pytest.MonkeyPat
 # -- 8: a hold-length correction after the answer is never asked again ---------------------------
 
 
-async def test_a_length_correction_keeps_the_picked_frame(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "correction",
+    [
+        "Make the freeze 2 seconds instead",
+        # 22. "at N seconds" in a length correction is the hold, never a typed frame.
+        "make the freeze at 2 seconds",
+        "freeze it at 2 seconds instead",
+    ],
+)
+async def test_a_length_correction_keeps_the_picked_frame(
+    monkeypatch: pytest.MonkeyPatch, correction: str
+) -> None:
     from tests.kria.test_kri899_freeze_length_changes import _with  # noqa: PLC0415
 
     answered = await _run(monkeypatch, pick=lambda q: _option(q, "Early"))
     early_key = next(
         a["option"] for a in answered[1]["choice_answers"] if a["kind"] == "freeze_frame"
     )
-    brief = _with(("Make the freeze 2 seconds instead", {"freeze_frame": True}))
+    brief = _with((correction, {"freeze_frame": True}))
     picks: list[str] = []
 
     def early_again(question: dict) -> str:

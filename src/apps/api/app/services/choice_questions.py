@@ -1829,10 +1829,11 @@ def _freeze_frame(
                         f"{label[0]} ({_seconds_text(frame)}s)",
                         f"{label[1]} ({_seconds_text(frame)} sn)",
                     ),
-                    recommended=share == 0.5,
+                    # The middle surviving frame, so "you choose" always has a pick.
+                    recommended=index == len(frames) // 2,
                     aliases=aliases,
                 )
-                for frame, share, label, aliases in frames
+                for index, (frame, _share, label, aliases) in enumerate(frames)
             ]
             intro = say(
                 en=(

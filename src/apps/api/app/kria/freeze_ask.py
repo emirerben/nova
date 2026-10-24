@@ -531,6 +531,27 @@ def _any_seconds(tokens: Sequence[str]) -> float | None:
     return next(iter(values)) if len(values) == 1 else None
 
 
+# KRI-900: in a correction, "at N seconds" is the HOLD's new length when the words change
+# something ("make", "set", "instead") and never name a frame ("frame", "clip", "into").
+_CHANGE_MARKERS = frozenset({"make", "set", "change", "turn", "instead", "rather"})
+_FRAME_NOUNS = frozenset({"frame", "kare", "kareyi", "clip", "klip", "klibin", "into", "moment"})
+
+
+def _hold_worded_at(tokens: Sequence[str], frame_at: frozenset[int]) -> float | None:
+    """The seconds of an "at N seconds" that, in a correction, re-sets the hold, or None."""
+    if not _CHANGE_MARKERS.intersection(tokens) or _FRAME_NOUNS.intersection(tokens):
+        return None
+    for index in frame_at:
+        token = tokens[index]
+        if token in _TR_FRAME_UNITS:
+            return None
+        value = _unit_suffixed(token)
+        if value is None and index > 0:
+            value = _as_number(tokens[index - 1])
+        return value
+    return None
+
+
 def _correction(req: BriefRequirement, previous: FreezeSpec) -> FreezeSpec | None:
     """``req`` as a change to ``previous`` (the creator's latest freeze), or None.
 
@@ -544,7 +565,12 @@ def _correction(req: BriefRequirement, previous: FreezeSpec) -> FreezeSpec | Non
         return None
     tokens = _tokens(req.description or "")
     numbers = _number_tokens(req.description or "")
-    frame, frame_scope, _at = _stated_frame(numbers)
+    frame, frame_scope, frame_at = _stated_frame(numbers)
+    hold_at = _hold_worded_at(numbers, frame_at) if frame is not None else None
+    if hold_at is not None:
+        # "make the freeze at 2 seconds" / "freeze it at 2 seconds instead": a change to the
+        # hold's length, never a typed frame (that would replace the creator's pick).
+        frame, frame_scope = None, "clip"
     if frame is None and _VIDEO_LENGTH_WORDS.intersection(tokens):
         return None
     position, used = _position(tokens)
@@ -555,7 +581,7 @@ def _correction(req: BriefRequirement, previous: FreezeSpec) -> FreezeSpec | Non
     words = _moment_words([token for index, token in enumerate(tokens) if index not in used])
     if any(word not in _CORRECTION_WORDS for word in words):
         return None
-    stated = _stated_seconds(numbers)
+    stated = hold_at if hold_at is not None else _stated_seconds(numbers)
     if stated is None:
         stated = _any_seconds(numbers)
     freeze_worded = bool(
