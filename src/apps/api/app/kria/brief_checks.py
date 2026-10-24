@@ -3256,6 +3256,12 @@ _FREEZE_NOT_GROUNDED = (
 # KRI-900: the moment is known but nobody picked the instant in it, so nothing is held. The
 # receipt goes on with the moment's seconds and asks for the second (`_check_freeze`).
 _FREEZE_NEEDS_FRAME = "I found that moment"
+# KRI-900: "freeze the first frame / at the start": a hold sits where a cut ends, so the
+# opening frame is never held, and the end of the first cut is not what was asked.
+_FREEZE_FIRST_FRAME = (
+    "A freeze holds the frame where a shot ends, so I can't hold the opening frame, and it "
+    'plays normally. Tell me the second of the clip to freeze on, like "freeze at 2 seconds"'
+)
 
 # KRI-705: what a phone Talking edit says, before approval and after render, about an ask
 # outside what it can draw. Static strings: `is_judged` / `is_format_limit` read them by prefix.
@@ -3358,6 +3364,10 @@ _REASON_TR: dict[str, str] = {
         "Hangi klipte kaçıncı saniyeyi tutayım, yaz"
     ),
     _FREEZE_NEEDS_FRAME: "O anı buldum",
+    _FREEZE_FIRST_FRAME: (
+        "Donma bir çekimin bittiği karede olur, o yüzden açılış karesini tutamıyorum ve normal "
+        'oynuyor. Klibin hangi saniyesinde donsun, yaz; örneğin "2. saniyede dondur"'
+    ),
     _BED_STILL_PLAYS: "Çekim sesi hâlâ çalıyor",
     _CLEANUP_PLANNED: "Konuşma temizliği uzun duraklamaları keser",
     _CLEANUP_AT_APPROVAL: (
@@ -3473,6 +3483,7 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _NO_FREEZE_FRAME,
     _FREEZE_NOT_GROUNDED,
     _FREEZE_NEEDS_FRAME,
+    _FREEZE_FIRST_FRAME,
     _LIGHT_UNAVAILABLE,
     *_TALKING_HONEST_EN,
 )
@@ -7177,11 +7188,6 @@ def _freeze_where(freeze: Mapping[str, Any], at: str) -> tuple[str, str]:
             f"seçtiğin saniyede (klibin {at}. saniyesi)",
         )
     if grounding == "cut_position":
-        if freeze.get("position") == "first":
-            return (
-                "on the last frame of the first shot",
-                "ilk çekimin son karesinde",
-            )
         return "on the last frame of the last shot", "son çekimin son karesinde"
     if grounding == "creator_moment":
         return (
@@ -7273,6 +7279,8 @@ def _check_freeze(req: BriefRequirement, freeze: Mapping[str, Any]) -> Requireme
             say(en="No freeze, as you chose", tr="Seçtiğin gibi donma yok"),
             verification="checked",
         )
+    if status == "needs_frame" and freeze.get("position") == "first":
+        return _receipt(req, "not_possible", _FREEZE_FIRST_FRAME)
     moment = freeze.get("moment_source_s")
     if (
         status == "needs_frame"
@@ -7281,18 +7289,20 @@ def _check_freeze(req: BriefRequirement, freeze: Mapping[str, Any]) -> Requireme
         and all(_finite_number(v) is not None for v in moment)
     ):
         start, end = (f"{float(v):.1f}" for v in moment)
+        middle = f"{(float(moment[0]) + float(moment[1])) / 2:.1f}"
         return _receipt(
             req,
             "not_possible",
             say(
                 en=(
                     f"{_FREEZE_NEEDS_FRAME} ({start}–{end}s into the clip) but not the exact "
-                    "frame to hold, so it plays normally. Tell me the second to freeze on"
+                    "frame to hold, so it plays normally. Tell me the second to freeze on, "
+                    f'like "freeze at {middle} seconds"'
                 ),
                 tr=(
                     f"{_REASON_TR[_FREEZE_NEEDS_FRAME]} (klibin {start}–{end}. saniyeleri) ama "
                     "tutulacak tam kareyi bilmiyorum, o yüzden normal oynuyor. Hangi saniyede "
-                    "donsun, söyle"
+                    f'donsun, söyle; örneğin "{middle}. saniyede dondur"'
                 ),
             ),
         )

@@ -1755,7 +1755,8 @@ def _freeze_frame(
     from app.kria.freeze_ask import planned_freeze_ids  # noqa: PLC0415
 
     live = _live(brief)
-    specs = [spec for spec in live_freezes(live) if spec.target_words]
+    # A second the creator typed ("freeze at 58.2 seconds") already pins the frame.
+    specs = [spec for spec in live_freezes(live) if spec.target_words and spec.frame_s is None]
     if not specs:
         return []
     audio = strategy.get("montage_audio")
@@ -3377,8 +3378,9 @@ def _disclosure(kind: object, option: object) -> str | None:
         if basis == FREEZE_BASIS_FRAME and parsed and parsed[2] is not None:
             at = _seconds_text(parsed[2])
             return say(
-                en=f"I'm freezing the frame you picked ({at}s into the clip).",
-                tr=f"Seçtiğin kareyi donduruyorum (klibin {at}. saniyesi).",
+                # Neutral: a "you choose" answer is disclosed as the AI's pick (`_disclose`).
+                en=f"I'm freezing the frame at {at}s into the clip.",
+                tr=f"Kareyi klibin {at}. saniyesinde donduruyorum.",
             )
         if basis == FREEZE_BASIS_MOMENT:
             return say(

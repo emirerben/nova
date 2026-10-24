@@ -2412,11 +2412,14 @@ def _ground_freeze(
 
     KRI-900: the frame is never guessed. It is, in order:
 
+    * the second the creator typed ("freeze at 58.2 seconds", `_typed_frame`);
     * the frame the creator picked before approval (``answers``, the ``freeze_frame``
       question): the cut of that clip nearest to it is re-anchored to end there (same length
       of motion, never overlapping another cut of the same take) and holds ``spec.hold_s``.
       "No freeze" is ``declined``;
-    * the cut the creator named by position ("freeze the last shot"): its own last frame;
+    * the final cut when the creator named it ("freeze the last shot / at the end"): its own
+      last frame. "The first frame / at the start" cannot be held (a hold sits where a cut
+      ends) and is ``needs_frame`` with its position;
     * otherwise nothing is held. One analysed moment matching the creator's words
       (``analysis.best_moments[].description``) is ``needs_frame`` (the moment is known,
       the instant is not; the receipt asks for the second); no match, or a tie between
@@ -2441,6 +2444,13 @@ def _ground_freeze(
         for media_id in dict.fromkeys(media for media, *_rest in spans)
         if media_id in by_id and by_id[media_id].kind == "video"
     ]
+    if spec.frame_s is not None:
+        # The second the creator typed ("freeze at 58.2 seconds") wins over everything else.
+        media_id, frame = _typed_frame(spec, spans, by_id, in_edit)
+        record = {**record, "frame_requested_s": spec.frame_s, "frame_scope": spec.frame_scope}
+        return _hold_creator_frame(
+            spans, by_id, media_id, frame, spec, record, claimed, taken, "creator_frame"
+        )
     answer = _freeze_answer(spec, answers)
     if answer is not None:
         option = parse_freeze_option(answer.get("option"))
@@ -2449,21 +2459,20 @@ def _ground_freeze(
         basis, digest, frame = option
         if basis == "no_freeze":
             return spans, {}, {**record, "status": "declined"}
+        # The picked clip is no longer in the edit: never a hold somewhere else.
         media_id = next((m for m in in_edit if media_key(m) == digest), None)
-        if media_id is None or frame is None:
-            # The picked clip is no longer in the edit: never a hold somewhere else.
-            return spans, {}, {**record, "status": "not_grounded"}
-        clip = by_id[media_id]
-        if not (_FREEZE_MIN_MOTION_S <= frame < clip.duration_s - _FREEZE_END_MARGIN_S):
-            return spans, {}, {**record, "status": "not_grounded"}
         if answer.get("source") == "creator_delegated":
             basis = "delegated_frame"
-        if (media_id, frame) in claimed:
-            # A later ask already holds this frame: it answers this one too.
-            return spans, {}, {**record, "_frame": (media_id, frame)}
-        return _hold_at(spans, media_id, frame, spec, record, taken, grounding=basis)
-    if spec.position is not None and not spec.target_words:
+        return _hold_creator_frame(
+            spans, by_id, media_id, frame, spec, record, claimed, taken, basis
+        )
+    if spec.position == POSITION_LAST and not spec.target_words:
         return _hold_cut_end(spans, by_id, spec, record, taken)
+    if spec.position is not None and not spec.target_words:
+        # "Freeze the first frame / at the start": a hold sits where a cut ends, so the
+        # opening frame cannot be held, and the end of the first cut is not what was named.
+        # Nothing is guessed; the receipt asks for the second (KRI-900).
+        return spans, {}, {**record, "status": "needs_frame", "position": spec.position}
     matches = match_moments(
         spec.target_words, [(media_id, by_id[media_id].analysis) for media_id in in_edit]
     )
@@ -2483,6 +2492,63 @@ def _ground_freeze(
     )
 
 
+def _typed_frame(
+    spec: FreezeSpec,
+    spans: Sequence[tuple[str, float, float, bool]],
+    by_id: Mapping[str, UnifiedClip],
+    in_edit: Sequence[str],
+) -> tuple[str | None, float | None]:
+    """KRI-900: ``(clip, source second)`` of the frame the creator typed, or ``(None, None)``.
+
+    "2 seconds into the video" is a time of the edit: the cut playing then, and its source
+    second. "at 58.2 seconds" is a second of a clip: the clip of the moment the creator
+    named, else the cut they named by position, else the only video clip in the edit. Any
+    other case names no clip, and nothing is guessed.
+    """
+    at = float(spec.frame_s or 0.0)
+    if spec.frame_scope == "edit":
+        elapsed = 0.0
+        for media_id, start, end, _approved in spans:
+            if elapsed <= at < elapsed + (end - start):
+                return media_id, round(start + at - elapsed, 3)
+            elapsed += end - start
+        return None, None
+    clips: list[str] = []
+    if spec.target_words:
+        moments = match_moments(
+            spec.target_words, [(media_id, by_id[media_id].analysis) for media_id in in_edit]
+        )
+        clips = list(dict.fromkeys(moment.media_id for moment in moments))
+    elif spec.position is not None and spans:
+        clips = [spans[-1 if spec.position == POSITION_LAST else 0][0]]
+    else:
+        clips = list(in_edit)
+    return (clips[0], round(at, 3)) if len(clips) == 1 else (None, None)
+
+
+def _hold_creator_frame(
+    spans: list[tuple[str, float, float, bool]],
+    by_id: Mapping[str, UnifiedClip],
+    media_id: str | None,
+    frame: float | None,
+    spec: FreezeSpec,
+    record: dict[str, Any],
+    claimed: Mapping[tuple[str, float], Any],
+    taken: set[int],
+    grounding: str,
+) -> tuple[list[tuple[str, float, float, bool]], dict[int, float], dict[str, Any]]:
+    """Hold the frame the creator chose (picked before approval or typed), or nothing."""
+    clip = by_id.get(media_id) if media_id is not None else None
+    if clip is None or clip.kind != "video" or frame is None:
+        return spans, {}, {**record, "status": "not_grounded"}
+    if not (_FREEZE_MIN_MOTION_S <= frame < clip.duration_s - _FREEZE_END_MARGIN_S):
+        return spans, {}, {**record, "status": "not_grounded"}
+    if (media_id, frame) in claimed:
+        # A later ask already holds this frame: it answers this one too.
+        return spans, {}, {**record, "_frame": (media_id, frame)}
+    return _hold_at(spans, media_id, frame, spec, record, taken, grounding=grounding)
+
+
 def _hold_cut_end(
     spans: list[tuple[str, float, float, bool]],
     by_id: Mapping[str, UnifiedClip],
@@ -2490,13 +2556,14 @@ def _hold_cut_end(
     record: dict[str, Any],
     taken: set[int],
 ) -> tuple[list[tuple[str, float, float, bool]], dict[int, float], dict[str, Any]]:
-    """KRI-900: "freeze the last shot": the named cut holds its own last frame.
+    """KRI-900: "freeze the last shot / at the end": the final cut holds its own last frame,
+    which is the video's last frame.
 
     Nothing moves: the cut's window already ends on the frame it holds. A photo cut has
     nothing to freeze (KRI-824 holds stills), and a cut already holding a freeze takes no
     other: both are ``not_grounded``.
     """
-    index = len(spans) - 1 if spec.position == POSITION_LAST else 0
+    index = len(spans) - 1
     if not spans:
         return spans, {}, {**record, "status": "not_grounded", "position": spec.position}
     media_id, start, end, _approved = spans[index]
@@ -2514,6 +2581,8 @@ def _hold_cut_end(
             "frame_source_s": round(end, 3),
             "grounding": "cut_position",
             "position": spec.position,
+            # A later "the last shot for 2 seconds" folds into this hold (KRI-899).
+            "_frame": (media_id, round(end, 3)),
         },
     )
 

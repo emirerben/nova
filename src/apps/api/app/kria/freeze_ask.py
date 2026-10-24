@@ -193,8 +193,9 @@ _ASK_WORDS = frozenset(
     | {"kare", "kareyi", "karede", "goruntu", "goruntuyu", "video", "videoyu", "sahne"}
     | {"donmus", "donuk", "sabit", "aninda", "uzerinde", "sirasinda", "esnasinda"}
     | {"please", "lutfen", "just", "right", "exactly", "moment", "seconds", "second"}
-    # KRI-900: "2 seconds into the video" names a time, never a moment.
-    | {"into", "videonun"}
+    # KRI-900: "2 seconds into the video" / "klibin 58. saniyesinde" name a time, never a
+    # moment.
+    | {"into", "videonun", "klibin", "saniyede", "saniyesinde", "saniyesi", "saniyesine"}
 )
 
 # KRI-900: a position names a cut of the edit, never a moment of the footage. "Freeze the last
@@ -212,7 +213,8 @@ _POSITION_WORDS = {
     "ilk": POSITION_FIRST,
 }
 _CUT_NOUNS = frozenset(
-    {"shot", "cut", "clip", "scene", "frame", "moment", "one"}
+    # Never "one": "the last one" is the creator's latest freeze (a correction, KRI-899).
+    {"shot", "cut", "clip", "scene", "frame", "moment"}
     | {"kare", "kareyi", "karede", "sahne", "sahneyi", "sahnede", "cekim", "cekimi", "klip"}
     | {"klibi", "an", "ani"}
 )
@@ -274,6 +276,11 @@ class FreezeSpec:
     # KRI-900: "first" / "last" when the creator named a cut ("freeze the last shot") and no
     # moment. It grounds on that cut's own last frame; words for a moment always win.
     position: str | None = None
+    # KRI-900: the second the creator typed for the frozen frame ("freeze at 58.2 seconds",
+    # "klibin 58. saniyesinde"): seconds into the clip (``frame_scope == "clip"``) or into
+    # the edit ("2 seconds into the video", ``"edit"``). Never a hold length.
+    frame_s: float | None = None
+    frame_scope: str = "clip"
 
     @property
     def requirement_ids(self) -> tuple[str, ...]:
@@ -321,6 +328,45 @@ def _unit_suffixed(token: str) -> float | None:
     return None
 
 
+# KRI-900: Turkish unit forms that place a time ("58. saniyede", "klibin 58. saniyesinde"),
+# never a length.
+_TR_FRAME_UNITS = frozenset({"saniyede", "saniyesinde", "saniyesi", "saniyesine"})
+_EDIT_WORDS = frozenset({"video", "videonun", "edit", "montage", "montajin", "reel"})
+
+
+def _stated_frame(tokens: Sequence[str]) -> tuple[float | None, str, frozenset[int]]:
+    """KRI-900: the second the creator names for the frozen frame, its scope and the unit
+    token indices that say it (``_number_tokens`` input).
+
+    "at 58.2 seconds" / "at 58s" (seconds into the clip), "N seconds into the clip|video"
+    and Turkish "58. saniyede" / "videonun 2. saniyesinde". ``(None, "clip", {})`` when the
+    words name no frame.
+    """
+    for index, token in enumerate(tokens):
+        glued = _unit_suffixed(token)
+        frame_unit = token in _TR_FRAME_UNITS
+        is_unit = token in _UNITS or frame_unit or glued is not None
+        if token == _SHORT_UNIT and index > 0 and _as_number(tokens[index - 1]) is not None:
+            is_unit = True
+        if not is_unit:
+            continue
+        value, number_at = glued, index
+        if value is None and index > 0:
+            number_at = index - 1
+            value = _as_number(tokens[number_at])
+        if value is None:
+            continue
+        lead = tokens[number_at - 1] if number_at > 0 else ""
+        tail = tokens[index + 1] if index + 1 < len(tokens) else ""
+        if tail == "into":
+            rest = [word for word in tokens[index + 2 :] if word not in _ARTICLES]
+            scope = "edit" if rest and rest[0] in _EDIT_WORDS else "clip"
+            return value, scope, frozenset({index})
+        if lead == "at" or frame_unit:
+            return value, "edit" if lead in _EDIT_WORDS else "clip", frozenset({index})
+    return None, "clip", frozenset()
+
+
 def _stated_seconds(tokens: Sequence[str]) -> float | None:
     """The hold length the creator's own words give, or None.
 
@@ -328,7 +374,10 @@ def _stated_seconds(tokens: Sequence[str]) -> float | None:
     or followed by "boyunca" / the freeze verb in Turkish. Any other seconds in the ask
     (a position, the total video length) never set the hold.
     """
+    frame_at = _stated_frame(tokens)[2]
     for index, token in enumerate(tokens):
+        if index in frame_at:
+            continue
         glued = _unit_suffixed(token)
         is_unit = token in _UNITS or token in _TR_UNITS or glued is not None
         if token == _SHORT_UNIT and index > 0 and _as_number(tokens[index - 1]) is not None:
@@ -381,8 +430,10 @@ def freeze_spec(req: BriefRequirement) -> FreezeSpec | None:
         return None
     # The creator's own number decides the hold; a typed `duration_s` (model output) never
     # sets it.
-    stated = _stated_seconds(_number_tokens(req.description or ""))
-    return _spec(req, tokens, stated)
+    numbers = _number_tokens(req.description or "")
+    stated = _stated_seconds(numbers)
+    frame, scope, _at = _stated_frame(numbers)
+    return _spec(req, tokens, stated, frame=frame, frame_scope=scope)
 
 
 def _clamped(seconds: float) -> float:
@@ -407,7 +458,14 @@ def _moment_words(tokens: Sequence[str]) -> tuple[str, ...]:
     )
 
 
-def _spec(req: BriefRequirement, tokens: Sequence[str], stated: float | None) -> FreezeSpec:
+def _spec(
+    req: BriefRequirement,
+    tokens: Sequence[str],
+    stated: float | None,
+    *,
+    frame: float | None = None,
+    frame_scope: str = "clip",
+) -> FreezeSpec:
     position, used = _position(tokens)
     words = _moment_words([token for index, token in enumerate(tokens) if index not in used])
     return FreezeSpec(
@@ -419,6 +477,8 @@ def _spec(req: BriefRequirement, tokens: Sequence[str], stated: float | None) ->
         hold_stated=stated is not None,
         hold_requested_s=None if stated is None else round(stated, 3),
         hold_basis="default" if stated is None else "stated",
+        frame_s=None if frame is None else round(frame, 3),
+        frame_scope=frame_scope,
     )
 
 
@@ -448,7 +508,10 @@ def _any_seconds(tokens: Sequence[str]) -> float | None:
     """The one number of seconds a correction names ("make it 2 seconds", "2 saniye yap"),
     wherever it sits; None when it names none or more than one."""
     values: set[float] = set()
+    frame_at = _stated_frame(tokens)[2]
     for index, token in enumerate(tokens):
+        if index in frame_at:
+            continue
         glued = _unit_suffixed(token)
         if glued is not None:
             values.add(glued)
@@ -480,15 +543,18 @@ def _correction(req: BriefRequirement, previous: FreezeSpec) -> FreezeSpec | Non
     if not asks_freeze_frame(req):
         return None
     tokens = _tokens(req.description or "")
-    if _VIDEO_LENGTH_WORDS.intersection(tokens):
-        return None
-    if _position(tokens)[0] is not None:
-        # KRI-900: "freeze the last shot" is a freeze of its own, never a change to an
-        # earlier one ("make the last freeze 2 seconds" names no cut, so it still is).
-        return None
-    if any(word not in _CORRECTION_WORDS for word in _moment_words(tokens)):
-        return None
     numbers = _number_tokens(req.description or "")
+    frame, frame_scope, _at = _stated_frame(numbers)
+    if frame is None and _VIDEO_LENGTH_WORDS.intersection(tokens):
+        return None
+    position, used = _position(tokens)
+    if position is not None and position != previous.position:
+        # KRI-900: "freeze the last shot" is a freeze of its own, never a change to an
+        # earlier one; the same cut named again ("the last shot for 2 seconds") changes it.
+        return None
+    words = _moment_words([token for index, token in enumerate(tokens) if index not in used])
+    if any(word not in _CORRECTION_WORDS for word in words):
+        return None
     stated = _stated_seconds(numbers)
     if stated is None:
         stated = _any_seconds(numbers)
@@ -505,6 +571,10 @@ def _correction(req: BriefRequirement, previous: FreezeSpec) -> FreezeSpec | Non
         "corrects": previous.requirement_ids,
         "previous_hold_s": previous.hold_s,
         "position": previous.position,
+        # KRI-900: a typed second ("freeze at 58.2 seconds") pins the frame; otherwise the
+        # earlier one stands.
+        "frame_s": previous.frame_s if frame is None else round(frame, 3),
+        "frame_scope": previous.frame_scope if frame is None else frame_scope,
     }
     if stated is not None:
         return FreezeSpec(
@@ -521,8 +591,9 @@ def _correction(req: BriefRequirement, previous: FreezeSpec) -> FreezeSpec | Non
             hold_stated=False,
             hold_basis="longer" if longer else "shorter",
         )
-    if not freeze_worded:
-        # Neither seconds, a direction nor the creator's own freeze words: nothing to change.
+    if not freeze_worded and frame is None:
+        # Neither seconds, a direction, a frame nor the creator's own freeze words: nothing
+        # to change.
         return None
     return FreezeSpec(
         **common,

@@ -27,6 +27,14 @@ Ways this can fail (written before the fix), each pinned below:
 13. "No freeze" still holds, or is reported as "Couldn't".
 14. A brief with no freeze ask plans differently with the freeze path on.
 15. Turkish position words are missed.
+16. "Freeze the first frame / at the start" holds the first cut's LAST frame and says met.
+17. "The last one" reads as a cut: "freeze the last one for 2 seconds" becomes a new freeze on
+    the final shot instead of correcting the bite, or "make the last one 2 seconds" is lost.
+18. The same cut asked twice ("the last shot", then "the last shot for 2 seconds") is two
+    freezes, and the earlier one reports a false "couldn't tell which moment".
+19. The second the receipt asks for ("freeze at 58.2 seconds") becomes the HOLD length.
+20. A typed second is ignored, so the creator gets the same "tell me the second" receipt again.
+21. The frame question is asked again after the creator typed the second.
 
 Set ``KRI900_KEEP_DIR`` to keep the evidence: ``report.json`` (question, answer, plan row,
 recipe hold, receipt per case), the cloud MP4 and ``held_vs_source.png``.
@@ -647,3 +655,109 @@ async def test_tied_moments_ask_which_moment_and_hold_the_picked_one(
     assert receipt["status"] == "met"
     assert "the moment you picked" in receipt["reason"]
     _keep("tied_moments", {"question": question, "plan_row": row, "receipt": receipt})
+
+
+# -- 16: the opening frame is never faked with the end of the first cut --------------------------
+
+
+@pytest.mark.parametrize("description", ["İlk kareyi 2 saniye dondur", "Freeze at the start"])
+async def test_the_first_frame_is_asked_for_never_faked(
+    monkeypatch: pytest.MonkeyPatch, description: str
+) -> None:
+    render, brief = _with_decoy_and_last_shot(description)
+    asked, _strategy, plan, outcome, _result = await _run(monkeypatch, brief=brief, render=render)
+    assert not _freeze_questions(asked)
+    assert outcome.refusal is None, outcome.refusal
+    execution, recipe = _phone_recipe(monkeypatch, plan)
+    assert not [m for m in execution.story_timeline if m.freeze_hold_s]
+    assert "freezeFrame" not in recipe.required_capabilities
+    row = next(r for r in plan.freeze_frames if r["requirement_id"] == "r3")
+    assert (row["status"], row["position"]) == ("needs_frame", "first")
+    assert "frame_source_s" not in row
+    receipt = _receipt(outcome, "r3")
+    assert receipt["status"] == "not_possible", receipt
+    assert "can't hold the opening frame" in receipt["reason"] or "açılış" in receipt["reason"]
+    _keep(f"first_frame:{description}", {"plan_row": row, "receipt": receipt})
+
+
+# -- 17, 18: "the last one" is the latest freeze; the same cut twice is one freeze ---------------
+
+
+@pytest.mark.parametrize(
+    "later", ["freeze the last one for 2 seconds", "make the last one 2 seconds"]
+)
+def test_the_last_one_corrects_the_latest_freeze(later: str) -> None:
+    bite = _req("Freeze the frame for one second on Atakan's bite", "r3")
+    specs = live_freezes([bite, _req(later, "r8")])
+    assert [(s.requirement_ids, s.target_words, s.position, s.hold_s) for s in specs] == [
+        (("r3", "r8"), ("atakan", "bite"), None, 2.0)
+    ]
+
+
+def test_the_same_cut_asked_twice_is_one_freeze() -> None:
+    specs = live_freezes(
+        [_req("Freeze the last shot", "r1"), _req("Freeze the last shot for 2 seconds", "r2")]
+    )
+    assert [(s.requirement_ids, s.position, s.hold_s) for s in specs] == [
+        (("r1", "r2"), "last", 2.0)
+    ]
+
+
+# -- 19, 20, 21: the second the receipt asks for is the frame, never the hold --------------------
+
+
+@pytest.mark.parametrize(
+    ("reply", "frame_s"),
+    [
+        ("freeze at 58.2 seconds", 58.2),
+        ("freeze it at 58.5 seconds into the clip", 58.5),
+        ("Klibin 58.2. saniyesinde dondur", 58.2),
+    ],
+)
+async def test_a_typed_second_is_the_held_frame(
+    monkeypatch: pytest.MonkeyPatch, reply: str, frame_s: float
+) -> None:
+    from tests.kria.test_kri899_freeze_length_changes import _with  # noqa: PLC0415
+
+    brief = _with((reply, {"freeze_frame": True}))
+    asked, strategy, plan, outcome, _result = await _run(
+        monkeypatch, brief=brief, pick=lambda _q: None
+    )
+    assert not _freeze_questions(asked)  # 21. the creator already named the frame
+    assert not [a for a in strategy.get("choice_answers") or [] if a["kind"] == "freeze_frame"]
+    assert outcome.refusal is None, outcome.refusal
+    execution, recipe = _phone_recipe(monkeypatch, plan)
+    held = [m for m in execution.story_timeline if m.freeze_hold_s]
+    assert len(held) == 1
+    assert held[0].media_id == TAKE
+    assert held[0].source_end_s == pytest.approx(frame_s, abs=0.002)  # 20.
+    assert held[0].freeze_hold_s == pytest.approx(1.0, abs=_FRAME)  # 19. the bite's 1 s stands
+    clip = next(c for t in recipe.tracks for c in t.clips if c.id == held[0].moment_id)
+    assert clip.hold_duration == pytest.approx(1.0, abs=_FRAME)
+    row = next(r for r in plan.freeze_frames if "r3" in r["requirement_ids"])
+    assert row["grounding"] == "creator_frame"
+    assert row["hold_s"] == pytest.approx(1.0)
+    receipt = _receipt(outcome, "r3")
+    assert receipt["status"] == "met", receipt
+    assert receipt["verification"] == "checked"
+    assert f"({frame_s:.1f}s into the clip)" in receipt["reason"] or "saniyesi" in receipt["reason"]
+    _keep(f"typed_second:{reply}", {"plan_row": row, "receipt": receipt})
+
+
+async def test_a_second_into_the_video_holds_the_cut_playing_then(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.kria.test_kri899_freeze_length_changes import _with  # noqa: PLC0415
+
+    brief = _with(("freeze 2 seconds into the video", {"freeze_frame": True}))
+    _asked, _strategy, plan, outcome, _result = await _run(
+        monkeypatch, brief=brief, pick=lambda _q: None
+    )
+    assert outcome.refusal is None, outcome.refusal
+    row = next(r for r in plan.freeze_frames if "r3" in r["requirement_ids"])
+    assert (row["status"], row["frame_scope"], row["frame_requested_s"]) == ("held", "edit", 2.0)
+    assert row["hold_s"] == pytest.approx(1.0)  # 19. "2 seconds into" is never the hold
+    execution, _recipe = _phone_recipe(monkeypatch, plan)
+    held = [m for m in execution.story_timeline if m.freeze_hold_s]
+    assert len(held) == 1
+    assert held[0].source_end_s == pytest.approx(row["frame_source_s"], abs=0.002)
