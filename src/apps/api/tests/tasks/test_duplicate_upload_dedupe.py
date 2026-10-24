@@ -468,6 +468,7 @@ def _run_dispatch(
     *,
     approved: bool = False,
     with_binding: bool = True,
+    **dispatch_kwargs,
 ):
     from app.services.phone_sources import bind_phone_sources
 
@@ -549,6 +550,7 @@ def _run_dispatch(
             creator_strategy=strategy,
             **({"creator_brief_binding": binding.model_dump(mode="json")} if with_binding else {}),
             **kwargs,
+            **dispatch_kwargs,
         )
     return result, item, built, bind
 

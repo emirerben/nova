@@ -128,6 +128,7 @@ from app.services.choice_questions import (
     simpler_version_question,
     tag_event,
 )
+from app.services.client_protocol import APPROVAL_CLIENT_PROTOCOL_FIELD
 from app.services.creation_thread_titles import conversation_revision_matches_sync
 from app.services.creative_copy_gate import CREATIVE_COPY_PENDING, creative_copy_problem
 from app.services.creator_label_reply import LabelTextReply, label_text_reply
@@ -144,6 +145,7 @@ from app.services.kria_editor_ops import (
     resolve_editor_base,
 )
 from app.services.kria_editor_ops_diff import describe_diff
+from app.services.phone_rollout import stamped_client_protocol
 from app.services.song_order import model_text
 from app.services.thought_summaries import (
     ThoughtSummaryPublisher,
@@ -247,6 +249,10 @@ class _ApprovalDispatchClaim:
     # KRI-306: the creator's explicit output-shape choice (`{"output_orientation",
     # "landscape_fit"}`), stashed by `decide_approval`; None = they never chose.
     render_shape: dict[str, str] | None = None
+    # KRI-898: the app build that approved (stashed by `decide_approval`); the Job carries it
+    # as `creator_client_protocol` so the render plans a freeze only for a build that plays
+    # it. None = unknown (web approval, a legacy approval), so no freeze is planned.
+    client_protocol: int | None = None
     # What the plan item pointed at BEFORE a strategy dispatch mints its new Job, so a
     # failure after the pointer moves can put it back (never leave an orphan target).
     prior_item_status: str | None = None
@@ -607,6 +613,7 @@ def _unresolved_choice_plan(
     events: Any = (),
     has_draft: bool = False,
     creator_id: Any = None,
+    client_protocol: int | None = None,
 ) -> tuple[KriaTurnPlan, str] | None:
     """KRI-476 backstop: the reply that replaces a draft an unresolved choice blocks.
 
@@ -642,7 +649,9 @@ def _unresolved_choice_plan(
     )
     history = list(events)
     capability = ChoiceCapability(
-        creator_id=creator_id, voice_route=settings.voice_behind_footage_enabled
+        creator_id=creator_id,
+        voice_route=settings.voice_behind_footage_enabled,
+        client_protocol=client_protocol,  # KRI-898: no freeze question for an older build
     )
     for conflict in open_conflicts(strategy, brief, media_snapshot, capability):
         if count_asks(history, conflict.conflict_id, conflict.input_digest) < (
@@ -1021,7 +1030,10 @@ def _complete_draft_turn(
     lease_epoch: int,
     claimed_thread_revision: int,
     planned: PlannedKriaTurn,
+    client_protocol: int | None = None,
 ) -> _Completion:
+    # KRI-898: ``client_protocol`` is the app build that sent this message (the claim
+    # snapshot's stamp); a freeze is planned for this draft only if that build plays one.
     plan = planned.plan
     _validate_draft_plan(plan, required_route=planned.brief_route)
     apply_intent = plan.intents[0]
@@ -1405,6 +1417,7 @@ def _complete_draft_turn(
                             strategy=document.strategy,
                             item_edit_format=item.edit_format,
                             clip_paths=item.clip_gcs_paths or (),
+                            client_protocol=client_protocol,
                         )
                     )
                     # KRI-689: a phone montage plays every clip at natural speed. Say so
@@ -1435,6 +1448,7 @@ def _complete_draft_turn(
                             media_snapshot=planned.media_snapshot
                             if planned.media_snapshot is not None
                             else snapshot_media(item),
+                            client_protocol=client_protocol,
                         )
                         checked = with_blocked_requirements(checked, brief, phone_blockers)
                 else:
@@ -1919,6 +1933,7 @@ def _complete_draft_turn(
                 ],
                 has_draft=head is not None,
                 creator_id=thread.creator_id if binding_on else None,
+                client_protocol=client_protocol,
             )
             if blocked is not None:
                 blocked_plan, blocked_reason = blocked
@@ -2413,6 +2428,12 @@ async def _plan_with_live_agent(
                     **({"batch_questions": True} if snapshot.get("batch_questions") else {}),
                     # KRI-723: this app answers a moment-order card.
                     **({"moment_questions": True} if snapshot.get("moment_questions") else {}),
+                    # KRI-898: the sending app build, for the choice gate's freeze question.
+                    **(
+                        {"client_protocol": snapshot["client_protocol"]}
+                        if snapshot.get("client_protocol") is not None
+                        else {}
+                    ),
                     **scoped,
                 )
                 if (
@@ -2670,6 +2691,12 @@ def _claim(
         if isinstance(source_payload, dict) and source_payload.get("answers_moment_questions"):
             # KRI-723: the app answers a moment-order card (stamped at submit from its protocol).
             claimed_snapshot["moment_questions"] = True
+        sent_from = stamped_client_protocol(
+            source_payload.get("client_protocol") if isinstance(source_payload, dict) else None
+        )
+        if sent_from is not None:
+            # KRI-898: the app build that sent the message; only when stamped.
+            claimed_snapshot["client_protocol"] = sent_from
         return (
             claimed_snapshot,
             # KRI-694: the task binds the chat's language only after this claim.
@@ -3170,6 +3197,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         lease_epoch=lease_epoch,
                         claimed_thread_revision=claimed_thread_revision,
                         planned=planned,
+                        client_protocol=stamped_client_protocol(snapshot.get("client_protocol")),
                     )
                 except EditorStateReplyError as exc:
                     # The creator's unsaved state is stale (video changed) or the op
@@ -4173,6 +4201,9 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             speech_cleanup_analysis_id=speech_cleanup_analysis_id,
             speech_cleanup_choice=speech_cleanup_choice,
             render_shape=render_shape_choice,
+            client_protocol=stamped_client_protocol(
+                (execution.result or {}).get(APPROVAL_CLIENT_PROTOCOL_FIELD)
+            ),
             prior_item_status=(
                 str(getattr(item, "item_status", None))
                 if getattr(item, "item_status", None) is not None
@@ -5524,6 +5555,12 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
             **(
                 {"creator_render_shape": claim.render_shape}
                 if getattr(claim, "render_shape", None)
+                else {}
+            ),
+            # KRI-898: the approving app build (absent = byte-identical call).
+            **(
+                {"creator_client_protocol": claim.client_protocol}
+                if getattr(claim, "client_protocol", None) is not None
                 else {}
             ),
             # KRI-722: the verified snapshot + attempt (absent = legacy call).

@@ -6268,7 +6268,10 @@ def _plan_phone_unified_montage(
         plan_unified_montage,
         skia_font_covers,
     )
-    from app.services.phone_rollout import freeze_frame_supported  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        freeze_frame_planned_for,
+        stamped_client_protocol,
+    )
 
     return plan_unified_montage(
         clips,
@@ -6289,7 +6292,12 @@ def _plan_phone_unified_montage(
         # recorded it (and the reply said so), never against a pinned order.
         speech_order=speech_order_approved(strategy, contract, approved_length_plan),
         # KRI-828: the creator's freeze is planned only where the phone can hold a frame.
-        freeze_frames=freeze_frame_supported(),
+        # KRI-898: and only for the app build that approved (stamped on the Job at dispatch;
+        # the pre-approval check stamps the drafting build). Unstamped => no hold, the
+        # receipt says "Couldn't", the rest of the video renders.
+        freeze_frames=freeze_frame_planned_for(
+            stamped_client_protocol(all_candidates.get("creator_client_protocol"))
+        ),
     )
 
 
@@ -6690,6 +6698,180 @@ def _classify_phone_talking_clips(
     return classify_talking_clips(evidence), transcripts
 
 
+# KRI-841: "add the X video at the very end with its own sound". The approved strategy's
+# `ending_clip` ({media_id, keep_audio}) names either one of the item's own footage clips
+# (a phone source binding's `media_id`; plays as the LAST clip of the main track) or a
+# Visuals-pool video (`asset-<pool id>`, the ending-clip lane). Either way the clip plays
+# once, at the very end, and is never also placed mid-talk. `PHONE_ENDING_CLIP_FIELD` is the
+# variant receipt, read back from the COMPILED recipe, that the brief check judges.
+PHONE_ENDING_CLIP_FIELD = "phone_ending_clip"
+_POOL_ASSET_PREFIX = "asset-"
+
+
+def _strategy_ending_request(all_candidates: dict) -> dict[str, Any] | None:
+    """The approved strategy's ``ending_clip`` as ``{"media_id", "keep_audio"}``, else ``None``."""
+    strategy = all_candidates.get("creator_strategy")
+    raw = strategy.get("ending_clip") if isinstance(strategy, dict) else None
+    if not isinstance(raw, dict):
+        return None
+    media_id = raw.get("media_id")
+    if not isinstance(media_id, str) or not media_id.strip():
+        return None
+    return {"media_id": media_id.strip(), "keep_audio": raw.get("keep_audio") is not False}
+
+
+def _pool_media_keys(media_id: str) -> frozenset[str]:
+    """The spellings one Visuals-pool asset is named by: the manifest's ``asset-<id>`` and
+    the bare pool row id (casefolded, like `phone_reaction_grounding._index_pool_assets`)."""
+    folded = media_id.strip().casefold()
+    keys = {folded}
+    if folded.startswith(_POOL_ASSET_PREFIX):
+        keys.add(folded[len(_POOL_ASSET_PREFIX) :])
+    return frozenset(keys)
+
+
+def _names_pool_media(visual_id: object, media_id: str) -> bool:
+    return isinstance(visual_id, str) and bool(
+        _pool_media_keys(visual_id) & _pool_media_keys(media_id)
+    )
+
+
+def _without_ending_media(
+    beats: list, closing: dict | None, media_id: str
+) -> tuple[list, dict | None, list[dict], bool]:
+    """``beats``/``closing`` minus every use of the ending clip's media (KRI-841): a Visual the
+    creator put at the very end is never also a reaction pop-in or the held closing shot.
+    A beat that also has a sound keeps the sound. Returns ``(beats, closing, removed_beats,
+    closing_removed)``; the removed ones are reported on the beat receipt, never silently lost."""
+    kept: list = []
+    removed: list[dict] = []
+    for beat in beats:
+        if not isinstance(beat, dict) or not _names_pool_media(beat.get("visual_id"), media_id):
+            kept.append(beat)
+        elif beat.get("sound"):
+            kept.append({k: v for k, v in beat.items() if k not in ("visual_id", "visual_role")})
+        else:
+            removed.append(
+                {
+                    "beat_id": str(beat.get("beat_id") or ""),
+                    "trigger": str(beat.get("trigger") or ""),
+                    "reason": "visual_is_ending_clip",
+                }
+            )
+    closing_removed = False
+    if isinstance(closing, dict):
+        if _names_pool_media(closing.get("visual_id"), media_id):
+            closing, closing_removed = None, True
+        elif _names_pool_media(closing.get("badge_visual_id"), media_id):
+            closing = {k: v for k, v in closing.items() if k != "badge_visual_id"}
+    return kept, closing, removed, closing_removed
+
+
+def _ending_over_length_limit(snapshot: dict, *, talk_s: float, ending_s: float) -> bool:
+    """True when appending an ending of ``ending_s`` to a ``talk_s`` edit breaks the length the
+    creator approved, although the edit without it does not (KRI-841).
+
+    The pin declines the WHOLE recipe when the finished length leaves the contract ("under 30
+    seconds including its ending", a confirmed 25 s), so an ending that would tip it over is
+    dropped instead and the render goes ahead without it. Asked through the pin's own rule
+    (`check_recipe_duration`, which counts the standard brand ending itself). No contract, an
+    unreadable one, or an edit that is already too long without the ending: not the ending's doing.
+    """
+    from app.services.creator_render_contract import (  # noqa: PLC0415
+        CreatorRenderContractError,
+        check_recipe_duration,
+    )
+    from app.services.device_render import _contract_for_variant  # noqa: PLC0415
+    from app.services.export_duration_policy import approved_export_maximum  # noqa: PLC0415
+    from app.services.length_policy_state import read_length_policy  # noqa: PLC0415
+
+    try:
+        contract = _contract_for_variant(snapshot, "subtitled")
+        if contract is None:
+            return False
+        limits = {
+            "length_policy": read_length_policy(snapshot, contract),
+            "max_export_duration_s": approved_export_maximum(snapshot, contract),
+        }
+    except CreatorRenderContractError:
+        return False  # the pin reports an unreadable authority; it is not the ending's doing
+    # A probe, not a creator-length check: it must not reach the fleet length-check proof.
+    try:
+        check_recipe_duration(contract, talk_s + ending_s, emit_observation=False, **limits)
+    except CreatorRenderContractError:
+        pass
+    else:
+        return False
+    try:
+        check_recipe_duration(contract, talk_s, emit_observation=False, **limits)
+    except CreatorRenderContractError:
+        return False
+    return True
+
+
+def _pool_row_has_audio(row: dict) -> bool | None:
+    """Whether a Visuals pool video has an audio track, when its analysis recorded it."""
+    analysis = row.get("analysis")
+    value = analysis.get("has_audio") if isinstance(analysis, dict) else None
+    return value if isinstance(value, bool) else None
+
+
+def _phone_ending_clip_receipt(
+    request: dict[str, Any],
+    *,
+    source: str,
+    reason: str | None,
+    recipe: Any,
+    footage_media_id: str | None,
+    visual_media_id: str | None,
+    has_audio: bool | None = None,
+) -> dict[str, Any]:
+    """The variant's ``phone_ending_clip`` receipt, derived from the COMPILED ``recipe``:
+    ``applied`` only when the last main-track clip really is the requested media and plays
+    with sound (or the creator asked for none) -- never copied from the strategy."""
+    keep_audio = bool(request.get("keep_audio", True))
+    main = next((track for track in recipe.tracks if track.id == "subtitled"), None)
+    last = (
+        max(main.clips, key=lambda clip: clip.timeline_start)
+        if main is not None and main.clips
+        else None
+    )
+    on_recipe = False
+    if last is not None and footage_media_id is not None:
+        on_recipe = last.source_asset_id == footage_media_id and len(main.clips) > 1
+    elif last is not None and visual_media_id is not None:
+        asset = next(
+            (a for a in recipe.asset_manifest.assets if a.id == last.source_asset_id), None
+        )
+        on_recipe = (
+            last.id == "clip-ending" and getattr(asset, "visual_id", None) == visual_media_id
+        )
+    applied = bool(on_recipe and last is not None and (last.volume > 0 or not keep_audio))
+    if applied:
+        reason = None
+    elif reason is None:
+        reason = "muted" if on_recipe else "not_in_recipe"
+    return {
+        "version": 1,
+        "requested_media_id": request["media_id"],
+        "source": source,
+        "status": "applied" if applied else "dropped",
+        "reason": reason,
+        "keep_audio": keep_audio,
+        # Whether the SOURCE has an audio track (None = unknown); a clip without one is still
+        # appended -- the brief check is what tells the creator it has no sound of its own.
+        "has_audio": has_audio,
+        "volume": float(last.volume) if applied and last is not None else 0.0,
+        "start_s": round(float(last.timeline_start), 3) if applied and last is not None else None,
+        "end_s": (
+            round(float(last.timeline_start + last.source_duration / last.rate), 3)
+            if applied and last is not None
+            else None
+        ),
+        "recipe_duration_s": round(float(recipe.duration), 3),
+    }
+
+
 # KRI-178 beat-receipt bookkeeping, shared by the phone Talking and (KRI-519)
 # phone Voiceover workers.
 _BEAT_CARD_ID_RE = re.compile(r"^beat-(?P<beat_id>.+)-(?P<n>\d+)$")
@@ -6861,6 +7043,7 @@ def _run_phone_subtitled_job(
     from app.pipeline.phone_spoken_text import SPOKEN_TEXT_FIELD  # noqa: PLC0415
     from app.pipeline.phone_subtitled_lanes import remap_lanes_for_cut  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
+        MAX_CLIP_DURATION_S,
         SFX_DUCK_RECEIPT_FIELD,
         PhoneCutaway,
         compile_phone_subtitled_plan,
@@ -6934,6 +7117,7 @@ def _run_phone_subtitled_job(
             PHONE_SUBTITLED_LANES_FIELD,
             PhoneSubtitledLaneRequest,
             PhoneSubtitledLanes,
+            SubtitledEndingClip,
             SubtitledLaneError,
             drop_lane,
             lane_names,
@@ -7112,6 +7296,30 @@ def _run_phone_subtitled_job(
     # The take's words on the timeline the recipe plays, for `spoken_text_asks`.
     timeline_words: list[Any] = []
 
+    # KRI-841: the creator's "end on this clip, with its own sound" ask, read off the approved
+    # strategy. Without it every statement below runs exactly as before and the variant carries
+    # no `phone_ending_clip` receipt.
+    ending_request = _strategy_ending_request(all_candidates)
+    # "visual" (Visuals pool) | "footage" (the item's own clip) | "unknown".
+    ending_source = "unknown"
+    # Why the ending was dropped, when it was.
+    ending_reason: str | None = None
+    # The footage clip that plays last on the main track.
+    ending_footage_media_id: str | None = None
+    # Whether the ending's source has an audio track (None = nobody recorded it).
+    ending_has_audio: bool | None = None
+    # The Visuals-pool row named as the ending: kept off the talk whatever becomes of the ending.
+    ending_visual_id: str | None = None
+    # The `SubtitledEndingClip` built from that row.
+    strategy_ending_lane: Any = None
+    # The footage ending's window: no cutaway is scheduled over it.
+    ending_blocked: list[tuple[float, float]] = []
+    # Several clips speak, so cards / sounds / beats are off -- but a Visuals ending is appended
+    # after ALL of them and still rides the lanes machinery, alone.
+    ending_lane_only = False
+    ending_beat_removed: list[dict] = []
+    ending_closing_removed = False
+
     # KRI-174 lane state. Kept at these empty defaults when the flag is off
     # (or there is no lane request), so the fences/persistence below become
     # no-ops and the variant dict stays byte-identical to before.
@@ -7215,6 +7423,82 @@ def _run_phone_subtitled_job(
                     caption_language=caption_language_req,
                     job_id=job_id,
                 )
+                if ending_request is not None:
+                    ending_binding = next(
+                        (row for row in bindings if row.media_id == ending_request["media_id"]),
+                        None,
+                    )
+                    if ending_binding is not None:
+                        # KRI-841: the creator's own footage clip goes LAST on the main
+                        # track with its sound (like a later speaker), and stays out of the
+                        # footage cutaways. It does not make this a several-speaker edit.
+                        ending_source = "footage"
+                        ending_has_audio = ending_binding.original.has_audio
+                        ending_clip_id = next(
+                            (
+                                cid
+                                for cid, path in clip_id_to_gcs.items()
+                                if path == ending_binding.proxy_path
+                            ),
+                            None,
+                        )
+                        # The talk is the first speaker that is NOT the ending clip (a
+                        # talkative ending uploaded first must not become the spine).
+                        talk_ids = [c for c in talking_roles.speakers if c != ending_clip_id]
+                        if ending_clip_id is None:
+                            ending_reason = "not_found"
+                        elif not talk_ids:
+                            ending_reason = "is_speaker"
+                        else:
+                            if (
+                                media_lanes_enabled
+                                and isinstance(snapshot.get(PHONE_SUBTITLED_LANES_FIELD), dict)
+                                and snapshot[PHONE_SUBTITLED_LANES_FIELD].get("ending_clip")
+                            ):
+                                # A hand-authored (admin) ending clip already ends this video.
+                                ending_reason = "lane_request_ending_wins"
+                            elif not ending_request["keep_audio"]:
+                                ending_reason = "muted_footage_ending_unsupported"
+                            elif (
+                                ending_binding.original.width is None
+                                or ending_binding.original.height is None
+                            ):
+                                ending_reason = "not_a_video"
+                            elif float(ending_binding.original.duration_s) > MAX_CLIP_DURATION_S:
+                                ending_reason = "too_long"
+                            elif _ending_over_length_limit(
+                                snapshot,
+                                talk_s=sum(
+                                    float(row.original.duration_s)
+                                    for row in (
+                                        binding_by_proxy.get(clip_id_to_gcs.get(cid))
+                                        for cid in talk_ids
+                                    )
+                                    if row is not None
+                                ),
+                                ending_s=float(ending_binding.original.duration_s),
+                            ):
+                                ending_reason = "over_length_limit"
+                            else:
+                                ending_footage_media_id = ending_binding.media_id
+                            if ending_footage_media_id is not None:
+                                # Last on the main track, whichever role it was given.
+                                talking_roles = replace(
+                                    talking_roles,
+                                    speakers=tuple(talk_ids) + (ending_clip_id,),
+                                    footage=tuple(
+                                        c for c in talking_roles.footage if c != ending_clip_id
+                                    ),
+                                )
+                            elif ending_clip_id in talking_roles.footage:
+                                # Asked for at the very end and refused there: it is not used
+                                # at all rather than shown as a muted cutaway over the talk.
+                                talking_roles = replace(
+                                    talking_roles,
+                                    footage=tuple(
+                                        c for c in talking_roles.footage if c != ending_clip_id
+                                    ),
+                                )
                 spine_clip_id = talking_roles.speakers[0]
                 extra_speaker_ids = talking_roles.speakers[1:]
                 extra = []
@@ -7231,15 +7515,34 @@ def _run_phone_subtitled_job(
                     "talking_multi_clip_roles",
                     {"clips": list(talking_roles.receipt)},
                 )
-                if extra_speaker_bindings and media_lanes_enabled:
+                if (
+                    any(row.media_id != ending_footage_media_id for row in extra_speaker_bindings)
+                    and media_lanes_enabled
+                ):
                     # v1: cards, sounds and beats are grounded against ONE
                     # speaker clip's own timeline and frames, so they stay off
-                    # when several clips speak (the receipt says so).
+                    # when several clips speak (the receipt says so). A footage
+                    # ENDING (KRI-841) plays after the talk and doesn't count.
                     talking_lanes_skipped = True
-                    media_lanes_enabled = False
+                    if ending_request is not None and ending_source != "footage":
+                        # KRI-841: a Visuals ending plays after every speaker, so it doesn't
+                        # depend on one speaker's timeline: keep the lane machinery for it
+                        # alone (the global lanes kill switch is still honoured -- this block
+                        # only runs while `media_lanes_enabled`).
+                        ending_lane_only = True
+                    else:
+                        media_lanes_enabled = False
                     overlay_grounding_enabled = False
                     beats_enabled = False
                     video_overlays_enabled = False
+
+            if ending_request is not None and not talking_multi:
+                # KRI-841: a clip of this item named as the ending, with no several-clips
+                # Talking to place it: the single clip IS the speaker; a multi-clip Talking
+                # head (cutaways) has no main-track slot for it.
+                if any(row.media_id == ending_request["media_id"] for row in bindings):
+                    ending_source = "footage"
+                    ending_reason = "talking_multi_off" if multi_clip else "is_speaker"
 
             clip_id = spine_clip_id if multi_clip else next(iter(clip_id_to_local))
             clip_path = clip_id_to_local[clip_id]
@@ -7253,7 +7556,7 @@ def _run_phone_subtitled_job(
             cutaways: tuple = ()
 
             probe = probe_video(clip_path)
-            if float(probe.duration_s) > 300.0:
+            if float(probe.duration_s) > MAX_CLIP_DURATION_S:
                 raise UnsupportedPhonePlan(
                     "subtitled clips are capped at 5 minutes -- trim the clip and re-upload"
                 )
@@ -7532,7 +7835,7 @@ def _run_phone_subtitled_job(
                         language=detected_lang,
                         job_language=language,
                     )
-                if media_lanes_enabled:
+                if media_lanes_enabled and not ending_lane_only:
                     # Original (uncut) clip time -- grounding samples frames
                     # from `clip_path`, the ORIGINAL clip, at these exact
                     # timestamps, so this transcript must stay in the SAME
@@ -7660,7 +7963,7 @@ def _run_phone_subtitled_job(
                             "spoken": _spoken_lang,
                         },
                     )
-                if media_lanes_enabled:
+                if media_lanes_enabled and not ending_lane_only:
                     # Captured before caption correction touches the cues -- the
                     # persisted receipt is exactly what Whisper heard in the SPOKEN
                     # language, never the LLM-corrected spelling or the requested-
@@ -7802,6 +8105,14 @@ def _run_phone_subtitled_job(
             talking_timeline_s = sum(
                 max(0.0, end - start) for start, end in speaker_keep_segments
             ) + sum(float(extra.original.duration_s) for extra in extra_speaker_bindings)
+            if ending_footage_media_id is not None:
+                # No footage cutaway covers the ending clip: it plays last, in the clear.
+                ending_blocked.append(
+                    (
+                        talking_timeline_s - float(extra_speaker_bindings[-1].original.duration_s),
+                        talking_timeline_s,
+                    )
+                )
             if spoken_text_asks:
                 spoken_text_rows, spoken_text_receipt = _phone_talking_spoken_text_rows(
                     spoken_text_asks,
@@ -7885,7 +8196,8 @@ def _run_phone_subtitled_job(
                     duration_s=talking_timeline_s,
                     word_starts=word_starts,
                     blocked=[(float(row["start_s"]), float(row["end_s"])) for row in title_rows]
-                    + blocked,
+                    + blocked
+                    + ending_blocked,
                 )
                 talking_cutaway_windows[:] = [
                     {
@@ -7929,6 +8241,15 @@ def _run_phone_subtitled_job(
                     **framed_compile,
                 )
             if not media_lanes_enabled:
+                if ending_request is not None and ending_source != "footage":
+                    # KRI-841: no card / ending-clip lane on this render, so a Visuals video
+                    # can't end it (and nothing places it mid-talk either).
+                    ending_source = (
+                        "visual"
+                        if ending_request["media_id"].casefold().startswith(_POOL_ASSET_PREFIX)
+                        else "unknown"
+                    )
+                    ending_reason = "media_lanes_disabled"
                 closing_text_rows, closing_text_receipt = _closing_rows_for(None)
                 styled_rows = _protected_style_rows(
                     title_rows + spoken_text_rows + closing_text_rows,
@@ -7961,11 +8282,63 @@ def _run_phone_subtitled_job(
             else:
                 raw_lane_request = snapshot.get(PHONE_SUBTITLED_LANES_FIELD)
                 lane_request: Any = None
-                if isinstance(raw_lane_request, dict):
+                if isinstance(raw_lane_request, dict) and not ending_lane_only:
                     try:
                         lane_request = PhoneSubtitledLaneRequest.model_validate(raw_lane_request)
                     except Exception as exc:  # noqa: BLE001
                         lane_drops.append({"lane": "request", "reason": str(exc)[:300]})
+
+                # KRI-841: "add the X video at the very end with its own sound" -- resolve the
+                # Visuals-pool video the approved strategy names BEFORE any grounding runs, so it
+                # is kept out of every mid-talk placement (beats, cards, the full-screen
+                # sequence) whatever happens to the ending itself below. A footage ending was
+                # settled with the speakers above.
+                if ending_request is not None and ending_source != "footage":
+                    import app.services.phone_overlay_grounding as phone_overlay_grounding_pool_mod  # noqa: PLC0415
+
+                    try:
+                        pool_rows = phone_overlay_grounding_pool_mod._load_ready_pool_assets(
+                            _sync_session, job_id=job_id
+                        )
+                    except OperationalError:
+                        raise  # transient DB -> Celery autoretry, never a lane drop
+                    except Exception as exc:  # noqa: BLE001 - the ending never fails the job
+                        log.warning(
+                            "phone_ending_pool_unavailable", job_id=job_id, error=str(exc)[:200]
+                        )
+                        pool_rows = []
+                        ending_reason = "pool_unavailable"
+                    ending_row = next(
+                        (
+                            row
+                            for row in pool_rows
+                            if _names_pool_media(str(row.get("id")), ending_request["media_id"])
+                        ),
+                        None,
+                    )
+                    if ending_row is None:
+                        ending_reason = ending_reason or "not_found"
+                    else:
+                        ending_source = "visual"
+                        ending_visual_id = str(ending_row["id"])
+                        ending_has_audio = _pool_row_has_audio(ending_row)
+                        if ending_row.get("kind") != "video":
+                            ending_reason = "not_a_video"
+                        elif not ending_row.get("gcs_path") or not ending_row.get("gcs_generation"):
+                            ending_reason = "missing_generation"
+                        elif lane_request is not None and lane_request.ending_clip is not None:
+                            ending_reason = "lane_request_ending_wins"
+                        elif lane_request is not None and any(
+                            card.media_id == ending_visual_id for card in lane_request.overlays
+                        ):
+                            ending_reason = "media_in_lane_request"
+                        else:
+                            strategy_ending_lane = SubtitledEndingClip(
+                                media_id=ending_visual_id,
+                                gcs_path=str(ending_row["gcs_path"]),
+                                generation=str(ending_row["gcs_generation"]),
+                                volume=1.0 if ending_request["keep_audio"] else 0.0,
+                            )
 
                 # KRI-178: ground creator-authored reaction beats (from the
                 # approved strategy, NOT the lane request) before the KRI-176
@@ -7996,13 +8369,23 @@ def _run_phone_subtitled_job(
                     else:
                         import app.services.phone_reaction_grounding as phone_reaction_grounding_mod  # noqa: PLC0415
 
+                        beats_to_ground, closing_to_ground = beats, closing
+                        if ending_visual_id is not None:
+                            # KRI-841: the Visual that ends the video is never also a pop-in
+                            # or the held closing shot.
+                            (
+                                beats_to_ground,
+                                closing_to_ground,
+                                ending_beat_removed,
+                                ending_closing_removed,
+                            ) = _without_ending_media(beats, closing, ending_visual_id)
                         ground_beats = phone_reaction_grounding_mod.ground_phone_reaction_beats
                         try:
                             grounded_beats = ground_beats(
                                 _sync_session,
                                 job_id=job_id,
-                                beats=beats,
-                                closing=closing,
+                                beats=beats_to_ground,
+                                closing=closing_to_ground,
                                 words=raw_words or [],
                                 duration_s=float(probe.duration_s),
                                 clip_path=clip_path,
@@ -8040,6 +8423,25 @@ def _run_phone_subtitled_job(
                             beat_receipt = grounded_beats.receipt
                             beat_closing_card_id = grounded_beats.closing_card_id
                             beat_closing_aspect = grounded_beats.closing_card_aspect
+                            if ending_beat_removed:
+                                beat_receipt = {
+                                    **beat_receipt,
+                                    "unplaced": list(beat_receipt.get("unplaced") or [])
+                                    + ending_beat_removed,
+                                }
+                            if (
+                                ending_closing_removed
+                                and (beat_receipt.get("closing") or {}).get("status", "none")
+                                == "none"
+                            ):
+                                beat_receipt = {
+                                    **beat_receipt,
+                                    "closing": {
+                                        "status": "unplaced",
+                                        "reason": "visual_is_ending_clip",
+                                        "badge": "none",
+                                    },
+                                }
 
                 # KRI-183: the creator's explicit beats direction still wins
                 # its Visuals and its time windows, but no longer silences the
@@ -8111,7 +8513,14 @@ def _run_phone_subtitled_job(
                                     card.media_id
                                     for card in (lane_request.overlays if lane_request else [])
                                 )
-                                | beat_media_ids,
+                                | beat_media_ids
+                                # KRI-841: the Visual that ends the video is never also a card
+                                # or a full-screen insert mid-talk.
+                                | (
+                                    frozenset({ending_visual_id})
+                                    if ending_visual_id is not None
+                                    else frozenset()
+                                ),
                                 video_supported=video_overlays_enabled,
                                 **(
                                     {
@@ -8146,7 +8555,12 @@ def _run_phone_subtitled_job(
                 overlay_cards: list = []
                 ending_clip: Any = None
                 resolved_sfx: list = []
-                if lane_request is not None or grounded_cards or beat_cards:
+                if (
+                    lane_request is not None
+                    or grounded_cards
+                    or beat_cards
+                    or strategy_ending_lane is not None
+                ):
                     visual_kinds = frozenset(
                         kind
                         for kind, feature in (
@@ -8159,6 +8573,8 @@ def _run_phone_subtitled_job(
                     overlay_cards += grounded_cards
                     overlay_cards += beat_cards
                     ending_clip = lane_request.ending_clip if lane_request is not None else None
+                    if ending_clip is None:
+                        ending_clip = strategy_ending_lane  # KRI-841 (None without the ask)
                     overlay_visuals: tuple = ()
                     ending_visuals: tuple = ()
                     # KRI-183: video cards ride the same overlay lane as photo
@@ -8208,6 +8624,23 @@ def _run_phone_subtitled_job(
                                 "reason": "visualVideos not verified on the phone",
                             }
                         )
+                        if ending_clip is strategy_ending_lane:
+                            ending_reason = "visual_videos_not_verified"
+                        ending_clip = None
+                    if (
+                        ending_clip is not None
+                        and ending_clip is strategy_ending_lane
+                        and "audioMix" not in settings.phone_render_verified_features
+                    ):
+                        # An ending clip needs `audioMix` (it plays on the main track): drop it
+                        # here rather than let recipe validation fail the whole job.
+                        lane_drops.append(
+                            {
+                                "lane": "ending_clip",
+                                "reason": "audioMix not verified on the phone",
+                            }
+                        )
+                        ending_reason = "audio_mix_not_verified"
                         ending_clip = None
                     if overlay_cards:
                         pins = {
@@ -8254,8 +8687,27 @@ def _run_phone_subtitled_job(
                             raise  # transient DB -> Celery autoretry, never a lane drop
                         except Exception as exc:  # noqa: BLE001 - a lane never fails the job
                             lane_drops.append({"lane": "ending_clip", "reason": str(exc)[:300]})
+                            if ending_clip is strategy_ending_lane:
+                                ending_reason = "bind_failed"
                             ending_clip = None
                             ending_visuals = ()
+                        else:
+                            if ending_clip is strategy_ending_lane and _ending_over_length_limit(
+                                snapshot,
+                                talk_s=talking_timeline_s,
+                                ending_s=sum(
+                                    max(0.0, float(v.duration_s or 0.0) - ending_clip.trim_start_s)
+                                    for v in ending_visuals
+                                ),
+                            ):
+                                # The creator's stated length has no room for it: render
+                                # without the ending rather than have the pin decline it all.
+                                lane_drops.append(
+                                    {"lane": "ending_clip", "reason": "over_length_limit"}
+                                )
+                                ending_reason = "over_length_limit"
+                                ending_clip = None
+                                ending_visuals = ()
                     visuals = tuple(overlay_visuals) + tuple(ending_visuals)
                     beat_sfx_ids: frozenset[str] = frozenset(item.id for item in beat_sfx_requests)
                     requested_sfx = (
@@ -8527,6 +8979,22 @@ def _run_phone_subtitled_job(
             recipe,
             allow_editor_media=bool(cutaways) or bool(lanes is not None and lanes.overlays),
         )
+    # KRI-841: what became of the creator's "end on this clip, with its own sound" ask, judged
+    # on the COMPILED recipe (never copied from the strategy). A dropped ending never fails the
+    # job; the receipt says so and the render-ready brief check tells the creator.
+    ending_receipt: dict[str, Any] | None = None
+    if ending_request is not None:
+        if ending_reason is None and any(drop.get("lane") == "ending_clip" for drop in lane_drops):
+            ending_reason = "compile_dropped"
+        ending_receipt = _phone_ending_clip_receipt(
+            ending_request,
+            source=ending_source,
+            reason=ending_reason,
+            recipe=recipe,
+            footage_media_id=ending_footage_media_id,
+            visual_media_id=ending_visual_id if strategy_ending_lane is not None else None,
+            has_audio=ending_has_audio,
+        )
     # KRI-283: receipt of how the speaker clip was framed. Recorded here, after
     # every compile and before the FOR UPDATE session below (never under a lock).
     try:
@@ -8601,8 +9069,11 @@ def _run_phone_subtitled_job(
             "ok": False,
         }
         if media_lanes_enabled:
-            new_entry["overlay_transcript"] = raw_words
+            if not ending_lane_only:
+                new_entry["overlay_transcript"] = raw_words
             new_entry["phone_lane_receipt"] = lane_receipt
+        if ending_receipt is not None:
+            new_entry[PHONE_ENDING_CLIP_FIELD] = ending_receipt
         if sfx_duck is not None:
             new_entry[SFX_DUCK_RECEIPT_FIELD] = sfx_duck
         if engine_noise_receipt is not None:
@@ -8706,6 +9177,12 @@ def _run_phone_subtitled_job(
                 "unplaced": list(talking_unplaced),
                 "clips": list(talking_roles.receipt),
                 **({"lanes_skipped": "multiple_speakers"} if talking_lanes_skipped else {}),
+                # KRI-841: the last speaker above is the creator's ending clip.
+                **(
+                    {"ending_media_id": ending_footage_media_id}
+                    if ending_footage_media_id is not None
+                    else {}
+                ),
             }
         if multi_clip and not talking_multi:
             # KRI-136: the phone Talking lane (and its editor) owns this

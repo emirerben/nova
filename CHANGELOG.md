@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.95.0] - 2026-10-24
+
+### Changed
+- fix(freeze): plan a freeze hold only for an app build that plays it (KRI-898) (#1809) <!-- release-pr: 1809 -->
+
+## [0.81.94.0] - 2026-10-24
+
+### Changed
+- fix(freeze): position words are positions and the frozen frame is never guessed (KRI-900) (#1805) <!-- release-pr: 1805 -->
+
+## [0.81.93.0] - 2026-10-24
+
+### Changed
+- fix(kria): end a Talking edit on the requested video with its own sound, never muted mid-talk (KRI-841) (#1784) <!-- release-pr: 1784 -->
+
 ## [0.81.92.0] - 2026-10-24
 
 ### Fixed

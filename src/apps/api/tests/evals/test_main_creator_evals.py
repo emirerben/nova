@@ -424,6 +424,27 @@ def test_main_creator_eval(
         assert strategy.get("closing_media") is not None
         assert strategy.get("licensed_sfx") is None
 
+    ending_meta = fixture.meta.get("ending_clip")
+    if ending_meta:
+        # KRI-841: "add the X video at the very end with its own sound" on a phone Talking edit
+        # is the strategy's `ending_clip` (never a pop-in card or a closing photo), and the
+        # brief records it as a `style` requirement with the `ending_clip` fact: never as a
+        # `last_clip` ordering ask, which the render contract cannot verify on a Talking edit.
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        strategy = action["strategy"]
+        assert strategy["edit_format"] == "subtitled"
+        assert strategy.get("ending_clip") == ending_meta
+        assert all(
+            beat.get("visual_id") != ending_meta["media_id"]
+            for beat in strategy.get("reaction_beats") or []
+        )
+        assert strategy.get("closing_media") is None
+        facts = [update.get("facts") or {} for update in result.output.get("brief_updates") or []]
+        assert any(f.get("ending_clip") and f.get("keep_audio") is True for f in facts)
+        assert not any(f.get("last_clip") for f in facts)
+
     if fixture.meta.get("single_clip_talking_scope"):
         # KRI-238: "all" media on a one-clip phone Talking edit is that clip.
         # Guided proposals never exist there, so an unrepaired "all" was
