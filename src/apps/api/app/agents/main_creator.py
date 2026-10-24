@@ -121,11 +121,13 @@ log = structlog.get_logger()
 # v78 (KRI-821): a named cut of a repeated line records which take (`cut_line_occurrences`).
 # v79 combines main's v77 (KRI-815 + KRI-816) with KRI-821's v78.
 # v80 combines main's v79 (KRI-815/816/821) with KRI-827's keep_text_off (branch v78).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v82"
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v87"
 # KRI-724: the Nth time a quoted phrase is said carries `speech_remove` {quote, occurrence}
 # beside its cut_lines, and an engine/motor noise ask carries `noise_reduction: "engine"`, so
 # the phone Talking worker cuts / filters from facts, never from the words (KRI-667) (v76,
 # on top of v75).
+# v76 (KRI-840): Talking reaction beats can ask for a photo full screen at a word
+# (`display_mode` "fullscreen"), and the shared brief records `display_mode`.
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -267,7 +269,15 @@ Greenwood", "visual_id": "<the matching media_context entry's media_id>", "visua
 Never set `licensed_sfx` on this edit once this capability is available -- beats place sound
 at the exact moments the creator named instead. A bare "add fun sound effects" with no named
 spoken moment adds NO beats; say in `summary` that only sounds tied to the moments the creator
-named are added on iPhone. This edit always stays `edit_format: "subtitled"`. Beats never
+named are added on iPhone. A beat's photo shows as a small corner card unless the creator asks
+for it full screen: only then set `display_mode` "fullscreen" ("show the grill photo full screen
+when I say Argentinian", "'oblea' dediğinde fotoğraf tam ekran gelsin"); a small card, "in the
+corner" or no mention is "pip" (omit it). Do this only when the manifest advertises
+`media_overlays:fullscreen`; otherwise keep the photo a corner card and say so plainly in
+`summary`. "For a moment", "briefly" or "bir an" means `hold_s` 1.0 to 1.5. A full-screen photo
+at a spoken word is a beat with `display_mode` "fullscreen", never `overlay_display`
+"fullscreen_images" (that spreads photos evenly, not at a word).
+This edit always stays `edit_format: "subtitled"`. Beats never
 replace a title: when the creator asks for a hook/opening title or closing text, still set
 `opening_title` / `closing_title` by the title rules above, alongside the beats.
 """.strip("\n")
@@ -494,7 +504,11 @@ sticker, sound or on-screen text timed to spoken words ("show the medal photo wh
 the creator wrote them, never translated, plus "speaker" (the creator's words for who) only when
 someone other than the creator says them: "Show MEROPE in big letters the first time she says
 Merope" => a text requirement, literal "MEROPE", facts {"triggers": ["Merope"], "speaker":
-"she"}; keep a take whole, uncut => {"keep_whole_take": true}; end on a
+"she"}; a photo or video shown full screen ("tam ekran", "full screen") or as a small card
+("in the corner") => add "display_mode": "fullscreen" or "pip" to those same facts, nothing when
+the creator says neither; two photos shown differently in one message => ONE requirement per
+photo, each with its own display_mode; keep a take whole, uncut =>
+{"keep_whole_take": true}; end on a
 particular shot, photo or badge => {"closing": "<the creator's words for it>"}; remove pauses,
 filler sounds or retakes from the speech => {"speech_cleanup": true}, keep them =>
 {"speech_cleanup": false}; cut out particular spoken words (a slip, a half question, a line, "the
