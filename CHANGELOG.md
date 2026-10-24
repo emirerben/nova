@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.92.0] - 2026-10-24
+
+### Fixed
+- fix(captions): a requested caption language is translated or honestly refused, never just stamped (KRI-838) (#1783) <!-- release-pr: 1783 -->
+
 ## [0.81.91.0] - 2026-10-24
 
 ### Changed
