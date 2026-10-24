@@ -3,25 +3,29 @@
 
 The model is the iPhone render lifecycle behind the "killer" screens: "Kria couldn't
 prepare this edit on your iPhone" (S1), "Couldn't refresh this edit" (S2), "This edit
-needs your attention" (S3) and the "couldn't render" family (S4).
+needs your attention" (S3) and the "couldn't render" family (S4). PhoneRender.tla is the
+code on this branch (the fixes); PhoneRenderBefore.tla is origin/main ff27b0a65.
 
 Steps (all must pass):
   0. happy    - with no faults the model publishes a video and every rule holds there
   1. drift    - the covered Swift/Python functions still hash to what the model was
                 last synced to (coverage.json); a change means re-read the model
-  2. model    - PhoneRender.tla keeps every rule in PhoneRender.cfg, at 1 save with every
-                optional event and at 2 saves (editor + another device)
-  3. findings - PhoneRender.tla breaks exactly the rules in PhoneRenderFindings.cfg
-                (today's code; each break is a finding written up in findings.md)
-  4. teeth    - each passing rule fails on a copy of PhoneRender.tla with its guard removed
+  2. model    - PhoneRender.tla keeps every PASSING rule in each of its runs
+  3. residual - PhoneRender.tla still breaks each RESIDUAL rule in its scoped run (a real
+                finding on today's code; see findings.md)
+  4. before   - PhoneRenderBefore.tla breaks every rule the fixes made pass (history)
+  5. teeth    - each passing rule fails on a copy of PhoneRender.tla with its guard removed
 
-Once the code is fixed, move a rule from FINDINGS to PASSING (and its cfg line from
-PhoneRenderFindings.cfg to PhoneRender.cfg). Never weaken a rule to make it pass.
+When the code changes so a residual rule holds, move it from RESIDUAL to PASSING (and
+widen its runs to the scenario it was scoped out of), add teeth, rerun. Never weaken a
+rule to make it pass.
 
-Usage: python3 formal/ios_edit_flow/verify.py [--resync] [--explore]
+Usage: python3 formal/ios_edit_flow/verify.py [--resync] [--full] [--explore]
   --resync   rewrite coverage.json hashes + sync_commit (only after re-reading the model)
-  --explore  also run every finding rule per starting scenario and event set, and write
-             .dev/formal-ios-edit-flow/explore.json (used for findings.md; ~5 min)
+  --full     also run the liveness rules for Save with a missing original and for Save
+             with Stop (about 3 more minutes); the default runs split those events
+  --explore  also run every residual rule per starting scenario and event set, and write
+             .dev/formal-ios-edit-flow/explore.json (used for findings.md)
 Env:   TLA2TOOLS (tla2tools.jar v1.8.0), JAVA (java 11+ binary)
 Exit:  0 PASS, 1 FAIL, 3 PASS with drift to review
 """
@@ -45,59 +49,123 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 OUT = REPO / ".dev/formal-ios-edit-flow"
 SPEC = HERE / "PhoneRender.tla"
+BEFORE = HERE / "PhoneRenderBefore.tla"
 TLC_URL = "https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar"
 TLC_SHA256 = "dae639a1f51a9e13ce60c369b15f32124cf1a78017aca366b6de0ae2b5169439"
 LOCAL_TOOLS = Path("/private/tmp/nova-formal-tools")
 
 ALL_EVENTS = '{"save", "other", "stop", "kill", "background", "reaper", "sync"}'
-BASE = {
-    "MaxFaults": "1",
-    "MaxTicks": "1",
-    "Conds": '{"none", "hot", "unsupported", "missing"}',
-    "Approvals": "{TRUE, FALSE}",
-}
-# Bounds for the passing (safety) rules. Both runs together take ~15 s.
+ALL_CONDS = '{"none", "hot", "unsupported", "missing"}'
+# Every starting condition except a recipe this iPhone cannot render. That one is a
+# residual finding (RESIDUAL below) for the rules that are scoped to SCOPED.
+SCOPED = '{"none", "hot", "missing"}'
+UNSUPPORTED = '{"unsupported"}'
+# Approval no longer routes anything in the fixed code (the server always sends
+# retry_requires_approval = false, R:535; nothing in PhoneRender.tla reads `approval`
+# except the AttentionHasWayOut teeth), so the fixed runs pin it to FALSE.
+BASE = {"MaxFaults": "1", "MaxTicks": "1", "Conds": ALL_CONDS, "Approvals": "{FALSE}"}
+ONE_SAVE = {**BASE, "MaxSaves": "1", "MaxId": "3", "Events": ALL_EVENTS}
+TWO_SAVES = {**BASE, "MaxSaves": "2", "MaxId": "4", "Events": '{"save", "other"}'}
+# Liveness runs: a patient user (SpecUser). Two answered preview polls, so the editor can
+# see a newer generation twice (E:7666-7682); the real budget is 300.
+LIVE = {**BASE, "MaxTicks": "2", "MaxSaves": "1", "MaxId": "3"}
+
+SAFETY = ["NoStalePublish", "PublishedStaysPublished", "SyncedMeansPublished",
+          "NoStaleRequestReinstalled", "CloudDecisionReported"]
+WAY_OUT = [("PROPERTY", "AttentionHasWayOut"), ("PROPERTY", "PreviewConverges")]
+# run name -> (specification, constants, [(kind, rule)]). Every PASSING rule appears in
+# at least one run; TLC checks the rules of a run together.
 MODEL_RUNS = {
-    "one-save-all-events": {**BASE, "MaxSaves": "1", "MaxId": "3", "Events": ALL_EVENTS},
-    "two-saves": {**BASE, "MaxSaves": "2", "MaxId": "4", "Events": '{"save", "other"}'},
+    "one-save-all-events": ("Spec", {**ONE_SAVE, "Conds": SCOPED},
+                            [("INVARIANT", r) for r in SAFETY + ["NoSpuriousAttention"]]),
+    "one-save-all-events-unsupported": ("Spec", {**ONE_SAVE, "Conds": UNSUPPORTED},
+                                        [("INVARIANT", r) for r in SAFETY]),
+    "two-saves": ("Spec", TWO_SAVES, [("INVARIANT", r) for r in SAFETY]),
+    # Liveness is slow in TLC (~90 us per graph node), so the default splits the events:
+    # Save on a phone with its originals (cool or hot), Stop with every scoped condition
+    # (including a missing original and the faults-only runs), and kills.
+    "live-save": ("SpecUser", {**LIVE, "Conds": '{"none", "hot"}', "Events": '{"save"}'}, WAY_OUT),
+    "live-stop": ("SpecUser", {**LIVE, "Conds": SCOPED, "Events": '{"stop"}'},
+                  [("PROPERTY", "AttentionHasWayOut")]),
+    # "Without anyone tapping anything": no user fairness, every condition.
+    "agree": ("Spec", {**LIVE, "Conds": ALL_CONDS, "Events": '{"stop", "kill"}'},
+              [("PROPERTY", "ClientServerAgree")]),
 }
-LIVE = {**BASE, "MaxSaves": "1", "MaxId": "3", "Events": '{"save", "stop"}'}
-# Happy path: no faults, no events, nothing wrong with the phone. Every rule must hold
-# here and a video must get published, or the model is broken (not the code).
-HAPPY = {**BASE, "MaxFaults": "0", "MaxSaves": "1", "MaxId": "3", "Conds": '{"none"}',
-         "Approvals": "{FALSE}", "Events": "{}"}
+# --full: the pairs the default leaves out (about 420K and 290K states, ~3 min together).
+# Save + Stop + a missing original at once is ~4M states and is not run; the safety runs
+# cover that combination.
+FULL_RUNS = {
+    "live-save-missing": ("SpecUser", {**LIVE, "Conds": '{"missing"}', "Events": '{"save"}'},
+                          WAY_OUT),
+    "live-save-stop": ("SpecUser",
+                       {**LIVE, "Conds": '{"none", "hot"}', "Events": '{"save", "stop"}'},
+                       WAY_OUT + [("PROPERTY", "ClientServerAgree")]),
+}
+PASSING = sorted({rule for _, _, checks in MODEL_RUNS.values() for _, rule in checks})
 
-PASSING = ["NoStalePublish", "PublishedStaysPublished", "SyncedMeansPublished",
-           "NoStaleRequestReinstalled"]
-# rule -> (kind, spec, constants). Invariants run with every optional event; the
-# liveness rules run under a patient user (SpecUser) with saves and Stop.
-FINDINGS = {
-    "NoSpuriousAttention": ("INVARIANT", "Spec", MODEL_RUNS["one-save-all-events"]),
-    "CloudDecisionReported": ("INVARIANT", "Spec", MODEL_RUNS["one-save-all-events"]),
-    "AttentionHasWayOut": ("PROPERTY", "SpecUser", LIVE),
-    "ClientServerAgree": ("PROPERTY", "SpecUser", LIVE),
-    "PreviewConverges": ("PROPERTY", "SpecUser", LIVE),
+# Rules today's code still breaks, each in the scenario it was scoped out of above.
+RESIDUAL = {
+    "NoSpuriousAttention": ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": UNSUPPORTED}),
+    "AttentionHasWayOut": ("PROPERTY", "SpecUser", {**LIVE, "Conds": UNSUPPORTED, "Events": "{}"}),
+    "PreviewConverges": ("PROPERTY", "SpecUser",
+                         {**LIVE, "Conds": UNSUPPORTED, "Events": '{"save"}'}),
 }
 
-# Each mutation removes one guard; TLC must then break the rule it protects.
+# The old code (PhoneRenderBefore.tla) broke each of these; the fixes made them pass.
+# Same constants as the old findings run (approval routed retries then).
+OLD_LIVE = {**BASE, "Approvals": "{TRUE, FALSE}", "MaxSaves": "1", "MaxId": "3",
+            "Events": '{"save", "stop"}'}
+OLD_ONE_SAVE = {**ONE_SAVE, "Approvals": "{TRUE, FALSE}"}
+BEFORE_BREAKS = {
+    "NoSpuriousAttention": ("INVARIANT", "Spec", OLD_ONE_SAVE),
+    "CloudDecisionReported": ("INVARIANT", "Spec", OLD_ONE_SAVE),
+    "AttentionHasWayOut": ("PROPERTY", "SpecUser", OLD_LIVE),
+    "ClientServerAgree": ("PROPERTY", "Spec", OLD_LIVE),
+    "PreviewConverges": ("PROPERTY", "SpecUser", OLD_LIVE),
+}
+
+# Each mutation removes one guard from PhoneRender.tla; TLC must then break the rule it
+# protects in the given run: (kind, specification, constants).
 MUTATIONS = {
-    # R:1091-1097 complete only for the current identity in phase syncing.
+    # complete only for the current identity in phase syncing.
     "NoStalePublish": [('CompleteOK == sId = coord.id /\\ sPhase = "syncing"',
                         'CompleteOK == sPhase \\in {"awaiting", "syncing"}')],
-    # V:592-608 mark_device_failed only from awaiting/syncing (R:830 409 when published).
+    # V:626 mark_device_failed only from awaiting/syncing (409 when published).
     "PublishedStaysPublished": [('FailableForReport == sPhase \\in {"awaiting", "syncing"}',
                                  'FailableForReport == sPhase # "attention"')],
-    # P:237-240 a 409 on complete is "superseded", never "published".
+    # P:320-328 a 409 on complete is "superseded", never "published".
     "SyncedMeansPublished": [('LateComplete == [coord EXCEPT !.ph = "superseded"',
                               'LateComplete == [coord EXCEPT !.ph = "synced"')],
-    # S:122 / S:171 tickets[key] == ticket after the fetch.
+    # S:346 / S:351 tickets[key] == ticket after the fetch.
     "NoStaleRequestReinstalled": [("/\\ Apply(oldRec, FALSE)", "/\\ Apply(oldRec, TRUE)")],
+    # S:476-480 a failed status read waits; the old code showed "couldn't prepare" (S1).
+    "NoSpuriousAttention": [('ReadFailedPres ==\n  IF pres.ph = "synced" THEN pres',
+                             'ReadFailedPres ==\n  IF TRUE THEN '
+                             '[NoPres EXCEPT !.ph = "attention", !.cause = "prepFail"]')],
+    # S:481 sendDecline; the old code returned before telling the server.
+    "CloudDecisionReported": [("/\\ decl' = IF keeps \\/ decl = id THEN decl ELSE id",
+                               "/\\ decl' = decl")],
+    # R:1050-1072 re-delivery needs no approval; the old route answered 409 for runtime-v2.
+    "AttentionHasWayOut": [('RetryOK == sPhase = "attention"',
+                            'RetryOK == ~approval /\\ sPhase = "attention"')],
+    # C:354-366 a report is re-sent until the server takes it; the old one was dropped.
+    "ClientServerAgree": [("/\\ faults' = faults - 1 /\\ rep' = rep",
+                           "/\\ faults' = faults - 1 /\\ rep' = NoRep")],
+    # E:7666-7682 follow a newer generation read twice; the old poll waited it out.
+    "PreviewConverges": [("THEN IF e.seen + 1 >= 2 THEN Saved(e)", "THEN IF FALSE THEN Saved(e)")],
 }
 TEETH_RUN = {
-    "NoStalePublish": "one-save-all-events",
-    "PublishedStaysPublished": "one-save-all-events",
-    "SyncedMeansPublished": "one-save-all-events",
-    "NoStaleRequestReinstalled": "one-save-all-events",
+    "NoStalePublish": ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": SCOPED}),
+    "PublishedStaysPublished": ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": SCOPED}),
+    "SyncedMeansPublished": ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": SCOPED}),
+    "NoStaleRequestReinstalled": ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": SCOPED}),
+    "NoSpuriousAttention": ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": SCOPED}),
+    "CloudDecisionReported": ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": UNSUPPORTED}),
+    "AttentionHasWayOut": ("PROPERTY", "SpecUser",
+                           {**LIVE, "Conds": '{"missing"}', "Approvals": "{TRUE}", "Events": "{}"}),
+    "ClientServerAgree": ("PROPERTY", "Spec", {**LIVE, "Conds": '{"none"}', "Events": '{"stop"}'}),
+    "PreviewConverges": ("PROPERTY", "SpecUser",
+                         {**LIVE, "Conds": '{"none"}', "Events": '{"save"}'}),
 }
 
 
@@ -127,30 +195,36 @@ def java() -> str:
 
 
 def tlc(spec: Path, constants: dict[str, str], checks: list[tuple[str, str]],
-        specification: str, tag: str) -> dict:
-    """Run TLC once. Returns {"broken": rule|None, "trace": n, "states": n, "seconds": s}."""
+        specification: str, tag: str, expect_pass: bool = False) -> dict:
+    """Run TLC once. Returns {"broken": [rules], "trace": n, "states": n, "seconds": s}.
+
+    A run expected to pass checks liveness once, on the complete graph; one expected to
+    break keeps TLC's periodic checks so a violation surfaces early."""
     with tempfile.TemporaryDirectory() as tmp:
         cfg = Path(tmp) / "run.cfg"
         lines = [f"SPECIFICATION {specification}", "CONSTANTS"]
         lines += [f"  {k} = {v}" for k, v in constants.items()]
         lines += [f"{kind} {rule}" for kind, rule in checks]
         cfg.write_text("\n".join(lines) + "\n")
-        shutil.copy(spec, Path(tmp) / "PhoneRender.tla")
+        shutil.copy(spec, Path(tmp) / spec.name)
         start = time.time()
         run = subprocess.run(
             [JAVA, "-XX:+UseParallelGC", "-cp", str(JAR), "tlc2.TLC", "-workers", "auto",
-             "-deadlock", "-metadir", str(Path(tmp) / "states"), "-config", str(cfg),
-             "PhoneRender.tla"],
+             *(["-lncheck", "final"] if expect_pass else []),
+             "-deadlock", "-metadir", str(Path(tmp) / "states"), "-config", str(cfg), spec.name],
             cwd=tmp, capture_output=True, text=True, timeout=900,
         )
         seconds = round(time.time() - start, 1)
     log = OUT / f"{tag}.log"
     log.write_text(run.stdout + run.stderr)
-    broken = None
-    m = re.search(r"(?:Invariant|Temporal property) (\w+) (?:is|was) violated", run.stdout)
+    broken: list[str] = []
+    m = re.search(r"Invariant (\w+) is violated", run.stdout)
     if m:
-        broken = m.group(1)
-    elif "No error has been found" not in run.stdout:
+        broken = [m.group(1)]
+    m = re.search(r"Temporal propert(?:y|ies) (.+?) (?:is|was|were) violated", run.stdout)
+    if m:
+        broken = re.findall(r"\w+", m.group(1).replace(" and ", " "))
+    if not broken and "No error has been found" not in run.stdout:
         sys.exit(f"FAIL: TLC did not finish ({tag}); see {log}")
     states = re.findall(r"([\d,]+) distinct states found", run.stdout)
     return {
@@ -211,7 +285,7 @@ def function_hashes() -> dict[str, str]:
 # ---------------------------------------------------------------- explore
 
 def explore() -> dict:
-    """Run every finding per starting scenario and event set: how many distinct ways break."""
+    """Run every residual rule per starting scenario and event set: how many ways break."""
     event_sets = {
         "faults only": "{}",
         "save": '{"save"}',
@@ -222,29 +296,40 @@ def explore() -> dict:
         "draft sync": '{"sync"}',
     }
     results = {}
-    for rule, (kind, specification, consts) in FINDINGS.items():
+    for rule, (kind, specification, consts) in RESIDUAL.items():
         rows = []
         for ev_name, events in event_sets.items():
             for cond in ("none", "hot", "unsupported", "missing"):
-                for approval in ("FALSE", "TRUE"):
-                    c = {**consts, "Events": events, "Conds": f'{{"{cond}"}}',
-                         "Approvals": f"{{{approval}}}"}
-                    if ev_name == "save+other device":
-                        c.update(MaxSaves="2", MaxId="4")
-                    r = tlc(SPEC, c, [(kind, rule)], specification,
-                            f"explore-{rule}-{ev_name.replace(' ', '_').replace('+', '_')}-{cond}-{approval}")
-                    rows.append({"events": ev_name, "cond": cond, "approval": approval == "TRUE",
-                                 "broken": r["broken"] == rule, "trace": r["trace"]})
+                c = {**consts, "Events": events, "Conds": f'{{"{cond}"}}'}
+                if ev_name == "save+other device":
+                    c.update(MaxSaves="2", MaxId="4")
+                tag = f"explore-{rule}-{ev_name.replace(' ', '_').replace('+', '_')}-{cond}"
+                r = tlc(SPEC, c, [(kind, rule)], specification, tag)
+                rows.append({"events": ev_name, "cond": cond, "broken": rule in r["broken"],
+                             "trace": r["trace"]})
         broken = [r for r in rows if r["broken"]]
         results[rule] = {
             "scenarios_checked": len(rows),
             "scenarios_broken": len(broken),
+            "broken_conditions": sorted({r["cond"] for r in broken}),
             "shortest_trace": min((r["trace"] for r in broken), default=None),
             "rows": rows,
         }
-        print(f"explore {rule}: broken in {len(broken)}/{len(rows)} scenarios")
+        print(f"explore {rule}: broken in {len(broken)}/{len(rows)} scenarios, "
+              f"conditions {results[rule]['broken_conditions']}")
     (OUT / "explore.json").write_text(json.dumps(results, indent=2) + "\n")
     return results
+
+
+def run_model(runs: dict, report: dict) -> None:
+    for name, (specification, consts, checks) in runs.items():
+        r = tlc(SPEC, consts, checks, specification, f"model-{name}", expect_pass=True)
+        report[name] = r
+        rules = ", ".join(rule for _, rule in checks)
+        print(f"model, {name}: " + ("holds" if not r["broken"] else f"BROKEN {r['broken']}")
+              + f" [{rules}] ({r['states']:,} states, {r['seconds']}s)")
+        if r["broken"]:
+            sys.exit(f"FAIL: the code model breaks {r['broken']}; see {r['log']}")
 
 
 def main() -> None:
@@ -266,37 +351,53 @@ def main() -> None:
         print("DRIFT (review, not a bug): these covered functions changed since "
               f"{coverage.get('sync_commit')}:\n  " + "\n  ".join(drift))
 
-    happy = tlc(SPEC, HAPPY, [("INVARIANT", "NeverPublished")], "Spec", "happy-publishes")
-    if happy["broken"] != "NeverPublished":
+    happy = {**BASE, "MaxFaults": "0", "MaxSaves": "1", "MaxId": "3", "Conds": '{"none"}',
+             "Events": "{}"}
+    r = tlc(SPEC, happy, [("INVARIANT", "NeverPublished")], "Spec", "happy-publishes")
+    if r["broken"] != ["NeverPublished"]:
         sys.exit("FAIL: with no faults the model never publishes a video; the model is wrong")
-    for rule, (kind, specification, _) in FINDINGS.items():
-        r = tlc(SPEC, HAPPY, [(kind, rule)], specification, f"happy-{rule}")
-        if r["broken"]:
-            sys.exit(f"FAIL: {rule} breaks on the happy path; the model is wrong ({r['log']})")
+    every = [("INVARIANT", rule) for rule in SAFETY + ["NoSpuriousAttention"]]
+    every += [("PROPERTY", rule) for rule in ("AttentionHasWayOut", "PreviewConverges")]
+    r = tlc(SPEC, {**happy, "MaxTicks": "2"}, every, "SpecUser", "happy-rules")
+    if r["broken"]:
+        sys.exit(f"FAIL: {r['broken']} break on the happy path; the model is wrong ({r['log']})")
+    r = tlc(SPEC, happy, [("PROPERTY", "ClientServerAgree")], "Spec", "happy-agree")
+    if r["broken"]:
+        sys.exit(f"FAIL: ClientServerAgree breaks on the happy path; the model is wrong "
+                 f"({r['log']})")
     report["happy_path"] = "publishes; every rule holds"
     print("happy path (no faults, no events): publishes, every rule holds")
 
-    model = {}
-    for name, consts in MODEL_RUNS.items():
-        r = tlc(SPEC, consts, [("INVARIANT", rule) for rule in PASSING], "Spec", f"model-{name}")
-        model[name] = r
-        print(f"model, {name}: " + ("all rules hold" if not r["broken"] else f"BROKEN {r['broken']}")
-              + f" ({r['states']:,} states, {r['seconds']}s)")
-        if r["broken"]:
-            sys.exit(f"FAIL: the code model breaks {r['broken']}; see {r['log']}")
+    model: dict[str, object] = {}
+    run_model(MODEL_RUNS, model)
+    if "--full" in sys.argv:
+        run_model(FULL_RUNS, model)
     report["model"] = model
 
-    findings = {}
-    for rule, (kind, specification, consts) in FINDINGS.items():
-        r = tlc(SPEC, consts, [(kind, rule)], specification, f"finding-{rule}")
-        findings[rule] = r
-        print(f"finding {rule}: " + (f"breaks (trace of {r['trace']} states, {r['seconds']}s)"
-                                     if r["broken"] == rule else "HOLDS"))
-    report["findings"] = findings
-    held = sorted(rule for rule, r in findings.items() if r["broken"] != rule)
+    residual = {}
+    for rule, (kind, specification, consts) in RESIDUAL.items():
+        r = tlc(SPEC, consts, [(kind, rule)], specification, f"residual-{rule}")
+        residual[rule] = r
+        print(f"residual {rule} (unsupported recipe): "
+              + (f"breaks (trace of {r['trace']} states, {r['seconds']}s)"
+                 if rule in r["broken"] else "HOLDS"))
+    report["residual"] = residual
+    held = sorted(rule for rule, r in residual.items() if rule not in r["broken"])
     if held:
-        sys.exit(f"FAIL: {held} no longer break. If the code was fixed, move them from FINDINGS "
-                 "to PASSING (and PhoneRenderFindings.cfg to PhoneRender.cfg), add teeth, rerun.")
+        sys.exit(f"FAIL: {held} no longer break on the unsupported recipe. If the code was "
+                 "fixed, move them from RESIDUAL to PASSING (widen their runs), add teeth, rerun.")
+
+    before = {}
+    for rule, (kind, specification, consts) in BEFORE_BREAKS.items():
+        r = tlc(BEFORE, consts, [(kind, rule)], specification, f"before-{rule}")
+        before[rule] = r
+        print(f"before the fix, {rule}: "
+              + (f"breaks (trace of {r['trace']} states, {r['seconds']}s)"
+                 if rule in r["broken"] else "HOLDS"))
+    report["before"] = before
+    held = sorted(rule for rule, r in before.items() if rule not in r["broken"])
+    if held:
+        sys.exit(f"FAIL: PhoneRenderBefore.tla should break {held} (the old code's findings)")
 
     teeth = {}
     for rule, edits in MUTATIONS.items():
@@ -308,11 +409,16 @@ def main() -> None:
         mutant = OUT / "mutant" / "PhoneRender.tla"
         mutant.parent.mkdir(exist_ok=True)
         mutant.write_text(text)
-        r = tlc(mutant, MODEL_RUNS[TEETH_RUN[rule]], [("INVARIANT", rule)], "Spec", f"teeth-{rule}")
-        teeth[rule] = r["broken"] == rule
-        print(f"teeth, {rule} without its guard: " + ("caught" if teeth[rule] else "NOT CAUGHT"))
+        kind, specification, consts = TEETH_RUN[rule]
+        r = tlc(mutant, consts, [(kind, rule)], specification, f"teeth-{rule}")
+        teeth[rule] = rule in r["broken"]
+        print(f"teeth, {rule} without its guard: " + ("caught" if teeth[rule] else "NOT CAUGHT")
+              + f" ({r['seconds']}s)")
         if not teeth[rule]:
             sys.exit(f"FAIL: {rule} cannot fail, so it proves nothing")
+    missing = sorted(set(PASSING) - set(MUTATIONS))
+    if missing:
+        sys.exit(f"FAIL: passing rules without teeth: {missing}")
     report["teeth"] = teeth
 
     if "--explore" in sys.argv:
@@ -320,7 +426,7 @@ def main() -> None:
                              for k, v in explore().items()}
 
     (OUT / "report.json").write_text(json.dumps(report, indent=2) + "\n")
-    print("PASS (findings recorded)" + (" with DRIFT to review" if drift else ""))
+    print("PASS (residual findings recorded)" + (" with DRIFT to review" if drift else ""))
     sys.exit(3 if drift else 0)
 
 
