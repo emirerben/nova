@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.104.0] - 2026-10-24
+
+### Changed
+- fix(kria): ask about a word Kria couldn't make out instead of guessing it in the captions (KRI-849) (#1796) <!-- release-pr: 1796 -->
+
 ## [0.81.103.0] - 2026-10-24
 
 ### Changed
