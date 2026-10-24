@@ -9924,9 +9924,6 @@ def _run_phone_narrated_job(
         )
         if cleaned_narration is not None:
             effective_voiceover_gcs_path = cleaned_narration.gcs_path
-    if named_cut_receipts is not None:
-        _record_named_cut_receipts("narrated", named_cut_receipts)
-
     narration = _resolve_phone_voiceover_bed(
         job_id, effective_voiceover_gcs_path, narration=cleaned_narration
     )
@@ -9937,6 +9934,9 @@ def _run_phone_narrated_job(
         )
 
     with pipeline_trace_for(job_id):
+        if named_cut_receipts is not None:
+            # Inside the job trace, or the admin job-debug view never sees it.
+            _record_named_cut_receipts("narrated", named_cut_receipts)
         with tempfile.TemporaryDirectory(
             prefix="nova_phone_narrated_", ignore_cleanup_errors=True
         ) as tmpdir:
@@ -22738,6 +22738,7 @@ def _discard_generation_storage(
         "subject_matte_path",
         "visual_blocks_base_path",
         "motion_base_path",
+        "narrated_voiceover_path",
     ),
 ) -> None:
     """Synchronous cleanup for exact outputs rejected by a terminal DB write.
@@ -26800,6 +26801,25 @@ def _render_narrated_variant(
                 storage_generation,
             )
             upload_public_read(base_path, base_gcs)
+        # KRI-889: a voice with named lines cut exists only in this render's temp dir.
+        # Keep it, so the Background Sound re-mix plays the same cut voice the
+        # persisted timings and captions were measured on (never the raw recording).
+        narrated_voiceover_gcs: str | None = None
+        if effective_voiceover_local != voiceover_local and _named_cut_spans(
+            base.get("named_cuts") or []
+        ):
+            from app.storage import upload_local_file  # noqa: PLC0415
+
+            narrated_voiceover_gcs = _variant_storage_key(
+                job_id, f"variant_{rank}_{variant_id}_voice.wav", storage_generation
+            )
+            try:
+                upload_local_file(effective_voiceover_local, narrated_voiceover_gcs, "audio/wav")
+            except Exception as exc:  # noqa: BLE001 - the re-mix refuses without it
+                log.warning(
+                    "narrated_named_cuts.voice_upload_failed", job_id=job_id, error=str(exc)[:200]
+                )
+                narrated_voiceover_gcs = None
         cloud_ctx = spec.get("cloud_evidence_ctx")
         cloud_receipt = None
         if cloud_ctx is not None:
@@ -26849,6 +26869,11 @@ def _render_narrated_variant(
             ),
             **({"cloud_evidence": cloud_receipt} if cloud_receipt is not None else {}),
             "base_video_path": base_gcs,
+            **(
+                {"narrated_voiceover_path": narrated_voiceover_gcs}
+                if narrated_voiceover_gcs
+                else {}
+            ),
             "caption_cues": caption_cues or None,
             "text_elements": storyboard_elements,
             "text_elements_materialized_from": (
@@ -31238,7 +31263,12 @@ def _run_reburn_narrated_bed_level(
     narrated_timings = list(variant.get("narrated_timings") or [])
     if not narrated_timings:
         raise ValueError(f"variant {variant_id} has no persisted narrated_timings")
-    voiceover_gcs_path = all_candidates.get("voiceover_gcs_path")
+    voiceover_gcs_path = variant.get("narrated_voiceover_path")
+    if not voiceover_gcs_path and _named_cut_spans(variant.get("named_cuts") or []):
+        # KRI-889: the timings and captions are in the cut voice's time; the raw
+        # recording would bring the cut line back and drift everything after it.
+        raise ValueError(f"variant {variant_id} has no persisted cut voiceover to re-mix")
+    voiceover_gcs_path = voiceover_gcs_path or all_candidates.get("voiceover_gcs_path")
     if not voiceover_gcs_path:
         raise ValueError(f"variant {variant_id} has no voiceover to re-mix")
     filming_guide = list(all_candidates.get("filming_guide") or [])
@@ -34310,6 +34340,12 @@ def _finalize_job_decision(
                     # voiceover; the finished video's receipts answer from it. Only
                     # written when asked, so every other variant keeps its shape.
                     **({"named_cuts": r["named_cuts"]} if r.get("named_cuts") is not None else {}),
+                    # KRI-889: the cut voice the Background Sound re-mix must play.
+                    **(
+                        {"narrated_voiceover_path": r["narrated_voiceover_path"]}
+                        if r.get("narrated_voiceover_path")
+                        else {}
+                    ),
                     # silence/filler cut summary (plans/010) — MUST survive
                     # finalization or the admin cut-plan viewer (T9) and the
                     # per-variant time-saved stat silently lose their data the

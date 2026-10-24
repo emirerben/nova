@@ -820,7 +820,10 @@ words remapped (no filler filtering). The derivative carries `NarrationTrack.nam
 provenance; the phone bed, the device grant (`authorized_device_narration`) and
 `narration_matches_item` accept it, and the device binding is carried across editor
 Saves. Captions, step timings and title follow the shorter voice with no compiler
-change. Cloud: `_cut_named_lines` in `_render_narrated_variant`. Receipts:
+change. Cloud: `_cut_named_lines` in `_render_narrated_variant`; when a line was cut
+the cut voice is kept at `variant["narrated_voiceover_path"]` and the Background Sound
+re-mix (`_run_reburn_narrated_bed_level`) plays it, never the raw recording (no kept
+voice + an applied cut ⇒ the dispatch 422s and the worker refuses). Receipts:
 `variant["named_cuts"]` (kept by the finalize whitelist); the draft promises the cut
 (`_cuts_named_voiceover_lines`) only for a non-guided narrated voiceover edit.
 `silence_cut` stays cleanup's own record. Kill switch: `NARRATED_NAMED_CUTS_ENABLED`

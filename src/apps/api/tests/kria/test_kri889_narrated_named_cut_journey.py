@@ -31,6 +31,9 @@ F16 Captions/re-transcription read the RAW file instead of the cut one.
 F18 Kill switch off is not byte-identical, or the draft promises a cut the worker won't make.
 F19 The derivative is written outside the item's speech-cleanup prefix (not deleted with it).
 F20 A cleanup-off job's named cut makes the variant claim speech cleanup "applied".
+F21 Cloud Background Sound re-mix plays the RAW voiceover under cut-time timings, so the
+    cut line comes back and everything after it drifts while the receipt still says "cut".
+F22 With the cut voice missing, the re-mix silently plays the raw recording anyway.
 """
 
 from __future__ import annotations
@@ -605,9 +608,84 @@ def test_cloud_narrated_render_plays_the_cut_voiceover_with_synced_captions(
     assert len(rendered["heard"]) == 1  # F16: one ASR pass, on the raw recording
 
 
+def _bed_remix(monkeypatch, variant: dict) -> dict:
+    """Run the real Background Sound re-mix task on ``variant``; return what it played."""
+    from tests.tasks.conftest import FakeJob, patch_job_session
+
+    job = FakeJob(
+        assembly_plan={"variants": [variant]},
+        all_candidates={
+            "voiceover_gcs_path": VOICE,
+            "filming_guide": [],
+            "clip_paths": ["slot-uploads/a.mp4"],
+            "narrative_shot_count": 0,
+        },
+    )
+    patch_job_session(monkeypatch, job)
+    seen: dict = {}
+
+    def fake_assemble(step_timings, _assignments, voiceover, output_path, _tmpdir, **kw):
+        seen["voiceover"] = _read(Path(voiceover))
+        seen["timings"] = step_timings
+        seen["bed_level"] = kw["bed_level"]
+        for path in (output_path, kw["base_output_path"]):
+            Path(path).write_bytes(b"video")
+        return []
+
+    monkeypatch.setattr("app.pipeline.narrated_assembler.assemble_narrated", fake_assemble)
+    monkeypatch.setattr(
+        "app.tasks.template_orchestrate._download_clips_parallel",
+        lambda paths, tmpdir: [f"{tmpdir}/local_{i}.mp4" for i in range(len(paths))],
+    )
+    monkeypatch.setattr(
+        gb,
+        "_burn_persisted_captions_onto_base",
+        lambda _base, out_local, _variant, _tmpdir: Path(out_local).write_bytes(b"video"),
+    )
+    monkeypatch.setattr("app.storage.delete_object_best_effort", lambda *_a, **_k: True)
+    gb._run_reburn_narrated_bed_level(str(uuid.uuid4()), "narrated", 0.6)
+    return seen
+
+
+def test_cloud_background_sound_remix_keeps_the_named_cut(monkeypatch, tmp_path, store):
+    """F21: the slider re-mix plays the same cut voice the render played, in sync."""
+    asks = [("with bread, no,", ("r1",), None)]
+    rendered = _render_cloud(
+        monkeypatch, tmp_path, store, speech_cleanup_contract="off_v1", named_cut_asks=asks
+    )
+    result = rendered["result"]
+    assert [row["status"] for row in result["named_cuts"]] == ["applied"]
+    voice_key = result["narrated_voiceover_path"]
+    assert voice_key.startswith("generative-jobs/job/")  # deleted with the job's outputs
+
+    variant = {**result, "variant_id": "narrated", "rank": 1, "resolved_archetype": "narrated"}
+    remixed = _bed_remix(monkeypatch, variant)
+
+    assert remixed["bed_level"] == 0.6
+    played = remixed["voiceover"]
+    assert np.array_equal(played, rendered["voiceover"])  # byte-for-byte the render's voice
+    removed = [(row["start_s"], row["end_s"]) for row in result["named_cuts"]]
+    _assert_audio(played, removed, SLIP_INDEXES)
+    # The persisted cut-time steps still tile the voice the re-mix plays.
+    assert remixed["timings"][-1].end_s == pytest.approx(len(played) / RATE, abs=0.01)
+
+
+def test_cloud_background_sound_remix_refuses_without_the_cut_voice(monkeypatch, tmp_path, store):
+    """F22: no kept cut voice means no re-mix, never the raw recording."""
+    asks = [("with bread, no,", ("r1",), None)]
+    result = _render_cloud(
+        monkeypatch, tmp_path, store, speech_cleanup_contract="off_v1", named_cut_asks=asks
+    )["result"]
+    variant = {**result, "variant_id": "narrated", "rank": 1, "resolved_archetype": "narrated"}
+    variant.pop("narrated_voiceover_path")
+    with pytest.raises(ValueError, match="cut voiceover"):
+        _bed_remix(monkeypatch, variant)
+
+
 def test_cloud_without_asks_is_unchanged(monkeypatch, tmp_path, store):
     rendered = _render_cloud(monkeypatch, tmp_path, store, speech_cleanup_contract="off_v1")
     assert "named_cuts" not in rendered["result"]
+    assert "narrated_voiceover_path" not in rendered["result"]
     assert rendered["voiceover_path"].endswith("voiceover_src")
 
 
