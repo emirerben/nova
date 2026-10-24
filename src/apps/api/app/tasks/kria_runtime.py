@@ -202,6 +202,23 @@ def _full_creator_request_sync(db, *, thread_id: uuid.UUID, through_sequence: in
     return request if len(request) <= 12_000 else None
 
 
+def _protected_regions_sync(db, *, thread_id: uuid.UUID, through_sequence: int) -> list[dict]:  # noqa: ANN001
+    """KRI-827: the creator's marks of what to keep text off, from their own turns only."""
+    from app.kria.protected_targets import fold_protected_regions  # noqa: PLC0415
+
+    return fold_protected_regions(
+        db.execute(
+            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == thread_id,
+                CreationThreadEvent.role == "user",
+                CreationThreadEvent.sequence <= through_sequence,
+            )
+            .order_by(CreationThreadEvent.sequence)
+        ).all()
+    )
+
+
 @dataclass(frozen=True)
 class _ClaimsExhausted:
     successor_turn_id: str | None = None
@@ -1998,6 +2015,15 @@ def _complete_draft_turn(
                         choice_answers=(
                             list(document.strategy.get("choice_answers") or [])
                             if choice_gate
+                            else None
+                        ),
+                        protected_regions=(
+                            _protected_regions_sync(
+                                db,
+                                thread_id=thread.id,
+                                through_sequence=int(source_event.sequence),
+                            )
+                            if source_event is not None
                             else None
                         ),
                     ),
