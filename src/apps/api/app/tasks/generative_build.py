@@ -688,6 +688,15 @@ _CONTENT_PLAN_FENCE_UNSET = object()
 _CONTENT_PLAN_FENCE: contextvars.ContextVar[tuple[str, int] | None | object] = (
     contextvars.ContextVar("generative_content_plan_owner_fence", default=_CONTENT_PLAN_FENCE_UNSET)
 )
+# KRI-725: the prepared (snapshot, attempt) this task renders for, set by the worker
+# start fence. Publication refuses an output whose attempt is no longer the variant's
+# current one. None = not a prepared attempt (legacy Job, or a later manual edit).
+# A full-job run also carries ``variant_fences``: each per-variant (editor-approval)
+# fence as it stood at start, so a variant the creator already re-approved is fenced
+# against its own stamp, not the Job-level one.
+_PREPARED_ATTEMPT: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "generative_prepared_attempt", default=None
+)
 _GUIDED_TASK_ATTEMPT_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "guided_story_task_attempt_id", default=None
 )
@@ -1048,6 +1057,8 @@ def _owned_job_task_fence(job_id: str, *, allow_phone_planning: bool = False):  
     """Establish the durable plan epoch before any task-side effect."""
 
     token = _CONTENT_PLAN_FENCE.set(None)
+    # A prefork worker reuses one context across tasks: never inherit an attempt.
+    prepared_token = _PREPARED_ATTEMPT.set(None)
     accepted = False
     try:
         with _sync_session() as db:
@@ -1076,6 +1087,7 @@ def _owned_job_task_fence(job_id: str, *, allow_phone_planning: bool = False):  
                     accepted = True
         yield accepted
     finally:
+        _PREPARED_ATTEMPT.reset(prepared_token)
         _CONTENT_PLAN_FENCE.reset(token)
 
 
@@ -2076,7 +2088,12 @@ def orchestrate_generative_job(self, job_id: str) -> None:
             terminalized = _fail_job(
                 job_id,
                 str(exc),
-                failure_reason=f"{rejected_format}_{exc.reason}",
+                # KRI-725: a prepared-execution refusal keeps its own typed code.
+                failure_reason=(
+                    exc.reason
+                    if str(exc.reason).startswith("prepared_execution_")
+                    else f"{rejected_format}_{exc.reason}"
+                ),
             )
             if not terminalized:
                 raise
@@ -2452,6 +2469,7 @@ def _run_generative_job(
         # Preserve an outer task-entry fence. Re-setting the current value gives us
         # a token for direct-call cleanup without erasing the durable bound epoch.
         token = _CONTENT_PLAN_FENCE.set(_CONTENT_PLAN_FENCE.get())
+        prepared_token = _PREPARED_ATTEMPT.set(None)
         try:
             _run_generative_job_impl(
                 job_id,
@@ -2459,6 +2477,7 @@ def _run_generative_job(
                 speech_cut_attempt_id=speech_cut_attempt_id,
             )
         finally:
+            _PREPARED_ATTEMPT.reset(prepared_token)
             _CONTENT_PLAN_FENCE.reset(token)
 
 
@@ -2847,6 +2866,8 @@ def _run_generative_job_impl(
                     },
                 }
             db.commit()
+            return
+        if _enter_prepared_attempt(db, job) is not None:
             return
         creator_direction_typed_overrides = _pinned_creator_direction_typed_overrides(assembly)
         creator_direction_prompt = str(
@@ -12320,6 +12341,8 @@ def _run_guided_story_job(
 def _resolve_slide_post_draft_and_assets(
     db,
     job_id: str,  # noqa: ANN001
+    *,
+    approved: bool = False,
 ) -> tuple[uuid.UUID, uuid.UUID, SlidePostDraft, list[dict[str, Any]]]:  # noqa: F821
     """Load the job's plan item, its `slide_post` draft, and every slide's
     resolved (ownership-checked) `PlanItemAsset` row, as plain dicts.
@@ -12327,6 +12350,11 @@ def _resolve_slide_post_draft_and_assets(
     Shared by the first render and every rebuild — both need this exact
     resolution, and it must be re-done fresh each time (never cached),
     because the draft or the pool can change between renders.
+
+    ``approved`` (first render, KRI-725): a prepared-execution-stamped Job renders
+    the draft its approval pinned at dispatch, and refuses a slide or sticker
+    whose stored object generation moved since. Unstamped Jobs, and the
+    creator's own post-render rebuilds, keep reading the live draft.
     """
     from sqlalchemy import select as _select  # noqa: PLC0415
 
@@ -12339,7 +12367,22 @@ def _resolve_slide_post_draft_and_assets(
     content_plan_item_id = job.content_plan_item_id
     job_user_id = job.user_id
     item = db.get(PlanItem, content_plan_item_id)
-    draft = parse_slide_post(item.slide_post if item is not None else None)
+    pinned_generations: dict[str, Any] | None = None
+    pinned = None
+    if approved:
+        from app.kria.prepared_execution import (  # noqa: PLC0415
+            PreparedExecutionError,
+            approved_slide_post,
+        )
+
+        try:
+            pinned = approved_slide_post(getattr(job, "assembly_plan", None))
+        except PreparedExecutionError as exc:
+            raise SlidePostPolicyError(exc.code, str(exc)) from exc
+    if pinned is not None:
+        draft, pinned_generations = pinned
+    else:
+        draft = parse_slide_post(item.slide_post if item is not None else None)
     if draft is None or not draft.slides:
         raise SlidePostPolicyError("empty_draft", "No slides to render.")
     asset_ids = [ref.asset_id for ref in draft.slides]
@@ -12352,6 +12395,20 @@ def _resolve_slide_post_draft_and_assets(
         .all()
     )
     assets_by_id = {row.id: row for row in rows}
+    if pinned_generations is not None:
+        # A pinned asset that moved, vanished or left 'ready' is stale, never dropped.
+        live = {str(row.id): row for row in rows}
+        moved = [
+            asset_id
+            for asset_id, generation in pinned_generations.items()
+            if asset_id not in live
+            or live[asset_id].media_status != "ready"
+            or generation != live[asset_id].gcs_generation
+        ]
+        if moved:
+            from app.kria.prepared_execution import STALE  # noqa: PLC0415
+
+            raise SlidePostPolicyError(STALE, "An approved slide was replaced after approval.")
     allowed_prefix = f"users/{job_user_id}/plan/{content_plan_item_id}/"
     # Extract every field we need into plain dicts BEFORE the session
     # closes — holding onto ORM row objects across the `with` boundary
@@ -12777,7 +12834,7 @@ def _run_slide_post_job(job_id: str, *, render_trace_id: str) -> None:
 
     with _sync_session() as db:
         content_plan_item_id, _job_user_id, draft, ordered_assets = (
-            _resolve_slide_post_draft_and_assets(db, job_id)
+            _resolve_slide_post_draft_and_assets(db, job_id, approved=True)
         )
         platform_profile = coerce_platform_profile(draft.platform_profile)
         cover_index = min(draft.cover_index, len(ordered_assets) - 1)
@@ -12839,6 +12896,8 @@ def rebuild_slide_post_variant(self, job_id: str, render_gen_id: str | None = No
         )
         return
 
+    if not _enter_prepared_variant_attempt(job_id, "slides", render_gen_id):
+        return
     from app.pipeline.slide_post.profiles import coerce_platform_profile  # noqa: PLC0415
 
     with _sync_session() as db:
@@ -14122,6 +14181,8 @@ def regenerate_generative_variant(
             generation=render_gen_id,
             claim_state=claim_state,
         )
+        return
+    if not _enter_prepared_variant_attempt(job_id, variant_id, render_gen_id):
         return
     log.info(
         "generative_regenerate_start",
@@ -21536,6 +21597,138 @@ def _stage_required_speech_result(
     ).accepted
 
 
+def _enter_prepared_attempt(db, job: Job, *, variant_id: str | None = None) -> str | None:  # noqa: ANN001
+    """KRI-725 worker start fence for a stamped cloud Job (one place, every adapter).
+
+    Verifies the prepared snapshot row is intact, unexpired and bound to this Job,
+    then records its (snapshot, attempt) for the publication fence. A refusal fails
+    the Job (or the variant) with the typed code before any ingest/model/render spend.
+    Returns the refusal code, or None to proceed. Unstamped Jobs return None with
+    nothing recorded: the legacy path is unchanged.
+    """
+    from app.kria import prepared_execution as prepared  # noqa: PLC0415
+
+    try:
+        attempt = prepared.verify_job_stamp(db, job, variant_id=variant_id)
+    except prepared.PreparedExecutionError as exc:
+        log.warning(
+            "prepared_execution_worker_refused",
+            job_id=str(job.id),
+            variant_id=variant_id,
+            code=exc.code,
+            changed=exc.changed,
+        )
+        if variant_id is None:
+            job.status = "processing_failed"
+            job.error_detail = str(exc)[:MAX_ERROR_DETAIL_LEN]
+            job.failure_reason = exc.code
+            db.commit()
+        return exc.code
+    if attempt is not None and variant_id is None:
+        from app.kria.prepared_execution import (  # noqa: PLC0415
+            VARIANT_STAMPS_FIELD,
+            variant_fence,
+        )
+
+        assembly = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
+        per_variant = assembly.get(VARIANT_STAMPS_FIELD)
+        attempt = {
+            **attempt,
+            "variant_fences": {
+                str(vid): variant_fence(assembly, str(vid))
+                for vid in (per_variant if isinstance(per_variant, dict) else {})
+            },
+        }
+    _PREPARED_ATTEMPT.set(attempt)
+    return None
+
+
+def _enter_prepared_variant_attempt(
+    job_id: str, variant_id: str, render_gen_id: str | None
+) -> bool:
+    """Start fence for a one-variant rerender that a Kria editor approval re-pinned.
+
+    Only a per-variant stamp (an editor approval or exact retry) makes a rerender a
+    prepared attempt. The creator's own later manual edits of a strategy-stamped Job
+    are not approvals and keep today's path. A refusal fails the variant and keeps
+    its last-good output.
+    """
+    from app.kria.prepared_execution import VARIANT_STAMPS_FIELD  # noqa: PLC0415
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        per_variant = (job.assembly_plan or {}).get(VARIANT_STAMPS_FIELD) if job else None
+        if not (isinstance(per_variant, dict) and variant_id in per_variant):
+            return True
+        code = _enter_prepared_attempt(db, job, variant_id=variant_id)
+    if code is None:
+        return True
+    _update_variant_entry(
+        job_id,
+        variant_id,
+        {
+            "ok": False,
+            "render_status": "failed",
+            "error": "This approved edit changed before it could render. Prepare it again.",
+            "error_class": "creator_render_contract_unverified",
+            "prepared_execution_code": code,
+        },
+        expected_render_gen_id=render_gen_id,
+        outcome="prepared_execution_refused",
+        cleanup_followup="none",
+    )
+    return False
+
+
+def _prepared_attempt_superseded(
+    assembly: dict[str, Any], result: dict[str, Any]
+) -> dict[str, Any] | None:
+    """KRI-725 cloud publication fence, the mirror of ``verify_device_record_contract``.
+
+    Inside a prepared attempt, a new playable output publishes only while that
+    attempt is still the variant's current one. A late completion of an attempt a
+    newer approval superseded becomes a failed result; callers keep the last-good
+    artifact. Outside a prepared attempt (legacy Job, manual edits) nothing changes.
+    """
+    attempt = _PREPARED_ATTEMPT.get()
+    if attempt is None or not (
+        result.get("render_status") == "ready"
+        and (result.get("video_path") or result.get("output_url"))
+    ):
+        return None
+    from app.kria.prepared_execution import SUPERSEDED, variant_fence  # noqa: PLC0415
+
+    variant_id = str(result.get("variant_id") or "")
+    # A full-job re-entry fences each variant against the stamp it had at start.
+    start_fences = attempt.get("variant_fences") or {}
+    expected = start_fences.get(variant_id) or {
+        "id": attempt.get("id"),
+        "attempt_id": attempt.get("attempt_id"),
+    }
+    if variant_fence(assembly, variant_id) == expected:
+        return None
+    log.warning(
+        "prepared_execution_publication_refused",
+        variant_id=result.get("variant_id"),
+        attempt_id=attempt.get("attempt_id"),
+    )
+    blocked = {
+        key: value
+        for key, value in result.items()
+        if key not in set(_PENDING_VARIANT_ASSET_FIELDS) | set(_DECLINE_VARIANT_FIELDS)
+    }
+    return {
+        **blocked,
+        "ok": False,
+        "render_status": "failed",
+        "error": "A newer approved attempt replaced this render; please use the latest version.",
+        # The existing publication-refusal class, so every boundary keeps the
+        # last-good artifact through the merge policy it already applies.
+        "error_class": "creator_render_contract_unverified",
+        "prepared_execution_code": SUPERSEDED,
+    }
+
+
 def _reject_unverified_cloud_variant(
     assembly: dict[str, Any], result: dict[str, Any], *, candidates: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -21552,6 +21745,9 @@ def _reject_unverified_cloud_variant(
         and (result.get("video_path") or result.get("output_url"))
     ):
         return result
+    superseded = _prepared_attempt_superseded(assembly, result)
+    if superseded is not None:
+        return superseded
     from app.services.cloud_render_contract import (  # noqa: PLC0415
         CloudRenderContractError,
         verify_cloud_variant,
@@ -21966,7 +22162,34 @@ def _update_variant_entry(
                 )
                 is_new_artifact = bool(patch.get("video_path") or patch.get("output_url"))
                 rejection = False
-                if contract_bound and has_objective_contract and is_new_artifact:
+                superseded = (
+                    _prepared_attempt_superseded(
+                        plan, {**updated_variant, "render_status": "ready"}
+                    )
+                    if is_new_artifact or patch.get("render_status") == "ready"
+                    else None
+                )
+                if superseded is not None:
+                    # KRI-725: the last accepted artifact stays reachable.
+                    for field in _PENDING_VARIANT_ASSET_FIELDS:
+                        if field in v:
+                            superseded[field] = v[field]
+                    updated_variant = superseded
+                    rejection = True
+                elif is_new_artifact and "prepared_execution_code" in updated_variant:
+                    # A fresh output of the current attempt clears the old refusal.
+                    updated_variant.pop("prepared_execution_code", None)
+                    for key in ("error_class", "error"):
+                        if key not in patch:
+                            updated_variant.pop(key, None)
+                    if updated_variant.get("render_status") == "ready" and "ok" not in patch:
+                        updated_variant["ok"] = True
+                if (
+                    superseded is None
+                    and contract_bound
+                    and has_objective_contract
+                    and (is_new_artifact)
+                ):
                     # A retry replaces the failed candidate, so its fresh
                     # proof must not inherit the old contract-failure label.
                     # Explicit errors in this patch remain authoritative.
@@ -34414,21 +34637,22 @@ def _publish_speech_cut_rerender(
                 raise RuntimeError("speech cut publication generation was superseded")
 
         candidates = getattr(job, "all_candidates", None) or {}
-        if _cloud_contract_has_objective_requirements(plan, candidates):
-            checked = _reject_unverified_cloud_variant(
-                plan,
-                {**winning_variant, "render_status": "ready"},
-                candidates=candidates,
+        ready_variant = {**winning_variant, "render_status": "ready"}
+        # KRI-725: a superseded prepared attempt is refused even with no objective contract.
+        checked = (
+            _reject_unverified_cloud_variant(plan, ready_variant, candidates=candidates)
+            if _cloud_contract_has_objective_requirements(plan, candidates)
+            else _prepared_attempt_superseded(plan, ready_variant) or {}
+        )
+        if checked.get("error_class") == "creator_render_contract_unverified":
+            from app.services.cloud_render_contract import (
+                CloudRenderContractError,  # noqa: PLC0415
             )
-            if checked.get("error_class") == "creator_render_contract_unverified":
-                from app.services.cloud_render_contract import (
-                    CloudRenderContractError,  # noqa: PLC0415
-                )
 
-                # Do not consume private ownership or retire the public output
-                # until its private candidate has independently satisfied the
-                # pinned requirements.
-                raise CloudRenderContractError(str(checked.get("error") or "unverified output"))
+            # Do not consume private ownership or retire the public output
+            # until its private candidate has independently satisfied the
+            # pinned requirements.
+            raise CloudRenderContractError(str(checked.get("error") or "unverified output"))
 
         _validate_speech_cut_publication(control, winning_variant)
         operation = dict(control.get("operation") or {})
