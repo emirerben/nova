@@ -246,6 +246,16 @@ enum NativePhoneTalkingSource {
     /// or any speaker can't be found in the pool.
     static func sourceIndices(variant: [String: JSONValue], document: EditorDocument,
                               pool: NativeEditorSourcePool, lanesEditable: Bool) -> [Int]? {
+        // The source-preview compiler does not hydrate the pinned recipe's audio
+        // fades or processed track. Use the finished export to preserve exact cuts
+        // and noise treatment until that compiler supports the complete recipe.
+        if case .array(let cuts)? = variant["explicit_speech_cuts"],
+           cuts.contains(where: { $0.objectValue?["status"] == .string("applied") }) {
+            return nil
+        }
+        if variant["engine_noise_reduction"]?.objectValue?["status"] == .string("applied") {
+            return nil
+        }
         guard lanesEditable,
               variant["resolved_archetype"] == .string("subtitled"),
               variant["render_destination"] == .string("device"),

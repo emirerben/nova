@@ -653,6 +653,19 @@ three extra lanes on top of the unchanged speaker clip + captions:
   main video track with per-clip `volume=0` (muted), which sidesteps the five
   "exactly one clip" gates (capabilities `max_clips`, upload/register routes,
   `phone_format:subtitled`, `subtitled_clip_count_unsupported`, the compiler).
+  **KRI-841, an ending with its own sound.** "Add the X video at the very end with its own
+  sound" is the strategy's `ending_clip` (`{media_id, keep_audio}`), repaired at approval. The
+  worker plays it LAST on the main track at volume 1 -- a Visuals video through this lane
+  (`SubtitledEndingClip.volume`; the admin lane above never sets it, so it stays muted), or one of
+  the item's own clips (multi-clip Talking) as the final speaker -- and keeps it out of every
+  mid-talk placement (cards, full-screen sequence, beats, cutaways); it survives 2+ speakers.
+  `variants[i].phone_ending_clip` is the receipt, read back from the COMPILED recipe: `status`
+  `applied|dropped`, `reason` (`not_found`, `is_speaker`, `lane_request_ending_wins`,
+  `visual_videos_not_verified`, `audio_mix_not_verified`, `media_lanes_disabled`, `bind_failed`,
+  `over_length_limit`, ...), `has_audio` (the source has a sound track; None = unknown), `volume`,
+  `start_s`/`end_s`. The brief check reads it: a dropped ending is "Couldn't". An ending that would
+  break the creator's stated length ("under 30 s", a confirmed 25 s; the pin counts the 1.6 s brand
+  ending) is dropped, not the whole render: `check_recipe_duration` is the pin's own rule.
 
 **Lane failures never terminalize the job.** Visuals are bound per lane
 (`bind_phone_visual_assets`, gated by `stillImages` / `visualVideos` in
@@ -901,6 +914,24 @@ the photo corner, played from its first frame for its own length (capped at
 with "Videos can't pop up on your words in this edit yet…", and a video card
 that still reaches the bind step drops alone with beat reason
 `visual_is_video`. The closing shot and badge stay photo-only.
+
+**Full-screen beats (KRI-840).** "When I say Argentinian, show the grill photo
+full screen for a moment" is a beat with `display_mode: "fullscreen"` (default
+`"pip"`, omitted from every dump so stored strategies keep their bytes) and
+`hold_s` ~1.2. Where `media_overlays:fullscreen` holds (phone Talking,
+`PHONE_SUBTITLED_FULLSCREEN_OVERLAYS_ENABLED`), grounding
+(`allow_fullscreen=True`) builds a `display_mode="fullscreen"` card on the
+word: its own slot (a corner card never shortens it, two full-screen photos
+never overlap), no face/caption-safe corner, default hold 1.5 s. The recipe is
+the KRI-297 `subtitled-fullscreen` track, so the speaker's voice and the
+captions run unbroken. The even-slot `fullscreen_images` sequence slides its
+cutaways around beat windows (`fullscreen_occupied`). Elsewhere (Voiceover, flag
+off) manifest repair downgrades the beat to a corner card with a notice, and the
+receipts say so: `phone_beat_receipt.placed[].display_mode == "fullscreen"`
+only for a real cutaway; `brief_checks` compares the ask's recorded
+`facts["display_mode"]` with it, so a corner card is never reported as full
+screen. Rollback: `fly secrets set PHONE_SUBTITLED_FULLSCREEN_OVERLAYS_ENABLED=false`
++ restart api + worker (never roll the code back: stored strategies carry the field).
 
 **The creator's beats win their Visuals and windows; Phase 2 fills the
 rest (KRI-183).** Beats ground FIRST. Every beat card's media id (photos,
@@ -2480,7 +2511,7 @@ to `TALKING_MULTI_CLIP_MAX_CLIPS` (10) clips.
   No room: receipt `unplaced` with upload position, shown as chat render notes.
 - **v1 limits**: speech cleanup refused for any multi-clip Talking (KRI-720); with
   2+ speakers the KRI-174 lanes (cards, sounds, beats) and KRI-547 face fill are
-  skipped (`lanes_skipped`); cloud Talking still uses only the first clip, so keep
+  skipped (`lanes_skipped`; a KRI-841 Visuals ending still plays); cloud Talking still uses only the first clip, so keep
   the flag off until the cloud renderer lands (plans/027 phase 3).
 - **Receipt**: `variants[i].phone_talking_multi_clip` (speakers, cutaways, unplaced,
   per-clip roles); trace event `phone/talking_multi_clip_roles`.
