@@ -3735,6 +3735,15 @@ _FREEZE_NOT_GROUNDED = (
     "I couldn't tell which moment to freeze, so that moment plays normally. "
     "Tell me what happens in the moment to hold, like who is in it and what they do"
 )
+# KRI-900: the moment is known but nobody picked the instant in it, so nothing is held. The
+# receipt goes on with the moment's seconds and asks for the second (`_check_freeze`).
+_FREEZE_NEEDS_FRAME = "I found that moment"
+# KRI-900: "freeze the first frame / at the start": a hold sits where a cut ends, so the
+# opening frame is never held, and the end of the first cut is not what was asked.
+_FREEZE_FIRST_FRAME = (
+    "A freeze holds the frame where a shot ends, so I can't hold the opening frame, and it "
+    'plays normally. Tell me the second of the clip to freeze on, like "freeze at 2 seconds"'
+)
 
 # KRI-842: one clip's own sound on a phone Voiceover edit (see `kria.narrated_clip_sound_ask`).
 _CLIP_SOUND_UNDER_VOICE_MET = "That clip's own sound plays softly under your voice"
@@ -3930,6 +3939,11 @@ _REASON_TR: dict[str, str] = {
         "Her klibin kendi sesi seslendirmenin altında kısık çalıyor, yalnızca bu klibinki değil"
     ),
     _NO_CLIP_SOUND_UNDER_VOICE: "Hiçbir klibin kendi sesi seslendirmenin altında çalmıyor",
+    _FREEZE_NEEDS_FRAME: "O anı buldum",
+    _FREEZE_FIRST_FRAME: (
+        "Donma bir çekimin bittiği karede olur, o yüzden açılış karesini tutamıyorum ve normal "
+        'oynuyor. Klibin hangi saniyesinde donsun, yaz; örneğin "2. saniyede dondur"'
+    ),
     _BED_STILL_PLAYS: "Çekim sesi hâlâ çalıyor",
     _CLEANUP_PLANNED: "Konuşma temizliği uzun duraklamaları keser",
     _CLEANUP_AT_APPROVAL: (
@@ -4064,6 +4078,8 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _NO_CLIP_SPEED,
     _NO_FREEZE_FRAME,
     _FREEZE_NOT_GROUNDED,
+    _FREEZE_NEEDS_FRAME,
+    _FREEZE_FIRST_FRAME,
     _LIGHT_UNAVAILABLE,
     # KRI-724: the planned source cut / noise filter, and what the noise filter can't do.
     _SPEECH_CUT_DRAFT_PLAN,
@@ -8127,40 +8143,63 @@ def _has_checker(req: BriefRequirement) -> bool:
     return req.kind == "order"
 
 
+def _freeze_where(freeze: Mapping[str, Any], at: str) -> tuple[str, str]:
+    """KRI-900: where the held frame is, said by what chose it (``(en, tr)``).
+
+    Only a frame the creator named (the second they picked, the cut they named) is said as
+    theirs; a frame inside a moment they did not pin down says who chose it.
+    """
+    grounding = freeze.get("grounding")
+    if grounding == "creator_frame":
+        return (
+            f"at the second you picked ({at}s into the clip)",
+            f"seçtiğin saniyede (klibin {at}. saniyesi)",
+        )
+    if grounding == "cut_position":
+        return "on the last frame of the last shot", "son çekimin son karesinde"
+    if grounding == "creator_moment":
+        return (
+            f"on the moment you picked, at its middle ({at}s into the clip)",
+            f"seçtiğin anın ortasında (klibin {at}. saniyesi)",
+        )
+    if grounding == "delegated_frame":
+        return (
+            f"on that moment ({at}s into the clip; you left the exact frame to me)",
+            f"o anda (klibin {at}. saniyesi; tam kareyi bana bıraktın)",
+        )
+    # A record from before KRI-900 (the moment's middle, never pinned down).
+    return f"on that moment ({at}s into the clip)", f"o anda (klibin {at}. saniyesi)"
+
+
 def _check_freeze(req: BriefRequirement, freeze: Mapping[str, Any]) -> RequirementReceipt:
     """KRI-828: "met" only when the plan holds a frame for this ask (``status == "held"``,
-    read off the compiled plan record and, on a finished video, its timeline)."""
+    read off the compiled plan record and, on a finished video, its timeline). KRI-900: the
+    reason says who chose the held frame, and a moment nobody pinned down holds nothing."""
     status = freeze.get("status")
     hold = _finite_number(freeze.get("hold_s"))
     frame = _finite_number(freeze.get("frame_source_s"))
     if status == "held" and hold is not None and frame is not None:
         seconds = f"{hold:g}"
-        at = f"{frame:.1f}"
+        where, where_tr = _freeze_where(freeze, f"{frame:.1f}")
         basis = freeze.get("hold_basis")
         previous = _finite_number(freeze.get("previous_hold_s"))
         if freeze.get("corrected_by") and not freeze.get("hold_requested_s"):
             # KRI-899: a later ask changed this freeze; its receipt names what now holds.
             reason = say(
-                en=(
-                    f"Freezes the frame for {seconds}s on that moment ({at}s into the clip), "
-                    "as you asked later"
-                ),
-                tr=(
-                    f"O anda kare {seconds} sn donuyor (klibin {at}. saniyesi), "
-                    "sonra istediğin gibi"
-                ),
+                en=f"Freezes the frame for {seconds}s {where}, as you asked later",
+                tr=f"Kare {seconds} sn donuyor, {where_tr}, sonra istediğin gibi",
             )
             return _receipt(req, "met", reason, verification="checked")
         if basis in {"longer", "shorter"} and previous is not None:
             longer = basis == "longer"
             reason = say(
                 en=(
-                    f"Freezes the frame for {seconds}s on that moment ({at}s into the clip); "
+                    f"Freezes the frame for {seconds}s {where}; "
                     f"you didn't say how long, so I made it {'longer' if longer else 'shorter'}"
                     f" than {previous:g}s"
                 ),
                 tr=(
-                    f"O anda kare {seconds} sn donuyor (klibin {at}. saniyesi); süre "
+                    f"Kare {seconds} sn donuyor, {where_tr}; süre "
                     f"söylemediğin için {previous:g} sn'den "
                     f"{'uzun' if longer else 'kısa'} tuttum"
                 ),
@@ -8168,17 +8207,17 @@ def _check_freeze(req: BriefRequirement, freeze: Mapping[str, Any]) -> Requireme
             return _receipt(req, "met", reason, verification="checked")
         if freeze.get("hold_stated"):
             reason = say(
-                en=f"Freezes the frame for {seconds}s on that moment ({at}s into the clip)",
-                tr=f"O anda kare {seconds} sn donuyor (klibin {at}. saniyesi)",
+                en=f"Freezes the frame for {seconds}s {where}",
+                tr=f"Kare {seconds} sn donuyor, {where_tr}",
             )
         else:
             reason = say(
                 en=(
-                    f"Freezes the frame for {seconds}s on that moment ({at}s into the clip); "
+                    f"Freezes the frame for {seconds}s {where}; "
                     "you didn't say how long, so I held it for one second"
                 ),
                 tr=(
-                    f"O anda kare {seconds} sn donuyor (klibin {at}. saniyesi); "
+                    f"Kare {seconds} sn donuyor, {where_tr}; "
                     "süre söylemediğin için bir saniye tuttum"
                 ),
             )
@@ -8188,19 +8227,54 @@ def _check_freeze(req: BriefRequirement, freeze: Mapping[str, Any]) -> Requireme
             # for a different length.
             reason = say(
                 en=(
-                    f"Freezes the frame for {seconds}s on that moment ({at}s into the clip), "
+                    f"Freezes the frame for {seconds}s {where}, "
                     f"not the {requested:g}s you asked for: a freeze holds "
                     f"{'at most' if requested > hold else 'at least'} {seconds}s"
                 ),
                 tr=(
-                    f"O anda kare {seconds} sn donuyor (klibin {at}. saniyesi), istediğin "
+                    f"Kare {seconds} sn donuyor, {where_tr}, istediğin "
                     f"{requested:g} sn değil: bir donma en "
                     f"{'fazla' if requested > hold else 'az'} {seconds} sn sürebiliyor"
                 ),
             )
             return _receipt(req, "partial", reason, verification="checked")
         return _receipt(req, "met", reason, verification="checked")
-    if status == "not_grounded":
+    if status == "declined":
+        # KRI-900: the creator answered "No freeze" before approval.
+        return _receipt(
+            req,
+            "met",
+            say(en="No freeze, as you chose", tr="Seçtiğin gibi donma yok"),
+            verification="checked",
+        )
+    if status == "needs_frame" and freeze.get("position") == "first":
+        return _receipt(req, "not_possible", _FREEZE_FIRST_FRAME)
+    moment = freeze.get("moment_source_s")
+    if (
+        status == "needs_frame"
+        and isinstance(moment, list)
+        and len(moment) == 2
+        and all(_finite_number(v) is not None for v in moment)
+    ):
+        start, end = (f"{float(v):.1f}" for v in moment)
+        middle = f"{(float(moment[0]) + float(moment[1])) / 2:.1f}"
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en=(
+                    f"{_FREEZE_NEEDS_FRAME} ({start}–{end}s into the clip) but not the exact "
+                    "frame to hold, so it plays normally. Tell me the second to freeze on, "
+                    f'like "freeze at {middle} seconds"'
+                ),
+                tr=(
+                    f"{_REASON_TR[_FREEZE_NEEDS_FRAME]} (klibin {start}–{end}. saniyeleri) ama "
+                    "tutulacak tam kareyi bilmiyorum, o yüzden normal oynuyor. Hangi saniyede "
+                    f'donsun, söyle; örneğin "{middle}. saniyede dondur"'
+                ),
+            ),
+        )
+    if status in {"not_grounded", "needs_frame"}:
         return _receipt(req, "not_possible", _FREEZE_NOT_GROUNDED)
     return _receipt(req, "not_possible", _NO_FREEZE_FRAME)
 

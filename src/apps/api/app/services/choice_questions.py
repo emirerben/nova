@@ -39,7 +39,18 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.kria.asset_holds import hold_seconds
 from app.kria.brief_route import fold_text, loose_text
-from app.kria.freeze_ask import times_one_moment
+from app.kria.freeze_ask import (
+    CONFLICT_FREEZE_FRAME,
+    FREEZE_BASIS_FRAME,
+    FREEZE_BASIS_MOMENT,
+    OPT_NO_FREEZE,
+    FreezeMoment,
+    freeze_option_key,
+    live_freezes,
+    match_moments,
+    parse_freeze_option,
+    times_one_moment,
+)
 from app.kria.reply_language import current_reply_language, say
 from app.services.clip_facts import (
     CAPTURE_ORDER_KEYS,
@@ -698,6 +709,7 @@ CONFLICT_PRIORITY = (
     CONFLICT_WHICH_VOICE,
     CONFLICT_TEXT_PLACEMENT,
     CONFLICT_TITLE_TEXT,
+    CONFLICT_FREEZE_FRAME,
     CONFLICT_SOURCE_COVERAGE,
     CONFLICT_HOLDS_VS_LENGTH,
     CONFLICT_DURATION_VS_COUNT,
@@ -1645,6 +1657,252 @@ def title_text_choice(requirement_ids: Iterable[str]) -> UnresolvedChoice:
     )
 
 
+# ── Freeze frame (KRI-900) ────────────────────────────────────────────────────
+
+# Where in the matched moment each offered frame sits, as a share of its length.
+_FREEZE_FRAME_SHARES = (
+    (0.25, ("Early in it", "Başına yakın"), ("early", "earlier", "erken", "başına yakın")),
+    (0.5, ("Middle", "Ortası"), ("middle", "the middle", "mid", "orta", "ortası")),
+    (0.75, ("Late in it", "Sonuna yakın"), ("late", "later", "sonuna yakın")),
+)
+_FREEZE_FPS = 30
+# Same bounds the worker applies to a picked frame (`unified_montage._ground_freeze`).
+_FREEZE_MIN_MOTION_S = 0.3
+_FREEZE_END_MARGIN_S = 0.05
+_NO_FREEZE_ALIASES = (
+    "no freeze",
+    "no freeze please",
+    "skip the freeze",
+    "skip freeze",
+    "without a freeze",
+    "without the freeze",
+    "dont freeze",
+    "don t freeze",
+    "do not freeze",
+    "donma olmasın",
+    "dondurma yapma",
+    "dondurmadan",
+    "donmasın",
+)
+
+
+def _seconds_text(value: float) -> str:
+    return f"{value:.1f}"
+
+
+def _clip_name(row: Mapping[str, Any] | None, ordinal: int, count: int) -> tuple[str, str]:
+    """Where the moment is, as a phrase: "your clip" / "klibinde" for a one-clip edit, else
+    the clip's short file name or its number."""
+    if count <= 1:
+        return "your clip", "klibinde"
+    name = " ".join(str((row or {}).get("source_filename") or "").split())
+    if name and len(name) <= _NAME_MAX:
+        return f"“{name}”", f"“{name}” klibinde"
+    return f"clip {ordinal}", f"{ordinal}. klipte"
+
+
+def _holdable_frame(at_s: float, duration_s: float | None) -> float | None:
+    """``at_s`` on the 30 fps frame grid, or None when the worker could not hold it there."""
+    frame = round(round(at_s * _FREEZE_FPS) / _FREEZE_FPS, 3)
+    if frame < _FREEZE_MIN_MOTION_S:
+        return None
+    if duration_s is not None and frame >= duration_s - _FREEZE_END_MARGIN_S:
+        return None
+    return frame
+
+
+def _frame_choices(
+    moment: FreezeMoment, duration_s: float | None
+) -> list[tuple[float, float, tuple[str, str], tuple[str, ...]]]:
+    """Up to three concrete frames inside ``moment`` the worker can hold:
+    ``(frame, share, (en, tr) label, aliases)``."""
+    found: list[tuple[float, float, tuple[str, str], tuple[str, ...]]] = []
+    for share, label, aliases in _FREEZE_FRAME_SHARES:
+        at = moment.start_s + (moment.end_s - moment.start_s) * share
+        frame = _holdable_frame(at, duration_s)
+        if frame is not None and all(frame != row[0] for row in found):
+            found.append((frame, share, label, aliases))
+    return found
+
+
+def _freeze_frame(
+    strategy: Mapping[str, Any],
+    brief: Any,
+    rows: list[Any],
+    cap: ChoiceCapability,
+    *,
+    clip_paths: Sequence[Any] = (),
+) -> list[UnresolvedChoice]:
+    """A freeze names a moment, but nothing knows the exact instant to hold (KRI-900).
+
+    "Freeze the frame on Atakan's bite": the clip record knows the bite's moment (57.0 to
+    59.8 s, an interval) but not the instant of the bite, and the render must not guess one.
+    The phone montage settles freezes at render time (`requirements_to_check_at_draft`
+    defers them), so without this the creator only learned after approving. Asked here,
+    before approval, with concrete frames inside the moment (or, when several moments match
+    equally, the moments themselves) and "No freeze". The moments come from the same
+    matcher the worker uses (`freeze_ask.match_moments`) over the same clip record, so the
+    question and the render cannot disagree. One question per matched moment set; a later
+    correction of the hold length keeps its digest, so it is never asked again.
+    """
+
+    if cap.creator_id is None:
+        return []
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        defers_to_unified_montage,
+        freeze_plannable,
+    )
+    from app.kria.freeze_ask import planned_freeze_ids  # noqa: PLC0415
+
+    live = _live(brief)
+    # A second the creator typed ("freeze at 58.2 seconds") already pins the frame.
+    specs = [spec for spec in live_freezes(live) if spec.target_words and spec.frame_s is None]
+    if not specs:
+        return []
+    audio = strategy.get("montage_audio")
+    if (
+        isinstance(audio, Mapping)
+        and audio.get("preserve_source_audio")
+        and audio.get("source_media_ids")
+    ):
+        return []  # the speech-excerpt lane: no freeze plan, KRI-777's "Couldn't" stands
+    if not defers_to_unified_montage(
+        creator_id=cap.creator_id,
+        edit_format=strategy.get("edit_format") or "montage",
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=clip_paths,
+    ):
+        return []
+    planned = planned_freeze_ids(live)
+    by_id = {str(req.id): req for req in live}
+    selected = {str(m) for m in strategy.get("selected_media_ids") or []}
+    videos = [
+        row
+        for row in rows
+        if isinstance(row, Mapping)
+        and row.get("kind", "video") == "video"
+        and row.get("media_id")
+        and (not selected or str(row["media_id"]) in selected)
+    ]
+    ordinal = {str(row["media_id"]): index for index, row in enumerate(videos, start=1)}
+    row_by_id = {str(row["media_id"]): row for row in videos}
+    groups: dict[tuple, dict[str, Any]] = {}
+    for spec in specs:
+        req = by_id.get(spec.requirement_id)
+        if req is None or not freeze_plannable(req, strategy, planned):
+            continue
+        moments = match_moments(
+            spec.target_words, [(str(row["media_id"]), row.get("analysis")) for row in videos]
+        )
+        if not moments:
+            continue  # nothing concrete to offer: the render's "which moment?" ask stands
+        key = tuple((m.media_id, m.start_s, m.end_s) for m in moments)
+        group = groups.setdefault(key, {"moments": moments, "ids": [], "words": []})
+        group["ids"].extend(spec.requirement_ids)
+        group["words"].extend(spec.target_words)
+    choices: list[UnresolvedChoice] = []
+    for key, group in groups.items():
+        ids = tuple(dict.fromkeys(str(i) for i in group["ids"]))
+        moments: tuple[FreezeMoment, ...] = group["moments"]
+        no_freeze = _option(
+            OPT_NO_FREEZE,
+            label=("No freeze", "Donma olmasın"),
+            description=(
+                "That moment plays normally, without a freeze.",
+                "O an normal oynar, donmadan.",
+            ),
+            aliases=_NO_FREEZE_ALIASES,
+        )
+        if len(moments) == 1:
+            moment = moments[0]
+            row = row_by_id.get(moment.media_id)
+            duration = _number((row or {}).get("duration_s"))
+            frames = _frame_choices(moment, duration)
+            if not frames:
+                continue
+            name, name_tr = _clip_name(row, ordinal.get(moment.media_id, 1), len(videos))
+            span = f"{_seconds_text(moment.start_s)}–{_seconds_text(moment.end_s)}"
+            options = [
+                _option(
+                    freeze_option_key(FREEZE_BASIS_FRAME, moment.media_id, frame),
+                    label=(
+                        f"{label[0]} ({_seconds_text(frame)}s)",
+                        f"{label[1]} ({_seconds_text(frame)} sn)",
+                    ),
+                    # The middle surviving frame, so "you choose" always has a pick.
+                    recommended=index == len(frames) // 2,
+                    aliases=aliases,
+                )
+                for index, (frame, _share, label, aliases) in enumerate(frames)
+            ]
+            intro = say(
+                en=(
+                    f"You asked me to freeze the frame on that moment. I found it in {name} "
+                    f"({span}s), but I can't tell the exact instant, and I won't guess it."
+                ),
+                tr=(
+                    f"O anda kareyi dondurmamı istedin. O anı {name_tr} buldum ({span}. "
+                    "saniyeler arası) ama tam anını bilemiyorum ve tahmin etmeyeceğim."
+                ),
+            )
+            reason = say(
+                en="Which frame should hold?",
+                tr="Hangi kare dursun?",
+            )
+        else:
+            options = []
+            for moment in moments[: MAX_CHOICE_OPTIONS - 1]:
+                row = row_by_id.get(moment.media_id)
+                name, _name_tr = _clip_name(row, ordinal.get(moment.media_id, 1), len(videos))
+                where = "" if len(videos) <= 1 else f", {name}"
+                where_tr = "" if len(videos) <= 1 else f", {ordinal.get(moment.media_id, 1)}. klip"
+                middle = _holdable_frame(
+                    (moment.start_s + moment.end_s) / 2, _number((row or {}).get("duration_s"))
+                )
+                if middle is None:
+                    continue
+                what = _clean_name(moment.description) or say(en="a moment", tr="bir an")
+                span = f"{_seconds_text(moment.start_s)}–{_seconds_text(moment.end_s)}"
+                options.append(
+                    _option(
+                        freeze_option_key(FREEZE_BASIS_MOMENT, moment.media_id, middle),
+                        # The clip record's own words for the moment, quoted as such.
+                        label=(f"“{what}” ({span}s{where})", f"“{what}” ({span} sn{where_tr})"),
+                    )
+                )
+            if len(options) < 2:
+                continue
+            intro = say(
+                en=(
+                    "You asked me to freeze the frame on a moment, and more than one moment in "
+                    "your footage fits what you described. I won't guess which one."
+                ),
+                tr=(
+                    "Bir anda kareyi dondurmamı istedin; çekimlerinde tarif ettiğine uyan "
+                    "birden fazla an var. Hangisi olduğunu tahmin etmeyeceğim."
+                ),
+            )
+            reason = say(
+                en="Which moment should freeze? I'll hold the middle of it.",
+                tr="Hangi an donsun? Ortasındaki kareyi tutarım.",
+            )
+        choices.append(
+            UnresolvedChoice(
+                kind=CONFLICT_FREEZE_FRAME,
+                conflict_id=f"{CONFLICT_FREEZE_FRAME}:{ids[0]}",
+                field_path="choice_answers",
+                requirement_ids=ids,
+                intro=intro,
+                reason=reason,
+                options=(*options, no_freeze),
+                # The moments asked about, never the hold length: "make it 2 seconds instead"
+                # keeps the answer.
+                input_digest=_digest(CONFLICT_FREEZE_FRAME, [list(k) for k in key]),
+            )
+        )
+    return choices
+
+
 # ── Continuous voice (KRI-479) ────────────────────────────────────────────────
 
 # A voice that plays longer than this with NO stated length is a question ("how long?"); at or
@@ -2573,6 +2831,7 @@ def collect_conflicts(
         _order_basis,
         _text_placement,
         functools.partial(_title_text, clip_paths=clip_paths),
+        functools.partial(_freeze_frame, clip_paths=clip_paths),
         functools.partial(_source_coverage, snapshot=media_snapshot),
         functools.partial(_holds_vs_length, snapshot=media_snapshot),
         _duration_vs_count,
@@ -2856,6 +3115,12 @@ def delegated_choice(question: Mapping[str, Any], message: object) -> str | None
     options = [o for o in question.get("options") or [] if isinstance(o, Mapping) and o.get("key")]
     if not options:
         return None
+    if question.get("kind") == CONFLICT_FREEZE_FRAME and not any(
+        o.get("recommended") for o in options
+    ):
+        # KRI-900: several moments fit the creator's words; "you choose" would be a guess
+        # at WHICH moment they meant. The gate asks once more instead.
+        return None
     pick = next((o for o in options if o.get("recommended")), options[0])
     return str(pick["key"])
 
@@ -3103,6 +3368,27 @@ def _disclosure(kind: object, option: object) -> str | None:
     english = _DISCLOSURES.get(key)  # type: ignore[arg-type]
     if english is not None:
         return say(en=english, tr=_DISCLOSURES_TR.get(key, english))  # type: ignore[arg-type]
+    if kind == CONFLICT_FREEZE_FRAME:
+        parsed = parse_freeze_option(option)
+        basis = parsed[0] if parsed else None
+        if basis == OPT_NO_FREEZE:
+            return say(
+                en="I'm leaving the freeze out, as you chose.",
+                tr="Seçtiğin gibi donmayı kaldırıyorum.",
+            )
+        if basis == FREEZE_BASIS_FRAME and parsed and parsed[2] is not None:
+            at = _seconds_text(parsed[2])
+            return say(
+                # Neutral: a "you choose" answer is disclosed as the AI's pick (`_disclose`).
+                en=f"I'm freezing the frame at {at}s into the clip.",
+                tr=f"Kareyi klibin {at}. saniyesinde donduruyorum.",
+            )
+        if basis == FREEZE_BASIS_MOMENT:
+            return say(
+                en="I'm freezing that moment on its middle frame.",
+                tr="O anı, ortasındaki karede donduruyorum.",
+            )
+        return None
     if kind == CONFLICT_VOICE_VS_DURATION and str(option).startswith("length_"):
         seconds = str(option).removeprefix("length_")
         return say(
@@ -3397,7 +3683,10 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
         for req in _live(brief):
             if req.id not in ids:
                 continue
-            if (
+            if kind == CONFLICT_FREEZE_FRAME and option == OPT_NO_FREEZE:
+                # KRI-900: the creator withdrew the freeze in their answer.
+                changed[req.id] = req.model_copy(update={"status": "superseded"})
+            elif (
                 kind == CONFLICT_HOLDS_VS_LENGTH
                 and option == OPT_KEEP_LENGTH
                 and hold_seconds(req) is not None
