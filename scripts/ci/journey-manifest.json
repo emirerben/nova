@@ -1542,6 +1542,21 @@
       ]
     },
     {
+      "id": "kri-838-caption-language",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri838_caption_language_replay.py tests/pipeline/test_caption_translate.py tests/pipeline/test_caption_language_id.py tests/pipeline/test_caption_language.py tests/kria/test_kri838_caption_language_asks.py tests/tasks/test_subtitled_caption_language.py tests/tasks/test_narrated_caption_language.py",
+      "paths": [
+        "src/apps/api/app/pipeline/caption_translate.py",
+        "src/apps/api/app/pipeline/caption_language.py",
+        "src/apps/api/tests/fixtures/kri838_caption_language/README.md",
+        "src/apps/api/tests/fixtures/kri838_caption_language/caro_t2_auto_en_words.json",
+        "src/apps/api/tests/fixtures/kri838_caption_language/caro_t2_forced_tr_words.json",
+        "src/apps/api/tests/fixtures/kri838_caption_language/lucas_t3_auto_words.json",
+        "src/apps/api/tests/fixtures/kri838_caption_language/lucas_t3_forced_es_words.json",
+        "src/apps/api/tests/fixtures/kri838_caption_language/prompts.json"
+      ]
+    },
+    {
       "id": "kri-798-render-worker-restart",
       "needs_native": false,
       "api_tests": "tests/services/test_fly_machines.py tests/tasks/test_render_worker_lifecycle.py tests/tasks/test_render_worker_activity_sql.py tests/test_render_worker_wake.py",

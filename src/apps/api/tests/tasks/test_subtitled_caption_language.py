@@ -26,19 +26,33 @@ from app.pipeline.transcribe import Transcript
 from tests.tasks.test_generative_build import _patch_subtitled_smart_render
 from tests.tasks.test_phone_subtitled_narrated_dispatch import _setup_subtitled, _words
 
+# What a hinted whisper pass writes when it really did caption in the asked language.
+_TR_SENTENCE = "Merhaba dostlar, bugün çok güzel bir gün."
+_EN_SENTENCE = "Hello everyone, today is a very nice day for all of us."
+
 # --------------------------------------------------------------------------
 # Cloud: _render_subtitled_variant
 # --------------------------------------------------------------------------
 
 
-def _mock_transcribe_whisper(monkeypatch, *, language: str, full_text: str = "") -> Mock:
+def _mock_transcribe_whisper(
+    monkeypatch, *, language: str, full_text: str = "", words_text: str = "Hello"
+) -> Mock:
     """Patch the flag-off/live-transcribe call site and return the Mock so
-    callers can assert the `language=` hint it was invoked with."""
+    callers can assert the `language=` hint it was invoked with.
+
+    ``words_text`` is what the stubbed hinted pass wrote. KRI-838: a hinted pass is read,
+    not trusted, so a test that expects "Turkish captions" must hand back Turkish text
+    (one English word under a "tr" hint is exactly what the fix stops believing).
+    """
     mock = Mock(
         return_value=types.SimpleNamespace(
             language=language,
             full_text=full_text,
-            words=[types.SimpleNamespace(text="Hello", start_s=0.0, end_s=1.0)],
+            words=[
+                types.SimpleNamespace(text=token, start_s=float(i), end_s=i + 1.0)
+                for i, token in enumerate(words_text.split())
+            ],
         )
     )
     monkeypatch.setattr("app.pipeline.transcribe.transcribe_whisper", mock)
@@ -101,7 +115,12 @@ def test_explicit_request_en_clip_to_tr(monkeypatch, tmp_path):
     """(c) Creator explicitly asked for Turkish captions — the whisper hint
     carries the request, and it wins regardless of the job's own language."""
     _patch_subtitled_smart_render(monkeypatch, tmp_path)
-    transcribe_mock = _mock_transcribe_whisper(monkeypatch, language="tr", full_text="Merhaba")
+    transcribe_mock = _mock_transcribe_whisper(
+        monkeypatch,
+        language="tr",
+        full_text=_TR_SENTENCE,
+        words_text=_TR_SENTENCE,
+    )
 
     result = gb._render_subtitled_variant(
         job_id=str(uuid.uuid4()),
@@ -122,7 +141,9 @@ def test_explicit_request_en_clip_to_tr(monkeypatch, tmp_path):
 def test_explicit_request_tr_clip_to_en(monkeypatch, tmp_path):
     """(c) Same override, opposite direction."""
     _patch_subtitled_smart_render(monkeypatch, tmp_path)
-    transcribe_mock = _mock_transcribe_whisper(monkeypatch, language="en", full_text="Hello")
+    transcribe_mock = _mock_transcribe_whisper(
+        monkeypatch, language="en", full_text=_EN_SENTENCE, words_text=_EN_SENTENCE
+    )
 
     result = gb._render_subtitled_variant(
         job_id=str(uuid.uuid4()),
@@ -142,7 +163,10 @@ def test_explicit_request_tr_clip_to_en(monkeypatch, tmp_path):
 
 def test_unsupported_request_value_is_ignored(monkeypatch, tmp_path):
     """A stray/legacy value (not in SUPPORTED_CAPTION_LANGUAGES) must never
-    silently become an override — re-validated inside the render fn too."""
+    silently become an override — re-validated inside the render fn too.
+
+    KRI-838: the value used to be "fr", which the two-language table ignored; "fr" is a
+    table language now (a real request), so the stray value is one outside the table."""
     _patch_subtitled_smart_render(monkeypatch, tmp_path)
     transcribe_mock = _mock_transcribe_whisper(monkeypatch, language="en", full_text="Hello")
 
@@ -154,7 +178,7 @@ def test_unsupported_request_value_is_ignored(monkeypatch, tmp_path):
         variant_dir=str(tmp_path),
         language="tr",
         smart_captions=None,
-        caption_language_request="fr",
+        caption_language_request="ru",
     )
 
     assert result["ok"] is True
@@ -244,7 +268,11 @@ def test_silence_cut_verbatim_request_retranscribes_original_clip(monkeypatch, t
 
     cached_mock = Mock(
         return_value=Transcript(
-            words=_words(("Merhaba", 0.0, 1.0)), language="tr", full_text="Merhaba"
+            words=_words(
+                *((token, float(i), i + 1.0) for i, token in enumerate(_TR_SENTENCE.split()))
+            ),
+            language="tr",
+            full_text=_TR_SENTENCE,
         )
     )
     monkeypatch.setattr("app.pipeline.transcribe.transcribe_whisper_cached", cached_mock)
@@ -438,7 +466,7 @@ def test_cloud_explicit_request_skips_the_crosscheck(monkeypatch, tmp_path):
     whisper = _cloud_whisper(
         monkeypatch,
         "transcribe_whisper",
-        {"tr": Transcript(words=_words(("Üçüncü", 0.0, 0.5)), language="tr", full_text="Üçüncü")},
+        {"tr": _hinted_turkish()},
     )
     events = _cloud_events(monkeypatch)
 
@@ -658,16 +686,34 @@ def test_phone_explicit_request_overrides_hint_and_persists(monkeypatch):
     job, _snapshot, _session, _binding = _setup_subtitled(monkeypatch)
     job.all_candidates["language"] = "en"
     job.all_candidates["caption_language_request"] = "tr"
-    mock = Mock(
-        return_value=Transcript(words=_words(("Hello", 0.0, 0.5)), language="en", full_text="Hello")
+    # KRI-838: the stubbed hinted pass writes Turkish, as whisper does for Turkish speech. It
+    # used to return an English "Hello" here and the test expected "tr" -- it pinned the label
+    # being stamped whatever came back (see test_kri838_caption_language_replay.py).
+    # KRI-839: the spoken (auto-language) pass runs first and is English here.
+    spoken_text = "Hello there, this is plain English text."
+    mock = _whisper_by_language(
+        monkeypatch,
+        {
+            None: Transcript(
+                words=_words(
+                    *(
+                        (token, i * 0.5, i * 0.5 + 0.5)
+                        for i, token in enumerate(spoken_text.split())
+                    )
+                ),
+                language="en",
+                full_text=spoken_text,
+            ),
+            "tr": _hinted_turkish(),
+        },
     )
-    monkeypatch.setattr("app.pipeline.transcribe.transcribe_whisper_cached", mock)
 
     gb._run_generative_job(str(job.id))
 
     variant = job.assembly_plan["variants"][0]
     assert variant["caption_language"] == "tr"
-    assert mock.call_args.kwargs.get("language") == "tr"
+    assert [c.kwargs.get("language") for c in mock.call_args_list] == [None, "tr"]
+    assert " ".join(c["text"] for c in variant["caption_cues"]).startswith("Üçüncü sırada kim var")
 
 
 def test_phone_empty_detection_infers_from_transcript_text(monkeypatch):
@@ -697,9 +743,19 @@ def test_phone_empty_detection_infers_from_transcript_text(monkeypatch):
 # Phone: whisper's detection cross-checked against Gemini's clip transcript
 # --------------------------------------------------------------------------
 
+
 # Job 385e3b13 (2026-09-24): Turkish-accented English. whisper-1 auto-detected
 # "tr" and wrote a Turkish translation ("Number three" -> "Üçüncü", "no" ->
 # "Hayır"), so every English reaction-beat trigger was "never heard".
+def _hinted_turkish() -> Transcript:
+    """What a Turkish-hinted whisper pass writes for Turkish speech (KRI-838: a hinted pass is
+    read, so one ambiguous word like "Üçüncü" would be sent for translation, and with the
+    translator blocked in tests and Gemini hearing English it would be stamped "en")."""
+    text = "Üçüncü sırada kim var, bence çok güzel bir futbolcu."
+    spans = [(token, i * 0.5, i * 0.5 + 0.5) for i, token in enumerate(text.split())]
+    return Transcript(words=_words(*spans), language="tr", full_text=text)
+
+
 _GEMINI_EN = (
     "Let's talk about the best football players in Turkish Super League this season. "
     "Number three, Mac Ingram? No, no, no, no, no. Number three, Rafael Leao."
@@ -800,9 +856,8 @@ def test_phone_explicit_request_crosschecks_the_spoken_pass_only(monkeypatch):
                 language="en",
                 full_text="Number three.",
             ),
-            "tr": Transcript(
-                words=_words(("Üçüncü", 5.76, 6.3)), language="tr", full_text="Üçüncü"
-            ),
+            # KRI-838: the hinted pass is read, so it must really be Turkish text.
+            "tr": _hinted_turkish(),
         },
     )
     events = _phone_events(monkeypatch)
