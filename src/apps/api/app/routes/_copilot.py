@@ -437,7 +437,8 @@ async def run_copilot_turn(
                 confidence=1,
                 needs_clarification=True,
                 reply=(
-                    str(exc) + ". The edit is unchanged."
+                    str(exc)
+                    + ". The edit is unchanged. I can still add titles without researched facts."
                     if isinstance(exc, ResearchUnavailable)
                     else "Search did not return usable explanations. The edit is unchanged."
                 ),
