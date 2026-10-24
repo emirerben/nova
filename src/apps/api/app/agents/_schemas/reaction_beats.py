@@ -125,4 +125,24 @@ class ClosingMedia(BaseModel):
         return cleaned
 
 
-__all__ = ["MAX_REACTION_BEATS", "BeatVisualRole", "ReactionBeat", "ClosingMedia"]
+class EndingClip(BaseModel):
+    """A video the creator asked to append AFTER the talk, playing its own sound (KRI-841).
+
+    "At the very end, add the cheers video with its own sound": unlike ``ClosingMedia`` (a
+    photo held over the last seconds of the talk), the talk plays to its end and this video
+    follows on the main track, so the phone's own audio for it is the clip's sound. ``media_id``
+    is an opaque manifest id: a Visuals video (``asset-*``) or one of the item's own footage
+    clips (multi-clip Talking). The server repair
+    (``app.services.creator_capabilities.repair_creator_ending_clip``) keeps it only where the
+    phone can render it and canonicalizes the id; the worker records what it really appended
+    (``variant["phone_ending_clip"]``).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    media_id: str = Field(min_length=1, max_length=200)
+    # False only when the creator asked for the video silent.
+    keep_audio: bool = True
+
+
+__all__ = ["MAX_REACTION_BEATS", "BeatVisualRole", "ReactionBeat", "ClosingMedia", "EndingClip"]
