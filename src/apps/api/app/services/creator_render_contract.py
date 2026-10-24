@@ -24,7 +24,11 @@ from app.kria.brief_checks import is_spoken_text_cue
 from app.kria.brief_route import chapter_list
 from app.kria.freeze_ask import times_one_moment
 from app.kria.recipes_v2 import EditRecipeV2
-from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
+from app.kria.render_assets import (
+    OriginalRenderAsset,
+    ProcessedAudioRenderAsset,
+    VoiceoverRenderAsset,
+)
 from app.kria.reply_language import say
 from app.kria.spoken_text_ask import requirement_spoken_text
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
@@ -2051,6 +2055,23 @@ def verify_phone_recipe(
             for clip in track.clips
         )
     }
+    # A processed-audio clip is still the creator's camera audio, merely a
+    # pinned, server-made derivative.  Treat it as its declared source for
+    # original-audio requirements; otherwise muting the video clip before
+    # adding the timed derivative would falsely look like dropped audio.
+    original_ids.update(
+        asset.source_media_id
+        for asset in manifest.values()
+        if isinstance(asset, ProcessedAudioRenderAsset)
+        and any(
+            track.kind == "audio"
+            and clip.source_asset_id == asset.id
+            and audible(track, clip)
+            and (source_audio is None or source_audio.get(asset.source_media_id) is True)
+            for track in recipe.tracks
+            for clip in track.clips
+        )
+    )
     if isinstance(bed_asset, OriginalRenderAsset) and (
         source_audio is None or source_audio.get(bed_asset.media_id) is True
     ):

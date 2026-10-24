@@ -1554,6 +1554,35 @@
         "src/apps/api/tests/fixtures/agent_evals/voiceover_script_writer/golden/kri815_museum_needs_check.json",
         "src/apps/api/tests/fixtures/agent_evals/main_creator/kri815_script_request.json"
       ]
+    },
+    {
+      "id": "kri-724-precise-speech-cuts",
+      "needs_native": true,
+      "api_tests": [
+        "tests/tasks/test_phone_explicit_speech_cut.py",
+        "tests/tasks/test_kri707_talking_spoken_text.py",
+        "tests/pipeline/test_explicit_speech_cut.py",
+        "tests/pipeline/test_explicit_speech_audio.py",
+        "tests/pipeline/test_speech_denoise.py",
+        "tests/services/test_processed_audio_asset.py",
+        "tests/kria/test_speech_cut_ask.py",
+        "tests/kria/test_noise_reduction_ask.py"
+      ],
+      "xctests": [
+        "KriaTests/NativeEditorSourcesTests/testExactSpeechCutsAndProcessedAudioUseFinishedPreview"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/speech_cut_ask.py",
+        "src/apps/api/app/kria/noise_reduction_ask.py",
+        "src/apps/api/app/kria/render_assets.py",
+        "src/apps/api/app/pipeline/explicit_speech_cut.py",
+        "src/apps/api/app/pipeline/explicit_speech_audio.py",
+        "src/apps/api/app/pipeline/phone_processed_audio.py",
+        "src/apps/api/app/pipeline/speech_denoise.py",
+        "src/apps/api/app/services/phone_noise_reduction.py",
+        "src/apps/api/tests/tasks/test_phone_explicit_speech_cut.py",
+        "src/apps/api/tests/services/test_processed_audio_asset.py"
+      ]
     }
   ]
 }
