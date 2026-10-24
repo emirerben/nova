@@ -247,6 +247,44 @@ the worker's Gemini call; the plan-item path keeps working. Neither path changes
 fingerprint, so nothing reshuffles cohorts or consent, and extra whisper work happens
 only on a disagreement.
 
+### Mixed-language takes (KRI-843)
+
+One take can hold several languages (Don Julio T1: an English question, a Spanish answer, Turkish
+table chatter). No single whisper language is right for it: auto-detect translated the question
+into Turkish (the quoted start line was never found, captions came out Turkish), and the EN/TR
+re-run above forces one language over everything, so it drops the waiter's Spanish. When the
+Gemini reference above speaks two or more languages (a sentence-level, accent-folded word-list
+check: en / tr / es / de / fr / it / pt), the engine instead:
+
+1. transcribes the take once more in each other language the reference shows (at most 3 extra
+   whisper-1 passes, same verbatim prompt; an extra pass that fails or hears nothing is skipped);
+2. aligns every pass to the reference in order and takes, stretch by stretch, the sentences the
+   reference confirms (ties keep whisper's first pass). Gemini's transcript only hears the first
+   30 s, so no other pass's words are taken from past it (`reference_covers_s`);
+3. stores the merged words. `analysis.language` is the language with the most confirmed words
+   (a mixed take has no single honest label, so the stretches are in the receipt).
+
+The first pass stands wherever no other pass is confirmed better. Stretches the reference does not
+confirm are NOT dropped (the KRI-808 clip rule, "no words beats wrong words", does not carry
+over): wordless sound inside a take reads as a pause to the cleanup cut plan, which removes it.
+On T1 that cut 12-14.4 s of table sound, and a short Gemini transcript made it remove 13-20 s
+of real Turkish speech. The cost of keeping them is that a murmur whisper mistranscribed stays
+mistranscribed (T1: "Videoya bak."), as it was before this change.
+
+Evidence: `diagnostics.language_crosscheck` gains `mixed: true`, `reference_languages`, `tried`
+(languages asked for), `heard` (extra passes that returned words), `failed` (extra passes that
+raised a transcription/provider error) and `segments` (`start_s`, `end_s`, `language`,
+`confirmed`). `segments[].language` is the language of the whisper pass the stretch was taken
+from, not a verified spoken language: words every pass shares ("Cheers") keep the first pass's
+language. `confirmed: false` is a first-pass stretch the reference did not confirm and no other
+pass replaced. `applied: false` with empty `segments` means no extra pass was confirmed and the
+first pass was kept. A single-language reference takes the EN/TR path above, unchanged.
+
+Cost: at most 3 extra whisper-1 passes (about $0.006 per audio minute each), on mixed takes only.
+Apply: fly secret + worker restart. Kill switch: `SPEECH_CLEANUP_MIXED_LANGUAGE_ENABLED=false`
+restores the EN/TR cross-check alone, byte for byte (only the preflight worker reads it).
+Already-settled analyses are not redone.
+
 ## Local verification
 
 ```bash

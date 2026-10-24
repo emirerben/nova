@@ -1018,6 +1018,14 @@ class Settings(BaseSettings):
     # 30 s so whisper's detected language is still cross-checked before the cut
     # plan is built. Best-effort; False skips the call (item transcript only).
     speech_cleanup_gemini_reference_enabled: bool = True
+    # KRI-843: a take whose Gemini reference speaks two or more languages (Don Julio T1:
+    # an English question, a Spanish answer, Turkish chatter) has no single right whisper
+    # language. The preflight worker transcribes it once more per extra language (at most 3
+    # extra whisper-1 passes, mixed takes only, ~$0.006/min each) and takes, stretch by stretch,
+    # the pass the reference confirms; the first pass stands everywhere else. false = the EN/TR
+    # cross-check alone (re-run the whole take in one language), byte-identical.
+    # Apply: fly secret + worker restart.
+    speech_cleanup_mixed_language_enabled: bool = True
 
     # yt-dlp cookies for admin URL imports. Use YTDLP_COOKIES_B64 in hosted
     # environments (secret-safe, decoded into a short-lived 0600 temp file) or
