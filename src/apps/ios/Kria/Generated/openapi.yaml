@@ -2950,7 +2950,8 @@
                 "audioDucking",
                 "slidePosts",
                 "semanticCamera",
-                "musicBed"
+                "musicBed",
+                "processedAudio"
               ],
               "type": "string"
             },
@@ -3073,7 +3074,8 @@
                 "audioDucking",
                 "slidePosts",
                 "semanticCamera",
-                "musicBed"
+                "musicBed",
+                "processedAudio"
               ],
               "type": "string"
             },
@@ -8344,6 +8346,84 @@
         "title": "PreviousValue",
         "type": "object"
       },
+      "ProcessedAudioRenderAsset": {
+        "additionalProperties": false,
+        "description": "A job-owned, immutable audio derivative for one bound phone source.\n\nThe storage object name is deliberately absent.  It remains private job\nstate and the download grant derives it only from a trusted receipt stored\nwith the variant that created this asset.",
+        "properties": {
+          "fingerprint": {
+            "$ref": "#/components/schemas/RenderFingerprint"
+          },
+          "generation": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Generation",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "job_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "processed_audio",
+            "enum": [
+              "processed_audio"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "render_generation": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Render Generation",
+            "type": "string"
+          },
+          "source_generation": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Source Generation",
+            "type": "string"
+          },
+          "source_media_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Source Media Id",
+            "type": "string"
+          },
+          "variant_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Variant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "job_id",
+          "variant_id",
+          "render_generation",
+          "source_media_id",
+          "source_generation",
+          "generation",
+          "fingerprint"
+        ],
+        "title": "ProcessedAudioRenderAsset",
+        "type": "object"
+      },
       "ProtectedRegionIn": {
         "additionalProperties": false,
         "description": "KRI-827: the creator marks what to keep text off (\"the plate\"): a box on one frame of\none of their clips, normalized to the upright source frame. The server checks the clip\nis this thread's and stamps its generation; old clients omit it.",
@@ -8525,6 +8605,7 @@
                 "mapping": {
                   "library": "#/components/schemas/LibraryRenderAsset",
                   "original": "#/components/schemas/OriginalRenderAsset",
+                  "processed_audio": "#/components/schemas/ProcessedAudioRenderAsset",
                   "song": "#/components/schemas/SongRenderAsset",
                   "visual": "#/components/schemas/VisualRenderAsset",
                   "voiceover": "#/components/schemas/VoiceoverRenderAsset"
@@ -8546,6 +8627,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/SongRenderAsset"
+                },
+                {
+                  "$ref": "#/components/schemas/ProcessedAudioRenderAsset"
                 }
               ]
             },
