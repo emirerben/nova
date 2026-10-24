@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.103.0] - 2026-10-24
+
+### Changed
+- feat(kria): cloud adapters honour the prepared execution snapshot (KRI-725) (#1812) <!-- release-pr: 1812 -->
+
 ## [0.81.102.0] - 2026-10-24
 
 ### Changed
