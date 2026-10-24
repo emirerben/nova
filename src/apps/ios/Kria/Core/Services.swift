@@ -124,6 +124,7 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func changeCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, order: [UUID]?, audioPolicy: String?, eventID: String) async throws -> CameraRollStory
     func indexCameraRollCollection(id: UUID, revision: Int, offset: Int) async throws -> CameraRollIndexPass
     func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool) async throws -> CameraRollStories
+    func savedCameraRollStories(id: UUID, revision: Int, storyIDs: [UUID]) async throws -> CameraRollStories
     func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool, researchTopic: String?) async throws -> CameraRollStories
     func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool, researchTopic: String?, allowPartialAnalysis: Bool) async throws -> CameraRollStories
     func recordCameraRollStoryExposure(collectionID: UUID, story: CameraRollStory, collectionRevision: Int) async throws

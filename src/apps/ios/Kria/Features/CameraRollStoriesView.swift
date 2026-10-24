@@ -31,10 +31,10 @@ struct CameraRollStoriesView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                if !result.coverage.unindexed.isEmpty {
-                    Label("\(result.coverage.unindexed.count) \(result.coverage.unindexed.count == 1 ? "video needs" : "videos need") source or analysis review before inclusion.", systemImage: "info.circle")
+                if let coverage = result.coverage, !coverage.unindexed.isEmpty {
+                    Label("\(coverage.unindexed.count) \(coverage.unindexed.count == 1 ? "video needs" : "videos need") source or analysis review before inclusion.", systemImage: "info.circle")
                         .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                } else if !result.coverage.incompleteSpeech.isEmpty {
+                } else if let coverage = result.coverage, !coverage.incompleteSpeech.isEmpty {
                     Label("Some audio needs checking", systemImage: "info.circle")
                         .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
                 }
@@ -114,8 +114,10 @@ struct CameraRollStoriesView: View {
             .onAppear { stories = result.stories }
             .task {
                 taste = try? await api.editorialTaste()
-                for story in result.stories {
-                    try? await api.recordCameraRollStoryExposure(collectionID: collection.id, story: story, collectionRevision: collection.serverRevision ?? 0)
+                if result.coverage != nil {
+                    for story in result.stories {
+                        try? await api.recordCameraRollStoryExposure(collectionID: collection.id, story: story, collectionRevision: collection.serverRevision ?? 0)
+                    }
                 }
             }
             .onDisappear {
@@ -192,7 +194,7 @@ struct CameraRollStoriesView: View {
                     HStack {
                         Button("Preview") { Task { await preview(moment) } }
                         Menu("Replace") {
-                            ForEach(result.coverage.moments.filter { alternative in
+                            ForEach((result.coverage?.moments ?? []).filter { alternative in
                                 !story.moments.contains { $0.id == alternative.id } && (1...20).contains(alternative.end - alternative.start)
                             }) { alternative in
                                 Button("\(sourceLabel(alternative)) · \(Int(alternative.start))s · \(alternative.text.prefix(60))") {

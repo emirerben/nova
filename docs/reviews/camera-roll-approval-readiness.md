@@ -1,5 +1,49 @@
 # Camera-roll readiness, held selection and whole-source context (KRI-733 / KRI-731)
 
+## Saved-card access without regeneration
+
+The held card also needs to remain reachable after a prompt/index cache change.
+Previously, **View saved ideas** saved the collection, refreshed its index and
+requested the current generation cache. A cache miss could hide an already saved
+story before the explicit recovery action was reachable.
+
+`GET /me/media-collections/{id}/stories` now reads at most 20 existing owned rows
+for the exact current collection revision. Optional bounded story IDs retain the
+requested card order; missing or foreign IDs refuse the read. Stored copy,
+moments and rejection state remain intact. This endpoint does not resolve media,
+re-index, claim a model cache, generate, log exposure, or write the database. It
+does not claim that the historical card represents current collection coverage.
+Selection and approval still check current story/source/execution identities.
+
+The native saved-card action uses that GET directly and omits automatic exposure
+writes for historical reads. Old/malformed servers fail honestly without a POST
+or generation fallback. Finding new ideas remains a separate action with fresh
+partial-coverage consent; opening an old partial card grants no new consent.
+This does not change research/provider caching or implement the separate #1807.
+
+The eight isolated HTTP read cases first failed with 405, then passed with only
+SELECT statements recorded and indexing/generation/source resolution forbidden.
+The combined saved-read → stable selection → explicit held recovery → real
+worker/approval/dispatch fixtures pass 66 cases. The expanded focused backend and
+free replay suite passes 2,394 tests (15 skips, seven expected failures); counts
+overlap. The new native read-only and old-server controls failed against the old
+path before wiring the GET. Native recovery verification is recorded separately;
+synthetic fixtures do not establish original-session or physical-phone success.
+
+Native evidence: `.dev/saved-read-final-ui.xcresult` has 17 passing regression
+cases and one failed recovery fixture case. Its retained hierarchy shows the
+full-quality-original error; the fixture reused a fixed project with different
+encoded source bytes. `.dev/saved-recovery-fixture-binding-diagnosis.json`
+records the exact old/new hashes and retained binding. The fixture now derives
+its stable project identity from the source fingerprint, preserving immutable
+binding checks. The corrected native saved-card → hold → explicit recovery →
+project handoff passes in `.dev/saved-recovery-bound-source.xcresult`. The new
+synthetic source preparation has its own readiness wait; existing card/recovery
+screen waits and product gates remain unchanged. These are complementary runs,
+not a claim that the failed bundle was entirely green. Earlier read-path red
+controls and both failed fixture attempts remain retained.
+
+
 ## Problems and causal evidence
 
 A selected camera-roll idea completed with “I need to establish the requested

@@ -68,6 +68,39 @@ def story_out(row):
     )
 
 
+async def read_saved_stories(db, owner, identifier, revision, story_ids=None):
+    from sqlalchemy import select
+
+    from app.models import MediaCollectionStory
+    from app.schemas.media_collections import SavedCollectionStoriesOut
+
+    collection = await media_collections.owned_collection(db, owner, identifier, revision=revision)
+    query = select(MediaCollectionStory).where(
+        MediaCollectionStory.user_id == owner,
+        MediaCollectionStory.collection_id == collection.id,
+        MediaCollectionStory.collection_revision == collection.revision,
+    )
+    if story_ids is not None:
+        query = query.where(MediaCollectionStory.id.in_(story_ids))
+    rows = list(
+        (
+            await db.scalars(
+                query.order_by(
+                    MediaCollectionStory.created_at.desc(), MediaCollectionStory.id
+                ).limit(20)
+            )
+        ).all()
+    )
+    if story_ids is not None and {row.id for row in rows} != set(story_ids):
+        raise HTTPException(409, "Saved ideas changed; reopen the current collection")
+    if story_ids is not None:
+        by_id = {row.id: row for row in rows}
+        rows = [by_id[value] for value in dict.fromkeys(story_ids)]
+    return SavedCollectionStoriesOut(
+        revision=collection.revision, stories=[story_out(row) for row in rows]
+    )
+
+
 async def candidate_evidence(db, owner, identifier, revision, query="", *, moment_ids=None):
     evidence = await media_moments.search_moments(
         db,

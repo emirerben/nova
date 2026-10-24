@@ -556,6 +556,16 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
                 if recovery_case == "lost-telemetry":
                     (await db.get(MediaCollectionStory, story_id)).events_json = []
                 await db.commit()
+        # Native saved-card access reads the retained row, not the model cache.
+        # Prompt/cache/index changes must not be needed to reach this hold.
+        saved = await client.get(
+            f"{path}/stories",
+            params={"expected_revision": 1, "story_ids": str(story_id)},
+        )
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["stories"][0]["id"] == str(story_id)
+        assert saved.json()["stories"][0]["moments"] == moments
+        assert saved.json()["stories"][0]["content_plan"]["caption"] == caption
         # Same attachment identities used by SavedMediaReuse: no new revision,
         # no source mutation. The route returns the current project each time.
         async with AsyncSessionLocal() as db:

@@ -267,7 +267,7 @@ struct CameraRollCollectionView: View {
                     .frame(minHeight: 48)
             } else {
                 Button {
-                    if collection.matchingSavedIdeas != nil { work = Task { await findStories(reusingSavedIdeas: true) } }
+                    if collection.matchingSavedIdeas != nil { work = Task { await openSavedStories() } }
                     else { requestIdeas() }
                 } label: {
                     Text(collection.matchingSavedIdeas == nil ? "Find story ideas" : "View saved ideas").frame(maxWidth: .infinity)
@@ -455,10 +455,26 @@ struct CameraRollCollectionView: View {
         } catch { self.error = "Choose at most \(CameraRollCollection.maximumCount) items." }
     }
 
-    @MainActor private func findStories(reusingSavedIdeas: Bool = false, allowPartial: Bool = false) async {
+    @MainActor private func openSavedStories() async {
+        guard !running, let saved = collection.matchingSavedIdeas else { return }
+        running = true; error = nil; status = nil
+        defer { running = false }
+        do {
+            let found = try await api.savedCameraRollStories(id: collection.id, revision: saved.revision, storyIDs: saved.result.stories.map(\.id))
+            try Task.checkCancellation()
+            stories = found
+            showsStories = true
+        } catch is CancellationError { }
+        catch {
+            if error as? APIError == .unsupported || error as? APIError == .invalidResponse || error as? APIError == .requestFailed(status: 404) || error as? APIError == .requestFailed(status: 405) {
+                self.error = "Saved ideas cannot be opened on this server. Your collection is saved."
+            } else { showCollectionError(error) }
+        }
+    }
+
+    @MainActor private func findStories(allowPartial: Bool = false) async {
         guard !fixture, !metadataOnly else { return }
         guard !running else { return }
-        let previous = reusingSavedIdeas ? collection.matchingSavedIdeas : nil
         running = true; error = nil; status = nil; collectionChanged = false
         missingAnalysisCount = 0; timingReviewCount = 0; readyVideoCount = 0
         defer { running = false }
@@ -484,9 +500,7 @@ struct CameraRollCollectionView: View {
             let excluded = missing.union(unusableTiming)
             let videos = collection.entries.filter { ($0.savedAsset?.kind ?? $0.metadata?.kind) == "video" }.count
             readyVideoCount = max(0, videos - excluded.count)
-            let savedPartialConsent = previous?.allowPartialAnalysis == true
-                && Set(previous?.result.coverage.unindexed ?? []) == excluded
-            let requestedPartial = allowPartial || savedPartialConsent
+            let requestedPartial = allowPartial
             guard excluded.isEmpty || requestedPartial else {
                 if missing.isEmpty {
                     status = "\(unusableTiming.count) \(unusableTiming.count == 1 ? "video needs" : "videos need") a usable source window. You can use the ready videos."
@@ -497,9 +511,9 @@ struct CameraRollCollectionView: View {
                 }
                 return
             }
-            let topic = previous.map { $0.researchTopic ?? "" } ?? researchTopic.trimmingCharacters(in: .whitespacesAndNewlines)
-            let requestedQuery = previous?.query ?? (query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Suggest different content ideas from this outing" : query)
-            let found = try await api.cameraRollStories(id: collection.id, revision: revision, query: requestedQuery, cacheOnly: previous != nil || cacheOnlyRequired || cacheOnly, researchTopic: topic.isEmpty ? nil : topic, allowPartialAnalysis: requestedPartial)
+            let topic = researchTopic.trimmingCharacters(in: .whitespacesAndNewlines)
+            let requestedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Suggest different content ideas from this outing" : query
+            let found = try await api.cameraRollStories(id: collection.id, revision: revision, query: requestedQuery, cacheOnly: cacheOnlyRequired || cacheOnly, researchTopic: topic.isEmpty ? nil : topic, allowPartialAnalysis: requestedPartial)
             try Task.checkCancellation()
             if let selection = collection.remoteSelection {
                 collection.savedIdeas = SavedCameraRollIdeas(revision: revision, selection: selection, query: requestedQuery, researchTopic: topic.isEmpty ? nil : topic, result: found, allowPartialAnalysis: requestedPartial)

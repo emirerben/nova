@@ -174,6 +174,11 @@ class CollectionStoriesOut(BaseModel):
     coverage: MomentSearchOut
 
 
+class SavedCollectionStoriesOut(BaseModel):
+    revision: int
+    stories: list[CollectionStoryOut] = Field(max_length=20)
+
+
 class StoryReviewBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_revision: int = Field(ge=1)
