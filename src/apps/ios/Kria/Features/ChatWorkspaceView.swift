@@ -1873,7 +1873,9 @@ private struct CreationWorkspaceView: View {
                             if fullThread?.failedRenderExecutionID != nil { await retryApprovedRender() }
                             else { await refreshNow() }
                         } },
-                        nonRetryableReasonCode: fullThread?.lastAssistantErrorCode
+                        nonRetryableReasonCode: fullThread?.lastAssistantErrorCode,
+                        declineReason: fullThread?.lastAssistantDeclineReason,
+                        replyInChat: { composerFocused = true }
                     ).id("failed")
                 }
             }
@@ -1883,7 +1885,9 @@ private struct CreationWorkspaceView: View {
     @ViewBuilder
     private func deviceRenderPanel(_ key: DeviceRenderKey) -> some View {
         DeviceRenderPanel(key: key, sessions: model.deviceRenders,
-            retryApproved: model.deviceRenders.retryNeedsApproval(key) ? { await retryApprovedRender() } : nil) {
+            retryApproved: model.deviceRenders.retryNeedsApproval(key) ? { await retryApprovedRender() } : nil,
+            // The edit needs a change only the conversation can make: hand over the composer.
+            reviewInChat: { composerFocused = true }) {
             await refreshCapabilities()
             await refreshDeviceRender(retry: true)
             // The retry re-pins the delivery server-side without a thread revision;

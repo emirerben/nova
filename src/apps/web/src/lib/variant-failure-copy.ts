@@ -26,6 +26,12 @@ export function variantFailureCopy(errorClass?: string | null): string {
   switch (errorClass) {
     case "guided_story_music_missing":
       return "The music attached to this edit is no longer available. Choose another song and save again.";
+    case "guided_story_music_unavailable":
+      // Transient: the song exists, it just couldn't be loaded after a few tries.
+      return "The music in this edit couldn't be loaded, even after a few tries. Your edit is saved. Try again in a moment.";
+    case "ai_quota_exhausted":
+      // Not a property of the edit, and a retry now answers the same: say to wait.
+      return jobFailureCopy("ai_quota_exhausted").detail;
     case "render_enqueue_failed":
       return "Your edits were saved, but the render didn't start. Open the editor and retry Save.";
     case "lyrics_unsupported_language":

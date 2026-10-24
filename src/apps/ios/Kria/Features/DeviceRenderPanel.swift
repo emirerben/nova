@@ -7,6 +7,9 @@ struct DeviceRenderPanel: View {
     let key: DeviceRenderKey
     let sessions: DeviceRenderSessions
     var retryApproved: (() async -> Void)? = nil
+    /// Opens the conversation for an edit only a change in chat can fix
+    /// (`contract_changed`, `requires_change`). Nil hides the call to action.
+    var reviewInChat: (() -> Void)? = nil
     let retry: () async -> Void
     @State private var showsSourceRecovery = false
     /// KRI-211: the attention state is caused by originals that are not on this
@@ -36,6 +39,11 @@ struct DeviceRenderPanel: View {
             },
             originalsMissing: originalsMissing
         )
+        if let reviewInChat, DeviceRenderAttentionCopy.needsChange(sessions.presentations[key]) {
+            Button("Review the updated edit", action: reviewInChat)
+                .buttonStyle(KriaSecondaryButtonStyle())
+                .accessibilityIdentifier("device-render-review-in-chat")
+        }
         if DeviceRenderAttentionCopy.offersOriginalRecovery(sessions.presentations[key]) {
             Button("Find original files") { showsSourceRecovery = true }
                 .buttonStyle(KriaSecondaryButtonStyle())
@@ -86,7 +94,7 @@ private struct DeviceSourceRecoveryView: View {
                             }
                         }
                         await refresh()
-                        if targets.isEmpty && message == nil { await retry(); dismiss() }
+                        if targets.isEmpty && message == nil { await resume(); dismiss() }
                     }
                 }
                 if !loading && targets.isEmpty && message == nil {
@@ -99,6 +107,16 @@ private struct DeviceSourceRecoveryView: View {
         }
         .background(KriaColor.paper)
         .task { await refresh() }
+    }
+
+    /// Every original is back: finish the video without another tap. A server that
+    /// already recorded `original_missing` re-pins the same approved recipe directly
+    /// (no new approval), then the phone reconciles and starts it.
+    private func resume() async {
+        if sessions.presentations[key]?.requiresServerRetry == true {
+            guard await sessions.retryNeedsAttention(key) else { return }
+        }
+        await retry()
     }
 
     private func refresh() async {
@@ -157,26 +175,51 @@ enum DeviceRenderAttentionCopy {
         // recipe (version/schema mismatch), not a specific feature it can't produce.
         // "Start a new edit" wouldn't fix that -- updating the app would.
         "renderer_outdated": "This edit uses something newer than this version of Kria. Your project is saved.",
-        "cancelled_by_user": "Rendering was stopped. Your project is saved.",
+        "cancelled_by_user": "You paused this render. Your project is saved; resume it any time.",
         // KRI-141: the server's stale-render reaper (`device_render_reaper.py`) gave up
         // after a day with no word from this iPhone -- usually Kria was closed or the
         // phone slept mid-render. Transient, so "Try again" stays.
         "timed_out": "Kria stopped waiting after a day without hearing from this iPhone. Your project is saved. Keep Kria open and try again.",
-        // Rendering on iPhone is paused for this account or edit (server rollout).
-        "device_unavailable": "Rendering on iPhone is paused for this edit. Your project is saved.",
+        // This iPhone can't render the recipe right now for a reason of its own (not
+        // heat or storage). Try again comes back once the phone can render it
+        // (`DeviceRenderSessions.apply` clears the reason then).
+        "device_unavailable": "This iPhone can’t render this edit right now. Your project is saved.",
+        // An original clip (or its analysis proxy) isn't on this iPhone; relinking fixes it.
+        "original_missing": "An original video for this edit isn’t on this iPhone. Find the original file and Kria will finish the video.",
+        // The approved requirements behind the pinned recipe changed. Retrying re-pins
+        // the same recipe and is refused again; the next step is in chat.
+        "contract_changed": "This edit’s approved details changed after it was prepared. Your project is saved. Review the updated edit in chat.",
         // The job was cancelled outside this iPhone (another device, the web, or Kria).
         DeviceRenderSessions.jobCancelledReason: "This render was stopped. Your project is saved.",
     ]
 
     /// Reasons a retry can't change: the recipe, the app version or the
     /// rollout has to change first, so "Try again" is hidden for them.
-    static let structuralReasons: Set<String> = ["unsupported_recipe", "renderer_outdated", "device_unavailable", DeviceRenderSessions.jobCancelledReason]
+    static let structuralReasons: Set<String> = Set(["unsupported_recipe", "renderer_outdated", "device_unavailable", DeviceRenderSessions.jobCancelledReason])
+        .union(changeReasons)
+
+    /// Reasons only a change to the edit fixes: Kria re-pins the same recipe on
+    /// retry, and the server refuses it again (`/device-render/retry` answers
+    /// `requires_change`). The way forward is the conversation.
+    static let changeReasons: Set<String> = ["contract_changed", "requires_change"]
+
+    static func needsChange(_ presentation: DeviceRenderPresentation?) -> Bool {
+        guard let presentation, presentation.waiting == nil, let reasonCode = presentation.reasonCode else { return false }
+        return changeReasons.contains(reasonCode)
+    }
+
+    /// The creator's own Stop: shown as a resumable pause, never a failure.
+    static func isPaused(_ presentation: DeviceRenderPresentation) -> Bool {
+        presentation.phase == .cancelled && presentation.reasonCode != DeviceRenderSessions.jobCancelledReason
+    }
 
     /// "Find original files" only helps a render that failed or stopped on
     /// this phone, never one waiting on the phone or blocked by the app version.
     static func offersOriginalRecovery(_ presentation: DeviceRenderPresentation?) -> Bool {
         guard let presentation, presentation.waiting == nil,
               [.needsAttention, .cancelled].contains(presentation.phase) else { return false }
+        // A pause is the creator's own Stop; its originals are not the problem.
+        if presentation.reasonCode == DeviceRenderSessions.pausedReason { return false }
         guard let reasonCode = presentation.reasonCode else { return true }
         return !structuralReasons.contains(reasonCode) && !["thermal", "insufficient_storage"].contains(reasonCode)
     }
@@ -213,10 +256,15 @@ enum DeviceRenderAttentionCopy {
     }
 
     static func message(phase: DeviceRenderPhase, reasonCode: String?, fallback: String?) -> String? {
+        // A pause says everything in its title and detail.
+        if phase == .cancelled, reasonCode == DeviceRenderSessions.pausedReason { return nil }
         if phase == .cancelled, let reasonCode, let mapped = reasonMessage[reasonCode] { return mapped }
         guard phase == .needsAttention else { return fallback }
         if let reasonCode, let mapped = reasonMessage[reasonCode] { return mapped }
         if let fallback, fallback.count <= 160 { return fallback }
+        if let reasonCode, changeReasons.contains(reasonCode) {
+            return "This edit needs a change before it can render again. Your project is saved."
+        }
         return "Your project is saved. You can wait and try again."
     }
 
@@ -289,7 +337,7 @@ struct DeviceRenderStatusCard: View {
             // Heat, storage and checking resume by themselves; quiet network waits keep the buttons.
             if presentation.waiting?.isQuiet != false,
                DeviceRenderAttentionCopy.showsRetryButton(phase: presentation.phase, reasonCode: presentation.reasonCode, originalsMissing: originalsMissing) {
-                Button(presentation.localFile == nil ? "Try again" : "Retry sync") {
+                Button(DeviceRenderAttentionCopy.isPaused(presentation) ? "Resume" : presentation.localFile == nil ? "Try again" : "Retry sync") {
                     guard presentation.requiresServerRetry, let retryNeedsAttention else {
                         retry(); return
                     }
@@ -374,8 +422,10 @@ struct DeviceRenderStatusCard: View {
         case .localReady: "Ready on this iPhone"
         case .syncing: "Syncing your video"
         case .synced: "Your video is synced"
-        case .cancelled: "Rendering stopped"
+        case .cancelled: DeviceRenderAttentionCopy.isPaused(presentation) ? "Rendering paused" : "Rendering stopped"
         case .needsAttention where presentation.reasonCode == "renderer_outdated": "Update Kria to render this edit"
+        case .needsAttention where DeviceRenderAttentionCopy.needsChange(presentation): "This edit needs a change"
+        case .needsAttention where presentation.reasonCode == "original_missing": "This edit needs its original clips"
         case .needsAttention: originalsMissing ? "This edit needs its original clips" : "This edit needs your attention"
         case .superseded: "Your edit changed"
         }
@@ -391,7 +441,9 @@ struct DeviceRenderStatusCard: View {
         case .localReady: "You can watch and share it now. It will appear on your other devices after syncing."
         case .syncing: "Your video is ready to watch and share while it uploads."
         case .synced: "Available in your Gallery and on your other devices."
-        case .cancelled: "Your project and original footage are saved."
+        case .cancelled: DeviceRenderAttentionCopy.isPaused(presentation)
+            ? "Your project and original footage are saved. Resume when you’re ready."
+            : "Your project and original footage are saved."
         case .needsAttention: originalsMissing ? "Your project is saved." : "Your project is saved. You can wait and try again."
         case .superseded: "Kria will use the latest approved version."
         }

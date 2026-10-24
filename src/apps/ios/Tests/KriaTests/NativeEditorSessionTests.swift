@@ -5027,6 +5027,47 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.commitCount, 1)
     }
 
+    /// Failure mode: "Saved — iPhone render needs a retry" was stored once and stayed after the chat
+    /// poll (or a Resume in the render sheet) healed the render, so the banner and its retry button
+    /// sat over a render that was already fine. The banner must follow the live render.
+    func testDeviceRetryBannerClearsWhenTheRenderHealsElsewhere() async {
+        let threadID = UUID(), jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 4, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+        fake.phoneDestination = true
+        let statusBox = SessionTestStatus(DeviceRenderStatusResponse(phase: "published", request: deviceRenderRequest(jobID: jobID, revision: 1, digest: "a"), publishedGeneration: "published-g2"))
+        let failing = SessionTestFlag(true)
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let renderSessions = DeviceRenderSessions(fetch: { _, _ in
+            if await failing.value { throw APIError.requestFailed(status: 400) }
+            return await statusBox.response
+        }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: SessionTestExport(), sources: SessionTestSources(), publisher: SessionTestPublisher())
+        })
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 4))
+        session.useDeviceRendering(renderSessions)
+        await session.load(api: fake, threadID: threadID)
+        session.selectClip(session.draft.clips[0].id)
+        session.trimSelected(edge: .trailing, to: 1.5)
+        await session.save()
+        guard case .deviceRenderRetryNeeded = session.saveState else {
+            return XCTFail("setup: the failed preparation shows the device retry banner: \(session.saveState)")
+        }
+
+        // The chat poll reconciles the same key and the server answers normally now.
+        await failing.set(false)
+        let key = DeviceRenderKey(projectID: threadID, jobID: jobID, variantID: "variant")
+        await renderSessions.reconcile(key, capabilities: PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.map(\.rawValue)))
+        XCTAssertEqual(renderSessions.presentations[key]?.phase, .synced)
+        let cleared = await waitUntil(timeout: .seconds(5)) {
+            if case .deviceRenderRetryNeeded = session.saveState { return false }
+            return true
+        }
+        XCTAssertTrue(cleared, "the retry banner follows the healed render: \(session.saveState)")
+        XCTAssertEqual(session.saveState, .previewPending, "back to waiting for this save's video, not a false Saved")
+        XCTAssertEqual(fake.commitCount, 1, "healing never re-saves")
+    }
+
     /// KRI-227: a save acknowledgement moves the document to the commit generation (`g2`) before the
     /// phone publishes under its own id (`published-g2`). Device narration is a generation-owned input,
     /// so the check must stay keyed on the generation the preview was prepared for.
@@ -6237,6 +6278,12 @@ private struct SessionTestSources: DeviceSourceResolving {
 private actor SessionTestPublisher: DeviceRenderPublishing {
     func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { true }
     func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication { .published }
+}
+
+private actor SessionTestFlag {
+    private(set) var value: Bool
+    init(_ value: Bool) { self.value = value }
+    func set(_ value: Bool) { self.value = value }
 }
 
 private actor SessionTestStatus {

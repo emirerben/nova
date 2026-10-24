@@ -23,6 +23,14 @@ import KriaMediaEngine
 // 11. Try again routes to chat approval while the server still waits on this
 //     phone (S1-k).
 // 12. An unknown server phase shows a failure (S1-p).
+// Cross-lane gaps (pause, server reason codes), written down before the fix:
+// 13. The server's `paused_by_user` is ignored: a relaunch restarts a render the
+//     creator stopped, or a Stop recorded by an older server reads as
+//     "needs attention" with a Try again.
+// 14. Resume restarts locally but never lifts the server's pause, so the reaper
+//     and the project keep treating it as stopped.
+// 15. `/retry` answering `requires_change` (or a `contract_changed` record) keeps
+//     offering Try again, which the server refuses identically forever.
 // Each test below drives `DeviceRenderSessions` with the real coordinator,
 // receipt store and status decoder; only the network and the encoder are fakes.
 
@@ -76,6 +84,18 @@ private actor Declines {
     var codes: [String] { sent.map(\.code) }
 }
 
+/// `POST /device-render/retry`: the server keeps the paused identity and returns it.
+private actor Retries {
+    private(set) var identities: [DeviceRenderIdentity] = []
+    func record(_ identity: DeviceRenderIdentity) throws -> DeviceRenderRetryAck {
+        identities.append(identity)
+        let body = try RecipeJSON.encoder().encode(["identity": identity])
+        let identityJSON = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+        let ack = try JSONSerialization.data(withJSONObject: ["identity": identityJSON["identity"]!, "phase": "awaiting_device"])
+        return try JSONDecoder().decode(DeviceRenderRetryAck.self, from: ack)
+    }
+}
+
 /// Backoff sleeps park here until the test fires them.
 private actor Clock {
     private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -120,6 +140,7 @@ private final class Phone: @unchecked Sendable {
 
     private func sessions(_ server: Server, exporter: any LocalExporting = Exporter(), output: URL? = nil,
                           declines: Declines = Declines(), clock: Clock = Clock(), phone: Phone = Phone(),
+                          retry: DeviceRenderSessions.RetryFailure? = nil,
                           diagnostics: (@Sendable (UUID, Error) async -> Void)? = nil) -> DeviceRenderSessions {
         let output = output ?? directory()
         return DeviceRenderSessions(
@@ -127,6 +148,7 @@ private final class Phone: @unchecked Sendable {
             factory: { _, _ in
                 try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: NoSources(), publisher: Publisher())
             },
+            retryFailure: retry ?? { _, _ in throw APIError.unsupported },
             reportPreparationFailure: diagnostics ?? { _, _ in },
             reportDecline: { _, identity, code, _ in try await declines.send(identity, code) },
             environment: phone.environment,
@@ -563,5 +585,87 @@ private final class Phone: @unchecked Sendable {
         let reported = await eventually { await declines.codes == ["renderer_outdated"] }
         XCTAssertTrue(reported, "the server hears the decline instead of waiting for the reaper")
         await later.stopAll()
+    }
+
+    // MARK: 13–15: a pause is resumable; a change-required reason has no Try again
+
+    func testServerPauseNeverRestartsOnItsOwnAndResumeLiftsItUnderTheSameIdentity() async throws {
+        let job = UUID(), request = request(job), exporter = Exporter()
+        let resumed = Retries()
+        let server = Server([.success(DeviceRenderStatusResponse(phase: "awaiting_device", request: request, pausedByUser: true))])
+        let sessions = sessions(server, exporter: exporter, retry: { _, identity in
+            try await resumed.record(identity)
+        })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+
+        // A fresh launch (no receipt on this phone) sees the creator's Stop.
+        await sessions.reconcile(key, capabilities: enabled)
+        let paused = try XCTUnwrap(sessions.presentations[key])
+        XCTAssertEqual(paused.phase, .cancelled)
+        XCTAssertTrue(DeviceRenderAttentionCopy.isPaused(paused))
+        XCTAssertTrue(DeviceRenderAttentionCopy.showsRetryButton(phase: paused.phase, reasonCode: paused.reasonCode))
+        XCTAssertEqual(DeviceRenderButtonTitle.for(presentation: paused), "Render paused")
+        XCTAssertFalse(DeviceRenderAttentionCopy.offersOriginalRecovery(paused), "a pause is not a missing original")
+        let idleCalls = await exporter.calls
+        XCTAssertEqual(idleCalls, 0, "a paused render never starts by itself")
+
+        // Resume: the server lifts the pause for this identity, then the phone renders it.
+        await server.then([.success(DeviceRenderStatusResponse(phase: "awaiting_device", request: request, pausedByUser: true)), awaiting(request)])
+        await sessions.reconcile(key, capabilities: enabled, retry: true)
+        let identities = await resumed.identities
+        XCTAssertEqual(identities, [request.identity], "Resume calls /retry with the identity the server still holds")
+        let synced = await eventually { sessions.presentations[key]?.phase == .synced }
+        XCTAssertTrue(synced)
+        await sessions.stopAll()
+    }
+
+    func testStopRecordedByAnOlderServerIsAPauseNotNeedsAttention() async throws {
+        let job = UUID(), request = request(job)
+        let server = Server([.success(DeviceRenderStatusResponse(phase: "needs_attention", request: request, reason: "Rendering was stopped", reasonCode: "cancelled_by_user"))])
+        let sessions = sessions(server)
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        let presentation = try XCTUnwrap(sessions.presentations[key])
+        XCTAssertEqual(presentation.phase, .cancelled)
+        XCTAssertTrue(presentation.requiresServerRetry, "Resume re-pins through /retry on this server")
+        XCTAssertNil(DeviceRenderAttentionCopy.message(phase: presentation.phase, reasonCode: presentation.reasonCode, fallback: presentation.message))
+        await sessions.stopAll()
+    }
+
+    func testChangeRequiredReasonsHideTryAgainAndPointToChat() async throws {
+        let job = UUID(), request = request(job)
+        let server = Server([.success(DeviceRenderStatusResponse(phase: "needs_attention", request: request, reasonCode: "export_failed"))])
+        let sessions = sessions(server, retry: { _, _ in
+            throw APIError.conflict(detail: ConflictDetail("That exact text isn't in this draft. Your edit is saved.", code: "requires_change"))
+        })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        XCTAssertTrue(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: sessions.presentations[key]?.reasonCode))
+
+        let retried = await sessions.retryNeedsAttention(key)
+        XCTAssertFalse(retried)
+        let refused = try XCTUnwrap(sessions.presentations[key])
+        XCTAssertEqual(refused.reasonCode, "requires_change")
+        XCTAssertFalse(DeviceRenderAttentionCopy.showsRetryButton(phase: refused.phase, reasonCode: refused.reasonCode))
+        XCTAssertTrue(DeviceRenderAttentionCopy.needsChange(refused))
+        XCTAssertEqual(DeviceRenderAttentionCopy.message(phase: refused.phase, reasonCode: refused.reasonCode, fallback: refused.message),
+                       "That exact text isn't in this draft. Your edit is saved.", "the server's reason, not a raw conflict string")
+
+        await server.then([.success(DeviceRenderStatusResponse(phase: "needs_attention", request: request, reasonCode: "contract_changed"))])
+        await sessions.reconcile(key, capabilities: enabled)
+        let changed = try XCTUnwrap(sessions.presentations[key])
+        XCTAssertFalse(DeviceRenderAttentionCopy.showsRetryButton(phase: changed.phase, reasonCode: changed.reasonCode))
+        XCTAssertTrue(DeviceRenderAttentionCopy.needsChange(changed))
+        XCTAssertFalse(DeviceRenderAttentionCopy.offersOriginalRecovery(changed))
+        await sessions.stopAll()
+    }
+
+    func testMissingOriginalOffersRecoveryNotAPausedRolloutAndDeviceUnavailableSaysSo() {
+        let missing = DeviceRenderPresentation(phase: .needsAttention, reasonCode: "original_missing", requiresServerRetry: true)
+        XCTAssertTrue(DeviceRenderAttentionCopy.offersOriginalRecovery(missing))
+        XCTAssertFalse(DeviceRenderAttentionCopy.needsChange(missing))
+        XCTAssertFalse(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: "original_missing", originalsMissing: true))
+        let unavailable = DeviceRenderAttentionCopy.message(phase: .needsAttention, reasonCode: "device_unavailable", fallback: nil) ?? ""
+        XCTAssertFalse(unavailable.localizedCaseInsensitiveContains("paused"), "device_unavailable is this iPhone, not a rollout pause")
     }
 }

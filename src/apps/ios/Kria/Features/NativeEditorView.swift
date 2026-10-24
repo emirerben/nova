@@ -171,6 +171,10 @@ struct NativeEditorView: View {
                             opensRetryConversation = true
                             showsDeviceRender = false
                         } : nil,
+                        reviewInChat: {
+                            opensRetryConversation = true
+                            showsDeviceRender = false
+                        },
                         retry: { await session.refreshDeviceRender(retry: true) })
                         .padding(20)
                         .presentationDetents([.medium, .large])

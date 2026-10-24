@@ -90,7 +90,9 @@ enum DeviceRenderButtonTitle {
         switch presentation.waiting {
         case .cooling, .storage: "Waiting to render"
         case .checking: "Checking render…"
-        case .connection, .server, nil: Self.for(phase: presentation.phase)
+        case .connection, .server, nil:
+            presentation.phase == .cancelled && presentation.reasonCode == DeviceRenderSessions.pausedReason
+                ? "Render paused" : Self.for(phase: presentation.phase)
         }
     }
 }
@@ -210,6 +212,8 @@ enum DeviceRenderGate: Equatable {
 
     /// `needsAttention` reason for a job cancelled outside this phone. No retry: the job is gone.
     nonisolated static let jobCancelledReason = "job_cancelled"
+    /// `.cancelled` reason for the creator's own Stop: a resumable pause, never a failure.
+    nonisolated static let pausedReason = "cancelled_by_user"
     /// Automatic re-reads per key before waiting for a reconnect, foreground or thermal change.
     static let maxAutomaticRetries = 12
     static func retryDelay(attempt: Int) -> Duration { .seconds(min(60, 1 << min(max(attempt, 1), 6))) }
@@ -399,8 +403,11 @@ enum DeviceRenderGate: Equatable {
                 reasonCode = nil
                 message = "Kria can render this edit on your iPhone now. Try again to start it."
             }
+            // A server from before Stop became a pause records it as a failure.
+            // It is still the creator's own pause: Resume, never "needs attention".
+            let paused = reasonCode == Self.pausedReason && saved?.outputURL == nil
             presentations[key] = DeviceRenderPresentation(
-                phase: (saved?.outputURL == nil || unchecked) ? .needsAttention : .localReady,
+                phase: paused ? .cancelled : (saved?.outputURL == nil || unchecked) ? .needsAttention : .localReady,
                 localFile: !unchecked && saved?.request == request ? saved?.outputURL : nil,
                 message: message, reasonCode: reasonCode, requiresServerRetry: true
             )
@@ -422,6 +429,22 @@ enum DeviceRenderGate: Equatable {
                 message: status.reason
             )
             return
+        }
+        if status.pausedByUser {
+            // The creator tapped Stop. The server holds that pause under the same
+            // identity; nothing restarts the render until the creator resumes it.
+            let pausedHere = saved?.request != request || saved?.phase == .cancelled
+            if pausedHere && !retry {
+                settle(key)
+                observations.removeValue(forKey: key)?.cancel()
+                presentations[key] = DeviceRenderPresentation(phase: .cancelled, reasonCode: Self.pausedReason)
+                return
+            }
+            // Resume (or a Stop report that landed after the creator already resumed
+            // here): `/retry` lifts the pause and keeps the identity. Best effort --
+            // the server takes this phone's upload either way.
+            _ = try? await retryFailure(key.jobID, request.identity)
+            guard tickets[key] == ticket else { return }
         }
         // Finishing an export that already exists only uploads; heat and
         // storage gates are about encoding, so they don't hold a sync back.
@@ -662,6 +685,14 @@ enum DeviceRenderGate: Equatable {
         } catch {
             guard requests[key] == request else { return false }
             var presentation = presentations[key] ?? DeviceRenderPresentation(phase: .needsAttention)
+            if case let APIError.conflict(detail) = error, detail.code == "requires_change" {
+                // The same recipe would be refused again: the edit needs a change in
+                // chat, so Try again goes away instead of looping (S3-o).
+                presentation.reasonCode = "requires_change"
+                presentation.message = detail.message
+                presentations[key] = presentation
+                return false
+            }
             presentation.message = RequestFailureCause(error) == .connection
                 ? "Kria couldn’t retry this edit. Check your connection and try again."
                 : "Kria couldn’t retry this edit. \(error.localizedDescription)"
@@ -830,7 +861,10 @@ enum DeviceRenderGate: Equatable {
             phase: receipt.phase, localFile: receipt.outputURL,
             message: receipt.error == nil ? nil : (receipt.outputURL == nil
                 ? "This edit couldn’t finish on your iPhone. Your project is saved."
-                : "Your video is ready on this iPhone. Syncing didn’t finish; you can retry without rendering again.")
+                : "Your video is ready on this iPhone. Syncing didn’t finish; you can retry without rendering again."),
+            // A stopped receipt is the creator's Stop (`cancelByUser`); housekeeping
+            // cancels drop or replace the presentation instead.
+            reasonCode: receipt.phase == .cancelled ? pausedReason : nil
         )
     }
 

@@ -88,8 +88,9 @@ struct NativeEditorSaveBanner: View {
             }
         case .deviceRenderRetryNeeded(let message):
             VStack(spacing: 0) {
-                banner(title: "Saved — iPhone render needs a retry", detail: message, systemImage: "arrow.clockwise", tint: .orange)
-                Button(retryApproved == nil ? "Retry device render" : "Review retry in chat") {
+                banner(title: session.deviceRenderIsPaused ? "Saved — rendering paused" : "Saved — iPhone render needs a retry",
+                       detail: message, systemImage: session.deviceRenderIsPaused ? "pause.circle" : "arrow.clockwise", tint: .orange)
+                Button(retryApproved == nil ? (session.deviceRenderIsPaused ? "Resume rendering" : "Retry device render") : "Review retry in chat") {
                     if let retryApproved { retryApproved() }
                     else { Task { await session.retryDeviceRender() } }
                 }

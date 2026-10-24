@@ -824,7 +824,64 @@ struct NativeEditorTemporaryVideo {
         return DeviceRenderKey(projectID: threadID ?? projectID, jobID: jobID, variantID: variantKey)
     }
 
-    func useDeviceRendering(_ sessions: DeviceRenderSessions) { deviceRenders = sessions }
+    func useDeviceRendering(_ sessions: DeviceRenderSessions) {
+        deviceRenders = sessions
+        observeDeviceRenderPresentations(sessions)
+    }
+
+    /// `deviceRenderRetryNeeded` follows the live render instead of freezing the
+    /// moment it was set: the chat poll, a Resume in the render sheet or the
+    /// coordinator itself can heal the render while the editor is open, and the
+    /// banner (and its retry button) must clear when they do.
+    private func observeDeviceRenderPresentations(_ sessions: DeviceRenderSessions) {
+        withObservationTracking {
+            _ = sessions.presentations
+        } onChange: { [weak self, weak sessions] in
+            Task { @MainActor [weak self, weak sessions] in
+                guard let self, let sessions, self.deviceRenders === sessions else { return }
+                self.deviceRenderPresentationChanged()
+                self.observeDeviceRenderPresentations(sessions)
+            }
+        }
+    }
+
+    /// Re-derives the device-render retry banner from the current presentation.
+    func deviceRenderPresentationChanged() {
+        guard case .deviceRenderRetryNeeded = saveState, let key = deviceRenderKey,
+              let presentation = deviceRenders?.presentations[key] else { return }
+        if Self.deviceRenderNeedsRetry(presentation) {
+            let updated = NativeEditorSaveState.deviceRenderRetryNeeded(Self.deviceRenderRetryMessage(presentation))
+            if saveState != updated { saveState = updated }
+            return
+        }
+        // Healed: go back to waiting for this save's video, which the preview poll installs.
+        if let generation = pendingPreviewGeneration {
+            saveState = .previewPending
+            startPreviewRefresh(generation: generation)
+        } else {
+            saveState = .idle
+        }
+    }
+
+    /// The render cannot finish without the creator (a retry, a Resume, a change).
+    static func deviceRenderNeedsRetry(_ presentation: DeviceRenderPresentation) -> Bool {
+        presentation.requiresServerRetry || presentation.phase == .needsAttention
+            || presentation.phase == .cancelled
+            || (presentation.phase == .localReady && presentation.message != nil)
+    }
+
+    static func deviceRenderRetryMessage(_ presentation: DeviceRenderPresentation) -> String {
+        if DeviceRenderAttentionCopy.isPaused(presentation) {
+            return "Your edit is saved. Rendering is paused on this iPhone; resume it when you’re ready."
+        }
+        return presentation.message ?? "Your edit is saved, but this iPhone needs to retry rendering it."
+    }
+
+    /// The device render behind the retry banner is the creator's own pause.
+    var deviceRenderIsPaused: Bool {
+        guard let key = deviceRenderKey, let presentation = deviceRenders?.presentations[key] else { return false }
+        return DeviceRenderAttentionCopy.isPaused(presentation)
+    }
     /// Upload records outlive this screen. The session only observes their
     /// results and turns a ready source into one local document transaction.
     func useMediaUploads(_ uploads: BackgroundUploadCoordinator) { mediaUploads = uploads }
@@ -7801,9 +7858,7 @@ struct NativeEditorTemporaryVideo {
         if let key = deviceRenderKey,
            let presentation = deviceRenders?.presentations[key],
            presentation.requiresServerRetry {
-            saveState = .deviceRenderRetryNeeded(
-                presentation.message ?? "Your edit is saved, but this iPhone needs to retry rendering it."
-            )
+            saveState = .deviceRenderRetryNeeded(Self.deviceRenderRetryMessage(presentation))
             return true
         }
         let status = variant["render_status"]?.stringValue
@@ -7936,12 +7991,8 @@ struct NativeEditorTemporaryVideo {
     @discardableResult
     private func surfaceDeviceRenderFailure() -> Bool {
         guard let key = deviceRenderKey, let presentation = deviceRenders?.presentations[key],
-              presentation.requiresServerRetry || presentation.phase == .needsAttention
-                || presentation.phase == .cancelled
-                || (presentation.phase == .localReady && presentation.message != nil) else { return false }
-        saveState = .deviceRenderRetryNeeded(
-            presentation.message ?? "Your edit is saved, but this iPhone needs to retry rendering it."
-        )
+              Self.deviceRenderNeedsRetry(presentation) else { return false }
+        saveState = .deviceRenderRetryNeeded(Self.deviceRenderRetryMessage(presentation))
         return true
     }
 

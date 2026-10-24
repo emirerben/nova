@@ -20,12 +20,16 @@ struct DeviceRenderStatusResponse: Decodable, Sendable {
     /// Phone rendering is rolled back for this account while the recipe waits. A hold,
     /// not a failure: the phone shows a waiting state and does not start the render.
     let phoneRenderingPaused: Bool
-    private enum CodingKeys: String, CodingKey { case phase, request, reason, reasonCode = "reason_code", publishedGeneration = "published_generation", baseGeneration = "base_generation", retryRequiresApproval = "retry_requires_approval", outputVerificationRequired = "output_verification_required", phoneRenderingPaused = "phone_rendering_paused" }
-    init(phase: String, request: DeviceRenderRequest, reason: String? = nil, reasonCode: String? = nil, publishedGeneration: String? = nil, baseGeneration: String? = nil, retryRequiresApproval: Bool = false, outputVerificationRequired: Bool = false, phoneRenderingPaused: Bool = false) {
+    /// The creator tapped Stop and has not resumed. A resumable pause, never a failure:
+    /// the server keeps the same identity and `/device-render/retry` resumes it.
+    let pausedByUser: Bool
+    private enum CodingKeys: String, CodingKey { case phase, request, reason, reasonCode = "reason_code", publishedGeneration = "published_generation", baseGeneration = "base_generation", retryRequiresApproval = "retry_requires_approval", outputVerificationRequired = "output_verification_required", phoneRenderingPaused = "phone_rendering_paused", pausedByUser = "paused_by_user" }
+    init(phase: String, request: DeviceRenderRequest, reason: String? = nil, reasonCode: String? = nil, publishedGeneration: String? = nil, baseGeneration: String? = nil, retryRequiresApproval: Bool = false, outputVerificationRequired: Bool = false, phoneRenderingPaused: Bool = false, pausedByUser: Bool = false) {
         self.phase = phase; self.request = request; self.reason = reason; self.reasonCode = reasonCode; self.publishedGeneration = publishedGeneration; self.baseGeneration = baseGeneration
         self.retryRequiresApproval = retryRequiresApproval
         self.outputVerificationRequired = outputVerificationRequired
         self.phoneRenderingPaused = phoneRenderingPaused
+        self.pausedByUser = pausedByUser
     }
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -37,6 +41,7 @@ struct DeviceRenderStatusResponse: Decodable, Sendable {
         retryRequiresApproval = try container.decodeIfPresent(Bool.self, forKey: .retryRequiresApproval) ?? false
         outputVerificationRequired = try container.decodeIfPresent(Bool.self, forKey: .outputVerificationRequired) ?? false
         phoneRenderingPaused = try container.decodeIfPresent(Bool.self, forKey: .phoneRenderingPaused) ?? false
+        pausedByUser = try container.decodeIfPresent(Bool.self, forKey: .pausedByUser) ?? false
         let raw = try container.decode(JSONValue.self, forKey: .request)
         let data = try JSONEncoder().encode(raw)
         do {

@@ -182,6 +182,52 @@ import XCTest
         XCTAssertFalse(isNonRetryableFailureCode(timedOut.lastAssistantErrorCode))
     }
 
+    /// Failure modes for the failed card, from the events the server really sends:
+    /// a spend cap offered as Retry/Refresh (it answers the same), a typed creator
+    /// decline offered only "New chat" (S4-h, the conversation is the way forward),
+    /// and an untyped structural refusal losing its New chat.
+    func testFailedCardOffersReplyForTypedDeclinesAndNothingForAnExhaustedQuota() throws {
+        func thread(_ events: String) throws -> CreationThread {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode(CreationThread.self, from: Data("""
+            {"id":"B8D594F1-5D75-4C52-BF94-9EA05B9C0D9B","title":"Draft","status":"failed","revision":3,
+             "runtime_version":2,"state":{},"updated_at":"2026-09-07T12:00:00Z","events":\(events)}
+            """.utf8))
+        }
+        let quota = try thread(#"""
+        [{"id":"e1","sequence":1,"revision":1,"role":"assistant","event_type":"assistant_render_failed",
+          "content":"Kria's AI service has reached its usage limit for now, so your video wasn't made.",
+          "payload":{"code":"ai_quota_exhausted","recovery":"ask_user","title":"Kria's AI is at its limit"},
+          "created_at":"2026-09-07T11:00:00Z"}]
+        """#)
+        XCTAssertEqual(FailedStage.affordance(code: quota.lastAssistantErrorCode, declineReason: quota.lastAssistantDeclineReason,
+                                              canReply: true, canRetry: true), .none)
+
+        let choice = try thread(#"""
+        [{"id":"e1","sequence":1,"revision":1,"role":"assistant","event_type":"assistant_render_failed",
+          "content":"Your direction asks for two orders for the clips. Which one should I use?",
+          "payload":{"code":"phone_plan_unsupported","recovery":"ask_user","decline_reason":"needs_choice","field_path":"clip_order"},
+          "created_at":"2026-09-07T11:00:00Z"}]
+        """#)
+        XCTAssertEqual(choice.lastAssistantDeclineReason, "needs_choice")
+        XCTAssertEqual(FailedStage.affordance(code: choice.lastAssistantErrorCode, declineReason: choice.lastAssistantDeclineReason,
+                                              canReply: true, canRetry: true), .reply)
+        for reason in ["requirement_conflict", "capability_unavailable", "evidence_missing"] {
+            XCTAssertEqual(FailedStage.affordance(code: "phone_plan_unsupported", declineReason: reason, canReply: true, canRetry: true), .reply, reason)
+        }
+
+        let untyped = try thread(#"""
+        [{"id":"e1","sequence":1,"revision":1,"role":"assistant","event_type":"assistant_render_failed",
+          "content":"This edit uses something your iPhone can't render yet.",
+          "payload":{"code":"phone_plan_unsupported","recovery":"ask_user"},
+          "created_at":"2026-09-07T11:00:00Z"}]
+        """#)
+        XCTAssertNil(untyped.lastAssistantDeclineReason)
+        XCTAssertEqual(FailedStage.affordance(code: untyped.lastAssistantErrorCode, declineReason: nil, canReply: true, canRetry: true), .newChat)
+        XCTAssertEqual(FailedStage.affordance(code: "plan_ai_timeout", declineReason: nil, canReply: true, canRetry: true), .retry)
+    }
+
     /// KRI-118 item 4: `strategy_invalid` (`app.services.creator_errors
     /// .CreatorStrategyError`), `phone_self_narration_multi_clip`
     /// (`PHONE_GATE_MESSAGES["self_narration_multi_clip"]`), and
