@@ -1159,6 +1159,7 @@ async def _mint_restore_turn(
                 db,
                 item,
                 document,
+                creator_id=thread.creator_id,
                 require_same_assessment=False,
             )
         except ApprovalReadinessError as exc:

@@ -118,6 +118,11 @@ def model_text(payload: Any, content: Any, *, language: str | None = None) -> st
             return stand_in(MOMENT_ORDER_ANSWER_MESSAGE, MOMENT_ORDER_ANSWER_MESSAGE_TR)
         if isinstance(payload.get(SONG_RANGE_ANSWER_KEY), Mapping):
             return stand_in(SONG_RANGE_ANSWER_MESSAGE, SONG_RANGE_ANSWER_MESSAGE_TR)
+        mark = payload.get("protected_region")
+        if isinstance(mark, Mapping):
+            # KRI-901: the mark card's answer. Never a new instruction for the extractor.
+            label = " ".join(str(mark.get("label") or "").split())[:60] or "it"
+            return stand_in(f"I marked the {label} on a frame.", f"{label} bir karede işaretledim.")
         selection = payload.get("clip_selection")
         if isinstance(selection, Mapping):
             if selection.get("skipped") is True:

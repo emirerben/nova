@@ -413,6 +413,10 @@ class CreationCapabilitiesOut(BaseModel):
     # KRI-588: the server may ask "which part of the song did you film?" in the chat
     # (`song_range_question` on a turn plan) and accepts the answer as `song_range` on a turn.
     song_range_questions: bool = False
+    # KRI-901: the server may ask "Mark the plate on one frame" (`protected_region_question` on
+    # a turn plan) and accepts the answer as `protected_region` on a turn. The question goes
+    # only to app builds at `protected_region_mark_min_client_protocol`.
+    protected_region_marks: bool = False
     # KRI-443: plan_block events follow Create and cancel-render is available.
     live_plan_review_enabled: bool = False
     # KRI-439: 2 = structured payloads, GET /plan, scoped turns and undo; 1 = the feed only.
@@ -3924,6 +3928,7 @@ async def capabilities(
         "song_order_placements": bool(song_available and settings.song_order_timeline_enabled),
         "song_filming_range": bool(song_available and settings.song_filming_range_enabled),
         "song_range_questions": bool(song_available and settings.song_filming_range_enabled),
+        "protected_region_marks": True,
         "live_plan_review_enabled": bool(settings.live_plan_review_enabled),
         "live_plan_review_version": CONTRACT_VERSION if settings.live_plan_review_enabled else 1,
         "suggestion_chips": bool(settings.suggestion_chips_for(user.id)),

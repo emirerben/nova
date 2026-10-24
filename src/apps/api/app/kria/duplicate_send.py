@@ -35,7 +35,14 @@ FINISHED_WINDOW = timedelta(seconds=120)
 # The review the copy points back at is a few lines; never paste a wall of text.
 _REVIEW_MAX_CHARS = 1_200
 # Payload keys of a message that is not plain free text: a tapped answer, a scoped edit.
-_STRUCTURED_KEYS = ("clip_selection", "choice_selection", "song_order", "song_range", "scope")
+_STRUCTURED_KEYS = (
+    "clip_selection",
+    "choice_selection",
+    "song_order",
+    "song_range",
+    "scope",
+    "protected_region",  # KRI-901: a mark answers the mark card
+)
 _IN_FLIGHT = frozenset(
     {"pending", "queued", "planning", "executing", "awaiting_approval", "observing"}
 )

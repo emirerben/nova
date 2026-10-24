@@ -199,6 +199,8 @@ struct ChatMessageRow: View {
     var questionBatch: QuestionBatch? = nil
     /// KRI-588: how to present `message.songRangeQuestion`. nil (old server, flag off, not a question) = text only.
     var songRangeMode: SongRangeCardMode? = nil
+    /// KRI-901: how to present `message.protectedRegionQuestion`. nil (old server, not a question) = text only.
+    var objectMarkMode: ObjectMarkCardMode? = nil
     /// Tappable answers for a plain `assistant_response` question. nil = not the newest unanswered question
     /// (or no options): no chips are drawn, so history never keeps stale tappable answers.
     var replyOptionsMode: ReplyOptionsMode? = nil
@@ -288,6 +290,10 @@ struct ChatMessageRow: View {
                 }
                 if let question = message.songRangeQuestion, let songRangeMode {
                     SongRangeQuestionCard(question: question, fallbackDurationS: songDurationS, mode: songRangeMode)
+                        .id(question.questionID)
+                }
+                if let question = message.protectedRegionQuestion, let objectMarkMode {
+                    ObjectMarkCard(question: question, projectID: projectID, mode: objectMarkMode)
                         .id(question.questionID)
                 }
                 if questionBatch == nil { choiceCard }

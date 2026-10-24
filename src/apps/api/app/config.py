@@ -854,6 +854,12 @@ class Settings(BaseSettings):
     # turn. Kill switch: `fly secrets set KRIA_QUESTION_BATCH_MIN_CLIENT_PROTOCOL=999`
     # (api + worker) + restart; messages sent after it get one question per turn again.
     kria_question_batch_min_client_protocol: int = 14
+    # KRI-901: an app build declaring `X-Kria-Client-Protocol` >= this shows the "Mark the
+    # plate" card, so a phone Talking edit whose brief keeps text off an unmarked object asks
+    # for the mark before approval. Lower builds and the web are never asked (approval as
+    # before; the receipt says `no_selection`). Kill switch: `fly secrets set
+    # PROTECTED_REGION_MARK_MIN_CLIENT_PROTOCOL=999` (api + worker) + restart.
+    protected_region_mark_min_client_protocol: int = 19
     # KRI-723: an app build declaring `X-Kria-Client-Protocol` >= this answers a
     # `moment_order_question` ("put your moments in order and show me where each one is"),
     # asked before approval when the clip record cannot place a moment the creator named.

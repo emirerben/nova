@@ -69,6 +69,7 @@ def test_no_text_row_is_called_clear_while_it_covers_the_object(report):
         "cleanup_cut",
         "landscape_crop",
         "decoy_plate",
+        "app_mark_rotated_take",
     ],
 )
 def test_supported_scenarios_keep_every_text_off_the_plate_the_whole_time(report, name):

@@ -343,7 +343,7 @@ async def prepare_render_retry(
             # Historical snapshots without the requirement binding stay legacy.
             if requires_readiness(readiness_document, creator_id):
                 readiness_report = await assess_saved_document(
-                    db, rows[PlanItem], readiness_document
+                    db, rows[PlanItem], readiness_document, creator_id=creator_id
                 )
         except ApprovalReadinessError as exc:
             raise _failure(NOT_READY, str(exc)) from exc

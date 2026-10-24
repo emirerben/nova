@@ -67,6 +67,25 @@ class Scenario:
     mark_generation: str = "gen-1"
     clip_generation: str = "gen-1"
     face_box: tuple[float, float, float, float] = FACE_SOURCE_BOX
+    # KRI-901: the clip as an iPhone stores a portrait take (sensor-landscape frames plus a
+    # 90 degree display rotation); the decoded frames must come out upright.
+    rotated: bool = False
+    # KRI-901: the creator's mark as the app's "Mark the plate" card sends it: the rectangle
+    # drawn in the editor (x, y, w, h on the UPRIGHT frame) at ``mark_t_s``, converted by
+    # `app_mark_box` exactly as `ProtectedRegionAnswer` converts it.
+    app_rect: tuple[float, float, float, float] | None = None
+    mark_t_s: float = 0.0
+
+
+def app_mark_box(rect: tuple[float, float, float, float]) -> list[float]:
+    """The iOS card's conversion (`ProtectedRegionAnswer.box(from:)`): an editor rectangle
+    (x, y, w, h, normalized upright) to the server's ``[left, top, right, bottom]``, clamped
+    to the frame, each side at least the server's 2% floor."""
+    x, y, w, h = rect
+    minimum = 0.02
+    w, h = max(minimum, min(1.0, w)), max(minimum, min(1.0, h))
+    left, top = max(0.0, min(1.0 - w, x)), max(0.0, min(1.0 - h, y))
+    return [round(left, 4), round(top, 4), round(left + w, 4), round(top + h, 4)]
 
 
 def _lerp(a: float, b: float, t: float) -> float:
@@ -112,6 +131,16 @@ def scenarios() -> list[Scenario]:
             face_box=(0.42, 0.12, 0.54, 0.42),
         ),
         Scenario("tracker_timeout", plate=lambda t: (0.5, 0.52), timeout_s=0.05),
+        # KRI-901: the app's mark (drawn a little loose around the plate, mid-clip) on a
+        # portrait take stored rotated, as the iPhone records it.
+        Scenario(
+            "app_mark_rotated_take",
+            plate=lambda t: (_lerp(0.45, 0.55, t / DURATION_S), 0.62),
+            radius=0.17,
+            rotated=True,
+            app_rect=(0.30, 0.51, 0.37, 0.22),
+            mark_t_s=2.0,
+        ),
         Scenario(
             "source_swapped",
             plate=lambda t: (0.5, 0.52),
@@ -133,6 +162,34 @@ def _plate_box(sc: Scenario, t: float) -> tuple[float, float, float, float]:
 
 
 def _write_clip(sc: Scenario, path: str) -> None:
+    if sc.rotated:
+        _write_rotated_clip(sc, path)
+        return
+    _write_upright_clip(sc, path)
+
+
+def _write_rotated_clip(sc: Scenario, path: str) -> None:
+    """Store the upright frames turned 90 degrees clockwise with a 90 degree counter-clockwise
+    display rotation, the shape of a portrait iPhone take."""
+    import subprocess  # noqa: PLC0415
+
+    upright = f"{path}.upright.mp4"
+    sideways = f"{path}.sideways.mp4"
+    _write_upright_clip(sc, upright)
+    run = {"check": True, "capture_output": True}
+    subprocess.run(  # noqa: S603
+        ["ffmpeg", "-y", "-v", "error", "-i", upright, "-vf", "transpose=1",
+         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "12", sideways],
+        **run,
+    )  # fmt: skip
+    subprocess.run(  # noqa: S603
+        ["ffmpeg", "-y", "-v", "error", "-display_rotation:v:0", "90", "-i", sideways,
+         "-c", "copy", path],
+        **run,
+    )  # fmt: skip
+
+
+def _write_upright_clip(sc: Scenario, path: str) -> None:
     import cv2  # noqa: PLC0415
     import numpy as np  # noqa: PLC0415
 
@@ -386,12 +443,13 @@ def run_scenario(sc: Scenario, work_dir: str) -> dict:
         facts={"keep_text_off": [{"kind": "face"}, {"kind": "object", "label": "plate"}]},
     )
     brief = stored.model_copy(update={"requirements": [*stored.requirements, keep_off]})
-    seed = _plate_box(sc, 0.0)
+    seed = _plate_box(sc, sc.mark_t_s)
     mark = {
         "label": "plate",
         "media_id": MEDIA_ID,
-        "source_t_s": 0.0,
-        "box": [round(max(0.0, v), 4) if i < 2 else round(min(1.0, v), 4)
+        "source_t_s": sc.mark_t_s,
+        "box": app_mark_box(sc.app_rect) if sc.app_rect is not None else
+               [round(max(0.0, v), 4) if i < 2 else round(min(1.0, v), 4)
                 for i, v in enumerate(seed)],
         "generation": sc.mark_generation,
     }  # fmt: skip
@@ -520,6 +578,8 @@ def run_scenario(sc: Scenario, work_dir: str) -> dict:
         "caption_look_y": getattr(look, "position_y_frac", None),
         "caption_receipt_status": caption_receipt.get("status"),
         "rows": rows,
+        **({"mark": mark, "rotated_source": True} if sc.rotated else {}),
+        **({"mark": mark} if sc.app_rect is not None and not sc.rotated else {}),
     }
     if plan.objects:
         track = plan.objects[0]
