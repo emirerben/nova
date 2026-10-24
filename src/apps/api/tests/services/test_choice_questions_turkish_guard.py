@@ -20,12 +20,15 @@ from __future__ import annotations
 import ast
 import re
 from pathlib import Path
+from unittest.mock import patch
 
 import app.services.choice_questions as cq
+from app.config import settings
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.reply_language import reply_language_for
 from app.services.choice_questions import (
     CONFLICT_DURATION_VS_COUNT,
+    CONFLICT_FREEZE_FRAME,
     CONFLICT_LENGTH_VS_NATURAL,
     CONFLICT_ORDER_BASIS,
     CONFLICT_PRIORITY,
@@ -213,6 +216,58 @@ def _cases() -> dict[str, tuple[str, list]]:
             _brief(),
             _coverage(code, **plan),
         )
+    # KRI-900: a freeze on a named moment asks which frame (one moment) or which moment (a
+    # tie), on a phone montage that can hold a frame.
+    freeze_strategy = {"edit_format": "montage", "audio_strategy": "original_audio"}
+    freeze_ask = BriefRequirement(
+        id="r3",
+        kind="timing",
+        scope="global",
+        description="Freeze the frame for one second on Atakan's bite",
+        facts={"freeze_frame": True},
+    )
+
+    def take(media_id: str, *descriptions: str) -> dict:
+        return {
+            "media_id": media_id,
+            "kind": "video",
+            "duration_s": 68.0,
+            "analysis": {
+                "best_moments": [
+                    {"start_s": 10.0 * i + 5, "end_s": 10.0 * i + 8, "description": text}
+                    for i, text in enumerate(descriptions)
+                ]
+            },
+        }
+
+    with (
+        patch.object(settings, "phone_rendering_enabled", True),
+        patch.object(settings, "phone_render_user_ids", []),
+        patch.object(
+            settings,
+            "phone_render_verified_features",
+            [*settings.phone_render_verified_features, "freezeFrame"],
+        ),
+    ):
+        for name, rows in (
+            ("freeze_one_moment", [take("a", "man takes first bite of dessert")]),
+            ("freeze_tied_moments", [take("a", "his bite"), take("b", "another bite")]),
+        ):
+            add(
+                name,
+                CONFLICT_FREEZE_FRAME,
+                freeze_strategy,
+                _brief(freeze_ask),
+                {
+                    "clip_assignments": rows,
+                    "clip_paths": [
+                        f"users/u/creation-threads/t/analysis-proxy-ios-{i}.mp4"
+                        for i in range(len(rows))
+                    ],
+                },
+                # KRI-898: sent from an app build that plays a freeze hold.
+                ChoiceCapability(creator_id="u", client_protocol=16),
+            )
     return cases
 
 

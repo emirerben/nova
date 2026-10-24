@@ -653,6 +653,19 @@ three extra lanes on top of the unchanged speaker clip + captions:
   main video track with per-clip `volume=0` (muted), which sidesteps the five
   "exactly one clip" gates (capabilities `max_clips`, upload/register routes,
   `phone_format:subtitled`, `subtitled_clip_count_unsupported`, the compiler).
+  **KRI-841, an ending with its own sound.** "Add the X video at the very end with its own
+  sound" is the strategy's `ending_clip` (`{media_id, keep_audio}`), repaired at approval. The
+  worker plays it LAST on the main track at volume 1 -- a Visuals video through this lane
+  (`SubtitledEndingClip.volume`; the admin lane above never sets it, so it stays muted), or one of
+  the item's own clips (multi-clip Talking) as the final speaker -- and keeps it out of every
+  mid-talk placement (cards, full-screen sequence, beats, cutaways); it survives 2+ speakers.
+  `variants[i].phone_ending_clip` is the receipt, read back from the COMPILED recipe: `status`
+  `applied|dropped`, `reason` (`not_found`, `is_speaker`, `lane_request_ending_wins`,
+  `visual_videos_not_verified`, `audio_mix_not_verified`, `media_lanes_disabled`, `bind_failed`,
+  `over_length_limit`, ...), `has_audio` (the source has a sound track; None = unknown), `volume`,
+  `start_s`/`end_s`. The brief check reads it: a dropped ending is "Couldn't". An ending that would
+  break the creator's stated length ("under 30 s", a confirmed 25 s; the pin counts the 1.6 s brand
+  ending) is dropped, not the whole render: `check_recipe_duration` is the pin's own rule.
 
 **Lane failures never terminalize the job.** Visuals are bound per lane
 (`bind_phone_visual_assets`, gated by `stillImages` / `visualVideos` in
@@ -2498,7 +2511,7 @@ to `TALKING_MULTI_CLIP_MAX_CLIPS` (10) clips.
   No room: receipt `unplaced` with upload position, shown as chat render notes.
 - **v1 limits**: speech cleanup refused for any multi-clip Talking (KRI-720); with
   2+ speakers the KRI-174 lanes (cards, sounds, beats) and KRI-547 face fill are
-  skipped (`lanes_skipped`); cloud Talking still uses only the first clip, so keep
+  skipped (`lanes_skipped`; a KRI-841 Visuals ending still plays); cloud Talking still uses only the first clip, so keep
   the flag off until the cloud renderer lands (plans/027 phase 3).
 - **Receipt**: `variants[i].phone_talking_multi_clip` (speakers, cutaways, unplaced,
   per-clip roles); trace event `phone/talking_multi_clip_roles`.
@@ -3329,12 +3342,33 @@ The existing Fly Deploy workflow checks all managed process groups, including st
   same receipt; the draft defers exactly these ids (`planned_freeze_ids`). On a rendered edit
   `brief.route_requirements` sends any freeze ask to the planner (re-plan + re-render): the
   editor copilot has no freeze op.
-- **Where.** `unified_montage._ground_freeze` matches the creator's words for the moment to
-  the clips' analysed `best_moments[].description` (time only, never text) and freezes at that
-  moment's midpoint. The nearest cut of that clip is re-anchored to END on the frame (same
-  length of motion, never overlapping another cut of the take). No match or a tie =>
-  `not_grounded`: no hold, receipt "I couldn't tell which moment to freeze". Frame-exact action
-  grounding is KRI-723.
+- **Where (KRI-900: never guessed).** The clip record knows a moment's interval, not the
+  instant of the action, so the frame comes from the creator. Before approval the gate asks
+  `freeze_frame` (`choice_questions._freeze_frame`): one matching moment => three frames inside
+  it ("Early / Middle / Late (57.7s)") + "No freeze"; several tied moments => the moments
+  themselves (middle frame) + "No freeze" (a "you choose" never picks a moment). Moments come
+  from `freeze_ask.match_moments` over the same clip record the worker reads. The answer lives
+  in server-owned `choice_answers` (option key `frame_<ms>_<clip>` / `moment_<ms>_<clip>` /
+  `no_freeze`); its digest is the moment set, so a hold-length correction is not re-asked.
+  `unified_montage._ground_freeze` then re-anchors the nearest cut of that clip to END on the
+  picked frame (`grounding: creator_frame | creator_moment | delegated_frame`). "No freeze"
+  supersedes the ask in the pinned brief. Unanswered after two asks => `needs_frame`: no hold,
+  receipt "I found that moment (57.0–59.8s into the clip) but not the exact frame ... Tell me
+  the second to freeze on". No match or an unanswered tie => `not_grounded`.
+- **Positions (KRI-900).** "freeze the last shot / final frame / at the end", "son sahne"
+  are positions (`FreezeSpec.position`), never moment names: the final cut holds its own last
+  frame (the video's last frame), nothing moves, nothing is asked (`grounding: cut_position`).
+  "First frame / at the start / ilk kare" cannot be held (a hold sits where a cut ends): no
+  hold, `needs_frame` + `position: first`, receipt asks for the second. "The last one" is the
+  latest freeze (a KRI-899 correction), never a cut; the same cut named twice is one freeze.
+  A photo cut is `not_grounded`. Words describing a moment ("his first bite") win over a
+  position. Vision action grounding (the instant of the bite) is still KRI-723.
+- **Typed seconds (KRI-900).** "freeze at 58.2 seconds", "58 seconds into the clip",
+  "klibin 58. saniyesinde" pin the frame (`FreezeSpec.frame_s`, scope `clip`); "2 seconds into
+  the video" / "videonun 2. saniyesinde" is edit time (scope `edit`, the cut playing then).
+  Never a hold length. A reply of only that corrects the latest freeze, keeps its hold, skips
+  the `freeze_frame` question and holds as `creator_frame` (`unified_montage._typed_frame`:
+  the matched moment's clip, else the named cut's clip, else the only video clip).
 - **Timing.** Without a creator length the hold adds its seconds on top of the moments. With
   one (`target_s`), `_reserve_freeze_hold` takes the overshoot out of the ends of the other
   plain video cuts, then (only as far as the 10 % length tolerance needs) out of the motion
