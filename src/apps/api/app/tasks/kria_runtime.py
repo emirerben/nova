@@ -1545,6 +1545,7 @@ def _complete_draft_turn(
                 editor_payload=document.editor_payload,
                 editor_text_diff=document.editor_text_diff,
                 creator_request=_readiness_request,
+                prepared_collection_story=document.prepared_collection_story,
             )
             if not readiness_report["ready"]:
                 reply_text = readiness_reply(brief, readiness_report)
@@ -1702,6 +1703,7 @@ def _complete_draft_turn(
                     else _readiness_media(item),
                     manifest=planned.readiness_manifest,
                     creator_request=_readiness_request,
+                    prepared_collection_story=document.prepared_collection_story,
                 )
             requirement_receipts = [
                 {**receipt, "brief_version": brief.version} for receipt in requirement_receipts

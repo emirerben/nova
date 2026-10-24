@@ -32,22 +32,60 @@ from app.models import (
 from app.tasks.kria_runtime import _claim_approval_dispatch, run_kria_turn
 from tests.integration.test_media_collections import collection_world, selection  # noqa: F401, F811
 
+_ACCEPTED_CAPTION = "A crossing  and an arrival.\n\nKeep this spacing."
 
-@pytest.mark.parametrize("with_content_plan", [False, True], ids=["legacy", "content-plan"])
-@pytest.mark.parametrize("fractional_end", [False, True])
-@pytest.mark.parametrize("change_before_approval", [False, True])
+
+@pytest.mark.parametrize(
+    "with_content_plan,fractional_end,change_before_approval,caption,readiness_enabled",
+    [
+        pytest.param(
+            content,
+            fractional,
+            changed,
+            _ACCEPTED_CAPTION if content else None,
+            True,
+            id=(
+                f"{'content' if content else 'legacy'}-"
+                f"{'fractional' if fractional else 'whole'}-"
+                f"{'stale-collection' if changed else 'approve'}"
+            ),
+        )
+        for content in (False, True)
+        for fractional in (False, True)
+        for changed in (False, True)
+    ]
+    + [pytest.param(True, False, False, "", True, id="explicit-empty-caption")]
+    + [
+        pytest.param(True, False, changed, _ACCEPTED_CAPTION, True, id=f"changed-{changed}")
+        for changed in (
+            "story",
+            "source",
+            "approval",
+            "prepared-window",
+            "prepared-caption",
+            "prepared-missing",
+        )
+    ]
+    + [
+        pytest.param(False, True, False, None, False, id="legacy-readiness-off"),
+        pytest.param(True, False, False, "", False, id="empty-caption-readiness-off"),
+    ],
+)
 async def test_selection_prepares_common_draft_then_explicit_approval_freezes_execution(
     collection_world,  # noqa: F811
     monkeypatch,
     change_before_approval,
     fractional_end,
     with_content_plan,
+    caption,
+    readiness_enabled,
 ):
     client, assets, sources, owner, _app = collection_world
     monkeypatch.setattr(settings, "kria_runtime_v2_enabled", True)
     monkeypatch.setattr(settings, "guided_edit_capability_enabled", True)
-    monkeypatch.setattr(settings, "kria_brief_binding_enabled", False)
-    monkeypatch.setattr(settings, "kria_creative_brief_enabled", False)
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", readiness_enabled)
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", readiness_enabled)
+    monkeypatch.setattr(settings, "kria_approval_readiness_enabled", readiness_enabled)
     monkeypatch.setattr("app.tasks.kria_runtime.run_kria_turn.delay", lambda *args: None)
     monkeypatch.setattr(settings, "phone_rendering_enabled", True)
     monkeypatch.setattr(settings, "kria_runtime_v2_phone_enabled", True)
@@ -223,7 +261,7 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
                             "why_it_works": "The last view answers the opening question.",
                             "opening_text": "Where does this crossing lead?",
                             "closing_text": "Worth the trip?",
-                            "caption": "A crossing and an arrival.",
+                            "caption": caption,
                             "beat_reasons": ["Establish the journey" for _ in moments],
                         }
                     }
@@ -291,6 +329,16 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         draft = db.get(CreatorEditDraft, approval.draft_id)
         assert draft.snapshot_json["prepared_collection_story"]["story_id"] == str(story_id)
         frozen = draft.snapshot_json["prepared_collection_story"]
+        if readiness_enabled:
+            readiness = draft.snapshot_json["brief_coverage"]["approval_readiness"]
+            assert readiness["ready"] is True and readiness["brief_version"] > 0
+            assert readiness["requirements"] and all(
+                row["disposition"] == "executable" for row in readiness["requirements"]
+            )
+            assert readiness["prepared_evidence_digest"] != hashlib.sha256(b"null").hexdigest()
+            assert draft.snapshot_json["brief_binding"]["state"] == "pinned"
+        else:
+            assert draft.snapshot_json.get("brief_binding") is None
         prepared_research = frozen.get("research")
         if with_content_plan:
             assert frozen["research"]["evidence"]["facts"][0]["sources"][0]["url"] == (
@@ -318,11 +366,42 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         approval_id, draft_revision = approval.id, approval.draft_revision
         thread_revision = db.get(CreationThread, thread_id).revision
     if change_before_approval:
-        changed = await client.put(
-            path,
-            json={**selection(assets, sources), "expected_revision": 1, "name": "Corrected outing"},
-        )
-        assert changed.status_code == 200
+        if change_before_approval is True:
+            changed = await client.put(
+                path,
+                json={
+                    **selection(assets, sources),
+                    "expected_revision": 1,
+                    "name": "Corrected outing",
+                },
+            )
+            assert changed.status_code == 200
+        elif change_before_approval != "approval":
+            with sync_session() as db:
+                if change_before_approval == "story":
+                    row = db.get(MediaCollectionStory, story_id)
+                    row.revision += 1
+                elif change_before_approval == "source":
+                    row = db.get(MediaAssetSource, uuid.UUID(sources[0]))
+                    # Source rows are immutable; simulate changed storage identity at
+                    # the storage boundary rather than disabling that DB protection.
+                    metadata_by_path[row.object_path] = SimpleNamespace(
+                        generation="replaced-generation", size=row.byte_count
+                    )
+                else:
+                    import copy
+
+                    row = db.get(CreatorEditDraft, approval.draft_id)
+                    value = copy.deepcopy(row.snapshot_json)
+                    prepared = value["prepared_collection_story"]
+                    if change_before_approval == "prepared-missing":
+                        value.pop("prepared_collection_story")
+                    elif change_before_approval == "prepared-window":
+                        prepared["snapshot"]["fast_cuts"][0]["source_start_s"] += 0.5
+                    else:
+                        prepared["content_plan"]["caption"] = "Unapproved replacement caption"
+                    row.snapshot_json = value
+                db.commit()
         async with AsyncSessionLocal() as db:
             with pytest.raises(RuntimeFailure) as blocked:
                 await decide_approval(
@@ -334,12 +413,23 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
                     body=ApprovalDecisionBody(
                         expected_thread_revision=thread_revision,
                         expected_draft_revision=draft_revision,
-                        expected_approval_fingerprint=fingerprint,
+                        expected_approval_fingerprint="0" * 64
+                        if change_before_approval == "approval"
+                        else fingerprint,
                     ),
                 )
-            assert blocked.value.code == "camera_roll_story_stale"
+            assert blocked.value.code in {
+                "approval_stale"
+                if change_before_approval == "approval"
+                else "camera_roll_story_stale",
+                "approval_requirements_not_ready"
+                if change_before_approval in {"prepared-window", "prepared-missing"}
+                else "camera_roll_story_stale",
+            }
         with sync_session() as db:
-            assert db.get(CreatorAgentApproval, approval_id).status == "cancelled"
+            assert db.get(CreatorAgentApproval, approval_id).status == (
+                "pending" if change_before_approval == "approval" else "cancelled"
+            )
             assert db.get(PlanItem, item_id).current_job_id is None
         return
     async with AsyncSessionLocal() as db:
@@ -448,3 +538,27 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
                     indent=2,
                 )
             )
+
+    if with_content_plan:
+        from app.kria import plan_blocks, plan_payloads
+
+        caption_starts = []
+        monkeypatch.setattr(plan_blocks, "enabled", lambda: True)
+        monkeypatch.setattr(
+            plan_blocks, "_start_post_caption", lambda *args: caption_starts.append(args)
+        )
+        plan_blocks.emit_plan_blocks(
+            dispatched.job_id, [plan_blocks.block("title", "decided", "Selected story title")]
+        )
+        assert caption_starts == [], "An approved caption must not start speculative model copy"
+        with sync_session() as db:
+            job = db.get(Job, uuid.UUID(dispatched.job_id))
+            raw = plan_blocks._variant_post_caption(job)
+        assert raw is not None and raw["text"] == caption
+        assert plan_payloads.finalize_payload("post_caption", raw)["text"] == caption
+        plan_blocks.emit_post_caption(dispatched.job_id)
+        with sync_session() as db:
+            sections = plan_blocks.reduce_job_blocks(
+                plan_blocks.load_plan_events(db, thread_id), str(dispatched.job_id)
+            )
+        assert sections["post_caption"]["payload"]["text"] == caption

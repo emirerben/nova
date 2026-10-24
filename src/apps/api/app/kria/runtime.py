@@ -2619,6 +2619,7 @@ async def decide_approval(
                             editor_payload=copy_document.editor_payload,
                             editor_text_diff=copy_document.editor_text_diff,
                             creator_request=copy_document.brief_binding.creator_request,
+                            prepared_collection_story=copy_document.prepared_collection_story,
                         )
                     ready = (
                         digest(media_identity(snapshot_media(copy_item)))

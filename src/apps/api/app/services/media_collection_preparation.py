@@ -41,6 +41,56 @@ class PreparedCollectionStory(BaseModel):
     research: StoryResearch | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
+def selected_story_requirement(prepared: PreparedCollectionStory):
+    """The creator selected this complete reviewed story, not an empty delegation."""
+    from app.kria.brief import BriefUpdate
+
+    return BriefUpdate(
+        kind="select",
+        scope="global",
+        description=prepared.snapshot.title,
+        facts={
+            "collection_story": {
+                "story_id": str(prepared.story_id),
+                "story_revision": prepared.story_revision,
+                "collection_id": str(prepared.collection_id),
+                "collection_revision": prepared.collection_revision,
+                "prepared_digest": execution_digest(prepared.model_dump(mode="json")),
+            }
+        },
+    )
+
+
+def prepared_story_readiness(raw, *, strategy, media):
+    """Read execution evidence; ownership/current revisions remain separately fenced."""
+    from app.agents._schemas.creator_agent import CreativeStrategy
+    from app.pipeline.guided_story import GuidedStoryError, compile_proposal_execution_plan
+
+    prepared = PreparedCollectionStory.model_validate(raw)
+    if CreativeStrategy.model_validate(strategy) != CreativeStrategy.model_validate(
+        prepared.strategy
+    ):
+        raise ValueError("Selected story strategy changed")
+    try:
+        compiled_digest = execution_digest(compile_proposal_execution_plan(prepared.snapshot))
+    except GuidedStoryError as exc:
+        raise ValueError("Selected story execution is invalid") from exc
+    if compiled_digest != prepared.compiled_digest:
+        raise ValueError("Selected story execution changed")
+    assignments = {
+        str(row.get("media_id")): row
+        for row in media.get("clip_assignments") or []
+        if isinstance(row, dict)
+    }
+    for ref in prepared.snapshot.media:
+        attached = assignments.get(ref.media_id) or {}
+        if attached.get("gcs_path") != ref.gcs_path or str(
+            attached.get("storage_generation")
+        ) != str(ref.generation):
+            raise ValueError("Selected story source binding changed")
+    return selected_story_requirement(prepared), execution_digest(prepared.model_dump(mode="json"))
+
+
 async def prepare_story_snapshot(db, owner, story, item):
     from app.pipeline.guided_story import compile_proposal_execution_plan
     from app.services.proposal_planning import refresh_snapshot_schedule
@@ -263,6 +313,19 @@ async def plan_selected_story(db, *, reference, thread_id, item_id, creator_id):
             + " / ".join(json.dumps(value, ensure_ascii=False) for value in wording)
             + ". No added music or narration."
         )
+    from app.config import settings
+    from app.kria.brief import load_latest_brief
+
+    brief_fields = {}
+    if settings.brief_binding_for(creator_id):
+        previous_brief = await load_latest_brief(db, thread_id)
+        brief_fields = {
+            "brief_updates": (selected_story_requirement(prepared),),
+            "brief_route": "replan",
+            "brief_expected_version": previous_brief.version if previous_brief else 0,
+            "brief_clip_ids": tuple(ref.media_id for ref in prepared.snapshot.media),
+            "brief_manifest": manifest,
+        }
     return PlannedKriaTurn(
         plan=KriaTurnPlan(
             mode="act",
@@ -287,6 +350,8 @@ async def plan_selected_story(db, *, reference, thread_id, item_id, creator_id):
         context_hash=manifest.context_hash,
         media_snapshot=snapshot_media(item),
         prepared_collection_story=prepared.model_dump(mode="json"),
+        readiness_manifest=manifest,
+        **brief_fields,
     )
 
 
@@ -334,6 +399,8 @@ def install_approved_story(db, *, item, owner, raw, strategy, dry_run=False):
         raise ValueError("Approved story strategy changed")
     if prepared.research != story_out(story).research:
         raise ValueError("Approved story research changed")
+    if prepared.content_plan != story_out(story).content_plan:
+        raise ValueError("Approved story content plan changed")
     if (
         execution_digest(compile_proposal_execution_plan(prepared.snapshot))
         != prepared.compiled_digest
@@ -415,5 +482,9 @@ async def validate_prepared_story_for_approval(db, *, owner, item, raw):
     ):
         raise HTTPException(409, "This story was rejected")
     current = await prepare_story_snapshot(db, owner, story, item)
-    if current.compiled_digest != prepared.compiled_digest or current.research != prepared.research:
-        raise HTTPException(409, "Chosen story source or compiler changed")
+    if (
+        current.compiled_digest != prepared.compiled_digest
+        or current.research != prepared.research
+        or current.content_plan != prepared.content_plan
+    ):
+        raise HTTPException(409, "Chosen story source, wording or compiler changed")
