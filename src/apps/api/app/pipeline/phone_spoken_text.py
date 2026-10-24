@@ -16,11 +16,16 @@ same time; when no spot clears both, the face wins (text never covers a face).
 Matching is the reaction-beat trigger match (`phone_reaction_grounding`, KRI-178): folded
 tokens, so "Atakan'ı" says "Atakan". Never guessed: a word the take doesn't say places nothing
 and the receipt says so (``not_heard``). Words carry no speaker, so "the first time SHE says
-Merope" is placed on the first "Merope" anyone says (KRI-791; the receipt says so).
+Merope" is placed on the first "Merope" anyone says (KRI-791; the receipt says so) --
+unless the creator picked which time before approval (KRI-724, ``SpokenTextAsk.pin``): then
+exactly that occurrence (`opening_cut_ask.select_occurrence`), or nothing and the receipt
+says the picked one wasn't found (``pinned_occurrence_missing``) or was cut out of the take
+(``pinned_occurrence_cut``). Never the first match instead.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
@@ -70,6 +75,26 @@ def _word_dicts(words: Sequence[Any]) -> list[dict]:
     return rows
 
 
+def spoken_word_occurrences(
+    words: Sequence[Any], triggers: Sequence[str]
+) -> list[tuple[str, float, float]]:
+    """Every time the take says any of ``triggers``, in time order: (trigger, start_s, end_s).
+
+    The same matcher `find_spoken_word` uses, so the question asked before approval
+    (`choice_questions._speech_occurrence`) counts what the render hears."""
+    from app.services.phone_reaction_grounding import (  # noqa: PLC0415
+        _match_trigger,
+        _token_stream,
+    )
+
+    stream = _token_stream(_word_dicts(words))
+    heard: dict[float, tuple[str, float, float]] = {}
+    for trigger in triggers:
+        for start, end in _match_trigger(stream, trigger, None, "every").windows:
+            heard.setdefault(round(float(start), 3), (trigger, float(start), float(end)))
+    return [heard[key] for key in sorted(heard)]
+
+
 def find_spoken_word(
     words: Sequence[Any], triggers: Sequence[str]
 ) -> tuple[str, float, float] | None:
@@ -88,6 +113,80 @@ def find_spoken_word(
         if windows and (heard is None or windows[0][0] < heard[1]):
             heard = (trigger, float(windows[0][0]), float(windows[0][1]))
     return heard
+
+
+def find_pinned_word(
+    words: Sequence[Any],
+    ask: SpokenTextAsk,
+    *,
+    to_timeline: Callable[[float], float | None] | None = None,
+) -> tuple[tuple[str, float, float] | None, str | None]:
+    """KRI-724: the occurrence of ``ask``'s word the creator picked, on ``words``' timeline.
+
+    ``to_timeline`` maps the pin's source time onto that timeline (None inside a cut; the
+    word playing where that cut closes can still be the pick, `_pinned_across_cut`). Returns
+    ``(hit, None)``, or ``(None, reason)``: ``pinned_occurrence_cut`` when the picked moment
+    was cut out, ``pinned_occurrence_missing`` when the take's words don't hold it."""
+    from app.kria.opening_cut_ask import select_occurrence  # noqa: PLC0415
+
+    pin = ask.pin
+    assert pin is not None  # noqa: S101 - only called for a pinned ask
+    hits = spoken_word_occurrences(words, ask.triggers)
+    approx = pin.approx_s
+    if approx is not None and to_timeline is not None:
+        mapped = to_timeline(approx)
+        if mapped is None:
+            return _pinned_across_cut(hits, pin, _cut_point(approx, to_timeline))
+        approx = mapped
+    # The ordinal decides first; the picked time (when it survived the cut) is the fallback.
+    picked = select_occurrence(
+        [(start, end) for _t, start, end in hits], dataclasses.replace(pin, approx_s=approx)
+    )
+    if picked is None:
+        return None, "pinned_occurrence_missing"
+    return next(hit for hit in hits if (hit[1], hit[2]) == picked), None
+
+
+# How far past a cut-out picked time `_cut_point` looks for where the take resumes.
+_CUT_PROBE_STEP_S = 0.02
+_CUT_PROBE_MAX_S = 120.0
+
+
+def _cut_point(source_s: float, to_timeline: Callable[[float], float | None]) -> float | None:
+    """Where the take resumes on the timeline after the cut holding ``source_s``."""
+    for step in range(1, int(_CUT_PROBE_MAX_S / _CUT_PROBE_STEP_S) + 1):
+        mapped = to_timeline(source_s + step * _CUT_PROBE_STEP_S)
+        if mapped is not None:
+            return mapped
+    return None
+
+
+def _pinned_across_cut(
+    hits: Sequence[tuple[str, float, float]], pin: Any, cut_point: float | None
+) -> tuple[tuple[str, float, float] | None, str | None]:
+    """The picked word when its (sentence-estimated) time fell inside a cut.
+
+    The estimate spreads a sentence's words by character share, so it can land in a pause
+    speech cleanup removed while the word itself plays right where the cut closes. The word
+    nearest that point is the pick only when it sits within ``_MAX_PIN_DRIFT_S`` of it and,
+    when the render hears the count the question offered, the ordinal names that same word.
+    Otherwise the picked moment really was cut: never another occurrence in its place."""
+    from app.kria.opening_cut_ask import _MAX_PIN_DRIFT_S  # noqa: PLC0415
+
+    ordered = sorted(hits, key=lambda hit: hit[1])
+    if cut_point is None or not ordered or pin.ordinal is None:
+        return None, "pinned_occurrence_cut"
+    index = min(range(len(ordered)), key=lambda i: abs(ordered[i][1] - cut_point))
+    gaps = [
+        abs(ordered[j][1] - ordered[index][1]) / 2.0
+        for j in (index - 1, index + 1)
+        if 0 <= j < len(ordered)
+    ]
+    if abs(ordered[index][1] - cut_point) > min([_MAX_PIN_DRIFT_S, *gaps]):
+        return None, "pinned_occurrence_cut"
+    if len(ordered) == pin.of and index != pin.ordinal - 1:
+        return None, "pinned_occurrence_cut"
+    return ordered[index], None
 
 
 # English contractions with exactly one long form, so a cue written "you're" finds a
@@ -262,8 +361,12 @@ def spoken_text_rows(
     place: Placer,
     shown_rows: Sequence[dict] = (),
     caption_look: Any = None,
+    to_timeline: Callable[[float], float | None] | None = None,
 ) -> tuple[list[dict], dict[str, Any]]:
     """One placed row per ask the take says, plus the receipt of every ask.
+
+    ``to_timeline`` maps a source time onto ``words``' timeline (None inside a cut), for the
+    occurrence a creator picked (KRI-724, `find_pinned_word`).
 
     ``words`` and ``cues`` are on the timeline the recipe plays (after any cut).
     ``place(row, avoid)`` moves a row off the speaker's face, keeping it clear of
@@ -281,8 +384,21 @@ def spoken_text_rows(
             # KRI-791: the ask named who says it; the take's words can't tell, so the first
             # time anyone says the word is the one shown (and the receipt says so).
             entry["speaker"] = ask.speaker
+        if ask.pin is not None:
+            # KRI-724: the creator picked which time; only that one is ever shown.
+            entry["pin"] = {
+                "ordinal": ask.pin.ordinal,
+                "of": ask.pin.of,
+                "approx_s": ask.pin.approx_s,
+            }
         try:
-            heard = find_spoken_word(words, ask.triggers)
+            if ask.pin is not None:
+                heard, missed = find_pinned_word(words, ask, to_timeline=to_timeline)
+                if heard is None:
+                    receipt_rows.append({**entry, "status": missed})
+                    continue
+            else:
+                heard = find_spoken_word(words, ask.triggers)
             if heard is None:
                 receipt_rows.append({**entry, "status": "not_heard"})
                 continue
@@ -316,6 +432,7 @@ def spoken_text_rows(
                 **entry,
                 "status": "placed",
                 "trigger": trigger,
+                **({"pinned": True} if ask.pin is not None else {}),
                 "element_id": placed["id"],
                 "start_s": placed["start_s"],
                 "end_s": placed["end_s"],
@@ -341,9 +458,11 @@ __all__ = [
     "SPOKEN_TEXT_FIELD",
     "SPOKEN_TEXT_SOURCE",
     "caption_boxes",
+    "find_pinned_word",
     "find_spoken_word",
     "find_spoken_word_matches",
     "spoken_cue_length",
     "spoken_text_element",
     "spoken_text_rows",
+    "spoken_word_occurrences",
 ]

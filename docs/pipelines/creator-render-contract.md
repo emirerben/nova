@@ -722,6 +722,53 @@ Not in this slice: several takes interleaved, the user-song / lip-sync variants,
 music frozen once, and the iOS card itself. Proof: `tests/kria/test_kri723_moment_authority_m2.py`
 (`KRI723_ARTIFACT=<dir>` writes `report.json`) and `tests/kria/test_kri723_moment_order_turns_postgres.py`.
 
+## Which spoken occurrence (KRI-724, phone Talking slice)
+
+"Show MEROPE the first time **she** says Merope" on a one-take Talking video: the take's words
+carry no speaker and there is no diarization (no paid model), so the first "Merope" anyone says
+(Yasin's, off camera) is not evidence of hers. The creator is asked before approval.
+
+- **Ask.** `choice_questions._speech_occurrence` (kind `speech_occurrence`, priority after
+  `title_text`), only on a one-take `subtitled` / `talking_head` draft that is not a voiceover,
+  with `SPEECH_OCCURRENCE_QUESTION_ENABLED` on. It asks about (a) a text-at-a-spoken-word ask
+  that names someone else as the speaker, even when the word is said once, and (b) a named cut
+  line said 2+ times with no ordinal (today `said_more_than_once`, nothing cut). Occurrences
+  come from the take's timed sentences through the worker's own matchers
+  (`phone_spoken_text.spoken_word_occurrences`, `phone_opening_cut.line_occurrences`), inside
+  the start/end cut the draft will make (`estimate_take_window`). Options: up to five times as
+  `0:40 “…Merope, it's a Colombian coffee…”`, "Every time" for a cut, and an explicit waiver
+  ("Leave the text off" / "Don't cut it"). Nothing is recommended and "you choose" is not a
+  delegation (only the creator knows whose voice). It is the existing `choice_question` card:
+  no client or protocol change. The digest covers the media id and the occurrence times, so new
+  media re-asks; two unanswered asks pass the plan through with KRI-791's honest `partial`.
+- **Answer.** Option key `occ_<n>_of_<m>_t<centiseconds>` / `occ_all_of_<m>` / `waive`;
+  `ChoiceAnswer.value` (same field as KRI-844's PR #1787) holds the word / line. Answers are
+  server-owned (`resolve_choices` drops model-written ones) and frozen in
+  `BriefBinding.choice_answers` at approval. The pin is read **only** from those answers
+  (`opening_cut_ask.answered_occurrence_pins`), never from a brief fact. A waiver is an agreed
+  simpler obligation: `answered_brief` supersedes the text ask, or drops the line from
+  `cut_lines`.
+- **Execution.** `opening_cut_ask.select_occurrence`: the ordinal when the render hears as many
+  occurrences as were offered; otherwise the nearest one within `min(1 s, half the gap to its
+  neighbours)` of the picked time. Text: on the cut timeline (the pin's source time remapped
+  through the plan's removals); receipts `pinned_occurrence_missing` / `pinned_occurrence_cut`,
+  never a fall-back to the first match. Cuts: that occurrence (or every one); a missing pick
+  is `pinned_occurrence_missing`.
+- **Receipts.** A placed pinned text is `met` (the creator named whose word it is); the draft
+  says "I'll show it on the “Merope” you picked, at 0:40 in your take". A miss is `partial` with
+  the reason.
+- **Rollout.** Flag default `false`. Order: API + worker deploy first (workers ignore pins that
+  never exist), then `fly secrets set SPEECH_OCCURRENCE_QUESTION_ENABLED=true` (api + worker) +
+  restart. Off = the question is never asked; renders read the first match exactly as before.
+
+Not in this slice: the recorded-voiceover / narrated slice (KRI-889), a quoted start/end line
+that is not found (KRI-844), real speaker diarization, and physical-device export proof
+(KRI-734). Proof: `tests/kria/test_kri724_speech_occurrence_replay.py` (`KRI724_REPORT=<file>`
+writes the JSON), `tests/kria/test_kri724_speech_occurrence_turns_postgres.py`, and
+`python -m app.cli.verify_take_window --take tests/fixtures/kri790_merope_t1_take.json
+--answer occ_2 --spoken-text "MEROPE::Show MEROPE in big letters the first time she says
+Merope"` (`.take-window-verify/report.json`; `--video` adds the frame at the placed time).
+
 ## Route resolution (KRI-470 PR-D)
 
 `services/render_route.py:resolve_route` is the one function that maps an approved plan

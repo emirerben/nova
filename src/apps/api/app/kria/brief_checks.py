@@ -152,6 +152,8 @@ class SpokenTextFact:
     # The word it waited for: the one heard, else the first one asked for.
     trigger: str = ""
     face_collision: bool = False
+    # KRI-724: shown on (or looked for at) the occurrence the creator picked before approval.
+    pinned: bool = False
 
 
 @dataclass(frozen=True)
@@ -513,6 +515,9 @@ class PlanFacts:
     # (`variant["spoken_text_placement"]`). None = no such receipt (no such ask, a draft,
     # or an older render): nothing is claimed.
     spoken_texts: tuple[SpokenTextFact, ...] | None = None
+    # KRI-724: the creator's server-owned ``speech_occurrence`` answers on the draft's strategy
+    # (which time a spoken word was meant), so the draft says the picked time.
+    speech_occurrence_answers: tuple[Mapping[str, Any], ...] = ()
     # KRI-547: pop-ins the render dropped for lack of room, as (trigger, "no_room") when
     # no spot cleared the face and captions, or (trigger, "overlap") when another pop-in
     # held the spot at that moment (`phone_beat_receipt.unplaced[]`).
@@ -813,6 +818,11 @@ def plan_facts_from_strategy(
         speech_cleanup_offered=speech_cleanup_offered,
         caption_style=str(caption_style) if caption_style else None,
         audio_strategy=str(audio_strategy) if audio_strategy else None,
+        speech_occurrence_answers=tuple(
+            dict(a)
+            for a in strategy.get("choice_answers") or []
+            if isinstance(a, Mapping) and a.get("kind") == "speech_occurrence"
+        ),
         render_program=(
             str(strategy.get("render_program")) if strategy.get("render_program") else None
         ),
@@ -3881,6 +3891,9 @@ _TALKING_SPOKEN_TEXT_ANY_VOICE = (
     "I'll show it the first time that word is said in your take; I can't tell who's "
     "speaking, so it may appear when someone else says it"
 )
+# KRI-724: the creator picked which time the word is said; a static prefix (word and time
+# follow it, `_pinned_spoken_text_plan`).
+_TALKING_SPOKEN_TEXT_PINNED = "I'll show it on the "
 _SPOKEN_TEXT_FIRST_HEARD = (
     "I can't tell who's speaking, so it shows the first time anyone says that word"
 )
@@ -3938,6 +3951,7 @@ _TALKING_HONEST_EN: tuple[str, ...] = (
     _TALKING_SPOKEN_TEXT_PLAN,
     _TALKING_CAPTIONS_EVERY_VOICE,
     _TALKING_SPOKEN_TEXT_ANY_VOICE,
+    _TALKING_SPOKEN_TEXT_PINNED,
     _SPOKEN_TEXT_FIRST_HEARD,
     _TALKING_SPOKEN_TEXT_NO_WORD,
 )
@@ -4111,6 +4125,7 @@ _REASON_TR: dict[str, str] = {
         "Yazıyı çekiminde o kelime ilk söylendiğinde gösteririm; kimin konuştuğunu ayırt "
         "edemiyorum, o yüzden başka biri söylediğinde çıkabilir"
     ),
+    _TALKING_SPOKEN_TEXT_PINNED: "Yazıyı seçtiğin ",
     _SPOKEN_TEXT_FIRST_HEARD: (
         "Kimin konuştuğunu ayırt edemiyorum, o yüzden yazı o kelime ilk söylendiğinde çıkıyor"
     ),
@@ -4793,6 +4808,11 @@ _NAMED_CUT_MISSED = {
     "occurrence_not_found": (
         "you don't say it that many times",
         "bunu o kadar çok kez söylemiyorsun",
+    ),
+    # KRI-724: the occurrence the creator picked is never swapped for another one.
+    "pinned_occurrence_missing": (
+        "I couldn't find the one you picked in your take",
+        "seçtiğin anı çekiminde bulamadım",
     ),
     "too_short": (
         "cutting it would leave too little video",
@@ -5925,6 +5945,7 @@ def _spoken_text_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
                 text=str(row.get("text") or ""),
                 trigger=str(row.get("trigger") or first or ""),
                 face_collision=row.get("face_collision") is True,
+                pinned=isinstance(row.get("pin"), Mapping),
             )
         )
     return {"spoken_texts": tuple(facts)}
@@ -5960,6 +5981,17 @@ def _spoken_text_miss(req: BriefRequirement, fact: SpokenTextFact) -> Requiremen
             en=f"You say {word} right at the end, so there was no time to show {text}",
             tr=f"{word} en sonda söylüyorsun, o yüzden {text} yazısına yer kalmadı",
         )
+    elif fact.status == "pinned_occurrence_missing":
+        # KRI-724: the creator's pick is never swapped for another time the word is said.
+        reason = say(
+            en=f"I couldn't find the {word} you picked in your take, so {text} isn't shown",
+            tr=f"Seçtiğin {word} anını çekiminde bulamadım, o yüzden {text} yazısı çıkmadı",
+        )
+    elif fact.status == "pinned_occurrence_cut":
+        reason = say(
+            en=f"The {word} you picked was cut out of your video, so {text} isn't shown",
+            tr=f"Seçtiğin {word} anı videodan kesildi, o yüzden {text} yazısı çıkmadı",
+        )
     else:
         reason = say(
             en=f"I couldn't place {text} on this video",
@@ -5987,13 +6019,35 @@ def _with_spoken_text_face(
     )
 
 
+def _pinned_spoken_text_plan(ask: Any, facts: PlanFacts) -> str | None:
+    """KRI-724: the draft's promise for a text the creator pinned to one spoken occurrence."""
+    from app.kria.spoken_text_ask import with_answered_pins  # noqa: PLC0415
+
+    if not facts.speech_occurrence_answers:
+        return None
+    [pinned] = with_answered_pins([ask], facts.speech_occurrence_answers) or [None]
+    pin = getattr(pinned, "pin", None)
+    if pin is None or pin.approx_s is None:
+        return None
+    whole = int(pin.approx_s + 0.5)
+    clock = f"{whole // 60}:{whole % 60:02d}"
+    word = f"“{ask.triggers[0]}”"
+    return say(
+        en=f"{_TALKING_SPOKEN_TEXT_PINNED}{word} you picked, at {clock} in your take; if I "
+        "can't find that one, it won't appear",
+        tr=f"{_REASON_TR[_TALKING_SPOKEN_TEXT_PINNED]}{word} anında, çekiminin {clock} "
+        "noktasında gösteririm; o anı bulamazsam yazı çıkmaz",
+    )
+
+
 def _with_spoken_text_speaker(
     req: BriefRequirement, facts: PlanFacts, base: RequirementReceipt
 ) -> RequirementReceipt:
     """KRI-791: "the first time SHE says it" was shown the first time anyone said the word,
     so the finished video says so (the take's words don't say who speaks)."""
     fact = _spoken_text_fact(facts, req)
-    if fact is None or fact.status != "placed":
+    if fact is None or fact.status != "placed" or fact.pinned:
+        # KRI-724: placed on the occurrence the creator picked: that IS who says it.
         return base
     from app.kria.spoken_text_ask import requirement_spoken_text  # noqa: PLC0415
 
@@ -7551,6 +7605,9 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
                 # says what it will do (like the start cut), never "a simpler version?".
                 # KRI-791: and that it can't tell one voice from another.
                 plan = _TALKING_SPOKEN_TEXT_ANY_VOICE if ask.speaker else _TALKING_SPOKEN_TEXT_PLAN
+                pinned = _pinned_spoken_text_plan(ask, facts)
+                if pinned is not None:
+                    return _receipt(req, "partial", pinned)
                 return _receipt(req, "partial", plan)
         # KRI-705: a Talking edit has the same gap (a pinned line has no trigger field), and the
         # reply says so plainly instead of holding the draft behind "a simpler version?".
