@@ -1092,10 +1092,13 @@
     {
       "id": "kri-722-prepared-execution",
       "needs_native": false,
-      "api_tests": "tests/kria/test_prepared_execution_postgres.py tests/kria/test_render_retry_postgres.py",
+      "api_tests": "tests/kria/test_prepared_execution_postgres.py tests/kria/test_render_retry_postgres.py tests/kria/test_kri725_cloud_prepared_postgres.py tests/kria/test_prepared_coverage_guard.py",
       "paths": [
         "src/apps/api/app/kria/prepared_execution.py",
-        "src/apps/api/tests/kria/test_prepared_execution_postgres.py"
+        "src/apps/api/app/kria/prepared_coverage.py",
+        "src/apps/api/tests/kria/test_prepared_execution_postgres.py",
+        "src/apps/api/tests/kria/test_kri725_cloud_prepared_postgres.py",
+        "src/apps/api/tests/kria/test_prepared_coverage_guard.py"
       ]
     },
     {
