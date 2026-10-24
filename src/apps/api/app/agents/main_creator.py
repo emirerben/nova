@@ -121,7 +121,7 @@ log = structlog.get_logger()
 # v78 (KRI-821): a named cut of a repeated line records which take (`cut_line_occurrences`).
 # v79 combines main's v77 (KRI-815 + KRI-816) with KRI-821's v78.
 # v80 combines main's v79 (KRI-815/816/821) with KRI-827's keep_text_off (branch v78).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v89"
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v90"
 # KRI-724: the Nth time a quoted phrase is said carries `speech_remove` {quote, occurrence}
 # beside its cut_lines, and an engine/motor noise ask carries `noise_reduction: "engine"`, so
 # the phone Talking worker cuts / filters from facts, never from the words (KRI-667) (v76,
@@ -131,6 +131,8 @@ MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v89"
 # v76 (KRI-841): `ending_clip` (a video added after the talk, with its own sound, Talking only) and
 # the brief fact that records it next to `last_clip` (brief_extractor v21 shares the section).
 # v76 (KRI-842) adds the `clip_sound` fact: one clip's own sound under, or after, a voiceover.
+# KRI-847: a ceiling ("at most 15 seconds") carries `duration_bound: "at_most"` beside
+# `duration_s`, so a shorter draft meets it instead of missing 15 s +/- 10 % (v76).
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -596,12 +598,17 @@ Merely narrating that footage was captured "from A to B", at sunset and then at 
 two activities is not such an ask. Compatible requirements with the same kind and scope coexist.
 ALWAYS add a `timing` requirement ({"kind": "timing", "scope": "global", "facts": {"duration_s":
 N}}) in the SAME turn's `brief_updates` whenever the creator states a length for the video: any
-number of seconds or minutes ("a 60 second montage", "under 15 seconds", "about half a minute" =>
-30), converted to seconds. Do it even when you also set `target_duration_s`, even for long
+number of seconds or minutes ("a 60 second montage", "about half a minute" => 30), converted to
+seconds. Do it even when you also set `target_duration_s`, even for long
 lengths, and even when the message carries other requirements ("all my clips", "in chronological
 order"): never drop a stated number because other requirements are present. When the creator
 states no length, emit NO timing requirement; a length you chose yourself in `target_duration_s`
-is never the creator's.
+is never the creator's. A ceiling is not an exact length: "under 15 seconds", "less than 15
+seconds", "shorter than 15 seconds", "15 saniyenin altında", "at most 15 s", "max 15 s", "no more
+than 15 seconds", "up to 15 seconds", "15 seconds or less", "en fazla 15 saniye" and "15 saniyeyi
+geçmesin" all become {"duration_s": 15, "duration_bound": "at_most"}; every other length has no
+`duration_bound` (omitting it means exact), and a change to a timing requirement must restate
+`duration_bound` if it still applies.
 The exception is exact text the creator dictates for particular shots ("1. The
 bookshop photo: "..." 2. The bowling video: "..."): add one {"operation":"add", "kind": "text",
 "scope":

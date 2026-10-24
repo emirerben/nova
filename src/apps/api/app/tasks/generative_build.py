@@ -22887,14 +22887,33 @@ def _fit_section_to_footage(track_config: dict, available_footage_s: float) -> d
     return cfg
 
 
+def _music_window_bound(
+    spec: Mapping[str, Any], approved_length_plan: Mapping[str, Any] | None
+) -> Literal["exact", "at_most"]:
+    """How `_effective_music_window` judges its requested length (KRI-847).
+
+    A ceiling ("under 20 seconds") only when the approved plan says the creator's length is
+    one. An editor-persisted window duration is a concrete length, never a ceiling.
+    """
+    if spec.get("music_window_video_duration_s") is not None:
+        return "exact"
+    ceiling = (approved_length_plan or {}).get("target_duration_bound") == "at_most"
+    return "at_most" if ceiling else "exact"
+
+
 def _effective_music_window(
     track: MusicTrack,
     *,
     requested_start_s: float | None,
     requested_duration_s: float | None,
     fallback_footage_s: float,
+    requested_duration_bound: Literal["exact", "at_most"] = "exact",
 ) -> dict[str, Any]:
-    """Resolve one song window for recipe, lyrics, preview persistence, and mix."""
+    """Resolve one song window for recipe, lyrics, preview persistence, and mix.
+
+    ``requested_duration_bound="at_most"`` (KRI-847): the length is a ceiling, so a song or an
+    approved section shorter than it plays whole instead of failing the render.
+    """
     from app.services.music_sections import track_config_with_rank_one  # noqa: PLC0415
 
     frozen_cfg = dict(track.track_config or {})
@@ -22909,12 +22928,14 @@ def _effective_music_window(
             end_s = approved_end_s
         else:
             duration_s = float(requested_duration_s)
-            from app.services.length_policy import creator_duration_matches  # noqa: PLC0415
+            from app.services.length_policy import creator_duration_satisfied  # noqa: PLC0415
 
             if not math.isfinite(duration_s) or duration_s <= 0:
                 raise ValueError("Approved song section cannot satisfy the requested length")
             if duration_s > approved_duration_s:
-                if not creator_duration_matches(approved_duration_s, duration_s):
+                if not creator_duration_satisfied(
+                    approved_duration_s, duration_s, requested_duration_bound
+                ):
                     raise ValueError("Approved song section cannot satisfy the requested length")
                 duration_s = approved_duration_s
             end_s = start_s + duration_s
@@ -22950,6 +22971,8 @@ def _effective_music_window(
 
     track_duration_s = float(track.duration_s or 0.0)
     duration_s = float(requested_duration_s)
+    if requested_duration_bound == "at_most" and 0 < track_duration_s < duration_s:
+        duration_s = track_duration_s  # KRI-847: a song shorter than the ceiling plays whole
     if track_duration_s <= 0 or duration_s <= 0 or track_duration_s + 0.02 < duration_s:
         raise ValueError("Selected song window is no longer available")
     max_start = max(0.0, track_duration_s - duration_s)
@@ -24283,6 +24306,7 @@ def _decide_generative_variant(
                     else creator_target_duration_s
                 ),
                 fallback_footage_s=effective_available_footage_s,
+                requested_duration_bound=_music_window_bound(spec, approved_length_plan),
             )
             track_config = effective_music_window["track_config"]
             if creator_pacing is not None:
