@@ -30,6 +30,7 @@ from app.agents._schemas.edit_format import EditFormat, RenderProgram
 from app.agents._schemas.reaction_beats import (
     MAX_REACTION_BEATS,
     ClosingMedia,
+    EndingClip,
     ReactionBeat,
 )
 from app.agents._schemas.sfx_intent import (
@@ -314,7 +315,8 @@ class ChoiceAnswer(_CreatorModel):
     depended on; ``requirement_ids`` link it to the brief requirements it resolves.
     ``source`` is ``creator`` for a tapped/typed answer and ``creator_delegated`` when the
     creator explicitly left the choice to us ("you choose"; the draft then says so).
-    An unanswered question never produces an answer.
+    An unanswered question never produces an answer. ``value`` is the picked text, for a
+    question whose options are lines of the creator's own footage (KRI-844).
     """
 
     conflict: str = Field(min_length=1, max_length=80)
@@ -323,6 +325,16 @@ class ChoiceAnswer(_CreatorModel):
     input_digest: str = Field(min_length=1, max_length=64)
     requirement_ids: list[str] = Field(default_factory=list, max_length=16)
     source: Literal["creator", "creator_delegated"] = "creator"
+    # KRI-844: the text the answer picked, when the option is a piece of the creator's own
+    # footage (the spoken line of a take they chose to open / end on). Omitted when unset, so
+    # every stored answer stays byte-identical.
+    value: str | None = Field(default=None, max_length=300, exclude_if=lambda value: value is None)
+    # KRI-849: what an unclear-word answer is for (the span's start_s / end_s, the action and
+    # the creator's chosen words). Server-written from the tapped option; omitted when empty so
+    # every other stored answer keeps its shape.
+    detail: dict[str, str | int | float] | None = Field(
+        default=None, max_length=8, exclude_if=lambda value: not value
+    )
 
 
 class CreativeStrategy(_CreatorModel):
@@ -483,6 +495,11 @@ class CreativeStrategy(_CreatorModel):
         ),
     )
     closing_media: SkipJsonSchema[ClosingMedia | None] = Field(default=None)
+    # KRI-841: a video appended AFTER the talk with its own sound (phone Talking only). Same
+    # pattern as the two fields above: out of every derived JSON schema (the `apply_strategy`
+    # tool schema stays byte-identical), omitted from serialization when None, taught in the
+    # creator prompt only where the manifest can render it.
+    ending_clip: SkipJsonSchema[EndingClip | None] = Field(default=None)
     # KRI-374 (creator-uploaded song). Same pattern as reaction_beats above:
     # SkipJsonSchema keeps both OUT of every derived JSON schema, default None
     # and the omit-when-None serializer below keep stored strategies and every
@@ -583,6 +600,7 @@ class CreativeStrategy(_CreatorModel):
             "omitted_copy_targets",
             "reaction_beats",
             "closing_media",
+            "ending_clip",
             "song_sync",
             "resolved_song_takes",
             "song_captions",
@@ -1582,6 +1600,7 @@ __all__ = [
     "DraftVoiceoverScript",
     "ChoiceAnswer",
     "ClosingMedia",
+    "EndingClip",
     "MAX_REACTION_BEATS",
     "ReactionBeat",
     "CreatorEditPlan",

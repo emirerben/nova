@@ -36,6 +36,7 @@ from app.kria.brief import (
     render_brief_request,
 )
 from app.kria.brief_binding import BriefBindingRequestTooLongError
+from app.kria.brief_binding import snapshot_media as _draft_media
 from app.kria.brief_checks import (
     NARRATED_ALIGNMENT_FIELD,
     _is_spoken_text_cue,
@@ -44,6 +45,7 @@ from app.kria.brief_checks import (
     build_receipts,
     clip_speed_notice,
     defers_caption_words_to_phone_render,
+    defers_to_narrated_render,
     describe_text_look,
     is_judged,
     judged_at_render,
@@ -1374,9 +1376,28 @@ def _complete_draft_turn(
                         facts,
                         phone_talking=phone_talking,
                         caption_words_at_render=talking_writer,
+                        # KRI-842: one clip's own sound is judged on the draft that the phone
+                        # Voiceover compiler will render, against the footage it will play.
+                        phone_narrated=defers_to_narrated_render(
+                            creator_id=thread.creator_id,
+                            edit_format=document.strategy.get("edit_format") or item.edit_format,
+                            audio_strategy=document.strategy.get("audio_strategy"),
+                            clip_paths=item.clip_gcs_paths or (),
+                        ),
+                        media_snapshot=planned.media_snapshot
+                        if planned.media_snapshot is not None
+                        else _draft_media(item),
                         # KRI-790: quoted boundaries and length use the same kept window.
                         take_window=(
                             _draft_take_window(
+                                brief, document.strategy, planned.media_snapshot, item
+                            )
+                            if phone_talking
+                            else None
+                        ),
+                        # KRI-849: what the draft does about "ask me instead of guessing".
+                        unclear_words=(
+                            _draft_unclear_words(
                                 brief, document.strategy, planned.media_snapshot, item
                             )
                             if phone_talking
@@ -2967,6 +2988,27 @@ def _draft_take_window(
         )
     except Exception as exc:  # noqa: BLE001 - an estimate never fails a turn
         log.warning("kria_draft_take_window_failed", error=str(exc)[:200])
+        return None
+
+
+def _draft_unclear_words(
+    brief: Any, strategy: Mapping[str, Any] | None, media_snapshot: Any, item: Any
+) -> dict[str, Any] | None:
+    """KRI-849: what a phone Talking draft does about the word the creator asked to be asked
+    about (None = no such ask, or a comparison that failed: the receipts then say nothing)."""
+    from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+    from app.kria.brief_checks import brief_caption_spellings  # noqa: PLC0415
+    from app.kria.unclear_word_ask import draft_state  # noqa: PLC0415
+
+    try:
+        return draft_state(
+            brief.live(),
+            media_snapshot if media_snapshot is not None else snapshot_media(item),
+            strategy=strategy,
+            spellings=brief_caption_spellings(brief),
+        )
+    except Exception as exc:  # noqa: BLE001 - a receipt line never fails a turn
+        log.warning("kria_draft_unclear_words_failed", error=str(exc)[:200])
         return None
 
 

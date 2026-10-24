@@ -107,11 +107,19 @@ enum NativeEditorRenderError: Error, Equatable {
         let requestedOriginalGain = document.mix["original_level"]?.numberValue ?? 1
         let originalGain = requestedOriginalGain.isFinite ? min(max(0, requestedOriginalGain), 1) : 1
         let hasExplicitOriginalGain = document.mix["original_level"] != nil
+        let activeSlots = document.clips.filter { !$0.removed }
+        // Voiceover renders normally silence every camera clip. A new server
+        // projection may opt one or more slots back in with this field: it is
+        // the clip-level half of the mix, while `originalGain` below remains
+        // the global creator-controlled bed gain. Its *presence* is the
+        // feature gate so older narrated documents stay byte-for-byte silent.
+        let hasExplicitNarratedSourceAudio = activeSlots.contains {
+            $0.raw["source_audio_volume"]?.numberValue != nil
+        }
         // The creator's song replaces the camera audio unless they explicitly turned the original
         // audio up (Sounds > Original audio): then the camera plays WITH the song at that level
         // (the song keeps its own level). An unset level, or an explicit 0, keeps the camera silent.
         let creatorHearsCameraWithSong = hasExplicitOriginalGain && originalGain > 0
-        let activeSlots = document.clips.filter { !$0.removed }
         func slot(for clip: EditorClip, index: Int) -> EditorTimelineSlot? {
             if let id = clip.slotID, let value = activeSlots.first(where: { $0.id == id }) { return value }
             return activeSlots.indices.contains(index) ? activeSlots[index] : nil
@@ -229,7 +237,18 @@ enum NativeEditorRenderError: Error, Equatable {
             let holdDuration = max(0, outputDuration - movingDuration)
             let hasExplicitClipAudio = authoredSlot?.raw["muted"] != nil
             let sourceGain: Double = hasExplicitOriginalGain || hasExplicitClipAudio || sourceAudioPreserved ? 1 : 0
-            let cameraLevel: Double = clip.muted || authoredSlot?.raw["muted"] == .bool(true) || audioSources["narration"] != nil ? 0 : sourceGain
+            let narratedSourceLevel: Double
+            if audioSources["narration"] != nil, hasExplicitNarratedSourceAudio {
+                let requested = authoredSlot?.raw["source_audio_volume"]?.numberValue ?? 0
+                // Selected sources carry unit gains; clip-scoped sound may
+                // carry a fractional gain. Clamp rather than fail a preview;
+                // AudioMixRecipe.originalVolume applies the global
+                // original-audio gain exactly once after this value.
+                narratedSourceLevel = requested.isFinite ? min(max(0, requested), 1) : 0
+            } else {
+                narratedSourceLevel = audioSources["narration"] != nil ? 0 : sourceGain
+            }
+            let cameraLevel: Double = clip.muted || authoredSlot?.raw["muted"] == .bool(true) ? 0 : narratedSourceLevel
             cameraLevelWithoutSong.append(cameraLevel)
             video.append(TimelineClip(id: clip.slotID ?? clip.id.uuidString, sourceAssetID: id,
                 sourceStart: sourceStart, sourceDuration: consumedSourceDuration, timelineStart: clip.start,

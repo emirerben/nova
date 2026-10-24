@@ -78,6 +78,27 @@ def test_main_creator_eval(
             _pin_range_is_grounded(PinnedText(**pin), evidence.pinned_texts or "") for pin in pinned
         )
 
+    fullscreen_beats = fixture.meta.get("fullscreen_reaction_beats")
+    if fullscreen_beats:
+        # KRI-840: "show the photo full screen when he says X" is a reaction beat with
+        # display_mode "fullscreen" and a short hold (never overlay_display, which spreads the
+        # photos evenly); a corner card omits the field; the brief records both asks' display.
+        assert result.output is not None
+        strategy = result.output["action"]["strategy"]
+        assert not strategy.get("overlay_display")
+        beats = {beat["beat_id"]: beat for beat in strategy["reaction_beats"]}
+        for beat_id, max_hold_s in fullscreen_beats["fullscreen"].items():
+            assert beats[beat_id]["display_mode"] == "fullscreen", beats[beat_id]
+            assert 0.5 <= beats[beat_id]["hold_s"] <= max_hold_s, beats[beat_id]
+        for beat_id in fullscreen_beats["corner"]:
+            assert beats[beat_id].get("display_mode", "pip") == "pip", beats[beat_id]
+        asked = {
+            trigger: update["facts"].get("display_mode")
+            for update in result.output["brief_updates"]
+            for trigger in update["facts"].get("triggers", [])
+        }
+        assert asked == fullscreen_beats["brief_display"]
+
     if fixture.meta.get("manual_visual_removal"):
         assert result.output is not None
         assert result.output["action"]["kind"] == "ask_user", (
@@ -354,6 +375,46 @@ def test_main_creator_eval(
         lengths = [r.facts.get("duration_s") for r in live if r.kind == "timing"]
         assert trim_meta["duration_s"] in lengths
 
+    unclear_meta = fixture.meta.get("unclear_word_ask")
+    if unclear_meta:
+        # KRI-849 (prompt v76): "if you can't tell what he says, ask me instead of guessing" is
+        # the recorded fact `ask_if_unclear` (the creator's words for the slot) on the captions
+        # requirement, never prose only; the server (not the words) decides which word is
+        # unclear. No `unclear_answer` until the creator answers.
+        from app.kria.brief import apply_updates, parse_brief_updates
+        from app.kria.unclear_word_ask import ask_requirements, model_answer
+
+        assert result.output is not None
+        assert result.output["action"]["kind"] == "propose_strategy"
+        live = apply_updates(
+            None, parse_brief_updates(result.output.get("brief_updates")), source_turn_id="eval"
+        ).live()
+        asks = ask_requirements(live)
+        assert len(asks) == 1, [r.facts for r in live]
+        assert asks[0].kind == "style" and asks[0].facts.get("captions") == "on"
+        assert asks[0].facts["ask_if_unclear"].strip()
+        assert asks[0].facts.get("spellings") == unclear_meta["spellings"]
+        assert model_answer(live) is None
+
+    answer_meta = fixture.meta.get("unclear_word_answer")
+    if answer_meta:
+        # KRI-849: the creator's typed answer to the unclear-word question is recorded on the
+        # SAME requirement as `unclear_answer` ("omit", or the exact words typed); the ask and
+        # the spellings stay (a partial change merges its facts, KRI-805).
+        from app.kria.brief import CreativeBrief, apply_updates, bind_updates, parse_brief_updates
+        from app.kria.unclear_word_ask import ask_requirements, model_answer
+
+        assert result.output is not None
+        prior = CreativeBrief.model_validate(answer_meta["prior_brief"])
+        updates = bind_updates(prior, parse_brief_updates(result.output.get("brief_updates")))
+        live = apply_updates(prior, updates, source_turn_id="eval").live()
+        (ask,) = ask_requirements(live)
+        for key in answer_meta["keeps"]:
+            assert key in ask.facts, (key, ask.facts)
+        assert ask.facts["unclear_answer"] == answer_meta["expect"]
+        answer = model_answer(live)
+        assert answer is not None and answer.action == answer_meta["expect"]
+
     shot_meta = fixture.meta.get("per_shot_texts")
     if shot_meta:
         # KRI-422 (prompt v42): text dictated for several described shots is one
@@ -402,6 +463,27 @@ def test_main_creator_eval(
             assert beat.get("visual_id") or beat.get("sound"), beat
         assert strategy.get("closing_media") is not None
         assert strategy.get("licensed_sfx") is None
+
+    ending_meta = fixture.meta.get("ending_clip")
+    if ending_meta:
+        # KRI-841: "add the X video at the very end with its own sound" on a phone Talking edit
+        # is the strategy's `ending_clip` (never a pop-in card or a closing photo), and the
+        # brief records it as a `style` requirement with the `ending_clip` fact: never as a
+        # `last_clip` ordering ask, which the render contract cannot verify on a Talking edit.
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        strategy = action["strategy"]
+        assert strategy["edit_format"] == "subtitled"
+        assert strategy.get("ending_clip") == ending_meta
+        assert all(
+            beat.get("visual_id") != ending_meta["media_id"]
+            for beat in strategy.get("reaction_beats") or []
+        )
+        assert strategy.get("closing_media") is None
+        facts = [update.get("facts") or {} for update in result.output.get("brief_updates") or []]
+        assert any(f.get("ending_clip") and f.get("keep_audio") is True for f in facts)
+        assert not any(f.get("last_clip") for f in facts)
 
     if fixture.meta.get("single_clip_talking_scope"):
         # KRI-238: "all" media on a one-clip phone Talking edit is that clip.

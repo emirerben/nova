@@ -780,11 +780,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
-                (True, "covered", "kri-625-moment-quality"),
+                (True, "covered", "kri-845-clip-detail-evidence,kri-625-moment-quality"),
             ),
             (
                 "src/apps/api/prompts/analyze_clip.txt",
-                (True, "covered", "kri-625-moment-quality"),
+                (True, "covered", "kri-845-clip-detail-evidence,kri-625-moment-quality"),
             ),
             (
                 "src/apps/api/prompts/edit_copilot.txt",
@@ -833,6 +833,14 @@ class GitDiffTests(unittest.TestCase):
             (
                 "src/apps/api/tests/pipeline/test_phone_talking_cutaways.py",
                 (True, "covered", "kri-719-talking-multi-clip"),
+            ),
+            (
+                "src/apps/api/app/pipeline/phone_subtitled_lanes.py",
+                (True, "covered", "kri-841-talking-ending-clip"),
+            ),
+            (
+                "src/apps/api/tests/tasks/test_kri841_talking_ending_clip.py",
+                (True, "covered", "kri-841-talking-ending-clip"),
             ),
             (
                 "src/apps/api/app/services/length_planning.py",

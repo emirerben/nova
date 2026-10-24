@@ -31,6 +31,7 @@ from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_voiceover_cut import narrated_slot_window
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
 from app.services.phone_voiceover_timeline import (
+    _selected_source_audio_ids,
     is_phone_voiceover_family_variant,
     project_phone_voiceover_timeline,
     source_pool_paths,
@@ -114,6 +115,7 @@ def resolve_phone_voiceover_slots(job: Any, variant: dict, slots: list[Any]) -> 
     current = current_voiceover_slots(job, variant) or []
     baseline = {row.get("slot_id"): row for row in current if row.get("slot_id")}
     narrated = variant.get("resolved_archetype") == "narrated"
+    selected_source_audio = _selected_source_audio_ids(variant)
     clip_rates = {
         (row.get("clip_index"), float(row.get("playback_rate") or 1.0)) for row in current
     }
@@ -217,6 +219,11 @@ def resolve_phone_voiceover_slots(job: Any, variant: dict, slots: list[Any]) -> 
         }
         if rate != 1.0:
             row["playback_rate"] = rate
+        if selected_source_audio is not None:
+            # Never trust a client-provided gain: selection is variant-owned
+            # and follows the source identity through trims, splits and new
+            # timeline occurrences.
+            row["source_audio_volume"] = 1.0 if binding.media_id in selected_source_audio else 0.0
         if "source_crop" in slot.model_fields_set:
             # Omitted keeps the pinned crop; an explicit null clears it (KRI-44).
             row["source_crop"] = slot.source_crop

@@ -440,13 +440,18 @@ def _complete_change(target: BriefRequirement, update: BriefUpdate) -> BriefUpda
     """KRI-805: a partial change keeps every field it leaves out; a complete one replaces."""
     if update.operation != "change" or (update.kind is not None and update.scope is not None):
         return update
+    facts = {**target.facts, **update.facts}
+    if "duration_s" in update.facts and "duration_bound" not in update.facts:
+        # KRI-847: a new length is exact until the update says it is a ceiling again, so
+        # "at most 10 seconds" then "make it 15 seconds" does not become "at most 15".
+        facts.pop("duration_bound", None)
     return update.model_copy(
         update={
             "kind": update.kind or target.kind,
             "scope": update.scope or target.scope,
             "literal": target.literal if update.literal is None else update.literal,
             "description": target.description if update.description is None else update.description,
-            "facts": {**target.facts, **update.facts},
+            "facts": facts,
         }
     )
 
@@ -525,7 +530,18 @@ def merge_requirements(
 # video", "animated with typewriter", "bottom left", "placeholder"). A later turn that only
 # changes the words ("the hook should say ...") restates the requirement without them; the
 # creator never withdrew them, so a same-kind, same-scope change keeps them unless it sets them.
-STICKY_FACTS = frozenset({"first_clip", "last_clip", "animation", "position", "placeholder"})
+# KRI-841: so is the video a Talking edit ends on (`ending_clip`) and whether it keeps its sound.
+STICKY_FACTS = frozenset(
+    {
+        "first_clip",
+        "last_clip",
+        "animation",
+        "position",
+        "placeholder",
+        "ending_clip",
+        "keep_audio",
+    }
+)
 
 
 def _carry_sticky_facts(target: BriefRequirement, update: BriefUpdate) -> dict[str, Any]:
