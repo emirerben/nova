@@ -500,3 +500,64 @@ def test_title_only_edit_still_offers_later_readable_research_windows():
     windows = research_windows(snap)
     assert any(row["media_ids"] == ["gallery"] for row in windows)
     assert all(row["start_s"] >= 3 for row in windows)
+
+
+def beat_cut_montage(count=27, clip_s=0.621):
+    # Prod 2026-10-23 "Add some titles and facts about assos": 27 beat-cut clips,
+    # no text. Each clip alone is below the readable minimum.
+    return {
+        "slots": [
+            {
+                "media_id": f"clip-{i}",
+                "output_start_s": round(i * clip_s, 3),
+                "output_end_s": round((i + 1) * clip_s, 3),
+                "seen": {"text": "Ancient ruins above the harbor"},
+            }
+            for i in range(count)
+        ],
+        "text_bars": [],
+        "copy_constraints": {},
+    }
+
+
+def test_beat_cut_montage_offers_windows_across_consecutive_clips():
+    """Failure modes: no window at all (the prod refusal), a window shorter than the
+    readable minimum, a window over the opening once text sits on it, a window whose
+    clips are not consecutive, and a long-clip edit changing its windows."""
+    from app.services.researched_text import research_windows
+
+    snap = beat_cut_montage()
+    windows = research_windows(snap)
+    assert windows
+    ids = [s["media_id"] for s in snap["slots"]]
+    for row in windows:
+        assert row["end_s"] - row["start_s"] >= 2
+        first = ids.index(row["media_ids"][0])
+        assert row["media_ids"] == ids[first : first + len(row["media_ids"])]
+
+    snap["text_bars"] = [{"id": "intro", "text": "Assos", "start_s": 0, "end_s": 0.6}]
+    assert all(row["start_s"] >= snap["slots"][0]["output_end_s"] for row in research_windows(snap))
+
+    long_clips = [(row["start_s"], row["end_s"]) for row in research_windows(snapshot())]
+    assert long_clips == [(0, 3), (3, 6), (6, 10)]
+
+
+def test_research_caption_binds_to_a_grouped_montage_window():
+    from app.services.researched_text import research_windows
+
+    snap = beat_cut_montage()
+    window = research_windows(snap)[0]
+    ops = research_operations(
+        [
+            caption(
+                media_ids=window["media_ids"],
+                window_id=window["id"],
+                visual_quote="Ancient ruins",
+            )
+        ],
+        evidence_from_response(response()),
+        snap,
+        "Add some titles and facts about the museum",
+    )
+    assert [op["op"] for op in ops] == ["add_text"]
+    assert ops[0]["end_s"] - ops[0]["start_s"] >= 2
