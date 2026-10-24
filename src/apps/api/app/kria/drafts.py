@@ -41,7 +41,7 @@ from app.models import (
     Job,
     PlanItem,
 )
-from app.services.length_policy import creator_duration_s
+from app.services.length_policy import creator_duration
 
 MAX_DRAFT_BYTES = 2 * 1024 * 1024
 
@@ -67,12 +67,11 @@ def _sanitize_strategy_duration_provenance(
     binding_answers = (
         brief_binding.choice_answers if brief_binding is not None else authoritative_answers or ()
     )
-    proven_duration_s = creator_duration_s(
+    proven = creator_duration(
         brief=brief_binding.brief if brief_binding is not None else None,
         authoritative_answers=binding_answers,
     )
-    if proven_duration_s is None:
-        proven_duration_s = authoritative_duration_s
+    proven_duration_s = proven.seconds if proven is not None else authoritative_duration_s
     strategy = CreativeStrategy.model_validate(
         {
             key: value
@@ -97,6 +96,10 @@ def _sanitize_strategy_duration_provenance(
             update["selected_music_section"] = length_plan.get("licensed_music")
     if proven_duration_s is not None:
         update["target_duration_s"] = proven_duration_s
+        if proven is not None and proven.bound == "at_most":
+            # KRI-847: "at most N seconds" caps the plan; the model's own shorter pick (from the
+            # footage) stays, a longer one (or the 24 s default) is held to the ceiling.
+            update["target_duration_s"] = min(strategy.target_duration_s, proven_duration_s)
     strategy = strategy.model_copy(update=update)
     return strategy.model_dump(mode="json", exclude_none=True)
 
