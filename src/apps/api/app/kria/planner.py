@@ -4081,6 +4081,13 @@ def _is_fast_path_plan(plan: KriaTurnPlan | None) -> bool:
             name = op.get("op") if isinstance(op, dict) else getattr(op, "op", None)
             if str(name) not in _FAST_PATH_OPS:
                 return False
+            # A model-authored clip order is no in-place text/label op: only the
+            # server-grounded capture_time reorder rides the fast path.
+            criterion = (
+                op.get("criterion") if isinstance(op, dict) else getattr(op, "criterion", None)
+            )
+            if str(name) == "reorder_clips_by" and criterion not in (None, "capture_time"):
+                return False
     return True
 
 
