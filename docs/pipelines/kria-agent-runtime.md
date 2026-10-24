@@ -499,8 +499,10 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   and are never left out without a tap. When the resolver itself asks a clip picker,
   the exclude rows ride in that same card (`with_exclusion_categories`). The notice is
   kept for a planner-dropped exclude, the picker flag off, a one-clip project, or
-  nothing tappable. Blur is not a clip-record fact: a measured sharpness probe on 170
-  kit clips could not tell M1_04 from its sharp look-alike. Guard:
+  nothing tappable. Blur is not a measured clip-record fact: a sharpness probe on 170
+  kit clips could not tell M1_04 from its sharp look-alike. KRI-845 adds the analyzer's
+  own judgment instead (`visual_quality`, with `props` / `actions`; see
+  `docs/pipelines/clip-understanding.md`). Guard:
   `tests/kria/test_kri807_unmatched_exclusion_picker.py`.
 - *Title*: confirmed strategy title > brief title literal > brief global literal
   (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`). With

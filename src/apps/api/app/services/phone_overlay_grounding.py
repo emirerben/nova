@@ -98,6 +98,9 @@ _FS_MIN_WINDOW_S = 1.5
 _FS_MAX_WINDOW_S = 4.0
 _FS_PHOTO_WINDOW_S = 3.0
 _FS_MIN_VIDEO_WINDOW_S = 0.3
+# KRI-840: breathing room kept between a sequence cutaway and a full-screen reaction beat, so
+# the rounding of either window can never make the compiler see them overlap.
+_FS_BEAT_GAP_S = 0.01
 
 _MAX_LABEL_LEN = 60
 _MAX_REASON_LEN = 160
@@ -406,6 +409,33 @@ def _order_by_capture(assets: list[dict]) -> list[dict]:
     return ordered
 
 
+def _start_clear_of(
+    start: float,
+    window: float,
+    slot_start: float,
+    slot_end: float,
+    blocked: list[tuple[float, float]],
+) -> float | None:
+    """The start nearest ``start`` where a ``window``-long cutaway fits in its slot without
+    touching any ``blocked`` window; ``None`` when the slot has no such spot (KRI-840)."""
+
+    def clear(candidate: float) -> bool:
+        return all(
+            candidate + window <= b_start - _FS_BEAT_GAP_S or candidate >= b_end + _FS_BEAT_GAP_S
+            for b_start, b_end in blocked
+        )
+
+    if clear(start):
+        return start
+    candidates = [slot_start, slot_end - window]
+    for b_start, b_end in blocked:
+        candidates += [b_start - _FS_BEAT_GAP_S - window, b_end + _FS_BEAT_GAP_S]
+    fits = [
+        c for c in candidates if slot_start - 1e-9 <= c <= slot_end - window + 1e-9 and clear(c)
+    ]
+    return min(fits, key=lambda c: (abs(c - start), c)) if fits else None
+
+
 def _ground_fullscreen_sequence(
     candidate_assets: list[dict],
     *,
@@ -418,6 +448,7 @@ def _ground_fullscreen_sequence(
     clip_path: str | None = None,
     face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
     occupied: Iterable[tuple[float, float]] = (),
+    fullscreen_occupied: Iterable[tuple[float, float]] = (),
 ) -> GroundedOverlayCards:
     """KRI-297: "use all my Visuals full screen" -- deterministic, no LLM.
 
@@ -437,6 +468,11 @@ def _ground_fullscreen_sequence(
     would land on a creator-named reaction beat or the closing text (``occupied``)
     is reported ``overlap`` instead of stacking on it; full-frame cutaways sit
     below those cards, so they ignore ``occupied`` as before.
+
+    KRI-840: ``fullscreen_occupied`` are the windows of full-screen reaction beats ("show the
+    grill photo full screen when I say Argentinian"). Two full-frame cutaways can never share
+    a moment, so a full-frame window that would touch one slides to the nearest free spot
+    inside its own slot, else is reported ``overlap``. Empty (default) changes nothing.
     """
     from app.services.clip_facts import visual_capture_time  # noqa: PLC0415
 
@@ -445,6 +481,7 @@ def _ground_fullscreen_sequence(
     if chronological:
         candidate_assets = _order_by_capture(candidate_assets)
     occupied_windows = [(float(a), float(b)) for a, b in occupied]
+    fullscreen_windows = [(float(a), float(b)) for a, b in fullscreen_occupied]
     lo = min(_FS_HOOK_FREE_S, max(duration_s, 0.0))
     hi = max(duration_s - _FS_TAIL_FREE_S, lo)
     span = hi - lo
@@ -487,6 +524,19 @@ def _ground_fullscreen_sequence(
         nominal = slot_start + (slot_len - window) / 2
         start = _snap_to_word_start(nominal, words) if words else nominal
         start = min(max(start, slot_start), slot_end - window)
+        if fullscreen_windows and _is_fullscreen_asset(asset, layout):
+            free_start = _start_clear_of(start, window, slot_start, slot_end, fullscreen_windows)
+            if free_start is None:
+                unplaced.append(
+                    {
+                        "media_id": str(asset["id"]),
+                        "label": _label_for_asset(asset),
+                        "reason": "overlap",
+                        "kind": kind,
+                    }
+                )
+                continue
+            start = free_start
         snapped = any(abs(start - ws) < 1e-3 for ws in word_starts)
         windows.append(
             (
@@ -637,6 +687,7 @@ def ground_phone_subtitled_overlays(
     duration_s: float,
     clip_path: str | None,
     occupied: Iterable[tuple[float, float]] = (),
+    fullscreen_occupied: Iterable[tuple[float, float]] = (),
     used_media_ids: frozenset[str] = frozenset(),
     video_supported: bool = False,
     layout: str = "pip",
@@ -653,6 +704,9 @@ def ground_phone_subtitled_overlays(
     ``kind="video"``, ``source_start_s=0.0`` -- `build_suggestions` already
     caps its on-screen window to the footage length plus a freeze allowance.
     When ``False``, every video is still reported ``video_not_supported``.
+
+    ``fullscreen_occupied`` (KRI-840): the windows of full-screen reaction beats; only the
+    full-frame sequence layouts read it (see ``_ground_fullscreen_sequence``).
 
     Fails open at every step: an LLM matcher failure falls back to the
     deterministic heuristic, and a face-sampling failure protects a
@@ -727,6 +781,7 @@ def ground_phone_subtitled_overlays(
             clip_path=clip_path,
             face_box_to_canvas=face_box_to_canvas,
             occupied=occupied_list,
+            fullscreen_occupied=fullscreen_occupied,
         )
 
     if not candidate_assets or not words:
