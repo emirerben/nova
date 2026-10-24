@@ -1218,6 +1218,51 @@ def _compile_subtitled_editor_commit(
         **({"speaker_position_x": speaker_position_x} if speaker_position_x is not None else {}),
     )
     recipe = with_drawings(recipe, variant.get("drawings"))
+    # A native same-source cut normally borrows 25 ms of removed audio to
+    # smooth pause cleanup. An explicit spoken-word removal must instead keep
+    # its source edges closed, including on a processed-audio derivative.
+    from app.pipeline.explicit_speech_audio import (  # noqa: PLC0415
+        protect_explicit_speech_cut_audio,
+    )
+    from app.pipeline.phone_processed_audio import (  # noqa: PLC0415
+        processed_audio_receipt_for,
+        replace_audio_with_processed_segments,
+    )
+
+    recipe = protect_explicit_speech_cut_audio(
+        recipe,
+        source_media_id=speaker.media_id,
+        cuts=variant.get("explicit_speech_cuts"),
+    )
+    # Noise reduction remains experimental: only restore its track when this
+    # exact immutable prior recipe already carried it. A receipt alone must
+    # never make an unrelated Save opt into a new audio treatment.
+    prior_has_processed_audio = any(
+        track.id == "processed-source-audio" for track in previous.recipe.tracks
+    )
+    if prior_has_processed_audio:
+        processed_receipts = {
+            binding.media_id: receipt
+            for binding in bindings
+            if (
+                receipt := processed_audio_receipt_for(
+                    assembly, variant_id=variant_id, source_media_id=binding.media_id
+                )
+            )
+            is not None
+        }
+        required_processed_sources = {
+            asset.source_media_id
+            for asset in previous.recipe.asset_manifest.assets
+            if asset.kind == "processed_audio"
+        }
+        if not required_processed_sources.issubset(processed_receipts):
+            raise ValueError(
+                "The saved noise-reduced audio is unavailable. Please regenerate this edit."
+            )
+        recipe = replace_audio_with_processed_segments(
+            recipe, receipts_by_source=processed_receipts
+        )
     duck_receipt = sfx_duck_receipt(lanes, recipe)
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(lanes.overlays or cutaways))
     request = make_device_request(

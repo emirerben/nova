@@ -1112,7 +1112,8 @@ enum KriaClientProtocolContract {
     /// this protocol inside an HTTP request; older builds cannot decode the case and fail the recipe.
     /// 17: previews voiceover source-audio selections from per-slot
     /// `source_audio_volume` without applying the global original-audio gain twice.
-    static let version = 17
+    /// 18: decodes and grants immutable `processed_audio` source derivatives.
+    static let version = 18
     static let header = "X-Kria-Client-Protocol"
 }
 
