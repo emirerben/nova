@@ -23,17 +23,26 @@
 \*
 \* Decline reasons: the phone declines a recipe it will never render as "unsupported"
 \* (unsupported_recipe: a capability its verified set lacks, K:19-20) or "outdated"
-\* (renderer_outdated: this build is older than the recipe, K:23-38). The card turns each
-\* into the creator's turn with its own way forward (D changeReasons / updateReason):
-\* "This edit needs a change" + "Review the updated edit" (chat), or "Update Kria".
+\* (renderer_outdated: this build is older than the recipe). The card turns each into the
+\* creator's turn with its own way forward (D changeReasons / updateReason): "This edit
+\* needs a change" + "Review the updated edit" (chat), or "Update Kria" + "Review in chat".
+\*
+\* Builds (round 3): levels stand for client protocols. An older build on another device is
+\* level OLD = 1; this iPhone starts at 2 and an update takes it to 3 or 4. A recipe needs
+\* level `need` (2, or 4 for an outdated one). Two kinds of version gap: "floor" (a feature
+\* the server gates by protocol, R _client_update_detail: the GET answers 426 naming the
+\* request) and "schema" (a recipe/renderer version the server cannot see: the GET returns
+\* the recipe and the phone's own gate says outdated, K:23-38). The server records the
+\* declining level (declined_client_protocol) and the newest level that read the recipe
+\* without a 426 (max_reader_client_protocol, kept across re-pins of the same recipe).
 \*
 \* Not modelled (see findings.md "Scope"): the rollout hold (phone_rendering_paused), 409
 \* superseded / cancelled / editor_empty / 426 answers on GET, contract refusals, output
 \* verification, the automatic-retry caps (12 re-reads, 4 transient waits, 12 decline
 \* sends: never reached with MaxFaults <= 1), and the editor's "reconnecting" hint (shown
-\* after 3 failed refresh reads). The phone's own clear of a stale renderer_outdated (S:399)
-\* serves records declined before the server recorded the declining protocol; here every
-\* record carries it, so the server's auto-resume (R _auto_resume_updated) answers first.
+\* after 3 failed refresh reads). The phone's own clear of a renderer_outdated it can render
+\* now (S apply, needs_attention: "renderable_now") is modelled; it shows when an operator
+\* lowers a protocol floor ("rollback") for the build that declined.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS MaxFaults,  \* network failures, app kills and backgroundings, in total
@@ -41,21 +50,31 @@ CONSTANTS MaxFaults,  \* network failures, app kills and backgroundings, in tota
           MaxTicks,   \* answered preview polls before "taking longer than expected" (E:7637, 300)
           MaxId,      \* identity bound; a liveness rule counts reaching it as done
           Conds,      \* phone-side conditions to start from (subset of
-                      \* none/hot/unsupported/outdated/missing)
+                      \* none/hot/unsupported/outdated/schema/newschema/missing): "outdated"
+                      \* is a protocol-floor gap (426), "schema" one the server cannot see,
+                      \* "newschema" a schema gap that only a later save ("feature") brings
           Approvals,  \* runtime-v2 job (subset of BOOLEAN); routes nothing any more (R:535)
           Chat,       \* is the chat workspace (and its poll) under the editor? (subset of
                       \* BOOLEAN). FALSE: the editor opened from the gallery (EditorViews:265)
           Events      \* optional events this run allows: "save", "other", "stop", "kill",
                       \* "background", "reaper", "sync" (the editor's draft sync), "caps"
-                      \* (the phone loses a verified capability after its export)
+                      \* (the phone loses a verified capability, also mid-render), "old" (a
+                      \* device on an older build declines or retries), "feature" (another
+                      \* device's save adds a feature this build can't decode), "rollback"
+                      \* (an operator lowers the protocol floor of the recipe)
 
 None == 0
 Pub(k) == 100 + k
+OLD == 1                 \* the older build on another device
+Max(a, b) == IF a > b THEN a ELSE b
 
 NoCoord == [id |-> 0, ph |-> "none", file |-> FALSE, run |-> FALSE, pc |-> "idle", cause |-> "none"]
 \* wait: DeviceRenderPresentation.waiting (S:25-39): none | quiet (connection/server) | cooling
 NoPres  == [ph |-> "none", rsr |-> FALSE, cause |-> "none", pub |-> 0, wait |-> "none"]
-NoResp  == [ok |-> FALSE, id |-> 0, ph |-> "none", reason |-> "none", pub |-> 0, paused |-> FALSE]
+\* upd: a 426 client_update_required naming request id (phase ph); no recipe came with it.
+\* need: the level the answered request's recipe needs (a stale answer is about its own recipe).
+NoResp  == [ok |-> FALSE, upd |-> FALSE, id |-> 0, ph |-> "none", reason |-> "none", pub |-> 0,
+            paused |-> FALSE, need |-> 0]
 NoRec   == [src |-> "none", retry |-> FALSE, pc |-> "none", resp |-> NoResp]
 \* The coordinator's pending report (C:338-375): live = a delivery task is running in this
 \* process; disk = it is still persisted on the receipt (survives a kill).
@@ -80,8 +99,14 @@ VARIABLES
   pubIds,    \* ghost: identities the server published
   pubFrom,   \* ghost: identity whose recipe produced the published video
   futile,    \* ghost: the server re-pinned the same recipe for a phone that declines it again
+  sDecl,     \* declined_client_protocol: level of the build whose renderer_outdated failed it (0: none)
+  sFloor,    \* declined_gap = floor: that build was below a protocol floor the server checks
+  sRead,     \* max_reader_client_protocol: newest level that read the recipe without a 426
+  autoRepins,\* ghost: automatic re-pins of an outdated decline (R _auto_resume_updated)
+  oldDecl,   \* identity the older device last declined (it reports once per identity)
+  oldRetr,   \* identity the older device last retried
   \* ---- environment ----
-  faults, hot, unsupported, outdated, missing, approval, saves, stops, chat,
+  faults, hot, unsupported, lvl, need, kind, missing, approval, saves, stops, chat,
   \* ---- the app ----
   app,       \* open | killed
   coord,     \* the DeviceRenderCoordinator receipt (on disk) + its running task
@@ -96,19 +121,26 @@ VARIABLES
   again,     \* S rereads[key]: a read asked for while the ticket was held: no | read | retry
   hiReq,     \* ghost: newest request this app process installed
   banner,    \* editor "Couldn't refresh this edit" (removed; never set any more)
+  upd426,      \* ghost: request a 426 this phone applied was about (0: none)
   ed         \* NativeEditorSession save / preview-poll state
 
 vars == <<sPhase, sId, sReason, sPaused, vStatus, vGen, stale, reapedId, pubIds, pubFrom, futile,
-          faults, hot, unsupported, outdated, missing, approval, saves, stops, chat,
-          app, coord, req, pres, obs, rec, oldRec, rep, decl, sched, hiReq, banner, ed, again>>
-srv == <<sPhase, sId, sReason, sPaused, vStatus, vGen, stale, reapedId, pubIds, pubFrom, futile>>
-env == <<hot, unsupported, outdated, missing, approval, saves, stops, chat>>
-cli == <<coord, req, pres, obs, rec, oldRec, rep, decl, sched, hiReq, banner, ed, again>>
+          sDecl, sFloor, sRead, autoRepins, oldDecl, oldRetr,
+          faults, hot, unsupported, lvl, need, kind, missing, approval, saves, stops, chat,
+          app, coord, req, pres, obs, rec, oldRec, rep, decl, sched, hiReq, banner, ed, again, upd426>>
+bld == <<sDecl, sFloor, sRead, autoRepins, oldDecl, oldRetr>>
+srv == <<sPhase, sId, sReason, sPaused, vStatus, vGen, stale, reapedId, pubIds, pubFrom, futile, bld>>
+env == <<hot, unsupported, lvl, need, kind, missing, approval, saves, stops, chat>>
+cli == <<coord, req, pres, obs, rec, oldRec, rep, decl, sched, hiReq, banner, ed, again, upd426>>
+
+\* This build is older than the recipe.
+Outdated == lvl < need
 
 Init ==
   /\ sPhase = "awaiting" /\ sId = 1 /\ sReason = "none" /\ sPaused = FALSE
   /\ vStatus = "awaiting" /\ vGen = 1
   /\ stale = FALSE /\ reapedId = 0 /\ pubIds = {} /\ pubFrom = 0 /\ futile = FALSE
+  /\ sDecl = 0 /\ sFloor = FALSE /\ sRead = 0 /\ autoRepins = 0 /\ oldDecl = 0 /\ oldRetr = 0
   /\ faults = MaxFaults
   \* At most one phone-side condition per run: too hot (cools later), a recipe needing a
   \* capability this phone's verified set lacks (K:19-20), a recipe newer than this build
@@ -116,14 +148,17 @@ Init ==
   \* (genuine, fixed by relinking).
   /\ \E cond \in Conds :
        /\ hot = (cond = "hot") /\ unsupported = (cond = "unsupported")
-       /\ outdated = (cond = "outdated") /\ missing = (cond = "missing")
+       /\ lvl = 2 /\ need = (IF cond \in {"outdated", "schema"} THEN 4 ELSE 2)
+       \* "newschema": the first recipe renders; a later one ("feature") has a newer schema.
+       /\ kind = (IF cond \in {"schema", "newschema"} THEN "schema" ELSE "floor")
+       /\ missing = (cond = "missing")
   /\ approval \in Approvals
   /\ chat \in Chat
   /\ saves = 0 /\ stops = 0
   /\ app = "open"
   /\ coord = NoCoord /\ req = 0 /\ pres = NoPres /\ obs = FALSE
   /\ rec = NoRec /\ oldRec = NoRec /\ rep = NoRep /\ decl = NoDecl /\ sched = FALSE
-  /\ hiReq = 0 /\ banner = FALSE /\ again = "no"
+  /\ hiReq = 0 /\ banner = FALSE /\ again = "no" /\ upd426 = 0
   \* E:7534 the editor read capabilities when it opened. Start from a failed read: with a
   \* good one, a later failed read behaves like the no-fault branch (EdRefresh, PollTick).
   /\ ed = EdIdle
@@ -140,24 +175,33 @@ Accepted == pubIds # {}                       \* V:199 has_accepted_artifact
 \* S:336 replaces a .disabled with it. So a failed capability read never declines.
 \* Order as in S:886-906 + K:16-44: missing capabilities, then storage/heat, then the
 \* renderer version.
-Gate == IF unsupported THEN "unsupported" ELSE IF hot THEN "wait" ELSE IF outdated THEN "outdated"
-        ELSE "local"
+\* A floor gap never reaches the gate: the GET answers 426 without the recipe.
+GateAt(n) == IF unsupported THEN "unsupported" ELSE IF hot THEN "wait"
+             ELSE IF lvl < n /\ kind = "schema" THEN "outdated" ELSE "local"
+Gate == GateAt(need)
 Declines == {"unsupported", "outdated"}
+\* S rendersLocally (sent with /retry): this phone's renderer produces the recipe, now or
+\* once it cools. An outdated build or a decline says no.
+Asserts == Gate \notin Declines /\ ~Outdated
 
 \* D:189-215: reasons a retry cannot change. A change in chat fixes the first two (the card's
 \* "This edit needs a change" + "Review the updated edit"); updating Kria fixes "outdated".
 ChangeReasons == {"unsupported", "requiresChange"}
 Structural == ChangeReasons \cup {"outdated"}
-\* D needsChange / nextStep: the creator's turn, with a button of its own. A quiet network
-\* wait (a failed status read, S wait) sits on top of it and keeps the button.
-NeedsChange(p) == p.wait \in {"none", "quiet"} /\ p.cause \in ChangeReasons
-NeedsUpdate(p) == p.wait \in {"none", "quiet"} /\ p.cause = "outdated"
+\* D yourTurnPhases: a change or update reason belongs to a render that stopped here or to
+\* a finished video this iPhone keeps but cannot sync; on another phase it is stale.
+YourTurnPh == {"attention", "localReady"}
+\* D needsChange / needsUpdate / nextStep: the creator's turn, with a button of its own. A
+\* quiet network wait (a failed status read, S wait) sits on top of it and keeps the button.
+NeedsChange(p) == p.ph \in YourTurnPh /\ p.wait \in {"none", "quiet"} /\ p.cause \in ChangeReasons
+NeedsUpdate(p) == p.ph \in YourTurnPh /\ p.wait \in {"none", "quiet"} /\ p.cause = "outdated"
 YourTurn(p) == NeedsChange(p) \/ NeedsUpdate(p)
-\* What the card's title says (D:406-423): a needsAttention phase with a change or update
-\* reason reads "This edit needs a change" / "Update Kria to render this edit", not
-\* "This edit needs your attention".
-Screen(p) == IF p.ph = "attention" /\ NeedsChange(p) THEN "change"
-             ELSE IF p.ph = "attention" /\ NeedsUpdate(p) THEN "update"
+\* What the card's title says (D title/detail): "This edit needs a change" / "Update Kria to
+\* render this edit" (or the kept video's "Ready on this iPhone" with that way forward),
+\* "Ready to render on this iPhone" for renderable_now, never "needs your attention".
+Screen(p) == IF NeedsChange(p) THEN "change"
+             ELSE IF NeedsUpdate(p) THEN "update"
+             ELSE IF p.ph = "attention" /\ p.cause = "renderable" THEN "renderable"
              ELSE p.ph
 
 \* S:331-365 + the defer: a read asked for while the ticket is held runs once it is released.
@@ -184,8 +228,9 @@ SurfaceFail(p) == p.rsr \/ p.ph \in {"attention", "cancelled"} \/ (p.ph = "local
 EdFail(p) == IF NeedsChange(p) THEN "review"
              ELSE IF NeedsUpdate(p) THEN "update"
              ELSE IF p.ph = "cancelled" /\ p.cause = "paused" THEN "paused"
+             ELSE IF p.cause = "renderable" THEN "renderNow"   \* "Render on this iPhone"
              ELSE "deviceRetry"
-EdBanner == {"deviceRetry", "paused", "review", "update"}
+EdBanner == {"deviceRetry", "paused", "review", "update", "renderNow"}
 
 \* src only tells the editor's own reconciles apart ("ed", "edpoll"); the chat poll, the
 \* scheduled re-read and the post-decline read are all "chat" (they behave the same).
@@ -203,100 +248,144 @@ PinForSave ==
   /\ sId' = sId + 1 /\ sPhase' = "awaiting" /\ sReason' = "none" /\ sPaused' = FALSE
   /\ vStatus' = "awaiting" /\ vGen' = saves + 2 /\ stale' = FALSE
   /\ saves' = saves + 1
-  /\ UNCHANGED futile
+  /\ sDecl' = 0 /\ sFloor' = FALSE /\ sRead' = 0   \* a new recipe: nobody has read it yet
+  /\ UNCHANGED <<futile, autoRepins, oldDecl, oldRetr>>
 
 \* V:705 retry_device_render (revision + 1) + V:757 apply_retry_variant_reset.
 \* `futile` records a re-pin of the same recipe for a phone that will decline it again.
+\* The fresh record keeps the newest reader (R _carry_reader_protocol) and forgets the decliner.
 ServerRetry ==
   /\ sId' = sId + 1 /\ sPhase' = "awaiting" /\ sReason' = "none" /\ sPaused' = FALSE
   /\ vStatus' = "awaiting" /\ stale' = FALSE
-  /\ futile' = (futile \/ (sReason = "unsupported" /\ unsupported) \/ (sReason = "outdated" /\ outdated))
+  /\ futile' = (futile \/ (sReason = "unsupported" /\ unsupported) \/ (sReason = "outdated" /\ Outdated))
+  /\ sDecl' = 0 /\ sFloor' = FALSE
 
 \* R POST /device-render/retry for the phone's request. No approval check any more; an
-\* unsupported decline answers requires_change, and an outdated one answers requires_update
-\* unless this build is newer than the one that declined (R _caller_is_newer_than_decliner;
-\* here: the phone updated, so it is no longer outdated).
+\* unsupported decline answers requires_change (R:1090), and an outdated one answers
+\* requires_update unless this build is newer than the one that declined
+\* (R _caller_is_newer_than_decliner) or says it renders the recipe (renders_locally).
 RetryOK == /\ sPhase = "attention" /\ sReason # "unsupported"
-           /\ ~(sReason = "outdated" /\ outdated)
+           /\ ~(sReason = "outdated" /\ lvl <= sDecl /\ ~Asserts)
            /\ req = sId /\ sId < MaxId
 ResumeOK == Paused /\ req = sId                      \* R:1084-1088 resume, same identity
 
 \* R:980-1047 POST /failures. A Stop pauses the record (phase unchanged, R:1015-1020); a
 \* failure marks it needs_attention (V:626, only from awaiting/syncing) and leaves an
 \* accepted video's variant alone (R:1037).
+\* R report_device_failure: a renderer_outdated decline from a build older than the newest
+\* reader, or while a device uploads (syncing), is held (409 held_by_newer_build): another
+\* device can render it. An accepted one records the declining level and whether that build
+\* was below a protocol floor of the recipe (R declined_gap: the server checks its floors
+\* for the decliner; a schema gap it cannot see is "renderer").
 FailableForReport == sPhase \in {"awaiting", "syncing"}
-Report(id, reason) ==
-  IF id = sId /\ FailableForReport
+HeldDecline(reason, from) == reason = "outdated" /\ (sPhase = "syncing" \/ from < sRead)
+Report(id, reason, from) ==
+  IF id = sId /\ FailableForReport /\ ~HeldDecline(reason, from)
   THEN IF reason = "cancelled"
-       THEN /\ sPaused' = TRUE /\ UNCHANGED <<sPhase, sReason, vStatus>>
+       THEN /\ sPaused' = TRUE /\ UNCHANGED <<sPhase, sReason, vStatus, sDecl, sFloor>>
        ELSE /\ sPhase' = "attention" /\ sReason' = reason /\ UNCHANGED sPaused
             /\ vStatus' = IF Accepted THEN vStatus ELSE "attention"
-  ELSE UNCHANGED <<sPhase, sReason, sPaused, vStatus>>     \* 409 / idempotent: rejected
+            /\ sDecl' = IF reason = "outdated" THEN from ELSE sDecl
+            /\ sFloor' = IF reason = "outdated" THEN kind = "floor" /\ from < need ELSE sFloor
+  ELSE UNCHANGED <<sPhase, sReason, sPaused, vStatus, sDecl, sFloor>>     \* 409 / idempotent: rejected
 
 \* C:354-375 the delivery task: sent until the server accepts or refuses it.
 Deliver ==
   /\ app = "open" /\ rep.live
-  /\ Report(rep.id, rep.reason)
+  /\ Report(rep.id, rep.reason, lvl)
   /\ rep' = NoRep
-  /\ UNCHANGED <<sId, vGen, stale, reapedId, pubIds, pubFrom, futile, faults, env, app, coord, req,
-                 pres, obs, rec, oldRec, decl, sched, hiReq, banner, ed, again>>
+  /\ UNCHANGED <<sId, vGen, stale, reapedId, pubIds, pubFrom, futile, sRead, autoRepins, oldDecl,
+                 oldRetr, faults, env, app, coord, req, pres, obs, rec, oldRec, decl, sched, hiReq,
+                 banner, ed, again, upd426>>
 
 DeliveryFails ==                                    \* offline: back off and send again
   /\ app = "open" /\ rep.live /\ Fault
   /\ faults' = faults - 1 /\ rep' = rep
   /\ UNCHANGED <<srv, env, app, coord, req, pres, obs, rec, oldRec, decl, sched, hiReq, banner, ed,
-                 again>>
+                 again, upd426>>
 
 \* S:623-656 sendDecline: retried until the server answers (accepted, or refused for good),
 \* then reconcile to read needs_attention (a read asked for while busy runs after).
 DeclDeliver ==
   /\ app = "open" /\ decl.st = "sending"
-  /\ Report(decl.id, decl.reason)
+  /\ Report(decl.id, decl.reason, lvl)
   /\ decl' = [decl EXCEPT !.st = "done"]
   /\ IF ~Busy THEN StartRec("chat", FALSE) /\ UNCHANGED again
      ELSE UNCHANGED rec /\ again' = Again1(again, FALSE)
-  /\ UNCHANGED <<sId, vGen, stale, reapedId, pubIds, pubFrom, futile, faults, env, app, coord, req,
-                 pres, obs, oldRec, rep, sched, hiReq, banner, ed>>
+  /\ UNCHANGED <<sId, vGen, stale, reapedId, pubIds, pubFrom, futile, sRead, autoRepins, oldDecl,
+                 oldRetr, faults, env, app, coord, req, pres, obs, oldRec, rep, sched, hiReq, banner,
+                 ed, upd426>>
 
 DeclFails ==                                        \* offline: back off and send again
   /\ app = "open" /\ decl.st = "sending" /\ Fault
   /\ faults' = faults - 1 /\ decl' = decl
   /\ UNCHANGED <<srv, env, app, coord, req, pres, obs, rec, oldRec, rep, sched, hiReq, banner, ed,
-                 again>>
+                 again, upd426>>
 
 \* X: no poll for 24 h. A day only passes unnoticed while the app is not polling.
 DayPasses ==
   /\ app = "killed" /\ "reaper" \in Events /\ sPhase \in Live /\ ~stale
   /\ stale' = TRUE
   /\ UNCHANGED <<sPhase, sId, sReason, sPaused, vStatus, vGen, reapedId, pubIds, pubFrom, futile,
-                 faults, env, app, cli>>
+                 bld, faults, env, app, cli>>
 \* X:99-145: skips a paused record (X:123); keeps an accepted video's variant (X:140).
 ReapablePhase == sPhase \in Live /\ ~Paused
 Reaper ==
   /\ stale /\ ReapablePhase /\ reapedId # sId
   /\ sPhase' = "attention" /\ sReason' = "timedOut" /\ reapedId' = sId
   /\ vStatus' = IF Accepted THEN vStatus ELSE "attention"
-  /\ UNCHANGED <<sId, sPaused, vGen, stale, pubIds, pubFrom, futile, faults, env, app, cli>>
+  /\ UNCHANGED <<sId, sPaused, vGen, stale, pubIds, pubFrom, futile, bld, faults, env, app, cli>>
 
 OtherDeviceSave ==                                   \* another device saves
-  /\ saves < MaxSaves /\ "other" \in Events /\ sId < MaxId
+  /\ saves < MaxSaves /\ ("other" \in Events \/ "feature" \in Events) /\ sId < MaxId
   /\ PinForSave
-  /\ UNCHANGED <<reapedId, pubIds, pubFrom, faults, hot, unsupported, outdated, missing, approval,
+  \* "feature": that device's newer build adds a protocol-gated feature this build lacks.
+  /\ need' \in (IF "feature" \in Events THEN {need, 4} ELSE {need})
+  /\ UNCHANGED <<reapedId, pubIds, pubFrom, faults, hot, unsupported, lvl, kind, missing, approval,
                  stops, chat, app, cli>>
+
+\* An older build on another device reads the record: the GET answers it 426 (it decodes
+\* no recipe of this iPhone's level), so it declines as renderer_outdated, once per identity.
+OldDecline ==
+  /\ "old" \in Events /\ sPhase \in Live /\ oldDecl # sId
+  /\ oldDecl' = sId
+  /\ Report(sId, "outdated", OLD)
+  /\ UNCHANGED <<sId, vGen, stale, reapedId, pubIds, pubFrom, futile, sRead, autoRepins, oldRetr,
+                 faults, env, app, cli>>
+
+\* That older build taps Try again on a needs_attention card (its card may be older than this
+\* fix). The server's checks are what stop it: requires_change for an unsupported recipe,
+\* requires_update for an outdated one (an old build never says renders_locally).
+OldRetry ==
+  /\ "old" \in Events /\ sPhase = "attention" /\ oldRetr # sId /\ sId < MaxId
+  /\ oldRetr' = sId
+  /\ IF sReason # "unsupported" /\ ~(sReason = "outdated" /\ OLD <= sDecl)
+     THEN ServerRetry /\ UNCHANGED <<vGen, sRead>>
+     ELSE UNCHANGED <<sId, sPhase, sReason, sPaused, vStatus, stale, futile, sDecl, sFloor, vGen, sRead>>
+  /\ UNCHANGED <<reapedId, pubIds, pubFrom, autoRepins, oldDecl, faults, env, app, cli>>
+
+\* An operator lowers the protocol floor of the recipe: the build that declined it can now
+\* render it (S apply shows renderable_now; its /retry says renders_locally).
+Rollback ==
+  /\ "rollback" \in Events /\ kind = "floor" /\ Outdated
+  /\ need' = lvl
+  /\ UNCHANGED <<srv, faults, hot, unsupported, lvl, kind, missing, approval, saves, stops, chat, app,
+                 cli>>
 
 \* The phone cools down; thermalStateDidChange runs resumeWaiting(thermalOnly) (S:703-713).
 Cool ==
   /\ hot /\ hot' = FALSE
   /\ sched' = IF app = "open" /\ pres.wait = "cooling" THEN TRUE ELSE sched
-  /\ UNCHANGED <<srv, faults, unsupported, outdated, missing, approval, saves, stops, chat, app, coord,
-                 req, pres, obs, rec, oldRec, rep, decl, hiReq, banner, ed, again>>
+  /\ UNCHANGED <<srv, faults, unsupported, lvl, need, kind, missing, approval, saves, stops, chat, app,
+                 coord, req, pres, obs, rec, oldRec, rep, decl, hiReq, banner, ed, again, upd426>>
 
-\* The server stops listing a feature as verified for this phone after its export already
-\* finished (a rollback of a verified capability). The video for the request exists.
+\* The server stops listing a feature as verified for this phone (a rollback of a verified
+\* capability) while its coordinator works on the request: mid-render (no file yet) or after
+\* its export finished. S apply re-checks capabilities on every reconcile.
 LoseCaps ==
-  /\ "caps" \in Events /\ ~unsupported /\ coord.file
+  /\ "caps" \in Events /\ ~unsupported /\ (coord.file \/ coord.run)
   /\ unsupported' = TRUE
-  /\ UNCHANGED <<srv, faults, hot, outdated, missing, approval, saves, stops, chat, app, cli>>
+  /\ UNCHANGED <<srv, faults, hot, lvl, need, kind, missing, approval, saves, stops, chat, app, cli>>
 
 \* ---------------------------------------------------------------- reconcile (S:331-497)
 
@@ -313,7 +402,7 @@ ChatPoll ==
   /\ app = "open" /\ chat /\ ~Busy
   /\ StartRec("chat", FALSE)
   /\ UNCHANGED <<srv, faults, env, app, coord, req, pres, obs, oldRec, rep, decl, sched, hiReq,
-                 banner, ed, again>>
+                 banner, ed, again, upd426>>
 ChatPollMust == ChatPoll /\ ~Settled
 
 \* S defer: the read asked for while another held the ticket runs once it is released.
@@ -321,7 +410,7 @@ Reread ==
   /\ app = "open" /\ again # "no" /\ ~Busy
   /\ StartRec("chat", again = "retry") /\ again' = "no"
   /\ UNCHANGED <<srv, faults, env, app, coord, req, pres, obs, oldRec, rep, decl, sched, hiReq,
-                 banner, ed>>
+                 banner, ed, upd426>>
 
 \* S:590-603 the scheduled re-read (also cut short by foreground / reconnect). It returns
 \* at once when another reconcile holds the ticket.
@@ -330,32 +419,41 @@ RetryWait ==
   /\ sched' = FALSE
   /\ IF ~Busy THEN StartRec("chat", FALSE) /\ UNCHANGED again
      ELSE UNCHANGED rec /\ again' = Again1(again, FALSE)
-  /\ UNCHANGED <<srv, faults, env, app, coord, req, pres, obs, oldRec, rep, decl, hiReq, banner, ed>>
+  /\ UNCHANGED <<srv, faults, env, app, coord, req, pres, obs, oldRec, rep, decl, hiReq, banner, ed,
+                 upd426>>
 
-\* S:344 GET /device-render. A success touches last_polled_at. A record the reaper failed
-\* is re-pinned for a phone build on the spot (R _auto_resume_reaped), and so is an
-\* outdated decline once a newer build reads it (R _auto_resume_updated).
+\* S:344 GET /device-render. A success touches last_polled_at. The protocol gates run first
+\* (R _client_update_detail): a build below a floor of the recipe gets a 426 naming the
+\* request and nothing is re-pinned. Otherwise a record the reaper failed is re-pinned for a
+\* phone build on the spot (R _auto_resume_reaped), and so is an outdated decline of a
+\* protocol floor once a build newer than the decliner reads it and passes the floors
+\* (R _auto_resume_updated). A schema gap is never re-pinned by the server (it cannot know
+\* whether the newer build renders it): the phone's own gate decides (renderable_now). A build that passes the
+\* gates is remembered as a reader (R _note_reader_protocol).
+Floors == kind = "schema" \/ lvl >= need             \* the server sees no schema gap
 RecFetch ==
   /\ rec.pc = "fetch"
   /\ \/ /\ Fault
         /\ rec' = [rec EXCEPT !.pc = "apply", !.resp = NoResp]
         /\ faults' = faults - 1
-        /\ UNCHANGED <<sPhase, sId, sReason, sPaused, vStatus, stale, futile>>
+        /\ UNCHANGED <<sPhase, sId, sReason, sPaused, vStatus, stale, futile, sDecl, sFloor, sRead, autoRepins>>
      \/ LET reaped == sPhase = "attention" /\ sReason = "timedOut" /\ reapedId = sId
-            updated == sPhase = "attention" /\ sReason = "outdated" /\ ~outdated
-            auto == (reaped \/ updated) /\ sId < MaxId
+            updated == sPhase = "attention" /\ sReason = "outdated" /\ sDecl > 0 /\ lvl > sDecl /\ sFloor
+            auto == Floors /\ (reaped \/ updated) /\ sId < MaxId
             id == IF auto THEN sId + 1 ELSE sId
             ph == IF auto THEN "awaiting" ELSE sPhase
-        IN /\ IF auto THEN ServerRetry ELSE UNCHANGED <<sPhase, sId, sReason, sPaused, vStatus, futile>>
+        IN /\ IF auto THEN ServerRetry ELSE UNCHANGED <<sPhase, sId, sReason, sPaused, vStatus, futile, sDecl, sFloor>>
+           /\ sRead' = IF Floors THEN Max(sRead, lvl) ELSE sRead
+           /\ autoRepins' = IF auto /\ updated THEN autoRepins + 1 ELSE autoRepins
            /\ rec' = [rec EXCEPT !.pc = "apply",
-                        !.resp = [ok |-> TRUE, id |-> id, ph |-> ph,
+                        !.resp = [ok |-> TRUE, upd |-> ~Floors, id |-> id, ph |-> ph,
                                   reason |-> IF auto THEN "none" ELSE sReason,
                                   pub |-> IF ph = "published" THEN Pub(id) ELSE 0,
-                                  paused |-> ~auto /\ Paused]]
+                                  paused |-> ~auto /\ Paused, need |-> need]]
            /\ stale' = FALSE
            /\ UNCHANGED faults
-  /\ UNCHANGED <<vGen, reapedId, pubIds, pubFrom, env, app, coord, req, pres, obs, oldRec, rep,
-                 decl, sched, hiReq, banner, ed, again>>
+  /\ UNCHANGED <<vGen, reapedId, pubIds, pubFrom, oldDecl, oldRetr, env, app, coord, req, pres, obs,
+                 oldRec, rep, decl, sched, hiReq, banner, ed, again, upd426>>
 
 \* C:392-411 start(): same request running/finished -> no-op; same request localReady ->
 \* retrySync; otherwise a FRESH receipt (which drops a persisted pending report).
@@ -388,14 +486,34 @@ ResumeServer(r, id) ==
   ELSE UNCHANGED <<sPaused, faults>>
 
 \* The rest of reconcile after the fetch, on the main actor. `own` = tickets[key] == ticket.
+\* S holdsFinishedVideo
+HoldsFinished == pres.ph = "synced" \/ (pres.ph = "localReady" /\ coord.file)
 Apply(r, own) ==
   IF ~own                                            \* S:347, S:351 ticket guard
-  THEN UNCHANGED <<coord, req, pres, obs, hiReq, rep, decl, sched, sPaused, faults>>
+  THEN UNCHANGED <<coord, req, pres, obs, hiReq, rep, decl, sched, sPaused, faults, upd426>>
   ELSE IF ~r.resp.ok
   THEN /\ pres' = ReadFailedPres
        /\ sched' = TRUE
-       /\ UNCHANGED <<coord, req, obs, hiReq, rep, decl, sPaused, faults>>
+       /\ UNCHANGED <<coord, req, obs, hiReq, rep, decl, sPaused, faults, upd426>>
+  ELSE IF r.resp.upd
+  THEN \* S readFailed .updateRequired(target): the 426 names its request. A published one
+       \* stays published; a finished video of the same request stays; a newer request is
+       \* shown as "Update Kria" and reported, whatever this phone holds for an older one.
+       LET id == r.resp.id
+       IN IF r.resp.ph = "published"
+          THEN /\ pres' = IF pres.ph = "synced" THEN pres ELSE [NoPres EXCEPT !.ph = "synced"]
+               /\ obs' = FALSE /\ sched' = FALSE
+               /\ UNCHANGED <<coord, req, hiReq, rep, decl, sPaused, faults, upd426>>
+          ELSE IF HoldsFinished /\ id = req
+          THEN /\ sched' = FALSE /\ upd426' = id
+               /\ UNCHANGED <<coord, req, pres, obs, hiReq, rep, decl, sPaused, faults>>
+          ELSE /\ obs' = FALSE /\ sched' = FALSE /\ upd426' = id
+               /\ pres' = [ph |-> "attention", rsr |-> r.resp.ph = "attention", cause |-> "outdated",
+                           pub |-> 0, wait |-> "none"]
+               /\ decl' = IF r.resp.ph \in Live THEN SendDecline(id, "outdated") ELSE decl
+               /\ UNCHANGED <<coord, req, hiReq, rep, sPaused, faults>>
   ELSE LET id == r.resp.id
+           gate == GateAt(r.resp.need)                   \* the answered request's recipe
            new == req # id
            \* S:374-380: a new request cancels the old coordinator (housekeeping, no report)
            \* and loads the receipt on disk again; the directory is per key.
@@ -403,15 +521,17 @@ Apply(r, own) ==
                  THEN [coord EXCEPT !.ph = "cancelled", !.run = FALSE, !.pc = "idle"]
                  ELSE IF new THEN [coord EXCEPT !.run = FALSE, !.pc = "idle"] ELSE coord
        IN /\ req' = id
+          /\ upd426' = 0                                  \* ghost: an answer with a recipe
           /\ hiReq' = IF id > hiReq THEN id ELSE hiReq
           /\ IF r.resp.ph = "published"                   \* S:385-390
              THEN /\ coord' = c1 /\ obs' = FALSE /\ sched' = FALSE
                   /\ pres' = [NoPres EXCEPT !.ph = "synced", !.pub = r.resp.pub]
                   /\ UNCHANGED <<rep, decl, sPaused, faults>>
              ELSE IF r.resp.ph = "attention"              \* S:392-411
-             THEN \* S:399: a decline this build no longer holds (it renders the recipe now).
-                  LET reason == IF r.resp.reason = "outdated" /\ Gate \notin Declines
-                                THEN "none" ELSE r.resp.reason
+             THEN \* S apply: a decline this build no longer holds (it renders the recipe now)
+                  \* reads renderable_now; its Try again says renders_locally.
+                  LET reason == IF r.resp.reason = "outdated" /\ gate = "local"
+                                THEN "renderable" ELSE r.resp.reason
                   IN /\ coord' = c1 /\ obs' = FALSE /\ sched' = FALSE
                      /\ pres' = [ph |-> IF c1.file THEN "localReady" ELSE "attention", rsr |-> TRUE,
                                  cause |-> reason, pub |-> 0, wait |-> "none"]
@@ -423,24 +543,28 @@ Apply(r, own) ==
                   /\ UNCHANGED <<rep, decl, sPaused, faults>>
              ELSE \* S:440-445 resume (or a Stop report that landed after a resume here).
                   /\ ResumeServer(r, id)
-                  /\ LET resumesSync == c1.id = id /\ c1.file /\ c1.ph \in {"localReady", "syncing"}
+                  \* S resumesSync: this request's video exists here (also already synced: a
+                  \* stale "awaiting" answer must not decline a video that is published).
+                  /\ LET resumesSync == c1.id = id /\ c1.file /\ c1.ph \in {"localReady", "syncing", "synced"}
                          inFlight == c1.id = id /\ c1.ph \in {"preparing", "rendering"} /\ c1.run
-                     IN IF Gate = "wait" /\ ~resumesSync /\ ~inFlight
+                     IN IF gate = "wait" /\ ~resumesSync /\ ~inFlight
                         THEN \* S:463-467 waiting for the phone to cool; re-checked on a timer
                              /\ coord' = c1 /\ obs' = FALSE /\ sched' = TRUE
                              /\ pres' = [NoPres EXCEPT !.ph = "preparing", !.wait = "cooling"]
                              /\ UNCHANGED <<rep, decl>>
-                        ELSE IF Gate \in Declines /\ ~resumesSync
+                        ELSE IF gate \in Declines /\ ~resumesSync /\ ~inFlight
                         THEN \* S decline: the phone will never render it. The card shows the
                              \* creator's turn (a change or an update), and the server is told,
                              \* also when a finished export of an earlier attempt is kept here.
-                             \* (`.decline where resumesSync` uploads the video it has.)
+                             \* (`.decline where resumesSync || inFlight` lets an export of this
+                             \* request that finished or is running upload: the server checks
+                             \* the bytes, never the phone's capabilities.)
                              LET keeps == c1.id = id /\ c1.file
                              IN /\ coord' = c1 /\ obs' = FALSE /\ sched' = FALSE
                                 /\ pres' = [ph |-> IF keeps THEN "localReady" ELSE "attention",
-                                            rsr |-> FALSE, cause |-> Gate, pub |-> 0,
+                                            rsr |-> FALSE, cause |-> gate, pub |-> 0,
                                             wait |-> "none"]
-                                /\ decl' = SendDecline(id, Gate)
+                                /\ decl' = SendDecline(id, gate)
                                 /\ UNCHANGED rep
                         ELSE \* S:483-496 start or recover, then observe
                              LET starts == c1.id # id \/ r.retry
@@ -460,14 +584,14 @@ RecApply ==
   /\ rec.pc = "apply"
   /\ Apply(rec, TRUE)
   /\ rec' = NoRec
-  /\ UNCHANGED <<sPhase, sId, sReason, vStatus, vGen, stale, reapedId, pubIds, pubFrom, futile,
+  /\ UNCHANGED <<sPhase, sId, sReason, vStatus, vGen, stale, reapedId, pubIds, pubFrom, futile, bld,
                  env, app, oldRec, banner, ed, again>>
 
 OldApply ==
   /\ oldRec # NoRec
   /\ Apply(oldRec, FALSE)
   /\ oldRec' = NoRec
-  /\ UNCHANGED <<sPhase, sId, sReason, vStatus, vGen, stale, reapedId, pubIds, pubFrom, futile,
+  /\ UNCHANGED <<sPhase, sId, sReason, vStatus, vGen, stale, reapedId, pubIds, pubFrom, futile, bld,
                  env, app, rec, banner, ed, again>>
 
 \* ---------------------------------------------------------------- the coordinator (C:546-649)
@@ -505,13 +629,13 @@ PerfPrep ==
            ELSE IF coord.file THEN Step([coord EXCEPT !.pc = "sync"])              \* intact MP4
            ELSE IF missing THEN FailStep("origMissing", "origMissing")             \* original_missing
            ELSE Step([coord EXCEPT !.ph = "rendering", !.pc = "export"])
-  /\ UNCHANGED <<sPhase, sId, sReason, sPaused, vStatus, vGen, reapedId, pubIds, pubFrom, futile, env,
-                 app, req, rec, oldRec, decl, sched, hiReq, banner, ed, again>>
+  /\ UNCHANGED <<sPhase, sId, sReason, sPaused, vStatus, vGen, reapedId, pubIds, pubFrom, futile, bld,
+                 env, app, req, rec, oldRec, decl, sched, hiReq, banner, ed, again, upd426>>
 
 PerfExport ==
   /\ Run("export")
   /\ Step([coord EXCEPT !.ph = "localReady", !.file = TRUE, !.pc = "sync"])
-  /\ UNCHANGED <<srv, faults, env, app, req, rec, oldRec, decl, sched, hiReq, banner, ed, again>>
+  /\ UNCHANGED <<srv, faults, env, app, req, rec, oldRec, decl, sched, hiReq, banner, ed, again, upd426>>
 
 \* C:458-500: the background window expired (or AVFoundation reports an interruption):
 \* stop the encode and keep the receipt resumable; the next reconcile recovers it.
@@ -519,7 +643,7 @@ Background ==
   /\ Run("export") /\ "background" \in Events /\ Fault
   /\ faults' = faults - 1
   /\ Step([Park EXCEPT !.run = FALSE, !.pc = "idle"])
-  /\ UNCHANGED <<srv, env, app, req, rec, oldRec, decl, sched, hiReq, banner, ed, again>>
+  /\ UNCHANGED <<srv, env, app, req, rec, oldRec, decl, sched, hiReq, banner, ed, again, upd426>>
 
 \* C:643-645 isCurrent, then P:320-350 reserve the upload. A reservation means the phone
 \* resumed, so it drops a user pause (R:922).
@@ -535,8 +659,8 @@ PerfSync ==
            THEN /\ sPhase' = "syncing" /\ sPaused' = FALSE
                 /\ Step([coord EXCEPT !.ph = "syncing", !.pc = "complete"])
            ELSE /\ UNCHANGED <<sPhase, sPaused>> /\ FailStep("blip", "transient")
-  /\ UNCHANGED <<sId, sReason, vStatus, vGen, reapedId, pubIds, pubFrom, futile, env, app, req, rec,
-                 oldRec, decl, sched, hiReq, banner, ed, again>>
+  /\ UNCHANGED <<sId, sReason, vStatus, vGen, reapedId, pubIds, pubFrom, futile, bld, env, app, req,
+                 rec, oldRec, decl, sched, hiReq, banner, ed, again, upd426>>
 
 LateComplete == [coord EXCEPT !.ph = "superseded", !.run = FALSE, !.pc = "idle"]
 CompleteOK == sId = coord.id /\ sPhase = "syncing"   \* complete via _record identity check
@@ -554,8 +678,8 @@ PerfComplete ==
                 \* 409 -> isCurrent -> superseded (or rethrow while current)
                 /\ IF ServerCurrent THEN FailStep("blip", "transient")
                    ELSE Step(LateComplete)
-  /\ UNCHANGED <<sId, sReason, sPaused, stale, reapedId, futile, env, app, req, rec, oldRec, decl,
-                 sched, hiReq, banner, ed, again>>
+  /\ UNCHANGED <<sId, sReason, sPaused, stale, reapedId, futile, bld, env, app, req, rec, oldRec, decl,
+                 sched, hiReq, banner, ed, again, upd426>>
 
 \* ---------------------------------------------------------------- app lifecycle
 
@@ -566,7 +690,7 @@ ProcessEnds ==
   /\ rep' = IF rep.disk THEN [rep EXCEPT !.live = FALSE] ELSE NoRep
   /\ req' = 0 /\ pres' = NoPres /\ obs' = FALSE /\ rec' = NoRec /\ oldRec' = NoRec
   /\ decl' = NoDecl /\ sched' = FALSE /\ hiReq' = 0 /\ banner' = FALSE
-  /\ ed' = EdIdle /\ again' = "no"
+  /\ ed' = EdIdle /\ again' = "no" /\ upd426' = 0
 
 Kill ==                                              \* iOS kills the app
   /\ app = "open" /\ "kill" \in Events /\ Fault
@@ -574,10 +698,12 @@ Kill ==                                              \* iOS kills the app
   /\ ProcessEnds
   /\ UNCHANGED <<srv, env>>
 
-Reopen ==                                            \* you open the project again
+\* You open Kria again: it starts on the chat workspace (KriaApp's root) with the last
+\* project, whose poll then runs, also after an update from the gallery editor.
+Reopen ==
   /\ app = "killed"
-  /\ app' = "open"
-  /\ UNCHANGED <<srv, faults, env, cli>>
+  /\ app' = "open" /\ chat' = TRUE
+  /\ UNCHANGED <<srv, faults, hot, unsupported, lvl, need, kind, missing, approval, saves, stops, cli>>
 
 \* ---------------------------------------------------------------- you, in the chat card
 
@@ -587,7 +713,8 @@ ShowsRetry ==
   /\ pres.ph \in {"attention", "cancelled", "localReady"}
   /\ pres.wait \in {"none", "quiet"}
   /\ ~(missing /\ pres.ph = "attention")              \* KRI-211 originalsMissing hides it
-  /\ ~(pres.ph = "attention" /\ pres.cause \in Structural)
+  \* D showsRetryButton: a kept video with a structural reason gets no "Retry sync" either.
+  /\ ~(pres.ph \in YourTurnPh /\ pres.cause \in Structural)
 
 \* "Stop rendering" (D:345 -> S:781-788 -> C:446-451): a resumable pause. The creator taps
 \* it at most once per run (like Saves, a bounded user event).
@@ -603,8 +730,8 @@ Stop ==
                        THEN [id |-> coord.id, reason |-> "cancelled", live |-> TRUE, disk |-> TRUE]
                        ELSE rep
      ELSE UNCHANGED <<coord, pres, obs, rep>>         \* no coordinator: the button does nothing
-  /\ UNCHANGED <<srv, faults, hot, unsupported, outdated, missing, approval, saves, chat, app, req, decl,
-                 hiReq, banner, ed>>
+  /\ UNCHANGED <<srv, faults, hot, unsupported, lvl, need, kind, missing, approval, saves, chat, app, req,
+                 decl, hiReq, banner, ed, upd426>>
 
 \* retryNeedsAttention (S:663-701): POST /device-render/retry, then drop the local
 \* coordinator and receipt identity and clear the ticket. `after` is what the caller
@@ -618,8 +745,8 @@ RetryNeedsAttention(after) ==
      \/ /\ UNCHANGED faults
         /\ IF RetryOK \/ ResumeOK
            THEN /\ IF RetryOK THEN ServerRetry
-                   ELSE /\ sPaused' = FALSE /\ UNCHANGED <<sId, sPhase, sReason, vStatus, stale, futile>>
-                /\ UNCHANGED <<vGen, reapedId, pubIds, pubFrom>>
+                   ELSE /\ sPaused' = FALSE /\ UNCHANGED <<sId, sPhase, sReason, vStatus, stale, futile, sDecl, sFloor>>
+                /\ UNCHANGED <<vGen, reapedId, pubIds, pubFrom, sRead, autoRepins, oldDecl, oldRetr>>
                 /\ coord' = IF coord.id # 0
                             THEN [coord EXCEPT !.ph = "cancelled", !.run = FALSE, !.pc = "idle"]
                             ELSE coord
@@ -631,7 +758,8 @@ RetryNeedsAttention(after) ==
            \* Kria"; not_awaiting_retry / superseded (R _record) / at the bound: message only.
            ELSE /\ pres' = IF sPhase = "attention" /\ req = sId /\ sReason = "unsupported"
                            THEN [pres EXCEPT !.cause = "requiresChange"]
-                           ELSE IF sPhase = "attention" /\ req = sId /\ sReason = "outdated" /\ outdated
+                           ELSE IF sPhase = "attention" /\ req = sId /\ sReason = "outdated"
+                                   /\ lvl <= sDecl /\ ~Asserts
                            THEN [pres EXCEPT !.cause = "outdated"]
                            ELSE pres
                 /\ UNCHANGED <<srv, coord, req, obs, rec, oldRec, sched, ed>>
@@ -659,7 +787,8 @@ ChatTryAgainBody == IF pres.rsr THEN RetryNeedsAttention(ChatAfterRetry) /\ UNCH
 ChatTryAgain ==
   /\ app = "open" /\ ShowsRetry
   /\ ChatTryAgainBody
-  /\ UNCHANGED <<hot, unsupported, outdated, missing, approval, chat, app, rep, decl, hiReq, banner>>
+  /\ UNCHANGED <<hot, unsupported, lvl, need, kind, missing, approval, chat, app, rep, decl, hiReq, banner,
+                 upd426>>
 
 \* D:47-111 Find original files: once every original is back, resume() finishes the video
 \* without another tap (retryNeedsAttention when the server needs it, then retry()).
@@ -668,30 +797,46 @@ Relink ==
   /\ pres.cause \notin Structural
   /\ missing' = FALSE
   /\ ChatTryAgainBody
-  /\ UNCHANGED <<hot, unsupported, outdated, approval, chat, app, rep, decl, hiReq, banner>>
+  /\ UNCHANGED <<hot, unsupported, lvl, need, kind, approval, chat, app, rep, decl, hiReq, banner, upd426>>
 
-\* "Review the updated edit" (card, D:42-46) or "Review in chat" (editor banner) opens the
-\* conversation, and the creator asks for a change. Kria re-plans with the features verified
-\* for phones (phone_guided_plan reads phone_render_verified_features), so the new recipe
-\* renders here (an environment assumption, findings.md). The server pins it as a new
-\* request for a new generation. From the gallery editor (no chat) the button goes back.
+\* "Review the updated edit" / "Review in chat" (card D, editor banner EC) in the chat
+\* workspace: the creator asks for a change in the conversation. The server pins Kria's new
+\* recipe as a new request for a new generation. Kria re-plans with the features verified for
+\* phones, but a chat edit may also keep the feature this iPhone lacks (or the newer one it
+\* can't decode): then the phone declines again and the creator still has the same way out.
+\* The rule is about having a way out, not about one change fixing it.
 ChatChange ==
-  /\ app = "open" /\ chat /\ (NeedsChange(pres) \/ ed.save = "review") /\ sId < MaxId
+  /\ app = "open" /\ chat /\ (YourTurn(pres) \/ ed.save \in {"review", "update"}) /\ sId < MaxId
   /\ sId' = sId + 1 /\ sPhase' = "awaiting" /\ sReason' = "none" /\ sPaused' = FALSE
   /\ vStatus' = "awaiting" /\ vGen' = 50 + sId + 1 /\ stale' = FALSE
-  /\ unsupported' = FALSE
-  /\ UNCHANGED <<reapedId, pubIds, pubFrom, futile, faults, hot, outdated, missing, approval, saves,
-                 stops, chat, app, cli>>
+  /\ sDecl' = 0 /\ sFloor' = FALSE /\ sRead' = 0
+  /\ unsupported' \in {FALSE, unsupported}
+  /\ need' \in {need, lvl}
+  /\ UNCHANGED <<reapedId, pubIds, pubFrom, futile, autoRepins, oldDecl, oldRetr, faults, hot, lvl, kind,
+                 missing, approval, saves, stops, chat, app, cli>>
 
-\* "Update Kria" (card D:323-327, editor banner): the App Store update ends the process. The
-\* new build is newer than the one that declined (the declining protocol is on the record).
-\* Bounded like the other pinning events: the auto-resume it leads to pins a new request.
+\* "Review in chat" from the gallery editor (no conversation under it, EditorViews:265): it
+\* opens the edit's own creation thread (open-in-editor names it; AppModel
+\* openCreationThread), closing the gallery and the editor. The chat workspace and its poll
+\* are there from then on.
+OpenChat ==
+  /\ app = "open" /\ ~chat
+  /\ YourTurn(pres) \/ ed.save \in {"review", "update"}
+  /\ chat' = TRUE /\ ed' = EdIdle
+  /\ UNCHANGED <<srv, faults, hot, unsupported, lvl, need, kind, missing, approval, saves, stops, app,
+                 coord, req, pres, obs, rec, oldRec, rep, decl, sched, hiReq, banner, again, upd426>>
+
+\* "Update Kria" (card D, editor banner EC -> KriaUpdateLink: TestFlight, else its App Store
+\* page): the update ends the process. The new build is newer than the one that declined,
+\* but for a floor gap it may still be too old (level 3 < 4): "newer but insufficient", at
+\* most once (the next update is the current build). A schema gap the server cannot see is
+\* assumed fixed by the update (findings.md, open risk). Bounded like the pinning events.
 UpdateApp ==
-  /\ app = "open" /\ outdated /\ sId < MaxId
-  /\ (pres.ph = "attention" /\ NeedsUpdate(pres)) \/ ed.save = "update"
-  /\ outdated' = FALSE
+  /\ app = "open" /\ Outdated /\ sId < MaxId
+  /\ NeedsUpdate(pres) \/ ed.save = "update"
+  /\ lvl' \in (IF kind = "floor" /\ lvl = 2 THEN {3, 4} ELSE {4})
   /\ ProcessEnds
-  /\ UNCHANGED <<srv, faults, hot, unsupported, missing, approval, saves, stops, chat>>
+  /\ UNCHANGED <<srv, faults, hot, unsupported, need, kind, missing, approval, saves, stops, chat>>
 
 \* ---------------------------------------------------------------- the editor
 
@@ -712,8 +857,9 @@ EdSave ==
                       !.ppc = "off", !.ticks = 0, !.seen = 0, !.rflag = FALSE, !.cause = "none",
                       !.from = vGen]
   /\ rec' = IF rec.src = "edpoll" /\ rec.pc = "fetch" THEN NoRec ELSE rec
-  /\ UNCHANGED <<reapedId, pubIds, pubFrom, faults, hot, unsupported, outdated, missing, approval, stops,
-                 chat, app, coord, req, pres, obs, oldRec, rep, decl, sched, hiReq, banner, again>>
+  /\ UNCHANGED <<reapedId, pubIds, pubFrom, faults, hot, unsupported, lvl, need, kind, missing, approval,
+                 stops, chat, app, coord, req, pres, obs, oldRec, rep, decl, sched, hiReq, banner, again,
+                 upd426>>
 
 \* E:900-922 refreshDeviceRender: a failed capability read keeps the last real answer;
 \* with none, it skips the reconcile and leaves it to the preview poll (deviceReconcilePending).
@@ -726,7 +872,7 @@ EdRefresh ==
      \/ /\ Fault /\ faults' = faults - 1
         /\ IF ed.caps THEN EdRefreshWith([ed EXCEPT !.recPend = FALSE])
            ELSE UNCHANGED <<rec, again>> /\ ed' = [ed EXCEPT !.recPend = TRUE, !.pc = "after"]
-  /\ UNCHANGED <<srv, env, app, coord, req, pres, obs, oldRec, rep, decl, sched, hiReq, banner>>
+  /\ UNCHANGED <<srv, env, app, coord, req, pres, obs, oldRec, rep, decl, sched, hiReq, banner, upd426>>
 
 \* Remember the identity reconcile accepted, start the poll.
 EdAfter ==
@@ -735,7 +881,7 @@ EdAfter ==
      \/ ed.pc = "waitRec" /\ rec.src # "ed"
   /\ ed' = StartPreview([ed EXCEPT !.devId = req])
   /\ UNCHANGED <<srv, faults, env, app, coord, req, pres, obs, rec, oldRec, rep, decl, sched,
-                 hiReq, banner, again>>
+                 hiReq, banner, again, upd426>>
 
 GiveUp(e) == IF e.ticks + 1 >= MaxTicks
              THEN [e EXCEPT !.save = "previewFailed", !.ppc = "off", !.ticks = 0, !.seen = 0]
@@ -772,37 +918,37 @@ PollTick ==
               ELSE IF ~Busy THEN StartRec("edpoll", FALSE) /\ ed' = [e EXCEPT !.ppc = "waitRec"]
                                  /\ UNCHANGED again
               ELSE UNCHANGED rec /\ ed' = [e EXCEPT !.ppc = "apply"] /\ again' = Again1(again, FALSE)
-  /\ UNCHANGED <<srv, env, app, coord, req, pres, obs, oldRec, rep, decl, sched, hiReq, banner>>
+  /\ UNCHANGED <<srv, env, app, coord, req, pres, obs, oldRec, rep, decl, sched, hiReq, banner, upd426>>
 
 PollWait ==
   /\ app = "open" /\ ed.ppc = "waitRec" /\ rec.src # "edpoll"
   /\ ed' = [ed EXCEPT !.ppc = "apply"]
   /\ UNCHANGED <<srv, faults, env, app, coord, req, pres, obs, rec, oldRec, rep, decl, sched,
-                 hiReq, banner, again>>
+                 hiReq, banner, again, upd426>>
 
 PollApply ==
   /\ app = "open" /\ ed.ppc = "apply"
   /\ ed' = ApplyVariant(ed)
   /\ UNCHANGED <<srv, faults, env, app, coord, req, pres, obs, rec, oldRec, rep, decl, sched,
-                 hiReq, banner, again>>
+                 hiReq, banner, again, upd426>>
 
 \* Banner "Retry device render" / "Resume rendering" (EC -> E retryDeviceRender). The entry
 \* point refuses a change or update reason even when a stale banner calls it (E filter).
 EdRetry ==
-  /\ app = "open" /\ ed.save \in {"deviceRetry", "paused"} /\ ed.pc = "idle" /\ ed.pend # 0
+  /\ app = "open" /\ ed.save \in {"deviceRetry", "paused", "renderNow"} /\ ed.pc = "idle" /\ ed.pend # 0
   /\ ~YourTurn(pres)
   /\ IF pres.rsr
      THEN RetryNeedsAttention(EdAfterRetry)
      ELSE /\ ed' = [ed EXCEPT !.pc = "refresh", !.rflag = TRUE]
           /\ UNCHANGED <<srv, saves, stops, faults, coord, req, pres, obs, rec, oldRec, sched>>
-  /\ UNCHANGED <<hot, unsupported, outdated, missing, approval, chat, app, rep, decl, hiReq, banner,
-                 again>>
+  /\ UNCHANGED <<hot, unsupported, lvl, need, kind, missing, approval, chat, app, rep, decl, hiReq, banner,
+                 again, upd426>>
 
 EdCheckAgain ==                                      \* "Check preview again"
   /\ app = "open" /\ ed.save = "previewFailed" /\ ed.pc = "idle"
   /\ ed' = StartPreview(ed)
   /\ UNCHANGED <<srv, faults, env, app, coord, req, pres, obs, rec, oldRec, rep, decl, sched,
-                 hiReq, banner, again>>
+                 hiReq, banner, again, upd426>>
 
 \* E:837-865: the retry banner follows the live render. A healed render goes back to
 \* waiting for this save's video; a changed failure updates the banner.
@@ -816,7 +962,7 @@ EdHeal ==
            ELSE [ed EXCEPT !.save = "idle", !.cause = "none"]
   /\ ed' # ed
   /\ UNCHANGED <<srv, faults, env, app, coord, req, pres, obs, rec, oldRec, rep, decl, sched,
-                 hiReq, banner, again>>
+                 hiReq, banner, again, upd426>>
 
 \* Chat events start the editor's draft sync (E:1831-1985). A failed read now writes only
 \* refreshSync (a quiet "reconnecting" hint after 3 failures) and retries on its own
@@ -825,7 +971,8 @@ PromptSync ==
   /\ app = "open" /\ ed.pc = "idle" /\ "sync" \in Events /\ Fault
   /\ faults' = faults - 1
   /\ banner' = banner
-  /\ UNCHANGED <<srv, env, app, coord, req, pres, obs, rec, oldRec, rep, decl, sched, hiReq, ed, again>>
+  /\ UNCHANGED <<srv, env, app, coord, req, pres, obs, rec, oldRec, rep, decl, sched, hiReq, ed, again,
+                 upd426>>
 
 \* ---------------------------------------------------------------- spec
 
@@ -834,8 +981,8 @@ Next ==
   \/ PerfPrep \/ PerfExport \/ PerfSync \/ PerfComplete
   \/ Deliver \/ DeliveryFails \/ DeclDeliver \/ DeclFails
   \/ Background \/ Kill \/ Reopen \/ DayPasses \/ Reaper
-  \/ OtherDeviceSave \/ Cool \/ LoseCaps
-  \/ Stop \/ ChatTryAgain \/ Relink \/ ChatChange \/ UpdateApp
+  \/ OtherDeviceSave \/ OldDecline \/ OldRetry \/ Rollback \/ Cool \/ LoseCaps
+  \/ Stop \/ ChatTryAgain \/ Relink \/ ChatChange \/ OpenChat \/ UpdateApp
   \/ EdSave \/ EdRefresh \/ EdAfter \/ PollTick \/ PollWait \/ PollApply
   \/ EdRetry \/ EdCheckAgain \/ EdHeal \/ PromptSync
 
@@ -857,10 +1004,13 @@ SysFair ==
 \* A patient user who keeps tapping whatever retry the screen offers.
 UserFair ==
   /\ SF_vars(ChatTryAgain) /\ SF_vars(EdRetry) /\ SF_vars(EdCheckAgain) /\ SF_vars(Relink)
-  /\ SF_vars(ChatChange) /\ SF_vars(UpdateApp)
+  /\ SF_vars(ChatChange) /\ SF_vars(OpenChat) /\ SF_vars(UpdateApp)
 
 Spec == Init /\ [][Next]_vars /\ SysFair
 SpecUser == Spec /\ UserFair
+\* The creator updates Kria when told to, and taps nothing else: the render then finishes
+\* on its own (Kria fixes; no "Try again" after an update).
+SpecUpdate == Spec /\ SF_vars(UpdateApp)
 
 \* ---------------------------------------------------------------- rules
 
@@ -891,7 +1041,11 @@ CloudDecisionReported ==
 \* From every needs-attention screen, and every screen that hands the creator the next
 \* step (a change in chat, an app update), what the screen offers (or the app by itself)
 \* reaches a published video.
-Stuck(p, e) == Screen(p) \in {"attention", "change", "update"} \/ e.save \in {"deviceRetry", "review", "update"}
+\* Also any card on a record the server marked needs_attention (rsr), whatever its title:
+\* a kept video included.
+Stuck(p, e) == Screen(p) \in {"attention", "change", "update", "renderable"}
+               \/ (p.rsr /\ p.ph \in {"attention", "localReady"})
+               \/ e.save \in {"deviceRetry", "review", "update", "renderNow"}
 Shown == app = "open" /\ Stuck(pres, ed)
 Resolved == sId = MaxId \/ (sPhase = "published" /\ ~Stuck(pres, ed))
 AttentionHasWayOut == Shown ~> Resolved
@@ -922,6 +1076,23 @@ NoStaleRequestReinstalled == req = 0 \/ req = hiReq
 \* The server never re-pins the same recipe for a phone that will decline it the same way
 \* (a retry loop): an unsupported recipe needs a change, an outdated one an update.
 NoFutileRepin == ~futile
+
+\* Once this phone applied a 426 for the pinned request, the server is told until it stops
+\* waiting (the 426 path names its request; a finished video of an older one never hides it).
+UpdateTold == (app = "open" /\ upd426 = sId /\ upd426 # 0 /\ ServerWaiting) => Told
+
+\* The server re-pins an outdated decline automatically at most once: each re-pin needs a
+\* build newer than the decliner, and an older build's decline never fails a record a newer
+\* one holds (two devices on different builds never loop).
+NoRepinLoop == autoRepins <= 1
+
+\* With the chat open on a phone that can render the pinned request, and its card not
+\* showing a finished video, the server stops waiting on its own (a published video, or the
+\* phone's own report): nobody taps anything. (A save on another device while this card
+\* shows its finished video is that device's to render.)
+Capable == ~unsupported /\ ~Outdated /\ ~missing
+CapableRenders == (app = "open" /\ chat /\ Capable /\ ServerWaiting /\ pres.ph # "synced")
+                  ~> (~ServerWaiting \/ app # "open" \/ sId = MaxId)
 
 \* Sanity: with no faults the model can publish (verify.py expects this to break).
 NeverPublished == sPhase # "published"

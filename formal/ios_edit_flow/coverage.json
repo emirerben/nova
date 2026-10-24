@@ -15,7 +15,9 @@
       "presentation",
       "decision",
       "gate",
-      "stopAll"
+      "stopAll",
+      "rendersLocally",
+      "holdsFinishedVideo"
     ],
     "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift": [
       "forRouteDecision",
@@ -72,7 +74,8 @@
       "showsRetryButton",
       "offersOriginalRecovery",
       "needsChange",
-      "nextStep"
+      "nextStep",
+      "needsUpdate"
     ],
     "src/apps/api/app/routes/device_render.py": [
       "_record",
@@ -85,7 +88,12 @@
       "_retry_device_export",
       "_complete_device_export",
       "_auto_resume_updated",
-      "_caller_is_newer_than_decliner"
+      "_caller_is_newer_than_decliner",
+      "_client_update_detail",
+      "_client_update_required",
+      "_note_reader_protocol",
+      "_carry_reader_protocol",
+      "_reader_protocol"
     ],
     "src/apps/api/app/services/device_render.py": [
       "device_status",
@@ -106,19 +114,26 @@
     ],
     "src/apps/ios/Kria/Features/NativeEditorComponents.swift": [
       "deviceTitle",
-      "deviceButton"
+      "deviceButton",
+      "deviceImage"
+    ],
+    "src/apps/ios/Kria/Core/AppState.swift": [
+      "openCreationThread"
+    ],
+    "src/apps/ios/Kria/Features/NativeEditorView.swift": [
+      "reviewRetryInChat"
     ]
   },
-  "sync_commit": "141d717a2f4f13a53702cfd33a0e9a04db077981",
+  "sync_commit": "0ca950e836155ea82e9e204cc934f350a1f96b8a",
   "hashes": {
     "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:reconcile": "014424b8e8da03a5",
-    "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:apply": "f1d044296e3c5d67",
-    "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:readFailed": "aae177d6d5e6e902",
+    "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:apply": "355d0dda967620b1",
+    "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:readFailed": "8c8fc6925ba5297b",
     "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:wait": "01c87bc2c3bf9b34",
     "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:scheduleRetry": "0f721528dda4050d",
     "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:settle": "b1a6ba8c8e7711fe",
     "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:sendDecline": "1c3b2ed3f8f9bad6",
-    "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:retryNeedsAttention": "1ad0e605d73ffe24",
+    "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:retryNeedsAttention": "1291760ba93a2e0e",
     "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:resumeWaiting": "bd6134b4cff19b77",
     "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:cancel": "4328d01b28953836",
     "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:observe": "ba01c87270c19103",
@@ -126,6 +141,8 @@
     "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:decision": "4ddb95b383a8a98e",
     "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:gate": "78ecfd467ac6ca05",
     "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:stopAll": "f8cd64df0c90f1f5",
+    "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:rendersLocally": "c54d0fd26a0aeab7",
+    "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:holdsFinishedVideo": "669103e30df63ae8",
     "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:forRouteDecision": "62d557a04a64d2a5",
     "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:forRenderFailure": "8192e527f30d1857",
     "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:reportFailure": "cec4089ad72a92ef",
@@ -154,11 +171,11 @@
     "src/apps/ios/Kria/Features/NativeEditorSession.swift:startPreviewRefresh": "71cb0ca1b9a03f7a",
     "src/apps/ios/Kria/Features/NativeEditorSession.swift:retryPreviewRefresh": "a3354ea941f42a46",
     "src/apps/ios/Kria/Features/NativeEditorSession.swift:applyPreviewVariant": "9877620739b0b8c5",
-    "src/apps/ios/Kria/Features/NativeEditorSession.swift:retryDeviceRender": "f71df9049899de12",
+    "src/apps/ios/Kria/Features/NativeEditorSession.swift:retryDeviceRender": "f24e7f4d1c0c2873",
     "src/apps/ios/Kria/Features/NativeEditorSession.swift:surfaceDeviceRenderFailure": "c311c1d1ceb46a69",
     "src/apps/ios/Kria/Features/NativeEditorSession.swift:runPromptRevisionSync": "fd08340ffcc7f64f",
     "src/apps/ios/Kria/Features/NativeEditorSession.swift:handleRefreshFailure": "aae7188d84e66386",
-    "src/apps/ios/Kria/Features/NativeEditorSession.swift:deviceRenderRetryMessage": "fa73ef6ffe6f3c2c",
+    "src/apps/ios/Kria/Features/NativeEditorSession.swift:deviceRenderRetryMessage": "ee9400b38034d374",
     "src/apps/ios/Kria/Features/ChatWorkspaceView.swift:refreshCapabilities": "11fe9ebcb63d9e2b",
     "src/apps/ios/Kria/Features/ChatWorkspaceView.swift:pollUntilDismissed": "412331c5be22cc89",
     "src/apps/ios/Kria/Features/ChatWorkspaceView.swift:refreshDeviceRender": "bbfb2a291e35f008",
@@ -167,21 +184,27 @@
     "src/apps/ios/Kria/Features/DeviceRenderPanel.swift:refreshOriginalsMissing": "2b9acb9037e1f684",
     "src/apps/ios/Kria/Features/DeviceRenderPanel.swift:resume": "420a08c4d25d7e42",
     "src/apps/ios/Kria/Features/DeviceRenderPanel.swift:message": "bb15948822e49994",
-    "src/apps/ios/Kria/Features/DeviceRenderPanel.swift:showsRetryButton": "6b3298486adf8a53",
-    "src/apps/ios/Kria/Features/DeviceRenderPanel.swift:offersOriginalRecovery": "631213a358cc74c3",
-    "src/apps/ios/Kria/Features/DeviceRenderPanel.swift:needsChange": "9577793983b1314b",
-    "src/apps/ios/Kria/Features/DeviceRenderPanel.swift:nextStep": "fdc2607190a8b704",
+    "src/apps/ios/Kria/Features/DeviceRenderPanel.swift:showsRetryButton": "5a1d8ab5609b6104",
+    "src/apps/ios/Kria/Features/DeviceRenderPanel.swift:offersOriginalRecovery": "16bda82c479212db",
+    "src/apps/ios/Kria/Features/DeviceRenderPanel.swift:needsChange": "5ea28a47a2151a7f",
+    "src/apps/ios/Kria/Features/DeviceRenderPanel.swift:nextStep": "adda434485d9dc98",
+    "src/apps/ios/Kria/Features/DeviceRenderPanel.swift:needsUpdate": "a7fb9f61f49fa85c",
     "src/apps/api/app/routes/device_render.py:_record": "2efa1eb67506cc14",
     "src/apps/api/app/routes/device_render.py:get_device_render": "1476fe4cb534a5d6",
-    "src/apps/api/app/routes/device_render.py:_device_render_status": "0cce66752109af6c",
-    "src/apps/api/app/routes/device_render.py:_auto_resume_reaped": "e7bf263e9c200fa5",
+    "src/apps/api/app/routes/device_render.py:_device_render_status": "834a0d20457d4d8d",
+    "src/apps/api/app/routes/device_render.py:_auto_resume_reaped": "71ece434e353725b",
     "src/apps/api/app/routes/device_render.py:reserve_device_export": "5b5ca8251043bf7c",
-    "src/apps/api/app/routes/device_render.py:report_device_failure": "e5f5f0834a1d627c",
-    "src/apps/api/app/routes/device_render.py:retry_device_export": "e0ad012e700b0ed9",
-    "src/apps/api/app/routes/device_render.py:_retry_device_export": "3747045b206ce503",
+    "src/apps/api/app/routes/device_render.py:report_device_failure": "32c7074f0ce93ed0",
+    "src/apps/api/app/routes/device_render.py:retry_device_export": "ba5d0876773d8e7d",
+    "src/apps/api/app/routes/device_render.py:_retry_device_export": "b100a1af84d722c2",
     "src/apps/api/app/routes/device_render.py:_complete_device_export": "a54978b5a883c006",
-    "src/apps/api/app/routes/device_render.py:_auto_resume_updated": "475a0e04aa35ce72",
-    "src/apps/api/app/routes/device_render.py:_caller_is_newer_than_decliner": "59550bdece5586ac",
+    "src/apps/api/app/routes/device_render.py:_auto_resume_updated": "73376cc8b747e7d2",
+    "src/apps/api/app/routes/device_render.py:_caller_is_newer_than_decliner": "e2f7bec546a7cd42",
+    "src/apps/api/app/routes/device_render.py:_client_update_detail": "f6dbfdfde2f4dac5",
+    "src/apps/api/app/routes/device_render.py:_client_update_required": "e31de68c27332ce7",
+    "src/apps/api/app/routes/device_render.py:_note_reader_protocol": "3131e3b4b4941fdd",
+    "src/apps/api/app/routes/device_render.py:_carry_reader_protocol": "9cb5674183234029",
+    "src/apps/api/app/routes/device_render.py:_reader_protocol": "7ad2fc10e1b5ec2e",
     "src/apps/api/app/services/device_render.py:device_status": "4bc9f3707f7d0a17",
     "src/apps/api/app/services/device_render.py:has_accepted_artifact": "1e848472038c38a2",
     "src/apps/api/app/services/device_render.py:mark_device_failed": "9c4c0b79d3d85dbe",
@@ -195,7 +218,10 @@
     "src/apps/api/app/tasks/device_render_reaper.py:_record_freshness": "bf2977d9d9f8f51d",
     "src/apps/api/app/tasks/device_render_reaper.py:_superseded": "9c492254f0f7ff74",
     "src/apps/api/app/tasks/device_render_reaper.py:_reap_job": "f8fd261f3719d639",
-    "src/apps/ios/Kria/Features/NativeEditorComponents.swift:deviceTitle": "acf201baf9939414",
-    "src/apps/ios/Kria/Features/NativeEditorComponents.swift:deviceButton": "2a04954a62be0ebd"
+    "src/apps/ios/Kria/Features/NativeEditorComponents.swift:deviceTitle": "925b42461c9ded29",
+    "src/apps/ios/Kria/Features/NativeEditorComponents.swift:deviceButton": "f62d83af4a80e5db",
+    "src/apps/ios/Kria/Features/NativeEditorComponents.swift:deviceImage": "02251172e4080225",
+    "src/apps/ios/Kria/Core/AppState.swift:openCreationThread": "eb98dfcd3c697425",
+    "src/apps/ios/Kria/Features/NativeEditorView.swift:reviewRetryInChat": "c9ec1fb8f4ba8b0c"
   }
 }

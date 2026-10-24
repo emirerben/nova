@@ -10,7 +10,7 @@ Models:
 - `PhoneRender.tla`: the code on `codex/killer-integration` (the fixes). Synced commit in `coverage.json`.
 - `PhoneRenderBefore.tla`: the code at `origin/main@ff27b0a65`, before the fixes. `verify.py` proves it broke each rule the fixes made pass.
 
-Run with `make verify-phone-render` (about 2.5 minutes). `--full` adds the heavier event combinations (`FULL_RUNS` in `verify.py`).
+Run with `make verify-phone-render` (about 3 minutes). `--full` adds the heavier event combinations (`FULL_RUNS` in `verify.py`).
 
 ## Prod evidence (2026-09-24 to 2026-10-24, 133 jobs, read-only admin GETs)
 
@@ -111,9 +111,8 @@ AttentionHasWayOut tooth that only flipped the `approval` variable nothing reads
 thing that reads again.
 
 Environment assumptions added in round 2:
-- **Review in chat leads to a renderable recipe.** `ChatChange` sets `unsupported` FALSE: Kria's
-  phone planner only uses features verified for phones (`phone_render_verified_features`). The
-  model does not model the planner.
+- **Review in chat leads to a renderable recipe.** (Dropped in round 3: a chat change may keep
+  the feature, see Round 3 #8.)
 - **An app update is a newer protocol.** `UpdateApp` clears `outdated`; the server compares
   `X-Kria-Client-Protocol` with the declining one. A release that renders a newer recipe without
   bumping the protocol would get `requires_update` again (open risk, not modeled).
@@ -125,14 +124,58 @@ reaper, background, so the reaper's timed_out appears), `live-reaped-no-user`,
 declines and lost capabilities, two saves with every condition, `live-save-outdated`,
 `live-save-other`, `live-save-faults` (with draft sync) and `live-save-stop`.
 
+### Round 3 (an adversarial check of round 2 found nine more)
+
+Each fix has its own tooth (one mutation, run alone). "Unnecessary" means the mutation is not
+caught in any scenario and the reason is given.
+
+| # | What was wrong | What changed in the code | Model | Tooth (rule) |
+|---|---|---|---|---|
+| 1 | The gallery editor (no conversation under it) has "Review in chat" call `requestBack()`, which only reaches the video detail: no chat, no render card. A TLC trace with `Chat = {FALSE}` + unsupported kept "needs a change" up forever. | `NativeEditorView.reviewRetryInChat`: with no conversation it calls `AppModel.openCreationThread(session.creationThreadID)` (open-in-editor names the creation thread). The model selects that project (fetching it when not listed) and posts `chatRouteRequest`; `ChatWorkspaceView` closes the gallery (and the editor it presented) onto the conversation, or opens the projects drawer when the thread is unknown. | `OpenChat` (user-fair): `chat' = TRUE`, the editor closes. `Reopen` lands on the chat workspace (KriaApp's root). New run `live-gallery-declines` (Chat FALSE, unsupported + outdated, Save). | `gallery-review-goes-back` (AttentionHasWayOut) |
+| 2a | A capability lost mid-render: the decline was queued and shown while the coordinator kept exporting; the export published, the server refused the decline. | `apply`: `.decline where resumesSync \|\| inFlight`, so a running export of this request finishes and uploads (the server checks bytes, not capabilities), and no "needs a change" shows for a video on its way. | `LoseCaps` fires mid-render too (`coord.run`). | `decline-while-exporting` (AttentionHasWayOut) |
+| 2b | The model then found the rest of the checker's trace: a read answered "awaiting" before the publish is applied after it, declines a published video ("needs a change"), the creator changes it in chat, and a stale "published" read settles the card while the change waits. | `resumesSync` counts a `synced` receipt of the same request. The phone cannot know about a pin it has not read; what it has read is fenced by the ticket (NoStaleRequestReinstalled), and with 2a+2b no card asks for a change while its video publishes, which is what made the stale read harmful. | `resumesSync` includes `synced`. | `stale-read-declines-synced` (AttentionHasWayOut) |
+| 3a | `renderer_outdated` was raised for asset-manifest value faults (`RenderAssetError.invalidManifest`, e.g. `byteCount == 0`, RenderAssets.swift:35): "Update Kria" that no update fixes. | KriaMediaEngine: `RenderAssetError.newerManifest` for an unknown key, an unknown asset kind or a newer manifest version. `DeviceRenderRecipeUnreadable`: only `DecodingError`, `newerManifest` and `RecipeError.unsupportedSchema` are outdated; a value fault is `unsupported_recipe` ("This edit needs a change", Review in chat: a re-plan rebuilds the manifest; a retry would re-pin the same bytes). | Below the model's abstraction (it has no manifests). | none: unit test `testOnlyAVersionGapInTheAssetManifestIsOutdated` |
+| 3b | `_auto_resume_updated` re-pinned for any newer protocol, before the 426 feature gates ran: a newer but still insufficient build was re-pinned and declined again. | `routes/device_render.py`: every protocol gate is one function, `_client_update_detail` (export_verification 13, text_preferences 10, drawing 6, text_bend 9, freeze_frame 16, single_word_text 11). The GET runs it before any automatic re-pin; a build that fails it gets the 426 and nothing is re-pinned. The failure route records `declined_gap` (`floor` when the decliner failed those gates, else `renderer`); only a floor gap is auto re-pinned. A renderer/schema gap the server cannot see is the phone's call (3c). | Builds as levels (`lvl`, `need`, OLD = 1); `kind` floor/schema; the floor GET answers 426 naming the request; `UpdateApp` may land on a newer but insufficient build once; `RecFetch` checks `Floors` first. | `floors-checked-after-repin` (NoFutileRepin); `auto-resume-updated-removed` (AttentionHasWayOut under `SpecUpdate`: after "Update Kria" nobody taps) |
+| 4 | Two devices: an old build's `renderer_outdated` failed a record a newer build was rendering; the newer one re-pinned it, the old one declined again, with no bound. | The GET remembers the newest protocol that read the recipe without a 426 (`max_reader_client_protocol`), kept across re-pins of the same recipe. `/failures` answers 409 `held_by_newer_build` to a `renderer_outdated` from an older build, or while the record is syncing. Bound: each auto re-pin needs a build newer than the decliner, and a decline is accepted only from a build at least as new as the newest reader, so re-pins need strictly newer builds. | `OldDecline` / `OldRetry` (event `old`), `sRead`, `HeldDecline`; new rule NoRepinLoop (`autoRepins <= 1`). | `old-decline-not-held` (NoRepinLoop) |
+| 5 | "Update Kria" went to `https://apps.apple.com/` (the store's home page) in the card, the editor banner and the native update screen; Kria ships through TestFlight. | One constant, `KriaUpdateLink` (Core/KriaUpdateLink.swift): `itms-beta://` when `canOpenURL` sees it (`LSApplicationQueriesSchemes` in Info.plist), else TestFlight's App Store page. The update screens also offer "Review in chat". | `ChatChange`/`OpenChat` are enabled on the update screen. | none (a URL): unit test `testUpdateKriaOpensTestFlightOrItsAppStorePage` |
+| 6a | The 426 path: `.updateRequired` returned early when the phone held a finished video, without comparing the request, so a 426 about a newer request was never reported. A 426 about a published request read as a failure. | The 426 detail names the request (`identity`, `phase`, `minimum_client_protocol`). `readFailed(.updateRequired(target))`: published stays synced; a finished video of the same request stays; any other request shows "Update Kria" and its decline is sent for that identity. | `RecFetch` answers `upd` (426) with the request; `Apply` mirrors the three branches; ghost `upd426`; new rule UpdateTold; event `feature` (another device's save needs a newer build). | `update-required-ignores-identity` (UpdateTold) |
+| 6b | The phone's own clear (`.local` gate on a `renderer_outdated` record) showed "Try again", `/retry` answered `requires_update`, the next read showed "Try again" again. | `DeviceRetryBody.renders_locally`: the phone sends it when its gate renders the pinned recipe (`rendersLocally`), and the server re-pins instead of `requires_update`. The card reads "Ready to render on this iPhone" (`renderable_now`), the editor "Render on this iPhone" (`NextStep.renderNow`). | `Asserts`, `RetryOK`, cause `renderable` (Screen `renderable`, editor `renderNow`), event `rollback`. | `retry-ignores-renders-locally` (AttentionHasWayOut) |
+| 7 | `needsChange()` ignored the phase: a kept video showed "Review the updated edit" with "Retry sync" under "Ready on this iPhone"; a kept video with `renderer_outdated` had no "Update Kria". | `DeviceRenderAttentionCopy.yourTurnPhases` (needsAttention, localReady); `needsChange` / new `needsUpdate` use it; `showsRetryButton` hides "Retry sync" for structural reasons on a kept video; the card's detail says what to do with the kept video. | `NeedsChange` / `NeedsUpdate` / `ShowsRetry` / `Screen` over `YourTurnPh`; `Stuck` also covers any card on a needs_attention record (stronger); `newschema` condition + `feature` reaches the kept video with a schema gap. | `kept-video-no-update` (AttentionHasWayOut) |
+| 8 | Model fidelity: `ChatChange` set `unsupported' = FALSE` unconditionally. | (code unchanged) | A chat change may keep the feature this iPhone lacks or the newer one it can't decode (`unsupported' \in {FALSE, unsupported}`, `need' \in {need, lvl}`); the phone then declines again and the same way out is there. The rule is a way out, not a fix. | n/a |
+| 9 | Round 2's bundled teeth hid that several fixes had none. | (see each) | Split, one mutation each. | `server-requires-update-removed`, `server-requires-change-removed` (NoFutileRepin, with an older device's Try again: older builds in the field are what these server checks stop); `settled-counts-superseded` (new rule CapableRenders: with the chat open, nobody tapping, a capable phone's waiting request gets rendered); `quiet-wait-hides-change` (NoSpuriousAttention, safety run); `auto-resume-updated-removed` (above) |
+
+Unnecessary (not a tooth, not caught in any scenario): the editor's `retryDeviceRender` filter
+(`~YourTurn` in `EdRetry`). With it removed, a stale "Retry device render" tap on a change or
+update card either calls `/retry`, which the server refuses (`requires_change` /
+`requires_update`, both toothed), or re-reads locally and declines the same way. It saves a round
+trip and a misleading message; no rule depends on it.
+
+Rules added in round 3: UpdateTold, NoRepinLoop (safety), CapableRenders (liveness, `Spec`). The
+`Stuck` helper now also covers any card on a needs_attention record (a kept video included).
+
+Open risks after round 3:
+- A schema/renderer gap the server cannot see is never re-pinned automatically; after an update the
+  creator taps "Try again" once (`renders_locally`). The model checks that path (`live-save-outdated`).
+- The model's `need` stands for the whole recipe's protocol floor; the six real gates are one
+  function (`_client_update_detail`) the GET and the failure route share.
+- `max_reader_client_protocol` survives re-pins of the same recipe: if the newest device is
+  uninstalled, an older device's decline stays held (its card keeps "Update Kria", which is its
+  real way forward) and the record waits for the reaper.
+- `openCreationThread` falls back to the projects drawer when the edit has no creation thread
+  (open-in-editor returns none); phone renders always come from a thread, so the model assumes one.
+
 ## Scope and bounds
 
 - Bounds: MaxFaults 1, Stop at most once, MaxId 3 or 4, one or two Saves, and 2 answered preview polls (the real budget is 300).
 - The default runs split the events (see `MODEL_RUNS`): every condition for safety across
-  four runs; liveness for Save (cool or hot, and an unsupported recipe), Stop and
+  five runs (round 3 adds `builds`: an older device, a newer device's feature, a rollback);
+  liveness for Save (cool or hot), the declines with nobody saving, Stop (no decline),
   kill/reaper/background with every condition, the reaper with nobody tapping, the gallery
-  editor, and ClientServerAgree with Stop, kills and a lost capability.
-- `--full` adds the heavier combinations (`FULL_RUNS`). Not run for liveness (past TLC's
+  editor (and with declines), the update with no further tap, the rollback, a later schema
+  gap, CapableRenders, and ClientServerAgree with Stop, kills and a lost capability. Save with
+  a decline and Stop with the declines moved to `--full` (the round-3 state made them 60 s and
+  100 s); the default run takes about 3 minutes.
+- `--full` adds the heavier combinations (`FULL_RUNS`, including `builds-stop`, `live-save-unsupported`, `live-stop-declines`). Not run for liveness (past TLC's
   15-minute limit with the round-2 state): Save with a missing original (round 1 ran it), and two
   saves (this editor and another device). `live-save-stop` checks PreviewConverges no more
   (one answered poll keeps it under 7 minutes). The safety runs cover both.
@@ -191,7 +234,7 @@ Now also passing on the fixed code, each with teeth:
 - ClientServerAgree
 - PreviewConverges
 
-None of them excludes a condition any more. New in round 2, with teeth: NoFutileRepin.
+None of them excludes a condition any more. New in round 2, with teeth: NoFutileRepin. New in round 3, with teeth: UpdateTold, NoRepinLoop, CapableRenders.
 
 ## Fix order (ranked by user impact; written against ff27b0a65)
 

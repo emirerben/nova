@@ -55,9 +55,14 @@ TLC_SHA256 = "dae639a1f51a9e13ce60c369b15f32124cf1a78017aca366b6de0ae2b5169439"
 LOCAL_TOOLS = Path("/private/tmp/nova-formal-tools")
 
 ALL_EVENTS = '{"save", "other", "stop", "kill", "background", "reaper", "sync"}'
-ALL_CONDS = '{"none", "hot", "unsupported", "outdated", "missing"}'
+ALL_CONDS = '{"none", "hot", "unsupported", "outdated", "schema", "missing"}'
 SCOPED = '{"none", "hot", "missing"}'  # conditions without a decline
-DECLINES = '{"unsupported", "outdated"}'  # a recipe this iPhone will never render
+# A recipe this iPhone will never render: a missing capability, a protocol-floor gap (the
+# GET answers 426) and a schema gap the server cannot see (the phone's own gate says so).
+DECLINES = '{"unsupported", "outdated", "schema"}'
+# Another device on an older build, another device's save adding a feature this build can't
+# decode, and an operator lowering a recipe's protocol floor.
+BUILD_EVENTS = '{"old", "feature", "rollback"}'
 # Approval no longer routes anything in the fixed code (the server always sends
 # retry_requires_approval = false, R:535; nothing in PhoneRender.tla reads `approval`), so
 # the fixed runs pin it to FALSE. Chat: the chat workspace (and its poll) is under the
@@ -77,6 +82,8 @@ SAFETY = [
     "CloudDecisionReported",
     "NoSpuriousAttention",
     "NoFutileRepin",
+    "UpdateTold",
+    "NoRepinLoop",
 ]
 INVARIANTS = [("INVARIANT", r) for r in SAFETY]
 WAY_OUT = [("PROPERTY", "AttentionHasWayOut"), ("PROPERTY", "PreviewConverges")]
@@ -102,22 +109,34 @@ MODEL_RUNS = {
         {**TWO_SAVES, "Conds": '{"none", "unsupported", "outdated"}'},
         INVARIANTS,
     ),
+    # Builds (round 3): an older device declining or retrying, a newer device's save with a
+    # feature this build can't decode (the 426 names its request), an operator rollback.
+    "builds": (
+        "Spec",
+        {
+            **ONE_SAVE,
+            "Conds": '{"none", "unsupported", "outdated", "schema", "newschema"}',
+            "Events": BUILD_EVENTS,
+        },
+        INVARIANTS,
+    ),
     # Liveness is slow in TLC (~90 us per graph node), so the default splits the events.
     "live-save": (
         "SpecUser",
         {**LIVE, "Conds": '{"none", "hot"}', "Events": '{"save"}'},
         WAY_OUT,
     ),
-    # A recipe this iPhone declines: "Review in chat" leads to a version it renders (the
-    # unsupported-recipe dead end, RESIDUAL before this fix). Outdated is under --full.
-    "live-save-unsupported": (
+    # A recipe this iPhone declines (a capability, a protocol floor, a schema): each screen
+    # has its way out. With an editor Save: --full (live-save-unsupported, live-save-outdated).
+    "live-declines": (
         "SpecUser",
-        {**LIVE, "Conds": '{"unsupported"}', "Events": '{"save"}'},
-        WAY_OUT,
+        {**LIVE, "Conds": DECLINES, "Events": "{}"},
+        [("PROPERTY", "AttentionHasWayOut")],
     ),
+    # Stop with the declines is about 100 s, under --full (live-stop-declines).
     "live-stop": (
         "SpecUser",
-        {**LIVE, "Conds": ALL_CONDS, "Events": '{"stop"}'},
+        {**LIVE, "Conds": SCOPED, "Events": '{"stop"}'},
         [("PROPERTY", "AttentionHasWayOut")],
     ),
     # Kills, a day passing (the reaper's timed_out) and backgrounding, with a patient user.
@@ -146,10 +165,51 @@ MODEL_RUNS = {
         {**LIVE, "Conds": ALL_CONDS, "Events": '{"stop", "kill"}'},
         [("PROPERTY", "ClientServerAgree")],
     ),
+    # The capability can go also mid-render (the export of this request keeps going).
     "live-lost-capability": (
         "SpecUser",
         {**LIVE, "Conds": '{"none"}', "Events": '{"caps"}'},
         [("PROPERTY", "AttentionHasWayOut")],
+    ),
+    # The gallery editor with a declined recipe: "Review in chat" opens the edit's own
+    # conversation (it used to go back to the video detail: no chat, no render card).
+    "live-gallery-declines": (
+        "SpecUser",
+        {
+            **LIVE,
+            "Chat": "{FALSE}",
+            "Conds": '{"unsupported", "outdated"}',
+            "Events": '{"save"}',
+        },
+        WAY_OUT,
+    ),
+    # After "Update Kria" (once possibly to a build that is newer but still too old), the
+    # render finishes with no further tap: the server re-pins for the updated build. (A
+    # schema gap the server cannot see takes one "Try again", renders_locally: live-save-outdated.)
+    "live-update-no-tap": (
+        "SpecUpdate",
+        {**LIVE, "Conds": '{"outdated"}', "Events": "{}"},
+        [("PROPERTY", "AttentionHasWayOut")],
+    ),
+    # An operator lowers the recipe's floor for the build that declined: its Try again works.
+    "live-rollback": (
+        "SpecUser",
+        {**LIVE, "Conds": '{"outdated"}', "Events": '{"rollback"}'},
+        [("PROPERTY", "AttentionHasWayOut")],
+    ),
+    # A later save brings a newer schema after this iPhone rendered the first request: the
+    # kept video's card (localReady) offers Update Kria and Review in chat.
+    "live-new-schema": (
+        "SpecUser",
+        {**LIVE, "Conds": '{"newschema"}', "Events": '{"feature"}'},
+        [("PROPERTY", "AttentionHasWayOut")],
+    ),
+    # Nobody taps: a capable phone with the chat open gets the server's request rendered, also
+    # after another device saved (superseded is not settled) or an older one declined.
+    "live-capable-renders": (
+        "Spec",
+        {**LIVE, "Conds": '{"none", "hot"}', "Events": '{"other", "old"}'},
+        [("PROPERTY", "CapableRenders")],
     ),
     "agree-lost-capability": (
         "Spec",
@@ -170,11 +230,32 @@ FULL_RUNS = {
         INVARIANTS,
     ),
     "two-saves-all-conds": ("Spec", {**TWO_SAVES, "Conds": ALL_CONDS}, INVARIANTS),
+    # A recipe this iPhone declines: "Review in chat" leads to a version it renders (the
+    # unsupported-recipe dead end, RESIDUAL before round 2).
+    "live-save-unsupported": (
+        "SpecUser",
+        {**LIVE, "Conds": '{"unsupported"}', "Events": '{"save"}'},
+        WAY_OUT,
+    ),
+    "live-stop-declines": (
+        "SpecUser",
+        {**LIVE, "Conds": DECLINES, "Events": '{"stop"}'},
+        [("PROPERTY", "AttentionHasWayOut")],
+    ),
     # An outdated build: "Update Kria", then the server re-pins for the newer build.
     "live-save-outdated": (
         "SpecUser",
-        {**LIVE, "Conds": '{"outdated"}', "Events": '{"save"}'},
+        {**LIVE, "Conds": '{"outdated", "schema"}', "Events": '{"save"}'},
         WAY_OUT,
+    ),
+    "builds-stop": (
+        "Spec",
+        {
+            **ONE_SAVE,
+            "Conds": '{"none", "unsupported", "outdated", "schema"}',
+            "Events": '{"old", "feature", "rollback", "save", "stop"}',
+        },
+        INVARIANTS,
     ),
     # Save with Stop (about 6 minutes). One answered preview poll: PreviewConverges needs
     # two (a newer generation read twice), so it is checked in the Save runs instead.
@@ -253,10 +334,13 @@ BEFORE_BREAKS = {
 # (kind, specification, constants)). Every passing rule has at least one.
 ONE_SCOPED = ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": SCOPED})
 LATE_LOST_CAPS = [
-    ("ELSE IF Gate \\in Declines /\\ ~resumesSync", "ELSE IF Gate \\in Declines"),
     (
-        "/\\ decl' = SendDecline(id, Gate)",
-        "/\\ decl' = IF keeps THEN decl ELSE SendDecline(id, Gate)",
+        "ELSE IF gate \\in Declines /\\ ~resumesSync /\\ ~inFlight",
+        "ELSE IF gate \\in Declines /\\ ~inFlight",
+    ),
+    (
+        "/\\ decl' = SendDecline(id, gate)",
+        "/\\ decl' = IF keeps THEN decl ELSE SendDecline(id, gate)",
     ),
 ]
 # The old card: unsupported_recipe hid Try again (a structural reason) but had no change
@@ -331,7 +415,12 @@ TEETH = {
     # EC banner by nextStep: before, an outdated build got "Retry device render".
     "outdated-banner-offers-retry": (
         "NoSpuriousAttention",
-        [('             ELSE IF NeedsUpdate(p) THEN "update"\n', "")],
+        [
+            (
+                '             ELSE IF NeedsUpdate(p) THEN "update"\n             ELSE IF p.ph = "cancelled"',
+                '             ELSE IF p.ph = "cancelled"',
+            )
+        ],
         (
             "INVARIANT",
             "Spec",
@@ -341,7 +430,7 @@ TEETH = {
     # S sendDecline; the old code returned before telling the server.
     "decline-not-sent": (
         "CloudDecisionReported",
-        [("/\\ decl' = SendDecline(id, Gate)", "/\\ decl' = decl")],
+        [("/\\ decl' = SendDecline(id, gate)", "/\\ decl' = decl")],
         ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": '{"unsupported"}', "Events": "{}"}),
     ),
     # S decline keeps a finished export: before, it neither uploaded nor told the server.
@@ -427,8 +516,8 @@ TEETH = {
         "PreviewConverges",
         [
             (
-                "/\\ sched' = TRUE\n       /\\ UNCHANGED <<coord, req, obs, hiReq, rep, decl, sPaused, faults>>",
-                "/\\ sched' = sched\n       /\\ UNCHANGED <<coord, req, obs, hiReq, rep, decl, sPaused, faults>>",
+                "/\\ sched' = TRUE\n       /\\ UNCHANGED <<coord, req, obs, hiReq, rep, decl, sPaused, faults, upd426>>",
+                "/\\ sched' = sched\n       /\\ UNCHANGED <<coord, req, obs, hiReq, rep, decl, sPaused, faults, upd426>>",
             )
         ],
         (
@@ -437,35 +526,191 @@ TEETH = {
             {**LIVE, "Chat": "{FALSE}", "Conds": '{"none"}', "Events": '{"save"}'},
         ),
     ),
-    # The renderer_outdated loop: R /retry re-pins for the declining build, the editor's
-    # retry has no filter, and its banner offers a retry.
-    "outdated-retry-loop": (
+    # ---- round 3: one mutation per fix --------------------------------------------------
+    # R requires_update (both callers of the same server check): an older build's Try
+    # again re-pins an outdated recipe this iPhone declines again.
+    "server-requires-update-removed": (
         "NoFutileRepin",
         [
-            ('           /\\ ~(sReason = "outdated" /\\ outdated)\n', ""),
-            ("  /\\ ~YourTurn(pres)\n", ""),
-            ('             ELSE IF NeedsUpdate(p) THEN "update"\n', ""),
+            (
+                '           /\\ ~(sReason = "outdated" /\\ lvl <= sDecl /\\ ~Asserts)\n',
+                "",
+            ),
+            (
+                'IF sReason # "unsupported" /\\ ~(sReason = "outdated" /\\ OLD <= sDecl)',
+                'IF sReason # "unsupported"',
+            ),
         ],
         (
             "INVARIANT",
             "Spec",
-            {**ONE_SAVE, "Conds": '{"outdated"}', "Events": '{"save"}'},
+            {**ONE_SAVE, "Conds": '{"outdated"}', "Events": '{"old"}'},
         ),
     ),
-    # R:1090 requires_change: without it /retry re-pins an unsupported recipe.
-    "unsupported-retry-loop": (
+    # R requires_change for unsupported_recipe (both callers): a re-pin of the same recipe
+    # for a phone that lacks the capability.
+    "server-requires-change-removed": (
         "NoFutileRepin",
         [
             (
                 'RetryOK == /\\ sPhase = "attention" /\\ sReason # "unsupported"',
                 'RetryOK == /\\ sPhase = "attention"',
             ),
-            *NO_UNSUPPORTED_CHANGE,
+            (
+                'IF sReason # "unsupported" /\\ ~(sReason = "outdated" /\\ OLD <= sDecl)',
+                'IF ~(sReason = "outdated" /\\ OLD <= sDecl)',
+            ),
         ],
         (
             "INVARIANT",
             "Spec",
-            {**ONE_SAVE, "Conds": '{"unsupported"}', "Events": '{"save"}'},
+            {**ONE_SAVE, "Conds": '{"unsupported"}', "Events": '{"old"}'},
+        ),
+    ),
+    # S isSettled: superseded counted as settled again. The chat poll stops on the old
+    # request and nothing reads the one another device pinned.
+    "settled-counts-superseded": (
+        "CapableRenders",
+        [
+            (
+                'Settled == pres.ph = "synced"',
+                'Settled == pres.ph \\in {"synced", "superseded"}',
+            )
+        ],
+        ("PROPERTY", "Spec", {**LIVE, "Conds": '{"none"}', "Events": '{"other"}'}),
+    ),
+    # D needsChange with a quiet wait: a failed read on the change card reads "needs your
+    # attention" with no way forward.
+    "quiet-wait-hides-change": (
+        "NoSpuriousAttention",
+        [
+            (
+                'NeedsChange(p) == p.ph \\in YourTurnPh /\\ p.wait \\in {"none", "quiet"}',
+                'NeedsChange(p) == p.ph \\in YourTurnPh /\\ p.wait = "none"',
+            )
+        ],
+        ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": '{"unsupported"}', "Events": "{}"}),
+    ),
+    # R _auto_resume_updated removed: after "Update Kria" the render waits for a tap.
+    "auto-resume-updated-removed": (
+        "AttentionHasWayOut",
+        [
+            (
+                'updated == sPhase = "attention" /\\ sReason = "outdated" /\\ sDecl > 0 /\\ lvl > sDecl /\\ sFloor',
+                "updated == FALSE",
+            )
+        ],
+        ("PROPERTY", "SpecUpdate", {**LIVE, "Conds": '{"outdated"}', "Events": "{}"}),
+    ),
+    # R gates before the auto re-pin: a newer but still insufficient build is re-pinned and
+    # declines again.
+    "floors-checked-after-repin": (
+        "NoFutileRepin",
+        [
+            (
+                "auto == Floors /\\ (reaped \\/ updated) /\\ sId < MaxId",
+                "auto == (reaped \\/ updated) /\\ sId < MaxId",
+            )
+        ],
+        ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": '{"outdated"}', "Events": "{}"}),
+    ),
+    # R held_by_newer_build: an older device's decline fails the record a newer one holds;
+    # the newer one re-pins, the older one declines again.
+    "old-decline-not-held": (
+        "NoRepinLoop",
+        [
+            (
+                'HeldDecline(reason, from) == reason = "outdated" /\\ (sPhase = "syncing" \\/ from < sRead)',
+                "HeldDecline(reason, from) == FALSE",
+            )
+        ],
+        ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": '{"none"}', "Events": '{"old"}'}),
+    ),
+    # S readFailed .updateRequired: a finished video of an older request hides a 426 about
+    # the newer one, so the server is never told.
+    "update-required-ignores-identity": (
+        "UpdateTold",
+        [("ELSE IF HoldsFinished /\\ id = req", "ELSE IF HoldsFinished")],
+        (
+            "INVARIANT",
+            "Spec",
+            {**ONE_SAVE, "Conds": '{"none"}', "Events": '{"feature"}'},
+        ),
+    ),
+    # R renders_locally: the declining build that renders the recipe now (rollback) is told
+    # requires_update; the card flips between Try again and Update Kria forever.
+    "retry-ignores-renders-locally": (
+        "AttentionHasWayOut",
+        [
+            (
+                '           /\\ ~(sReason = "outdated" /\\ lvl <= sDecl /\\ ~Asserts)\n',
+                '           /\\ ~(sReason = "outdated" /\\ lvl <= sDecl)\n',
+            )
+        ],
+        (
+            "PROPERTY",
+            "SpecUser",
+            {**LIVE, "Conds": '{"outdated"}', "Events": '{"rollback"}'},
+        ),
+    ),
+    # AppModel openCreationThread: the gallery editor's "Review in chat" went back to the
+    # video detail (no conversation, no render card).
+    "gallery-review-goes-back": (
+        "AttentionHasWayOut",
+        [
+            (
+                "  /\\ chat' = TRUE /\\ ed' = EdIdle\n",
+                "  /\\ chat' = chat /\\ ed' = ed\n",
+            )
+        ],
+        (
+            "PROPERTY",
+            "SpecUser",
+            {
+                **LIVE,
+                "Chat": "{FALSE}",
+                "Conds": '{"unsupported"}',
+                "Events": '{"save"}',
+            },
+        ),
+    ),
+    # S `.decline where inFlight`: a capability lost mid-render declines while the export
+    # goes on and publishes.
+    "decline-while-exporting": (
+        "AttentionHasWayOut",
+        [
+            (
+                "ELSE IF gate \\in Declines /\\ ~resumesSync /\\ ~inFlight",
+                "ELSE IF gate \\in Declines /\\ ~resumesSync",
+            )
+        ],
+        ("PROPERTY", "SpecUser", {**LIVE, "Conds": '{"none"}', "Events": '{"caps"}'}),
+    ),
+    # S resumesSync counts synced: a stale "awaiting" read declines a published video, and a
+    # stale "published" read then settles the card while the change it led to waits.
+    "stale-read-declines-synced": (
+        "AttentionHasWayOut",
+        [
+            (
+                'c1.ph \\in {"localReady", "syncing", "synced"}',
+                'c1.ph \\in {"localReady", "syncing"}',
+            )
+        ],
+        ("PROPERTY", "SpecUser", {**LIVE, "Conds": '{"none"}', "Events": '{"caps"}'}),
+    ),
+    # D yourTurnPhases: a kept video (localReady) whose build is too old gets no Update link.
+    "kept-video-no-update": (
+        "AttentionHasWayOut",
+        [
+            (
+                "NeedsUpdate(p) == p.ph \\in YourTurnPh /\\",
+                'NeedsUpdate(p) == p.ph = "attention" /\\',
+            )
+        ],
+        (
+            "PROPERTY",
+            "SpecUser",
+            {**LIVE, "Conds": '{"newschema"}', "Events": '{"feature"}'},
         ),
     ),
 }

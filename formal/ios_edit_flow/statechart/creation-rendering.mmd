@@ -40,8 +40,10 @@ stateDiagram-v2
     state "This edit needs its original clips<br/>(Find original files)" as originalMissing
     %% DeviceRenderSessions.swift (gate .decline unsupported_recipe + sendDecline); DeviceRenderPanel.swift (changeReasons)
     state "This edit needs a change<br/>(Review the updated edit)" as needsChange
-    %% DeviceRenderSessions.swift (gate .decline renderer_outdated + sendDecline)
-    state "Update Kria to render this edit<br/>(Update Kria)" as needsUpdate
+    %% DeviceRenderSessions.swift (426 naming the request, gate .decline renderer_outdated + sendDecline)
+    state "Update Kria to render this edit<br/>(Update Kria via TestFlight, Review in chat)" as needsUpdate
+    %% DeviceRenderSessions.swift (renderable_now); routes/device_render.py (renders_locally)
+    state "Ready to render on this iPhone<br/>(Try again)" as renderNow
     %% DeviceRenderPanel.swift (export_failed and others: Try again)
     state "This edit needs your attention<br/>(Try again)" as needsAttention
     %% src/apps/api/app/routes/device_render.py (_auto_resume_reaped, _auto_resume_updated)
@@ -78,6 +80,7 @@ stateDiagram-v2
     phoneWait --> awaitingDevice : Cooled down or space freed
     awaitingDevice --> needsChange : iPhone can't render this recipe, server told
     awaitingDevice --> needsUpdate : Recipe newer than this Kria, server told
+    awaitingDevice --> autoResume : Older device declined, a newer build reads it
     awaitingDevice --> superseded : Newer edit approved
     awaitingDevice --> autoResume : Server gave up after a day, you reopen
     autoResume --> awaitingDevice : New attempt, same edit
@@ -96,7 +99,12 @@ stateDiagram-v2
     originalMissing --> awaitingDevice : Originals found, finishes on its own
     needsChange --> chatChange : Tap Review the updated edit
     chatChange --> awaitingDevice : New version for this iPhone
-    needsUpdate --> autoResume : Update Kria and reopen
+    needsUpdate --> autoResume : Update Kria and reopen (build passes every floor)
+    needsUpdate --> renderNow : Update reopens a schema gap it renders now
+    needsUpdate --> chatChange : Tap Review in chat
+    renderNow --> awaitingDevice : Tap Try again (new attempt)
+    localReady --> needsChange : Kept video, this version can't sync
+    localReady --> needsUpdate : Kept video, needs a newer Kria
 
     failedCard --> retryApproval : Retry approved edit
     failedCard --> refreshLoop : No retry id, tap Refresh
@@ -115,7 +123,7 @@ stateDiagram-v2
     classDef failed fill:#f4f6f7,stroke:#566573,color:#1b2631
 
     class dispatch,cloudRendering,awaitingDevice,quietWait,phoneWait,phonePreparing,phoneRendering,syncing,superseded,autoResume working
-    class localReady,paused,originalMissing,needsChange,needsUpdate,needsAttention,chatChange,retryApproval yourturn
+    class localReady,paused,originalMissing,needsChange,needsUpdate,renderNow,needsAttention,chatChange,retryApproval yourturn
     class ready,synced done
     class cloudPartial,refreshLoop degraded
     class failedCard,nonRetryable failed

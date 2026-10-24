@@ -25,8 +25,13 @@ stateDiagram-v2
     state "Already rendered and synced" as AlreadyPublished
     %% DeviceRenderSessions.swift (gate .decline unsupported_recipe, sendDecline) + DeviceRenderPanel.swift (changeReasons)
     state "This edit needs a change<br/>(Review in chat)" as NeedsChange
-    %% DeviceRenderSessions.swift (gate .decline renderer_outdated, retryNeedsAttention requires_update)
-    state "Update Kria to render this edit<br/>(Update Kria)" as NeedsUpdate
+    %% DeviceRenderSessions.swift (readFailed .updateRequired(target), gate .decline renderer_outdated, requires_update)
+    %% KriaUpdateLink.swift (TestFlight itms-beta://, else its App Store page)
+    state "Update Kria to render this edit<br/>(Update Kria, Review in chat)" as NeedsUpdate
+    %% DeviceRenderSessions.swift (apply: renderer_outdated it renders now -> renderable_now)
+    state "Ready to render on this iPhone<br/>(Render on this iPhone)" as RenderNow
+    %% src/apps/ios/Kria/Core/AppState.swift (openCreationThread) + ChatWorkspaceView.swift (chatRouteRequest)
+    state "Gallery editor: open this edit's<br/>own conversation" as OpenThread
     %% DeviceRenderSessions.swift (apply: needs_attention, requiresServerRetry)
     state "Kria says: needs attention<br/>(Retry device render)" as ServerNeedsAttention
     %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift (performOnce: isCurrent, sources)
@@ -49,8 +54,8 @@ stateDiagram-v2
     state "Saved, rendering paused<br/>(Resume rendering)" as Paused
     %% DeviceRenderCoordinator.swift (receipt on disk; recover on reopen)
     state "App killed mid-render,<br/>receipt saved on disk" as Killed
-    %% src/apps/api/app/routes/device_render.py (_auto_resume_reaped, _auto_resume_updated)
-    state "Kria re-sends the same edit<br/>on its own" as AutoResume
+    %% src/apps/api/app/routes/device_render.py (_client_update_detail first, then _auto_resume_reaped / _auto_resume_updated)
+    state "Kria re-sends the same edit<br/>on its own (build passes every floor)" as AutoResume
     %% NativeEditorSession.swift (applyPreviewVariant: generation, identity fence, newer generation read twice)
     state "Editor shows the new video" as EditorReady
     %% DeviceRenderSessions.swift (retryNeedsAttention) + routes/device_render.py (retry_device_export)
@@ -70,12 +75,14 @@ stateDiagram-v2
     AskServer --> Cooling : too hot to start
     Cooling --> AskServer : cooled down
     AskServer --> NeedsChange : recipe this iPhone can't render, server told
-    AskServer --> NeedsUpdate : recipe newer than this build, server told
+    AskServer --> NeedsUpdate : 426 for this request (or a newer one), or recipe newer than this build, server told
+    AskServer --> RenderNow : declined as outdated, this build renders it now
     AskServer --> ServerNeedsAttention : server phase needs_attention
-    AskServer --> AutoResume : reaped, or outdated and now updated
+    AskServer --> AutoResume : reaped, or a floor decline and this build is newer and passes the floors
     AutoResume --> AskServer : new identity, same recipe
     AskServer --> Preparing : awaiting_device, new identity
     AskServer --> Syncing : video for this request exists, upload it
+    AskServer --> Rendering : capability lost mid-render, the export finishes
 
     Preparing --> Superseded : server no longer current
     Preparing --> Parked : offline or 5xx
@@ -99,8 +106,14 @@ stateDiagram-v2
     AlreadyPublished --> EditorReady : variant ready
 
     NeedsChange --> Chat : Review in chat
-    Chat --> AskServer : the new version is pinned for this iPhone
+    NeedsChange --> OpenThread : Review in chat (from the gallery)
+    NeedsUpdate --> OpenThread : Review in chat (from the gallery)
+    OpenThread --> Chat : the conversation opens
+    NeedsUpdate --> Chat : Review in chat
+    Chat --> AskServer : the new version is pinned (it may still need a change)
     NeedsUpdate --> AutoResume : Update Kria, reopen
+    NeedsUpdate --> NeedsUpdate : update still too old (426)
+    RenderNow --> ServerRetry : Render on this iPhone (renders_locally)
     ServerNeedsAttention --> ServerRetry : Retry device render
     OriginalMissing --> ServerRetry : Find original files, all back
     Paused --> ServerRetry : Resume rendering
@@ -117,5 +130,5 @@ stateDiagram-v2
     classDef failed fill:#f4f6f7,stroke:#566573,color:#1b2631
 
     class Capabilities,CapsKept,AskServer,Reread,QuietWait,Cooling,Preparing,Rendering,Parked,LocalReady,Syncing,ServerRetry,AutoResume,Killed,Superseded working
-    class NeedsChange,NeedsUpdate,ServerNeedsAttention,OriginalMissing,Paused,Chat yourturn
+    class NeedsChange,NeedsUpdate,RenderNow,OpenThread,ServerNeedsAttention,OriginalMissing,Paused,Chat yourturn
     class AlreadyPublished,Synced,EditorReady done
