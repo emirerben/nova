@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.98.0] - 2026-10-24
+
+### Changed
+- fix(kria): a song suggestion is honest about the genre asked for (KRI-848) (#1789) <!-- release-pr: 1789 -->
+
 ## [0.81.97.0] - 2026-10-24
 
 ### Changed
