@@ -804,6 +804,30 @@ restart (restores the bucket split for unbound jobs; bound requests ask for reco
 cacio e pepe job, a pinned-last Cappadocia case from prod 38caaebd, and the Tigre
 spoken-cue case from prod ef8e35b8, KRI-590).
 
+### Named-line cuts in a narrated voiceover (KRI-889)
+
+"Cut the line 'with bread, no'" / "cut my second 'thank you Karo'" on a narrated edit
+with a recorded voiceover cuts that line out of the voiceover FILE, phone and cloud.
+The asks come off the pinned brief (`_brief_named_cut_asks` →
+`opening_cut_ask.brief_named_cuts`, as phone Talking, KRI-821) and are grounded by
+`phone_opening_cut.apply_named_line_cuts` in the voiceover's raw-time words (never
+guessed: `not_found` / `said_more_than_once` / `occurrence_not_found` / `too_short`
+leave the voice whole). Cleanup on: the lines are cut in the same pass as the accepted
+CutPlan (`build_cleaned_narration(named_removals=...)`, one derivative under
+`speech-cleanup/{analysis}/`, fingerprint `effective_cut_fingerprint`). Cleanup off:
+`build_named_cut_narration` pins `speech-cleanup/named-cuts/{sha}.wav` with the raw
+words remapped (no filler filtering). The derivative carries `NarrationTrack.named_cuts`
+provenance; the phone bed, the device grant (`authorized_device_narration`) and
+`narration_matches_item` accept it, and the device binding is carried across editor
+Saves. Captions, step timings and title follow the shorter voice with no compiler
+change. Cloud: `_cut_named_lines` in `_render_narrated_variant`. Receipts:
+`variant["named_cuts"]` (kept by the finalize whitelist); the draft promises the cut
+(`_cuts_named_voiceover_lines`) only for a non-guided narrated voiceover edit.
+`silence_cut` stays cleanup's own record. Kill switch: `NARRATED_NAMED_CUTS_ENABLED`
+(default `true`, read by worker and receipts) + restart api + worker. Not covered:
+cloud Talking, cloud self-narration, guided stories, voiceover montages. Journey test:
+`tests/kria/test_kri889_narrated_named_cut_journey.py`.
+
 Clip ORDER for native (phone) edits is set at dispatch, not by the model's
 `selected_media_ids` order: `content_plan_build._creator_intent_clip_order`
 (pure core `order_paths_by_resolved_intents`) re-seats `clip_paths` from the

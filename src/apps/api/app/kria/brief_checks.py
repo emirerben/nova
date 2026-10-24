@@ -378,6 +378,9 @@ class PlanFacts:
     capped_beat_hits: tuple[tuple[str, int, int], ...] = ()
     # The strategy's audio strategy ("voiceover", "original_audio", ...); None = unknown.
     audio_strategy: str | None = None
+    # The strategy's render program ("native", "guided"); None = unknown. KRI-889: a
+    # guided story's voiceover is not cut around named lines.
+    render_program: str | None = None
     # How loud the footage's own sound plays under the creator's voice (0..1; 1.0 = full
     # volume). None = unknown, never guessed.
     voiceover_bed_level: float | None = None
@@ -672,6 +675,9 @@ def plan_facts_from_strategy(
         speech_cleanup_offered=speech_cleanup_offered,
         caption_style=str(caption_style) if caption_style else None,
         audio_strategy=str(audio_strategy) if audio_strategy else None,
+        render_program=(
+            str(strategy.get("render_program")) if strategy.get("render_program") else None
+        ),
         **extra,
     )
 
@@ -4011,6 +4017,11 @@ _NAMED_CUT_MISSED = {
         "your take has no word timings to find it in",
         "çekiminde onu bulacak kelime zamanlaması yok",
     ),
+    # KRI-889: the line was found, but cutting the voiceover file failed.
+    "cut_failed": (
+        "cutting it out of your voiceover failed",
+        "seslendirmenden kesmek başarısız oldu",
+    ),
 }
 
 
@@ -4047,6 +4058,21 @@ def _named_cut_notes(req: BriefRequirement, facts: PlanFacts) -> tuple[list[str]
     return notes, all(row.get("status") == "applied" for row in rows)
 
 
+def _cuts_named_voiceover_lines(facts: PlanFacts) -> bool:
+    """KRI-889: a narrated render cuts named lines out of the recorded voiceover.
+
+    Phone and cloud both do, behind ``NARRATED_NAMED_CUTS_ENABLED`` (read here too, so the
+    draft never promises a cut the worker won't make). A guided story is not cut.
+    """
+    from app.config import settings  # noqa: PLC0415
+
+    return (
+        _is_voiceover_edit(facts)
+        and facts.render_program != "guided"
+        and bool(settings.narrated_named_cuts_enabled)
+    )
+
+
 def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Pauses, retakes and filler the creator asked to cut, against the draft.
 
@@ -4076,8 +4102,9 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         lead, status = _CLEANUP_IF_OFFERED, "partial"
     notes = [_loc(lead)]
     if _wants_named_cuts(req):
-        if facts.phone_talking and named_cut_lines(req):
-            # KRI-821: the phone Talking render cuts each named line it finds said once.
+        if (facts.phone_talking or _cuts_named_voiceover_lines(facts)) and named_cut_lines(req):
+            # KRI-821: the phone Talking render cuts each named line it finds said once;
+            # KRI-889: so does a narrated render, out of the recorded voiceover.
             # Not certain before the render finds the line, so never "Done" (KRI-792).
             notes.append(_loc(_NAMED_CUT_AT_RENDER))
             status = "partial"
