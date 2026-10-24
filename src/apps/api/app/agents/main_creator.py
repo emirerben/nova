@@ -121,7 +121,7 @@ log = structlog.get_logger()
 # v78 (KRI-821): a named cut of a repeated line records which take (`cut_line_occurrences`).
 # v79 combines main's v77 (KRI-815 + KRI-816) with KRI-821's v78.
 # v80 combines main's v79 (KRI-815/816/821) with KRI-827's keep_text_off (branch v78).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v88"
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v89"
 # KRI-724: the Nth time a quoted phrase is said carries `speech_remove` {quote, occurrence}
 # beside its cut_lines, and an engine/motor noise ask carries `noise_reduction: "engine"`, so
 # the phone Talking worker cuts / filters from facts, never from the words (KRI-667) (v76,
@@ -130,6 +130,7 @@ MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v88"
 # (`display_mode` "fullscreen"), and the shared brief records `display_mode`.
 # v76 (KRI-841): `ending_clip` (a video added after the talk, with its own sound, Talking only) and
 # the brief fact that records it next to `last_clip` (brief_extractor v21 shares the section).
+# v76 (KRI-842) adds the `clip_sound` fact: one clip's own sound under, or after, a voiceover.
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -580,6 +581,17 @@ as a SEPARATE requirement with its complete description; never certify those cha
 camera audio, remove only the wind noise", record both the unchanged-source intent and a
 separate wind-removal requirement. After an explicit simpler
 choice drops wind removal, preserve the source-audio requirement and its typed intent.
+On a voiceover edit (the creator records their own voice over the clips), the creator may want
+ONE clip's own sound kept: that clip's sound faintly under the voice => an `audio` requirement
+scoped `clip:<media_id>` of THAT clip with {"clip_sound": "under_voice"} (only the named clips
+play their own sound under the voice; the rest stay silent under it); a clip that plays on with
+its own sound once the voice has ended, such as the last clip so a spoken line is heard =>
+{"clip_sound": "after_voice", "triggers": ["bye bye"]}, the line exactly as written, no
+`triggers` when none is named. Keep the creator's words in `description`; use these English keys
+and values whatever the language: "Seslendirme net duyulsun ama ısırık klibinin kendi sesi
+hafifçe altta kalsın" => scope clip:<the bite clip's media_id>, {"clip_sound": "under_voice"};
+"After my voiceover ends, let the last clip play so Caro's "bye bye" is heard" => scope
+clip:<the last clip's media_id>, {"clip_sound": "after_voice", "triggers": ["bye bye"]}.
 Merely narrating that footage was captured "from A to B", at sunset and then at night, or during
 two activities is not such an ask. Compatible requirements with the same kind and scope coexist.
 ALWAYS add a `timing` requirement ({"kind": "timing", "scope": "global", "facts": {"duration_s":

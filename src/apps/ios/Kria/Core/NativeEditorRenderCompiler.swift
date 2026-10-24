@@ -240,9 +240,9 @@ enum NativeEditorRenderError: Error, Equatable {
             let narratedSourceLevel: Double
             if audioSources["narration"] != nil, hasExplicitNarratedSourceAudio {
                 let requested = authoredSlot?.raw["source_audio_volume"]?.numberValue ?? 0
-                // The server only emits 0 or 1 today. Clamp rather than fail
-                // a preview if a future server sends a fractional ducking
-                // level; AudioMixRecipe.originalVolume applies the global
+                // Selected sources carry unit gains; clip-scoped sound may
+                // carry a fractional gain. Clamp rather than fail a preview;
+                // AudioMixRecipe.originalVolume applies the global
                 // original-audio gain exactly once after this value.
                 narratedSourceLevel = requested.isFinite ? min(max(0, requested), 1) : 0
             } else {
