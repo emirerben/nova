@@ -2405,6 +2405,69 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-845-clip-detail-evidence",
+      "tickets": [
+        "KRI-845",
+        "KRI-761",
+        "KRI-807"
+      ],
+      "symptom": "The clip record never said what is in a clip, what the people do, or how it looks, so the resolver could not tell look-alikes apart: cafe M1 \"skip the clip where Caro bends and puts the plate down\" could not tell M1_05 from M1_08 (the clip pinned FIRST: the only one with a black tray), Don Julio M1 \"the big wooden menus\" read as \"waiter carrying a tray\", and \"the blurry shot of the empty table\" matched nothing.",
+      "boundary": "persistence",
+      "status": "open_pr",
+      "owner": "KRI-845",
+      "journey": "kri-845-clip-detail-evidence",
+      "paths": [
+        "src/apps/api/app/agents/clip_metadata.py",
+        "src/apps/api/app/agents/clip_request_resolver.py",
+        "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
+        "src/apps/api/app/pipeline/clip_cache.py",
+        "src/apps/api/app/schemas/clip_intents.py",
+        "src/apps/api/app/schemas/clip_understanding.py",
+        "src/apps/api/app/services/clip_understanding.py",
+        "src/apps/api/app/services/creator_sessions.py",
+        "src/apps/api/prompts/analyze_clip.txt",
+        "src/apps/api/prompts/clip_request_resolver.txt",
+        "src/apps/api/tests/fixtures/kri845_m1_clip_detail.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri845_clip_detail_evidence.py",
+        "tests/agents/test_clip_metadata.py",
+        "tests/kria/test_kri761_look_alike_exclusions.py",
+        "tests/kria/test_kri807_unmatched_exclusion_picker.py",
+        "tests/pipeline/test_clip_cache.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Authored analyzer outputs (props / actions / visual_quality) from the footage of the cafe and Don Julio M1 kits (frames + local sharpness, no model), layered on the Don Julio prod records, through the real ClipMetadataAgent.parse, analyze_clip shim, understanding_payload, clip_record, the REAL rendered resolver prompt and the real clip-intent planner, resolution, exclusion and runtime-v2 planner code; only the provider transport is a stand-in that matches rules over the records in the prompt. Red on origin/main (the three fields do not exist), green after: the cafe skip drops M1_05 only, the tray clip stays first, no picker; Don Julio menus resolve to M1_09 and the blurry pan goes without a picker. Negative controls on the records as main wrote them (both cafe pickers, the KRI-807 picker), and wrong-evidence controls.",
+        "live_model": "Not run; no paid calls. Needs one bounded development-ledger check (about 21 clips through clip_metadata plus the two resolver calls, about $0.10 by the cost-control price table): docs/reviews/kri-845-clip-detail.md.",
+        "native_output": "n/a: server-side clip records. A fresh-chat iPhone re-send of cafe M1 and Don Julio M1 after the deploy is pending (older chats keep their old records).",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "records written before the change gain no key (prompt view and chat evidence byte-identical)",
+        "drifted analyzer values (string for list, object, None) never fail the parse; comma strings split",
+        "role markers, fences and runaway lists are defanged and capped",
+        "a skip that matches both look-alikes asks and never offers the pinned clip",
+        "evidence that puts the put-down, or the tray, on the wrong clip: asks, M1_08 kept",
+        "cafe and Don Julio on the records as main wrote them: nothing dropped, the pickers ask",
+        "the sharp look-alike of the blurry pan (fast pan, stays sharp) plays",
+        "a label or caption picked from a prop / action word grounds as a record_span; a visual_quality word never does; records without the keys ground exactly as before",
+        "clip_cache round trip keeps the three fields, and a pre-KRI-845 cache entry loads with defaults",
+        "three equally good menu matches (a menu in the actions of M1_09, M1_01 and M1_06): all play, nothing asks (pinned)"
+      ],
+      "neighbours_gap": [
+        "Gemini's real props / actions / visual_quality for the kit footage are authored, not observed; the stand-in resolver proves the pipeline delivers the evidence, not that Gemini reads it.",
+        "KNOWN LIMIT: if the tray AND the put-down are both read onto the wrong clips, the answer is self-consistent and a confident skip drops the pinned clip without a question (pinned by test_known_limit_fully_swapped_evidence_is_followed_not_second_guessed).",
+        "Clips analysed before the deploy keep their records (ANALYSIS_VERSION is not bumped, so no prod-wide paid re-analysis): only fresh attaches carry the fields.",
+        "No deterministic number separates a motion-smeared clip from a sharp look-alike (Don Julio M1_04 vs M1_06); blur is the model's judgment.",
+        "KNOWN LIMIT: a singular skip (\"the blurry shot\") that the analyzer matches on TWO clips at 0.9 (Don Julio M1_04 and the sharp M1_06 both called blurry) drops both with no question or notice: neither the resolver prompt nor the exclusion code has a singular-ask rule (pinned by test_known_limit_two_blurry_pans_for_a_singular_skip_both_go).",
+        "Menus: when the analyzer writes a menu board into the actions of M1_01 / M1_06 as well as M1_09, the three matches are equal and all three are included without asking (pinned by test_three_equally_good_menu_matches_all_play_and_nothing_asks); the live check must confirm they do not."
+      ],
+      "follow_ups": [],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-805-brief-change-answer",
       "tickets": [
         "KRI-805",
@@ -2787,6 +2850,60 @@
       ],
       "follow_ups": [
         "Cafe T2 phone re-send after deploy (Turkish captions, cleanup declined)"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-838-caption-language",
+      "tickets": [
+        "KRI-838"
+      ],
+      "symptom": "Caf\u00e9 T2 (English speech, 'altyaz\u0131lar T\u00fcrk\u00e7e olsun') shipped English captions stamped 'tr' and the review said 'The captions are in Turkish' (a whisper language hint does not reliably translate; the label was the request). Don Julio T3 ('make the subtitles Spanish') was promised as Spanish before approval, dropped by the dispatcher (en/tr only) and rendered in the spoken language.",
+      "boundary": "compiler",
+      "status": "open_pr",
+      "owner": "KRI-838",
+      "paths": [
+        "src/apps/api/app/config.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/pipeline/caption_correct.py",
+        "src/apps/api/app/pipeline/caption_language.py",
+        "src/apps/api/app/pipeline/caption_translate.py",
+        "src/apps/api/app/tasks/generative_build.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri838_caption_language_asks.py",
+        "tests/pipeline/test_caption_language.py",
+        "tests/pipeline/test_caption_language_id.py",
+        "tests/pipeline/test_caption_translate.py",
+        "tests/tasks/test_kri838_caption_language_replay.py",
+        "tests/tasks/test_narrated_caption_language.py",
+        "tests/tasks/test_subtitled_caption_language.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": "caption_translation_enabled",
+      "evidence": {
+        "offline_replay": "Real kit prompts (caf\u00e9 T2 Turkish, Don Julio T3 English) through the real dispatcher parser, the real phone Talking job (no-cleanup and cleanup branches), the real cue builder and the real brief checks; whisper replayed from local whisper.cpp medium output of the two incident clips, the translator an authored stub. Red on main (only the config field and a stub provider function shimmed): 18 of 20 replay tests fail (English cues stamped 'tr' and 'met'; 'es' dropped; Spanish promised); green with the fix.",
+        "live_model": "Not run; no paid calls. The translator prompt is exercised through a fake provider client only.",
+        "native_output": "Pending: iPhone re-run of caf\u00e9 T2 and Don Julio T3 after deploy (Yasin).",
+        "production": "not merged"
+      },
+      "neighbours_covered": [
+        "phone Talking, no-cleanup and cleanup branches",
+        "multi-clip Talking extra speakers",
+        "phone and cloud Voiceover hinted pass",
+        "cloud Talking (live, silence-cut and checked-uncut words)",
+        "pre-approval promise (Spanish promised only when deliverable; EN and TR)"
+      ],
+      "neighbours_gap": [
+        "editor D5 re-transcribe route and task, and the web CaptionLanguage type, are still en/tr only",
+        "translated words carry synthetic per-word timing inside each sentence span",
+        "a regenerate re-translates (no cache); the translator is not an Agent with replay evals",
+        "the compile-time Voiceover receipt has no cue text (the render-ready review reads it)",
+        "a hinted pass with no independent spoken-language evidence leaves caption_language empty (unknown) rather than guessing"
+      ],
+      "follow_ups": [
+        "KRI-838 iPhone re-run",
+        "KRI-843 language cross-check"
       ],
       "red_control": "not_applicable"
     }

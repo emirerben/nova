@@ -1388,6 +1388,23 @@ CASES: tuple[Case, ...] = (
             "tr_mixed": "Türkçe captions olsun",
         },
     ),
+    # D37b (KRI-838): "Spanish captions" requests Spanish; every language the brief side
+    # knows is a request the dispatcher hears now (it used to be en/tr only), EN and TR.
+    Case(
+        "D37b",
+        "captions_transcript",
+        "pipeline.caption_language.parse_caption_language_request",
+        "Spanish captions",
+        _caption_language,
+        "make the subtitles Spanish",
+        "es",
+        {
+            "tr": "İspanyolca altyazı",
+            "tr_ascii": "ispanyolca altyazi",
+            "tr_upper": "İSPANYOLCA ALTYAZI",
+            "tr_mixed": "İspanyolca captions olsun",
+        },
+    ),
     # O18 (KRI-780): a chat-driven plan item's hook is written in the chat's language.
     Case(
         "O18",

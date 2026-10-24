@@ -204,6 +204,37 @@ def test_round_trip_preserves_kri127_understanding_fields(fake_redis):
     assert got.clip_audio_type == "dialogue"
 
 
+def test_round_trip_preserves_kri845_props_actions_and_quality(fake_redis):
+    """KRI-845: ClipMeta gained clip_props / clip_actions / clip_visual_quality (schema s4).
+    A fresh write round-trips them; an entry written before the change (no such keys) still
+    loads, with the dataclass defaults, so a cache hit never raises."""
+    meta = _meta(
+        clip_props=["black round tray", "beige plate with an oblea"],
+        clip_actions=["stands holding a black round tray", "walks off with the plate"],
+        clip_visual_quality="sharp and steady",
+    )
+    clip_cache.set_cached_meta("hash1", "ball", meta, creator_id=_CREATOR_ID)
+    got = clip_cache.get_cached_meta("hash1", "ball", creator_id=_CREATOR_ID)
+    assert got is not None
+    assert got.clip_props == ["black round tray", "beige plate with an oblea"]
+    assert got.clip_actions == ["stands holding a black round tray", "walks off with the plate"]
+    assert got.clip_visual_quality == "sharp and steady"
+
+
+def test_a_pre_kri845_cache_entry_loads_with_defaults(monkeypatch, fake_redis):
+    legacy = {
+        key: value
+        for key, value in dataclasses.asdict(_meta()).items()
+        if key not in ("clip_path", "clip_props", "clip_actions", "clip_visual_quality")
+    }
+    monkeypatch.setattr(
+        clip_cache, "_get_persistent_payload", MagicMock(return_value=json.dumps(legacy))
+    )
+    got = clip_cache.get_cached_meta("old-hash", "ball", creator_id=_CREATOR_ID)
+    assert got is not None and got.hook_text == "Hook!"
+    assert (got.clip_props, got.clip_actions, got.clip_visual_quality) == ([], [], "")
+
+
 def test_get_returns_none_on_miss(fake_redis):
     assert clip_cache.get_cached_meta("never-set", "ball", creator_id=_CREATOR_ID) is None
 

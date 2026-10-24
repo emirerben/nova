@@ -78,6 +78,27 @@ def test_main_creator_eval(
             _pin_range_is_grounded(PinnedText(**pin), evidence.pinned_texts or "") for pin in pinned
         )
 
+    fullscreen_beats = fixture.meta.get("fullscreen_reaction_beats")
+    if fullscreen_beats:
+        # KRI-840: "show the photo full screen when he says X" is a reaction beat with
+        # display_mode "fullscreen" and a short hold (never overlay_display, which spreads the
+        # photos evenly); a corner card omits the field; the brief records both asks' display.
+        assert result.output is not None
+        strategy = result.output["action"]["strategy"]
+        assert not strategy.get("overlay_display")
+        beats = {beat["beat_id"]: beat for beat in strategy["reaction_beats"]}
+        for beat_id, max_hold_s in fullscreen_beats["fullscreen"].items():
+            assert beats[beat_id]["display_mode"] == "fullscreen", beats[beat_id]
+            assert 0.5 <= beats[beat_id]["hold_s"] <= max_hold_s, beats[beat_id]
+        for beat_id in fullscreen_beats["corner"]:
+            assert beats[beat_id].get("display_mode", "pip") == "pip", beats[beat_id]
+        asked = {
+            trigger: update["facts"].get("display_mode")
+            for update in result.output["brief_updates"]
+            for trigger in update["facts"].get("triggers", [])
+        }
+        assert asked == fullscreen_beats["brief_display"]
+
     if fixture.meta.get("manual_visual_removal"):
         assert result.output is not None
         assert result.output["action"]["kind"] == "ask_user", (
