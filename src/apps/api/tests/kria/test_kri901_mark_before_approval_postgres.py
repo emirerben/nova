@@ -236,7 +236,7 @@ async def test_the_plate_is_asked_for_before_approval_and_pinned_at_approval(
         )
         return _app_mark(question)
 
-    chat, asked = await _chat(monkeypatch, protocol=17, on_mark_question=answer)
+    chat, asked = await _chat(monkeypatch, protocol=19, on_mark_question=answer)
 
     # Asked once, before any approval card, about the plate, on the take.
     assert [q["label"] for q in asked] == ["plate"]
@@ -269,7 +269,7 @@ async def test_the_plate_is_asked_for_before_approval_and_pinned_at_approval(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("readiness", [False, True], ids=["readiness-off", "readiness-on"])
-@pytest.mark.parametrize("protocol", [16, None], ids=["protocol-16-app", "web"])
+@pytest.mark.parametrize("protocol", [18, None], ids=["protocol-18-app", "web"])
 async def test_a_client_without_the_card_is_never_asked(
     monkeypatch: pytest.MonkeyPatch, protocol: int | None, readiness: bool
 ) -> None:
@@ -309,11 +309,11 @@ def _assert_no_mark_verdicts(chat: Chat) -> None:
 async def test_an_account_the_phone_does_not_render_for_is_never_asked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """11: a protocol-17 app, but this account is outside the phone cohort: its take is a
+    """11: a protocol-19 app, but this account is outside the phone cohort: its take is a
     cloud upload and the Talking edit renders on the cloud, which ignores marks."""
     monkeypatch.setattr(settings, "kria_approval_readiness_enabled", True)
     monkeypatch.setattr(settings, "phone_render_user_ids", [str(uuid.uuid4())])
-    chat, asked = await _chat(monkeypatch, protocol=17, seed=_cloud_take)
+    chat, asked = await _chat(monkeypatch, protocol=19, seed=_cloud_take)
     assert asked == []
     assert chat.approval is not None
     _assert_no_mark_verdicts(chat)
@@ -324,7 +324,7 @@ async def test_an_account_the_phone_does_not_render_for_is_never_asked(
 @pytest.mark.asyncio
 async def test_the_kill_switch_stops_the_question(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "protected_region_mark_min_client_protocol", 999)
-    chat, asked = await _chat(monkeypatch, protocol=17)
+    chat, asked = await _chat(monkeypatch, protocol=19)
     assert asked == [] and chat.approval is not None
 
 
@@ -348,7 +348,7 @@ async def test_saying_the_text_can_go_anywhere_stops_the_question(
             ),
         }
 
-    chat, asked = await _chat(monkeypatch, protocol=17, on_mark_question=retract)
+    chat, asked = await _chat(monkeypatch, protocol=19, on_mark_question=retract)
     assert len(asked) == 1
     claim = await _approve(chat)
     assert not claim.brief_binding.get("protected_regions")
@@ -381,7 +381,7 @@ async def test_a_mark_on_a_replaced_clip_is_asked_again(monkeypatch: pytest.Monk
         answered.append(True)
         return out
 
-    chat, asked = await _chat(monkeypatch, protocol=17, on_mark_question=answer_once)
+    chat, asked = await _chat(monkeypatch, protocol=19, on_mark_question=answer_once)
     assert [q["label"] for q in asked] == ["plate", "plate"]
     claim = await _approve(chat)
     assert [m["generation"] for m in claim.brief_binding["protected_regions"]] == ["2"]
@@ -392,7 +392,7 @@ async def test_a_mark_on_a_replaced_clip_is_asked_again(monkeypatch: pytest.Monk
 
 @pytest.mark.asyncio
 async def test_a_face_only_ask_asks_for_no_mark(monkeypatch: pytest.MonkeyPatch) -> None:
-    chat, asked = await _chat(monkeypatch, protocol=17, facts={"keep_text_off": [{"kind": "face"}]})
+    chat, asked = await _chat(monkeypatch, protocol=19, facts={"keep_text_off": [{"kind": "face"}]})
     assert asked == [] and chat.approval is not None
 
 
@@ -433,7 +433,7 @@ async def test_with_readiness_on_the_marked_plate_is_executable(
         description="No text on her face or on the plate",
         facts=KEEP_OFF,
     )
-    chat, asked = await _chat(monkeypatch, protocol=17, extra_updates=(own,))
+    chat, asked = await _chat(monkeypatch, protocol=19, extra_updates=(own,))
     assert [q["label"] for q in asked] == ["plate"]
     assert "Mark the plate" in str(chat.replies[0].content)
     assert chat.approval is not None
@@ -518,7 +518,7 @@ async def test_a_two_clip_talking_edit_asks_for_the_mark_on_the_speaking_clip(
     marks = iter([BROLL, TAKE])
     chat, asked = await _chat(
         monkeypatch,
-        protocol=17,
+        protocol=19,
         seed=_with_broll(broll_speaks=False),
         on_mark_question=lambda q, t: _mark_on(next(marks))(q, t),
     )

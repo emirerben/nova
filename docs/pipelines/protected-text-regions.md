@@ -40,7 +40,7 @@ text's whole time on screen.
   generation; a re-upload asks again. Faces are never asked for.
 - Only app builds that show the card are asked: submit stamps `marks_protected_regions`
   on the user event when `X-Kria-Client-Protocol >= PROTECTED_REGION_MARK_MIN_CLIENT_PROTOCOL`
-  (default 17; kill switch `999`, api + worker). Older builds and the web approve as before
+  (default 19; kill switch `999`, api + worker). Older builds and the web approve as before
   and the receipt reads `no_selection`.
 - The answer turn (`protected_region` on the turn) forces a re-plan, reaches the brief
   extractor as a neutral "I marked the plate on a frame." (never a new instruction) and is

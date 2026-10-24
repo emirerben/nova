@@ -1119,10 +1119,13 @@ enum KriaClientProtocolContract {
     /// 16 (KRI-828): decodes the `freezeFrame` recipe capability (a creator's freeze frame: a main-track
     /// `holdDuration` longer than one frame, the clip's last frame held). The server plans a freeze only for
     /// this protocol inside an HTTP request; older builds cannot decode the case and fail the recipe.
-    /// 17 (KRI-901): shows the "Mark the plate" card (`protected_region_question`) and answers it with
+    /// 17: previews voiceover source-audio selections from per-slot
+    /// `source_audio_volume` without applying the global original-audio gain twice.
+    /// 18: decodes and grants immutable `processed_audio` source derivatives.
+    /// 19 (KRI-901): shows the "Mark the plate" card (`protected_region_question`) and answers it with
     /// `protected_region` on the next turn. The server asks for a mark before approval only from this protocol;
     /// older builds keep approving as before.
-    static let version = 17
+    static let version = 19
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -2604,6 +2607,21 @@ extension DraftSnapshot {
                case .number? = authoritativeVariant["original_audio_level"] {
                 var audioMix = Self.object(sections["audio_mix"]) ?? [:]
                 audioMix["original_level"] = authoritativeVariant["original_audio_level"]
+                sections["audio_mix"] = .object(audioMix)
+            }
+            // A phone Voiceover selection uses the server's final ducked
+            // source-bed gain, not its pre-duck display level. The per-slot
+            // `source_audio_volume` marker remains 0/1; this becomes the one
+            // global factor applied by AudioMixRecipe. Require the explicit
+            // selected-source list so an older narrated variant cannot gain
+            // camera audio merely because it happens to carry a number.
+            if !isIntentionalEmpty,
+               authoritativeVariant["render_destination"]?.stringValue == "device",
+               ["narrated", "voiceover"].contains(authoritativeVariant["resolved_archetype"]?.stringValue ?? ""),
+               authoritativeVariant["source_audio_media_ids"] != nil,
+               case .number? = authoritativeVariant["source_audio_bed_gain"] {
+                var audioMix = Self.object(sections["audio_mix"]) ?? [:]
+                audioMix["original_level"] = authoritativeVariant["source_audio_bed_gain"]
                 sections["audio_mix"] = .object(audioMix)
             }
             if !isIntentionalEmpty, let title = authoritativeVariant["track_title"] {

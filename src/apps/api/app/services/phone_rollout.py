@@ -1269,3 +1269,29 @@ def phone_render_supported_formats() -> frozenset[str]:
     # Defense in depth: never advertise a format the static compiler-existence
     # allowlist doesn't even recognize, regardless of how settings resolve.
     return frozenset(formats) & PHONE_RENDER_SUPPORTED_FORMATS
+
+
+def phone_voiceover_spoken_text_supported(*, require_client: bool = True) -> bool:
+    """Use the existing editable narrated text lane for grounded spoken text."""
+    return bool(
+        settings.phone_voiceover_spoken_text_enabled
+        and phone_narrated_title_edits_supported(require_client=require_client)
+    )
+
+
+def phone_voiceover_source_audio_supported(*, require_client: bool = True) -> bool:
+    """New authoring requires a preview that preserves selected camera sound."""
+    if not (
+        settings.phone_voiceover_source_audio_enabled
+        and "audioMix" in settings.phone_render_verified_features
+    ):
+        return False
+    if not require_client:
+        return True
+    from app.services.client_protocol import current_client_protocol
+
+    protocol = current_client_protocol()
+    return (
+        protocol is not None
+        and protocol >= settings.phone_voiceover_source_audio_min_client_protocol
+    )
