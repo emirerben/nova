@@ -683,6 +683,41 @@ def replace_narrated_captions(
     return _with_text_layers(recipe, [*titles, *layers])
 
 
+def _validated_source_audio_selection(
+    source_audio_media_ids: tuple[str, ...] | list[str] | None,
+    *,
+    bindings_by_media_id: dict[str, PhoneSourceBinding],
+    used_media_ids: set[str],
+) -> frozenset[str] | None:
+    """Validate the explicit camera-audio selection for a narration recipe.
+
+    A caller may only select a bound source which the visual recipe actually
+    uses. ``has_audio`` is a required, attach-time media fact, so selecting a
+    known-silent source is a clear error instead of a silently inaudible edit.
+    """
+    if source_audio_media_ids is None:
+        return None
+    if not isinstance(source_audio_media_ids, (tuple, list)) or not all(
+        isinstance(media_id, str) and media_id for media_id in source_audio_media_ids
+    ):
+        raise ValueError("source audio selection must contain non-empty media ids")
+    selected = frozenset(source_audio_media_ids)
+    unknown = sorted(selected - bindings_by_media_id.keys())
+    if unknown:
+        raise ValueError(f"source audio selection has unknown media ids: {', '.join(unknown)}")
+    unused = sorted(selected - used_media_ids)
+    if unused:
+        raise ValueError(
+            f"source audio selection has media ids not used by this edit: {', '.join(unused)}"
+        )
+    silent = sorted(
+        media_id for media_id in selected if not bindings_by_media_id[media_id].original.has_audio
+    )
+    if silent:
+        raise ValueError(f"source audio selection has silent media ids: {', '.join(silent)}")
+    return selected
+
+
 def compile_phone_narrated_plan(
     steps: list[NarratedPhoneStep],
     bindings: tuple[PhoneSourceBinding, ...],
@@ -700,6 +735,8 @@ def compile_phone_narrated_plan(
     visuals: tuple[PhoneVisualBinding, ...] = (),
     opening_title: str | None = None,
     opening_title_end_s: float | None = None,
+    source_audio_media_ids: tuple[str, ...] | list[str] | None = None,
+    resolved_text_elements: list[dict] | None = None,
 ) -> EditRecipeV2:
     """See the module docstring for the full contract.
 
@@ -725,6 +762,14 @@ def compile_phone_narrated_plan(
     ``lanes`` / ``visuals`` (KRI-281): the editor's sound-effect and Visuals
     lanes, compiled by `replace_editor_lanes` -- the same swap a phone-editor
     Save uses, so a first compile and every later Save agree.
+
+    ``source_audio_media_ids`` is an explicit creator selection of footage
+    whose camera audio may sit under the recorded narration. ``None`` keeps
+    the legacy recipe shape. An explicit selection marks every video clip with
+    a unit ``volume`` (1 for a selected source, 0 for every other source);
+    ``audio.original_volume`` remains the existing, bounded narration bed
+    gain. ``resolved_text_elements`` contains extra authored rows; the opening
+    title remains its own first row.
     """
     if not steps:
         raise ValueError("phone narrated plan has no steps")
@@ -794,6 +839,19 @@ def compile_phone_narrated_plan(
 
     if len({clip.id for clip in clips}) != len(clips):
         raise ValueError("phone narrated clips must have unique identities")
+
+    selected_source_audio = _validated_source_audio_selection(
+        source_audio_media_ids,
+        bindings_by_media_id=bindings_by_media_id,
+        used_media_ids={step.media_id for step in steps},
+    )
+    if selected_source_audio is not None:
+        clips = [
+            clip.model_copy(
+                update={"volume": 1.0 if step.media_id in selected_source_audio else 0.0}
+            )
+            for clip, step in zip(clips, steps, strict=True)
+        ]
 
     narration_asset = VoiceoverRenderAsset(
         id=f"voiceover-{narration.plan_item_id}",
@@ -874,7 +932,12 @@ def compile_phone_narrated_plan(
         timeline_duration_s=timeline_end_s(clips),
         canvas=story_canvas,
     )
-    if title is not None:
+    if resolved_text_elements is not None:
+        title_rows = ([title.model_dump(mode="json")] if title is not None else []) + list(
+            resolved_text_elements
+        )
+        recipe = replace_narrated_title(recipe, title_rows)
+    elif title is not None:
         recipe = _with_text_layers(
             recipe,
             [

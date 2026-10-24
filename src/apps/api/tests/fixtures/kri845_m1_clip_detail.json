@@ -1,0 +1,181 @@
+{
+  "_source": "KRI-845 ground truth: what the footage of two Kria M1 test kits shows, and the analyzer output (props / actions / visual_quality) that a careful describer would write for it. The 'observation' and 'measured' blocks are facts from the footage; 'analyzer_output' is AUTHORED from them, never produced by a model.",
+  "_provenance": {
+    "no_ai": "No model of any kind was called. Frames were looked at by a person-equivalent reviewer; sharpness and camera speed were measured locally with OpenCV/ffmpeg.",
+    "footage": {
+      "cafe": "Merope cafe M1 kit, 12 clips, 1080x1920 H.264 30 fps (2026-10-16 DJI/phone take; prod run 2026-10-19, thread A9100235).",
+      "don_julio": "Don Julio M1 kit, 9 clips, 1080x1920 H.264 30 fps (2026-10-21 julio1 take; prod run 2026-10-21, thread F4083F1D)."
+    },
+    "frames": "6 frames per clip at mid-bin of 6 equal slices (360 px wide contact sheets) plus 10-12 dense timestamped frames and full-resolution strips for the clips named below.",
+    "measured": {
+      "laplacian_var_540": "median over 8 evenly spaced frames of the variance of cv2.Laplacian(CV_64F, 3x3) on the gray frame resized to 540 px wide (INTER_AREA); LOWER = less fine detail",
+      "laplacian_var_360": "the same at 360 px wide (about the scale of the iOS analysis proxy)",
+      "blurdetect_mean": "ffmpeg blurdetect, 540 px wide, all frames, mean; HIGHER = blurrier",
+      "camera_shift_px_per_frame": "median global shift between consecutive frames at 1080 px wide (cv2.phaseCorrelate on 135 px gray frames, x8); the speed of the camera move"
+    },
+    "caveat": "No single number separates a motion-smeared clip from a sharp look-alike: Don Julio M1_04 is the lowest on the Laplacian but ffmpeg blurdetect ranks M1_06 above it. Blur has to come from the vision model's judgment of the frames (that is the point of KRI-845), not from a threshold.",
+    "cafe_base_fields": "No repo fixture holds the cafe clip records the resolver saw. The base fields of M1_05 and M1_08 are reconstructed around the two quotes in the 2026-10-19 run notes (Bug D); M1_03 has no quote and is authored from the footage.",
+    "don_julio_base_records": "tests/fixtures/kri807_don_julio_m1_clips.json (the prod records, untouched). Only the three KRI-845 fields are layered on."
+  },
+  "cafe": {
+    "creator_request": "Caro'nun elinde siyah tepsiyle geldiği klip ilk olsun. Caro'nun eğilip tabağı masaya bıraktığı kısa klibi kullanma.",
+    "clips": [
+      {
+        "file_name": "M1_05_footage",
+        "duration_s": 2.2,
+        "role": "the clip the creator wants LEFT OUT",
+        "observation": "No tray anywhere in the clip. Caro carries a round beige plate with the oblea in BOTH hands toward the camera, laughing (0-0.9 s); then she bends forward deeply at the waist (0.99-2.09 s) and lowers the plate out of the bottom of the frame (onto a table that is never visible); the camera tilts down to follow; a man in a black jacket enters at the right edge at about 1.9 s. Sharp.",
+        "measured": {
+          "laplacian_var_540": 350.9,
+          "laplacian_var_360": 658.6,
+          "blurdetect_mean": 6.32,
+          "camera_shift_px_per_frame": 5.6
+        },
+        "base_quote_from_run_notes": "server ... hands over a plate of food to an off-camera customer",
+        "base_fields": {
+          "detected_subject": "server putting down a plate",
+          "summary": "A server hands over a plate of food to an off-camera customer.",
+          "setting": "cafe patio",
+          "activity": "serving a plate of food",
+          "people_count": 1,
+          "best_moments": [{"start_s": 0.0, "end_s": 2.0, "energy": 4, "description": "plate goes down"}]
+        },
+        "analyzer_output": {
+          "props": ["beige plate with an oblea"],
+          "actions": ["carries a plate in both hands toward the camera", "bends forward and lowers the plate down out of frame"],
+          "visual_quality": "sharp and steady"
+        }
+      },
+      {
+        "file_name": "M1_08_footage",
+        "duration_s": 5.0,
+        "role": "the clip the creator wants FIRST (the one with the black tray)",
+        "observation": "The ONLY clip with a flat black round tray. Caro already stands in frame (she does not walk in), smiling, tray held in both hands at thigh height (0-1.2 s); she lets it hang edge-on in her right hand and gestures with the left (1.4 s); she leans forward (1.9-3.1 s) and reaches a plate at the bottom right, a hand from the man in black joins the plate rim (2.9 s); she holds the beige plate with the oblea out toward the camera (3.3-3.6 s); she turns and walks off to the right carrying the plate and the tray (3.9-5.0 s). She never sets the plate down on camera. Sharp.",
+        "measured": {
+          "laplacian_var_540": 397.3,
+          "laplacian_var_360": 698.6,
+          "blurdetect_mean": 6.27,
+          "camera_shift_px_per_frame": 4.1
+        },
+        "base_quote_from_run_notes": "server approaches a table, places a plate of food",
+        "base_fields": {
+          "detected_subject": "server bringing a plate",
+          "summary": "A server approaches a table and places a plate of food.",
+          "setting": "cafe patio",
+          "activity": "serving a plate of food",
+          "people_count": 1,
+          "best_moments": [{"start_s": 0.0, "end_s": 3.0, "energy": 4, "description": "server handles a plate"}]
+        },
+        "analyzer_output": {
+          "props": ["black round tray", "beige plate with an oblea"],
+          "actions": [
+            "stands holding a black round tray",
+            "leans forward and picks up a plate",
+            "holds the plate out toward the camera",
+            "walks off to the right with the plate and the tray"
+          ],
+          "visual_quality": "sharp and steady"
+        }
+      },
+      {
+        "file_name": "M1_03_footage",
+        "duration_s": 4.77,
+        "role": "a bystander: neither pinned nor skipped",
+        "observation": "Starts on Atakan holding the bitten oblea (first 0.4 s), pans to Caro, who laughs with her hands clasped, waves with both open hands at about 3 s and walks off to the right. She holds nothing. The only fast camera move is the first ~0.5 s (the swing from Atakan to Caro); nothing is visibly blurred. Sharp.",
+        "measured": {
+          "laplacian_var_540": 643.6,
+          "laplacian_var_360": 999.9,
+          "blurdetect_mean": 5.75,
+          "camera_shift_px_per_frame": 6.6
+        },
+        "base_quote_from_run_notes": null,
+        "base_fields": {
+          "detected_subject": "woman waving goodbye",
+          "summary": "A woman laughs and waves at the camera.",
+          "setting": "cafe patio",
+          "activity": "laughing and waving goodbye",
+          "people_count": 1,
+          "best_moments": [{"start_s": 0.0, "end_s": 3.0, "energy": 4, "description": "waves goodbye"}]
+        },
+        "analyzer_output": {
+          "props": [],
+          "actions": ["laughs and waves with both hands", "walks off to the right"],
+          "visual_quality": "sharp and steady"
+        }
+      }
+    ]
+  },
+  "don_julio": {
+    "creator_request_source": "tests/fixtures/kri807_don_julio_m1_clips.json -> creator_request",
+    "clips": [
+      {
+        "file_name": "M1_09_footage",
+        "duration_s": 2.5,
+        "role": "'the big wooden menus'",
+        "observation": "The waiter (maroon shirt, black DON JULIO apron, earpiece) smiles at the camera while lifting a thick dark-brown wooden slab (two stacked boards, layered worn-varnish edge, no rim) flat on his open palms up to face height, then tilts it and carries it sideways at shoulder height. Nothing sits on it: no plates, glasses or food. It is held exactly the way a tray is held, which is why the prod record says 'waiter carrying a rectangular tray'. Sharp.",
+        "measured": {
+          "laplacian_var_540": 419.9,
+          "laplacian_var_360": 790.9,
+          "blurdetect_mean": 5.49,
+          "camera_shift_px_per_frame": 5.8
+        },
+        "analyzer_output": {
+          "props": ["thick wooden menu boards"],
+          "actions": ["lifts the wooden menu boards flat to face height", "carries the boards sideways"],
+          "visual_quality": "sharp and steady"
+        }
+      },
+      {
+        "file_name": "M1_01_footage",
+        "duration_s": 3.4,
+        "role": "a second clip with the same wooden board (carried, not lifted)",
+        "observation": "At t=0.2 s the same waiter walks in profile carrying the same thick dark wooden board flat on one palm past the pastel-shirt diner, who already holds a menu board upright; then the diner raises a water glass and drinks. Sharp. This is a genuine second candidate for 'the big wooden menus' (the same board, carried past behind the diner, not lifted); the authored `actions` call it 'a wooden board' while `props` name the menu board.",
+        "measured": {
+          "laplacian_var_540": 562.8,
+          "laplacian_var_360": 1032.8,
+          "blurdetect_mean": 5.61,
+          "camera_shift_px_per_frame": 9.1
+        },
+        "analyzer_output": {
+          "props": ["thick dark wooden menu board", "wine glass", "plate of bread"],
+          "actions": ["walks past a seated diner carrying a wooden board on one palm", "the diner raises a glass and drinks"],
+          "visual_quality": "sharp and steady"
+        }
+      },
+      {
+        "file_name": "M1_06_footage",
+        "duration_s": 2.0,
+        "role": "the SHARP look-alike of the blurry table",
+        "observation": "A high-angle tilt-down (about 28 px/frame, similar to M1_04) from the pastel-shirt man holding a dark wooden menu board to the table: bread on a white napkin on a round wooden board, a plate with a bread chunk, steak knife, fork, spoon, a salad dish with green sauce and chopped tomato, a wooden sauce bowl, wine glasses. The subjects stay crisp; only the diner's moving hand and the fork tines smear a little. The menu board is a background prop the diner holds in the first frames: nobody lifts or carries it, so it belongs in `props` only.",
+        "measured": {
+          "laplacian_var_540": 59.9,
+          "laplacian_var_360": 138.4,
+          "blurdetect_mean": 7.02,
+          "camera_shift_px_per_frame": 28.2
+        },
+        "analyzer_output": {
+          "props": ["bread on a white napkin", "salad dish", "wooden sauce bowl", "dark wooden menu board held by a diner"],
+          "actions": ["camera tilts down from a seated diner to the table"],
+          "visual_quality": "fast pan, stays sharp"
+        }
+      },
+      {
+        "file_name": "M1_04_footage",
+        "duration_s": 2.6,
+        "role": "'the blurry shot of the empty table'",
+        "observation": "A fast handheld pan (about 32 px/frame at 1080 wide) over a white-tablecloth table: beige plates (one with crumbs), wine glasses, a fork, a steak knife, a ramekin of oil, a phone, a water bottle, a folded napkin, a seated person in a dark hoodie at the top. The first ~0.5 s is crisp (fork tines and knife edge sharp); in the rest the motion smears the edges directionally (fork tines doubled, glass rims ghosted). Nothing is out of focus and the plates stay recognisable, so at 360 px wide it reads as a fast pan, not as blur: only a judgment of the full-resolution frames calls it blurry.",
+        "measured": {
+          "laplacian_var_540": 33.6,
+          "laplacian_var_360": 70.4,
+          "blurdetect_mean": 6.82,
+          "camera_shift_px_per_frame": 31.7
+        },
+        "analyzer_output": {
+          "props": ["beige plates", "wine glasses", "steak knife", "phone on the table"],
+          "actions": ["camera sweeps fast across an empty table"],
+          "visual_quality": "blurry, fast pan"
+        }
+      }
+    ]
+  }
+}
