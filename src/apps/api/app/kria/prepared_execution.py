@@ -39,6 +39,15 @@ RESULT_FIELD = "prepared_execution"
 STALE = "prepared_execution_stale"
 UNSUPPORTED = "prepared_execution_unsupported"
 SOURCE_LINEAGE = "prepared_execution_source_lineage"
+SUPERSEDED = "prepared_execution_superseded"
+
+# KRI-725: a slide post's approved draft. Its digest is a compiled ref of the snapshot
+# and the dispatched Job carries the exact approved draft, so the cloud slides worker
+# renders what was approved instead of whatever ``PlanItem.slide_post`` says later.
+SLIDE_POST_REF = "slide_post"
+APPROVED_SLIDE_POST_FIELD = "approved_slide_post"
+# Bookkeeping the slides route rewrites after a render; never an approved decision.
+_SLIDE_POST_BOOKKEEPING = frozenset({"rendered_version", "user_edited"})
 
 Origin = Literal["creator", "creator_answer", "model_default", "system"]
 Role = Literal["original", "analysis_proxy"]
@@ -224,16 +233,55 @@ def _number(value: Any) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
+def targets_slides(item: Any, document: Any = None) -> bool:
+    """Whether an approval renders ``item`` as a slide post.
+
+    A strategy draft sets the item's format at claim, so its own ``edit_format`` wins;
+    any other draft renders the item's current format.
+    """
+    strategy = getattr(document, "strategy", None) if document is not None else None
+    if getattr(document, "kind", None) == "strategy" and isinstance(strategy, Mapping):
+        return str(strategy.get("edit_format") or "") == "slides"
+    return str(getattr(item, "edit_format", "") or "") == "slides"
+
+
+def slide_post_draft(item: Any) -> Any:
+    """The item's parsed slide draft, or None (no draft, or unreadable)."""
+    from app.schemas.slide_post import parse_slide_post  # noqa: PLC0415
+
+    return parse_slide_post(getattr(item, "slide_post", None))
+
+
+def slide_post_digest(draft: Any) -> str:
+    """Digest of what a creator approves in a slide post (None digests too: fail closed)."""
+    if draft is None:
+        return digest(None)
+    return digest(draft.model_dump(mode="json", exclude=set(_SLIDE_POST_BOOKKEEPING)))
+
+
+def slide_asset_slots(draft: Any) -> list[tuple[str, str]]:
+    """(slot, asset id) for every slide and pasted sticker, in render order."""
+    slots: list[tuple[str, str]] = []
+    for index, ref in enumerate(getattr(draft, "slides", None) or []):
+        slots.append((f"slide:{index}", str(ref.asset_id)))
+        for sticker in (ref.edits.stickers or []) if ref.edits is not None else []:
+            slots.append((f"sticker:{index}:{sticker.id}", str(sticker.asset_id)))
+    return slots
+
+
 def source_identities(
     item: Any,
     *,
     asset_generations: Mapping[str, str | None],
     library_sources: Mapping[str, tuple[str, str]],
+    slide_assets: Mapping[str, tuple[str, str | None]] | None = None,
 ) -> list[SourceIdentity]:
     """Pure: the item's render sources with generation and original/proxy lineage.
 
     ``asset_generations`` maps a PlanItemAsset path to its GCS generation;
     ``library_sources`` maps a media-library object path to (role, generation).
+    ``slide_assets`` (slide posts only, KRI-725) maps a PlanItemAsset id to
+    (path, generation); None leaves a non-slide snapshot byte-identical.
     """
 
     rows = [r for r in (getattr(item, "clip_assignments", None) or []) if isinstance(r, Mapping)]
@@ -281,7 +329,45 @@ def source_identities(
                 duration_s=_number(getattr(item, f"{slot}_duration_s", None)),
             )
         )
+    if slide_assets is not None:
+        for slot, asset_id in slide_asset_slots(slide_post_draft(item)):
+            path, generation = slide_assets.get(asset_id, ("", None))
+            sources.append(
+                SourceIdentity(
+                    slot=slot,
+                    media_id=asset_id,
+                    path=path,
+                    role="analysis_proxy" if is_analysis_proxy_path(path) else "original",
+                    generation=generation,
+                )
+            )
     return sources
+
+
+def _slide_query(item: Any, slides: bool):  # noqa: ANN202
+    """The item's own slide/sticker asset rows (never another item's), or None."""
+    if not slides:
+        return None
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.models import PlanItemAsset  # noqa: PLC0415
+
+    ids = []
+    for _slot, asset_id in slide_asset_slots(slide_post_draft(item)):
+        try:
+            ids.append(uuid.UUID(asset_id))
+        except ValueError:
+            continue
+    return select(PlanItemAsset.id, PlanItemAsset.gcs_path, PlanItemAsset.gcs_generation).where(
+        PlanItemAsset.plan_item_id == item.id, PlanItemAsset.id.in_(ids)
+    )
+
+
+def _slide_map(rows) -> dict[str, tuple[str, str | None]]:  # noqa: ANN001
+    return {
+        str(asset_id): (str(path), str(gen) if gen is not None else None)
+        for asset_id, path, gen in rows
+    }
 
 
 def _source_queries(item: Any, owner: Any):  # noqa: ANN202
@@ -310,18 +396,38 @@ def _maps(asset_rows, library_rows):  # noqa: ANN001, ANN202
     )
 
 
-async def load_source_identities(db: Any, item: Any, owner: Any) -> list[SourceIdentity]:
+async def load_source_identities(
+    db: Any, item: Any, owner: Any, *, slides: bool = False
+) -> list[SourceIdentity]:
     assets, library = _source_queries(item, owner)
     asset_map, library_map = _maps(
         (await db.execute(assets)).all(), (await db.execute(library)).all()
     )
-    return source_identities(item, asset_generations=asset_map, library_sources=library_map)
+    slide_query = _slide_query(item, slides)
+    return source_identities(
+        item,
+        asset_generations=asset_map,
+        library_sources=library_map,
+        slide_assets=(
+            _slide_map((await db.execute(slide_query)).all()) if slide_query is not None else None
+        ),
+    )
 
 
-def load_source_identities_sync(db: Any, item: Any, owner: Any) -> list[SourceIdentity]:
+def load_source_identities_sync(
+    db: Any, item: Any, owner: Any, *, slides: bool = False
+) -> list[SourceIdentity]:
     assets, library = _source_queries(item, owner)
     asset_map, library_map = _maps(db.execute(assets).all(), db.execute(library).all())
-    return source_identities(item, asset_generations=asset_map, library_sources=library_map)
+    slide_query = _slide_query(item, slides)
+    return source_identities(
+        item,
+        asset_generations=asset_map,
+        library_sources=library_map,
+        slide_assets=(
+            _slide_map(db.execute(slide_query).all()) if slide_query is not None else None
+        ),
+    )
 
 
 def _creator_authored_editor(document: Any) -> bool:
@@ -382,11 +488,14 @@ def build_snapshot(
     sources: list[SourceIdentity],
     execution_result: Mapping[str, Any] | None = None,
     latest_brief: Any = None,
+    slide_post: Any = None,
 ) -> PreparedExecutionSnapshot:
     """Pure function of stored rows: replaying it makes no new decision.
 
     Without a brief binding (creators outside that cohort) the brief version current
     at approval, ``latest_brief``, is pinned by version and digest instead.
+    ``slide_post`` is ``(draft,)`` for a slide-post approval (the draft may be None)
+    and None otherwise, so a non-slide snapshot gains no key (KRI-725).
     """
 
     binding = document.brief_binding
@@ -402,6 +511,8 @@ def build_snapshot(
     story = getattr(document, "prepared_collection_story", None)
     if story is not None:
         compiled_refs["prepared_collection_story"] = digest(story)
+    if slide_post is not None:
+        compiled_refs[SLIDE_POST_REF] = slide_post_digest(slide_post[0])
     return PreparedExecutionSnapshot(
         creator_id=str(creator_id),
         thread_id=str(thread_id),
@@ -452,10 +563,12 @@ def verify(
     document: Any,
     thread_id: Any,
     sources: list[SourceIdentity] | None,
+    item: Any = None,
 ) -> None:
     """Raise when a live approval input no longer matches the snapshot.
 
     ``sources=None`` skips the source fence (an accepted redelivery already passed it).
+    A slide-post snapshot also fences the live draft (``item.slide_post``).
     """
 
     if (
@@ -484,6 +597,11 @@ def verify(
         )
     if [s.fence() for s in sources] != [s.fence() for s in snapshot.sources]:
         raise PreparedExecutionError(STALE, "An approved source changed.", ["sources"])
+    approved_slides = snapshot.compiled_refs.get(SLIDE_POST_REF)
+    if approved_slides is not None and (
+        item is None or slide_post_digest(slide_post_draft(item)) != approved_slides
+    ):
+        raise PreparedExecutionError(STALE, "The approved slide post changed.", [SLIDE_POST_REF])
 
 
 def changed_decisions(
@@ -611,3 +729,93 @@ def pinned_brief_for_job(db: Any, job: Any, thread_id: Any) -> tuple[bool, Any]:
         return True, binding.resolve(thread_id)
     except ValueError:
         return True, None
+
+
+def verify_job_stamp(db: Any, job: Any, *, variant_id: str | None = None) -> dict[str, str] | None:
+    """KRI-725: the cloud worker's start fence. ``{id, attempt_id}`` or None (legacy).
+
+    Checks only the snapshot row's integrity and its identity with this Job, never the
+    live capabilities: an accepted attempt must survive a deploy (KRI-722 F10 rule).
+    ``variant_id`` fences one variant's (editor/retry) stamp instead of the Job's.
+    Raises ``PreparedExecutionError`` before any render spend.
+    """
+
+    from app.models import CreatorPreparedExecution  # noqa: PLC0415
+
+    assembly = job.assembly_plan if isinstance(job.assembly_plan, Mapping) else {}
+    stamp = variant_stamp(assembly, variant_id) if variant_id else read_stamp(assembly)
+    if stamp is None:
+        return None
+    try:
+        row = db.get(CreatorPreparedExecution, uuid.UUID(str(stamp["id"])))
+    except ValueError as exc:
+        raise PreparedExecutionError(STALE, "The prepared edit is missing.") from exc
+    if row is None or str(row.creator_id) != str(job.user_id):
+        raise PreparedExecutionError(STALE, "The prepared edit is missing.")
+    snapshot = parse(row)
+    if row.invalidated_at is not None:
+        raise PreparedExecutionError(
+            row.invalidation_code or STALE, "The prepared edit was invalidated."
+        )
+    if stamp.get("digest") != snapshot.digest:
+        raise PreparedExecutionError(STALE, "This render is not the approved edit.", ["stamp"])
+    generation = stamp.get("generation_id")
+    if generation is not None and generation != assembly.get("creator_generation_id"):
+        raise PreparedExecutionError(
+            STALE, "This render belongs to another approved attempt.", ["generation"]
+        )
+    if variant_id:
+        return variant_fence(assembly, variant_id)
+    return {"id": str(stamp["id"]), "attempt_id": str(stamp.get("attempt_id") or "")}
+
+
+def pin_approved_slide_post(db: Any, job: Any, item: Any) -> None:
+    """Copy the approved slide draft onto a stamped slides Job at dispatch.
+
+    The claim fence has just proven the live draft equals the approved one, so the
+    copy is the approved draft. Asset generations are pinned beside it so the worker
+    can refuse a photo replaced after dispatch.
+    """
+
+    from app.models import CreatorPreparedExecution  # noqa: PLC0415
+
+    stamp = read_stamp(job.assembly_plan)
+    if stamp is None:
+        return
+    row = db.get(CreatorPreparedExecution, uuid.UUID(str(stamp["id"])))
+    approved = parse(row).compiled_refs.get(SLIDE_POST_REF) if row is not None else None
+    if approved is None:
+        return
+    draft = slide_post_draft(item)
+    if draft is None or slide_post_digest(draft) != approved:
+        raise PreparedExecutionError(STALE, "The approved slide post changed.", [SLIDE_POST_REF])
+    query = _slide_query(item, True)
+    job.assembly_plan = {
+        **(job.assembly_plan or {}),
+        APPROVED_SLIDE_POST_FIELD: {
+            "draft": draft.model_dump(mode="json"),
+            "digest": approved,
+            "asset_generations": {
+                asset_id: generation
+                for asset_id, (_path, generation) in _slide_map(db.execute(query).all()).items()
+            },
+        },
+    }
+
+
+def approved_slide_post(assembly: Mapping[str, Any] | None) -> tuple[Any, dict[str, Any]] | None:
+    """(draft, asset generations) a stamped slides Job must render, or None (live read).
+
+    Raises when the pinned copy no longer matches its digest.
+    """
+
+    pinned = (assembly or {}).get(APPROVED_SLIDE_POST_FIELD)
+    if not isinstance(pinned, Mapping) or read_stamp(assembly) is None:
+        return None
+    from app.schemas.slide_post import parse_slide_post  # noqa: PLC0415
+
+    draft = parse_slide_post(pinned.get("draft"))
+    if draft is None or slide_post_digest(draft) != pinned.get("digest"):
+        raise PreparedExecutionError(STALE, "The approved slide post was altered.", ["slide_post"])
+    generations = pinned.get("asset_generations")
+    return draft, dict(generations) if isinstance(generations, Mapping) else {}

@@ -753,6 +753,78 @@ writes the JSON), `tests/kria/test_kri724_speech_occurrence_turns_postgres.py`, 
 --answer occ_2 --spoken-text "MEROPE::Show MEROPE in big letters the first time she says
 Merope"` (`.take-window-verify/report.json`; `--video` adds the frame at the placed time).
 
+## Cloud adapters and the prepared snapshot (KRI-725, PR 1)
+
+KRI-722 stamps every approved cloud Job, but until this PR only the device path read
+the stamp after dispatch. The cloud adapters now enforce it in three places:
+
+- **Worker start** (`generative_build._enter_prepared_attempt` ->
+  `prepared_execution.verify_job_stamp`): one call in `_run_generative_job_impl`,
+  right after `preflight_cloud_contract`, under the Job lock. It checks that the
+  snapshot row exists, belongs to the Job's owner, parses at this worker's
+  schema/compiler version, is not invalidated, and matches the stamp's digest and
+  the Job's `creator_generation_id`. A refusal fails the Job with
+  `failure_reason = prepared_execution_stale | prepared_execution_unsupported`
+  before any ingest or model spend. It never rechecks live capabilities, so a
+  deploy cannot cancel an accepted attempt (KRI-722 F10). One-variant rerenders
+  (`regenerate_generative_variant`, `rebuild_slide_post_variant`) run the same
+  check only when a Kria editor approval or exact retry re-pinned that variant.
+  The creator's own later manual edits keep today's path.
+- **Publication** (`_prepared_attempt_superseded`, called first in
+  `_reject_unverified_cloud_variant` and in `_update_variant_entry`): inside a
+  prepared attempt, a new playable output publishes only while that attempt is
+  still the variant's `variant_fence`. A late completion of a superseded attempt
+  becomes a failed variant (`prepared_execution_code = prepared_execution_superseded`,
+  under the existing `creator_render_contract_unverified` class so every boundary
+  keeps the last-good artifact). The attempt is held in a task-scoped contextvar
+  that `_owned_job_task_fence` resets, so renderers cannot forget to attach it.
+- **Guided dispatch** (`content_plan_build._story_matches_prepared_execution`): the
+  recompiled story must match the snapshot's `compiled_refs.prepared_collection_story`
+  digest minted at approve, not only the live proposal's own digest.
+
+**Slides.** A slide-post approval pins every slide and sticker as a snapshot source
+(`slide:i`, `sticker:i:id`, with object generation) and the draft digest as
+`compiled_refs.slide_post`. The claim refuses a changed caption, order or photo.
+Dispatch copies the approved draft onto the Job (`approved_slide_post`), and the
+first render reads that copy instead of `PlanItem.slide_post`. It refuses a pinned
+asset whose generation moved after dispatch. Non-slide snapshots gain no key, so
+existing digests do not move. Kria's strategy policy does not offer `slides` today
+(`format_availability` -> `policy_edit_format_unavailable`), so in production slide
+posts still dispatch unstamped from the slides route. These fences apply as soon as
+a Kria approval can reach the slides adapter.
+
+No `COMPILER_VERSION` bump: a bump would invalidate every in-flight approval at
+deploy. An old worker that renders a stamped slides Job falls back to the live read,
+which is the same rolling-deploy exposure KRI-470/722 document.
+
+### Prepared coverage matrix
+
+`app/kria/prepared_coverage.py` keeps one row per render adapter. Each row names
+where every approval-critical input is pinned, the worker and publication fences,
+and the state of each decision key. A new adapter, or a key with no row, fails at
+import. `gap:` rows name the ticket that owns the missing capability. They are
+unmet demand, not support claims. `executed` means the decision is carried into the
+pinned execution and fenced. It does not mean output proof (KRI-734). The guard test
+`tests/kria/test_prepared_coverage_guard.py` keeps this table equal to the code:
+
+<!-- prepared-coverage:start -->
+| adapter | text | length | order | audio | direction | editor | shape | speech_cleanup |
+|---|---|---|---|---|---|---|---|---|
+| cloud_classic | declined_before_render | executed | gap:KRI-725 | gap:KRI-725 | executed | executed | executed | executed |
+| cloud_guided_story | executed | executed | executed | gap:KRI-725 | executed | executed | executed | executed |
+| cloud_slides | executed | not_applicable | executed | not_applicable | executed | not_applicable | executed | not_applicable |
+| phone_guided_unified_montage | executed | executed | executed | executed | executed | executed | executed | not_applicable |
+| phone_narrated | executed | executed | executed | executed | executed | executed | executed | executed |
+| phone_speech_montage | executed | executed | executed | executed | executed | executed | executed | executed |
+| phone_subtitled | executed | executed | executed | executed | executed | executed | executed | executed |
+| phone_voice_behind_footage | executed | executed | executed | executed | executed | executed | executed | executed |
+| phone_voiceover_montage | executed | executed | executed | executed | executed | executed | executed | executed |
+<!-- prepared-coverage:end -->
+
+Evidence: `KRI725_ARTIFACT=.dev/kri-725 pytest tests/kria/test_kri725_cloud_prepared_postgres.py`
+writes `report.json`, `slides_positive.mp4` and `frames.png`. Failure matrix:
+`docs/reviews/kri-725-prepared-coverage.md`.
+
 ## Route resolution (KRI-470 PR-D)
 
 `services/render_route.py:resolve_route` is the one function that maps an approved plan
