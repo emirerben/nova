@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.90.0] - 2026-10-24
+
+### Fixed
+- fix(kria): clip records name props, actions and blur so look-alike skips find the right clip (KRI-845) (#1781) <!-- release-pr: 1781 -->
+
 ## [0.81.89.0] - 2026-10-24
 
 ### Changed
