@@ -38,15 +38,18 @@ from app.schemas.edit_proposal import (
 # the exact same footage will fail identically every time.
 #
 # Everything else raised by guided_story.py -- including
-# guided_story_media_missing/guided_story_media_replaced (both wrap a bare
-# `except Exception` around a GCS download / ffprobe / PIL decode / image
-# normalize call with no retry logic of their own) and one of
-# guided_story_music_missing's two raise sites (wraps `_mix_template_audio`,
-# also a bare `except Exception`) -- can be triggered by a transient network
-# blip, subprocess hiccup, or disk-pressure failure, not just a genuine
-# "the media changed" condition. Those only block after GUIDED_RENDER_MAX_ATTEMPTS
-# repeats of the exact same code at the exact same approved version, giving a
-# transient blip room to succeed on retry before the user is told to re-plan.
+# guided_story_media_missing / guided_story_media_replaced / guided_story_music_missing
+# -- is a property of the approved plan: a file was replaced or deleted (e.g. by the
+# 24h upload lifecycle), a generation or kind changed, the story has no media, or the
+# track was archived. The same plan fails the same way on every retry, so those block
+# after GUIDED_RENDER_MAX_ATTEMPTS repeats of the exact same code at the exact same
+# approved version, and the copy says to re-plan or pick other media.
+#
+# Only the I/O wrappers (GCS download / metadata, ffprobe / PIL verify, the audio mix)
+# raise the *_unavailable codes below, and only when the cause chain is a real blip
+# (5xx, 429, connection, timeout -- never a NotFound or a generation precondition; see
+# `guided_story.is_transient_storage_failure`). The worker retries those with backoff
+# (`generative_build._GUIDED_TRANSIENT_RETRIES`) and they never count toward the block.
 _NON_RETRYABLE_GUIDED_RENDER_CODES = frozenset(
     {
         # The approved story's timing cannot fit the approved media -- purely
@@ -55,31 +58,46 @@ _NON_RETRYABLE_GUIDED_RENDER_CODES = frozenset(
         # The approved snapshot itself fails structural validation -- a pure
         # schema check against the pinned proposal, no I/O involved.
         "guided_story_snapshot_invalid",
-        # NOTE: guided_story_media_missing, guided_story_media_replaced, and
-        # guided_story_music_missing are deliberately NOT in this set -- see
-        # the comment above. They still block, just after
-        # GUIDED_RENDER_MAX_ATTEMPTS repeats instead of on the first hit.
+    }
+)
+TRANSIENT_GUIDED_RENDER_CODES = frozenset(
+    {
+        "guided_story_media_unavailable",
+        "guided_story_music_unavailable",
     }
 )
 GUIDED_RENDER_MAX_ATTEMPTS = 3
 
+# Shown on the web planner card and in chat, so the way forward names no one surface.
 _GUIDED_RENDER_COPY = {
     "guided_story_duration_impossible": (
         "This edit's timing doesn't fit your footage. Open the planner to shorten it "
         "or add more media."
     ),
     "guided_story_media_missing": (
-        "Some media in this edit is no longer available. Open the planner to re-plan it."
+        "Some media in this edit is no longer available. Ask for the edit again with your "
+        "current clips, or choose different media."
     ),
     "guided_story_media_replaced": (
-        "The media in this edit changed after it was approved. Open the planner to re-plan it."
+        "Some media in this edit changed after you approved it. Ask for the edit again "
+        "with your current clips."
     ),
     "guided_story_music_missing": (
-        "The music in this edit is no longer available. Open the planner to re-plan it."
+        "The music in this edit is no longer available. Ask for the edit again with "
+        "different music."
+    ),
+    "guided_story_media_unavailable": (
+        "Some media in this edit couldn't be loaded, even after a few tries. Your edit is "
+        "saved. Try again in a moment."
+    ),
+    "guided_story_music_unavailable": (
+        "The music in this edit couldn't be loaded, even after a few tries. Your edit is "
+        "saved. Try again in a moment."
     ),
 }
 _GUIDED_RENDER_DEFAULT_COPY = (
-    "Kria couldn't render this approved edit. Open the planner to revise it and try again."
+    "Kria couldn't render this approved edit. Your edit is saved. Try again, or tell Kria "
+    "what to change."
 )
 
 
@@ -799,6 +817,9 @@ def guided_render_is_blocked(proposal: EditProposal) -> bool:
         if rf is None or last_approved is None:
             return False
         if rf.proposal_version != last_approved.proposal_version:
+            return False
+        if rf.code in TRANSIENT_GUIDED_RENDER_CODES:
+            # A storage blip the worker already retried; it never blocks the plan.
             return False
         return (
             rf.code in _NON_RETRYABLE_GUIDED_RENDER_CODES

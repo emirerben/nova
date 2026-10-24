@@ -22,8 +22,12 @@ from app.services.phone_destination import native_device_only_job
 log = structlog.get_logger()
 
 CLOUD_RENDER_DISABLED_REASON = "cloud_render_disabled"
+# Say what is true: this project (web, or older than iPhone rendering) can only render on
+# the server, which is off. Updating the app does not move it to the iPhone.
 CLOUD_RENDER_DISABLED_DETAIL = (
-    "Server video rendering is disabled. Update Kria to render this project on your iPhone."
+    "Server video rendering is switched off, and this project can only be rendered there, "
+    "so this version wasn't made. Start a new edit on your iPhone with these clips to make "
+    "it there."
 )
 
 # Only in-flight rows may be terminalized.  A ready/partially-ready Job can be
