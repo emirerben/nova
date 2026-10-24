@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.102.0] - 2026-10-24
+
+### Changed
+- feat(talking): ask which spoken occurrence a Talking ask means and render exactly that one (KRI-724) (#1810) <!-- release-pr: 1810 -->
+
 ## [0.81.101.0] - 2026-10-24
 
 ### Changed
