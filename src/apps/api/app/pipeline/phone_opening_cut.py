@@ -11,6 +11,13 @@ cut to captions, title, lanes and cutaways exactly like a cleanup cut.
 
 Never guessed: a line the take doesn't say, or a cut that would leave too little video,
 leaves that side of the plan untouched and its receipt says why.
+
+KRI-844: a quote in another language than the take ("Here we have traditional Argentinian
+sauces" over Spanish speech) is not in the words, so the creator is asked which line of the
+take to open / end on and the pick comes in as ``start_spoken`` / ``end_spoken``: the take's
+own words, grounded first. The creator's quote stays the receipt's ``quote`` (what the cards
+name); the pick is recorded beside it as ``spoken``. A pick the words don't hold either (a
+re-transcribed take) falls back to the quote, then to the honest ``not_found``.
 """
 
 from __future__ import annotations
@@ -108,13 +115,35 @@ def _kept(plan: CutPlan) -> float:
     return sum(e - s for s, e in plan.keep_segments)
 
 
-def _receipt(quote: str, requirement_ids: Sequence[str]) -> dict[str, Any]:
-    return {
+def _receipt(
+    quote: str, requirement_ids: Sequence[str], spoken: str | None = None
+) -> dict[str, Any]:
+    receipt: dict[str, Any] = {
         "version": 1,
         "quote": quote,
         "requirement_ids": list(requirement_ids),
         "status": "not_applied",
     }
+    if spoken:
+        receipt["spoken"] = spoken
+    return receipt
+
+
+def ground_take_line(
+    words: Sequence[Any],
+    spoken: str | None,
+    quote: str | None,
+    *,
+    duration_s: float,
+    min_after_s: float = 0.0,
+):
+    """Where a side's line is said: the picked spoken line first, else the creator's quote."""
+    for line in (spoken, quote):
+        if line:
+            grounded = ground_line(words, line, duration_s=duration_s, min_after_s=min_after_s)
+            if grounded is not None:
+                return grounded
+    return None
 
 
 def apply_take_window(
@@ -126,6 +155,8 @@ def apply_take_window(
     duration_s: float,
     start_ids: Sequence[str] = (),
     end_ids: Sequence[str] = (),
+    start_spoken: str | None = None,
+    end_spoken: str | None = None,
 ) -> tuple[CutPlan, dict[str, Any] | None, dict[str, Any] | None]:
     """The plan cut to ``[start_quote, end of end_quote]``, and a receipt per asked line.
 
@@ -134,6 +165,8 @@ def apply_take_window(
     said only before the start line); that side of the plan is then left untouched. A line
     not asked for has no receipt (``None``). The end line is looked for after the start
     line, so a phrase said twice ends the video the first time it follows the start.
+    ``start_spoken`` / ``end_spoken`` (KRI-844) are lines of the take the creator picked for a
+    quote it does not hold; they are grounded before the quote and added to the receipt.
     """
     words = list(words)
     cut = plan
@@ -141,8 +174,8 @@ def apply_take_window(
     end_receipt: dict[str, Any] | None = None
     line_start_s = 0.0
     if start_quote:
-        start_receipt = _receipt(start_quote, start_ids)
-        grounded = ground_line(words, start_quote, duration_s=duration_s)
+        start_receipt = _receipt(start_quote, start_ids, start_spoken)
+        grounded = ground_take_line(words, start_spoken, start_quote, duration_s=duration_s)
         if grounded is None:
             start_receipt["reason"] = "not_found"
         else:
@@ -165,10 +198,14 @@ def apply_take_window(
                     exact=bool(grounded.exact),
                 )
     if end_quote:
-        end_receipt = _receipt(end_quote, end_ids)
-        grounded = ground_line(words, end_quote, duration_s=duration_s, min_after_s=line_start_s)
+        end_receipt = _receipt(end_quote, end_ids, end_spoken)
+        grounded = ground_take_line(
+            words, end_spoken, end_quote, duration_s=duration_s, min_after_s=line_start_s
+        )
         if grounded is None:
-            said_before = line_start_s > 0 and ground_line(words, end_quote, duration_s=duration_s)
+            said_before = line_start_s > 0 and ground_take_line(
+                words, end_spoken, end_quote, duration_s=duration_s
+            )
             end_receipt["reason"] = "before_start" if said_before else "not_found"
         else:
             end_s = round(_end_after_word(words, grounded.word_end_s, duration_s), 3)
@@ -342,4 +379,5 @@ __all__ = [
     "cut_before",
     "cut_span",
     "line_occurrences",
+    "ground_take_line",
 ]

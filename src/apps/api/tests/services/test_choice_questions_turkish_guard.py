@@ -19,9 +19,12 @@ from __future__ import annotations
 
 import ast
 import re
+from contextlib import ExitStack
 from pathlib import Path
+from unittest.mock import patch
 
 import app.services.choice_questions as cq
+from app.config import settings
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.reply_language import reply_language_for
 from app.services.choice_questions import (
@@ -30,6 +33,8 @@ from app.services.choice_questions import (
     CONFLICT_ORDER_BASIS,
     CONFLICT_PRIORITY,
     CONFLICT_SOURCE_COVERAGE,
+    CONFLICT_TAKE_LINE_END,
+    CONFLICT_TAKE_LINE_START,
     CONFLICT_VOICE_VS_DURATION,
     CONFLICT_WHICH_VOICE,
     ChoiceCapability,
@@ -38,6 +43,10 @@ from app.services.choice_questions import (
     collect_conflicts,
 )
 from tests.kria.test_choice_voice_gate import VOICE, _voice_rows
+from tests.kria.test_kri844_take_line_ask import CAP as _TAKE_CAP
+from tests.kria.test_kri844_take_line_ask import SNAP as _TAKE_SNAP
+from tests.kria.test_kri844_take_line_ask import STRATEGY as _TAKE_STRATEGY
+from tests.kria.test_kri844_take_line_ask import brief as _take_brief
 
 # Words only English uses. Quoted spans are the creator's own words and are skipped.
 _ENGLISH = frozenset(
@@ -192,6 +201,16 @@ def _cases() -> dict[str, tuple[str, list]]:
                 }
             },
         )
+    # KRI-844: the quoted start / end line a Spanish take does not hold (a phone Talking edit).
+    with ExitStack() as pilot:
+        for name, value in (
+            ("phone_rendering_enabled", True),
+            ("phone_render_user_ids", []),
+            ("subtitled_archetype_enabled", True),
+        ):
+            pilot.enter_context(patch.object(settings, name, value))
+        for kind in (CONFLICT_TAKE_LINE_START, CONFLICT_TAKE_LINE_END):
+            add(kind, kind, _TAKE_STRATEGY, _take_brief(), _TAKE_SNAP, _TAKE_CAP)
     for code, strategy in (
         ("single_hero_order_conflict", {}),
         ("insufficient_media", {}),

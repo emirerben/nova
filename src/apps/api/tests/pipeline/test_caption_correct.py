@@ -116,7 +116,10 @@ def test_legacy_language_mapping_and_brand_prompt_are_unchanged(monkeypatch) -> 
     monkeypatch.setattr(cc.settings, "openai_api_key", "test", raising=False)
 
     assert cc._language_name("tr") == "Turkish"
-    assert cc._language_name("es") == "es"
+    # KRI-838: "es" used to stay a raw code here (the table was tr/en); it is "Spanish" now
+    # (test_the_correction_prompt_names_every_caption_language). A language outside the
+    # shared table still stays as written.
+    assert cc._language_name("ru") == "ru"
     assert cc._llm_correct_lines(["Kokokolu ayıcık"], "tr", model="gpt-4o") == ["Coca-Cola ayıcık"]
     system_prompt = captured["messages"][0]["content"]
     assert "Restore mangled brand names, product names, and proper nouns" in system_prompt
@@ -370,3 +373,13 @@ def test_kri708_rewording_keeps_spoken_order_and_word_timings(monkeypatch) -> No
     ]
     for cue in out:
         assert " ".join(w["text"] for w in cue["words"]) == cue["text"]
+
+
+def test_the_correction_prompt_names_every_caption_language():
+    """KRI-838: a translated Spanish caption set is corrected as "Spanish", not as "es"."""
+    assert cc._language_name("es") == "Spanish"
+    assert cc._language_name("pt-BR") == "pt-br"  # an unlisted tag stays as written
+    assert cc._language_name("tr") == "Turkish"
+    assert cc._language_name("EN") == "English"
+    assert cc._language_name("xx") == "xx"
+    assert cc._language_name(None) == "the spoken language"

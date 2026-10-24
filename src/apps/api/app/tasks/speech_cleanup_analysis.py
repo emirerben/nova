@@ -36,6 +36,8 @@ from app.models import ContentPlan, PlanItem, SpeechCleanupAnalysis
 from app.pipeline.caption_language import crosscheck_detected_language
 from app.pipeline.silence_cut import NO_SPEECH_BAILOUTS
 from app.pipeline.speech_cleanup_analysis import (
+    PROGRAMMING_ERRORS,
+    TRANSCRIPTION_PROVIDER_MODULES,
     SpeechCleanupAnalysisInput,
     SpeechCleanupAnalysisResult,
 )
@@ -88,16 +90,6 @@ SPEECH_CLEANUP_PUBLISH_RETRY_S = 30
 SPEECH_CLEANUP_GEMINI_REFERENCE_SAMPLE_S = 30.0
 SPEECH_CLEANUP_GEMINI_ACTIVE_TIMEOUT_S = 20
 
-_PROGRAMMING_ERRORS = (
-    AssertionError,
-    AttributeError,
-    ImportError,
-    KeyError,
-    NameError,
-    TypeError,
-    ValueError,
-)
-_TRANSCRIPTION_PROVIDER_MODULES = frozenset({"httpcore", "httpx", "openai", "requests", "urllib3"})
 _STORAGE_PROVIDER_MODULES = frozenset({"google", "httpcore", "httpx", "requests", "urllib3"})
 
 
@@ -597,12 +589,16 @@ def _run_engine_once(
         max_removal_frac_required=settings.speech_cleanup_max_removal_frac_required,
         reference_transcript=reference_transcript,
         reference_source=reference_source,
+        # Gemini only listened to the narration's opening (`_transcribe_reference_sample`).
+        reference_covers_s=(
+            SPEECH_CLEANUP_GEMINI_REFERENCE_SAMPLE_S if reference_source == "gemini_audio" else None
+        ),
     )
     try:
         if retake_detect_fn is None:
             return run_speech_cleanup_engine(analysis_input)
         return run_speech_cleanup_engine(analysis_input, retake_detect_fn=retake_detect_fn)
-    except _PROGRAMMING_ERRORS:
+    except PROGRAMMING_ERRORS:
         raise
     except TranscribeError as exc:
         raise SpeechCleanupOperationalError(
@@ -615,7 +611,7 @@ def _run_engine_once(
             "transcription_unavailable", detail=type(exc).__name__
         ) from exc
     except Exception as exc:
-        if type(exc).__module__.partition(".")[0] in _TRANSCRIPTION_PROVIDER_MODULES:
+        if type(exc).__module__.partition(".")[0] in TRANSCRIPTION_PROVIDER_MODULES:
             raise SpeechCleanupOperationalError(
                 "transcription_unavailable", detail=type(exc).__name__
             ) from exc

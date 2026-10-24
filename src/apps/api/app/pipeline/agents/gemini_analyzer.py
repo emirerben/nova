@@ -111,6 +111,11 @@ class ClipMeta:
     clip_audio_type: str = "ambient"
     # KRI-625: [{start_s, end_s, reason}] stretches no shot should be cut from.
     unusable_spans: list[dict] = field(default_factory=list)
+    # KRI-845: objects / movements / focus-steadiness, copied from ClipMetadataOutput. Named
+    # `clip_*` like the other understanding fields (bare names risk dormant getattr readers).
+    clip_props: list[str] = field(default_factory=list)
+    clip_actions: list[str] = field(default_factory=list)
+    clip_visual_quality: str = ""
 
 
 @dataclass
@@ -536,6 +541,9 @@ def analyze_clip(
         clip_brands=list(getattr(out, "brands", None) or []),
         clip_content_type=getattr(out, "content_type", "broll") or "broll",
         clip_audio_type=getattr(out, "audio_type", "ambient") or "ambient",
+        clip_props=list(getattr(out, "props", None) or []),
+        clip_actions=list(getattr(out, "actions", None) or []),
+        clip_visual_quality=getattr(out, "visual_quality", "") or "",
     )
 
 
