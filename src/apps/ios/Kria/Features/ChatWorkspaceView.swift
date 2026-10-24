@@ -510,6 +510,8 @@ private struct CreationWorkspaceView: View {
     /// The server's reason the last confirmation was rejected, shown inside the card.
     @State private var confirmationConflict: CreationConfirmationConflict?
     @State private var showsAttachments = false
+    /// KRI-815: the script the attachment sheet shows on its voiceover step; nil = the sheet as before.
+    @State private var attachmentScript: VoiceoverScript?
     @State private var showsResult = false
     /// Live plan & review: the "Review your video" sheet, opened from the feed's CTA / Change or the project.
     @State private var reviewPresentation: ReviewPlanPresentation?
@@ -959,7 +961,8 @@ private struct CreationWorkspaceView: View {
                            choiceQuestionMode: choiceQuestionMode(for: message),
                            questionBatch: asksTogether(message) ? questionBatches[message.id] ?? QuestionBatch() : nil,
                            songRangeMode: songRangeMode(for: message),
-                           replyOptionsMode: replyOptionsMode(for: message))
+                           replyOptionsMode: replyOptionsMode(for: message),
+                           voiceoverScriptMode: voiceoverScriptMode(for: message))
                 .id(entry.id)
             if let operationID = message.memoryOperationID {
                 SavedTextPreferenceUndo(operationID: operationID, api: model.api)
@@ -1116,6 +1119,38 @@ private struct CreationWorkspaceView: View {
         }
     }
 
+    /// KRI-815: the script card only when the server advertises it. Interactive on the newest script of THIS
+    /// project (its item, its latest revision); every other script card is read-only text.
+    private func voiceoverScriptMode(for message: ChatTranscriptMessage) -> VoiceoverScriptCardMode? {
+        guard capabilities?.voiceoverScriptCardsEnabled == true, let script = message.voiceoverScript else { return nil }
+        let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
+            if case .message(let message) = entry.content { message } else { nil }
+        }
+        let scripts = messages.compactMap(\.voiceoverScript)
+        // A draft is live while it is the newest draft; a failed draft only while no draft exists to record.
+        let current = script.isDraft ? scripts.last(where: \.isDraft) : (scripts.contains(where: \.isDraft) ? nil : scripts.last)
+        let index = messages.firstIndex(where: { $0.id == message.id }) ?? messages.endIndex
+        let alreadyPlanned = messages[index...].contains { $0.role == .user && $0.content == script.recordedMessage }
+        guard transcriptIsFresh, current == script, !alreadyPlanned,
+              script.itemID == fullThread?.activePlanItemID else { return .readOnly }
+        let voiceoverAttached = CreationAttachedMedia.parse(threadState).contains(where: \.isVoiceover)
+        return .active(
+            voiceoverAttached: voiceoverAttached,
+            isSending: isSending || isActing || isThinking,
+            record: { openVoiceoverStep(with: $0) },
+            importVoiceover: { openVoiceoverStep(with: $0) },
+            planWithVoiceover: { script in Task { await send(message: script.recordedMessage) } }
+        )
+    }
+
+    /// KRI-815: the attachment sheet, opened on the voiceover step with this script to read along.
+    private func openVoiceoverStep(with script: VoiceoverScript) {
+        guard canAttachMedia else { return }
+        attachmentScript = script
+        scrollRequest += 1
+        showsAttachments = true
+    }
+
     /// KRI-802: this reply asks a choice card and a clip picker together (servers send that only to protocol 14
     /// builds), and both cards are shown. Their answers then wait for each other and go out on one turn.
     private func asksTogether(_ message: ChatTranscriptMessage) -> Bool {
@@ -1209,6 +1244,7 @@ private struct CreationWorkspaceView: View {
 
     private func openAttachments() {
         guard canAttachMedia else { return }
+        attachmentScript = nil
         scrollRequest += 1
         showsAttachments = true
     }
@@ -1481,6 +1517,7 @@ private struct CreationWorkspaceView: View {
                 thread: fullThread,
                 capabilities: capabilities,
                 capabilitiesLoaded: capabilitiesAreAuthoritative,
+                voiceoverScript: attachmentScript,
                 refresh: {
                     if !capabilitiesAreAuthoritative { await refreshCapabilities() }
                     await refreshNow()
@@ -2802,6 +2839,8 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
     var replyLead: String? = nil
     /// Deliberate extra changes no request claimed; shown as one muted line under the receipts.
     var alsoChanged: [String] = []
+    /// KRI-815: the voiceover script this reply carries, when the server sent one.
+    var voiceoverScript: VoiceoverScript? = nil
 
     /// True only with receipts AND a lead: an old server (no lead) or a reply without receipts renders `content`.
     var usesReplyLead: Bool { !receipts.isEmpty && !(replyLead ?? "").isEmpty }
@@ -2855,7 +2894,8 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
         let songRangeQuestion = role == .assistant ? SongRangeQuestion.parse(payload: event.payload) : nil
         let songRangeAnswer = role == .user ? SongRangeAnswer.parse(payload: event.payload) : nil
         let memoryOperationID = event.payload?["kind"]?.stringValue == "creator_memory_receipt" ? event.payload?["operation_id"]?.stringValue : nil
-        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts, clipQuestion: clipQuestion, songOrderQuestion: songOrderQuestion, songOrderAnswer: songOrderAnswer, choiceQuestion: choiceQuestion, songRangeQuestion: songRangeQuestion, songRangeAnswer: songRangeAnswer, memoryOperationID: memoryOperationID, replyOptions: replyExtras?.options ?? [], replyLead: replyExtras?.lead, alsoChanged: replyExtras?.alsoChanged ?? [])
+        let voiceoverScript = role == .assistant ? VoiceoverScript.parse(payload: event.payload) : nil
+        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts, clipQuestion: clipQuestion, songOrderQuestion: songOrderQuestion, songOrderAnswer: songOrderAnswer, choiceQuestion: choiceQuestion, songRangeQuestion: songRangeQuestion, songRangeAnswer: songRangeAnswer, memoryOperationID: memoryOperationID, replyOptions: replyExtras?.options ?? [], replyLead: replyExtras?.lead, alsoChanged: replyExtras?.alsoChanged ?? [], voiceoverScript: voiceoverScript)
     }
 }
 

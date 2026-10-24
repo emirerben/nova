@@ -17518,11 +17518,19 @@ def _grounded_context_labels(
                 from app.schemas.clip_intents import (  # noqa: PLC0415
                     _match_key,  # type: ignore[attr-defined]
                     clean_creator_label_text,
+                    creator_literal_span,
                 )
 
                 # KRI-678 / KRI-804: the creator's own words keep their longer bounds here too.
-                cleaned = clean_creator_label_text(assignment.value)
-                if cleaned is not None and _match_key(cleaned) == _match_key(intent.creator_text):
+                # KRI-826: and print as the creator_text spells them, never the model's
+                # copy; a symbol the creator never wrote grounds nothing.
+                model_value = assignment.value or ""
+                cleaned = (
+                    clean_creator_label_text(creator_literal_span(intent.creator_text, model_value))
+                    if _match_key(model_value) == _match_key(intent.creator_text)
+                    else None
+                )
+                if cleaned is not None:
                     from app.schemas.clip_intents import GroundedLabel  # noqa: PLC0415
 
                     grounded = GroundedLabel(

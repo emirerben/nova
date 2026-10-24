@@ -19,7 +19,7 @@ $brief
 ## Answers (DATA — the creator's answers to a few questions; may be "(none)")
 
 $answers
-
+$revision_section
 ## Length — this is a hard requirement
 
 The footage runs about $duration_s seconds. Write roughly $target_words words so the spoken length matches the footage. Your script MUST be between $min_words and $max_words words. Count as you write. Shorter is better than padded — never add filler to hit the number.
@@ -31,8 +31,14 @@ The footage runs about $duration_s seconds. Write roughly $target_words words so
 - Plain spoken language. No "in this video", no "welcome back", no "today I'm going to show you".
 - No stage directions, no line labels, no markdown — just the words to say, as sentences.
 - Match the tone implied by the brief and answers.
+- Never claim the audio, voice or video was generated, recorded or edited by you.
+
+## Facts — only what the inputs state
+
+Do not name, date or identify anything (a person, artwork, exhibit, building, place, event, brand or species) unless the Footage, Brief or Answers above name it. No years, numbers, historical facts, prices or records the inputs do not state, and never cite a source ("according to", "historians say"). Describe what is visible instead ("this huge stone statue", not a name you guessed). If a line still makes a claim the inputs do not back, keep it short and list it in `needs_check` so the creator can verify it before recording.
 
 ## Output
 
 Return ONLY a JSON object:
-{"text": "<the full spoken script as plain sentences>"}
+{"text": "<the full spoken script as plain sentences>", "needs_check": [{"phrase": "<exact words from text>", "reason": "<what the creator should verify>"}]}
+`needs_check` is an empty list when every claim is backed by the inputs.

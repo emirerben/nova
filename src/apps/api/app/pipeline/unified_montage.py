@@ -734,6 +734,34 @@ def _shrink(frames: list[int], labelled: Sequence[bool], total: int, target: int
     return total
 
 
+# ``CreatorStillHold.requirement_id`` of a photo held by the photos' group length.
+GROUP_STILL_HOLD_ID = "photos"
+
+
+def group_still_hold(
+    media_id: str, mixed_media_timing: MixedMediaTimingProfile | None
+) -> AssetHold | None:
+    """KRI-825: the photos' group length as one photo's creator-owned hold, else None."""
+    seconds = mixed_media_timing.image_hold_s if mixed_media_timing is not None else None
+    if seconds is None:
+        return None
+    return AssetHold(media_id, round(float(seconds), 3), GROUP_STILL_HOLD_ID, "explicit")
+
+
+def unheld_still_frames(mixed_media_timing: MixedMediaTimingProfile | None) -> int:
+    """Frames a photo nobody gave a length plays: the AI's cadence, else a default cut.
+
+    The one rule both this planner and the approved length budget
+    (``kria.planner._enrich_best_parts_snapshot``) read, so they cannot drift (KRI-825).
+    """
+    want_s = (
+        mixed_media_hold_bounds("image", mixed_media_timing).preferred_s
+        if mixed_media_timing is not None
+        else DEFAULT_CUT_S
+    )
+    return int(math.ceil(want_s * FPS - 1e-9))
+
+
 def _capacity_frames(clip: UnifiedClip) -> int:
     if clip.kind == "image":
         return int(round(STILL_MAX_S * FPS))
@@ -1720,6 +1748,13 @@ def plan_unified_montage(
         still_media[ref]: hold
         for ref, hold in holds_from_requirements(view.hold_requirements, still_media).items()
     }
+    # KRI-825: a length the creator stated for the photos as a group ("every photo 1
+    # second", read from their own words into the profile) holds every other photo exactly
+    # the same way; a photo with its own stated length keeps that.
+    for media_id in still_media.values():
+        group = group_still_hold(media_id, mixed_media_timing)
+        if group is not None and media_id not in holds:
+            holds[media_id] = group
     # KRI-596: a long take may give several moments; each is its own cut, in plan order.
     windows_by_id: dict[str, list[BestPart]] = {}
     for part in best_parts.parts if best_parts else ():
@@ -1753,8 +1788,8 @@ def plan_unified_montage(
             want_s = sum(part.duration_s for part in approved_parts)
         elif clip.media_id in holds:
             want_s = holds[clip.media_id].hold_s
-        elif clip.kind == "image" and mixed_media_timing is not None:
-            want_s = mixed_media_hold_bounds("image", mixed_media_timing).preferred_s
+        elif clip.kind == "image" and (mixed_media_timing is not None or label is None):
+            want_s = unheld_still_frames(mixed_media_timing) / FPS
         else:
             want_s = label.min_display_s if label is not None else DEFAULT_CUT_S
         want = int(math.ceil(want_s * FPS - 1e-9))

@@ -885,8 +885,15 @@ def test_two_placements_packed_into_one_order_still_ask() -> None:
 
 
 def test_label_copy_keeps_its_short_bound() -> None:
-    """Only caption copy gets the creator-caption bound; a label is a corner tag."""
-    long_label = T04_LINES[4]
+    """Only caption copy gets the creator-caption bound; a label is a corner tag.
+
+    KRI-826: a creator label is bounded by the label bar (the fence answers "too long"),
+    so the planner only refuses label copy past the stored bound: a whole sentence.
+    """
+    from app.schemas.clip_intents import CREATOR_LABEL_STORAGE_MAX
+
+    long_label = f"{T04_LINES[4]} {T04_LINES[5]}"
+    assert len(long_label) > CREATOR_LABEL_STORAGE_MAX
     raw = json.dumps(
         {
             "intents": [

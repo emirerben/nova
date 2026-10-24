@@ -176,6 +176,22 @@ def _cases() -> dict[str, tuple[str, list]]:
         {"clip_assignments": _voice_rows(voice_s=75)},
         _VOICE_CAP,
     )
+    # KRI-825: timed photos the creator's total cannot fit (extendable, and not).
+    for name, needed in (("holds_extend", 12.0), ("holds_keep_only", 400.0)):
+        add(
+            name,
+            "holds_vs_length",
+            {},
+            _brief(_timing(5)),
+            {
+                "still_hold_conflict": {
+                    "requested_s": 5.0,
+                    "needed_s": needed,
+                    "held_s": 6.0,
+                    "requirement_ids": [],
+                }
+            },
+        )
     for code, strategy in (
         ("single_hero_order_conflict", {}),
         ("insufficient_media", {}),

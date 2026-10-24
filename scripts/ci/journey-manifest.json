@@ -2,6 +2,22 @@
   "schema_version": 1,
   "journeys": [
     {
+      "id": "kri-826-creator-text-literal-fit",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_kri826_creator_text_literal.py tests/kria/test_kri804_label_text_reply.py tests/pipeline/test_authored_newlines.py tests/pipeline/test_text_overlay_skia.py tests/pipeline/test_overlay_verify.py",
+      "xctests": [
+        "KriaTests/CreatorTextFitTests/testTheCapKeepsWholeCharactersOnly",
+        "KriaTests/CreatorTextFitTests/testTypedTextRoundTripsThroughSaveAndReopenByteForByte",
+        "KriaTests/CreatorTextFitTests/testTheExportedSlideKeepsALongAuthoredLineInsideTheFrame"
+      ],
+      "paths": [
+        "src/apps/api/app/pipeline/text_fit.py",
+        "src/apps/api/tests/fixtures/kri826_authored_fit_rows.json",
+        "src/apps/api/tests/kria/test_kri826_creator_text_literal.py",
+        "src/apps/ios/Tests/KriaTests/CreatorTextFitTests.swift"
+      ]
+    },
+    {
       "id": "kri-384-library-ingest",
       "needs_native": false,
       "api_tests": "tests/integration/test_media_library_ingest.py tests/integration/test_media_library_analysis.py tests/integration/test_media_library_reuse.py tests/integration/test_media_library_original_upgrade.py tests/pipeline/test_library_transcription_cost.py tests/routes/test_media_assets.py tests/routes/test_media_library_attachments.py tests/services/test_media_library_source_verification.py tests/integration/test_media_library_backfill.py",
@@ -1486,6 +1502,28 @@
         "src/apps/api/tests/tasks/test_render_worker_lifecycle.py",
         "src/apps/api/tests/tasks/test_render_worker_activity_sql.py",
         "src/apps/api/tests/test_render_worker_wake.py"
+      ]
+    },
+    {
+      "id": "kri-815-voiceover-script",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_kri815_voiceover_script_journey.py tests/evals/test_main_creator_evals.py tests/evals/test_voiceover_script_writer_evals.py",
+      "xctests": [
+        "KriaUITests/VoiceoverScriptCardUITests/testRecordWithThisScriptOpensTheVoiceoverStepWithTheScript",
+        "KriaUITests/VoiceoverScriptCardUITests/testWithoutTheCapabilityTheScriptIsReplyText"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/voiceover_script.py",
+        "src/apps/api/app/agents/voiceover_script_writer.py",
+        "src/apps/api/prompts/write_voiceover_script.txt",
+        "src/apps/api/prompts/main_creator.txt",
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/ios/Kria/Core/VoiceoverScript.swift",
+        "src/apps/ios/Kria/Features/VoiceoverScriptCard.swift",
+        "src/apps/ios/Tests/KriaUITests/VoiceoverScriptCardUITests.swift",
+        "src/apps/api/tests/kria/test_kri815_voiceover_script_journey.py",
+        "src/apps/api/tests/fixtures/agent_evals/voiceover_script_writer/golden/kri815_museum_needs_check.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri815_script_request.json"
       ]
     }
   ]

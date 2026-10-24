@@ -269,9 +269,23 @@ def test_iter_recipe_overlays_shapes():
         ov.iter_recipe_overlays({"nope": 1})
 
 
-def test_missing_glyph_with_no_covering_face_fails():
+def test_missing_glyph_with_no_covering_face_fails(monkeypatch):
     """KRI-785: tofu passed the bbox check. A letter no bundled face can draw
-    (no glyph fallback is possible) must FAIL, naming the missing codepoint."""
+    (no glyph fallback is possible) must FAIL, naming the missing codepoint.
+
+    KRI-826: the renderer shapes any text its face can't draw, filling each codepoint
+    from the system faces (so "漢" draws wherever a CJK face is installed). Here no
+    system face covers it either, as on a host without a CJK font."""
+
+    class _NoSystemFaces:
+        @staticmethod
+        def RefDefault():  # noqa: N802 - skia's name
+            return _NoSystemFaces()
+
+        def matchFamilyStyleCharacter(self, *_args):  # noqa: N802 - skia's name
+            return None
+
+    monkeypatch.setattr(ov.tos.skia, "FontMgr", _NoSystemFaces)
     overlay = {
         **_fixture_overlays("turkish_glyphs.json")[0],
         "text": "Güneş 漢",

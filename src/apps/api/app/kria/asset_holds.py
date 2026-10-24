@@ -24,17 +24,47 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from app.schemas.edit_proposal import (
+    CREATOR_STILL_HOLD_MAX_S,
+    CREATOR_STILL_HOLD_MIN_S,
+    seconds_negated,
+)
+
 Authority = Literal["explicit", "accepted", "cleared"]
 
-# Seconds a creator may give one photo. The AI cadence band (0.1-0.8 s,
-# ``MixedMediaTimingProfile.image_hold_s``) is a taste default and does not bound this.
-MIN_HOLD_S = 0.1
-MAX_HOLD_S = 10.0
+# Seconds a creator may give one photo (or the photos as a group, KRI-825). The AI's
+# photo cadence (0.5-0.8 s, ``MIXED_MEDIA_IMAGE_HOLD``) is a taste default and does not
+# bound this.
+MIN_HOLD_S = CREATOR_STILL_HOLD_MIN_S
+MAX_HOLD_S = CREATOR_STILL_HOLD_MAX_S
 # Facts a model may file the seconds under; the first positive one is the hold.
 HOLD_FACT_KEYS = ("hold_s", "duration_s", "clip_duration_s", "per_clip_duration_s")
 # The renderer's frame clock: an applied hold is judged within one frame of the ask.
 HOLD_FPS = 30
 HOLD_TOLERANCE_S = 1.0 / HOLD_FPS + 1e-3
+
+
+# Quoted on-screen copy ('title "1 second to midnight"'): its seconds are the copy's.
+# Opening mark -> the mark that closes it.
+_QUOTE_PAIRS = {'"': '"', "\u201c": "\u201d", "\u00ab": "\u00bb", "'": "'", "\u2018": "\u2019"}
+
+
+def _quoted_spans(text: str) -> list[tuple[int, int]]:
+    """Each quoted stretch of ``text``, marks included. Language-neutral: a straight
+    apostrophe inside a word ("don't") neither opens nor closes a quote."""
+
+    spans: list[tuple[int, int]] = []
+    opened: tuple[int, str] | None = None
+    for index, mark in enumerate(text):
+        inner = index > 0 and text[index - 1].isalnum()
+        outer = index + 1 < len(text) and text[index + 1].isalnum()
+        if opened is None:
+            if mark in _QUOTE_PAIRS and not (mark == "'" and inner):
+                opened = (index, _QUOTE_PAIRS[mark])
+        elif mark == opened[1] and not (mark == "'" and outer):
+            spans.append((opened[0], index + 1))
+            opened = None
+    return spans
 
 
 def stated_seconds(text: str) -> tuple[float, ...]:
@@ -44,10 +74,23 @@ def stated_seconds(text: str) -> tuple[float, ...]:
     words, followed by a seconds unit), so a count ("3 photos"), a caption number or "1000
     followers" is never a length. What the length is *for* stays the brief extractor's
     call (KRI-667), recorded in ``facts``; this only confirms the creator said it.
+
+    KRI-825: seconds inside quoted on-screen copy ('title "1 second to midnight"') and
+    seconds the creator's own clause negates ("don't keep the beach photo 1 second",
+    "plaj fotoğrafı 1 saniye kalmasın") are not a length they asked for.
     """
     from app.kria.planner import _hold_key, _stated_holds  # noqa: PLC0415 - import cycle
 
-    return tuple(dict.fromkeys(value for _, _, value in _stated_holds(_hold_key(text or ""))))
+    key = _hold_key(text or "")
+    quoted = _quoted_spans(key)
+    lengths = []
+    for start, end, value in _stated_holds(key):
+        if any(lo <= start and end <= hi for lo, hi in quoted):
+            continue
+        if seconds_negated(key, start, end):
+            continue
+        lengths.append(value)
+    return tuple(dict.fromkeys(lengths))
 
 
 def _creator_typed(seconds: float, creator_text: str) -> bool:
@@ -210,25 +253,77 @@ def holds_from_requirements(
     return holds
 
 
+@dataclass(frozen=True)
+class VisualBudget:
+    """Seconds the placed Visuals (pool stills beside the footage) take, as frames.
+
+    ``held_frames``: the creator-held ones (their own length, or the photos' group
+    length). ``unheld_frames``: every other placed Visual at the AI pacing the montage
+    gives it (``unified_montage.unheld_still_frames``). ``requirement_ids``: the brief
+    requirements behind the held ones.
+    """
+
+    held_frames: int = 0
+    unheld_frames: int = 0
+    requirement_ids: tuple[str, ...] = ()
+
+    @property
+    def held_s(self) -> float:
+        return round(self.held_frames / HOLD_FPS, 3)
+
+    @property
+    def total_s(self) -> float:
+        return round((self.held_frames + self.unheld_frames) / HOLD_FPS, 3)
+
+
+def visual_budget(
+    brief: Any,
+    clip_ids: Iterable[str],
+    visual_photo_ids: Iterable[str] | None,
+    *,
+    group_hold_s: float | None = None,
+    unheld_frames_each: int = 0,
+) -> VisualBudget:
+    """What the placed Visuals take off a creator total (KRI-824, KRI-825).
+
+    The approved length plan sizes only the clip record's footage; every Visual plays its
+    own length beside it, so a creator total must leave exactly that much room. A
+    creator-held Visual counts its hold (resolved, never an ambiguous tail, against every
+    medium of the item, once per photo); ``group_hold_s`` (the photos' group length)
+    holds every other Visual; the rest count ``unheld_frames_each``. ``None`` (the format
+    places no Visuals, or the pool is unknown) takes nothing.
+    """
+    if not visual_photo_ids:
+        return VisualBudget()
+    clips = list(dict.fromkeys(str(media_id) for media_id in clip_ids))
+    visuals = [m for m in dict.fromkeys(str(v) for v in visual_photo_ids) if m not in clips]
+    holds = (
+        holds_from_requirements(hold_requirements(brief), [*clips, *visuals])
+        if brief is not None
+        else {}
+    )
+    held = unheld = 0
+    requirement_ids: list[str] = []
+    group_frames = max(1, int(round(group_hold_s * HOLD_FPS))) if group_hold_s else None
+    for media_id in visuals:
+        hold = holds.get(media_id)
+        if hold is not None:
+            held += hold.frames
+            requirement_ids.append(hold.requirement_id)
+        elif group_frames is not None:
+            held += group_frames
+        else:
+            unheld += unheld_frames_each
+    return VisualBudget(held, unheld, tuple(dict.fromkeys(requirement_ids)))
+
+
 def held_visual_seconds(
     brief: Any, clip_ids: Iterable[str], visual_photo_ids: Iterable[str] | None
 ) -> float:
-    """Seconds the creator-held Visual photos (pool stills outside ``clip_ids``) will take.
-
-    The approved length plan sizes only the clip record's footage; a held Visual plays its
-    own length beside it, so a creator total must leave that much room. Only a hold that
-    ``holds_from_requirements`` would apply counts: resolved (never an ambiguous tail)
-    against every medium of the item, to a still ``visual_photo_ids`` lists (the Visuals
-    this format places), once per photo. ``None`` (the format places no Visuals, or the
-    pool is unknown) subtracts nothing.
-    """
-    if brief is None or not visual_photo_ids:
+    """Seconds the creator-held Visual photos take (``visual_budget``'s held part)."""
+    if brief is None:
         return 0.0
-    clips = list(dict.fromkeys(str(media_id) for media_id in clip_ids))
-    visuals = [m for m in dict.fromkeys(str(v) for v in visual_photo_ids) if m not in clips]
-    holds = holds_from_requirements(hold_requirements(brief), [*clips, *visuals])
-    total = sum(hold.frames for media_id, hold in holds.items() if media_id in visuals)
-    return round(total / HOLD_FPS, 3)
+    return visual_budget(brief, clip_ids, visual_photo_ids).held_s
 
 
 def hold_outcomes(
@@ -250,6 +345,7 @@ def hold_outcomes(
 __all__ = [
     "AssetHold",
     "Authority",
+    "VisualBudget",
     "HOLD_TOLERANCE_S",
     "MAX_HOLD_S",
     "MIN_HOLD_S",
@@ -263,4 +359,5 @@ __all__ = [
     "resolve_clip_scope",
     "stamp_authority",
     "stated_seconds",
+    "visual_budget",
 ]
