@@ -618,3 +618,80 @@ def _resolve_new_sound_effect(
         catalog_id=request.catalog_id,
     )
     return ResolvedSoundEffect(request=request, asset=asset, duration_s=float(duration_s))
+
+
+def phone_subtitled_research_slots(job: Any, variant: dict) -> list[dict]:
+    """Read-only clip rows for a phone Talking edit's chat snapshot (KRI-816).
+
+    A device `subtitled` variant has no ``ai_timeline``: its cut lives in the
+    pinned recipe. The copilot still needs to know which footage plays when
+    (research binds an explanation to what is pictured), so the main track's
+    speaker clips are projected in output order with their real ``media_id``
+    and the pool index they play from. The ending clip (a Visuals binding) is
+    projected only while it matches its pinned visual by id and generation.
+
+    PURE. Never feeds the applier: a Talking cut is not editable from chat,
+    and every row is marked ``read_only``.
+    """
+    from app.services.phone_voiceover_timeline import (  # noqa: PLC0415
+        _bindings,
+        source_pool_paths,
+    )
+
+    assembly_plan = getattr(job, "assembly_plan", None)
+    if not is_phone_subtitled_editor_variant(variant) or not isinstance(assembly_plan, dict):
+        return []
+    variant_id = variant.get("variant_id")
+    recipe = _pinned_recipe(assembly_plan, variant_id) if isinstance(variant_id, str) else None
+    if recipe is None:
+        return []
+    track = next((row for row in recipe.tracks if row.id == "subtitled"), None)
+    if track is None:
+        return []
+    bindings = {binding.media_id: binding for binding in _bindings(assembly_plan)}
+    pool = source_pool_paths(assembly_plan, getattr(job, "all_candidates", None))
+    manifest = {asset.id: asset for asset in recipe.asset_manifest.assets}
+    visuals = _visual_bindings(assembly_plan)
+    rows: list[dict] = []
+    for clip in sorted(track.clips, key=lambda c: c.timeline_start):
+        duration = round(float(clip.source_duration / clip.rate), 3)
+        start = round(float(clip.timeline_start), 3)
+        if duration <= 0:
+            continue
+        row = {
+            "slot_id": clip.id,
+            "in_s": round(max(0.0, float(clip.source_start)), 3),
+            "duration_s": duration,
+            "output_start_s": start,
+            "output_end_s": round(start + duration, 3),
+            "removed": False,
+            "transition_after": "cut",
+            "read_only": True,
+        }
+        binding = bindings.get(clip.source_asset_id)
+        if binding is not None:
+            if binding.proxy_path not in pool:
+                return []
+            row |= {
+                "media_id": binding.media_id,
+                "clip_index": pool.index(binding.proxy_path),
+                "source_duration_s": round(float(binding.original.duration_s), 3),
+                "media_kind": "video",
+            }
+        else:
+            asset = manifest.get(clip.source_asset_id)
+            visual = next(
+                (
+                    visual
+                    for visual in visuals
+                    if isinstance(asset, VisualRenderAsset)
+                    and visual.media_id == asset.visual_id
+                    and visual.generation == asset.generation
+                ),
+                None,
+            )
+            if visual is None:
+                continue
+            row |= {"media_id": visual.media_id, "clip_index": None, "media_kind": visual.kind}
+        rows.append(row)
+    return rows

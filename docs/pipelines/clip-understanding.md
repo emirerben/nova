@@ -541,6 +541,45 @@ Guards: `tests/test_pool_asset_fly_contract.py` and `tests/test_worker_prewarm_g
 in `[env]`); the queue assertions in `tests/routes/test_plan_item_assets.py` and
 `tests/tasks/test_pool_asset_reconcile.py`.
 
+## Visuals analysis has one declared bound (KRI-820)
+
+A hard-killed `analyze_pool_asset` (time-limit kill, SIGKILL, deploy) used to leave the
+row `analyzing` until the reaper requeued it up to 3 times on 10-/60-minute windows. One
+stalled photo read "Analyzing…" for 30–90+ minutes, Retry did nothing while it was
+queued or analyzing, and the iOS Slider blocked export and AI requests on any pending
+asset. On T08 a small JPEG stayed `analyzing` for 528.58 s.
+
+- **One deadline per attempt.** `plan_item_assets.analysis_deadline_at` (migration 0125;
+  rules in `app/services/pool_analysis_deadline.py`). Dispatch stamps
+  `now + claim_window + run_window` (image 10 min + 6 min, video 30 min + 12 min). The
+  worker's claim may only shorten it to `claim + run_window`. Celery retries, broker
+  re-sends and the reaper never extend it. Broker messages carry `expires=deadline`.
+- **Past the deadline** a queued/analyzing row is `failed / analysis_timed_out`,
+  `retryable=true`. The list/Slider projection (`_asset_out`) shows that at once. The
+  reaper (`reconcile_stale_pool_assets`, every 5 min) persists it and rotates the
+  attempt token, so a late worker cannot write. Nothing requeues it automatically, and
+  iOS does not auto-retry it either: the creator picks Retry or Remove.
+- **Retry** on an expired queued/analyzing row ends the old attempt and requeues a new
+  one in the same row-locked transaction. Inside the bound, Retry returns the row
+  unchanged, so duplicate taps and a tap racing the reaper share one token.
+- **Late results** are fenced by the attempt token, the ownership epoch and the
+  generation, as before. `refresh=True` runs never expire and never degrade a `ready` row.
+- **Creator preparation** leaves out pool sources that expired or whose analysis fails.
+  It lists them in `session.preparation.omitted` and tells the creator in the progress
+  message, then plans with the ready sources. It still fails with `analysis_unavailable`
+  when nothing usable is left, or on systemic errors (quota, budget, ownership,
+  missing bytes).
+- **Slider (iOS).** Export and Ask Kria are gated only on media the draft uses (slides
+  and stickers): `SlidePostAssetGate`. A photo whose AI analysis failed but whose
+  bytes were verified (`media_status == "ready"`) stays placeable, the same rule the
+  server's slide routes use. The Visuals progress copy names the server deadline.
+- **Media library.** `reconcile_media_library_analysis` re-sends a stale
+  pending/processing library asset at most `MEDIA_ANALYSIS_MAX_REDISPATCHES` (3) times,
+  then marks it `failed`.
+
+E2E: `tests/integration/test_pool_asset_stall_bound_postgres.py` (real Postgres, routes,
+task body, reaper and creator preparation; writes `.dev/kri-820-e2e/report.json`).
+
 ## Chat turns wait for analysis in flight
 
 A Kria turn whose clip instructions need clip understanding gates on it in

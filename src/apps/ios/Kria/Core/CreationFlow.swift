@@ -223,6 +223,10 @@ struct CreationVisual: Codable, Sendable, Identifiable {
     /// assets and on servers that predate the fields.
     var errorCode: String? = nil
     var errorDetail: String? = nil
+    /// KRI-820: while queued/analyzing, the server's declared time by which this
+    /// Visual is ready or a retryable `analysis_timed_out` failure (ISO-8601).
+    var analysisDeadlineAt: String? = nil
+    var analysisDeadline: Date? { analysisDeadlineAt.flatMap(PlanBlock.parseDate) }
 
     /// Older APIs return original videos in display_url. For images, accept
     /// that URL only when its key is the original, never a flattened preview.
@@ -240,6 +244,7 @@ struct CreationVisual: Codable, Sendable, Identifiable {
         case gcsPath = "gcs_path", sourceURL = "source_url", durationS = "duration_s", mediaStatus = "media_status"
         case sourceFilename = "source_filename", displayURL = "display_url", previewURL = "preview_url"
         case errorCode = "error_code", errorDetail = "error_detail"
+        case analysisDeadlineAt = "analysis_deadline_at"
     }
 }
 struct CreationVisuals: Codable, Sendable {

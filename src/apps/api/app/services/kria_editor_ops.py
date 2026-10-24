@@ -254,6 +254,8 @@ def _safe_slot(
         slot["seen"] = {"text": seen, "provenance": "vision"}
     if visible_text:
         slot["visible_text"] = visible_text[:1000]
+    if row.get("read_only") is True:
+        slot["read_only"] = True
     return slot
 
 
@@ -344,18 +346,30 @@ def _clip_description_by_media_id(
     it cannot tell what that clip shows, never guess.
     """
     guided = _guided_v2_revision(job, variant)
-    if guided is None:
+    phone_sources = _phone_source_media(job, variant) if guided is None else {}
+    if guided is None and not phone_sources:
         return {}
     media_by_path = {
         str(source.get("gcs_path")): str(source.get("media_id"))
-        for source in guided.get("sources") or []
+        for source in (guided or {}).get("sources") or []
         if isinstance(source, dict) and source.get("gcs_path") and source.get("media_id")
     }
     out: dict[str, str] = {}
     for row in assignments:
         if not isinstance(row, dict):
             continue
-        media_id = media_by_path.get(str(row.get("gcs_path")))
+        if guided is None:
+            # KRI-816: phone sources join on the immutable binding triple, so a
+            # re-uploaded (new generation) clip is never described as this one.
+            media_id = phone_sources.get(
+                (
+                    str(row.get("media_id")),
+                    str(row.get("gcs_path")),
+                    str(row.get("storage_generation")),
+                )
+            )
+        else:
+            media_id = media_by_path.get(str(row.get("gcs_path")))
         if media_id is None:
             continue
         if visible_text:
@@ -371,6 +385,22 @@ def _clip_description_by_media_id(
         if text:
             out[media_id] = text
     return out
+
+
+def _phone_source_media(job: Any, variant: dict[str, Any]) -> dict[tuple[str, str, str], str]:
+    """(media_id, proxy path, generation) -> media_id for a phone Talking edit's sources."""
+    from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+        is_phone_subtitled_editor_variant,
+    )
+    from app.services.phone_voiceover_timeline import _bindings  # noqa: PLC0415
+
+    assembly = getattr(job, "assembly_plan", None)
+    if not is_phone_subtitled_editor_variant(variant) or not isinstance(assembly, dict):
+        return {}
+    return {
+        (binding.media_id, binding.proxy_path, binding.generation): binding.media_id
+        for binding in _bindings(assembly)
+    }
 
 
 def clip_seen_by_media_id(
@@ -935,6 +965,15 @@ def build_editor_snapshot(
         **(clip_context.get("visible_text") or {}),
     }
     slot_rows = _variant_slots(variant, job)
+    if not slot_rows:
+        # KRI-816: a phone Talking cut lives only in its pinned recipe. Project it
+        # read-only for the snapshot (research binds to what is pictured); it is
+        # never added to `_variant_slots`, which also seeds the applier.
+        from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+            phone_subtitled_research_slots,
+        )
+
+        slot_rows = phone_subtitled_research_slots(job, variant)
     guided_source_labels = _slot_moments(job, variant, slot_rows)
     label_links = _clip_label_links(job, variant)
     label_text_by_clip = {
@@ -1032,6 +1071,10 @@ def build_editor_snapshot(
         "text_bars": text_bars,
         "total_duration_s": duration,
     }
+    if variant.get("resolved_archetype") in {"subtitled", "talking_head"}:
+        # KRI-816: the recorded speech is the edit's primary track, so research
+        # places sourced text only in its pauses (narrated/voiceover cues do not).
+        snapshot["spoken_edit"] = True
     brief = clip_context.get("brief")
     if isinstance(brief, str) and brief.strip():
         from app.kria.brief import BriefCoverageError  # noqa: PLC0415

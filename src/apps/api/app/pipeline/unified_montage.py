@@ -46,6 +46,12 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.kria.asset_holds import (
+    AssetHold,
+    hold_outcomes,
+    hold_requirements,
+    holds_from_requirements,
+)
 from app.kria.brief_route import (
     END_KEYS,
     START_KEYS,
@@ -64,6 +70,7 @@ from app.schemas.edit_proposal import (
     MAX_PROPOSAL_DURATION_S,
     MIN_PROPOSAL_DURATION_S,
     ClipLabel,
+    CreatorStillHold,
     EditProposalSnapshot,
     FastMontageCut,
     MediaRef,
@@ -215,6 +222,9 @@ class BriefView:
     title_animation: str | None = None
     label_position: str | None = None
     placeholder_labels: bool = False
+    # KRI-824: live ``timing`` / ``clip:<id>`` requirements, resolved against the plan's
+    # own photos by ``holds_from_requirements``; only server-stamped ones apply.
+    hold_requirements: tuple[Any, ...] = ()
 
 
 def brief_view(brief: Any) -> BriefView:
@@ -299,6 +309,7 @@ def brief_view(brief: Any) -> BriefView:
         title_animation=title_animation,
         label_position=label_position,
         placeholder_labels=placeholder_labels,
+        hold_requirements=hold_requirements(brief),
     )
 
 
@@ -483,6 +494,10 @@ class UnifiedMontagePlan:
     # ("held" / "not_held" / "ambiguous" / "not_found"), media_id, source_start_s,
     # source_end_s}. Empty without such an ask, so every earlier record is unchanged.
     named_lines: list[dict[str, Any]] = field(default_factory=list)
+    # KRI-824: each photo the creator gave its own seconds: {media_id, hold_s,
+    # requirement_id, authority, rendered_s}. Empty without such an ask, so every earlier
+    # record is unchanged.
+    asset_holds: list[dict[str, Any]] = field(default_factory=list)
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
@@ -510,6 +525,7 @@ class UnifiedMontagePlan:
         speech = {"closing_speech": dict(self.closing_speech)} if self.closing_speech else {}
         quote = {"closing_quote": dict(self.closing_quote)} if self.closing_quote else {}
         named = {"named_lines": [dict(row) for row in self.named_lines]} if self.named_lines else {}
+        held = {"asset_holds": [dict(row) for row in self.asset_holds]} if self.asset_holds else {}
         best_parts = (
             {"best_parts": list(self.best_parts_receipt)} if self.best_parts_receipt else {}
         )
@@ -573,6 +589,7 @@ class UnifiedMontagePlan:
             **choice,
             **zone,
             **named,
+            **held,
             **song,
             **speech,
             **quote,
@@ -1668,6 +1685,22 @@ def plan_unified_montage(
 
     # ── cut lengths ──────────────────────────────────────────────────────────
     approved_windows = has_approved_windows
+    # KRI-824: a photo the creator gave its own seconds plays exactly that, whatever the
+    # AI's photo pacing; only the item's own photos resolve, by brief scope id.
+    still_media = {clip.ref_id: clip.media_id for clip in ordered if clip.kind == "image"}
+    # A media id its own ref id already ends with ("asset-<uuid>") resolves through the ref;
+    # listing both would make every tail of that one photo look ambiguous.
+    still_media.update(
+        {
+            clip.media_id: clip.media_id
+            for clip in ordered
+            if clip.kind == "image" and not clip.ref_id.endswith(clip.media_id)
+        }
+    )
+    holds: dict[str, AssetHold] = {
+        still_media[ref]: hold
+        for ref, hold in holds_from_requirements(view.hold_requirements, still_media).items()
+    }
     # KRI-596: a long take may give several moments; each is its own cut, in plan order.
     windows_by_id: dict[str, list[BestPart]] = {}
     for part in best_parts.parts if best_parts else ():
@@ -1699,12 +1732,16 @@ def plan_unified_montage(
             # frame counts are only bookkeeping for the legacy code below;
             # cut construction continues to use the unrounded approved parts.
             want_s = sum(part.duration_s for part in approved_parts)
+        elif clip.media_id in holds:
+            want_s = holds[clip.media_id].hold_s
         elif clip.kind == "image" and mixed_media_timing is not None:
             want_s = mixed_media_hold_bounds("image", mixed_media_timing).preferred_s
         else:
             want_s = label.min_display_s if label is not None else DEFAULT_CUT_S
         want = int(math.ceil(want_s * FPS - 1e-9))
-        if approved_parts:
+        if clip.media_id in holds and not approved_parts:
+            want = holds[clip.media_id].frames
+        if approved_parts or clip.media_id in holds:
             cap = want
         elif clip.kind == "image" and mixed_media_timing is not None:
             # The snapshot validator owns these photo bounds too.  Keep the
@@ -1731,6 +1768,13 @@ def plan_unified_montage(
     growth_ceiling = (
         list(capacity) if target_s else [min(cap, int(READING_MAX_S * FPS)) for cap in capacity]
     )
+    # A held photo is pinned like a labelled cut: never grown, never shrunk (``_shrink``
+    # only takes frames from unlabelled cuts), never trimmed for a song below.
+    pinned = [clip.media_id in holds for clip in ordered]
+    for index, held in enumerate(pinned):
+        if held:
+            growth_ceiling[index] = wanted[index]
+            labelled[index] = True
     # KRI-517: the creator asked to end on a clip that speaks, with its own audio. Its
     # cut holds the whole spoken line (never shrunk, never grown past it) and the other
     # cuts share the rest of the length. A line the creator's length cannot also fit
@@ -1797,15 +1841,20 @@ def plan_unified_montage(
         # named on the receipt; nothing is silently cut.
         while total > song_cap and ordered:
             excess = total - song_cap
-            if wanted[-1] - excess >= int(math.ceil(MIN_VIDEO_CUT_S * FPS)) or len(ordered) == 1:
-                wanted[-1] = max(1, wanted[-1] - excess)
+            # The last cut the AI sized gives way; a creator-held photo never does.
+            last = max((i for i, held in enumerate(pinned) if not held), default=None)
+            if last is None:
+                raise ValueError("the song is too short for the photo lengths you asked for")
+            if wanted[last] - excess >= int(math.ceil(MIN_VIDEO_CUT_S * FPS)) or len(ordered) == 1:
+                wanted[last] = max(1, wanted[last] - excess)
                 total = sum(wanted)
                 break
-            gone = ordered.pop()
-            total -= wanted.pop()
-            capacity.pop()
-            labelled.pop()
-            growth_ceiling.pop()
+            gone = ordered.pop(last)
+            total -= wanted.pop(last)
+            capacity.pop(last)
+            labelled.pop(last)
+            growth_ceiling.pop(last)
+            pinned.pop(last)
             labels.pop(gone.media_id, None)
             song_dropped.append(gone.media_id)
         if total < floor_frames:
@@ -1841,6 +1890,11 @@ def plan_unified_montage(
                 int(math.floor(label.min_display_s * 1000)) - 1 if label else _MIN_UNLABELLED_MS
             )
             nominal_ms.append(nominal)
+            if clip.media_id in holds:
+                # A creator-held photo keeps its length; the beat snap moves the others.
+                lo_ms.append(nominal)
+                hi_ms.append(nominal)
+                continue
             lo_ms.append(nominal if tiny else min(floor_ms, nominal))
             hi_ms.append(
                 nominal if tiny else max(nominal, int(round(max(ceiling, frames) * 1000 / FPS)))
@@ -2005,6 +2059,14 @@ def plan_unified_montage(
         snapshot_kwargs["user_song"] = song_plan
     if mixed_media_timing is not None:
         snapshot_kwargs["mixed_media_timing"] = mixed_media_timing
+    if holds:
+        snapshot_kwargs["creator_still_holds"] = [
+            CreatorStillHold(
+                media_id=media_id, hold_s=hold.frames / FPS, requirement_id=hold.requirement_id
+            )
+            for media_id, hold in holds.items()
+            if any(cut.media_id == media_id for cut in cuts)
+        ]
     # KRI-522: the brief is cumulative, so the creator's ask survives a later turn whose
     # strategy omits it; the strategy's own typed value is the fallback.
     title_animation = view.title_animation or normalize_title_animation(
@@ -2098,6 +2160,14 @@ def plan_unified_montage(
         opening_speech=opening_speech,
         closing_quiet=closing_quiet,
         named_lines=named_lines,
+        asset_holds=hold_outcomes(
+            holds,
+            {
+                media_id: sum(cut.output_duration_s for cut in cuts if cut.media_id == media_id)
+                for media_id in holds
+                if any(cut.media_id == media_id for cut in cuts)
+            },
+        ),
     )
 
 

@@ -836,6 +836,12 @@ class Settings(BaseSettings):
     # unstamped = legacy behaviour. Default TRUE; kill switch = false + restart
     # api and worker (affects new jobs only).
     kria_plan_authority_enabled: bool = True
+    # KRI-722: mint one immutable prepared execution snapshot at approve and stamp
+    # it on the approval, execution and Job. Read ONCE at approve; workers branch on
+    # the stamp (`creator_prepared_execution`), never on this flag. False = new
+    # approvals are unstamped = legacy. Kill switch: fly secret false + restart
+    # api and worker (already-stamped work keeps being verified).
+    kria_prepared_execution_enabled: bool = True
     # KRI-189 (KRI-185 P3): clip facts -- capture time, place name and a
     # best-guess landmark per clip, each with provenance. Gates SERVER
     # CONSUMPTION only: the landmark agent run, exposing facts to the Main

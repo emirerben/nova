@@ -14,7 +14,7 @@ struct NativeResearchSourcesView: View {
                 ForEach(cited, id: \.1.id) { text, citation in
                     Section {
                         Text(text.text).font(.headline)
-                        if !citation.matches(text, clips: document.clips) {
+                        if !citation.matches(text, clips: document.clips, captions: document.captionUnits) {
                             Label("Text or footage changed. Recheck these sources.", systemImage: "info.circle")
                                 .font(.subheadline).foregroundStyle(.secondary)
                             Text("Original: \(citation.originalText)").font(.subheadline)

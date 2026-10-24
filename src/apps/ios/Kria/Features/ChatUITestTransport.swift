@@ -120,6 +120,8 @@ final class CreationChatFixture: @unchecked Sendable {
     /// moment they are registered, exactly like a pasted sticker whose upload finished.
     private var slideStickerAssets: [String: [[String: Any]]] = [:]
     private var deviceRevisions: [String: Int] = [:]
+    /// KRI-823: device deliveries the iPhone reported as failed (`/device-render/failures`), until a retry re-pins them.
+    private var deviceReportedFailures: Set<String> = []
     /// KRI-443 (`KRIA_CHAT_PLAN_BLOCKS=1`): how far the staged `plan_block` script has advanced, per thread.
     private var planStages: [String: Int] = [:]
     private var planTicks: [String: Int] = [:]
@@ -209,6 +211,8 @@ final class CreationChatFixture: @unchecked Sendable {
             let reply = AccountTextPreferenceFixture.shared.reply(request, stale: false, learning: true, initiallyEnabled: true)
             return (reply.0, Data(reply.1.utf8))
         }
+        seedDeviceDeliveryThread()
+        mirrorDeviceDelivery()
         if path == "/creation-threads/capabilities" {
             // `KRIA_SLIDE_POST_CAPS=fail`: the capabilities request never gets an answer.
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CAPS"] == "fail" { return nil }
@@ -1164,11 +1168,73 @@ final class CreationChatFixture: @unchecked Sendable {
             return response(status)
         case "retry":
             deviceRevisions[key] = revision + 1
+            deviceReportedFailures.remove(key)
+            DeviceRenderUITestFixture.published.remove(key)
+            mirrorDeviceDelivery()
             return response(["identity": encoded(identity(revision + 1)), "phase": "awaiting_device"])
         case "failures":
+            deviceReportedFailures.insert(key)
+            mirrorDeviceDelivery()
             return response(["identity": encoded(identity(revision)), "phase": "needs_attention", "reason_code": body["reason_code"] as? String ?? "export_failed"])
         default:
             return response(["detail": "Fixture route missing"], status: 404)
+        }
+    }
+
+    /// KRI-823 (`KRIA_CHAT_DEVICE_SEED_THREAD=1`): a project whose phone render was already handed to this iPhone
+    /// before the app launched, under a fixed id, so a relaunch (and a warm SwiftData cache) finds the same project.
+    static let seededDeviceThreadID = "DE11FE11-0000-4000-8000-000000000823"
+    private func seedDeviceDeliveryThread() {
+        let id = Self.seededDeviceThreadID
+        guard DeviceRenderUITestFixture.scenario != nil,
+              ProcessInfo.processInfo.environment["KRIA_CHAT_DEVICE_SEED_THREAD"] == "1", threads[id] == nil else { return }
+        func event(_ sequence: Int, _ type: String, role: String = "assistant", _ payload: [String: Any] = [:]) -> [String: Any] {
+            ["id": "\(id)-\(sequence)", "sequence": sequence, "revision": sequence + 1, "role": role, "event_type": type,
+             "content": "", "payload": payload, "created_at": "2026-10-20T10:00:00Z"]
+        }
+        threads[id] = [
+            "id": id, "title": "Delivery check", "status": "active", "revision": 4, "runtime_version": runtime,
+            "state": ["format": "montage", "edit_format": "montage"],
+            "events": [event(0, "thread_created"), event(1, "format_prompt"),
+                       event(2, "action_select_format", role: "user", ["format": "montage"]), event(3, "generation_started")],
+            "active_plan_item_id": id, "active_job_id": id,
+            "job": ["id": id, "status": "processing", "variants": [
+                Self.deviceRecordOnly
+                    // A phone EDIT: the last accepted cut is still on the variant while its replacement is delivered.
+                    ? ["variant_id": DeviceRenderUITestFixture.variantID, "render_status": "awaiting_device", "render_destination": "device",
+                       "output_url": "https://fixture.invalid/last-cut.mp4",
+                       "poster_url": Bundle.main.url(forResource: "trulli-street", withExtension: "jpg")?.absoluteString ?? ""]
+                    : ["variant_id": DeviceRenderUITestFixture.variantID, "render_status": "awaiting_device", "render_destination": "device"],
+            ]],
+            "updated_at": "2026-10-20T10:00:00Z",
+        ]
+    }
+
+    /// KRI-823 (`KRIA_CHAT_DEVICE_RECORD_ONLY=1`): the failure lands only on the device record, as a refused EDIT
+    /// publication or an expired repair permission do; the variant's `render_status` stays `awaiting_device`.
+    static var deviceRecordOnly: Bool { ProcessInfo.processInfo.environment["KRIA_CHAT_DEVICE_RECORD_ONLY"] == "1" }
+
+    /// KRI-823: the server's thread projections carry each variant's current device delivery phase. A failure the
+    /// server already recorded (`scenario` on revision 1) or the iPhone reported mirrors onto the variant the way the
+    /// reaper / failure route do; the job itself stays in flight and the thread revision does not move. With
+    /// `KRIA_CHAT_DEVICE_PUBLISH_READY=1` a published export turns the job ready, as `/device-render/complete` does.
+    private func mirrorDeviceDelivery() {
+        guard let scenario = DeviceRenderUITestFixture.scenario else { return }
+        for (id, thread) in threads {
+            guard var job = thread["job"] as? [String: Any], let jobID = job["id"] as? String,
+                  var variants = job["variants"] as? [[String: Any]],
+                  let index = variants.firstIndex(where: { $0["render_destination"] as? String == "device" }) else { continue }
+            let failed = (scenario != "ready" && deviceRevisions[jobID, default: 1] == 1) || deviceReportedFailures.contains(jobID)
+            let ready = ProcessInfo.processInfo.environment["KRIA_CHAT_DEVICE_PUBLISH_READY"] == "1"
+                && DeviceRenderUITestFixture.published.contains(jobID)
+            let phase = ready ? "published" : failed ? "needs_attention" : "awaiting_device"
+            variants[index]["delivery_phase"] = phase
+            variants[index]["render_status"] = ready ? "ready" : Self.deviceRecordOnly ? "awaiting_device" : phase
+            job["variants"] = variants
+            job["status"] = ready ? "variants_ready" : "processing"
+            var updated = thread
+            updated["job"] = job
+            threads[id] = updated
         }
     }
 
@@ -1215,6 +1281,17 @@ final class CreationChatFixture: @unchecked Sendable {
 /// journey reaches the real status card's ready state without footage or network uploads.
 enum DeviceRenderUITestFixture {
     static let variantID = "original_text"
+    /// Jobs whose export this iPhone published (KRI-823), read by the fixture server's thread projection.
+    static let published = LockedJobSet()
+    private static let clearedDirectories = LockedJobSet()
+
+    final class LockedJobSet: @unchecked Sendable {
+        private let lock = NSLock()
+        private var ids: Set<String> = []
+        func insert(_ id: String) { lock.lock(); ids.insert(id); lock.unlock() }
+        func remove(_ id: String) { lock.lock(); ids.remove(id); lock.unlock() }
+        func contains(_ id: String) -> Bool { lock.lock(); defer { lock.unlock() }; return ids.contains(id) }
+    }
     static var scenario: String? {
         guard ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") else { return nil }
         return ProcessInfo.processInfo.environment["KRIA_CHAT_DEVICE_RENDER"]
@@ -1222,6 +1299,12 @@ enum DeviceRenderUITestFixture {
 
     static func coordinator(directory: URL) throws -> DeviceRenderCoordinator? {
         guard scenario != nil else { return nil }
+        // KRI-823 (`KRIA_CHAT_DEVICE_LOST_LOCAL_EXPORT=1`): this iPhone lost what an earlier launch exported (an
+        // interrupted device), so only the server's record of the delivery remains. Once per launch and directory.
+        if ProcessInfo.processInfo.environment["KRIA_CHAT_DEVICE_LOST_LOCAL_EXPORT"] == "1", !clearedDirectories.contains(directory.path) {
+            clearedDirectories.insert(directory.path)
+            try? FileManager.default.removeItem(at: directory)
+        }
         return try DeviceRenderCoordinator(directory: directory, exporter: Exporter(), sources: Sources(), publisher: Publisher())
     }
 
@@ -1253,7 +1336,10 @@ enum DeviceRenderUITestFixture {
 
     private struct Publisher: DeviceRenderPublishing {
         func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { true }
-        func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication { .published }
+        func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
+            DeviceRenderUITestFixture.published.insert(identity.jobID.uuidString)
+            return .published
+        }
     }
 }
 
