@@ -329,6 +329,12 @@ class ChoiceAnswer(_CreatorModel):
     # footage (the spoken line of a take they chose to open / end on). Omitted when unset, so
     # every stored answer stays byte-identical.
     value: str | None = Field(default=None, max_length=300, exclude_if=lambda value: value is None)
+    # KRI-849: what an unclear-word answer is for (the span's start_s / end_s, the action and
+    # the creator's chosen words). Server-written from the tapped option; omitted when empty so
+    # every other stored answer keeps its shape.
+    detail: dict[str, str | int | float] | None = Field(
+        default=None, max_length=8, exclude_if=lambda value: not value
+    )
 
 
 class CreativeStrategy(_CreatorModel):

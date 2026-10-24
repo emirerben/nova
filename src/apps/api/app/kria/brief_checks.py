@@ -59,6 +59,7 @@ from app.kria.style_asks import (
     text_look_facts,
     value_matches,
 )
+from app.kria.unclear_word_ask import asks_if_unclear
 from app.pipeline.caption_language import (
     ASK_END,
     LANGUAGE_NAMES,
@@ -415,6 +416,12 @@ class PlanFacts:
     # Whether approving this draft offers "Clean up speech" (the preflight check is
     # enforced and this project is in its cohort). None = unknown, never assumed.
     speech_cleanup_offered: bool | None = None
+    # KRI-849: what a phone Talking draft / finished video does about the unclear word the
+    # creator asked to be asked about (``facts["ask_if_unclear"]``): ``{"state": "agree" |
+    # "not_comparable" | "applied", "spans": [{start_s, end_s, action, text?}], "finished"?}``
+    # (``unclear_word_ask.draft_state``, ``variant["caption_unclear"]``). None = no ask or not
+    # a phone Talking edit. Never holds the heard words.
+    unclear_words: Mapping[str, Any] | None = None
     # What speech cleanup did on a rendered variant: "applied" (pauses were cut),
     # "no_change" (it ran and found nothing to cut), "not_run" (the render kept the whole
     # take). None = unknown or a draft.
@@ -1738,6 +1745,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
         changes["clip_sound"] = receipt  # KRI-842
     if variant.get("resolved_archetype") == "voiceover":
         changes["voiceover_edit"] = True  # KRI-842
+    changes.update(_unclear_word_facts(variant))
     rendered = _rendered_clip_durations(variant)
     if rendered is not None:
         changes["clip_output_durations"] = rendered
@@ -1924,6 +1932,20 @@ def _rendered_caption_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(language, str) and language.strip():
         facts["caption_language"] = language.strip()
     return facts
+
+
+def _unclear_word_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    """KRI-849: what the phone Talking writer did about the unclear word (``caption_unclear``)."""
+    receipt = variant.get("caption_unclear")
+    if not isinstance(receipt, Mapping) or receipt.get("state") not in {
+        "agree",
+        "not_comparable",
+        "applied",
+        "error",
+    }:
+        return {}
+    spans = [dict(row) for row in receipt.get("spans") or [] if isinstance(row, Mapping)]
+    return {"unclear_words": {"state": receipt["state"], "spans": spans, "finished": True}}
 
 
 # KRI-546: the order facts a unified montage's plan record holds, laid over a finished
@@ -3837,7 +3859,30 @@ _NOISE_REDUCTION_UNSUPPORTED = (
     "Engine noise reduction is only available for a single-source Talking edit"
 )
 _NOISE_REDUCTION_MISSED = "Couldn't apply engine noise reduction"
+# KRI-849: what a phone Talking edit says about the word the creator asked to be asked about
+# ("if you can't tell what he says, ask me"). Static prefixes: ``is_judged`` / ``is_format_limit``
+# read them; the times and the creator's own words follow. Never the heard words.
+_UNCLEAR_AGREE = "Both listens heard the same words, so I didn't find an unclear word"
+_UNCLEAR_UNSURE = (
+    "I couldn't double-check the speech on this clip, so I can't spot the unclear word"
+)
+_UNCLEAR_OMIT_PLAN = "I'll leave out the word I couldn't make out"
+_UNCLEAR_OMIT_DONE = "I left out the word I couldn't make out"
+_UNCLEAR_WRITE_PLAN = "I'll write the word you gave me"
+_UNCLEAR_WRITE_DONE = "I wrote the word you gave me"
+# The step that checks it failed on this render: never "met", never a claim about what it did.
+_UNCLEAR_ERROR = "I couldn't check the unclear word in this video"
+_UNCLEAR_PREFIXES: tuple[str, ...] = (
+    _UNCLEAR_ERROR,
+    _UNCLEAR_AGREE,
+    _UNCLEAR_UNSURE,
+    _UNCLEAR_OMIT_PLAN,
+    _UNCLEAR_OMIT_DONE,
+    _UNCLEAR_WRITE_PLAN,
+    _UNCLEAR_WRITE_DONE,
+)
 _TALKING_HONEST_EN: tuple[str, ...] = (
+    *_UNCLEAR_PREFIXES,
     _TALKING_NO_SUCH_EDIT,
     _TALKING_NO_SPOKEN_TEXT,
     _TALKING_OPENING_CUT_PLAN,
@@ -3994,6 +4039,15 @@ _REASON_TR: dict[str, str] = {
     _TALKING_CAPTIONS_EVERY_VOICE: (
         "Çekimindeki her ses altyazıya girer, kamera dışındaki sesler de"
     ),
+    _UNCLEAR_AGREE: "İki dinleme de aynı kelimeleri duydu, o yüzden belirsiz bir kelime bulmadım",
+    _UNCLEAR_UNSURE: (
+        "Bu klipteki konuşmayı iki kez karşılaştıramadım, o yüzden belirsiz kelimeyi bulamıyorum"
+    ),
+    _UNCLEAR_OMIT_PLAN: "Anlayamadığım kelimeyi çıkarırım",
+    _UNCLEAR_OMIT_DONE: "Anlayamadığım kelimeyi çıkardım",
+    _UNCLEAR_WRITE_PLAN: "Verdiğin kelimeyi yazarım",
+    _UNCLEAR_WRITE_DONE: "Verdiğin kelimeyi yazdım",
+    _UNCLEAR_ERROR: "Videodaki belirsiz kelimeyi kontrol edemedim",
     _TALKING_SPOKEN_TEXT_ANY_VOICE: (
         "Yazıyı çekiminde o kelime ilk söylendiğinde gösteririm; kimin konuştuğunu ayırt "
         "edemiyorum, o yüzden başka biri söylediğinde çıkabilir"
@@ -7043,6 +7097,13 @@ def _check_caption_words(req: BriefRequirement, facts: PlanFacts) -> Requirement
                     spelled.append(name)
                 else:
                     absent.append(name)
+            # KRI-849: words the creator chose for an unclear word are theirs, never a miss.
+            chosen = {
+                str(row.get("text") or "").casefold()
+                for row in (facts.unclear_words or {}).get("spans") or []
+                if isinstance(row, Mapping) and row.get("text")
+            }
+            wrong = [(name, other) for name, other in wrong if other.casefold() not in chosen]
             if wrong:
                 misses.append(
                     say(
@@ -8096,6 +8157,8 @@ def _has_checker(req: BriefRequirement) -> bool:
         return True  # KRI-841: judged against the plan's / render's ending video
     if requirement_clip_sound(req) is not None:
         return True  # KRI-842
+    if asks_if_unclear(req):
+        return True  # KRI-849: the unclear-word line (``_with_unclear_word``)
     if asks_clip_speed(req):
         # KRI-689: judged wherever the plan knows it cannot retime (the phone montage); a plan
         # that does not say gets the neutral `_NO_CHECKER`, which `is_judged` treats as unjudged.
@@ -8215,7 +8278,9 @@ def _check_freeze(req: BriefRequirement, freeze: Mapping[str, Any]) -> Requireme
     return _receipt(req, "not_possible", _NO_FREEZE_FRAME)
 
 
-def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+def _check_requirement_with_protection(
+    req: BriefRequirement, facts: PlanFacts
+) -> RequirementReceipt:
     if facts.protected_text is not None and any(r[0] == req.id for r in facts.protected_text):
         # KRI-827: "no text on her face or on the plate" is judged by the render's own
         # measurement of every text against every named target. Any other ask on the same
@@ -8229,6 +8294,101 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         base = _check_requirement(rest, facts) if _has_checker(rest) else _receipt(req, "met", None)
         return _with_protected_text(req, facts, base)
     return _check_requirement(req, facts)
+
+
+def _unclear_clock(rows: Sequence[Mapping[str, Any]]) -> str:
+    times = [
+        _clock(float(row["start_s"])) for row in rows if isinstance(row.get("start_s"), int | float)
+    ]
+    return say(en=" and ".join(dict.fromkeys(times)), tr=" ve ".join(dict.fromkeys(times)))
+
+
+def _unclear_word_line(state: Mapping[str, Any]) -> str | None:
+    """The one line a Talking draft / finished video says about the word the creator asked to be
+    asked about (KRI-849), from ``PlanFacts.unclear_words``. It never quotes a heard word: only
+    the times, and the words the creator themselves gave."""
+    kind = state.get("state")
+    if kind == "agree":
+        return _loc(_UNCLEAR_AGREE)
+    if kind == "not_comparable":
+        return _loc(_UNCLEAR_UNSURE) + say(
+            en=": tell me the word, or say leave it out",
+            tr=": kelimeyi söyle ya da çıkar de",
+        )
+    if kind == "error":
+        return _loc(_UNCLEAR_ERROR) + say(
+            en=", so have a look at the captions", tr=", o yüzden altyazılara bir göz at"
+        )
+    if kind != "applied":
+        return None
+    finished = state.get("finished") is True
+    rows = [row for row in state.get("spans") or [] if isinstance(row, Mapping)]
+    left_out = [row for row in rows if row.get("action") == "omitted"]
+    written = [row for row in rows if row.get("action") == "written"]
+    parts: list[str] = []
+    if left_out:
+        prefix = _UNCLEAR_OMIT_DONE if finished else _UNCLEAR_OMIT_PLAN
+        times = _unclear_clock(left_out)
+        # Before approval the time is the SOURCE clip's; after render it is the edited video's
+        # (an opening or speech cut moves the captions).
+        parts.append(
+            say(
+                en=f"{prefix} at {times} in the video"
+                if finished
+                else f"{prefix} around {times} in your clip",
+                tr=f"{_REASON_TR[prefix]} (videoda {times})"
+                if finished
+                else f"{_REASON_TR[prefix]} (klibinde yaklaşık {times})",
+            )
+        )
+    for row in written:
+        prefix = _UNCLEAR_WRITE_DONE if finished else _UNCLEAR_WRITE_PLAN
+        text, times = str(row.get("text") or ""), _unclear_clock([row])
+        parts.append(
+            say(
+                en=f"{prefix}, \u201c{text}\u201d, at {times} in the video"
+                if finished
+                else f"{prefix}, \u201c{text}\u201d, around {times} in your clip",
+                tr=f"{_REASON_TR[prefix]}: \u201c{text}\u201d (videoda {times})"
+                if finished
+                else f"{_REASON_TR[prefix]}: \u201c{text}\u201d (klibinde yaklaşık {times})",
+            )
+        )
+    return "; ".join(parts) or None
+
+
+def _with_unclear_word(
+    req: BriefRequirement, facts: PlanFacts, receipt: RequirementReceipt
+) -> RequirementReceipt:
+    """``receipt`` with the unclear-word line (KRI-849) on the requirement that carries the ask.
+
+    A captions row that is already judged (language / spellings) keeps its verdict and gains the
+    sentence; a row that only holds the ask (no checker of its own) gets the line as its reason,
+    never the placeholder "I can't verify this one automatically yet."
+    """
+    line = _unclear_word_line(facts.unclear_words or {})
+    if line is None:
+        return receipt
+    if (facts.unclear_words or {}).get("state") == "error":
+        # Never "met". When nothing else is wrong the line leads (its registered prefix keeps the
+        # receipt a limit, not a "simpler version?" miss); a real miss keeps its place and verdict.
+        if receipt.status != "met" and receipt.reason and receipt.reason not in _NEUTRAL_REASONS:
+            return receipt.model_copy(update={"reason": f"{receipt.reason}; {line}"[:300]})
+        rest = receipt.reason if receipt.reason and receipt.reason not in _NEUTRAL_REASONS else ""
+        return _receipt(req, "partial", f"{line}; {rest}" if rest else line)
+    if receipt.reason and receipt.reason not in _NEUTRAL_REASONS:
+        sep = " " if receipt.reason.endswith(".") else "; "
+        return receipt.model_copy(update={"reason": f"{receipt.reason}{sep}{line}"[:300]})
+    state = facts.unclear_words or {}
+    met = facts.rendered_variant and state.get("state") != "not_comparable"
+    return _receipt(req, "met" if met else "partial", line)
+
+
+def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    receipt = _check_requirement_with_protection(req, facts)
+    if facts.unclear_words is not None and asks_if_unclear(req):
+        return _with_unclear_word(req, facts, receipt)
+    return receipt
 
 
 def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:

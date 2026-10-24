@@ -375,6 +375,46 @@ def test_main_creator_eval(
         lengths = [r.facts.get("duration_s") for r in live if r.kind == "timing"]
         assert trim_meta["duration_s"] in lengths
 
+    unclear_meta = fixture.meta.get("unclear_word_ask")
+    if unclear_meta:
+        # KRI-849 (prompt v76): "if you can't tell what he says, ask me instead of guessing" is
+        # the recorded fact `ask_if_unclear` (the creator's words for the slot) on the captions
+        # requirement, never prose only; the server (not the words) decides which word is
+        # unclear. No `unclear_answer` until the creator answers.
+        from app.kria.brief import apply_updates, parse_brief_updates
+        from app.kria.unclear_word_ask import ask_requirements, model_answer
+
+        assert result.output is not None
+        assert result.output["action"]["kind"] == "propose_strategy"
+        live = apply_updates(
+            None, parse_brief_updates(result.output.get("brief_updates")), source_turn_id="eval"
+        ).live()
+        asks = ask_requirements(live)
+        assert len(asks) == 1, [r.facts for r in live]
+        assert asks[0].kind == "style" and asks[0].facts.get("captions") == "on"
+        assert asks[0].facts["ask_if_unclear"].strip()
+        assert asks[0].facts.get("spellings") == unclear_meta["spellings"]
+        assert model_answer(live) is None
+
+    answer_meta = fixture.meta.get("unclear_word_answer")
+    if answer_meta:
+        # KRI-849: the creator's typed answer to the unclear-word question is recorded on the
+        # SAME requirement as `unclear_answer` ("omit", or the exact words typed); the ask and
+        # the spellings stay (a partial change merges its facts, KRI-805).
+        from app.kria.brief import CreativeBrief, apply_updates, bind_updates, parse_brief_updates
+        from app.kria.unclear_word_ask import ask_requirements, model_answer
+
+        assert result.output is not None
+        prior = CreativeBrief.model_validate(answer_meta["prior_brief"])
+        updates = bind_updates(prior, parse_brief_updates(result.output.get("brief_updates")))
+        live = apply_updates(prior, updates, source_turn_id="eval").live()
+        (ask,) = ask_requirements(live)
+        for key in answer_meta["keeps"]:
+            assert key in ask.facts, (key, ask.facts)
+        assert ask.facts["unclear_answer"] == answer_meta["expect"]
+        answer = model_answer(live)
+        assert answer is not None and answer.action == answer_meta["expect"]
+
     shot_meta = fixture.meta.get("per_shot_texts")
     if shot_meta:
         # KRI-422 (prompt v42): text dictated for several described shots is one

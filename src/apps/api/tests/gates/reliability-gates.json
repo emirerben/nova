@@ -2693,6 +2693,67 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-849-unclear-word",
+      "tickets": [
+        "KRI-849"
+      ],
+      "symptom": "Don Julio T1 (Talking, one 25.7 s take): \"I didn't catch the third sauce he names: if you can't tell what he says, ask me instead of guessing.\" The sentence became a prose style row (\"I can't verify this one automatically yet.\"); nothing was asked before approval and the writer printed whisper-1's guess (\"... chimichurri and sardines\") in the captions.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-849",
+      "fix_prs": [],
+      "journey": "kri-849-unclear-word",
+      "paths": [
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/agents/brief_extractor.py",
+        "src/apps/api/app/agents/_schemas/creator_agent.py",
+        "src/apps/api/app/pipeline/caption_unclear.py",
+        "src/apps/api/app/kria/unclear_word_ask.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/tests/fixtures/kri849_dj_t1/dj_t1.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri849_dj_t1_ask_if_unclear.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri849_dj_t1_unclear_answer_omit.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri849_dj_t1_unclear_word_replay.py",
+        "tests/kria/test_kri849_unclear_word_postgres.py",
+        "tests/agents/test_kri849_unclear_word_prompt.py",
+        "tests/evals/test_main_creator_evals.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "DJ T1 fixture (kit prompt and timings recorded; the third-sauce hearing pair is prod's m1_03 pair re-cast onto T1; the brief, the take row and the render words are hand-authored because T1 was never sent) through the real planner gate, the approval backstop, a tapped answer, the pinned BriefBinding, the real _dispatch_item_render, the real _run_phone_subtitled_job (also with an opening cut moving the captions) and the draft + finished-video receipts; plus the real run_kria_turn -> _complete_draft_turn on Postgres. On main 6453cbca6 67 of the 73 cases fail (no question, the guess ships, the old placeholder line, no detector module); the 6 controls (no ask, hearings agree, hearings not comparable) pass on both. On the branch 73 of 73 pass. Review round mutation checks: dropping the approval-time windows turns 6 red, no error fallback 2, ignoring the cut mapping 2, no contraction table 5, removing the PlanFacts.unclear_words wiring in _complete_draft_turn turns the Postgres wording case red. Main Creator cassettes kri849_dj_t1_* replay the free (structural) eval.",
+        "live_model": "Not run; no paid calls. The cassettes are hand-authored replies; an optional paid check is one live Main Creator call per cassette input.",
+        "native_output": "unknown; the finished captions are the writer's cues, not an exported phone video. Re-send DJ T1 on a phone after deploy.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "the ask on the captions row, or on a row of its own",
+        "tap Leave it out, tap either heard candidate, the model-recorded unclear_answer (omit / typed words)",
+        "question asked twice and ignored, or never asked: the writer still leaves the span out",
+        "no ask recorded, hearings agree, hearings not comparable (other language, missing hearing, little in common): nothing asked, captions untouched",
+        "a word the creator listed to spell (whisper-1 writes \"Creole sauce\" for \"salsa criolla\") is never an unclear word",
+        "EN/TR option labels and receipt twins; delegation (\"you decide\") never picks a word",
+        "a render pass that cannot be compared (whisper-1 re-run at render) or hears the word the other way: the tapped / typed answer and the approval-time window still apply",
+        "the unclear-word step raising: a fallback still drops the pinned windows and the finished line says it could not check",
+        "an opening cut moves the captions: the answer lands in the cut video's time; draft lines say the source clip's time, finished lines the video's time",
+        "contractions, repetitions, filler phrases, names and accents are not unclear words"
+      ],
+      "neighbours_gap": [
+        "whisper-1 has no per-word confidence: when both hearings agree on a wrong word, the guess still ships (the draft says both listens agreed).",
+        "The cloud _render_subtitled_variant path does not apply spellings or unclear-word answers; creators without a brief binding never reach the writer's step.",
+        "Multi-take Talking drafts are not compared, and a span longer than 40 characters is not asked (the render still leaves it out when it finds it).",
+        "A window nobody answered is left out at render even when the render pass now agrees there (fail closed); a render pass that finds a NEW unclear stretch leaves it out without asking.",
+        "variant.overlay_transcript (media-lanes receipt) still stores what whisper heard.",
+        "If the unclear-word step AND its fallback both fail with nothing readable, the captions are unchanged and only the receipt says it could not be checked."
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-804-label-text-reply",
       "tickets": [
         "KRI-804",
