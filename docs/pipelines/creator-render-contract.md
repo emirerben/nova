@@ -354,6 +354,22 @@ require a declaration. A creator-named target uses ±10%; otherwise song placeme
 or a frozen music section, recorded narration, cleaned take, or selected best parts
 provide the clock. Derived lengths remain notes, not creator proof.
 
+An inclusive ceiling ("at most 10 seconds", "max 10 s", "en fazla 10 saniye", KRI-847) is not a
+±10% target. The model records it on the `timing` requirement as
+`facts.duration_bound = "at_most"` beside `duration_s` (absent or unknown = exact; a change
+that sets `duration_s` without it drops it, as does an answered length card).
+`length_policy.creator_duration_satisfied(..., "at_most")` is the exact check without its lower
+side (`0 < actual <= N + 10%`): it can only relax the existing check, never tighten it, so a
+wrong or stale fact cannot create a hard cap. It is used by the draft receipt ("you asked for
+at most 10s"), the length plan (`target_duration_bound` on the envelope), the choice cards,
+the approved music window and the render check ("You asked for at most 10 seconds; this edit
+is 11.5 seconds."). Exclusive wording ("under N", "less than N", TR "N saniyenin altında") is
+the strict whole-export cap of KRI-629 (`strict_duration_limit_s`), read from the description
+and judged on the measured export including its ending; `duration_bound` never changes it. The
+bound never rides on `CreatorRenderContract` (frozen schema, see above): dispatch writes it to
+`assembly_plan["creator_length_bounds"][contract_digest]`, and `read_length_policy` returns it
+as `state.requested_duration_bound`, so an exact job's stored keys are unchanged.
+
 `length_planning.py` freezes exact best-parts windows once at server planning, with
 source identities, capacity, deterministic ranking/fallback receipts, and generation.
 Phone and cloud compilers read that envelope. The silent cap is 120 seconds and
