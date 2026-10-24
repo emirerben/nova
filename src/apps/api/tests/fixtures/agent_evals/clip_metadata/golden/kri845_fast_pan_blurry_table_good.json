@@ -1,0 +1,47 @@
+{
+  "agent": "nova.video.clip_metadata",
+  "prompt_version": "2026-10-23.1",
+  "input": {
+    "file_uri": "clips/restaurant_table_pan.mp4",
+    "file_mime": "video/mp4"
+  },
+  "raw_text": "{\"clip_id\": \"files/t9b3k6m1wlpe\", \"transcript\": \"\", \"hook_text\": \"\", \"hook_score\": 1.0, \"best_moments\": [{\"start_s\": 0.0, \"end_s\": 2.6, \"energy\": 4.0, \"description\": \"fast pan across the table settings\"}], \"detected_subject\": \"restaurant table setting\", \"brands\": [], \"summary\": \"A fast handheld pan over a white-tablecloth restaurant table with plates, wine glasses, a steak knife and a phone.\", \"setting\": \"restaurant interior during the day\", \"activity\": \"camera sweeping over a laid table\", \"people_count\": 1, \"speaks_to_camera\": false, \"people_note\": \"a seated person in a dark hoodie at the top of the frame\", \"props\": [\"beige plates\", \"wine glasses\", \"steak knife\", \"phone on the table\"], \"actions\": [\"camera sweeps fast across an empty table\"], \"visual_quality\": \"blurry, fast pan\", \"content_type\": \"broll\", \"audio_type\": \"ambient\"}",
+  "output": {
+    "clip_id": "files/t9b3k6m1wlpe",
+    "transcript": "",
+    "hook_text": "",
+    "hook_score": 1.0,
+    "best_moments": [
+      {
+        "start_s": 0.0,
+        "end_s": 2.6,
+        "energy": 4.0,
+        "description": "fast pan across the table settings"
+      }
+    ],
+    "detected_subject": "restaurant table setting",
+    "brands": [],
+    "summary": "A fast handheld pan over a white-tablecloth restaurant table with plates, wine glasses, a steak knife and a phone.",
+    "setting": "restaurant interior during the day",
+    "activity": "camera sweeping over a laid table",
+    "people_count": 1,
+    "speaks_to_camera": false,
+    "people_note": "a seated person in a dark hoodie at the top of the frame",
+    "props": [
+      "beige plates",
+      "wine glasses",
+      "steak knife",
+      "phone on the table"
+    ],
+    "actions": [
+      "camera sweeps fast across an empty table"
+    ],
+    "visual_quality": "blurry, fast pan",
+    "content_type": "broll",
+    "audio_type": "ambient"
+  },
+  "meta": {
+    "source": "hand-authored golden",
+    "purpose": "KRI-845: covers a fast pan whose edges smear (fork tines doubled, glass rims ghosted) while the plates stay recognisable: visual_quality names the blur plainly ('blurry, fast pan') instead of clearing it because the subject can still be made out. Its sharp look-alike would say 'fast pan, stays sharp'. Authored from tests/fixtures/kri845_m1_clip_detail.json (Don Julio M1_04); a single moment because the clip is 2.6 s. Hand-authored; no live run was made (no paid calls)."
+  }
+}

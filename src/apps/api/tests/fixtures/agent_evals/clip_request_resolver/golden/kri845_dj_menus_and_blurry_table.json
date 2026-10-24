@@ -1,0 +1,267 @@
+{
+  "agent": "nova.plan.clip_request_resolver",
+  "prompt_version": "2026-10-23.1",
+  "input": {
+    "creator_request": "Then the sauce bowls, the big wooden menus, and the cheers under the Don Julio sign. Skip the blurry shot of the empty table.",
+    "intents": [
+      {
+        "intent_id": "order_menus",
+        "op": "include",
+        "attribute": "the big wooden menus",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null
+      },
+      {
+        "intent_id": "exclude_blurry_table",
+        "op": "include",
+        "attribute": "the blurry shot of the empty table",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null
+      }
+    ],
+    "clips": [
+      {
+        "alias": "m001",
+        "kind": "video",
+        "record": {
+          "subject": "waiter carrying a tray",
+          "summary": "A waiter at an outdoor restaurant carries a rectangular tray past a dining table.",
+          "setting": "outdoor restaurant patio during the day",
+          "activity": "waiter carrying a tray",
+          "people": {
+            "speaks_to_camera": false,
+            "count": 4,
+            "note": "a waiter and three diners"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "Gracias."
+          },
+          "props": [
+            "thick wooden menu boards"
+          ],
+          "actions": [
+            "lifts the wooden menu boards flat to face height",
+            "carries the boards sideways"
+          ],
+          "visual_quality": "sharp and steady",
+          "content_type": "broll",
+          "audio_type": "dialogue",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 1.5,
+              "description": "waiter holding tray"
+            },
+            {
+              "start_s": 2.0,
+              "end_s": 3.0,
+              "description": "waiter lowers tray"
+            }
+          ]
+        }
+      },
+      {
+        "alias": "m002",
+        "kind": "video",
+        "record": {
+          "subject": "man toasting at restaurant",
+          "summary": "A man is seated at an outdoor restaurant table, smiling and raising a glass of water as if toasting, while a waiter stands behind him.",
+          "setting": "outdoor restaurant patio",
+          "activity": "toasting with a glass of water at a restaurant",
+          "people": {
+            "speaks_to_camera": false,
+            "count": 2,
+            "note": "a man dining and a waiter"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "Cheers. Cheers."
+          },
+          "props": [
+            "thick dark wooden menu board",
+            "wine glass",
+            "plate of bread"
+          ],
+          "actions": [
+            "walks past a seated diner carrying a wooden board on one palm",
+            "the diner raises a glass and drinks"
+          ],
+          "visual_quality": "sharp and steady",
+          "content_type": "broll",
+          "audio_type": "dialogue"
+        }
+      },
+      {
+        "alias": "m003",
+        "kind": "video",
+        "record": {
+          "subject": "Diner at a restaurant table with food",
+          "summary": "A person is seated at a restaurant table, holding a menu, with various dishes and drinks spread out. The table is set with a white tablecloth, bread, dips, and a glass of water.",
+          "setting": "Restaurant interior during the day",
+          "activity": "Dining at a restaurant",
+          "people": {
+            "speaks_to_camera": false,
+            "count": 1,
+            "note": "A person in a patterned shirt"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false
+          },
+          "props": [
+            "bread on a white napkin",
+            "salad dish",
+            "wooden sauce bowl",
+            "dark wooden menu board held by a diner"
+          ],
+          "actions": [
+            "tilts down from a diner holding a menu board to the table"
+          ],
+          "visual_quality": "fast pan, stays sharp",
+          "content_type": "broll",
+          "audio_type": "dialogue",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 3.0,
+              "description": "Diner holding a menu at table"
+            }
+          ]
+        }
+      },
+      {
+        "alias": "m004",
+        "kind": "video",
+        "record": {
+          "subject": "restaurant table setting",
+          "summary": "The camera pans across a restaurant table set with plates, cutlery, and glasses of water, showing people's hands and torsos but no faces.",
+          "setting": "restaurant interior",
+          "activity": "dining at a table",
+          "people": {
+            "speaks_to_camera": false,
+            "note": "people's hands and torsos are visible around the table"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "Ne, hiçbir şey bilmedi. Bütün şeyler, var mı?"
+          },
+          "props": [
+            "beige plates",
+            "wine glasses",
+            "steak knife",
+            "phone on the table"
+          ],
+          "actions": [
+            "camera sweeps fast across an empty table"
+          ],
+          "visual_quality": "blurry, fast pan",
+          "content_type": "broll",
+          "audio_type": "dialogue",
+          "notable_moments": [
+            {
+              "start_s": 3.0,
+              "end_s": 4.5,
+              "description": "overhead pan of table"
+            }
+          ]
+        }
+      },
+      {
+        "alias": "m005",
+        "kind": "video",
+        "record": {
+          "subject": "waiter serving condiments",
+          "summary": "A waiter at a restaurant presents small bowls of salsa criolla, chimichurri, and sea salt to a customer at a table.",
+          "setting": "restaurant outdoor patio",
+          "activity": "waiter presenting condiments",
+          "people": {
+            "speaks_to_camera": false,
+            "count": 2,
+            "note": "a male waiter and a partially visible customer"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "Salsa criolla, chimichurri con sal marina."
+          },
+          "content_type": "broll",
+          "audio_type": "dialogue",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 1.4,
+              "description": "waiter gesturing at condiments"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "raw_text": "{\"intents\": [{\"intent_id\": \"order_menus\", \"assignments\": [{\"media\": \"m001\", \"value\": \"\", \"evidence\": \"props: thick wooden menu boards; actions: lifts the wooden menu boards flat to face height\", \"confidence\": 0.95}], \"needs_vision\": [], \"question\": null, \"caption\": null}, {\"intent_id\": \"exclude_blurry_table\", \"assignments\": [{\"media\": \"m004\", \"value\": \"\", \"evidence\": \"visual_quality: blurry, fast pan; actions: camera sweeps fast across an empty table\", \"confidence\": 0.9}], \"needs_vision\": [], \"question\": null, \"caption\": null}]}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "order_menus",
+        "assignments": [
+          {
+            "media": "m001",
+            "value": "",
+            "evidence": "props: thick wooden menu boards; actions: lifts the wooden menu boards flat to face height",
+            "confidence": 0.95
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      },
+      {
+        "intent_id": "exclude_blurry_table",
+        "assignments": [
+          {
+            "media": "m004",
+            "value": "",
+            "evidence": "visual_quality: blurry, fast pan; actions: camera sweeps fast across an empty table",
+            "confidence": 0.9
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "KRI-845 (prod thread F4083F1D, Don Julio M1): \"the big wooden menus\" is m001 (M1_09: the waiter lifts two stacked wooden menu boards flat on his palms; recorded as \"a waiter carries a rectangular tray\"), not the carried board of M1_01 or the diner holding a menu in M1_06; \"the blurry shot of the empty table\" is m004 (M1_04: fast handheld pan, directional smear after the first 0.5 s) and not its sharp look-alike m003 (M1_06: similar-speed tilt-down whose subjects stay crisp), with no vision check and no picker. The legacy record fields are the prod-recorded ones (tests/fixtures/kri807_don_julio_m1_clips.json); props/actions/visual_quality are authored from the footage ground truth in tests/fixtures/kri845_m1_clip_detail.json. Hand-authored expectation; no live run was made (no paid calls).",
+    "expect_assignment_set": {
+      "order_menus": [
+        "m001"
+      ],
+      "exclude_blurry_table": [
+        "m004"
+      ]
+    },
+    "expect_not_assigned": {
+      "order_menus": [
+        "m002",
+        "m003"
+      ],
+      "exclude_blurry_table": [
+        "m003"
+      ]
+    },
+    "alias_to_clip": {
+      "m001": "M1_09",
+      "m002": "M1_01",
+      "m003": "M1_06",
+      "m004": "M1_04",
+      "m005": "M1_03"
+    }
+  }
+}
