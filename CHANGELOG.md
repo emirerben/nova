@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.105.0] - 2026-10-24
+
+### Changed
+- feat(kria): ask the creator to mark the plate before approval, iOS mark card (KRI-901) (#1811) <!-- release-pr: 1811 -->
+
 ## [0.81.104.0] - 2026-10-24
 
 ### Changed
