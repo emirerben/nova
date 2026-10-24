@@ -211,6 +211,24 @@ def test_a_split_piece_gets_a_server_slot_id(monkeypatch):
     assert len(_track(_recipe(job, vid), "montage").clips) == 4
 
 
+def test_source_audio_selection_projects_and_survives_a_cut_save(monkeypatch):
+    _enable(monkeypatch, protocol=17)
+    job, vid = voiceover_job()
+    _variant(job)["source_audio_media_ids"] = ["c1"]
+
+    timeline = gj.dispatch_get_timeline(job, vid, sign_url=lambda path, ttl: f"https://s/{path}")
+    assert [slot["source_audio_volume"] for slot in timeline["slots"]] == [0.0, 1.0, 0.0]
+
+    slots = _slots(job, vid)  # an older client need not round-trip the marker
+    slots[1]["duration_s"] = 3.0
+    _save(job, vid, timeline_slots=slots)
+
+    saved = _variant(job)["user_timeline"]["slots"]
+    assert [slot["source_audio_volume"] for slot in saved] == [0.0, 1.0, 0.0]
+    video = _track(_recipe(job, vid), "narrated")
+    assert [clip.volume for clip in video.clips] == [0.0, 1.0, 0.0]
+
+
 def test_an_unknown_slot_id_is_stale(monkeypatch):
     _enable(monkeypatch)
     job, vid = voiceover_job()

@@ -128,6 +128,14 @@ def _video_clips(
     landscape_fit: str = "fill",
 ) -> list[TimelineClip]:
     by_id = {clip.id: clip for clip in previous}
+    # A selected source can appear in more than one slot. This map lets a
+    # split piece and a later newly-added occurrence keep the source's unit
+    # selection marker even when their slot id is new. The explicit slot value
+    # below wins when present (the normal Save path supplies it).
+    source_audio_by_asset = {clip.source_asset_id: clip.volume for clip in previous}
+    source_audio_mode = any(clip.volume != 1.0 for clip in previous) or any(
+        "source_audio_volume" in slot for slot in slots
+    )
     looks = {clip.look for clip in previous}
     default_look = next(iter(looks)) if len(looks) == 1 else None
     clips: list[TimelineClip] = []
@@ -183,6 +191,21 @@ def _video_clips(
             "transition": transition,
         }
         old = by_id.get(clip_id)
+        if source_audio_mode:
+            raw_volume = slot.get("source_audio_volume")
+            if raw_volume is None:
+                # A source that was not part of the pinned selection remains
+                # muted. This prevents a newly introduced clip from becoming
+                # audible simply because it has no predecessor slot.
+                volume = source_audio_by_asset.get(asset.id, 0.0)
+            else:
+                try:
+                    volume = float(raw_volume)
+                except (TypeError, ValueError) as exc:
+                    raise UnsupportedPhonePlan("voiceover source audio volume is invalid") from exc
+                if volume not in {0.0, 1.0}:
+                    raise UnsupportedPhonePlan("voiceover source audio volume must be 0 or 1")
+            update["volume"] = volume
         # A creator crop (KRI-44). The slot omits it to keep the pinned one; an
         # explicit None clears it. A cropped clip is cover-fitted from the crop by
         # the device, so it never also carries a letterbox transform.
