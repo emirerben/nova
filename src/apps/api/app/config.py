@@ -732,11 +732,13 @@ class Settings(BaseSettings):
     # KRI-828: a creator's freeze frame on a phone montage moment (a main-track
     # `hold_duration` longer than one frame, capability `freezeFrame`). Planned only when
     # `freezeFrame` is in PHONE_RENDER_VERIFIED_FEATURES (device parity, set after a
-    # physical-device preview + export check) and, inside an HTTP request, the app build
-    # declares `X-Kria-Client-Protocol` >= this. Without it the plan carries no hold and the
-    # receipt keeps KRI-777's honest "Couldn't". The worker plans with no app build in hand,
-    # so an older build that fetches or edits a held recipe gets 426 client_update_required
-    # (`freeze_frame`) from device_render / phone_editor instead of an undecodable recipe.
+    # physical-device preview + export check) and the app build the creator acted from
+    # declared `X-Kria-Client-Protocol` >= this (KRI-898: stamped on the message at submit
+    # for the draft, and on the Job as `creator_client_protocol` at approval for the render;
+    # no stamp = no hold). Without it the plan carries no hold, the receipt keeps KRI-777's
+    # honest "Couldn't" and the rest of the video renders. A held recipe later opened on an
+    # older build still gets 426 client_update_required (`freeze_frame`) from device_render
+    # / phone_editor instead of an undecodable recipe.
     freeze_frame_min_client_protocol: int = 16
     # KRI-742: voice dictation in the chat composers. `POST /dictation/transcribe` (Whisper) and
     # the `voice_dictation` capability the iOS mic button reads. Default TRUE; this is the kill
@@ -1032,6 +1034,14 @@ class Settings(BaseSettings):
     # 30 s so whisper's detected language is still cross-checked before the cut
     # plan is built. Best-effort; False skips the call (item transcript only).
     speech_cleanup_gemini_reference_enabled: bool = True
+    # KRI-843: a take whose Gemini reference speaks two or more languages (Don Julio T1:
+    # an English question, a Spanish answer, Turkish chatter) has no single right whisper
+    # language. The preflight worker transcribes it once more per extra language (at most 3
+    # extra whisper-1 passes, mixed takes only, ~$0.006/min each) and takes, stretch by stretch,
+    # the pass the reference confirms; the first pass stands everywhere else. false = the EN/TR
+    # cross-check alone (re-run the whole take in one language), byte-identical.
+    # Apply: fly secret + worker restart.
+    speech_cleanup_mixed_language_enabled: bool = True
 
     # yt-dlp cookies for admin URL imports. Use YTDLP_COOKIES_B64 in hosted
     # environments (secret-safe, decoded into a short-lived 0600 temp file) or
@@ -1306,6 +1316,17 @@ class Settings(BaseSettings):
     # fixed it 2/2). ~$0.005/render. Set to gpt-4o-mini to trade accuracy for cost.
     subtitled_caption_correction_enabled: bool = True
     caption_correction_model: str = "gpt-4o"
+
+    # Caption translation (KRI-838): a whisper language hint does not reliably translate (a
+    # Turkish hint on English speech wrote the English again in local tests), so when the
+    # creator asks for captions in another language and the hinted text is not in it, one
+    # structured model call translates the caption lines (app/pipeline/caption_translate.py).
+    # Fail-open: any failure keeps the spoken-language words and the variant is stamped
+    # with the language the text really is. Kill switch: set False and restart api +
+    # worker (the pre-approval promise reads the same flag). Empty model = the caption
+    # correction model above. ~$0.005/render, only on renders that ask for a language.
+    caption_translation_enabled: bool = True
+    caption_translation_model: str = ""
 
     # Caption punctuation restoration: whisper-1's word-level timestamps strip
     # punctuation/capitalization (it lives only in the full-text transcript).

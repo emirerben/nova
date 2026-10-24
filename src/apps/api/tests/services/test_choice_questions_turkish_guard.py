@@ -19,17 +19,23 @@ from __future__ import annotations
 
 import ast
 import re
+from contextlib import ExitStack
 from pathlib import Path
+from unittest.mock import patch
 
 import app.services.choice_questions as cq
+from app.config import settings
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.reply_language import reply_language_for
 from app.services.choice_questions import (
     CONFLICT_DURATION_VS_COUNT,
+    CONFLICT_FREEZE_FRAME,
     CONFLICT_LENGTH_VS_NATURAL,
     CONFLICT_ORDER_BASIS,
     CONFLICT_PRIORITY,
     CONFLICT_SOURCE_COVERAGE,
+    CONFLICT_TAKE_LINE_END,
+    CONFLICT_TAKE_LINE_START,
     CONFLICT_VOICE_VS_DURATION,
     CONFLICT_WHICH_VOICE,
     ChoiceCapability,
@@ -38,6 +44,10 @@ from app.services.choice_questions import (
     collect_conflicts,
 )
 from tests.kria.test_choice_voice_gate import VOICE, _voice_rows
+from tests.kria.test_kri844_take_line_ask import CAP as _TAKE_CAP
+from tests.kria.test_kri844_take_line_ask import SNAP as _TAKE_SNAP
+from tests.kria.test_kri844_take_line_ask import STRATEGY as _TAKE_STRATEGY
+from tests.kria.test_kri844_take_line_ask import brief as _take_brief
 
 # Words only English uses. Quoted spans are the creator's own words and are skipped.
 _ENGLISH = frozenset(
@@ -192,6 +202,16 @@ def _cases() -> dict[str, tuple[str, list]]:
                 }
             },
         )
+    # KRI-844: the quoted start / end line a Spanish take does not hold (a phone Talking edit).
+    with ExitStack() as pilot:
+        for name, value in (
+            ("phone_rendering_enabled", True),
+            ("phone_render_user_ids", []),
+            ("subtitled_archetype_enabled", True),
+        ):
+            pilot.enter_context(patch.object(settings, name, value))
+        for kind in (CONFLICT_TAKE_LINE_START, CONFLICT_TAKE_LINE_END):
+            add(kind, kind, _TAKE_STRATEGY, _take_brief(), _TAKE_SNAP, _TAKE_CAP)
     for code, strategy in (
         ("single_hero_order_conflict", {}),
         ("insufficient_media", {}),
@@ -213,6 +233,58 @@ def _cases() -> dict[str, tuple[str, list]]:
             _brief(),
             _coverage(code, **plan),
         )
+    # KRI-900: a freeze on a named moment asks which frame (one moment) or which moment (a
+    # tie), on a phone montage that can hold a frame.
+    freeze_strategy = {"edit_format": "montage", "audio_strategy": "original_audio"}
+    freeze_ask = BriefRequirement(
+        id="r3",
+        kind="timing",
+        scope="global",
+        description="Freeze the frame for one second on Atakan's bite",
+        facts={"freeze_frame": True},
+    )
+
+    def take(media_id: str, *descriptions: str) -> dict:
+        return {
+            "media_id": media_id,
+            "kind": "video",
+            "duration_s": 68.0,
+            "analysis": {
+                "best_moments": [
+                    {"start_s": 10.0 * i + 5, "end_s": 10.0 * i + 8, "description": text}
+                    for i, text in enumerate(descriptions)
+                ]
+            },
+        }
+
+    with (
+        patch.object(settings, "phone_rendering_enabled", True),
+        patch.object(settings, "phone_render_user_ids", []),
+        patch.object(
+            settings,
+            "phone_render_verified_features",
+            [*settings.phone_render_verified_features, "freezeFrame"],
+        ),
+    ):
+        for name, rows in (
+            ("freeze_one_moment", [take("a", "man takes first bite of dessert")]),
+            ("freeze_tied_moments", [take("a", "his bite"), take("b", "another bite")]),
+        ):
+            add(
+                name,
+                CONFLICT_FREEZE_FRAME,
+                freeze_strategy,
+                _brief(freeze_ask),
+                {
+                    "clip_assignments": rows,
+                    "clip_paths": [
+                        f"users/u/creation-threads/t/analysis-proxy-ios-{i}.mp4"
+                        for i in range(len(rows))
+                    ],
+                },
+                # KRI-898: sent from an app build that plays a freeze hold.
+                ChoiceCapability(creator_id="u", client_protocol=16),
+            )
     return cases
 
 

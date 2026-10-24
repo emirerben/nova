@@ -1144,6 +1144,196 @@ def _repair_creator_reaction_beats(
     )
 
 
+# KRI-841: why an `ending_clip` (a video appended after the talk, with its own sound) cannot
+# be kept. The creator reads the notice before approving; the brief receipt words the same
+# code in `app.kria.brief_checks`, and the Turkish twins of both live with their readers.
+ENDING_CLIP_NOTICES: dict[str, str] = {
+    "not_talking": (
+        "Couldn't add that video at the end with its own sound: only a talking-to-camera edit "
+        "on your iPhone can end on another video."
+    ),
+    "not_found": "Couldn't find the video you named for the end; kept the normal ending.",
+    "not_video": (
+        "Couldn't add that at the end with its own sound: it's a photo, not a video. A photo "
+        "can be the closing photo instead."
+    ),
+    "visual_videos_off": (
+        "Couldn't add that video at the end: this iPhone can't play videos from Visuals yet."
+    ),
+    "media_lanes_disabled": (
+        "Couldn't add that video at the end: this iPhone render can't place pictures and "
+        "videos around your talk yet."
+    ),
+    "audio_mix_not_verified": (
+        "Couldn't add that at the end with its own sound: this iPhone can't mix its sound "
+        "into the video yet."
+    ),
+    "muted_footage_ending_unsupported": (
+        "Couldn't add that clip at the end silent: one of your own clips can only end the "
+        "video with its own sound."
+    ),
+    "not_selected": ("Couldn't add that clip at the end: you asked to leave it out of this edit."),
+    "only_clip": "Couldn't add that clip at the end: it is the only clip in this edit.",
+    "multi_clip_off": (
+        "Couldn't add that clip at the end: ending on another of your clips needs a Talking "
+        "edit with several clips, which isn't available yet."
+    ),
+}
+ENDING_CLIP_NOT_ALSO_A_POP_IN_NOTICE = (
+    "The video you wanted at the end plays only there, not also on a spoken word."
+)
+
+
+def _ending_clip_resolution(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> tuple[CreatorMediaRef | None, str | None]:
+    """(the media an ``ending_clip`` names, None) when the phone can append it, else (None, why).
+
+    Only a phone Talking edit appends a video after the talk. The video is a Visuals video
+    (the device must draw them) or one of the item's own footage clips, which needs
+    multi-clip Talking and at least one OTHER clip to be the talk.
+    """
+
+    ending = strategy.ending_clip
+    if ending is None:
+        return None, None
+    phone = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    if (
+        strategy.edit_format != "subtitled"
+        or phone is None
+        or not phone.available
+        or manifest.has_voiceover
+    ):
+        return None, "not_talking"
+    videos = [item for item in manifest.media if item.kind == "video"]
+    media = _match_owned_media_ref(videos, ending.media_id)
+    if media is None:
+        if resolve_creator_image_media_ref(manifest, ending.media_id) is not None:
+            return None, "not_video"
+        return None, "not_found"
+    if media.media_id.startswith("asset-"):
+        # The gates `_run_phone_subtitled_job` applies to a Visuals ending: the card / ending
+        # lane (media lanes), the device's video decode, and the main-track audio mix.
+        if not settings.phone_subtitled_media_lanes_enabled:
+            return None, "media_lanes_disabled"
+        if "video" not in phone_drawable_visual_kinds():
+            return None, "visual_videos_off"
+        if not _phone_audio_mix_verified():
+            return None, "audio_mix_not_verified"
+        return media, None
+    if sum(1 for item in videos if not item.media_id.startswith("asset-")) < 2:
+        return None, "only_clip"
+    if not ending.keep_audio:
+        # The worker puts a footage clip last on the main track with its own sound only.
+        return None, "muted_footage_ending_unsupported"
+    if not _phone_audio_mix_verified():
+        return None, "audio_mix_not_verified"
+    if not phone_talking_multi_clip_supported():
+        return None, "multi_clip_off"
+    if _creator_left_out(strategy, media.media_id):
+        return None, "not_selected"
+    return media, None
+
+
+def _creator_left_out(strategy: CreativeStrategy, media_id: str) -> bool:
+    """True when a resolved ``exclude`` clip intent (the creator's own words) names this clip."""
+    needle = media_id.casefold()
+    return any(
+        intent.status == "resolved"
+        and intent.op == "exclude"
+        and any(a.media_id.casefold() == needle for a in intent.assignments)
+        for intent in strategy.resolved_clip_intents or ()
+    )
+
+
+def _phone_audio_mix_verified() -> bool:
+    return "audioMix" in settings.phone_render_verified_features
+
+
+def ending_clip_problem(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> str | None:
+    """The reason code ``repair_creator_ending_clip`` drops this strategy's ending, else None."""
+
+    return _ending_clip_resolution(manifest, strategy)[1]
+
+
+def ending_clip_candidates(manifest: ResolvedCreatorManifest) -> list[CreatorMediaRef]:
+    """Videos a phone Talking edit could end on right now (empty = nothing to teach or keep)."""
+
+    phone = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    if manifest.edit_format != "subtitled" or manifest.has_voiceover:
+        return []
+    if phone is None or not phone.available:
+        return []
+    videos = [item for item in manifest.media if item.kind == "video"]
+    visuals = [item for item in videos if item.media_id.startswith("asset-")]
+    own = [item for item in videos if not item.media_id.startswith("asset-")]
+    if not _phone_audio_mix_verified():
+        return []  # every ending plays on the main track, which needs the audio mix
+    found = (
+        visuals
+        if settings.phone_subtitled_media_lanes_enabled and "video" in phone_drawable_visual_kinds()
+        else []
+    )
+    if len(own) >= 2 and phone_talking_multi_clip_supported():
+        found = [*found, *own]
+    return found
+
+
+def _repair_creator_ending_clip(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> tuple[CreativeStrategy, list[str]]:
+    """KRI-841: keep an ``ending_clip`` only where the phone can append it, honestly.
+
+    Repair (never reject), like the reaction-beat repair: an ending the edit cannot render
+    (a montage or voiceover edit, a photo, an unknown id, the only clip, a footage clip while
+    multi-clip Talking is off) is dropped with a plain notice, so the brief receipt can say
+    "Couldn't" before approval. A kept one carries the manifest's canonical id, and the same
+    video is taken out of every reaction beat: it plays at the end with its own sound, never
+    also muted in the middle of the talk.
+    """
+
+    ending = strategy.ending_clip
+    if ending is None:
+        return strategy, []
+    media, problem = _ending_clip_resolution(manifest, strategy)
+    if media is None:
+        return (
+            strategy.model_copy(update={"ending_clip": None}),
+            [ENDING_CLIP_NOTICES[problem or "not_found"]],
+        )
+    update: dict[str, Any] = {"ending_clip": ending.model_copy(update={"media_id": media.media_id})}
+    selected = list(strategy.selected_media_ids)
+    if (
+        not media.media_id.startswith("asset-")
+        and selected
+        and strategy.media_scope != "all"
+        and media.media_id.casefold() not in {m.casefold() for m in selected}
+    ):
+        # The phone worker binds only the selected clips: an ending the pick left out would
+        # be kept here and then never bound. (A clip the creator left out was refused above.)
+        update["selected_media_ids"] = [*selected, media.media_id]
+    videos = [item for item in manifest.media if item.kind == "video"]
+    beats = []
+    removed = False
+    for beat in strategy.reaction_beats or ():
+        same = beat.visual_id is not None and (
+            _match_owned_media_ref(videos, beat.visual_id) == media
+        )
+        if same:
+            removed = True
+            if beat.sound is None:
+                continue
+            beat = beat.model_copy(update={"visual_id": None})
+        beats.append(beat)
+    notices: list[str] = []
+    if removed:
+        update["reaction_beats"] = beats or None
+        notices.append(ENDING_CLIP_NOT_ALSO_A_POP_IN_NOTICE)
+    return strategy.model_copy(update=update), notices
+
+
 def _drop_talking_clip_intents(strategy: CreativeStrategy) -> tuple[CreativeStrategy, list[str]]:
     """Strip footage clip intents from a Talking edit, saying so once.
 
@@ -1195,6 +1385,10 @@ def compile_strategy_to_plan(
     # the same pass.
     strategy, beat_notices = _repair_creator_reaction_beats(manifest, strategy)
     shape_notices = [*shape_notices, *beat_notices]
+    # KRI-841: a video appended after the talk, with its own sound; same entry as the beats so
+    # the dispatched strategy is the repaired one.
+    strategy, ending_notices = _repair_creator_ending_clip(manifest, strategy)
+    shape_notices = [*shape_notices, *ending_notices]
     # KRI-374: validate/repair the uploaded-song fields. A no-op for every
     # strategy that is not `audio_strategy="user_song"`.
     try:
@@ -1585,6 +1779,8 @@ build_creator_manifest = resolve_creator_manifest
 # Public name for the Creative Brief checks (KRI-188), which must judge reaction
 # beats exactly as approval will keep them.
 repair_creator_reaction_beats = _repair_creator_reaction_beats
+# ... and the ending clip (KRI-841), judged by the same checks.
+repair_creator_ending_clip = _repair_creator_ending_clip
 
 
 __all__ = [
@@ -1597,6 +1793,7 @@ __all__ = [
     "CAPABILITY_NATIVE_RENDER",
     "CAPABILITY_REACTION_BEATS",
     "CAPABILITY_SELECT_READY_VARIANT",
+    "ENDING_CLIP_NOTICES",
     "CAPABILITY_SET_ITEM_INTENT",
     "CreatorCapabilityError",
     "CreatorStrategyError",
@@ -1605,7 +1802,10 @@ __all__ = [
     "build_creator_manifest",
     "compile_strategy_to_plan",
     "effective_render_program",
+    "ending_clip_candidates",
+    "ending_clip_problem",
     "normalize_creator_strategy_media",
+    "repair_creator_ending_clip",
     "repair_creator_reaction_beats",
     "resolve_creator_image_media_ref",
     "resolve_creator_visual_video_media_ref",

@@ -328,6 +328,8 @@ def lanes_from_recipe(
                     generation=visual.generation,
                     trim_start_s=clip.source_start,
                     max_duration_s=clip.source_duration,
+                    # KRI-841: an ending that plays its own sound keeps it on Save.
+                    volume=clip.volume,
                 )
         elif track.id in ("subtitled-overlays", "subtitled-fullscreen"):
             fullscreen_track = track.id == "subtitled-fullscreen"
