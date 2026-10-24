@@ -22,7 +22,7 @@ length the phone can do). Delete the fallback once the model records ``freeze_fr
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -210,6 +210,19 @@ class FreezeSpec:
     hold_s: float
     hold_stated: bool
     hold_requested_s: float | None = None
+    # KRI-899: the earlier live freeze asks this one corrects (latest wins per moment), so
+    # their receipts follow this one's outcome. Empty for a creator's first freeze.
+    corrects: tuple[str, ...] = ()
+    # KRI-899: why the hold is this long: "stated" (the creator's seconds), "default" (one
+    # second; the creator named none), "longer" / "shorter" (a correction with no number,
+    # from ``previous_hold_s``).
+    hold_basis: str = "default"
+    previous_hold_s: float | None = None
+
+    @property
+    def requirement_ids(self) -> tuple[str, ...]:
+        """Every live requirement this freeze answers: the ones it corrects, then its own."""
+        return (*self.corrects, self.requirement_id)
 
 
 # Words that make a number-of-seconds the HOLD's length ("for 2 seconds", "freeze 2s",
@@ -313,9 +326,16 @@ def freeze_spec(req: BriefRequirement) -> FreezeSpec | None:
     # The creator's own number decides the hold; a typed `duration_s` (model output) never
     # sets it.
     stated = _stated_seconds(_number_tokens(req.description or ""))
-    hold = DEFAULT_FREEZE_HOLD_S if stated is None else stated
-    hold = round(min(MAX_FREEZE_HOLD_S, max(MIN_FREEZE_HOLD_S, hold)), 3)
-    words = tuple(
+    return _spec(req, tokens, stated)
+
+
+def _clamped(seconds: float) -> float:
+    return round(min(MAX_FREEZE_HOLD_S, max(MIN_FREEZE_HOLD_S, seconds)), 3)
+
+
+def _moment_words(tokens: Sequence[str]) -> tuple[str, ...]:
+    """The creator's words for the moment: everything that is not the ask itself."""
+    return tuple(
         token
         for token in tokens
         if len(token) > 1
@@ -329,13 +349,150 @@ def freeze_spec(req: BriefRequirement) -> FreezeSpec | None:
         and not any(token.startswith(unit) for unit in _UNITS)
         and not (token[:-1].isdigit() and token.endswith("s"))
     )
+
+
+def _spec(req: BriefRequirement, tokens: Sequence[str], stated: float | None) -> FreezeSpec:
     return FreezeSpec(
         requirement_id=req.id,
-        target_words=words,
-        hold_s=hold,
+        target_words=_moment_words(tokens),
+        hold_s=_clamped(DEFAULT_FREEZE_HOLD_S if stated is None else stated),
         hold_stated=stated is not None,
         hold_requested_s=None if stated is None else round(stated, 3),
+        hold_basis="default" if stated is None else "stated",
     )
+
+
+# KRI-899: words of a correction to an earlier freeze ("make the freeze 2 seconds instead",
+# "make it longer", "donmayı 2 saniye yap"). A freeze ask whose words are ONLY these (and the
+# ask's own words) names no moment of its own: it changes the creator's latest freeze.
+_CORRECTION_WORDS = frozenset(
+    {"make", "change", "set", "turn", "instead", "rather", "now", "actually", "again", "but"}
+    | {"longer", "shorter", "long", "short", "more", "less", "bit", "little", "lot", "much"}
+    | {"too", "than", "same", "only", "to", "be", "is", "its", "can", "you", "could", "would"}
+    | {"do", "let", "lets", "last", "previous", "earlier", "one", "slightly", "way", "even"}
+    | {"yap", "olsun", "daha", "uzun", "kisa", "yerine", "biraz", "cok", "az", "onu", "bunu"}
+    | {"sure", "suresi", "suresini", "donma", "donmayi", "donmasi", "donmasini", "degistir"}
+    | {"donmus", "kareyi", "kare", "uzat", "kisalt", "simdi", "aslinda", "de", "da"}
+)
+_LONGER_WORDS = frozenset({"longer", "uzun", "uzat", "uzatir", "uzatin"})
+_SHORTER_WORDS = frozenset({"shorter", "kisa", "kisalt", "kisaltir", "kisaltin"})
+# A correction never sets the video's own length: "make the video 20 seconds" is a length ask
+# even when a model files it with a stray freeze fact (KRI-821's corroboration rule).
+_VIDEO_LENGTH_WORDS = frozenset(
+    {"video", "videoyu", "videonun", "edit", "montage", "montaj", "reel", "whole", "total"}
+    | {"overall", "entire", "tamami", "toplam", "film"}
+)
+
+
+def _any_seconds(tokens: Sequence[str]) -> float | None:
+    """The one number of seconds a correction names ("make it 2 seconds", "2 saniye yap"),
+    wherever it sits; None when it names none or more than one."""
+    values: set[float] = set()
+    for index, token in enumerate(tokens):
+        glued = _unit_suffixed(token)
+        if glued is not None:
+            values.add(glued)
+            continue
+        if token not in _UNITS and token not in _TR_UNITS and token != _SHORT_UNIT:
+            continue
+        if index == 0:
+            continue
+        previous = tokens[index - 1]
+        value = _as_number(previous)
+        if value is None and previous in {"a", "an"} and tokens[index - 2 : index - 1] == ["half"]:
+            value = 0.5
+        elif value is None and token != _SHORT_UNIT and previous in _NUMBER_WORDS:
+            value = _NUMBER_WORDS[previous]
+        if value is not None:
+            values.add(value)
+    return next(iter(values)) if len(values) == 1 else None
+
+
+def _correction(req: BriefRequirement, previous: FreezeSpec) -> FreezeSpec | None:
+    """``req`` as a change to ``previous`` (the creator's latest freeze), or None.
+
+    Only a freeze ask (`asks_freeze_frame`) that names no moment of its own counts. Its own
+    freeze words are not required: the earlier freeze is the creator's corroboration
+    (KRI-821), so "make it 2 seconds instead" with the model's freeze fact follows it. A
+    number of seconds sets the hold; "longer" / "shorter" with no number doubles or halves
+    the earlier hold; any other wording ("freeze it instead") keeps it.
+    """
+    if not asks_freeze_frame(req):
+        return None
+    tokens = _tokens(req.description or "")
+    if _VIDEO_LENGTH_WORDS.intersection(tokens):
+        return None
+    if any(word not in _CORRECTION_WORDS for word in _moment_words(tokens)):
+        return None
+    numbers = _number_tokens(req.description or "")
+    stated = _stated_seconds(numbers)
+    if stated is None:
+        stated = _any_seconds(numbers)
+    freeze_worded = bool(
+        _FREEZE_WORDS.intersection(tokens)
+        or _has_phrase(tokens, _FREEZE_PHRASES)
+        or _turkish_freeze(tokens)
+    )
+    longer = bool(_LONGER_WORDS.intersection(tokens))
+    shorter = bool(_SHORTER_WORDS.intersection(tokens))
+    common = {
+        "requirement_id": req.id,
+        "target_words": previous.target_words,
+        "corrects": previous.requirement_ids,
+        "previous_hold_s": previous.hold_s,
+    }
+    if stated is not None:
+        return FreezeSpec(
+            **common,
+            hold_s=_clamped(stated),
+            hold_stated=True,
+            hold_requested_s=round(stated, 3),
+            hold_basis="stated",
+        )
+    if longer != shorter:
+        return FreezeSpec(
+            **common,
+            hold_s=_clamped(previous.hold_s * (2 if longer else 0.5)),
+            hold_stated=False,
+            hold_basis="longer" if longer else "shorter",
+        )
+    if not freeze_worded:
+        # Neither seconds, a direction nor the creator's own freeze words: nothing to change.
+        return None
+    return FreezeSpec(
+        **common,
+        hold_s=previous.hold_s,
+        hold_stated=previous.hold_stated,
+        hold_requested_s=previous.hold_requested_s,
+        hold_basis=previous.hold_basis,
+    )
+
+
+def live_freezes(requirements: Iterable[BriefRequirement]) -> tuple[FreezeSpec, ...]:
+    """KRI-899: every freeze the creator's live requirements ask for, in brief order.
+
+    A freeze ask that names a moment is its own freeze (a second moment holds too). One that
+    names no moment ("make the freeze 2 seconds instead", "make it longer") changes the
+    latest freeze before it, which then answers both requirements (``corrects``). Two asks
+    that name the same moment are settled where the moment is grounded
+    (`unified_montage._ground_freezes`): the later one wins there.
+    """
+    specs: list[FreezeSpec] = []
+    for req in requirements:
+        if specs:
+            changed = _correction(req, specs[-1])
+            if changed is not None:
+                specs[-1] = changed
+                continue
+        spec = freeze_spec(req)
+        if spec is not None:
+            specs.append(spec)
+    return tuple(specs)
+
+
+def planned_freeze_ids(requirements: Iterable[BriefRequirement]) -> frozenset[str]:
+    """The live requirement ids a freeze plan answers (each corrected one included)."""
+    return frozenset(rid for spec in live_freezes(requirements) for rid in spec.requirement_ids)
 
 
 __all__ = [
@@ -346,5 +503,7 @@ __all__ = [
     "FreezeSpec",
     "asks_freeze_frame",
     "freeze_spec",
+    "live_freezes",
+    "planned_freeze_ids",
     "times_one_moment",
 ]

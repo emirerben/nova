@@ -38,7 +38,12 @@ from app.kria.brief_route import (
     wants_hour_only_text,
 )
 from app.kria.contracts import InferredLabel, RequirementReceipt
-from app.kria.freeze_ask import asks_freeze_frame, freeze_spec, times_one_moment
+from app.kria.freeze_ask import (
+    asks_freeze_frame,
+    freeze_spec,
+    planned_freeze_ids,
+    times_one_moment,
+)
 from app.kria.reply_language import current_reply_language, say
 from app.kria.speed_ask import asks_clip_speed
 from app.kria.spoken_text_ask import SPOKEN_TEXT_CUE_KEYS
@@ -857,7 +862,7 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         source_durations_s=_source_durations(record.get("clip_durations_s")),
         song_bed=bool(record.get("user_song")),
         speed_unsupported=True,
-        freeze_frames=_freeze_facts(record.get("freeze_frame")),
+        freeze_frames=_freeze_facts(record.get("freeze_frames"), record.get("freeze_frame")),
         asset_holds=tuple(
             row for row in record.get("asset_holds") or [] if isinstance(row, Mapping)
         ),
@@ -865,11 +870,23 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
     )
 
 
-def _freeze_facts(row: object) -> dict[str, Mapping[str, Any]]:
-    """KRI-828: the plan record's freeze row, keyed by its requirement id."""
-    if not isinstance(row, Mapping) or not isinstance(row.get("requirement_id"), str):
-        return {}
-    return {str(row["requirement_id"]): dict(row)}
+def _freeze_facts(rows: object, legacy: object = None) -> dict[str, Mapping[str, Any]]:
+    """KRI-828 / KRI-899: the plan record's freeze rows, keyed by every requirement id each
+    answers. A row also answers the earlier asks it corrected (``requirement_ids``); those
+    carry ``corrected_by`` so their receipt says the later ask changed them."""
+    if not isinstance(rows, list):
+        rows = [legacy]
+    facts: dict[str, Mapping[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, Mapping) or not isinstance(row.get("requirement_id"), str):
+            continue
+        own = str(row["requirement_id"])
+        ids = row.get("requirement_ids")
+        for rid in ids if isinstance(ids, list) else [own]:
+            if isinstance(rid, str):
+                facts[rid] = dict(row) if rid == own else {**row, "corrected_by": own}
+        facts.setdefault(own, dict(row))
+    return facts
 
 
 def _rendered_freezes(
@@ -7151,6 +7168,36 @@ def _check_freeze(req: BriefRequirement, freeze: Mapping[str, Any]) -> Requireme
     if status == "held" and hold is not None and frame is not None:
         seconds = f"{hold:g}"
         at = f"{frame:.1f}"
+        basis = freeze.get("hold_basis")
+        previous = _finite_number(freeze.get("previous_hold_s"))
+        if freeze.get("corrected_by") and not freeze.get("hold_requested_s"):
+            # KRI-899: a later ask changed this freeze; its receipt names what now holds.
+            reason = say(
+                en=(
+                    f"Freezes the frame for {seconds}s on that moment ({at}s into the clip), "
+                    "as you asked later"
+                ),
+                tr=(
+                    f"O anda kare {seconds} sn donuyor (klibin {at}. saniyesi), "
+                    "sonra istediğin gibi"
+                ),
+            )
+            return _receipt(req, "met", reason, verification="checked")
+        if basis in {"longer", "shorter"} and previous is not None:
+            longer = basis == "longer"
+            reason = say(
+                en=(
+                    f"Freezes the frame for {seconds}s on that moment ({at}s into the clip); "
+                    f"you didn't say how long, so I made it {'longer' if longer else 'shorter'}"
+                    f" than {previous:g}s"
+                ),
+                tr=(
+                    f"O anda kare {seconds} sn donuyor (klibin {at}. saniyesi); süre "
+                    f"söylemediğin için {previous:g} sn'den "
+                    f"{'uzun' if longer else 'kısa'} tuttum"
+                ),
+            )
+            return _receipt(req, "met", reason, verification="checked")
         if freeze.get("hold_stated"):
             reason = say(
                 en=f"Freezes the frame for {seconds}s on that moment ({at}s into the clip)",
@@ -7455,30 +7502,39 @@ def requirements_to_check_at_draft(
         audio_strategy=strategy.get("audio_strategy"),
         clip_paths=clip_paths,
     )
+    requirements = list(requirements)
+    # KRI-899: the freezes the plan will carry, read over the whole brief, so a correction
+    # ("make it 2 seconds instead") is deferred exactly when the render answers it.
+    planned = planned_freeze_ids(requirements)
     return [
         req
         for req in requirements
         if not (
             defers
             and req.kind in UNIFIED_SETTLED_KINDS
-            and (not asks_freeze_frame(req) or freeze_plannable(req, strategy))
+            and (not asks_freeze_frame(req) or freeze_plannable(req, strategy, planned))
         )
         and not (narrated and _settled_by_narrated_render(req, strategy))
     ]
 
 
-def freeze_plannable(req: BriefRequirement, strategy: Mapping[str, Any] | None) -> bool:
+def freeze_plannable(
+    req: BriefRequirement,
+    strategy: Mapping[str, Any] | None,
+    planned: frozenset[str] | None = None,
+) -> bool:
     """KRI-828: will the phone montage plan carry this freeze ask?
 
-    Only a corroborated freeze ask (`freeze_spec`), on a montage with no creator song, where
-    the phone can hold a frame (`freeze_frame_supported`). The render then settles it (met,
-    or which moment it could not find); everywhere else KRI-777's "Couldn't" stays on the
-    draft.
+    Only a corroborated freeze ask (`freeze_spec`, or with ``planned`` -- the brief's
+    `planned_freeze_ids` -- a correction of one, KRI-899), on a montage with no creator
+    song, where the phone can hold a frame (`freeze_frame_supported`). The render then
+    settles it (met, or which moment it could not find); everywhere else KRI-777's
+    "Couldn't" stays on the draft.
     """
     from app.services.phone_rollout import freeze_frame_supported  # noqa: PLC0415
 
     return (
-        freeze_spec(req) is not None
+        (req.id in planned if planned is not None else freeze_spec(req) is not None)
         and str((strategy or {}).get("audio_strategy") or "") != "user_song"
         and freeze_frame_supported()
     )

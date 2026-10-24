@@ -107,7 +107,11 @@ class GuidedEditorSegment(BaseModel):
     # the end of the slot (``duration_s`` includes them). Omitted when unset so every earlier
     # revision keeps its state hash.
     freeze_hold_s: float | None = Field(
-        default=None, gt=0, le=3.0, exclude_if=lambda value: value is None
+        # Up to `freeze_ask.MAX_FREEZE_HOLD_S` (10 s), the longest freeze a creator can ask for.
+        default=None,
+        gt=0,
+        le=10.0,
+        exclude_if=lambda value: value is None,
     )
     # Layout is authored per timeline occurrence, not per source media ID.
     # Keep it optional and omit nulls so revisions written before this field

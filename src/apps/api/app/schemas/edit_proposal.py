@@ -1793,7 +1793,11 @@ class FastMontageCut(BaseModel):
     # these seconds. The output is the source window plus the hold. Omitted when unset so
     # every stored snapshot keeps its exact dump.
     freeze_hold_s: float | None = Field(
-        default=None, gt=0, le=3.0, exclude_if=lambda value: value is None
+        # Up to `freeze_ask.MAX_FREEZE_HOLD_S` (10 s), the longest freeze a creator can ask for.
+        default=None,
+        gt=0,
+        le=10.0,
+        exclude_if=lambda value: value is None,
     )
 
     @model_validator(mode="after")

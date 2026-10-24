@@ -156,7 +156,11 @@ class GuidedStoryMoment(BaseModel):
     # after the moment plays (``duration_s`` = source span / rate + hold). The clip's own
     # sound is silent under the hold. Omitted when unset so every stored plan keeps its dump.
     freeze_hold_s: float | None = Field(
-        default=None, gt=0, le=3.0, exclude_if=lambda value: value is None
+        # Up to `freeze_ask.MAX_FREEZE_HOLD_S` (10 s), the longest freeze a creator can ask for.
+        default=None,
+        gt=0,
+        le=10.0,
+        exclude_if=lambda value: value is None,
     )
     output_start_s: float = Field(ge=0)
     output_end_s: float = Field(gt=0)

@@ -3300,6 +3300,17 @@ The existing Fly Deploy workflow checks all managed process groups, including st
   the creator's own words (`_stated_seconds`, decimals included: "1.5 seconds", "1,5 saniye");
   the model's typed `duration_s` is never read. Unstated => 1 s. A stated length outside
   0.2-10 s holds the nearest bound and the receipt says `partial` with the asked number.
+- **Changing it in chat (KRI-899).** `freeze_ask.live_freezes` reads EVERY live freeze ask in
+  brief order. One that names a moment is its own freeze (a second moment holds too, on its own
+  cut). One that names no moment ("make the freeze 2 seconds instead", "make it longer",
+  "donmayı 2 saniye yap") changes the latest freeze: its seconds (anywhere in the words), or
+  x2 / x0.5 for longer / shorter. It needs no freeze word of its own when the model filed it
+  with the freeze fact (the earlier freeze is the corroboration), but a video-length ask ("make
+  the video 20 seconds") never takes over a freeze. Two asks grounded to the same analysed
+  moment hold it once, at the later ask's length (`_ground_freezes`). Every answered id gets the
+  same receipt; the draft defers exactly these ids (`planned_freeze_ids`). On a rendered edit
+  `brief.route_requirements` sends any freeze ask to the planner (re-plan + re-render): the
+  editor copilot has no freeze op.
 - **Where.** `unified_montage._ground_freeze` matches the creator's words for the moment to
   the clips' analysed `best_moments[].description` (time only, never text) and freezes at that
   moment's midpoint. The nearest cut of that clip is re-anchored to END on the frame (same
@@ -3325,8 +3336,9 @@ The existing Fly Deploy workflow checks all managed process groups, including st
   trimming its start shortens the motion, a slot that no longer reaches the frame (leading half
   of a split, a trim through the whole hold) plays with no hold. Server Save
   (`build_guided_segments`) and the iOS preview (`NativeEditorRenderCompiler`) apply the same
-  rule; neither derives a slow rate for it.
-- **Receipt.** `met` only when the plan record's `freeze_frame.status == "held"` (and, on a
+  rule; neither derives a slow rate for it. Dragging the held slot's end out lengthens the hold
+  (up to 10 s, the same bound as a chat ask).
+- **Receipt.** `met` only when the plan record's `freeze_frames[].status == "held"` (and, on a
   finished video, its timeline still carries a hold); otherwise KRI-777's "Couldn't".
 - **Rollout (dark).** Planned only when `freezeFrame` is in `PHONE_RENDER_VERIFIED_FEATURES`
   and, in an HTTP request, the build declares `X-Kria-Client-Protocol` >= 16
@@ -3334,4 +3346,6 @@ The existing Fly Deploy workflow checks all managed process groups, including st
   exported MP4 on a physical device, then add `freezeFrame` to the Fly secret (api + worker).
   Older builds cannot decode `freezeFrame` and fail such a recipe instead of dropping the hold.
 - Proof: `tests/kria/test_kri828_freeze_frame_m2.py` (M2 replay -> recipe, cloud MP4, editor
-  round trip), `KriaMediaEngineTests/FreezeFrameExportTests` (native export).
+  round trip), `tests/kria/test_kri899_freeze_length_changes.py` (chat corrections, second
+  freeze, router, editor end-drag), `KriaMediaEngineTests/FreezeFrameExportTests` (native
+  export).

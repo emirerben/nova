@@ -346,6 +346,28 @@ def _ffmpeg(*args: str) -> None:
     )
 
 
+def _all_lumas(path: Path) -> list[float]:
+    """Every decoded frame's mean luma, in order (8x8 gray per frame)."""
+    raw = subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-vf",
+            "scale=8:8,format=gray",
+            "-f",
+            "rawvideo",
+            "-",
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    ).stdout
+    return [sum(raw[i : i + 64]) / 64 for i in range(0, len(raw) - 63, 64)]
+
+
 def _frame_luma(path: Path, at_s: float) -> float:
     raw = subprocess.run(
         [
@@ -471,14 +493,29 @@ def test_cloud_render_holds_the_same_source_frame_silently(tmp_path: Path) -> No
     # second of the brightness ramp (slow motion would span half of it)
     moved = _frame_luma(held, 1.5) - _frame_luma(held, 0.5)
     assert moved == pytest.approx(_frame_luma(source, 2.5) - _frame_luma(source, 1.5), rel=0.25)
-    # 1, 10. the hold is the source frame at source_end_s, unchanged for the whole hold
-    frozen = [_frame_luma(held, t) for t in (2.1, 2.5, 2.9)]
-    assert max(frozen) - min(frozen) < 1.5, frozen
-    last_moving = _frame_luma(held, 1.97)
-    assert frozen[0] == pytest.approx(last_moving, abs=2)
-    # ... and that frame is the source's frame at source_end_s (3.0 s), not the window start
-    assert frozen[0] == pytest.approx(_frame_luma(source, 2.96), abs=3)
-    assert abs(frozen[0] - _frame_luma(source, 1.0)) > 30
+    # 1, 10. the hold is the LAST FRAME THAT ACTUALLY PLAYED, and it stays still for exactly
+    # the requested hold. Read off the media itself, frame by frame, so it does not depend
+    # on how a given FFmpeg build seeks the shared clip cutter's input (FFmpeg 8.0.1 starts
+    # the window ~4 frames earlier than 6.1/8.1; the window's length and the hold do not
+    # change). The moving part is the cutter's own output, kept beside the held moment.
+    played = _all_lumas(tmp_path / "moment_00_moving.mp4")
+    frames = _all_lumas(held)
+    fps = len(frames) / receipts[0]["output_duration_s"]
+    assert fps == pytest.approx(30, abs=0.5), (len(frames), receipts[0])
+    still = 1
+    while still < len(frames) and abs(frames[-1 - still] - frames[-1]) < 0.75:
+        still += 1
+    # the frozen picture is the last frame the moving part played ...
+    assert frames[-1] == pytest.approx(played[-1], abs=0.75), (frames[-still - 2 :], played[-3:])
+    # ... the ramp keeps moving right up to it (no early stall, no slow motion into it) ...
+    assert frames[-still] - frames[-still - 1] > 0.75, frames[-still - 3 :]
+    assert len(frames) - still == pytest.approx(len(played) - 1, abs=1)
+    # ... and it then stays still for the requested 1.0 s (the played frame + 30 clones)
+    assert still - 1 == pytest.approx(round(1.0 * fps), abs=1), (still, frames[-still - 3 :])
+    # the held picture comes from the end of the chosen window, never its start (the ramp
+    # is ~80 luma apart across the 2 s window; seek precision is a few frames)
+    assert abs(frames[-1] - _frame_luma(source, 1.0)) > 30
+    frozen = frames[-still:]
 
     joined = tmp_path / "joined.mp4"
     listing = tmp_path / "list.txt"
@@ -502,7 +539,9 @@ def test_cloud_render_holds_the_same_source_frame_silently(tmp_path: Path) -> No
             "plan": plan,
             "moment_receipts": receipts,
             "luma_moving_0.5_1.5": [_frame_luma(held, 0.5), _frame_luma(held, 1.5)],
-            "luma_hold_2.1_2.5_2.9": frozen,
+            "luma_held_frames": frozen,
+            "luma_played_last": played[-1],
+            "still_frames": still,
             "luma_source_at_2.96": _frame_luma(source, 2.96),
             "rms_moving_0.5_1.8": _rms(final, 0.5, 1.8),
             "rms_hold_2.1_2.9": _rms(final, 2.1, 2.9),
