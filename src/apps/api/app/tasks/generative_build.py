@@ -9421,6 +9421,8 @@ def _phone_opening_cut(
                     duration_s=duration_s,
                     start_ids=ask.start_ids,
                     end_ids=ask.end_ids,
+                    start_spoken=ask.start_spoken,
+                    end_spoken=ask.end_spoken,
                 )
                 receipts = {
                     field: receipt
