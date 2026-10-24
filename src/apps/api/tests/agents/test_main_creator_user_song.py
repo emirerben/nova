@@ -18,6 +18,7 @@ from app.agents._schemas.creator_agent import (
     ProposeStrategy,
     UserSongFacts,
 )
+from app.agents._skills import load_skill
 from app.agents.main_creator import (
     MAIN_CREATOR_PROMPT_VERSION,
     MainCreatorAgent,
@@ -79,7 +80,7 @@ def _song_input() -> MainCreatorInput:
 
 
 @pytest.mark.parametrize(("clip_intents", "brief"), sorted(PRE_CHANGE_PROMPT_SHA))
-def test_prompt_without_a_song_is_byte_identical_to_the_pre_change_render(
+def test_prompt_without_a_song_preserves_base_under_editorial_skills(
     monkeypatch, clip_intents, brief
 ) -> None:
     monkeypatch.setattr(settings, "clip_intents_enabled", clip_intents)
@@ -87,8 +88,12 @@ def test_prompt_without_a_song_is_byte_identical_to_the_pre_change_render(
 
     prompt = _render(_input().model_copy(update={"brief_enabled": brief}))
 
+    skills = load_skill("edit-story") + "\n\n" + load_skill("grounded-hook") + "\n\n"
+    assert prompt.startswith(skills)
+    base_prompt = prompt.removeprefix(skills)
     assert (
-        hashlib.sha256(prompt.encode()).hexdigest() == PRE_CHANGE_PROMPT_SHA[(clip_intents, brief)]
+        hashlib.sha256(base_prompt.encode()).hexdigest()
+        == PRE_CHANGE_PROMPT_SHA[(clip_intents, brief)]
     )
     assert "UPLOADED SONG" not in prompt
     assert "$user_song_section" not in prompt
@@ -125,7 +130,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-24-v80"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-24-v81"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

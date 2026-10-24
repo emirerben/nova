@@ -122,7 +122,7 @@ def test_brief_prompt_requires_explicit_versioned_target_for_changes() -> None:
         _input().model_copy(update={"brief_enabled": True})
     )
 
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-24-v80"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-24-v81"
     assert '`operation`: "change"' in prompt
     assert "target_requirement_id" in prompt
     assert "expected_version" in prompt
@@ -584,7 +584,13 @@ def test_reaction_beats_prompt_section_omitted_when_capability_unavailable() -> 
         # KRI-189: no clip carries facts, so the slot renders empty.
         clip_facts_note="",
     )
-    assert actual == expected
+    skills = (
+        main_creator_module.load_skill("edit-story")
+        + "\n\n"
+        + main_creator_module.load_skill("grounded-hook")
+        + "\n\n"
+    )
+    assert actual == skills + expected
 
 
 def test_reaction_beats_prompt_section_present_when_capability_available() -> None:

@@ -31,6 +31,7 @@ from app.agents._schemas.creator_policy import (
     native_voiceover_only,
 )
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
+from app.agents._skills import load_skill
 from app.config import settings
 from app.kria.brief import BriefUpdate, parse_brief_updates
 from app.kria.reply_language import prompt_language_line
@@ -121,7 +122,8 @@ log = structlog.get_logger()
 # v78 (KRI-821): a named cut of a repeated line records which take (`cut_line_occurrences`).
 # v79 combines main's v77 (KRI-815 + KRI-816) with KRI-821's v78.
 # v80 combines main's v79 (KRI-815/816/821) with KRI-827's keep_text_off (branch v78).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v80"
+# v81: packaged edit-story and grounded-hook guidance, preserving the base contract.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v81"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -761,6 +763,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 "\n" + _VOICEOVER_SCRIPT_PROMPT_SECTION if input.voiceover_script_available else ""
             ),
         )
+        prompt = load_skill("edit-story") + "\n\n" + load_skill("grounded-hook") + "\n\n" + prompt
         # KRI-520: the reply-language instruction goes last, where it wins over the
         # English examples above. "" for English/unknown: byte-identical prompt.
         language_line = prompt_language_line(input.reply_language)

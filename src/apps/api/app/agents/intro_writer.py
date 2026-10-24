@@ -28,6 +28,7 @@ from typing import ClassVar
 from pydantic import BaseModel, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
+from app.agents._skills import load_skill
 from app.agents.music_matcher import ClipSummary, _sanitize_text
 from app.agents.overlay_examples import OverlayExample
 from app.agents.persona_examples import format_success_factors
@@ -469,7 +470,7 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
         #              pillars + plan item theme/idea) for persona-coherent hooks.
         # 2026-05-29 — overlay_examples.json grown with market-research hooks.
         # 2026-05-28 — added $language_instruction block (en|tr).
-        prompt_version="2026-10-22-research-18",
+        prompt_version="2026-10-24-grounded-hook-skill",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -501,7 +502,7 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
             )
             or "(none)"
         )
-        return load_prompt(
+        prompt = load_prompt(
             "write_intro_text",
             tone=_sanitize_text(input.tone) or "neutral",
             effect=str(input.form.get("effect", "static")),
@@ -533,6 +534,7 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
             # Codified hook-relevant TikTok success factors (reference, not data).
             success_factors=format_success_factors("hook"),
         )
+        return load_skill("grounded-hook") + "\n\n" + prompt
 
     def parse(self, raw_text: str, input: IntroWriterInput) -> IntroWriterOutput:  # noqa: A002
         try:
