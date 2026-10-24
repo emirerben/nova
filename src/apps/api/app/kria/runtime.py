@@ -28,6 +28,7 @@ from app.kria.api_schemas import (
     ApprovalDecisionOut,
     ApprovalSnapshotOut,
     DeltaEvent,
+    ProtectedRegionIn,
     SubmitTurnBody,
     ThreadDeltaOut,
     TurnAccepted,
@@ -140,6 +141,8 @@ def request_digest(body: SubmitTurnBody) -> str:
         # KRI-441: additive the same way, so every pre-existing digest holds.
         | ({"scope"} if body.scope is None else set())
         | ({"manual_edits"} if body.manual_edits is None else set())
+        # KRI-827: additive the same way.
+        | ({"protected_region"} if body.protected_region is None else set())
     )
     encoded = json.dumps(
         body.model_dump(mode="json", exclude=excluded),
@@ -292,6 +295,60 @@ async def _apply_song_range_answer(
     item = await db.get(PlanItem, thread.active_plan_item_id, with_for_update=True)
     if item is not None and getattr(item, "song_gcs_path", None):
         apply_song_range(thread, item, chosen)
+
+
+async def _stamp_protected_region(
+    db: AsyncSession, thread: CreationThread, region: ProtectedRegionIn
+) -> dict:
+    """KRI-827: the creator's mark, checked and stamped by the server.
+
+    The clip must be one of THIS thread's clips (its active plan item's media); anything
+    else -- another creator's media id, a clip removed from the item -- is a 404, so a
+    mark can never point the tracker at media the creator does not own. The clip's
+    storage generation is read from the item, never from the client: a later re-upload or
+    swap then invalidates the mark instead of reusing it on other bytes."""
+    from app.kria.protected_targets import ProtectedRegionSelection  # noqa: PLC0415
+
+    item = (
+        await db.get(PlanItem, thread.active_plan_item_id) if thread.active_plan_item_id else None
+    )
+    plan = await db.get(ContentPlan, item.content_plan_id) if item is not None else None
+    owned = plan is not None and plan.user_id == thread.creator_id
+    assignments = list(getattr(item, "clip_assignments", None) or []) if owned else []
+    match = next(
+        (
+            row
+            for row in assignments
+            if isinstance(row, dict) and str(row.get("media_id")) == region.media_id
+        ),
+        None,
+    )
+    if match is None:
+        raise RuntimeFailure(
+            404,
+            "protected_region_media_not_found",
+            "That clip isn't part of this video. Mark the object on one of your clips.",
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        )
+    generation = match.get("storage_generation") or match.get("generation")
+    try:
+        mark = ProtectedRegionSelection(
+            label=region.label,
+            media_id=region.media_id,
+            source_t_s=region.source_t_s,
+            box=region.box,
+            generation=str(generation) if generation is not None else None,
+        )
+    except ValueError as exc:
+        raise RuntimeFailure(
+            422,
+            "protected_region_invalid",
+            "That mark is too small or outside the frame. Draw a box around the object.",
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        ) from exc
+    return mark.model_dump(mode="json")
 
 
 async def _validate_choice_selection(
@@ -706,6 +763,11 @@ async def submit_turn(
         await _validate_song_order(db, thread, body.song_order)
     if body.song_range is not None and settings.song_filming_range_enabled:
         await _apply_song_range_answer(db, thread, body.song_range)
+    protected_region = (
+        await _stamp_protected_region(db, thread, body.protected_region)
+        if body.protected_region is not None
+        else None
+    )
     if choice_selection is not None and not choice_reanswer:
         # A derived re-answer targets a question the server asked and has closed
         # (KRI-794); every client-sent selection must still answer the open one.
@@ -957,6 +1019,8 @@ async def submit_turn(
                 if body.song_order is not None and settings.user_song_montage_enabled
                 else {}
             ),
+            # KRI-827: the creator's checked + stamped mark (never client-stamped).
+            **({"protected_region": protected_region} if protected_region is not None else {}),
             # KRI-588: flag off -> dropped silently, nothing stored.
             **(
                 {"song_range": body.song_range.model_dump(mode="json")}

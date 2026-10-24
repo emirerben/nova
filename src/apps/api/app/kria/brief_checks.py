@@ -422,6 +422,10 @@ class PlanFacts:
     # KRI-706: True when the rendered opening title still sits on the speaker's face
     # (`variant["opening_title_placement"]["face_collision"]`). None = no such receipt.
     title_face_collision: bool | None = None
+    # KRI-827: per requirement that carries "no text on <face|object>", what a phone Talking
+    # render's protected-text receipt says (`variant["protected_text_regions"]`):
+    # (requirement_id, verdict, labels). None = no such receipt: nothing is claimed.
+    protected_text: tuple[tuple[str, str, tuple[str, ...]], ...] | None = None
     # KRI-707: how a phone Talking render handled each text-on-a-spoken-word ask
     # (`variant["spoken_text_placement"]`). None = no such receipt (no such ask, a draft,
     # or an older render): nothing is claimed.
@@ -1530,6 +1534,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
         changes["named_cuts"] = tuple(row for row in named if isinstance(row, Mapping))
     changes.update(_title_face_facts(variant))
     changes.update(_spoken_text_facts(variant))
+    changes.update(_protected_text_facts(variant))
     changes.update(_beat_room_facts(variant.get("phone_beat_receipt")))
     changes.update(_rendered_caption_facts(variant))
     rendered = _rendered_clip_durations(variant)
@@ -4952,6 +4957,103 @@ def _with_spoken_text_speaker(
     return combine_receipts(base, _receipt(req, "partial", _SPOKEN_TEXT_FIRST_HEARD))
 
 
+def _protected_text_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    from app.kria.protected_targets import (  # noqa: PLC0415
+        PROTECTED_TEXT_FIELD,
+        protected_text_fingerprint,
+        stale_protected_text,
+    )
+
+    receipt = variant.get(PROTECTED_TEXT_FIELD)
+    if (
+        isinstance(receipt, Mapping)
+        and receipt.get("measured_fingerprint")
+        and receipt["measured_fingerprint"] != protected_text_fingerprint(variant)
+    ):
+        # The text, captions or bars changed after the render measured them (an editor
+        # Save, a text edit): the old verdict describes a video the creator no longer has.
+        receipt = stale_protected_text(receipt, "edited_text")
+    targets = receipt.get("targets") if isinstance(receipt, Mapping) else None
+    if not isinstance(targets, list):
+        return {}
+    by_req: dict[str, list[tuple[str, str]]] = {}
+    for target in targets:
+        if not isinstance(target, Mapping):
+            continue
+        label = "face" if target.get("kind") == "face" else str(target.get("label") or "")
+        for req_id in target.get("requirement_ids") or []:
+            by_req.setdefault(str(req_id), []).append(
+                (label, str(target.get("status") or "unverified"))
+            )
+    rank = {
+        "clear": 0,
+        "unverified": 1,
+        "stale": 2,
+        "no_selection": 2,
+        "invalidated": 2,
+        "other_source": 2,
+    }
+    rows = []
+    for req_id, entries in by_req.items():
+        verdict = max((status for _, status in entries), key=lambda s: rank.get(s, 3))
+        labels = tuple(label for label, status in entries if status != "clear")
+        rows.append((req_id, verdict, labels))
+    return {"protected_text": tuple(rows)}
+
+
+def _with_protected_text(
+    req: BriefRequirement, facts: PlanFacts, base: RequirementReceipt
+) -> RequirementReceipt:
+    """KRI-827: "no text on her face or on the plate" is met only when the render measured
+    every text clear of every named target over each text's whole time on screen, against
+    an object the tracker actually saw. Anything else says what is missing."""
+    row = next((r for r in facts.protected_text or () if r[0] == req.id), None)
+    if row is None or row[1] == "clear":
+        return base
+    _, verdict, labels = row
+    # The object in the creator's own words; a face target is "your face" in either language.
+    named = ", ".join("your face" if label == "face" else f"the {label}" for label in labels)
+    named = named or "it"
+    named_tr = ", ".join("yüzün" if label == "face" else label for label in labels) or "o"
+    if verdict == "no_selection":
+        reason = say(
+            en=f"Mark {named} on a frame so I can keep the text off it",
+            tr=f"Yazıyı uzak tutabilmem için {named_tr} bir karede işaretle",
+        )
+    elif verdict == "invalidated":
+        reason = say(
+            en=f"The clip changed since you marked {named}; mark it again",
+            tr=f"{named_tr} işaretlediğinden beri klip değişti; tekrar işaretle",
+        )
+    elif verdict == "stale":
+        reason = say(
+            en=f"You changed the edit after I placed the text, so I can't confirm it still "
+            f"stays off {named}",
+            tr=f"Yazıyı yerleştirdikten sonra düzenlemeyi değiştirdin; hâlâ {named_tr} "
+            "üstünde olmadığını doğrulayamıyorum",
+        )
+    elif verdict == "other_source":
+        reason = say(
+            en=f"You marked {named} on a different clip than the one I put the text on; "
+            "mark it on the speaking clip",
+            tr=f"{named_tr} yazının olduğu klipte değil başka bir klipte işaretledin; "
+            "konuşan klipte işaretle",
+        )
+    elif verdict == "unverified":
+        reason = say(
+            en=f"I kept the text away from where {named} was, but lost sight of it for "
+            "part of the video, so I can't confirm it stays clear",
+            tr=f"Yazıyı {named_tr} olduğu yerden uzak tuttum ama videonun bir kısmında onu "
+            "göremedim, açıkta kaldığını doğrulayamıyorum",
+        )
+    else:
+        reason = say(
+            en=f"Some text still covers {named}; there was no spot clear of it",
+            tr=f"Bazı yazılar hâlâ {named_tr} üstünde; açıkta bir yer kalmadı",
+        )
+    return combine_receipts(base, _receipt(req, "partial", reason))
+
+
 def _title_face_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
     placement = variant.get("opening_title_placement")
     if isinstance(placement, Mapping) and isinstance(placement.get("face_collision"), bool):
@@ -7000,6 +7102,22 @@ def _has_checker(req: BriefRequirement) -> bool:
 
 
 def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if facts.protected_text is not None and any(r[0] == req.id for r in facts.protected_text):
+        # KRI-827: "no text on her face or on the plate" is judged by the render's own
+        # measurement of every text against every named target. Any other ask on the same
+        # requirement ("brighten the clips and no text on the plate") keeps its own checker;
+        # the protected-text verdict folds into it, never replaces it.
+        from app.kria.protected_targets import KEEP_TEXT_OFF_KEY  # noqa: PLC0415
+
+        rest = req.model_copy(
+            update={"facts": {k: v for k, v in req.facts.items() if k != KEEP_TEXT_OFF_KEY}}
+        )
+        base = _check_requirement(rest, facts) if _has_checker(rest) else _receipt(req, "met", None)
+        return _with_protected_text(req, facts, base)
+    return _check_requirement(req, facts)
+
+
+def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if _wants_opening_cut(req) and facts.edit_format in {"subtitled", "talking_head"}:
         # "Cut the intro, start the video at '...'": a quoted start line owns the sentence
         # (and any pauses it names); every other speech edit keeps its usual path.

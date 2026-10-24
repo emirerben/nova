@@ -115,10 +115,13 @@ log = structlog.get_logger()
 # v76 (KRI-815): `$voiceover_script_section` teaches `draft_voiceover_script` when footage is
 # attached and no voiceover is (a script request returns a script, not a doomed narrated draft).
 # v77 combines both v76 branches (KRI-816 starts_fresh + KRI-815 voiceover script section).
+# v77 (KRI-827): "no text on her face or on the plate" => `keep_text_off` facts.
+# v78 combines main's v77 (KRI-815 + KRI-816) with KRI-827's v77 (keep_text_off).
 # v77 (KRI-821): "mute the camera / crowd sound" is a typed `source_muted` audio intent.
 # v78 (KRI-821): a named cut of a repeated line records which take (`cut_line_occurrences`).
 # v79 combines main's v77 (KRI-815 + KRI-816) with KRI-821's v78.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v79"
+# v80 combines main's v79 (KRI-815/816/821) with KRI-827's keep_text_off (branch v78).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v80"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -505,7 +508,11 @@ code) when they name the captions' language ("Türkçe altyazı" => "tr"), plus 
 captions, each exactly as the creator wrote it (never corrected or translated); brighten or darken
 the footage itself ("brighten the dark clips", "klipleri aydınlat") => a `style` requirement with
 {"footage_light": "brighter"} or {"footage_light": "darker"}; no edit can change the footage's
-light yet, so never say in `summary` that it is brightened or darkened.
+light yet, so never say in `summary` that it is brightened or darkened; keep text off something
+in the frame ("no text on her face or on the plate", "yüzüme ve tabağa yazı gelmesin") => a
+`style` requirement with {"keep_text_off": [{"kind": "face"}, {"kind": "object", "label":
+"plate"}]}, each object in the creator's own words, never translated (the app asks the creator to
+mark the object on a frame; never describe where it is yourself).
 Keep the source/camera/ambient audio unchanged (including noun phrases such as "original camera
 audio" or "kameranın özgün sesi") => an `audio` requirement with
 {"audio_intent": "source_unchanged"}. This fact describes ONLY unprocessed source sound.
