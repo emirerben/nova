@@ -4979,7 +4979,8 @@ final class NativeEditorSessionTests: XCTestCase {
             XCTAssertEqual(job, jobID)
             XCTAssertEqual(variant, "variant")
             await MainActor.run { fake.deviceFetchCount += 1 }
-            throw APIError.requestFailed(status: 503)
+            // A 4xx the phone can't classify: a 503 now waits and retries on its own.
+            throw APIError.requestFailed(status: 400)
         }, factory: { _, _ in throw APIError.unsupported })
         let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 4))
         session.useDeviceRendering(renderSessions)

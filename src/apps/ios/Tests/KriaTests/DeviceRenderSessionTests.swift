@@ -241,10 +241,12 @@ private actor RetryGate {
         })
         let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
         await sessions.reconcile(key, capabilities: .disabled)
-        XCTAssertEqual(sessions.presentations[key]?.phase, .needsAttention)
+        // `.disabled` is also a failed capability read: check again, never "not available".
+        XCTAssertEqual(sessions.presentations[key]?.waiting, .checking)
         XCTAssertFalse(sessions.presentations[key]?.requiresServerRetry ?? true)
         let calls = await exporter.calls
         XCTAssertEqual(calls, 0)
+        await sessions.stopAll()
     }
 
     /// S3-b: a rollout pause is a hold. The phone shows a waiting state and never

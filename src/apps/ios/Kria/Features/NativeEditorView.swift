@@ -337,8 +337,8 @@ struct NativeEditorView: View {
                         .padding(.horizontal, 16)
                         .padding(.bottom, 4)
                 }
-                if let key = session.deviceRenderKey, let phase = model.deviceRenders.presentations[key]?.phase {
-                    Button(DeviceRenderButtonTitle.for(phase: phase)) { showsDeviceRender = true }
+                if let key = session.deviceRenderKey, let presentation = model.deviceRenders.presentations[key] {
+                    Button(DeviceRenderButtonTitle.for(presentation: presentation)) { showsDeviceRender = true }
                         .font(KriaFont.body(12).weight(.semibold))
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .accessibilityIdentifier("native-editor-device-render")

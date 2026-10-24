@@ -38,8 +38,40 @@ struct DeviceRenderStatusResponse: Decodable, Sendable {
         outputVerificationRequired = try container.decodeIfPresent(Bool.self, forKey: .outputVerificationRequired) ?? false
         phoneRenderingPaused = try container.decodeIfPresent(Bool.self, forKey: .phoneRenderingPaused) ?? false
         let raw = try container.decode(JSONValue.self, forKey: .request)
-        request = try RecipeJSON.decoder().decode(DeviceRenderRequest.self, from: JSONEncoder().encode(raw))
-        try request.recipe.validate()
+        let data = try JSONEncoder().encode(raw)
+        do {
+            request = try RecipeJSON.decoder().decode(DeviceRenderRequest.self, from: data)
+            try request.recipe.validate()
+        } catch {
+            // A recipe this build can't read used to surface as raw decoder
+            // text while the server waited on the phone forever (S1-f). Keep
+            // the identity so the phone can tell the server why it won't render.
+            guard let identity = try? RecipeJSON.decoder().decode(DeviceRenderRequestIdentity.self, from: data).identity else { throw error }
+            throw DeviceRenderRecipeUnreadable(identity: identity, phase: phase, publishedGeneration: publishedGeneration, underlying: error)
+        }
+    }
+}
+private struct DeviceRenderRequestIdentity: Decodable { let identity: DeviceRenderIdentity }
+
+/// The status read succeeded but this build can't decode or validate the
+/// pinned recipe. Unknown keys or enum cases, and a newer schema, mean the
+/// app is out of date; an invalid recipe of a known schema is unsupported.
+struct DeviceRenderRecipeUnreadable: Error, Equatable, Sendable {
+    let identity: DeviceRenderIdentity
+    let phase: String
+    let publishedGeneration: String?
+    let reasonCode: String
+    let detail: String
+
+    init(identity: DeviceRenderIdentity, phase: String, publishedGeneration: String?, underlying: Error) {
+        self.identity = identity; self.phase = phase; self.publishedGeneration = publishedGeneration
+        let outdated: Bool = switch underlying {
+        case is DecodingError, is RenderAssetError: true
+        case RecipeError.unsupportedSchema: true
+        default: false
+        }
+        reasonCode = outdated ? DeviceRenderFailureReasonCode.rendererOutdated.rawValue : DeviceRenderFailureReasonCode.unsupportedRecipe.rawValue
+        detail = "Device recipe unreadable: \(String(describing: type(of: underlying)))"
     }
 }
 struct DeviceRenderFailureBody: Encodable, Sendable {

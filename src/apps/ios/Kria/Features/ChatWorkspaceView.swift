@@ -700,7 +700,8 @@ private struct CreationWorkspaceView: View {
         guard let presentation = model.deviceRenders.presentations[key] else { return true }
         guard deviceBuildStage != nil else { return false }
         guard !presentation.outputVerificationPending, presentation.repairAttempt == nil else { return false }
-        return presentation.message == nil && !presentation.requiresServerRetry
+        // A quiet network wait stays in the feed; heat, storage and unknown states need the card.
+        return presentation.message == nil && !presentation.requiresServerRetry && presentation.waiting?.isQuiet != false
     }
 
     @ViewBuilder private var planFeedView: some View {
@@ -2317,7 +2318,7 @@ private struct CreationWorkspaceView: View {
                 let changed = try await refreshDelta()
                 // A published device render never changes on its own; keep
                 // polling it only while it is unsettled or the thread moved.
-                let deviceSettled = deviceRenderKey.flatMap { model.deviceRenders.presentations[$0]?.phase } == .synced
+                let deviceSettled = serverDeviceRenderKey.map { model.deviceRenders.isSettled($0) } ?? false
                 if changed || !deviceSettled || currentProject.status == .rendering { await refreshDeviceRender() }
                 delay = changed || isSending || isActing || isThinking || currentProject.status == .rendering
                     || fullThread?.preparationIsActive == true || speechCleanupIsChecking
@@ -2344,7 +2345,13 @@ private struct CreationWorkspaceView: View {
         SpeechCleanupOffer.resolve(fullThread?.speechCleanup).offer == .checking
     }
 
+    /// The device card's key. Nil once the server has no device render behind it
+    /// (job or record gone, editor draft empty), so the job's own status shows instead.
     private var deviceRenderKey: DeviceRenderKey? {
+        serverDeviceRenderKey.flatMap { model.deviceRenders.isInactive($0) ? nil : $0 }
+    }
+
+    private var serverDeviceRenderKey: DeviceRenderKey? {
         guard let job = fullThread?.job, let jobID = UUID(uuidString: job.id),
               let variant = job.variants.first(where: {
                   $0.renderDestination == "device" || $0.renderStatus == "awaiting_device" || $0.deliveryPhase != nil
@@ -2353,9 +2360,11 @@ private struct CreationWorkspaceView: View {
     }
 
     private func refreshDeviceRender(retry: Bool = false) async {
-        guard capabilitiesAreAuthoritative,
-              let deviceRenderKey,
-              let phoneRendering = capabilities?.phoneRendering else { return }
+        // A failed capability read keeps the last set the server enabled; it
+        // never substitutes `.disabled`, which reads as "not available" (S4-d).
+        guard let deviceRenderKey = serverDeviceRenderKey,
+              let phoneRendering = capabilitiesAreAuthoritative
+                ? capabilities?.phoneRendering : model.deviceRenders.lastEnabledCapabilities else { return }
         await model.deviceRenders.reconcile(deviceRenderKey, capabilities: phoneRendering, retry: retry)
     }
 

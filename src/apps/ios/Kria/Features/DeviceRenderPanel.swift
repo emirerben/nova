@@ -19,9 +19,10 @@ struct DeviceRenderPanel: View {
             presentation: sessions.presentations[key] ?? DeviceRenderPresentation(phase: .preparing),
             retry: { Task {
                 // Re-sending an existing local file needs no new render consent.
-                // Every fresh runtime export goes through its approval, including
-                // a local failure whose server observer has not caught up yet.
-                if let retryApproved, sessions.presentations[key]?.phase != .localReady {
+                // A fresh runtime export goes through chat approval only when the
+                // server really needs a new attempt; a phone-local failure (server
+                // still awaiting this iPhone) is retried right here (S1-k).
+                if let retryApproved, sessions.retryNeedsApproval(key), sessions.presentations[key]?.phase != .localReady {
                     await retryApproved()
                 } else { await retry() }
             } },
@@ -35,7 +36,7 @@ struct DeviceRenderPanel: View {
             },
             originalsMissing: originalsMissing
         )
-        if [.needsAttention, .cancelled].contains(sessions.presentations[key]?.phase ?? .preparing) {
+        if DeviceRenderAttentionCopy.offersOriginalRecovery(sessions.presentations[key]) {
             Button("Find original files") { showsSourceRecovery = true }
                 .buttonStyle(KriaSecondaryButtonStyle())
                 .accessibilityIdentifier("device-render-find-originals")
@@ -155,15 +156,64 @@ enum DeviceRenderAttentionCopy {
         // Distinct from `unsupported_recipe`: the renderer itself is out of date for this
         // recipe (version/schema mismatch), not a specific feature it can't produce.
         // "Start a new edit" wouldn't fix that -- updating the app would.
-        "renderer_outdated": "Update Kria to render this edit.",
+        "renderer_outdated": "This edit uses something newer than this version of Kria. Your project is saved.",
         "cancelled_by_user": "Rendering was stopped. Your project is saved.",
         // KRI-141: the server's stale-render reaper (`device_render_reaper.py`) gave up
         // after a day with no word from this iPhone -- usually Kria was closed or the
         // phone slept mid-render. Transient, so "Try again" stays.
         "timed_out": "Kria stopped waiting after a day without hearing from this iPhone. Your project is saved. Keep Kria open and try again.",
+        // Rendering on iPhone is paused for this account or edit (server rollout).
+        "device_unavailable": "Rendering on iPhone is paused for this edit. Your project is saved.",
+        // The job was cancelled outside this iPhone (another device, the web, or Kria).
+        DeviceRenderSessions.jobCancelledReason: "This render was stopped. Your project is saved.",
     ]
 
+    /// Reasons a retry can't change: the recipe, the app version or the
+    /// rollout has to change first, so "Try again" is hidden for them.
+    static let structuralReasons: Set<String> = ["unsupported_recipe", "renderer_outdated", "device_unavailable", DeviceRenderSessions.jobCancelledReason]
+
+    /// "Find original files" only helps a render that failed or stopped on
+    /// this phone, never one waiting on the phone or blocked by the app version.
+    static func offersOriginalRecovery(_ presentation: DeviceRenderPresentation?) -> Bool {
+        guard let presentation, presentation.waiting == nil,
+              [.needsAttention, .cancelled].contains(presentation.phase) else { return false }
+        guard let reasonCode = presentation.reasonCode else { return true }
+        return !structuralReasons.contains(reasonCode) && !["thermal", "insufficient_storage"].contains(reasonCode)
+    }
+
+    /// Title, detail and quiet note for a render that waits instead of failing.
+    static func waitingTitle(_ wait: DeviceRenderWait) -> String? {
+        switch wait {
+        case .cooling: "Waiting for your iPhone to cool down"
+        case .storage(let bytes): bytes > 0 ? "Free up \(formattedBytes(bytes)) to render" : "Waiting for storage"
+        case .checking: "Checking your render"
+        case .connection, .server: nil
+        }
+    }
+
+    static func waitingDetail(_ wait: DeviceRenderWait) -> String? {
+        switch wait {
+        case .cooling: "Rendering starts automatically when it’s cooler. Your project is saved."
+        case .storage: "This iPhone is low on storage. Rendering starts automatically once there’s room."
+        case .checking: "Kria is checking this render. It continues automatically."
+        case .connection, .server: nil
+        }
+    }
+
+    static func waitingNote(_ wait: DeviceRenderWait) -> String? {
+        switch wait {
+        case .connection: "Waiting for connection. Kria will continue automatically."
+        case .server: "Kria is busy. Your render will continue automatically."
+        case .cooling, .storage, .checking: nil
+        }
+    }
+
+    static func formattedBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
     static func message(phase: DeviceRenderPhase, reasonCode: String?, fallback: String?) -> String? {
+        if phase == .cancelled, let reasonCode, let mapped = reasonMessage[reasonCode] { return mapped }
         guard phase == .needsAttention else { return fallback }
         if let reasonCode, let mapped = reasonMessage[reasonCode] { return mapped }
         if let fallback, fallback.count <= 160 { return fallback }
@@ -179,9 +229,10 @@ enum DeviceRenderAttentionCopy {
         guard [.needsAttention, .cancelled, .localReady].contains(phase) else { return false }
         // KRI-211: retrying cannot conjure files that are on another device.
         if originalsMissing && phase == .needsAttention { return false }
+        // A job cancelled elsewhere is gone; retrying it would only answer 409.
+        if phase == .cancelled, reasonCode == DeviceRenderSessions.jobCancelledReason { return false }
         // `renderer_outdated` is structural the same way `unsupported_recipe` is: retrying
         // recompiles the identical, still-too-new recipe and fails identically.
-        let structuralReasons: Set<String> = ["unsupported_recipe", "renderer_outdated"]
         guard phase == .needsAttention, let reasonCode else { return true }
         return !structuralReasons.contains(reasonCode)
     }
@@ -208,10 +259,13 @@ struct DeviceRenderStatusCard: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(title).font(KriaFont.body(18)).bold()
             Text(detail).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
-            if [.preparing, .rendering, .syncing].contains(presentation.phase) {
+            if [.preparing, .rendering, .syncing].contains(presentation.phase), !waitsOnPhone {
                 ProgressView().accessibilityLabel(title)
             }
-            if originalsMissing && presentation.phase == .needsAttention {
+            if let note = presentation.waiting.flatMap(DeviceRenderAttentionCopy.waitingNote) {
+                Text(note).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+                    .accessibilityIdentifier("device-render-waiting")
+            } else if originalsMissing && presentation.phase == .needsAttention {
                 Text(NativeEditorSession.originalsUnavailableMessage).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
                     .accessibilityIdentifier("device-render-originals-missing")
             } else if let message = needsAttentionAwareMessage {
@@ -227,7 +281,14 @@ struct DeviceRenderStatusCard: View {
                         .accessibilityIdentifier("device-render-save-message")
                 }
             }
-            if DeviceRenderAttentionCopy.showsRetryButton(phase: presentation.phase, reasonCode: presentation.reasonCode, originalsMissing: originalsMissing) {
+            if presentation.phase == .needsAttention, presentation.reasonCode == "renderer_outdated" {
+                Link("Update Kria", destination: Self.appStoreURL)
+                    .buttonStyle(KriaSecondaryButtonStyle())
+                    .accessibilityIdentifier("device-render-update-app")
+            }
+            // Heat, storage and checking resume by themselves; quiet network waits keep the buttons.
+            if presentation.waiting?.isQuiet != false,
+               DeviceRenderAttentionCopy.showsRetryButton(phase: presentation.phase, reasonCode: presentation.reasonCode, originalsMissing: originalsMissing) {
                 Button(presentation.localFile == nil ? "Try again" : "Retry sync") {
                     guard presentation.requiresServerRetry, let retryNeedsAttention else {
                         retry(); return
@@ -242,7 +303,7 @@ struct DeviceRenderStatusCard: View {
                 .disabled(isRetryingFailure)
                 .accessibilityIdentifier("device-render-retry")
             }
-            if [.preparing, .rendering].contains(presentation.phase) {
+            if [.preparing, .rendering].contains(presentation.phase), presentation.waiting?.isQuiet != false {
                 Button("Stop rendering", action: stop)
                     .font(KriaFont.body(14))
                     .frame(minHeight: 44)
@@ -290,6 +351,15 @@ struct DeviceRenderStatusCard: View {
         }
     }
 
+    private static let appStoreURL = URL(string: "https://apps.apple.com/")!
+
+    /// Waiting on the phone itself (heat, storage) or on an unknown server
+    /// state: nothing is rendering, so no spinner or Stop button.
+    private var waitsOnPhone: Bool {
+        guard let waiting = presentation.waiting else { return false }
+        return !waiting.isQuiet && waiting != .checking
+    }
+
     private var needsAttentionAwareMessage: String? {
         DeviceRenderAttentionCopy.message(phase: presentation.phase, reasonCode: presentation.reasonCode, fallback: presentation.message)
     }
@@ -297,6 +367,7 @@ struct DeviceRenderStatusCard: View {
     private var title: String {
         if presentation.outputVerificationPending { return "Checking your video" }
         if let attempt = presentation.repairAttempt { return "Repairing your video (\(attempt) of 2)" }
+        if let title = presentation.waiting.flatMap(DeviceRenderAttentionCopy.waitingTitle) { return title }
         return switch presentation.phase {
         case .preparing: "Preparing on your iPhone"
         case .rendering: "Rendering on your iPhone"
@@ -304,12 +375,16 @@ struct DeviceRenderStatusCard: View {
         case .syncing: "Syncing your video"
         case .synced: "Your video is synced"
         case .cancelled: "Rendering stopped"
+        case .needsAttention where presentation.reasonCode == "renderer_outdated": "Update Kria to render this edit"
         case .needsAttention: originalsMissing ? "This edit needs its original clips" : "This edit needs your attention"
         case .superseded: "Your edit changed"
         }
     }
     private var detail: String {
         if presentation.outputVerificationPending { return "Checking the exported picture, text and sound against your approved edit." }
+        if let detail = presentation.waiting.flatMap(DeviceRenderAttentionCopy.waitingDetail) { return detail }
+        if presentation.phase == .needsAttention, let reasonCode = presentation.reasonCode,
+           DeviceRenderAttentionCopy.structuralReasons.contains(reasonCode) { return "Your project is saved." }
         return switch presentation.phase {
         case .preparing: "Getting the original footage and selected assets ready."
         case .rendering: "Keep Kria open while the video finishes."
