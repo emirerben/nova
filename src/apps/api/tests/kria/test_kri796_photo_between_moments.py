@@ -198,8 +198,52 @@ def m2_brief() -> CreativeBrief:
     return apply_updates(None, updates, source_turn_id="t").model_copy(update={"version": 1})
 
 
-def length_plan(windows: list[tuple[float, float]] = WINDOWS) -> dict:
-    """The approved length plan #1711 builds for the take (version 1 envelope)."""
+def length_plan(
+    windows: list[tuple[float, float]] = WINDOWS, *, strategy: dict | None = None
+) -> dict:
+    """The approved length plan #1711 builds for the take (version 1 envelope).
+
+    KRI-723: with ``strategy``, the same windows as the creator pointed at them (envelope v2,
+    one ``creator_answer`` moment per window in the strategy's named-moment order), the only
+    plan whose windows are evidence of the named actions. Ordinal windows (v1) are not.
+    """
+    plan = _plain_length_plan(windows)
+    if strategy is None:
+        return plan
+    from app.services.clip_order_sequence import sequence_rows  # noqa: PLC0415
+    from app.services.named_moments import _listed  # noqa: PLC0415
+
+    named = [
+        (index, words)
+        for index, (_pos, name, members, _status) in enumerate(
+            sequence_rows(strategy["resolved_clip_intents"])
+        )
+        if members == [TAKE]
+        for words in _listed(name)
+    ]
+    if len(named) != len(windows):
+        return plan
+    for window in plan["windows"]:
+        window["reason"] = "creator_answer"
+        window["score"] = 0.0
+    plan["version"] = 2
+    plan["moments"] = [
+        {
+            "moment_key": f"m{i}",
+            "words": words,
+            "row": row,
+            "origin": "creator_answer",
+            "media_id": TAKE,
+            "source_start_s": start,
+            "source_end_s": end,
+            "window_index": i,
+        }
+        for i, ((row, words), (start, end)) in enumerate(zip(named, windows, strict=True))
+    ]
+    return plan
+
+
+def _plain_length_plan(windows: list[tuple[float, float]]) -> dict:
     return {
         "version": 1,
         "owner": "footage",
@@ -263,15 +307,23 @@ def photo() -> UnifiedClip:
 
 
 def plan_m2(
-    strategy: dict, *, windows: list[tuple[float, float]] | None = WINDOWS
+    strategy: dict,
+    *,
+    windows: list[tuple[float, float]] | None = WINDOWS,
+    evidenced: bool = True,
 ) -> UnifiedMontagePlan:
+    """``evidenced`` (KRI-723): the windows are the creator's pointed moments (v2)."""
     return plan_unified_montage(
         [take()],
         brief_view(m2_brief()),
         strategy=copy.deepcopy(strategy),
         clip_intents_enabled=True,
         visuals=[photo()],
-        approved_length_plan=length_plan(windows) if windows is not None else None,
+        approved_length_plan=(
+            length_plan(windows, strategy=strategy if evidenced else None)
+            if windows is not None
+            else None
+        ),
     )
 
 
@@ -337,7 +389,12 @@ def test_a_photo_the_cuts_do_not_hold_where_asked_is_never_met() -> None:
     ordered = [take(), photo()]
     # The cuts as they were before this fix: the photo after all six windows.
     stale = _sequence_outcomes(
-        rows, ordered, seats=seats, cuts=[(TAKE, start) for start, _end in WINDOWS] + [(PHOTO, 0.0)]
+        rows,
+        ordered,
+        seats=seats,
+        cuts=[(TAKE, start) for start, _end in WINDOWS] + [(PHOTO, 0.0)],
+        spans=[(TAKE, start, end) for start, end in WINDOWS] + [(PHOTO, 0.0, 1.0)],
+        moment_record=length_plan(strategy=one_list())["moments"],
     )
     assert [row["status"] for row in stale] == ["met", "partial"]
     assert stale[1]["code"] == "misplaced"
@@ -390,6 +447,21 @@ def test_six_named_moments_over_five_windows_are_not_guessed(strategy: dict) -> 
     plan = plan_m2(strategy, windows=WINDOWS[:5])
     assert layout(plan) == [*WINDOWS[:5], "PHOTO"]
     assert receipts(plan)["r1"]["status"] == "partial"
+
+
+# -- KRI-723: ordinal windows are no evidence of the named actions ----------------------------
+
+
+@pytest.mark.parametrize("strategy", [one_list(), row_per_moment()], ids=["one-list", "row-each"])
+def test_ordinal_windows_seat_the_photo_but_never_claim_the_moments(strategy: dict) -> None:
+    """The v1 layout is unchanged (KRI-796's seat), but nobody located those actions: an honest
+    format limit on r1 that does not block the render, never "met"."""
+    plan = plan_m2(strategy, evidenced=False)
+    assert layout(plan) == SEATED
+    assert {row["code"] for row in order_rows(plan)} == {"not_located"}
+    judged = receipts(plan)
+    assert judged["r1"]["status"] == "partial", judged["r1"]
+    assert not needs_creator_choice(judged["r1"]), judged["r1"]
 
 
 # -- 6: everything else lays out and judges exactly as before ---------------------------------

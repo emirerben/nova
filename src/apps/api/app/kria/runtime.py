@@ -28,6 +28,7 @@ from app.kria.api_schemas import (
     ApprovalDecisionOut,
     ApprovalSnapshotOut,
     DeltaEvent,
+    MomentOrderAnswerIn,
     ProtectedRegionIn,
     SubmitTurnBody,
     ThreadDeltaOut,
@@ -122,6 +123,12 @@ class RuntimeFailure(Exception):
     current_revision: int | None = None
 
 
+def _answers_moment_questions() -> bool:
+    """KRI-723: the app sending this request answers a ``moment_order_question``."""
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.moment_order_min_client_protocol
+
+
 def _answers_batched_questions() -> bool:
     """KRI-802: the app sending this request answers a reply's cards together."""
     protocol = current_client_protocol()
@@ -170,6 +177,8 @@ def request_digest(body: SubmitTurnBody) -> str:
         | ({"manual_edits"} if body.manual_edits is None else set())
         # KRI-827: additive the same way.
         | ({"protected_region"} if body.protected_region is None else set())
+        # KRI-723: additive the same way.
+        | ({"moment_order"} if body.moment_order is None else set())
     )
     encoded = json.dumps(
         body.model_dump(mode="json", exclude=excluded),
@@ -322,6 +331,70 @@ async def _apply_song_range_answer(
     item = await db.get(PlanItem, thread.active_plan_item_id, with_for_update=True)
     if item is not None and getattr(item, "song_gcs_path", None):
         apply_song_range(thread, item, chosen)
+
+
+async def _validate_moment_order(
+    db: AsyncSession, thread: CreationThread, answer: MomentOrderAnswerIn
+) -> dict:
+    """KRI-723: the answer must close the thread's latest open moment question, answer each
+    of its moments once, and point only at this thread's take, inside it, without overlaps.
+
+    The take must still be one of THIS thread's clips (its active plan item's media, the
+    KRI-827 ownership rule) at the storage generation the question was asked about: a
+    re-uploaded or removed take makes the question stale instead of pinning other bytes."""
+    from app.services.named_moments import (  # noqa: PLC0415
+        MEDIA_CODE,
+        STALE_CODE,
+        MomentOrderError,
+        latest_open_moment_question,
+        validate_moment_order_answer,
+    )
+
+    rows = (
+        await db.execute(
+            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == thread.id,
+                CreationThreadEvent.role.in_({"user", "assistant"}),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    question = latest_open_moment_question((role, payload) for role, payload in rows)
+    payload = answer.model_dump(mode="json", exclude_none=True)
+    try:
+        validate_moment_order_answer(payload, question)
+        take = dict((question or {}).get("take") or {})
+        item = (
+            await db.get(PlanItem, thread.active_plan_item_id)
+            if thread.active_plan_item_id
+            else None
+        )
+        plan = await db.get(ContentPlan, item.content_plan_id) if item is not None else None
+        owned = plan is not None and plan.user_id == thread.creator_id
+        match = next(
+            (
+                row
+                for row in (list(getattr(item, "clip_assignments", None) or []) if owned else [])
+                if isinstance(row, dict) and str(row.get("media_id")) == str(take.get("media_id"))
+            ),
+            None,
+        )
+        if match is None:
+            raise MomentOrderError(MEDIA_CODE, "That clip isn't part of this video anymore.")
+        generation = match.get("storage_generation") or match.get("generation")
+        if str(generation or "") != str(take.get("generation") or ""):
+            raise MomentOrderError(STALE_CODE, "That clip changed. Answer the latest question.")
+    except MomentOrderError as exc:
+        status = 409 if exc.code == STALE_CODE else 404 if exc.code == MEDIA_CODE else 422
+        raise RuntimeFailure(
+            status,
+            exc.code,
+            str(exc),
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        ) from exc
+    return payload
 
 
 async def _stamp_protected_region(
@@ -777,6 +850,7 @@ async def submit_turn(
         and body.clip_selection is None
         and body.song_order is None
         and body.song_range is None
+        and body.moment_order is None
         and scope is None  # a scoped ask is an edit; free text must not become an answer
     ):
         # The request digest above stays that of the body as sent (idempotency); only
@@ -790,6 +864,11 @@ async def submit_turn(
         await _validate_song_order(db, thread, body.song_order)
     if body.song_range is not None and settings.song_filming_range_enabled:
         await _apply_song_range_answer(db, thread, body.song_range)
+    moment_order = (
+        await _validate_moment_order(db, thread, body.moment_order)
+        if body.moment_order is not None
+        else None
+    )
     protected_region = (
         await _stamp_protected_region(db, thread, body.protected_region)
         if body.protected_region is not None
@@ -870,6 +949,7 @@ async def submit_turn(
         and body.clip_selection is None
         and body.song_order is None
         and body.song_range is None
+        and body.moment_order is None
     ):
         duplicate = await find_duplicate_send(db, thread, body.message)
     # KRI-520: the chat's reply language after this message, stored on the locked
@@ -1048,6 +1128,8 @@ async def submit_turn(
             ),
             # KRI-827: the creator's checked + stamped mark (never client-stamped).
             **({"protected_region": protected_region} if protected_region is not None else {}),
+            # KRI-723: the creator's checked answer (folded by the planner's moment gate).
+            **({"moment_order": moment_order} if moment_order is not None else {}),
             # KRI-588: flag off -> dropped silently, nothing stored.
             **(
                 {"song_range": body.song_range.model_dump(mode="json")}
@@ -1087,6 +1169,9 @@ async def submit_turn(
             # the planner may ask them together. Not part of `request_digest`; older builds
             # and the web store nothing (existing payloads byte-identical).
             **({"answers_batched_questions": True} if _answers_batched_questions() else {}),
+            # KRI-723: this app answers a moment-order card. Not part of `request_digest`;
+            # older builds and the web store nothing (existing payloads byte-identical).
+            **({"answers_moment_questions": True} if _answers_moment_questions() else {}),
             # KRI-898: the app build that sent this message, so the draft plans a freeze
             # only for a build that can play it. Not part of `request_digest`; the web and
             # headerless callers store nothing (existing payloads byte-identical).
