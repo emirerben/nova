@@ -151,6 +151,22 @@ the pending fixtures also initially used an invalid fact status. Those harness
 issues/logs are retained. Final verification uses a separate task-local PostgreSQL
 server on 127.0.0.1:55489; no other connections or databases were changed/stopped.
 
+## CI inventory correction
+
+The first CI run of the inclusion commit failed in `changes / select`: the two
+new UI methods were not registered in the existing creation-group inventory.
+The selector correctly fell back to full coverage, causing four focused-selection
+contract assertions to fail and dependent API/native gates to stop. Supported
+Codex-app diagnostics supplied the actual failed job120878608090/run40096017730;
+the bounded log was truncated but included all four failure tracebacks. No CLI
+CI/log fallback or manual remote rerun was used.
+
+The follow-up adds exactly those two method names to
+`scripts/ios/ui-test-groups.json`. It changes no selector algorithm, thresholds,
+required checks or existing inventory entries. Local selector tests reproduce the
+four failures before registration; afterward all118 CI contract tests and117 iOS
+orchestration/inventory tests pass. Fresh source CI is required after publication.
+
 ## Actual native output and binding
 
 Two retained output families use the production AVFoundation exporter on the Mac,
