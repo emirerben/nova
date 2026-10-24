@@ -661,9 +661,17 @@ def shorter_creator_label(value: object) -> str | None:
 
 
 def vision_evidence_text(record: ClipUnderstanding) -> str:
-    """Everything the vision model WROTE about a clip. Never the transcript."""
+    """Everything the vision model WROTE about a clip. Never the transcript.
+
+    KRI-845: its ``props`` and ``actions`` are the model's own words too ("black round tray"),
+    and the resolver sees them, so a label picked from one grounds as ``record_span``. Never
+    ``visual_quality``: "blurry, fast pan" is a judgment of the footage, not label or caption
+    text. A record without props / actions yields exactly what it did before.
+    """
     parts = [record.subject, record.summary, record.setting, record.activity, record.people.note]
     parts.extend(m.description for m in record.notable_moments)
+    parts.extend(record.props)
+    parts.extend(record.actions)
     return " ".join(p for p in parts if p)
 
 

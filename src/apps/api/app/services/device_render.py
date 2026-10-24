@@ -386,6 +386,43 @@ def _verify_recipe_source_identity(
     return {media_id: binding.original.has_audio for media_id, binding in bindings.items()}
 
 
+def _verify_processed_audio_identity(
+    job: Any, request: DeviceRenderRequest, base_generation: str
+) -> None:
+    """Refuse a forged/stale derivative before it becomes a device receipt."""
+    from app.kria.render_assets import ProcessedAudioRenderAsset  # noqa: PLC0415
+    from app.pipeline.phone_processed_audio import (  # noqa: PLC0415
+        processed_audio_asset,
+        processed_audio_receipt_for,
+    )
+
+    manifest = request.recipe.asset_manifest
+    if not any(isinstance(asset, ProcessedAudioRenderAsset) for asset in manifest.assets):
+        return
+    bindings = _approved_source_bindings(job.assembly_plan or {}, request.identity.variant_id)
+    for asset in manifest.assets:
+        if not isinstance(asset, ProcessedAudioRenderAsset):
+            continue
+        receipt = processed_audio_receipt_for(
+            job.assembly_plan or {},
+            variant_id=request.identity.variant_id,
+            source_media_id=asset.source_media_id,
+        )
+        source = bindings.get(asset.source_media_id)
+        if (
+            receipt is None
+            or asset != processed_audio_asset(receipt, asset_id=asset.id)
+            or asset.job_id != str(job.id)
+            or asset.variant_id != request.identity.variant_id
+            or asset.render_generation != base_generation
+            or source is None
+            or source.generation != asset.source_generation
+        ):
+            raise CreatorRenderContractError(
+                "This edit's processed audio no longer matches its approved source files."
+            )
+
+
 def _verify_contract_pin(
     job: Any,
     request: DeviceRenderRequest,
@@ -396,6 +433,11 @@ def _verify_contract_pin(
     """Validate a new v2 request against its immutable creator requirements."""
     assembly = job.assembly_plan or {}
     _require_marked_root_authority(job)
+    # Asset authorization is independent of creator-contract rollout. A legacy
+    # job must not be able to pin a client-forged processed-audio identity and
+    # merely discover the refusal later while downloading it.
+    if isinstance(request.recipe, EditRecipeV2):
+        _verify_processed_audio_identity(job, request, base_generation)
     contract = _contract_for_variant(assembly, request.identity.variant_id)
     if contract is None:
         return None

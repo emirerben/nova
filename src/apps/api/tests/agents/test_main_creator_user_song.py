@@ -52,9 +52,9 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v78 (KRI-821) teaches `cut_line_occurrences` for a repeated named cut: brief-on hashes only.
 # v80 combines KRI-827 keep_text_off with KRI-821: brief-on hashes re-pinned.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "e091619111da20a56e03ec76f35515d8015ae65917feabef0287246671eb78d3",
+    (True, True): "9f296ed7cacd61d7e91e6cbca936e522986750e72894d9d0c4a73da3008b24f5",
     (True, False): "e33c7b44e601b95b61036b2806cc2111d8aa20204994881bf8fe128534b5cf3c",
-    (False, True): "454a0de68ed73a53d33d0c85b256b48678a5331ce5a83b2931ada0498d79b6ec",
+    (False, True): "5daebd61f435b7d2ec361ecd32d2a12f1941570b66c9e850559f7dafd0ab2e6c",
     (False, False): "6e32911313c9667767209df7d6d929db36873990e5dceb2d27549ba179569c1d",
 }
 
@@ -125,7 +125,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-24-v80"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-24-v87"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

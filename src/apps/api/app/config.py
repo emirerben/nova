@@ -115,6 +115,10 @@ class Settings(BaseSettings):
     # `fly secrets set PHONE_SUBTITLED_RENDERING_ENABLED=false --app nova-video`
     # + `fly machine restart <id>` (api + worker).
     phone_subtitled_rendering_enabled: bool = True
+    # Requires processedAudio on a verified protocol-18 client cohort.
+    phone_engine_noise_reduction_enabled: bool = False
+    phone_engine_noise_model_path: str = ""
+    phone_engine_noise_model_sha256: str = ""
     # KRI-174 Phase 1: a server-owned `_phone_subtitled_lanes_v1` request on
     # the job's assembly_plan (overlay sticker/photo cards pinned from the
     # Visuals pool, catalog sound effects on an `sfx` track, a muted ending
@@ -397,6 +401,10 @@ class Settings(BaseSettings):
     # Saves. Rollback: `fly secrets set PHONE_SUBTITLED_SPOKEN_TEXT_ENABLED=false
     # --app nova-video` + `fly machine restart <id>` (api + worker).
     phone_subtitled_spoken_text_enabled: bool = True
+    # New Voiceover authoring; existing saved recipes remain playable when off.
+    phone_voiceover_spoken_text_enabled: bool = False
+    phone_voiceover_source_audio_enabled: bool = False
+    phone_voiceover_source_audio_min_client_protocol: int = 17
     # KRI-465 (editable title on phone Voiceover edits): the opening title the
     # status route shows (`narrated_title_text_elements`) opens as an ordinary
     # editable text element: the capability map opens `text_elements` and a
@@ -1018,6 +1026,14 @@ class Settings(BaseSettings):
     # 30 s so whisper's detected language is still cross-checked before the cut
     # plan is built. Best-effort; False skips the call (item transcript only).
     speech_cleanup_gemini_reference_enabled: bool = True
+    # KRI-843: a take whose Gemini reference speaks two or more languages (Don Julio T1:
+    # an English question, a Spanish answer, Turkish chatter) has no single right whisper
+    # language. The preflight worker transcribes it once more per extra language (at most 3
+    # extra whisper-1 passes, mixed takes only, ~$0.006/min each) and takes, stretch by stretch,
+    # the pass the reference confirms; the first pass stands everywhere else. false = the EN/TR
+    # cross-check alone (re-run the whole take in one language), byte-identical.
+    # Apply: fly secret + worker restart.
+    speech_cleanup_mixed_language_enabled: bool = True
 
     # yt-dlp cookies for admin URL imports. Use YTDLP_COOKIES_B64 in hosted
     # environments (secret-safe, decoded into a short-lived 0600 temp file) or

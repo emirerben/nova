@@ -604,6 +604,29 @@
       ]
     },
     {
+      "id": "kri-845-clip-detail-evidence",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri845_clip_detail_evidence.py tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/evals/test_clip_metadata_evals.py tests/evals/test_clip_request_resolver_evals.py tests/agents/test_clip_metadata.py tests/services/test_kri520_clip_intent_copy.py tests/pipeline/test_clip_cache.py tests/schemas/test_clip_intents.py",
+      "paths": [
+        "src/apps/api/app/agents/clip_metadata.py",
+        "src/apps/api/app/agents/clip_request_resolver.py",
+        "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
+        "src/apps/api/app/pipeline/clip_cache.py",
+        "src/apps/api/app/schemas/clip_intents.py",
+        "src/apps/api/app/schemas/clip_understanding.py",
+        "src/apps/api/app/services/clip_understanding.py",
+        "src/apps/api/app/services/creator_sessions.py",
+        "src/apps/api/prompts/analyze_clip.txt",
+        "src/apps/api/prompts/clip_request_resolver.txt",
+        "src/apps/api/tests/fixtures/agent_evals/clip_metadata/golden/kri845_cafe_tray_clip_props_actions_good.json",
+        "src/apps/api/tests/fixtures/agent_evals/clip_metadata/golden/kri845_fast_pan_blurry_table_good.json",
+        "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri845_cafe_look_alike_skip.json",
+        "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri845_dj_menus_and_blurry_table.json",
+        "src/apps/api/tests/fixtures/kri845_m1_clip_detail.json",
+        "src/apps/api/tests/kria/test_kri845_clip_detail_evidence.py"
+      ]
+    },
+    {
       "id": "kri-585-spoken-order",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri585_spoken_order_montage.py tests/pipeline/test_unified_montage_spoken_order.py tests/services/test_spoken_roles.py",
@@ -1493,6 +1516,22 @@
       ]
     },
     {
+      "id": "voiceover-word-text-selected-audio",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_voiceover_requested_capabilities.py tests/pipeline/test_phone_narrated_spoken_text.py tests/tasks/test_phone_voiceover_requested_edits.py tests/routes/test_phone_voiceover_requested_edit_roundtrip.py tests/services/test_creator_render_contract.py",
+      "xctests": [
+        "KriaTests/NativeEditorRenderCompilerTests/testNarratedSelectedSourceAudioUsesPerSlotGainOnceAndKeepsLegacySilent",
+        "KriaTests/NativeEditorSessionTests/testPhoneNarratedSelectedSourceAudioHydratesFinalBedGainOnly"
+      ],
+      "paths": [
+        "src/apps/api/app/pipeline/phone_narrated_spoken_text.py",
+        "src/apps/api/tests/kria/test_voiceover_requested_capabilities.py",
+        "src/apps/api/tests/pipeline/test_phone_narrated_spoken_text.py",
+        "src/apps/api/tests/tasks/test_phone_voiceover_requested_edits.py",
+        "src/apps/api/tests/routes/test_phone_voiceover_requested_edit_roundtrip.py"
+      ]
+    },
+    {
       "id": "kri-839-beats-spoken-words",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri839_beats_spoken_words.py tests/tasks/test_subtitled_caption_language.py",
@@ -1537,6 +1576,45 @@
         "src/apps/api/tests/kria/test_kri815_voiceover_script_journey.py",
         "src/apps/api/tests/fixtures/agent_evals/voiceover_script_writer/golden/kri815_museum_needs_check.json",
         "src/apps/api/tests/fixtures/agent_evals/main_creator/kri815_script_request.json"
+      ]
+    },
+    {
+      "id": "kri-724-precise-speech-cuts",
+      "needs_native": true,
+      "api_tests": [
+        "tests/tasks/test_phone_explicit_speech_cut.py",
+        "tests/tasks/test_kri707_talking_spoken_text.py",
+        "tests/pipeline/test_explicit_speech_cut.py",
+        "tests/pipeline/test_explicit_speech_audio.py",
+        "tests/pipeline/test_speech_denoise.py",
+        "tests/services/test_processed_audio_asset.py",
+        "tests/kria/test_speech_cut_ask.py",
+        "tests/kria/test_noise_reduction_ask.py"
+      ],
+      "xctests": [
+        "KriaTests/NativeEditorSourcesTests/testExactSpeechCutsAndProcessedAudioUseFinishedPreview"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/speech_cut_ask.py",
+        "src/apps/api/app/kria/noise_reduction_ask.py",
+        "src/apps/api/app/kria/render_assets.py",
+        "src/apps/api/app/pipeline/explicit_speech_cut.py",
+        "src/apps/api/app/pipeline/explicit_speech_audio.py",
+        "src/apps/api/app/pipeline/phone_processed_audio.py",
+        "src/apps/api/app/pipeline/speech_denoise.py",
+        "src/apps/api/app/services/phone_noise_reduction.py",
+        "src/apps/api/tests/tasks/test_phone_explicit_speech_cut.py",
+        "src/apps/api/tests/services/test_processed_audio_asset.py"
+      ]
+    },
+    {
+      "id": "kri-843-mixed-language-talking",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_kri843_mixed_language_transcript.py tests/services/test_speech_cleanup_language_crosscheck.py tests/tasks/test_speech_cleanup_analysis.py",
+      "paths": [
+        "src/apps/api/app/services/mixed_language_transcript.py",
+        "src/apps/api/app/pipeline/speech_cleanup_analysis.py",
+        "src/apps/api/tests/fixtures/kri843_don_julio_t1_passes.json"
       ]
     }
   ]
