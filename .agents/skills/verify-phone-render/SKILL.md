@@ -5,10 +5,17 @@ description: Model-check the iPhone render lifecycle (TLA+) behind "Kria couldn'
 
 # Verify phone render
 
-Run `make verify-phone-render` (TLC v1.8.0, under a minute). Exit 0 pass, 1 fail, 3 pass with drift.
+Run `make verify-phone-render` (TLC v1.8.0, a few minutes). Add `--full` to `python3 formal/ios_edit_flow/verify.py` for the heavier event combinations (Stop with declines and lost capabilities, two saves with every condition, more liveness pairs). Exit 0 pass, 1 fail, 3 pass with drift.
 
-- **drift (exit 3):** a covered function in `formal/ios_edit_flow/coverage.json` changed. Re-read that code, update `PhoneRender.tla` if the behavior changed, then `python3 formal/ios_edit_flow/verify.py --resync`.
-- **model FAIL:** a safety rule broke (stale publish, published flipping to attention, synced without publish, stale request reinstalled). The change is wrong; read the trace in `.dev/formal-ios-edit-flow/`.
-- **finding no longer breaks:** you fixed one. Move the rule from `FINDINGS` to `PASSING` in `verify.py` and its line from `PhoneRenderFindings.cfg` to `PhoneRender.cfg`. Never weaken a rule to make it pass.
+Two models live in `formal/ios_edit_flow/`:
+- `PhoneRender.tla` is the code on this branch. Every rule must hold in its runs (`MODEL_RUNS`, plus `FULL_RUNS` with `--full`).
+- `PhoneRenderBefore.tla` is the code before the killer-screens fixes (origin/main ff27b0a65). `verify.py` checks it still breaks each rule the fixes made pass (`BEFORE_BREAKS`). Do not edit it to match new code; it is history. Rule texts are shared, so a rule change goes into both modules with the same text (helpers such as `Screen`, `Stuck`, `Told` are per module).
 
-Findings and prod evidence: `formal/ios_edit_flow/findings.md`. Statecharts: `formal/ios_edit_flow/statechart/`. To extend the model to new code, use `/maintain-formal-verification-skill`.
+Steps and what a failure means:
+- **drift (exit 3):** a covered function in `coverage.json` changed. Re-read that code, update `PhoneRender.tla` if the behavior changed, then `python3 formal/ios_edit_flow/verify.py --resync`.
+- **model FAIL:** a rule broke on the code model. The trace is in `.dev/formal-ios-edit-flow/model-<run>.log`. Either the change is wrong, or the model no longer matches the code. The model must match the code: never weaken a rule or remove behavior to make it pass.
+- **residual:** `RESIDUAL` lists real findings today's code still breaks, each in the scenario scoped out of `MODEL_RUNS`; `verify.py` checks they still break. It is empty now. When a fix makes one hold, move it to the passing runs (widen them to the scenario), add teeth, rerun.
+- **before:** the old module stopped breaking a rule. Usually a shared rule text changed in a way that hides the old bug; fix the rule, not the old model.
+- **teeth:** every passing rule has at least one mutation (`TEETH`) that puts one piece of the old behavior back; TLC must catch it. Every new fix needs a tooth.
+
+Findings, prod evidence and what changed: `formal/ios_edit_flow/findings.md`. Statecharts of the fixed flow: `formal/ios_edit_flow/statechart/` (`editor-device`, `creation-rendering`). To extend the model to new code, use `/maintain-formal-verification-skill`.

@@ -22,8 +22,8 @@ rule to make it pass.
 
 Usage: python3 formal/ios_edit_flow/verify.py [--resync] [--full] [--explore]
   --resync   rewrite coverage.json hashes + sync_commit (only after re-reading the model)
-  --full     also run the liveness rules for Save with a missing original and for Save
-             with Stop (about 3 more minutes); the default runs split those events
+  --full     also run FULL_RUNS: Stop with declines and lost capabilities, two saves with
+             every condition, and the heavier liveness pairs (several more minutes)
   --explore  also run every residual rule per starting scenario and event set, and write
              .dev/formal-ios-edit-flow/explore.json (used for findings.md)
 Env:   TLA2TOOLS (tla2tools.jar v1.8.0), JAVA (java 11+ binary)
@@ -55,67 +55,191 @@ TLC_SHA256 = "dae639a1f51a9e13ce60c369b15f32124cf1a78017aca366b6de0ae2b5169439"
 LOCAL_TOOLS = Path("/private/tmp/nova-formal-tools")
 
 ALL_EVENTS = '{"save", "other", "stop", "kill", "background", "reaper", "sync"}'
-ALL_CONDS = '{"none", "hot", "unsupported", "missing"}'
-# Every starting condition except a recipe this iPhone cannot render. That one is a
-# residual finding (RESIDUAL below) for the rules that are scoped to SCOPED.
-SCOPED = '{"none", "hot", "missing"}'
-UNSUPPORTED = '{"unsupported"}'
+ALL_CONDS = '{"none", "hot", "unsupported", "outdated", "missing"}'
+SCOPED = '{"none", "hot", "missing"}'  # conditions without a decline
+DECLINES = '{"unsupported", "outdated"}'  # a recipe this iPhone will never render
 # Approval no longer routes anything in the fixed code (the server always sends
-# retry_requires_approval = false, R:535; nothing in PhoneRender.tla reads `approval`
-# except the AttentionHasWayOut teeth), so the fixed runs pin it to FALSE.
-BASE = {"MaxFaults": "1", "MaxTicks": "1", "Conds": ALL_CONDS, "Approvals": "{FALSE}"}
+# retry_requires_approval = false, R:535; nothing in PhoneRender.tla reads `approval`), so
+# the fixed runs pin it to FALSE. Chat: the chat workspace (and its poll) is under the
+# editor; FALSE is the editor opened from the gallery (EditorViews:265).
+BASE = {"MaxFaults": "1", "MaxTicks": "1", "Approvals": "{FALSE}", "Chat": "{TRUE}"}
 ONE_SAVE = {**BASE, "MaxSaves": "1", "MaxId": "3", "Events": ALL_EVENTS}
 TWO_SAVES = {**BASE, "MaxSaves": "2", "MaxId": "4", "Events": '{"save", "other"}'}
-# Liveness runs: a patient user (SpecUser). Two answered preview polls, so the editor can
-# see a newer generation twice (E:7666-7682); the real budget is 300.
+# Liveness runs: two answered preview polls, so the editor can see a newer generation
+# twice (E:7666-7682); the real budget is 300.
 LIVE = {**BASE, "MaxTicks": "2", "MaxSaves": "1", "MaxId": "3"}
 
-SAFETY = ["NoStalePublish", "PublishedStaysPublished", "SyncedMeansPublished",
-          "NoStaleRequestReinstalled", "CloudDecisionReported"]
+SAFETY = [
+    "NoStalePublish",
+    "PublishedStaysPublished",
+    "SyncedMeansPublished",
+    "NoStaleRequestReinstalled",
+    "CloudDecisionReported",
+    "NoSpuriousAttention",
+    "NoFutileRepin",
+]
+INVARIANTS = [("INVARIANT", r) for r in SAFETY]
 WAY_OUT = [("PROPERTY", "AttentionHasWayOut"), ("PROPERTY", "PreviewConverges")]
 # run name -> (specification, constants, [(kind, rule)]). Every PASSING rule appears in
-# at least one run; TLC checks the rules of a run together.
+# at least one run; TLC checks the rules of a run together. No run scopes a condition out
+# any more: an unsupported or outdated recipe is the creator's turn with its own button.
 MODEL_RUNS = {
-    "one-save-all-events": ("Spec", {**ONE_SAVE, "Conds": SCOPED},
-                            [("INVARIANT", r) for r in SAFETY + ["NoSpuriousAttention"]]),
-    "one-save-all-events-unsupported": ("Spec", {**ONE_SAVE, "Conds": UNSUPPORTED},
-                                        [("INVARIANT", r) for r in SAFETY]),
-    "two-saves": ("Spec", TWO_SAVES, [("INVARIANT", r) for r in SAFETY]),
-    # Liveness is slow in TLC (~90 us per graph node), so the default splits the events:
-    # Save on a phone with its originals (cool or hot), Stop with every scoped condition
-    # (including a missing original and the faults-only runs), and kills.
-    "live-save": ("SpecUser", {**LIVE, "Conds": '{"none", "hot"}', "Events": '{"save"}'}, WAY_OUT),
-    "live-stop": ("SpecUser", {**LIVE, "Conds": SCOPED, "Events": '{"stop"}'},
-                  [("PROPERTY", "AttentionHasWayOut")]),
+    "one-save-all-events": ("Spec", {**ONE_SAVE, "Conds": SCOPED}, INVARIANTS),
+    "one-save-declines": (
+        "Spec",
+        {**ONE_SAVE, "Conds": DECLINES, "Events": '{"save", "kill", "reaper"}'},
+        INVARIANTS,
+    ),
+    # The phone loses a verified capability after its export finished (S `.decline where
+    # resumesSync`): the video it has uploads, and anything else is told to the server.
+    "lost-capability": (
+        "Spec",
+        {**ONE_SAVE, "Conds": '{"none", "hot"}', "Events": '{"caps", "save", "kill"}'},
+        INVARIANTS,
+    ),
+    "two-saves": (
+        "Spec",
+        {**TWO_SAVES, "Conds": '{"none", "unsupported", "outdated"}'},
+        INVARIANTS,
+    ),
+    # Liveness is slow in TLC (~90 us per graph node), so the default splits the events.
+    "live-save": (
+        "SpecUser",
+        {**LIVE, "Conds": '{"none", "hot"}', "Events": '{"save"}'},
+        WAY_OUT,
+    ),
+    # A recipe this iPhone declines: "Review in chat" leads to a version it renders (the
+    # unsupported-recipe dead end, RESIDUAL before this fix). Outdated is under --full.
+    "live-save-unsupported": (
+        "SpecUser",
+        {**LIVE, "Conds": '{"unsupported"}', "Events": '{"save"}'},
+        WAY_OUT,
+    ),
+    "live-stop": (
+        "SpecUser",
+        {**LIVE, "Conds": ALL_CONDS, "Events": '{"stop"}'},
+        [("PROPERTY", "AttentionHasWayOut")],
+    ),
+    # Kills, a day passing (the reaper's timed_out) and backgrounding, with a patient user.
+    "live-faults": (
+        "SpecUser",
+        {**LIVE, "Conds": ALL_CONDS, "Events": '{"kill", "reaper", "background"}'},
+        [("PROPERTY", "AttentionHasWayOut")],
+    ),
+    # Nobody taps anything: the reaper's timed_out is re-pinned when the phone opens the
+    # project (R _auto_resume_reaped), so no needs-attention screen stays up.
+    "live-reaped-no-user": (
+        "Spec",
+        {**LIVE, "Conds": '{"none", "hot"}', "Events": '{"kill", "reaper"}'},
+        [("PROPERTY", "AttentionHasWayOut")],
+    ),
+    # The editor opened from the gallery: no chat poll underneath, so a failed status read
+    # is re-read only by its own scheduled retry (S scheduleRetry).
+    "live-gallery-editor": (
+        "SpecUser",
+        {**LIVE, "Chat": "{FALSE}", "Conds": '{"none", "hot"}', "Events": '{"save"}'},
+        [("PROPERTY", "PreviewConverges")],
+    ),
     # "Without anyone tapping anything": no user fairness, every condition.
-    "agree": ("Spec", {**LIVE, "Conds": ALL_CONDS, "Events": '{"stop", "kill"}'},
-              [("PROPERTY", "ClientServerAgree")]),
+    "agree": (
+        "Spec",
+        {**LIVE, "Conds": ALL_CONDS, "Events": '{"stop", "kill"}'},
+        [("PROPERTY", "ClientServerAgree")],
+    ),
+    "live-lost-capability": (
+        "SpecUser",
+        {**LIVE, "Conds": '{"none"}', "Events": '{"caps"}'},
+        [("PROPERTY", "AttentionHasWayOut")],
+    ),
+    "agree-lost-capability": (
+        "Spec",
+        {**LIVE, "Conds": '{"none"}', "Events": '{"caps", "kill"}'},
+        [("PROPERTY", "ClientServerAgree")],
+    ),
 }
-# --full: the pairs the default leaves out (about 420K and 290K states, ~3 min together).
-# Save + Stop + a missing original at once is ~4M states and is not run; the safety runs
-# cover that combination.
+# --full: the heavier combinations the default leaves out.
 FULL_RUNS = {
-    "live-save-missing": ("SpecUser", {**LIVE, "Conds": '{"missing"}', "Events": '{"save"}'},
-                          WAY_OUT),
-    "live-save-stop": ("SpecUser",
-                       {**LIVE, "Conds": '{"none", "hot"}', "Events": '{"save", "stop"}'},
-                       WAY_OUT + [("PROPERTY", "ClientServerAgree")]),
+    "one-save-declines-stop": (
+        "Spec",
+        {**ONE_SAVE, "Conds": DECLINES, "Events": '{"save", "stop", "kill", "reaper"}'},
+        INVARIANTS,
+    ),
+    "lost-capability-stop": (
+        "Spec",
+        {**ONE_SAVE, "Conds": '{"none"}', "Events": '{"caps", "save", "stop", "kill"}'},
+        INVARIANTS,
+    ),
+    "two-saves-all-conds": ("Spec", {**TWO_SAVES, "Conds": ALL_CONDS}, INVARIANTS),
+    # An outdated build: "Update Kria", then the server re-pins for the newer build.
+    "live-save-outdated": (
+        "SpecUser",
+        {**LIVE, "Conds": '{"outdated"}', "Events": '{"save"}'},
+        WAY_OUT,
+    ),
+    # Save with Stop (about 6 minutes). One answered preview poll: PreviewConverges needs
+    # two (a newer generation read twice), so it is checked in the Save runs instead.
+    # Save with a missing original is past TLC's 15-minute limit for liveness; live-stop
+    # and live-faults cover a missing original, the safety runs cover it with Save.
+    "live-save-stop": (
+        "SpecUser",
+        {
+            **LIVE,
+            "MaxTicks": "1",
+            "Conds": '{"none", "hot"}',
+            "Events": '{"save", "stop"}',
+        },
+        [("PROPERTY", "AttentionHasWayOut"), ("PROPERTY", "ClientServerAgree")],
+    ),
+    # One save in all, from this editor or another device (two saves with liveness ran
+    # past TLC's 15-minute limit here).
+    "live-save-other": (
+        "SpecUser",
+        {
+            **LIVE,
+            "Conds": '{"none", "unsupported"}',
+            "Events": '{"save", "other"}',
+        },
+        WAY_OUT,
+    ),
+    "live-save-faults": (
+        "SpecUser",
+        {
+            **LIVE,
+            "Conds": '{"none", "outdated"}',
+            "Events": '{"save", "kill", "reaper", "background", "sync"}',
+        },
+        WAY_OUT,
+    ),
 }
 PASSING = sorted({rule for _, _, checks in MODEL_RUNS.values() for _, rule in checks})
 
-# Rules today's code still breaks, each in the scenario it was scoped out of above.
-RESIDUAL = {
-    "NoSpuriousAttention": ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": UNSUPPORTED}),
-    "AttentionHasWayOut": ("PROPERTY", "SpecUser", {**LIVE, "Conds": UNSUPPORTED, "Events": "{}"}),
-    "PreviewConverges": ("PROPERTY", "SpecUser",
-                         {**LIVE, "Conds": UNSUPPORTED, "Events": '{"save"}'}),
-}
+# Rules today's code still breaks, each in a scenario scoped out of MODEL_RUNS. Empty: the
+# unsupported-recipe dead end is fixed (findings.md "Fixed on this branch"). A new real
+# finding goes here as rule -> (kind, specification, constants).
+RESIDUAL: dict[str, tuple[str, str, dict[str, str]]] = {}
 
 # The old code (PhoneRenderBefore.tla) broke each of these; the fixes made them pass.
-# Same constants as the old findings run (approval routed retries then).
-OLD_LIVE = {**BASE, "Approvals": "{TRUE, FALSE}", "MaxSaves": "1", "MaxId": "3",
-            "Events": '{"save", "stop"}'}
-OLD_ONE_SAVE = {**ONE_SAVE, "Approvals": "{TRUE, FALSE}"}
+# Same constants as the old findings run (approval routed retries then). The old module
+# has no Chat constant, and its conditions and events are the old ones.
+OLD_BASE = {"MaxFaults": "1", "MaxTicks": "1"}
+OLD_EVENTS = '{"save", "other", "stop", "kill", "background", "reaper", "sync"}'
+OLD_CONDS = '{"none", "hot", "unsupported", "missing"}'
+OLD_LIVE = {
+    **OLD_BASE,
+    "Conds": OLD_CONDS,
+    "Approvals": "{TRUE, FALSE}",
+    "MaxSaves": "1",
+    "MaxId": "3",
+    "Events": '{"save", "stop"}',
+}
+OLD_ONE_SAVE = {
+    **OLD_BASE,
+    "Conds": OLD_CONDS,
+    "Approvals": "{TRUE, FALSE}",
+    "MaxSaves": "1",
+    "MaxId": "3",
+    "Events": OLD_EVENTS,
+}
 BEFORE_BREAKS = {
     "NoSpuriousAttention": ("INVARIANT", "Spec", OLD_ONE_SAVE),
     "CloudDecisionReported": ("INVARIANT", "Spec", OLD_ONE_SAVE),
@@ -124,48 +248,226 @@ BEFORE_BREAKS = {
     "PreviewConverges": ("PROPERTY", "SpecUser", OLD_LIVE),
 }
 
-# Each mutation removes one guard from PhoneRender.tla; TLC must then break the rule it
-# protects in the given run: (kind, specification, constants).
-MUTATIONS = {
+# Teeth: each mutation puts one piece of the old behavior back in a copy of
+# PhoneRender.tla; TLC must then break the rule in the given run. name -> (rule, edits,
+# (kind, specification, constants)). Every passing rule has at least one.
+ONE_SCOPED = ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": SCOPED})
+LATE_LOST_CAPS = [
+    ("ELSE IF Gate \\in Declines /\\ ~resumesSync", "ELSE IF Gate \\in Declines"),
+    (
+        "/\\ decl' = SendDecline(id, Gate)",
+        "/\\ decl' = IF keeps THEN decl ELSE SendDecline(id, Gate)",
+    ),
+]
+# The old card: unsupported_recipe hid Try again (a structural reason) but had no change
+# screen of its own.
+NO_UNSUPPORTED_CHANGE = [
+    (
+        'ChangeReasons == {"unsupported", "requiresChange"}',
+        'ChangeReasons == {"requiresChange"}',
+    ),
+    (
+        'Structural == ChangeReasons \\cup {"outdated"}',
+        'Structural == ChangeReasons \\cup {"outdated", "unsupported"}',
+    ),
+]
+TEETH = {
     # complete only for the current identity in phase syncing.
-    "NoStalePublish": [('CompleteOK == sId = coord.id /\\ sPhase = "syncing"',
-                        'CompleteOK == sPhase \\in {"awaiting", "syncing"}')],
+    "complete-any-identity": (
+        "NoStalePublish",
+        [
+            (
+                'CompleteOK == sId = coord.id /\\ sPhase = "syncing"',
+                'CompleteOK == sPhase \\in {"awaiting", "syncing"}',
+            )
+        ],
+        ONE_SCOPED,
+    ),
     # V:626 mark_device_failed only from awaiting/syncing (409 when published).
-    "PublishedStaysPublished": [('FailableForReport == sPhase \\in {"awaiting", "syncing"}',
-                                 'FailableForReport == sPhase # "attention"')],
+    "fail-a-published-record": (
+        "PublishedStaysPublished",
+        [
+            (
+                'FailableForReport == sPhase \\in {"awaiting", "syncing"}',
+                'FailableForReport == sPhase # "attention"',
+            )
+        ],
+        ONE_SCOPED,
+    ),
     # P:320-328 a 409 on complete is "superseded", never "published".
-    "SyncedMeansPublished": [('LateComplete == [coord EXCEPT !.ph = "superseded"',
-                              'LateComplete == [coord EXCEPT !.ph = "synced"')],
+    "late-complete-says-synced": (
+        "SyncedMeansPublished",
+        [
+            (
+                'LateComplete == [coord EXCEPT !.ph = "superseded"',
+                'LateComplete == [coord EXCEPT !.ph = "synced"',
+            )
+        ],
+        ONE_SCOPED,
+    ),
     # S:346 / S:351 tickets[key] == ticket after the fetch.
-    "NoStaleRequestReinstalled": [("/\\ Apply(oldRec, FALSE)", "/\\ Apply(oldRec, TRUE)")],
-    # S:476-480 a failed status read waits; the old code showed "couldn't prepare" (S1).
-    "NoSpuriousAttention": [('ReadFailedPres ==\n  IF pres.ph = "synced" THEN pres',
-                             'ReadFailedPres ==\n  IF TRUE THEN '
-                             '[NoPres EXCEPT !.ph = "attention", !.cause = "prepFail"]')],
-    # S:481 sendDecline; the old code returned before telling the server.
-    "CloudDecisionReported": [("/\\ decl' = IF keeps \\/ decl = id THEN decl ELSE id",
-                               "/\\ decl' = decl")],
-    # R:1050-1072 re-delivery needs no approval; the old route answered 409 for runtime-v2.
-    "AttentionHasWayOut": [('RetryOK == sPhase = "attention"',
-                            'RetryOK == ~approval /\\ sPhase = "attention"')],
+    "no-ticket-guard": (
+        "NoStaleRequestReinstalled",
+        [("/\\ Apply(oldRec, FALSE)", "/\\ Apply(oldRec, TRUE)")],
+        ONE_SCOPED,
+    ),
+    # S readFailed: a failed status read waits; the old code showed "couldn't prepare" (S1).
+    "failed-read-shows-attention": (
+        "NoSpuriousAttention",
+        [
+            (
+                'ReadFailedPres ==\n  IF pres.ph = "synced" THEN pres',
+                'ReadFailedPres ==\n  IF TRUE THEN [NoPres EXCEPT !.ph = "attention", !.cause = "prepFail"]',
+            )
+        ],
+        ONE_SCOPED,
+    ),
+    # D changeReasons: before, a declined recipe read "needs your attention" with no button.
+    "decline-has-no-change-screen": (
+        "NoSpuriousAttention",
+        NO_UNSUPPORTED_CHANGE,
+        ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": '{"unsupported"}', "Events": "{}"}),
+    ),
+    # EC banner by nextStep: before, an outdated build got "Retry device render".
+    "outdated-banner-offers-retry": (
+        "NoSpuriousAttention",
+        [('             ELSE IF NeedsUpdate(p) THEN "update"\n', "")],
+        (
+            "INVARIANT",
+            "Spec",
+            {**ONE_SAVE, "Conds": '{"outdated"}', "Events": '{"save"}'},
+        ),
+    ),
+    # S sendDecline; the old code returned before telling the server.
+    "decline-not-sent": (
+        "CloudDecisionReported",
+        [("/\\ decl' = SendDecline(id, Gate)", "/\\ decl' = decl")],
+        ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": '{"unsupported"}', "Events": "{}"}),
+    ),
+    # S decline keeps a finished export: before, it neither uploaded nor told the server.
+    "lost-capability-kept-silently": (
+        "CloudDecisionReported",
+        LATE_LOST_CAPS,
+        ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": '{"none"}', "Events": '{"caps"}'}),
+    ),
+    # S sendDecline retries until the server answers; a dropped report is never re-sent.
+    "failed-decline-dropped": (
+        "CloudDecisionReported",
+        [
+            (
+                "/\\ faults' = faults - 1 /\\ decl' = decl",
+                "/\\ faults' = faults - 1 /\\ decl' = NoDecl",
+            )
+        ],
+        ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": '{"unsupported"}', "Events": "{}"}),
+    ),
+    # R _auto_resume_reaped: without it the reaper's timed_out waits for a tap.
+    "reaped-not-auto-resumed": (
+        "AttentionHasWayOut",
+        [
+            (
+                'LET reaped == sPhase = "attention" /\\ sReason = "timedOut" /\\ reapedId = sId',
+                "LET reaped == FALSE",
+            )
+        ],
+        (
+            "PROPERTY",
+            "Spec",
+            {**LIVE, "Conds": '{"none"}', "Events": '{"kill", "reaper"}'},
+        ),
+    ),
+    # A declined recipe with no change screen has no button and no way out.
+    "decline-dead-end": (
+        "AttentionHasWayOut",
+        NO_UNSUPPORTED_CHANGE,
+        ("PROPERTY", "SpecUser", {**LIVE, "Conds": '{"unsupported"}', "Events": "{}"}),
+    ),
     # C:354-366 a report is re-sent until the server takes it; the old one was dropped.
-    "ClientServerAgree": [("/\\ faults' = faults - 1 /\\ rep' = rep",
-                           "/\\ faults' = faults - 1 /\\ rep' = NoRep")],
+    "failed-report-dropped": (
+        "ClientServerAgree",
+        [
+            (
+                "/\\ faults' = faults - 1 /\\ rep' = rep",
+                "/\\ faults' = faults - 1 /\\ rep' = NoRep",
+            )
+        ],
+        ("PROPERTY", "Spec", {**LIVE, "Conds": '{"none"}', "Events": '{"stop"}'}),
+    ),
+    # "Ready on this iPhone, can't sync from this iPhone yet" while the server waits.
+    "lost-capability-contradicts": (
+        "ClientServerAgree",
+        LATE_LOST_CAPS,
+        (
+            "PROPERTY",
+            "Spec",
+            {**LIVE, "Conds": '{"none"}', "Events": '{"caps", "kill"}'},
+        ),
+    ),
     # E:7666-7682 follow a newer generation read twice; the old poll waited it out.
-    "PreviewConverges": [("THEN IF e.seen + 1 >= 2 THEN Saved(e)", "THEN IF FALSE THEN Saved(e)")],
-}
-TEETH_RUN = {
-    "NoStalePublish": ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": SCOPED}),
-    "PublishedStaysPublished": ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": SCOPED}),
-    "SyncedMeansPublished": ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": SCOPED}),
-    "NoStaleRequestReinstalled": ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": SCOPED}),
-    "NoSpuriousAttention": ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": SCOPED}),
-    "CloudDecisionReported": ("INVARIANT", "Spec", {**ONE_SAVE, "Conds": UNSUPPORTED}),
-    "AttentionHasWayOut": ("PROPERTY", "SpecUser",
-                           {**LIVE, "Conds": '{"missing"}', "Approvals": "{TRUE}", "Events": "{}"}),
-    "ClientServerAgree": ("PROPERTY", "Spec", {**LIVE, "Conds": '{"none"}', "Events": '{"stop"}'}),
-    "PreviewConverges": ("PROPERTY", "SpecUser",
-                         {**LIVE, "Conds": '{"none"}', "Events": '{"save"}'}),
+    "newer-generation-not-followed": (
+        "PreviewConverges",
+        [("THEN IF e.seen + 1 >= 2 THEN Saved(e)", "THEN IF FALSE THEN Saved(e)")],
+        ("PROPERTY", "SpecUser", {**LIVE, "Conds": '{"none"}', "Events": '{"save"}'}),
+    ),
+    # S rereads: the editor's refresh while the chat poll holds the ticket is dropped; the
+    # old request installs, turns superseded (settled), and nothing reads the new one.
+    "lost-reread": (
+        "PreviewConverges",
+        [
+            (
+                "ELSE UNCHANGED rec /\\ ed' = [e EXCEPT !.pc = \"after\"] /\\ again' = Again1(again, e.rflag)",
+                'ELSE UNCHANGED rec /\\ ed\' = [e EXCEPT !.pc = "after"] /\\ UNCHANGED again',
+            )
+        ],
+        ("PROPERTY", "SpecUser", {**LIVE, "Conds": '{"none"}', "Events": '{"save"}'}),
+    ),
+    # S wait/scheduleRetry: a failed status read re-reads on its own (the gallery editor
+    # has no chat poll to do it).
+    "failed-read-not-re-read": (
+        "PreviewConverges",
+        [
+            (
+                "/\\ sched' = TRUE\n       /\\ UNCHANGED <<coord, req, obs, hiReq, rep, decl, sPaused, faults>>",
+                "/\\ sched' = sched\n       /\\ UNCHANGED <<coord, req, obs, hiReq, rep, decl, sPaused, faults>>",
+            )
+        ],
+        (
+            "PROPERTY",
+            "SpecUser",
+            {**LIVE, "Chat": "{FALSE}", "Conds": '{"none"}', "Events": '{"save"}'},
+        ),
+    ),
+    # The renderer_outdated loop: R /retry re-pins for the declining build, the editor's
+    # retry has no filter, and its banner offers a retry.
+    "outdated-retry-loop": (
+        "NoFutileRepin",
+        [
+            ('           /\\ ~(sReason = "outdated" /\\ outdated)\n', ""),
+            ("  /\\ ~YourTurn(pres)\n", ""),
+            ('             ELSE IF NeedsUpdate(p) THEN "update"\n', ""),
+        ],
+        (
+            "INVARIANT",
+            "Spec",
+            {**ONE_SAVE, "Conds": '{"outdated"}', "Events": '{"save"}'},
+        ),
+    ),
+    # R:1090 requires_change: without it /retry re-pins an unsupported recipe.
+    "unsupported-retry-loop": (
+        "NoFutileRepin",
+        [
+            (
+                'RetryOK == /\\ sPhase = "attention" /\\ sReason # "unsupported"',
+                'RetryOK == /\\ sPhase = "attention"',
+            ),
+            *NO_UNSUPPORTED_CHANGE,
+        ],
+        (
+            "INVARIANT",
+            "Spec",
+            {**ONE_SAVE, "Conds": '{"unsupported"}', "Events": '{"save"}'},
+        ),
+    ),
 }
 
 
@@ -188,14 +490,24 @@ def tlc_jar() -> Path:
 
 def java() -> str:
     local = LOCAL_TOOLS / "jdk-21.0.8+9-jre/Contents/Home/bin/java"
-    found = os.environ.get("JAVA") or (str(local) if local.exists() else shutil.which("java"))
+    found = os.environ.get("JAVA") or (
+        str(local) if local.exists() else shutil.which("java")
+    )
     if not found or subprocess.run([found, "-version"], capture_output=True).returncode:
-        sys.exit("FAIL: no Java runtime. Install one (brew install openjdk@21) and set JAVA.")
+        sys.exit(
+            "FAIL: no Java runtime. Install one (brew install openjdk@21) and set JAVA."
+        )
     return found
 
 
-def tlc(spec: Path, constants: dict[str, str], checks: list[tuple[str, str]],
-        specification: str, tag: str, expect_pass: bool = False) -> dict:
+def tlc(
+    spec: Path,
+    constants: dict[str, str],
+    checks: list[tuple[str, str]],
+    specification: str,
+    tag: str,
+    expect_pass: bool = False,
+) -> dict:
     """Run TLC once. Returns {"broken": [rules], "trace": n, "states": n, "seconds": s}.
 
     A run expected to pass checks liveness once, on the complete graph; one expected to
@@ -209,10 +521,26 @@ def tlc(spec: Path, constants: dict[str, str], checks: list[tuple[str, str]],
         shutil.copy(spec, Path(tmp) / spec.name)
         start = time.time()
         run = subprocess.run(
-            [JAVA, "-XX:+UseParallelGC", "-cp", str(JAR), "tlc2.TLC", "-workers", "auto",
-             *(["-lncheck", "final"] if expect_pass else []),
-             "-deadlock", "-metadir", str(Path(tmp) / "states"), "-config", str(cfg), spec.name],
-            cwd=tmp, capture_output=True, text=True, timeout=900,
+            [
+                JAVA,
+                "-XX:+UseParallelGC",
+                "-cp",
+                str(JAR),
+                "tlc2.TLC",
+                "-workers",
+                "auto",
+                *(["-lncheck", "final"] if expect_pass else []),
+                "-deadlock",
+                "-metadir",
+                str(Path(tmp) / "states"),
+                "-config",
+                str(cfg),
+                spec.name,
+            ],
+            cwd=tmp,
+            capture_output=True,
+            text=True,
+            timeout=900,
         )
         seconds = round(time.time() - start, 1)
     log = OUT / f"{tag}.log"
@@ -221,7 +549,9 @@ def tlc(spec: Path, constants: dict[str, str], checks: list[tuple[str, str]],
     m = re.search(r"Invariant (\w+) is violated", run.stdout)
     if m:
         broken = [m.group(1)]
-    m = re.search(r"Temporal propert(?:y|ies) (.+?) (?:is|was|were) violated", run.stdout)
+    m = re.search(
+        r"Temporal propert(?:y|ies) (.+?) (?:is|was|were) violated", run.stdout
+    )
     if m:
         broken = re.findall(r"\w+", m.group(1).replace(" and ", " "))
     if not broken and "No error has been found" not in run.stdout:
@@ -237,6 +567,7 @@ def tlc(spec: Path, constants: dict[str, str], checks: list[tuple[str, str]],
 
 
 # ---------------------------------------------------------------- drift
+
 
 def swift_functions(text: str, name: str) -> list[str]:
     """Every `func name` body (brace matched) in a Swift file."""
@@ -275,14 +606,21 @@ def function_hashes() -> dict[str, str]:
     for rel, names in coverage["functions"].items():
         text = (REPO / rel).read_text()
         for name in names:
-            bodies = (python_functions if rel.endswith(".py") else swift_functions)(text, name)
+            bodies = (python_functions if rel.endswith(".py") else swift_functions)(
+                text, name
+            )
             if not bodies:
-                sys.exit(f"DRIFT: {rel}:{name} no longer exists; update the model and coverage.json")
-            out[f"{rel}:{name}"] = hashlib.sha256("\n".join(bodies).encode()).hexdigest()[:16]
+                sys.exit(
+                    f"DRIFT: {rel}:{name} no longer exists; update the model and coverage.json"
+                )
+            out[f"{rel}:{name}"] = hashlib.sha256(
+                "\n".join(bodies).encode()
+            ).hexdigest()[:16]
     return out
 
 
 # ---------------------------------------------------------------- explore
+
 
 def explore() -> dict:
     """Run every residual rule per starting scenario and event set: how many ways break."""
@@ -305,8 +643,14 @@ def explore() -> dict:
                     c.update(MaxSaves="2", MaxId="4")
                 tag = f"explore-{rule}-{ev_name.replace(' ', '_').replace('+', '_')}-{cond}"
                 r = tlc(SPEC, c, [(kind, rule)], specification, tag)
-                rows.append({"events": ev_name, "cond": cond, "broken": rule in r["broken"],
-                             "trace": r["trace"]})
+                rows.append(
+                    {
+                        "events": ev_name,
+                        "cond": cond,
+                        "broken": rule in r["broken"],
+                        "trace": r["trace"],
+                    }
+                )
         broken = [r for r in rows if r["broken"]]
         results[rule] = {
             "scenarios_checked": len(rows),
@@ -315,8 +659,10 @@ def explore() -> dict:
             "shortest_trace": min((r["trace"] for r in broken), default=None),
             "rows": rows,
         }
-        print(f"explore {rule}: broken in {len(broken)}/{len(rows)} scenarios, "
-              f"conditions {results[rule]['broken_conditions']}")
+        print(
+            f"explore {rule}: broken in {len(broken)}/{len(rows)} scenarios, "
+            f"conditions {results[rule]['broken_conditions']}"
+        )
     (OUT / "explore.json").write_text(json.dumps(results, indent=2) + "\n")
     return results
 
@@ -326,8 +672,11 @@ def run_model(runs: dict, report: dict) -> None:
         r = tlc(SPEC, consts, checks, specification, f"model-{name}", expect_pass=True)
         report[name] = r
         rules = ", ".join(rule for _, rule in checks)
-        print(f"model, {name}: " + ("holds" if not r["broken"] else f"BROKEN {r['broken']}")
-              + f" [{rules}] ({r['states']:,} states, {r['seconds']}s)")
+        print(
+            f"model, {name}: "
+            + ("holds" if not r["broken"] else f"BROKEN {r['broken']}")
+            + f" [{rules}] ({r['states']:,} states, {r['seconds']}s)"
+        )
         if r["broken"]:
             sys.exit(f"FAIL: the code model breaks {r['broken']}; see {r['log']}")
 
@@ -344,27 +693,46 @@ def main() -> None:
             ["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True, text=True
         ).stdout.strip()
         (HERE / "coverage.json").write_text(json.dumps(coverage, indent=2) + "\n")
-        print("resynced coverage.json; commit it only after re-reading the model against the code")
-    drift = sorted(k for k, v in hashes.items() if coverage.get("hashes", {}).get(k) != v)
+        print(
+            "resynced coverage.json; commit it only after re-reading the model against the code"
+        )
+    drift = sorted(
+        k for k, v in hashes.items() if coverage.get("hashes", {}).get(k) != v
+    )
     report["drift"] = drift
     if drift:
-        print("DRIFT (review, not a bug): these covered functions changed since "
-              f"{coverage.get('sync_commit')}:\n  " + "\n  ".join(drift))
+        print(
+            "DRIFT (review, not a bug): these covered functions changed since "
+            f"{coverage.get('sync_commit')}:\n  " + "\n  ".join(drift)
+        )
 
-    happy = {**BASE, "MaxFaults": "0", "MaxSaves": "1", "MaxId": "3", "Conds": '{"none"}',
-             "Events": "{}"}
+    happy = {
+        **BASE,
+        "MaxFaults": "0",
+        "MaxSaves": "1",
+        "MaxId": "3",
+        "Conds": '{"none"}',
+        "Events": "{}",
+    }
     r = tlc(SPEC, happy, [("INVARIANT", "NeverPublished")], "Spec", "happy-publishes")
     if r["broken"] != ["NeverPublished"]:
-        sys.exit("FAIL: with no faults the model never publishes a video; the model is wrong")
-    every = [("INVARIANT", rule) for rule in SAFETY + ["NoSpuriousAttention"]]
-    every += [("PROPERTY", rule) for rule in ("AttentionHasWayOut", "PreviewConverges")]
+        sys.exit(
+            "FAIL: with no faults the model never publishes a video; the model is wrong"
+        )
+    every = INVARIANTS + [
+        ("PROPERTY", rule) for rule in ("AttentionHasWayOut", "PreviewConverges")
+    ]
     r = tlc(SPEC, {**happy, "MaxTicks": "2"}, every, "SpecUser", "happy-rules")
     if r["broken"]:
-        sys.exit(f"FAIL: {r['broken']} break on the happy path; the model is wrong ({r['log']})")
+        sys.exit(
+            f"FAIL: {r['broken']} break on the happy path; the model is wrong ({r['log']})"
+        )
     r = tlc(SPEC, happy, [("PROPERTY", "ClientServerAgree")], "Spec", "happy-agree")
     if r["broken"]:
-        sys.exit(f"FAIL: ClientServerAgree breaks on the happy path; the model is wrong "
-                 f"({r['log']})")
+        sys.exit(
+            f"FAIL: ClientServerAgree breaks on the happy path; the model is wrong "
+            f"({r['log']})"
+        )
     report["happy_path"] = "publishes; every rule holds"
     print("happy path (no faults, no events): publishes, every rule holds")
 
@@ -378,55 +746,83 @@ def main() -> None:
     for rule, (kind, specification, consts) in RESIDUAL.items():
         r = tlc(SPEC, consts, [(kind, rule)], specification, f"residual-{rule}")
         residual[rule] = r
-        print(f"residual {rule} (unsupported recipe): "
-              + (f"breaks (trace of {r['trace']} states, {r['seconds']}s)"
-                 if rule in r["broken"] else "HOLDS"))
+        print(
+            f"residual {rule}: "
+            + (
+                f"breaks (trace of {r['trace']} states, {r['seconds']}s)"
+                if rule in r["broken"]
+                else "HOLDS"
+            )
+        )
     report["residual"] = residual
     held = sorted(rule for rule, r in residual.items() if rule not in r["broken"])
     if held:
-        sys.exit(f"FAIL: {held} no longer break on the unsupported recipe. If the code was "
-                 "fixed, move them from RESIDUAL to PASSING (widen their runs), add teeth, rerun.")
+        sys.exit(
+            f"FAIL: {held} no longer break in their RESIDUAL scenario. If the code was "
+            "fixed, move them from RESIDUAL to PASSING (widen their runs), add teeth, rerun."
+        )
 
     before = {}
     for rule, (kind, specification, consts) in BEFORE_BREAKS.items():
         r = tlc(BEFORE, consts, [(kind, rule)], specification, f"before-{rule}")
         before[rule] = r
-        print(f"before the fix, {rule}: "
-              + (f"breaks (trace of {r['trace']} states, {r['seconds']}s)"
-                 if rule in r["broken"] else "HOLDS"))
+        print(
+            f"before the fix, {rule}: "
+            + (
+                f"breaks (trace of {r['trace']} states, {r['seconds']}s)"
+                if rule in r["broken"]
+                else "HOLDS"
+            )
+        )
     report["before"] = before
     held = sorted(rule for rule, r in before.items() if rule not in r["broken"])
     if held:
-        sys.exit(f"FAIL: PhoneRenderBefore.tla should break {held} (the old code's findings)")
+        sys.exit(
+            f"FAIL: PhoneRenderBefore.tla should break {held} (the old code's findings)"
+        )
 
     teeth = {}
-    for rule, edits in MUTATIONS.items():
+    for name, (rule, edits, (kind, specification, consts)) in TEETH.items():
         text = SPEC.read_text()
         for old, new in edits:
             if text.count(old) != 1:
-                sys.exit(f"FAIL: mutation for {rule} no longer matches PhoneRender.tla: {old!r}")
+                sys.exit(
+                    f"FAIL: mutation {name} no longer matches PhoneRender.tla: {old!r}"
+                )
             text = text.replace(old, new)
         mutant = OUT / "mutant" / "PhoneRender.tla"
         mutant.parent.mkdir(exist_ok=True)
         mutant.write_text(text)
-        kind, specification, consts = TEETH_RUN[rule]
-        r = tlc(mutant, consts, [(kind, rule)], specification, f"teeth-{rule}")
-        teeth[rule] = rule in r["broken"]
-        print(f"teeth, {rule} without its guard: " + ("caught" if teeth[rule] else "NOT CAUGHT")
-              + f" ({r['seconds']}s)")
-        if not teeth[rule]:
-            sys.exit(f"FAIL: {rule} cannot fail, so it proves nothing")
-    missing = sorted(set(PASSING) - set(MUTATIONS))
+        r = tlc(mutant, consts, [(kind, rule)], specification, f"teeth-{name}")
+        teeth[name] = rule in r["broken"]
+        print(
+            f"teeth, {name} ({rule}): "
+            + ("caught" if teeth[name] else "NOT CAUGHT")
+            + f" ({r['seconds']}s)"
+        )
+        if not teeth[name]:
+            sys.exit(f"FAIL: {rule} does not catch {name}, so it proves nothing there")
+    missing = sorted(set(PASSING) - {rule for rule, _, _ in TEETH.values()})
     if missing:
         sys.exit(f"FAIL: passing rules without teeth: {missing}")
     report["teeth"] = teeth
 
     if "--explore" in sys.argv:
-        report["explore"] = {k: {kk: vv for kk, vv in v.items() if kk != "rows"}
-                             for k, v in explore().items()}
+        report["explore"] = {
+            k: {kk: vv for kk, vv in v.items() if kk != "rows"}
+            for k, v in explore().items()
+        }
 
     (OUT / "report.json").write_text(json.dumps(report, indent=2) + "\n")
-    print("PASS (residual findings recorded)" + (" with DRIFT to review" if drift else ""))
+    print(
+        "PASS"
+        + (
+            f" ({len(RESIDUAL)} residual findings recorded)"
+            if RESIDUAL
+            else " (no residual findings)"
+        )
+        + (" with DRIFT to review" if drift else "")
+    )
     sys.exit(3 if drift else 0)
 
 

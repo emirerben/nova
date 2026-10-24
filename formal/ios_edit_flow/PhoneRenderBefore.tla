@@ -596,8 +596,12 @@ Genuine == {"origMissing", "timedOut"}   \* an original is missing; the phone wa
 
 \* The app never shows needs-attention / "couldn't prepare" / "couldn't refresh" unless
 \* a genuine, user-fixable failure happened.
+\* The card's title by phase and reason (PhoneRender.tla Screen). At ff27b0a65 no reason the
+\* model produces had a change or update screen of its own, so the title follows the phase.
+Screen(p) == p.ph
+
 NoSpuriousAttention ==
-  /\ (pres.ph = "attention" => pres.cause \in Genuine)
+  /\ (Screen(pres) = "attention" => pres.cause \in Genuine)
   /\ (ed.save = "deviceRetry" => ed.cause \in Genuine)
   /\ ~banner
 
@@ -611,19 +615,22 @@ NoReportInFlight == rep = NoRep
 
 \* The decision on the card is about req; a request pinned since is not decided yet.
 CloudDecisionReported ==
-  (pres.ph \in {"attention", "localReady"} /\ pres.cause \in {"cloudCaps", "structural", "hot"}
+  (pres.ph \in {"attention", "localReady"}
+     /\ pres.cause \in {"cloudCaps", "structural", "hot", "unsupported", "outdated"}
      /\ req = sId)
     => (~ServerWaiting \/ Told)
 
 \* From every needs-attention screen, the retries on screen (or the app by itself) reach
 \* a published video.
-Shown == app = "open" /\ (pres.ph = "attention" \/ ed.save = "deviceRetry")
-Resolved == sId = MaxId \/ (sPhase = "published" /\ pres.ph # "attention" /\ ed.save # "deviceRetry")
+Stuck(p, e) == Screen(p) \in {"attention", "change", "update"} \/ e.save \in {"deviceRetry", "review", "update"}
+Shown == app = "open" /\ Stuck(pres, ed)
+Resolved == sId = MaxId \/ (sPhase = "published" /\ ~Stuck(pres, ed))
 AttentionHasWayOut == Shown ~> Resolved
 
 \* The phone and the server do not stay in contradicting states (phone: stopped / needs
 \* attention; server: still waiting for this phone) without anyone tapping anything.
-Contradict == app = "open" /\ pres.ph \in {"attention", "cancelled"}
+Contradict == app = "open"
+              /\ (pres.ph \in {"attention", "cancelled"} \/ (pres.ph = "localReady" /\ pres.cause # "none"))
               /\ ServerWaiting /\ NoReportInFlight /\ ~coord.run
 ClientServerAgree == Contradict ~> ~Contradict
 

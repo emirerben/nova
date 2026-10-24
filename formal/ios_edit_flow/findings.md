@@ -10,7 +10,7 @@ Models:
 - `PhoneRender.tla`: the code on `codex/killer-integration` (the fixes). Synced commit in `coverage.json`.
 - `PhoneRenderBefore.tla`: the code at `origin/main@ff27b0a65`, before the fixes. `verify.py` proves it broke each rule the fixes made pass.
 
-Run with `make verify-phone-render` (about 40 s). `--full` adds the two slow liveness pairs (about 3.5 more minutes; both hold at the synced commit).
+Run with `make verify-phone-render` (about 2.5 minutes). `--full` adds the heavier event combinations (`FULL_RUNS` in `verify.py`).
 
 ## Prod evidence (2026-09-24 to 2026-10-24, 133 jobs, read-only admin GETs)
 
@@ -59,10 +59,12 @@ So 51 of 69 paths (74%) put up a failure screen when nothing the user did went w
 
 ## Fixed on this branch
 
-All five finding rules now hold on `PhoneRender.tla`, and each still breaks on
-`PhoneRenderBefore.tla`. One condition is left: a recipe this iPhone cannot render (see
-"Still broken" below). Each passing rule has a mutation that puts the old behavior back at
-one guard, and TLC catches it ("teeth").
+All finding rules hold on `PhoneRender.tla` with no condition scoped out, and each of the
+five original ones still breaks on `PhoneRenderBefore.tla`. `RESIDUAL` in `verify.py` is
+empty. Each passing rule has at least one mutation that puts a piece of the old behavior
+back, and TLC catches it ("teeth", `TEETH` in `verify.py`).
+
+### Round 1 (the killer-screens fixes)
 
 | Rule | Before the fixes (trace) | What changed in the code | Teeth (old behavior put back) |
 |---|---|---|---|
@@ -91,41 +93,52 @@ Two environment assumptions changed in both modules:
 - **Stop is bounded.** The creator taps Stop at most once per run, the same way Saves are bounded. Unbounded Stop let the "user" kill every reconcile forever. It also made the liveness state space 50x larger.
 - **ClientServerAgree runs without user fairness** (`Spec`, not `SpecUser`), to match its text: "without anyone tapping anything". That is stronger than before.
 
-## Still broken: a recipe this iPhone cannot render
+### Round 2 (an adversarial check of round 1 found five more)
 
-This affects NoSpuriousAttention, AttentionHasWayOut and PreviewConverges. Each one breaks on the fixed code when the recipe needs a capability this phone's verified set lacks (K:19-20). It is a real result, not a modeling gap. `verify.py` checks that these three still break in that scenario (`RESIDUAL`), and that every other condition passes.
+| # | What was wrong (trace) | What changed in the code | Model | Teeth |
+|---|---|---|---|---|
+| 1 | A recipe this iPhone declines (`unsupported_recipe`) read "This edit needs your attention" with no button; the editor's "Retry device render" re-declined it forever. Was RESIDUAL for NoSpuriousAttention, AttentionHasWayOut, PreviewConverges. | `unsupported_recipe` is a change reason from the moment the decline is recorded (`DeviceRenderPanel.swift` `changeReasons`): "This edit needs a change" + "Review the updated edit". The editor banner follows `nextStep`: "Review in chat" / "Update Kria" / "Resume rendering" / "Retry device render" (`NativeEditorComponents.swift`, `NativeEditorSession.deviceRenderNextStep`). A quiet network wait keeps that button (`needsChange` no longer needs `waiting == nil`; the model found a failed read on the declined card hid it). | `Screen(p)` (the card's title by phase + reason), editor states `review` / `update`, `ChatChange` (the creator asks for a change; Kria re-plans with phone-verified features) and `UpdateApp`, both under user fairness. AttentionHasWayOut now also covers the your-turn screens (stronger). | `decline-has-no-change-screen`, `decline-dead-end`, `outdated-banner-offers-retry` |
+| 2 | Losing a capability after the export finished kept the file, said "can't sync from this iPhone yet", sent no decline; the server waited forever (polls keep `last_polled_at` fresh, so the reaper never fires). | `DeviceRenderSessions.apply`: `.decline where resumesSync` uploads the video it already has (the server checks the bytes, never the phone's capabilities). Any other decline is reported, also when an export of the request is kept. | `LoseCaps` (event `caps`: `unsupported` turns TRUE once `coord.file`). Contradict now also covers `localReady` with an error. | `lost-capability-kept-silently` (CloudDecisionReported), `lost-capability-contradicts` (ClientServerAgree) |
+| 3 | `renderer_outdated` loop: `/retry` re-pinned for the build that declined it, the phone declined the re-pin, the editor retry (no filter) looped. | `routes/device_render.py`: the failure report stores `declined_client_protocol`; `/retry` from a build that is not newer answers 409 `requires_update`; a newer build is re-pinned on `GET` (`_auto_resume_updated`). The phone maps `requires_update` to "Update Kria"; `retryDeviceRender` refuses change and update reasons. | Decline reasons split into `unsupported` and `outdated`; `RetryOK` mirrors the route; `RecFetch` auto-resumes an outdated record for a non-outdated phone; new rule NoFutileRepin (the server never re-pins the same recipe for a phone that declines it again). | `outdated-retry-loop`, `unsupported-retry-loop` (NoFutileRepin) |
+| 4 | Verified real. The chat poll only reads when `changed || !deviceSettled || status == .rendering` (W:2240-2242); `changed` and the project status are server projections the phone cannot rely on, and an editor Save of a phone render does not have to move the thread. Two traces: (a) the chat GET for request 1 is in flight, the editor saves (request 2), its refresh returns at the ticket guard, request 1 installs and turns `superseded` (settled), nothing reads request 2, "Check preview again" loops; (b) found by the model once the chat poll's fairness matched the guard: after a publish, the editor's refresh read fails, `wait()` skipped a synced card without scheduling a re-read. (c) also found: a report that lands after a relink makes the coordinator `superseded` against a needs_attention record, and nothing reads it again. | `reconcile` remembers a read asked for while the ticket is held (`rereads`) and runs it when the holder finishes. `wait()` keeps a synced card as it is but still schedules the re-read. `isSettled` no longer counts `superseded`. | `ChatPoll` is always allowed but only fair while not `Settled` (synced); `again` + `Reread`; `ReadFailedPres` always schedules. | `lost-reread`, `failed-read-not-re-read` (PreviewConverges) |
+| 5 | Model fidelity. | (code unchanged) | `/retry` refusal sets the presentation reason (`requiresChange`, or `outdated` for `requires_update`); the paused resume's `try? retryFailure` may fail (`ResumeServer`); `sendDecline` skips a second decline for an identity it already sent (`decl` keeps the identity and whether it is still sending). | `failed-decline-dropped` (CloudDecisionReported) |
 
-`--explore` ran each of the three across 7 event sets × 4 starting conditions (faults only, Save, Stop, background, kill + reaper, Save + another device, draft sync). Every break had the unsupported recipe as its condition:
-- NoSpuriousAttention: 7 of 28 scenarios break.
-- AttentionHasWayOut: 7 of 28 break.
-- PreviewConverges: 2 of 28 break (only the Save scenarios).
+Teeth added for things that had none: `reaped-not-auto-resumed` (AttentionHasWayOut with nobody
+tapping, kill + reaper: the reaper's timed_out must be re-pinned on reopen) replaces the old
+AttentionHasWayOut tooth that only flipped the `approval` variable nothing reads.
+`failed-read-not-re-read` runs with `Chat = {FALSE}` (the editor opened from the gallery,
+`EditorViews.swift:265`, with no chat poll underneath), so the scheduled re-read is the only
+thing that reads again.
 
-Everything else holds, including AttentionHasWayOut with kills, the reaper, backgrounding and a second device.
+Environment assumptions added in round 2:
+- **Review in chat leads to a renderable recipe.** `ChatChange` sets `unsupported` FALSE: Kria's
+  phone planner only uses features verified for phones (`phone_render_verified_features`). The
+  model does not model the planner.
+- **An app update is a newer protocol.** `UpdateApp` clears `outdated`; the server compares
+  `X-Kria-Client-Protocol` with the declining one. A release that renders a newer recipe without
+  bumping the protocol would get `requires_update` again (open risk, not modeled).
+- `UpdateApp` and `ChatChange` are bounded like the other pinning events (`sId < MaxId`).
 
-Trace, 4 states for NoSpuriousAttention and a 10-state lasso for AttentionHasWayOut:
-1. The chat polls. The gate says `.decline(unsupported_recipe)`.
-2. The card shows needs attention, and `sendDecline` tells the server.
-3. The server records `needs_attention` / `unsupported_recipe`. The card now reads "This edit needs your attention" / "Your project is saved."
-4. The card has no button. Try again is hidden for a structural reason, the "Review the updated edit" call to action only shows for `contract_changed` / `requires_change`, and "Find original files" is hidden too. Nothing on screen leads to a published video.
-
-In the editor (PreviewConverges, a 14-state lasso), the "Retry device render" banner loops:
-- Before the decline lands, retrying reconciles into the same decline.
-- After it lands, `/retry` answers `requires_change`. Only then does the chat card switch to "This edit needs a change" with its button.
-
-The only exit is a new edit made in chat, and the model does not assume a new edit will come.
-
-Suggested fix: show "This edit needs a change" (or "Update Kria" when the phone is older than the recipe) as soon as the decline is recorded, rather than after a failed retry. The editor banner should then offer "Review in chat", not a retry.
-
-Not added: RepairNeverSilent (planner repair notes). The planner runs before a recipe is pinned, and this model starts after the pin. Adding it would need a planner model, so it is not cheap here.
+New runs: `one-save-declines`, `lost-capability`, `live-save-unsupported`, `live-faults` (kill,
+reaper, background, so the reaper's timed_out appears), `live-reaped-no-user`,
+`live-gallery-editor`, `live-lost-capability`, `agree-lost-capability`; `--full` adds Stop with
+declines and lost capabilities, two saves with every condition, `live-save-outdated`,
+`live-save-other`, `live-save-faults` (with draft sync) and `live-save-stop`.
 
 ## Scope and bounds
 
 - Bounds: MaxFaults 1, Stop at most once, MaxId 3 or 4, one or two Saves, and 2 answered preview polls (the real budget is 300).
-- The default liveness runs split the events:
-  - Save on a phone with its originals, cool or hot.
-  - Stop with every condition except an unsupported recipe.
-  - Kills, with every condition (ClientServerAgree).
-- `--full` adds Save with a missing original, and Save with Stop. Save + Stop + a missing original all at once is about 4M states and is not run for liveness. The safety runs cover it.
+- The default runs split the events (see `MODEL_RUNS`): every condition for safety across
+  four runs; liveness for Save (cool or hot, and an unsupported recipe), Stop and
+  kill/reaper/background with every condition, the reaper with nobody tapping, the gallery
+  editor, and ClientServerAgree with Stop, kills and a lost capability.
+- `--full` adds the heavier combinations (`FULL_RUNS`). Not run for liveness (past TLC's
+  15-minute limit with the round-2 state): Save with a missing original (round 1 ran it), and two
+  saves (this editor and another device). `live-save-stop` checks PreviewConverges no more
+  (one answered poll keeps it under 7 minutes). The safety runs cover both.
+- A chat poll that finds the ticket held also asks for a re-read; that read is the same as a
+  later chat poll, which the model always allows, so only the editor's, the scheduled and the
+  decline's skipped reads set `again`.
 - Not modeled:
   - the rollout hold (`phone_rendering_paused`)
   - the GET's 409 superseded / cancelled / `editor_empty` and 426 answers
@@ -134,9 +147,10 @@ Not added: RepairNeverSilent (planner repair notes). The planner runs before a r
   - the retry caps: 12 re-reads, 4 transient waits, 12 decline sends. MaxFaults 1 never reaches them.
   - the editor's "reconnecting" hint, shown after 3 failed reads
   - the planner (S4)
-- The resume inside `apply` (`retryFailure` on a paused record) is one step in the model. If it fails, the code swallows the error, and the reservation clears the pause anyway.
+- The resume inside `apply` (`retryFailure` on a paused record) is one step in the model and may fail (`ResumeServer`); the code swallows the error, and the reservation clears the pause anyway.
+- The phone's own clear of a stale `renderer_outdated` (S `apply`, needs_attention branch) serves records declined before `declined_client_protocol` existed; every model record carries it, so the server's auto-resume answers first.
 - The editor starts from a failed capability read. With a good read, a later failed read does the same as the no-fault branch.
-- The statecharts in `statechart/` still show the old code.
+- The statecharts `statechart/editor-device.mmd` and `creation-rendering.mmd` show the fixed flow.
 
 ## Before the fixes (PhoneRenderBefore.tla, origin/main ff27b0a65)
 
@@ -177,7 +191,7 @@ Now also passing on the fixed code, each with teeth:
 - ClientServerAgree
 - PreviewConverges
 
-The first three of these exclude an unsupported recipe; see "Still broken" above.
+None of them excludes a condition any more. New in round 2, with teeth: NoFutileRepin.
 
 ## Fix order (ranked by user impact; written against ff27b0a65)
 
