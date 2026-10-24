@@ -93,3 +93,25 @@ turn or modify the original failed thread/draft; fresh QA-copy selection is the
 bounded verified path. Original-session recovery needs a separately explicit
 creator action/recovery contract and positive test, preserving request idempotency.
 KRI-731 physical/semantic fulfillment and rollout are not closed by this local fix.
+
+## Current-main integration checks
+
+Integrated main4499189663c31e1274ff249a9afc53cd2cdc75d5 additively after the
+local fix; the only feature diff remains the selected-story readiness/caption
+handoff and its regression/documentation. Existing main freeze-frame/editor
+changes retain their author history and are not part of this fix.
+
+- `bash scripts/check-api.sh test tests/kria/test_approval_readiness_postgres.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_request_binding_journey.py tests/kria/test_plan_blocks.py tests/tasks/test_phone_plan_blocks.py tests/integration/test_camera_roll_execution.py tests/integration/test_media_collections.py tests/integration/test_editorial_taste.py -q` — **182 passed**,40 deprecation warnings.
+- `bash scripts/check-api.sh test tests/integration/test_camera_roll_execution.py -q` — **17 passed** with enabled/disabled readiness and stale/missing evidence controls.
+- `python -m app.cli.kria_contracts --check` from API with test config — tools,
+  mobile and OpenAPI contracts match; no API wire-schema change.
+- Scoped ruff and `git diff --check` pass.
+- The timed synthetic QA-copy regression passes and the existing offline export
+  fixture preparation compiles correct/wrong-window/wrong-audio/wrong-order cases.
+  These native cases are **prepared, not exported or compared on hardware**.
+  API fixture dispatch/approval is not physical app selection/Save/reopen proof.
+
+The tests used the worktree's own PostgreSQL database. Models were replayed or
+unused; no live model call, production write, original-media change or phone
+operation occurred. Final pre-PR gates and exact tested revision are recorded in
+the PR evidence; local results do not certify CI, deployment or TestFlight.
