@@ -106,12 +106,32 @@ class SongRenderAsset(_AssetModel):
     fingerprint: RenderFingerprint
 
 
+class ProcessedAudioRenderAsset(_AssetModel):
+    """A job-owned, immutable audio derivative for one bound phone source.
+
+    The storage object name is deliberately absent.  It remains private job
+    state and the download grant derives it only from a trusted receipt stored
+    with the variant that created this asset.
+    """
+
+    kind: Literal["processed_audio"] = "processed_audio"
+    id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    job_id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    variant_id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    render_generation: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    source_media_id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    source_generation: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    generation: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    fingerprint: RenderFingerprint
+
+
 RenderAsset = Annotated[
     OriginalRenderAsset
     | LibraryRenderAsset
     | VisualRenderAsset
     | VoiceoverRenderAsset
-    | SongRenderAsset,
+    | SongRenderAsset
+    | ProcessedAudioRenderAsset,
     Field(discriminator="kind"),
 ]
 
@@ -134,6 +154,16 @@ class RenderAssetManifest(_AssetModel):
                 key = ("voiceover", asset.plan_item_id, asset.generation)
             elif isinstance(asset, SongRenderAsset):
                 key = ("song", asset.plan_item_id, asset.generation)
+            elif isinstance(asset, ProcessedAudioRenderAsset):
+                key = (
+                    "processed_audio",
+                    asset.job_id,
+                    asset.variant_id,
+                    asset.render_generation,
+                    asset.source_media_id,
+                    asset.source_generation,
+                    asset.generation,
+                )
             else:
                 key = ("library", asset.catalog, asset.catalog_id, asset.generation)
             if key in sources and sources[key] != asset.fingerprint:

@@ -50,6 +50,38 @@ _EDITOR_TRANSITIONS = {
 }
 
 
+def require_phone_voiceover_source_audio_client(variant: object) -> None:
+    """Refuse an old app reopening a persisted selected-source-audio edit.
+
+    This is deliberately independent from the creation rollout flag. Once a
+    variant stores the selection, an older renderer would otherwise reopen it
+    without its per-slot audio markers and silently change the mix. Workers,
+    scripts and chat edits have no app build to qualify, so the guard applies
+    only to a real HTTP request.
+    """
+    if not isinstance(variant, dict) or not isinstance(variant.get("source_audio_media_ids"), list):
+        return
+    from app.config import settings
+    from app.services.client_protocol import current_client_protocol, in_http_request
+
+    if not in_http_request():
+        return
+    minimum = settings.phone_voiceover_source_audio_min_client_protocol
+    protocol = current_client_protocol()
+    if protocol is not None and protocol >= minimum:
+        return
+    from fastapi import HTTPException
+
+    raise HTTPException(
+        426,
+        detail={
+            "code": "client_update_required",
+            "feature": "voiceover_source_audio",
+            "minimum_client_protocol": minimum,
+        },
+    )
+
+
 def is_phone_voiceover_family_variant(variant: object) -> bool:
     """A device-rendered `narrated` or montage `voiceover` variant."""
     return (
@@ -109,6 +141,52 @@ def _crop_field(clip: Any) -> dict:
     """``{"source_crop": {...}}`` for a cropped clip, else nothing (KRI-44)."""
     crop = getattr(clip, "source_crop", None)
     return {"source_crop": crop.model_dump()} if crop is not None else {}
+
+
+def _selected_source_audio_ids(variant: dict) -> frozenset[str] | None:
+    """The explicit source-audio selection, if this is a new audio-aware edit.
+
+    The variant is the durable source identity record. Recipe clip volume alone
+    cannot distinguish a legacy clip's default volume of one from an explicit
+    selection containing every used source.
+    """
+    raw = variant.get("source_audio_media_ids")
+    if not isinstance(raw, (list, tuple)) or not all(
+        isinstance(media_id, str) and media_id for media_id in raw
+    ):
+        return None
+    return frozenset(raw)
+
+
+def _with_source_audio_volumes(
+    slots: list[dict],
+    *,
+    bindings: list[PhoneSourceBinding],
+    pool: list[str],
+    variant: dict,
+) -> list[dict]:
+    """Add the unit source-audio marker to every slot of an explicit selection."""
+    selected = _selected_source_audio_ids(variant)
+    if selected is None:
+        return slots
+    by_proxy = {binding.proxy_path: binding for binding in bindings}
+    rows: list[dict] = []
+    for slot in slots:
+        index = slot.get("clip_index")
+        binding = (
+            by_proxy.get(pool[index]) if isinstance(index, int) and 0 <= index < len(pool) else None
+        )
+        if binding is None:
+            return slots
+        rows.append(
+            {
+                **slot,
+                # This is a selection marker, not the final mixed gain. The
+                # native renderer multiplies it once by audio.original_volume.
+                "source_audio_volume": 1.0 if binding.media_id in selected else 0.0,
+            }
+        )
+    return rows
 
 
 def narrated_timings_and_assignments(
@@ -233,9 +311,12 @@ def project_phone_voiceover_timeline(
         projected = narrated_timings_and_assignments(recipe, bindings, pool)
         if projected is None:
             return None
+        slots = _with_source_audio_volumes(
+            projected[2], bindings=bindings, pool=pool, variant=variant
+        )
         return {
             "pool": pool,
-            "slots": projected[2],
+            "slots": slots,
             "total_duration_s": round(float(recipe.duration), 3),
             "narrated_timings": projected[0],
             "narrated_clip_assignments": projected[1],
@@ -243,9 +324,12 @@ def project_phone_voiceover_timeline(
     timeline = voiceover_ai_timeline(recipe, bindings, pool)
     if not timeline:
         return None
+    slots = _with_source_audio_volumes(
+        timeline["slots"], bindings=bindings, pool=pool, variant=variant
+    )
     return {
         "pool": pool,
-        "slots": timeline["slots"],
-        "ai_timeline": timeline,
+        "slots": slots,
+        "ai_timeline": {**timeline, "slots": slots},
         "total_duration_s": round(float(recipe.duration), 3),
     }

@@ -2541,11 +2541,19 @@ def _run_generative_job_impl(
                     # A recording's mere presence cannot override the approved
                     # soundtrack. Historical jobs retain their original dispatch.
                     # Every decline here is typed (decline_reason/field_path).
+                    from app.services.phone_rollout import (
+                        phone_voiceover_source_audio_supported,  # noqa: PLC0415
+                    )
+
                     has_voiceover_candidate = check_phone_dispatch_contract(
                         contract,
                         snapshot_generation_id=phone_snapshot.get("creator_generation_id"),
                         has_voiceover_candidate=has_voiceover_candidate,
                         user_song=candidates.get("user_song"),
+                        allow_voiceover_source_audio=(
+                            phone_voiceover_source_audio_supported(require_client=False)
+                            and declared_format in NARRATED_EDIT_FORMATS
+                        ),
                     )
                 if isinstance(phone_snapshot.get("guided_edit"), dict):
                     _shadow_route(
@@ -6763,6 +6771,11 @@ def _demote_beat_receipt(
             survivor["at_s"] = entry.get("at_s")
             survivor["end_s"] = entry.get("end_s")
             survivor["visual_label"] = entry.get("visual_label")
+            if entry.get("display_mode") == "fullscreen":  # KRI-840: absent = the corner card
+                survivor["display_mode"] = "fullscreen"
+                for key in ("card_id", "following_clip_id"):
+                    if entry.get(key) is not None:
+                        survivor[key] = entry[key]
         if sound_survives:
             survivor.setdefault("at_s", entry.get("at_s"))
             survivor["sound_label"] = entry.get("sound_label")
@@ -6834,6 +6847,7 @@ def _run_phone_subtitled_job(
     from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
     from app.pipeline.caption_language import (  # noqa: PLC0415
         SOURCE_DETECTED,
+        SOURCE_FALLBACK,
         coerce_caption_language_request,
         crosscheck_detected_language,
         resolve_spoken_caption_language,
@@ -7041,6 +7055,12 @@ def _run_phone_subtitled_job(
     # KRI-661: the creator asked for their Visuals in the order they were taken (the
     # approved contract pinned capture-time order). Only the sequence layouts read it.
     overlay_chronological: bool = _approved_capture_order(snapshot, all_candidates)
+    # KRI-840: "show the photo full screen when I say X" (a reaction beat with
+    # display_mode "fullscreen") rides the same full-screen track and the same kill switch
+    # as the KRI-297 sequence; off, capability repair has already made it a corner card.
+    fullscreen_beats_enabled: bool = bool(
+        getattr(settings, "phone_subtitled_fullscreen_overlays_enabled", True)
+    )
     language: str = all_candidates.get("language") or "en"
     # KRI-177: same explicit override contract as the cloud subtitled render —
     # re-validated here since a stray/legacy value must never silently win.
@@ -7303,13 +7323,51 @@ def _run_phone_subtitled_job(
                     snapshot, storage_path=gcs_path, duration_s=float(probe.duration_s)
                 )
             )
+            # Explicit word removals need the full original transcript even when
+            # automatic cleanup was declined. Never infer cut times from corrected cues.
+            explicit_source_transcript = None
+            explicit_asks = _phone_speech_cut_asks(snapshot)
+            if (
+                explicit_asks
+                and not multi_clip
+                and not (speech_cleanup_snapshot or opening_cut_snapshot)
+            ):
+                explicit_source_transcript = transcribe_whisper_cached(
+                    clip_path, language=caption_language_req
+                )
+            explicit_words = (
+                speech_cleanup_snapshot.source_words()
+                if speech_cleanup_snapshot
+                else opening_cut_snapshot.source_words()
+                if opening_cut_snapshot
+                else explicit_source_transcript.words
+                if explicit_source_transcript is not None
+                else None
+            )
             cleanup_cut_plan = cut_plan
             cut_plan, take_window_receipts = _phone_opening_cut(
                 snapshot,
                 cut_plan,
                 speech_cleanup_snapshot.source_words() if speech_cleanup_snapshot else (),
                 duration_s=float(probe.duration_s),
-                off_words=opening_cut_snapshot.source_words() if opening_cut_snapshot else None,
+                off_words=explicit_words,
+            )
+            cut_plan, explicit_cut_receipts = _phone_explicit_speech_cuts(
+                explicit_asks,
+                cut_plan,
+                explicit_words,
+                duration_s=float(probe.duration_s),
+                multiple_sources=multi_clip,
+                low_confidence=(
+                    bool(explicit_source_transcript.low_confidence)
+                    if explicit_source_transcript is not None
+                    else bool(
+                        (speech_cleanup_snapshot or opening_cut_snapshot)
+                        and (
+                            speech_cleanup_snapshot or opening_cut_snapshot
+                        ).analysis.safety_signals.transcript_low_confidence
+                    )
+                ),
             )
             # True when the plan is the start/end cut alone (cleanup off): captions remap
             # through it, but it is never reported as a speech-cleanup outcome.
@@ -7446,10 +7504,16 @@ def _run_phone_subtitled_job(
                 # `_resolve_verbatim_caption_language` + `_cut_caption_words`.
                 # The cut itself and `raw_words` stay on the spoken words.
                 words_snapshot = speech_cleanup_snapshot or opening_cut_snapshot
-                assert words_snapshot is not None and cut_plan is not None  # noqa: S101
-                words = words_snapshot.source_words()
+                assert cut_plan is not None  # noqa: S101
+                words = (
+                    words_snapshot.source_words()
+                    if words_snapshot is not None
+                    else explicit_source_transcript.words
+                )
                 detected_lang, _lang_source = resolve_spoken_caption_language(
-                    words_snapshot.analysis.language,
+                    words_snapshot.analysis.language
+                    if words_snapshot is not None
+                    else explicit_source_transcript.language,
                     transcript_text=" ".join(word.text for word in words),
                     fallback=language,
                 )
@@ -7486,6 +7550,9 @@ def _run_phone_subtitled_job(
                         }
                         for word in words
                     ]
+                # KRI-838: the spoken language, only when something detected it (never the
+                # job language the fallback chain ends on): what an unmet ask is stamped.
+                spoken_caption_lang = detected_lang if _lang_source != SOURCE_FALLBACK else ""
                 caption_words, detected_lang = _requested_language_caption_words(
                     words, detected_lang
                 )
@@ -7502,6 +7569,21 @@ def _run_phone_subtitled_job(
                     # Cleanup cut the fillers out of the audio; an opening cut alone left them in.
                     if opening_cut_only or not is_filler_token(item["text"])
                 ]
+                if caption_language_req is not None:
+                    # KRI-838: the hinted pass is no proof (a whisper language hint does
+                    # not reliably translate), and an empty one leaves the spoken words.
+                    # Read the text; translate when it is not in the requested language.
+                    # Done on the kept words so a cut sentence is never translated whole.
+                    # The cut and the lanes stay on the spoken words.
+                    ensured = _ensure_requested_caption_language(
+                        cut_words,
+                        requested=caption_language_req,
+                        fallback_language=spoken_caption_lang,
+                        job_id=job_id,
+                        variant_id="subtitled",
+                        glossary=_caption_glossary(snapshot, all_candidates),
+                    )
+                    cut_words, detected_lang = ensured.words, ensured.language
                 cues = build_plain_cues(cut_words, attach_words=True, budget=PHONE_CUE_BUDGET)
                 if spoken_text_asks:
                     # KRI-707: the SPOKEN words (never a requested caption language), cut.
@@ -7596,6 +7678,26 @@ def _run_phone_subtitled_job(
                         }
                         for word in transcript.words
                     ]
+                if caption_language_req is not None:
+                    # KRI-838: the hinted pass is no proof (a whisper language hint does
+                    # not reliably translate). Only the CAPTIONS take the verified or
+                    # translated words; `raw_words` and `timeline_words` stay on the spoken
+                    # pass (KRI-839).
+                    ensured = _ensure_requested_caption_language(
+                        caption_words,
+                        requested=caption_language_req,
+                        # The spoken pass's language when whisper or its text said it,
+                        # else Gemini's independent read of the clip, else "".
+                        fallback_language=(
+                            _spoken_lang
+                            if _lang_source != SOURCE_FALLBACK
+                            else _clip_spoken_language(clip_metas, clip_id)
+                        ),
+                        job_id=job_id,
+                        variant_id="subtitled",
+                        glossary=_caption_glossary(snapshot, all_candidates),
+                    )
+                    caption_words, detected_lang = ensured.words, ensured.language
                 cues = build_plain_cues(caption_words, attach_words=True, budget=PHONE_CUE_BUDGET)
                 if spoken_text_asks:
                     timeline_words = list(transcript.words)
@@ -7619,8 +7721,21 @@ def _run_phone_subtitled_job(
                         for word in (getattr(extra_transcript, "words", None) or [])
                     ]
                     if extra_words:
+                        extra_caption_words = extra_words
+                        if caption_language_req is not None:
+                            # KRI-838: an extra speaker's captions follow the same ask,
+                            # judged on their own words (the variant keeps the main
+                            # speaker's language stamp).
+                            extra_caption_words = _ensure_requested_caption_language(
+                                extra_words,
+                                requested=caption_language_req,
+                                fallback_language=_clip_spoken_language(clip_metas, extra_id),
+                                job_id=job_id,
+                                variant_id="subtitled",
+                                glossary=_caption_glossary(snapshot, all_candidates),
+                            ).words
                         cues = cues + build_plain_cues(
-                            extra_words, attach_words=True, budget=PHONE_CUE_BUDGET
+                            extra_caption_words, attach_words=True, budget=PHONE_CUE_BUDGET
                         )
                         if spoken_text_asks:
                             timeline_words.extend(extra_words)
@@ -7885,21 +8000,24 @@ def _run_phone_subtitled_job(
                     else:
                         import app.services.phone_reaction_grounding as phone_reaction_grounding_mod  # noqa: PLC0415
 
+                        ground_beats = phone_reaction_grounding_mod.ground_phone_reaction_beats
                         try:
-                            grounded_beats = (
-                                phone_reaction_grounding_mod.ground_phone_reaction_beats(
-                                    _sync_session,
-                                    job_id=job_id,
-                                    beats=beats,
-                                    closing=closing,
-                                    words=raw_words or [],
-                                    duration_s=float(probe.duration_s),
-                                    clip_path=clip_path,
-                                    # KRI-521: "when I say X, show my video" -- the
-                                    # same gate the KRI-183 PiP pass uses.
-                                    video_supported=video_overlays_enabled,
-                                    **framed_grounding,
-                                )
+                            grounded_beats = ground_beats(
+                                _sync_session,
+                                job_id=job_id,
+                                beats=beats,
+                                closing=closing,
+                                words=raw_words or [],
+                                duration_s=float(probe.duration_s),
+                                clip_path=clip_path,
+                                # KRI-521: "when I say X, show my video" -- the
+                                # same gate the KRI-183 PiP pass uses.
+                                video_supported=video_overlays_enabled,
+                                allow_fullscreen=fullscreen_beats_enabled,
+                                fullscreen_hold_s_default=(
+                                    phone_reaction_grounding_mod.TALKING_FULLSCREEN_HOLD_S_DEFAULT
+                                ),
+                                **framed_grounding,
                             )
                         except OperationalError:
                             raise  # transient DB -> Celery autoretry, never a lane drop
@@ -7941,6 +8059,14 @@ def _run_phone_subtitled_job(
                 # overlapping" invariant of KRI-183.
                 beat_windows: list[tuple[float, float]] = [
                     (float(card.start_s), float(card.end_s)) for card in beat_cards
+                ]
+                # KRI-840: a full-screen beat owns the full-screen track at its word; the
+                # even-slot sequence slides its cutaways around these (two full-screen
+                # windows overlapping would drop the WHOLE overlays lane in the compiler).
+                fullscreen_beat_windows: list[tuple[float, float]] = [
+                    (float(card.start_s), float(card.end_s))
+                    for card in beat_cards
+                    if card.display_mode == "fullscreen"
                 ]
                 # KRI-514: closing text with no closing photo to sit on takes
                 # the last 3 s near the top; keep generic cards out of it.
@@ -7984,6 +8110,7 @@ def _run_phone_subtitled_job(
                                     for card in (lane_request.overlays if lane_request else [])
                                 ]
                                 + beat_windows,
+                                fullscreen_occupied=fullscreen_beat_windows,
                                 used_media_ids=frozenset(
                                     card.media_id
                                     for card in (lane_request.overlays if lane_request else [])
@@ -8376,6 +8503,27 @@ def _run_phone_subtitled_job(
                 except Exception:  # noqa: BLE001
                     pass
 
+            from app.pipeline.explicit_speech_audio import (  # noqa: PLC0415
+                protect_explicit_speech_cut_audio,
+            )
+            from app.services.phone_noise_reduction import (  # noqa: PLC0415
+                prepare_phone_noise_reduction,
+            )
+
+            recipe = protect_explicit_speech_cut_audio(
+                recipe, source_media_id=binding.media_id, cuts=explicit_cut_receipts
+            )
+
+            recipe, processed_audio_receipt, engine_noise_receipt = prepare_phone_noise_reduction(
+                recipe,
+                snapshot,
+                source=binding,
+                local_path=clip_path,
+                temporary_dir=tmpdir,
+                job_id=job_id,
+                multiple_sources=multi_clip,
+            )
+
     if not media_lanes_enabled:
         validate_phone_pilot_recipe(recipe, allow_editor_media=bool(cutaways))
     else:
@@ -8461,6 +8609,22 @@ def _run_phone_subtitled_job(
             new_entry["phone_lane_receipt"] = lane_receipt
         if sfx_duck is not None:
             new_entry[SFX_DUCK_RECEIPT_FIELD] = sfx_duck
+        if engine_noise_receipt is not None:
+            new_entry["engine_noise_reduction"] = engine_noise_receipt
+        if processed_audio_receipt is not None:
+            from app.pipeline.phone_processed_audio import (
+                PHONE_PROCESSED_AUDIO_FIELD,  # noqa: PLC0415
+            )
+
+            processed = dict(current.get(PHONE_PROCESSED_AUDIO_FIELD) or {})
+            processed[variant_id] = {
+                processed_audio_receipt.source_media_id: processed_audio_receipt.model_dump(
+                    mode="json"
+                )
+            }
+            current[PHONE_PROCESSED_AUDIO_FIELD] = processed
+        if explicit_cut_receipts:
+            new_entry["explicit_speech_cuts"] = explicit_cut_receipts
         if take_window_receipts:
             # KRI-628 / KRI-790: whether the video starts (`opening_cut`) and ends
             # (`end_cut`) at the lines the creator quoted; the brief receipt's evidence at
@@ -8614,6 +8778,74 @@ def _run_phone_subtitled_job(
             ),
         },
     )
+
+
+def _phone_speech_cut_asks(snapshot: dict) -> tuple:
+    """Read only the immutable approved brief, never free-form renderer input."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.speech_cut_ask import brief_speech_cuts  # noqa: PLC0415
+
+    try:
+        return brief_speech_cuts(
+            BriefBinding.model_validate(snapshot.get("creator_brief_binding")).resolve()
+        )
+    except (ValueError, TypeError):
+        return ()
+
+
+def _phone_explicit_speech_cuts(
+    asks: tuple,
+    cut_plan: CutPlan | None,
+    words: Any,
+    *,
+    duration_s: float,
+    multiple_sources: bool = False,
+    low_confidence: bool = False,
+) -> tuple[CutPlan | None, list[dict[str, Any]]]:
+    """Apply creator-selected word spans on the source clock, with honest receipts.
+
+    Every request is resolved on the same uncut words, so removing the first
+    occurrence never renumbers a later request. Multi-source scope is refused.
+    """
+    from app.pipeline.explicit_speech_cut import (  # noqa: PLC0415
+        ExplicitSpeechCutRequest,
+        build_explicit_speech_cut,
+    )
+
+    receipts = []
+    for ask in asks:
+        receipt = {
+            "version": 1,
+            "requirement_ids": list(ask.requirement_ids),
+            "quote": ask.quote,
+            "occurrence": ask.occurrence,
+            "status": "not_applied",
+        }
+        try:
+            if multiple_sources:
+                raise ValueError("multiple_sources")
+            if words is None:
+                raise ValueError("missing_word_timings")
+            if low_confidence:
+                raise ValueError("uncertain_transcript")
+            result = build_explicit_speech_cut(
+                words,
+                ExplicitSpeechCutRequest(phrase=ask.quote, occurrence=ask.occurrence),
+                duration_s=duration_s,
+                existing_plan=cut_plan,
+            )
+            cut_plan = result.plan
+            receipt.update(result.receipt)
+            receipt.update(
+                requirement_ids=list(ask.requirement_ids),
+                quote=ask.quote,
+                occurrence=ask.occurrence,
+                status="applied",
+            )
+        except ValueError as exc:
+            receipt["reason"] = str(exc)
+        receipts.append(receipt)
+    return cut_plan, receipts
 
 
 def _phone_opening_cut_snapshot(
@@ -9186,6 +9418,74 @@ def _apply_creator_spellings(cues: list, targets: tuple[str, ...]) -> list:
     return out
 
 
+def _transcript_with_words(transcript: Any, words: list, language: str) -> Any:
+    """A copy of ``transcript`` carrying ``words`` (and their joined text) in ``language``."""
+    clone = replace(transcript) if is_dataclass(transcript) else copy.copy(transcript)
+    clone.words = words
+    clone.full_text = " ".join(str(word.text) for word in words)
+    clone.language = language
+    return clone
+
+
+def _clip_spoken_language(clip_metas: Any, clip_id: Any) -> str:
+    """KRI-838: an INDEPENDENT read of the language spoken in a clip -- the language-ID on
+    Gemini's own transcript of it -- or "" when there is none. The hinted whisper pass cannot
+    say: it reports the language it was told to write, so a stamp taken from it repeats the
+    request. This is what ``ensure_caption_language`` may stamp when the text cannot say."""
+    from app.pipeline.caption_language import detect_text_language  # noqa: PLC0415
+
+    meta = next(
+        (m for m in clip_metas or () if str(getattr(m, "clip_id", "")) == str(clip_id)), None
+    )
+    return detect_text_language(getattr(meta, "transcript", None)) or ""
+
+
+def _caption_glossary(snapshot: dict, all_candidates: dict) -> tuple[str, ...]:
+    """KRI-838: the creator's own names and spellings for the captions -- the do-not-translate
+    list of the caption translator (the same words ``_apply_creator_spellings`` applies)."""
+    from app.pipeline.caption_spelling import extract_spelling_asks  # noqa: PLC0415
+
+    return _phone_caption_spellings(
+        snapshot, extract_spelling_asks(_creator_request_text(all_candidates))
+    )
+
+
+def _ensure_requested_caption_language(
+    words: list,
+    *,
+    requested: str,
+    fallback_language: str,
+    job_id: str,
+    variant_id: str,
+    glossary: tuple[str, ...] = (),
+) -> Any:
+    """KRI-838: caption ``words`` just transcribed with the creator's requested language as
+    the whisper hint, made to really be in it, and the language they honestly are.
+
+    A whisper language hint does not reliably translate (a Turkish hint on English speech
+    wrote the English again in local tests), so the hint alone is no proof. The text is
+    read; if it is not in the requested language it is translated
+    (``CAPTION_TRANSLATION_ENABLED``), and if that fails the original words come back with
+    the language they truly are, so the variant's ``caption_language`` and the review never
+    repeat the request. ``fallback_language`` is an INDEPENDENT read of the spoken language
+    (never the hinted pass's own label, which echoes the request), "" when unknown: it is
+    what an unmet ask is stamped with when the text cannot say. Returns a
+    ``CaptionLanguageResult``.
+    """
+    from app.pipeline.caption_translate import ensure_caption_language  # noqa: PLC0415
+
+    return ensure_caption_language(
+        words,
+        requested=requested,
+        fallback_language=fallback_language,
+        glossary=glossary,
+        enabled=settings.caption_translation_enabled,
+        model=settings.caption_translation_model,
+        variant_id=variant_id,
+        job_id=job_id,
+    )
+
+
 def _phone_spoken_text_asks(snapshot: dict) -> tuple:
     """KRI-707: the texts the creator wants on screen when they say a word, read
     deterministically off the approved brief pinned on the job
@@ -9424,6 +9724,7 @@ def _narrated_caption_transcript(
     caption_lang: str,
     requested_lang: str | None,
     variant_id: str,
+    glossary: tuple[str, ...] = (),
 ) -> tuple[Any, str]:
     """The transcript a narrated variant's captions are built from, and its language.
 
@@ -9438,6 +9739,12 @@ def _narrated_caption_transcript(
     ``caption_lang`` is the language returned when no request applies. A request
     already matching what was spoken, or an empty hinted pass, keeps ``transcript``
     (the empty case is recorded, never silent).
+
+    KRI-838: the hinted pass is no proof either -- a whisper language hint does not reliably
+    translate, so "Turkish" over an English voiceover can come back English. The hinted
+    words are read and, when they are not in the requested language, translated
+    (``_ensure_requested_caption_language``); if that fails the hinted words are returned
+    with the language they really are. ``glossary`` is the creator's do-not-translate list.
     """
     from app.pipeline.caption_language import infer_language_from_text  # noqa: PLC0415
     from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
@@ -9458,7 +9765,17 @@ def _narrated_caption_transcript(
         log.warning("caption_language_request_empty", job_id=job_id, **payload)
         return transcript, caption_lang
     record_pipeline_event("captions", "caption_language_requested", payload)
-    return requested, requested_lang
+    ensured = _ensure_requested_caption_language(
+        requested.words,
+        requested=requested_lang,
+        fallback_language=heard,
+        job_id=job_id,
+        variant_id=variant_id,
+        glossary=glossary,
+    )
+    if ensured.outcome == "translated":
+        requested = _transcript_with_words(requested, ensured.words, ensured.language)
+    return requested, ensured.language
 
 
 def _phone_narrated_reaction_lanes(
@@ -9765,6 +10082,7 @@ def _run_phone_narrated_job(
     from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
         NarratedPhoneStep,
         compile_phone_narrated_plan,
+        narrated_title_element,
         narrated_title_end_s,
         narrated_title_text_elements,
     )
@@ -9779,6 +10097,8 @@ def _run_phone_narrated_job(
     from app.services.phone_reaction_grounding import trigger_vocabulary_prompt  # noqa: PLC0415
     from app.services.phone_rollout import (  # noqa: PLC0415
         phone_voiceover_reaction_beats_supported,
+        phone_voiceover_source_audio_supported,
+        phone_voiceover_spoken_text_supported,
         validate_phone_pilot_recipe,
     )
     from app.services.phone_sources import (  # noqa: PLC0415
@@ -9851,6 +10171,19 @@ def _run_phone_narrated_job(
     # my medal photo"), grounded below against this voiceover's own words.
     strategy = all_candidates.get("creator_strategy")
     strategy = strategy if isinstance(strategy, dict) else {}
+    source_audio_ids: tuple[str, ...] | None = None
+    raw_audio = strategy.get("montage_audio")
+    if isinstance(raw_audio, dict):
+        if not phone_voiceover_source_audio_supported(require_client=False):
+            raise UnsupportedPhonePlan("Selected clip sound under narration is not enabled yet")
+        from app.schemas.edit_proposal import MontageAudioPlan  # noqa: PLC0415
+
+        selected_audio = MontageAudioPlan.model_validate(raw_audio)
+        source_audio_ids = (
+            tuple(selected_audio.source_media_ids or [b.media_id for b in bindings])
+            if selected_audio.preserve_source_audio
+            else ()
+        )
     raw_beats = strategy.get("reaction_beats")
     beats: list = raw_beats if isinstance(raw_beats, list) else []
     raw_closing = strategy.get("closing_media")
@@ -10196,6 +10529,7 @@ def _run_phone_narrated_job(
                     caption_lang=detected_lang,
                     requested_lang=caption_language_req,
                     variant_id="narrated",
+                    glossary=_caption_glossary(snapshot, all_candidates),
                 )
                 cues = build_plain_cues(caption_transcript.words, attach_words=True)
                 cues = correct_caption_cues(
@@ -10283,6 +10617,66 @@ def _run_phone_narrated_job(
             opening_title_end_s = narrated_title_end_s(
                 transcript.words[0].end_s if transcript.words else None
             )
+            spoken_rows: list[dict] = []
+            spoken_receipt: dict | None = None
+            if phone_voiceover_spoken_text_supported(require_client=False):
+                asks = _phone_spoken_text_asks(snapshot)
+                if asks:
+                    from app.kria.recipes import Canvas  # noqa: PLC0415
+                    from app.kria.reply_language import say  # noqa: PLC0415
+                    from app.pipeline.phone_narrated_spoken_text import (
+                        narrated_spoken_text_rows,  # noqa: PLC0415
+                    )
+
+                    canvas = Canvas(width=1080, height=1920)
+                    title = narrated_title_element(
+                        opening_title,
+                        end_s=opening_title_end_s,
+                        timeline_duration_s=voiceover_duration_s,
+                        canvas=canvas,
+                    )
+                    spoken_rows, spoken_receipt = narrated_spoken_text_rows(
+                        asks,
+                        words=transcript.words,
+                        cues=cues,
+                        caption_style=caption_style,
+                        timeline_duration_s=voiceover_duration_s,
+                        canvas=canvas,
+                        shown_rows=[title.model_dump(mode="json", exclude_none=True)]
+                        if title
+                        else [],
+                    )
+                    misses = [row for row in spoken_receipt["rows"] if row["status"] != "placed"]
+                    if misses:
+                        with _worker_reply_language(snapshot):
+                            repeated = any(row["status"] == "ambiguous" for row in misses)
+                            words = ", ".join(str(row["text"]) for row in misses)
+                            message = say(
+                                en=(
+                                    f"I found repeated trigger words for {words}. "
+                                    "Tell me first, last, or which occurrence."
+                                    if repeated
+                                    else (
+                                        f"I couldn't safely place {words} on the recorded words. "
+                                        "Check the phrase or choose a different moment."
+                                    )
+                                ),
+                                tr=(
+                                    f"{words} için beklenen sözler tekrarlanıyor. "
+                                    "İlk, son ya da hangi tekrar olduğunu söyle."
+                                    if repeated
+                                    else (
+                                        f"{words} yazısını kayıttaki sözlere yerleştiremedim. "
+                                        "Sözü kontrol et ya da başka bir an seç."
+                                    )
+                                ),
+                            )
+                        if not _save_request_recovery(
+                            job_id, snapshot, ownership_epoch=ownership_epoch, message=message
+                        ):
+                            return None
+                        raise UnsupportedPhonePlan(message)
+                    record_pipeline_event("narrated", "spoken_text", spoken_receipt)
             # KRI-519: beats become the Voiceover overlay / sound-effect lanes,
             # the same ones an editor Save recompiles (KRI-281).
             lanes: Any = None
@@ -10315,6 +10709,8 @@ def _run_phone_narrated_job(
                         opening_title_end_s=opening_title_end_s,
                         lanes=lanes,
                         visuals=visuals,
+                        source_audio_media_ids=source_audio_ids,
+                        resolved_text_elements=spoken_rows,
                     )
                     break
                 except UnsupportedPhonePlan as exc:
@@ -10437,8 +10833,13 @@ def _run_phone_narrated_job(
         title_elements = narrated_title_text_elements(
             recipe, opening_title, end_s=opening_title_end_s
         )
-        if title_elements:
-            new_entry["narrated_title_text_elements"] = title_elements
+        if title_elements or spoken_rows:
+            new_entry["narrated_title_text_elements"] = title_elements + spoken_rows
+        if spoken_receipt is not None:
+            new_entry["spoken_text_placement"] = spoken_receipt
+        if source_audio_ids is not None:
+            new_entry["source_audio_media_ids"] = list(source_audio_ids)
+            new_entry["source_audio_bed_gain"] = recipe.audio.original_volume
         # KRI-281: persist the cut the editor shows, derived from the very recipe
         # just pinned (same code the read-time projection uses for videos rendered
         # before this existed). Clip ids index the source pool the timeline lists.
@@ -26345,6 +26746,7 @@ def _render_narrated_variant(
     timing above still comes from the spoken words (`_narrated_caption_transcript`).
     """
     from app.pipeline.caption_language import coerce_caption_language_request  # noqa: PLC0415
+    from app.pipeline.caption_spelling import extract_spelling_asks  # noqa: PLC0415
     from app.pipeline.narrated_assembler import assemble_narrated  # noqa: PLC0415
     from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
     from app.storage import (  # noqa: PLC0415
@@ -26723,6 +27125,7 @@ def _render_narrated_variant(
             caption_lang=getattr(transcript, "language", "") or "",
             requested_lang=coerce_caption_language_request(caption_language_request),
             variant_id=variant_id,
+            glossary=extract_spelling_asks(creator_request),
         )
         caption_cues = assemble_narrated(
             step_timings,
@@ -28529,6 +28932,26 @@ def _render_subtitled_variant(
         )
         return caption_language_req, override_transcript.words
 
+    def _ensure_cloud_caption_words(lang: str, words: list, *, spoken: str) -> Any:
+        """KRI-838: after a hinted pass was adopted (``lang`` is the requested language),
+        read the words and translate them when they are not in it. Returns a
+        ``CaptionLanguageResult``: the language is the one the text honestly is, and the
+        words are untouched unless it says "translated". A pass that was not hinted (no
+        request, or ``lang`` is the spoken language) comes back as it went in."""
+        from app.pipeline.caption_translate import CaptionLanguageResult  # noqa: PLC0415
+
+        if caption_language_req is None or lang != caption_language_req:
+            return CaptionLanguageResult(words, lang, "heard")
+        # This render carries no creator request text, so there is no spelling list to
+        # keep verbatim here (the phone paths pass it).
+        return _ensure_requested_caption_language(
+            words,
+            requested=caption_language_req,
+            fallback_language=spoken,
+            job_id=job_id,
+            variant_id=variant_id,
+        )
+
     def _resolve_live_transcript_language(
         transcript: Any, *, retranscribe: Callable[[str], Any]
     ) -> tuple[str, Any]:
@@ -28559,7 +28982,15 @@ def _render_subtitled_variant(
                 "spoken": spoken_lang,
             },
         )
-        return caption_language_req, transcript
+        ensured = _ensure_cloud_caption_words(
+            caption_language_req,
+            list(transcript.words or []),
+            # `spoken_lang` is the hinted pass's own label; Gemini's transcript is independent.
+            spoken=_clip_spoken_language(clip_metas, selected_clip_id),
+        )
+        if ensured.outcome == "translated":
+            transcript = _transcript_with_words(transcript, ensured.words, ensured.language)
+        return ensured.language, transcript
 
     # Caption style: "word" → word-by-word lime pop (line visible, active word popped);
     # anything else → sentence blocks (the safe default). Reuses the narrated key.
@@ -28935,11 +29366,19 @@ def _render_subtitled_variant(
                     sc_language, words=sc_words
                 )
                 caption_words = _cut_caption_words(resolved_sc_words, sc_plan, sc_grid)
+                ensured = _ensure_cloud_caption_words(
+                    detected_lang, caption_words, spoken=sc_language
+                )
+                detected_lang, caption_words = ensured.language, ensured.words
                 cues = build_plain_cues(caption_words, attach_words=True)
             elif checked_uncut_words is not None:
                 detected_lang, resolved_uncut_words = _resolve_verbatim_caption_language(
                     checked_uncut_language, words=checked_uncut_words
                 )
+                ensured = _ensure_cloud_caption_words(
+                    detected_lang, resolved_uncut_words, spoken=checked_uncut_language
+                )
+                detected_lang, resolved_uncut_words = ensured.language, ensured.words
                 cues = build_plain_cues(resolved_uncut_words, attach_words=True)
             else:
                 # Content-addressed cache: re-renders of the same clip reuse the
@@ -29213,6 +29652,8 @@ def _render_subtitled_variant(
                 sc_language, words=sc_words
             )
             caption_words = _cut_caption_words(resolved_sc_words, sc_plan, sc_grid)
+            ensured = _ensure_cloud_caption_words(detected_lang, caption_words, spoken=sc_language)
+            detected_lang, caption_words = ensured.language, ensured.words
             cues = build_plain_cues(caption_words, attach_words=True)
         elif not smart_v2 and checked_uncut_words is not None:
             # Explicit keep-original means the exact accepted words and source
@@ -29220,6 +29661,10 @@ def _render_subtitled_variant(
             detected_lang, resolved_uncut_words = _resolve_verbatim_caption_language(
                 checked_uncut_language, words=checked_uncut_words
             )
+            ensured = _ensure_cloud_caption_words(
+                detected_lang, resolved_uncut_words, spoken=checked_uncut_language
+            )
+            detected_lang, resolved_uncut_words = ensured.language, ensured.words
             cues = build_plain_cues(resolved_uncut_words, attach_words=True)
         elif not smart_v2:
             # Flag-off / gated / analysis-failed path — today's flow, unchanged.

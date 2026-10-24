@@ -1,0 +1,54 @@
+{
+  "agent": "nova.video.clip_metadata",
+  "prompt_version": "2026-10-23.1",
+  "input": {
+    "file_uri": "clips/cafe_tray_serve.mp4",
+    "file_mime": "video/mp4"
+  },
+  "raw_text": "{\"clip_id\": \"files/c4f8n2q7wlpe\", \"transcript\": \"\", \"hook_text\": \"\", \"hook_score\": 2.0, \"best_moments\": [{\"start_s\": 1.9, \"end_s\": 3.1, \"energy\": 5.0, \"description\": \"server leans forward to take a plate\"}, {\"start_s\": 3.9, \"end_s\": 5.0, \"energy\": 3.0, \"description\": \"server walks off with plate and tray\"}], \"detected_subject\": \"server with a black tray\", \"brands\": [], \"summary\": \"A server stands holding a black round tray, leans forward to take a plate with a wafer dessert, holds it out to the camera and walks away with the plate and the tray.\", \"setting\": \"cafe patio\", \"activity\": \"serving a dessert plate\", \"people_count\": 1, \"speaks_to_camera\": false, \"people_note\": \"a woman in a beige T-shirt and denim shorts\", \"props\": [\"black round tray\", \"beige plate with an oblea\"], \"actions\": [\"stands holding a black round tray\", \"leans forward and picks up a plate\", \"holds the plate out toward the camera\", \"walks off to the right with the plate and the tray\"], \"visual_quality\": \"sharp and steady\", \"content_type\": \"broll\", \"audio_type\": \"ambient\"}",
+  "output": {
+    "clip_id": "files/c4f8n2q7wlpe",
+    "transcript": "",
+    "hook_text": "",
+    "hook_score": 2.0,
+    "best_moments": [
+      {
+        "start_s": 1.9,
+        "end_s": 3.1,
+        "energy": 5.0,
+        "description": "server leans forward to take a plate"
+      },
+      {
+        "start_s": 3.9,
+        "end_s": 5.0,
+        "energy": 3.0,
+        "description": "server walks off with plate and tray"
+      }
+    ],
+    "detected_subject": "server with a black tray",
+    "brands": [],
+    "summary": "A server stands holding a black round tray, leans forward to take a plate with a wafer dessert, holds it out to the camera and walks away with the plate and the tray.",
+    "setting": "cafe patio",
+    "activity": "serving a dessert plate",
+    "people_count": 1,
+    "speaks_to_camera": false,
+    "people_note": "a woman in a beige T-shirt and denim shorts",
+    "props": [
+      "black round tray",
+      "beige plate with an oblea"
+    ],
+    "actions": [
+      "stands holding a black round tray",
+      "leans forward and picks up a plate",
+      "holds the plate out toward the camera",
+      "walks off to the right with the plate and the tray"
+    ],
+    "visual_quality": "sharp and steady",
+    "content_type": "broll",
+    "audio_type": "ambient"
+  },
+  "meta": {
+    "source": "hand-authored golden",
+    "purpose": "KRI-845: covers props / actions / visual_quality (prompt_version 2026-10-23.1) on the footage of the cafe clip that holds the only black tray: the prop is named with its colour, the actions keep their direction (picks up, holds out, walks off) and the quality is the crisp-and-steady default. Authored from tests/fixtures/kri845_m1_clip_detail.json (M1_08); the moments follow the prompt's spacing rules (starts 2.0 s apart, span >= 60% of 5.0 s). Hand-authored; no live run was made (no paid calls)."
+  }
+}

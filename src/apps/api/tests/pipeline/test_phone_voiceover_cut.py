@@ -152,6 +152,73 @@ def test_an_untouched_montage_cut_round_trips_to_the_same_recipe():
     assert _cut(recipe, _montage_slots(recipe), "voiceover") == recipe
 
 
+def test_source_audio_markers_follow_source_identity_through_a_cut():
+    recipe = compile_phone_narrated_plan(
+        [
+            _step("s0", "c0", start_s=0.0, end_s=4.0),
+            _step("s1", "c1", start_s=4.0, end_s=8.0),
+            _step("s2", "c2", start_s=8.0, end_s=12.0),
+        ],
+        _BINDINGS[:3],
+        _narration(duration_s=12.0),
+        voiceover_duration_s=12.0,
+        mix=0.4,
+        source_audio_media_ids=("c1",),
+    )
+    slots = _narrated_slots(recipe)
+    for slot, volume in zip(slots, (0.0, 1.0, 0.0), strict=True):
+        slot["source_audio_volume"] = volume
+    # A split c1 occurrence remains selected; a new c3 occurrence is not.
+    split = {**slots[1], "slot_id": "c1-split", "in_s": 1.0, "duration_s": 2.0}
+    split["source_audio_volume"] = 1.0
+    new = {
+        "slot_id": "new-c3",
+        "clip_index": 3,
+        "in_s": 0.0,
+        "duration_s": 2.0,
+        "transition_after": "cut",
+    }
+    edited = _cut(recipe, [slots[0], slots[1], split, slots[2], new])
+
+    video = _track(edited, "narrated")
+    assert [clip.volume for clip in video.clips] == [0.0, 1.0, 1.0, 0.0, 0.0]
+    assert edited.audio.original_volume == pytest.approx(0.6)
+
+
+def test_source_audio_selection_falls_back_to_prior_source_identity_without_slot_markers():
+    recipe = compile_phone_narrated_plan(
+        [
+            _step("s0", "c0", start_s=0.0, end_s=4.0),
+            _step("s1", "c1", start_s=4.0, end_s=8.0),
+            _step("s2", "c2", start_s=8.0, end_s=12.0),
+        ],
+        _BINDINGS[:3],
+        _narration(duration_s=12.0),
+        voiceover_duration_s=12.0,
+        mix=0.4,
+        source_audio_media_ids=("c1",),
+    )
+    slots = [
+        {key: value for key, value in slot.items() if key != "source_audio_volume"}
+        for slot in _narrated_slots(recipe)
+    ]
+    # An old/malformed client omitted the server marker. A selected source's
+    # existing and split occurrences still resolve to unit volume 1, while a
+    # new unselected source stays muted.
+    split = {**slots[1], "slot_id": "c1-split", "in_s": 1.0, "duration_s": 2.0}
+    new = {
+        "slot_id": "new-c3",
+        "clip_index": 3,
+        "in_s": 0.0,
+        "duration_s": 2.0,
+        "transition_after": "cut",
+    }
+
+    edited = _cut(recipe, [slots[0], slots[1], split, slots[2], new])
+
+    assert [clip.volume for clip in _track(edited, "narrated").clips] == [0.0, 1.0, 1.0, 0.0, 0.0]
+
+
 def test_shorter_footage_cuts_the_voice_at_the_video_end(verified):
     recipe = _recipe()
     slots = _narrated_slots(recipe)
