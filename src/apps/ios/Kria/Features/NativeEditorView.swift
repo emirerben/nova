@@ -109,7 +109,7 @@ struct NativeEditorView: View {
                     } else {
                         NativeEditorLoadSurface(
                             title: "Opening the editor…",
-                            detail: "Loading the latest cut and its editing controls.",
+                            detail: session.loadWaitingMessage ?? "Loading the latest cut and its editing controls.",
                             projectTitle: project.workspaceTitle,
                             isLoading: true,
                             onBack: requestBack,
@@ -264,7 +264,14 @@ struct NativeEditorView: View {
             // server probe is picked up instead of leaving "Preparing media
             // import…" up until a relaunch.
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active { Task { await session.resumeEditorImports() } }
+                if phase == .active {
+                    Task { await session.resumeEditorImports() }
+                    Task { await session.resumeRefreshSync() }
+                }
+            }
+            // A refresh waiting out its backoff runs as soon as the connection is back.
+            .onReceive(NetworkReachability.shared.$isOnline.removeDuplicates()) { online in
+                if online { Task { await session.resumeRefreshSync() } }
             }
             .onDisappear {
                 finishPanelEditing()
@@ -323,6 +330,7 @@ struct NativeEditorView: View {
                 NativeEditorSaveBanner(session: session,
                     retryApproved: session.deviceRenderKey.map { model.deviceRenders.retryNeedsApproval($0) } == true ? { reviewRetryInChat() } : nil)
                 NativeEditorExportBanner(exporter: exporter)
+                NativeEditorRefreshIndicator(session: session, onBackToChat: conversation == nil ? requestBack : onBack)
                 if let message = session.cloudEditorUnavailableMessage {
                     Label(message, systemImage: "lock")
                         .font(KriaFont.body(13))

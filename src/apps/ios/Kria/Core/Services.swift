@@ -1480,17 +1480,28 @@ struct KriaAPI: KriaAPIClient {
         try await request(path: "generative-jobs/\(jobID.uuidString)/status", method: "GET", bodyData: nil, decode: EditorStatusEnvelope.self).variants
     }
     func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue] {
-        guard var variant = try await editorVariants(jobID: jobID).first(where: { $0["variant_id"]?.stringValue == variantID }) else { throw APIError.invalidResponse }
-        if variant["resolved_archetype"] == .string("guided_story"),
-           case let .object(capabilities) = variant["editor_capabilities"], capabilities["timeline"] == .bool(true) {
+        // Status and timeline are two reads. An editor commit, a render claim or a device publish
+        // between them moves the generation, and those are exactly the moments that start an editor
+        // refresh. Re-read both before calling the pair a conflict.
+        for attempt in 0..<3 {
+            guard var variant = try await editorVariants(jobID: jobID).first(where: { $0["variant_id"]?.stringValue == variantID }) else { throw APIError.invalidResponse }
+            guard variant["resolved_archetype"] == .string("guided_story"),
+                  case let .object(capabilities) = variant["editor_capabilities"], capabilities["timeline"] == .bool(true) else {
+                return variant
+            }
             let timeline = try await request(path: "generative-jobs/\(jobID.uuidString)/variants/\(variantID)/timeline", method: "GET", bodyData: nil, decode: [String: JSONValue].self)
+            // Same rule as the server's `variant_render_baseline`: a variant that never finished a
+            // render has "" as its baseline, which is a real value and not a conflict.
             let generation = [variant["render_generation_id"], variant["render_finished_at"]]
-                .compactMap { $0?.stringValue }.first { !$0.isEmpty }
-            guard let generation, timeline["base_generation"] == .string(generation) else { throw APIError.conflict }
-            variant["user_timeline"] = .object(timeline)
-            variant["editor_revision_number"] = timeline["revision_number"]
+                .compactMap { $0?.stringValue }.first { !$0.isEmpty } ?? ""
+            if timeline["base_generation"] == .string(generation) {
+                variant["user_timeline"] = .object(timeline)
+                variant["editor_revision_number"] = timeline["revision_number"]
+                return variant
+            }
+            if attempt < 2 { try await Task.sleep(for: .milliseconds(150 * (attempt + 1))) }
         }
-        return variant
+        throw APIError.conflict
     }
     func editorCommit(itemID: String, variantID: String, request commit: EditorCommitRequest) async throws -> EditorCommitResponse {
         try await request(path: "plan-items/\(itemID)/variants/\(variantID)/editor-commit", method: "POST", bodyData: try JSONEncoder().encode(commit), decode: EditorCommitResponse.self)

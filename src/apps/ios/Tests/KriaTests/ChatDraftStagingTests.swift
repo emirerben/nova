@@ -721,7 +721,8 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertFalse(session.hasUnsavedChanges)
         XCTAssertEqual(fake.commitCount, 0)
         XCTAssertEqual((session.player?.currentItem?.asset as? AVURLAsset)?.url.lastPathComponent, "job-b.mp4")
-        if case .refreshFailed = session.saveState { XCTFail("must not show the refresh-failed banner") }
+        XCTAssertEqual(session.saveState, .idle, "following a re-plan is not a refresh failure")
+        XCTAssertEqual(session.refreshSync, .idle)
     }
 
     func testDraftHeadOnTheNewJobAdoptsItToo() async throws {
@@ -1032,5 +1033,389 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertEqual(session.document.clips, before.clips)
         XCTAssertTrue(session.hasUnsavedChanges, "the creator's own edits are still unsaved")
         XCTAssertEqual(session.dirtySections, [.text])
+    }
+}
+
+/// Killer screen S2 ("Couldn't refresh this edit") and the editor's convergence paths. Each test
+/// drives the real session against the API double with the failure shape seen in prod.
+extension ChatDraftStagingTests {
+    private func settle(timeout: Duration = .seconds(5), _ condition: () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return condition()
+    }
+
+    private static func conflict(_ code: String) -> APIError {
+        .conflict(detail: ConflictDetail("problem", code: code))
+    }
+
+    private static func notFound(_ code: String) -> APIError {
+        .requestFailed(status: 404, detail: RequestFailureDetail(nil, code: code))
+    }
+
+    // MARK: S2-a / S2-b: temporary failures wait and recover on their own
+
+    func testOfflineRefreshRetriesOnItsOwnAndLandsTheChatEdit() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        session.refreshRetryDelays = [.milliseconds(20)]
+        fake.draftError = .offline
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.saveState, .idle, "offline is not a save problem")
+        XCTAssertEqual(session.refreshSync, .idle, "one failure shows nothing")
+        // The chat edit lands while the phone is offline; nothing else triggers another sync.
+        fake.draftSnapshot = Self.textDraft(revision: 2, texts: [("t1", "from chat")])
+        fake.draftError = nil
+        let landed = await settle { session.document.textElements.first?.text == "from chat" }
+        XCTAssertTrue(landed, "the retry must run without new chat events")
+        XCTAssertEqual(session.refreshSync, .idle)
+    }
+
+    func testServerRetryAfterIsHonouredBeforeTheNextTry() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        session.refreshRetryDelays = [.milliseconds(10)]
+        fake.draftError = .requestFailed(status: 429, detail: RequestFailureDetail(nil, retryAfter: 1))
+        await session.synchronizePromptRevision()
+        let calls = fake.draftCallCount
+        fake.draftError = nil
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(fake.draftCallCount, calls, "Retry-After: 1 must hold the retry back")
+        let retried = await settle { fake.draftCallCount > calls }
+        XCTAssertTrue(retried)
+    }
+
+    func testReconnectRunsAPendingRetryImmediately() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        session.refreshRetryDelays = [.seconds(3600)]
+        fake.draftError = .offline
+        for _ in 0..<NativeEditorSession.reconnectingHintAfterFailures { await session.synchronizePromptRevision() }
+        XCTAssertEqual(session.refreshSync, .reconnecting)
+        fake.draftSnapshot = Self.textDraft(revision: 2, texts: [("t1", "from chat")])
+        fake.draftError = nil
+        await session.resumeRefreshSync()
+        XCTAssertEqual(session.document.textElements.first?.text, "from chat")
+        XCTAssertEqual(session.refreshSync, .idle, "any good read clears the hint")
+    }
+
+    // MARK: S2-h: sign-in and update are app-wide gates
+
+    func testSignedOutOrUpdateRequiredLeavesTheEditorAloneAndDoesNotRetry() async throws {
+        for gate in [APIError.sessionExpired, .nativeUpdateRequired] {
+            let (session, fake) = await loaded(Self.bootstrapSnapshot())
+            session.refreshRetryDelays = [.milliseconds(10)]
+            fake.draftError = gate
+            await session.synchronizePromptRevision()
+            let calls = fake.draftCallCount
+            try await Task.sleep(for: .milliseconds(150))
+            XCTAssertEqual(fake.draftCallCount, calls, "\(gate): retrying cannot help, the app gate owns it")
+            XCTAssertEqual(session.saveState, .idle)
+            XCTAssertEqual(session.refreshSync, .idle)
+        }
+    }
+
+    // MARK: S2-e: the edit target is gone
+
+    func testProjectResetOrDeletedShowsHonestCopyOnceAndStopsSyncing() async throws {
+        for lost in [Self.conflict("draft_target_missing"), Self.notFound("thread_not_found"), Self.notFound("thread_deleted")] {
+            let (session, fake) = await loaded(Self.bootstrapSnapshot())
+            session.refreshRetryDelays = [.milliseconds(10)]
+            fake.draftError = lost
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.refreshSync, .targetLost(NativeEditorSession.targetLostMessage))
+            XCTAssertEqual(session.saveState, .idle)
+            let calls = fake.draftCallCount
+            await session.synchronizePromptRevision()
+            try await Task.sleep(for: .milliseconds(80))
+            XCTAssertEqual(fake.draftCallCount, calls, "\(lost): no repeating banner, no repeating reads")
+        }
+    }
+
+    func testChatRuntimeSwitchedOffKeepsTheEditorWorkingSilently() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        fake.draftError = Self.notFound("kria_runtime_unavailable")
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.refreshSync, .idle)
+        XCTAssertEqual(session.saveState, .idle)
+        let calls = fake.draftCallCount
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(fake.draftCallCount, calls)
+    }
+
+    // MARK: S2-c: read-path conflicts never say "changed elsewhere"
+
+    func testPersistentReadConflictRetriesBrieflyThenStaysQuiet() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        session.refreshRetryDelays = [.milliseconds(10)]
+        fake.draftError = Self.conflict("draft_variant_ambiguous")
+        await session.synchronizePromptRevision()
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(fake.draftCallCount, 2 + NativeEditorSession.readConflictRetryLimit, "load + first sync + bounded retries")
+        XCTAssertEqual(session.saveState, .idle)
+        XCTAssertEqual(session.refreshSync, .idle)
+    }
+
+    /// The draft read succeeds but the variant read keeps conflicting (a guided timeline out of
+    /// step with its baseline, or a vanished content plan): the half-good read must not reset
+    /// the retry streak, or the editor re-reads every ~1.5 s for the life of the session.
+    func testPersistentVariantConflictAfterAGoodDraftReadStaysBounded() async throws {
+        for conflict in [APIError.conflict, .contentPlanUnavailable] {
+            let (session, fake) = await loaded(Self.bootstrapSnapshot())
+            session.refreshRetryDelays = [.milliseconds(10)]
+            let before = fake.editorVariantJobIDs.count
+            fake.editorVariantError = conflict
+            await session.synchronizePromptRevision()
+            try await Task.sleep(for: .milliseconds(300))
+            let reads = fake.editorVariantJobIDs.count - before
+            XCTAssertEqual(reads, 1 + NativeEditorSession.readConflictRetryLimit, "\(conflict): first sync + bounded retries")
+            try await Task.sleep(for: .milliseconds(150))
+            XCTAssertEqual(fake.editorVariantJobIDs.count - before, reads, "\(conflict): retries stop")
+            XCTAssertEqual(session.saveState, .idle)
+            XCTAssertEqual(session.refreshSync, .idle)
+        }
+    }
+
+    /// The connection comes back while a save is in flight: the retry is deferred, not dropped,
+    /// and the successful save clears the offline hint on its own.
+    func testReconnectDuringASaveClearsTheOfflineHintAndStillRetries() async throws {
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant(),
+            commitResponse: EditorCommitResponse(ok: true, generation: "g2",
+                sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: true, mix: true),
+                revisionNumber: 4, revisionHash: "r4", expectedDuration: nil),
+            suspendNextCommit: true)
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: UUID())
+        session.refreshRetryDelays = [.seconds(3600)]
+        fake.draftError = .offline
+        for _ in 0..<NativeEditorSession.reconnectingHintAfterFailures { await session.synchronizePromptRevision() }
+        XCTAssertEqual(session.refreshSync, .reconnecting)
+
+        session.setClipTiming(clipID: "s1", durationS: 1.1)
+        let saving = Task { await session.save() }
+        let suspended = await settle { fake.commitIsSuspended }
+        XCTAssertTrue(suspended, "the commit gate did not suspend in time")
+        fake.draftError = nil
+        session.refreshRetryDelays = [.milliseconds(20)]
+        let callsDuringSave = fake.draftCallCount
+        await session.resumeRefreshSync()  // reachability fires mid-save
+        XCTAssertEqual(fake.draftCallCount, callsDuringSave, "no read while the save is in flight")
+
+        fake.resumeCommit()
+        await saving.value
+        XCTAssertEqual(session.refreshSync, .idle, "the committed save proves the connection works")
+        let retried = await settle { fake.draftCallCount > callsDuringSave }
+        XCTAssertTrue(retried, "the deferred retry still runs after the save")
+    }
+
+    // MARK: L-a / S2-d: a re-plan whose new job is still rendering
+
+    func testReplanStillRenderingKeepsTheOldVideoThenSwitchesWhenReady() async throws {
+        let (session, fake, newProject, jobB) = await replanFixture(manualEdit: false)
+        session.newVersionPollDelays = [.milliseconds(20)]
+        fake.editorVariantsByJob[jobB] = []
+        await session.adoptLatestJob(newProject, api: fake)
+        func playing() -> String? { (session.player?.currentItem?.asset as? AVURLAsset)?.url.lastPathComponent }
+        XCTAssertEqual(playing(), "job-a.mp4", "the working video must not be thrown away")
+        XCTAssertEqual(session.loadState, .loaded)
+        XCTAssertNil(session.newerJobPrompt, "nothing is ready to switch to")
+        XCTAssertEqual(session.refreshSync, .newVersionRendering)
+        XCTAssertNotEqual(fake.editorVariantJobIDs.last, jobB)
+
+        var ready = Self.variant(generation: "gNew"); ready["output_url"] = .string("https://example.com/job-b.mp4")
+        fake.editorVariantsByJob[jobB] = [ready]
+        let switched = await settle { playing() == "job-b.mp4" }
+        XCTAssertTrue(switched, "the watch adopts the new job on its own once it is ready")
+        XCTAssertEqual(session.refreshSync, .idle)
+        XCTAssertEqual(session.loadState, .loaded)
+    }
+
+    func testReplanStillRenderingWithManualEditsAsksOnlyOnceItIsReady() async throws {
+        let (session, fake, newProject, jobB) = await replanFixture(manualEdit: true)
+        session.newVersionPollDelays = [.milliseconds(20)]
+        fake.editorVariantsByJob[jobB] = [["variant_id": .string("initial"), "render_status": .string("rendering")]]
+        await session.adoptLatestJob(newProject, api: fake)
+        XCTAssertNil(session.newerJobPrompt, "'A new version is ready' would be false while it renders")
+        XCTAssertTrue(session.hasUnsavedChanges)
+        fake.editorVariantsByJob[jobB] = [Self.variant(generation: "gNew")]
+        let asked = await settle { session.newerJobPrompt != nil }
+        XCTAssertTrue(asked)
+        XCTAssertTrue(session.hasUnsavedChanges, "asking never discards")
+    }
+
+    func testChatSyncDuringAReplanRenderShowsTheNeutralChipNotAFailure() async throws {
+        let (session, fake, newProject, jobB) = await replanFixture(manualEdit: false)
+        session.refreshRetryDelays = [.seconds(3600)]
+        session.newVersionPollDelays = [.seconds(3600)]
+        // The draft follows the plan item to the new job, which has no variants yet (drafts.py:270-285).
+        fake.draftError = Self.conflict("draft_variant_ambiguous")
+        fake.refreshedThread = try decodeThread(newProject.id, job: jobB)
+        fake.editorVariantsByJob[jobB] = []
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.refreshSync, .newVersionRendering)
+        XCTAssertEqual(session.saveState, .idle)
+        XCTAssertEqual((session.player?.currentItem?.asset as? AVURLAsset)?.url.lastPathComponent, "job-a.mp4")
+    }
+
+    func testFailedNewRenderLeavesTheCurrentVideoAndNoChip() async throws {
+        let (session, fake, newProject, jobB) = await replanFixture(manualEdit: false)
+        fake.editorVariantsByJob[jobB] = [["variant_id": .string("initial"), "render_status": .string("failed")]]
+        await session.adoptLatestJob(newProject, api: fake)
+        XCTAssertEqual(session.refreshSync, .idle)
+        XCTAssertEqual((session.player?.currentItem?.asset as? AVURLAsset)?.url.lastPathComponent, "job-a.mp4")
+    }
+
+    private func decodeThread(_ id: UUID, job: UUID) throws -> CreationThread {
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(CreationThread.self, from: Data(#"""
+        {"id":"\#(id.uuidString)","title":"Chat","status":"active","revision":9,"runtime_version":2,
+         "active_job_id":"\#(job.uuidString)","active_plan_item_id":"item","state":{"selected_variant_id":"initial"},
+         "job":{"id":"\#(job.uuidString)","status":"processing","variants":[]},
+         "updated_at":"2026-09-30T08:00:00Z"}
+        """#.utf8))
+    }
+
+    // MARK: L-b: reopening offline keeps the working editor
+
+    func testReopenOfflineKeepsACleanEditorInsteadOfTheCouldntOpenScreen() async throws {
+        for failure in [APIError.offline, .requestFailed(status: 503)] {
+            let id = UUID()
+            let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant())
+            let session = NativeEditorSession(project: threadProject(id, revision: 5))
+            await session.load(project: threadProject(id, revision: 5), api: fake)
+            session.refreshRetryDelays = [.seconds(3600)]
+            XCTAssertFalse(session.hasUnsavedChanges)
+            fake.editorVariantError = failure
+            let handled = await session.reconcileOnOpen(project: threadProject(id, revision: 7), api: fake)
+            XCTAssertTrue(handled, "\(failure): a full reload would fail the same way and replace a working editor")
+            XCTAssertEqual(session.loadState, .loaded)
+        }
+    }
+
+    // MARK: L-c: first open waits for a video that is still rendering, or for a connection
+
+    func testFirstOpenOfflineWaitsBehindTheOpeningScreenAndOpensWhenBack() async throws {
+        let id = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant())
+        fake.editorVariantScript = [.failure(.offline), .failure(.offline)]
+        let session = NativeEditorSession(project: threadProject(id, revision: 5))
+        session.loadRetryDelays = [.milliseconds(20)]
+        await session.load(project: threadProject(id, revision: 5), api: fake)
+        XCTAssertEqual(session.loadState, .loading, "not 'The editor couldn't open'")
+        XCTAssertNotNil(session.loadWaitingMessage)
+        let opened = await settle { session.loadState == .loaded }
+        XCTAssertTrue(opened)
+        XCTAssertNil(session.loadWaitingMessage)
+        XCTAssertEqual(session.saveState, .idle)
+    }
+
+    func testFirstOpenOfAVideoStillRenderingSaysSoAndOpensWhenReady() async throws {
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(),
+            openReceipt: OpenInEditorResponse(planItemID: "item", variantID: "initial"), authoritativeVariant: Self.variant())
+        fake.openErrors = [.editorNotReady, .editorNotReady]
+        let session = NativeEditorSession()
+        session.loadRenderingDelays = [.milliseconds(20)]
+        await session.load(libraryJobID: UUID(uuidString: Self.jobID)!, api: fake)
+        XCTAssertEqual(session.loadState, .loading)
+        XCTAssertTrue(session.loadWaitingMessage?.contains("still rendering") == true)
+        let opened = await settle { session.loadState == .loaded }
+        XCTAssertTrue(opened)
+    }
+
+    func testFirstOpenOfAGenuinelyUnopenableVideoStillSaysSo() async throws {
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(),
+            openReceipt: OpenInEditorResponse(planItemID: "item", variantID: "initial"), authoritativeVariant: Self.variant())
+        fake.openErrors = [.contentPlanUnavailable]
+        let session = NativeEditorSession()
+        session.loadRetryDelays = [.milliseconds(20)]
+        await session.load(libraryJobID: UUID(uuidString: Self.jobID)!, api: fake)
+        guard case .failed = session.loadState else { return XCTFail("a missing content plan cannot be waited out") }
+    }
+
+    // MARK: N3 / C1: a failed capabilities read is not "iPhone rendering unavailable"
+
+    func testFailedCapabilitiesReadNeverRoutesThePhoneRenderToUnavailable() async throws {
+        let threadID = UUID(), jobID = UUID(uuidString: Self.jobID)!
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot())
+        fake.phoneDestination = true
+        let renderSessions = DeviceRenderSessions(fetch: { _, _ in
+            await MainActor.run { fake.deviceFetchCount += 1 }
+            throw APIError.unsupported
+        }, factory: { _, _ in throw APIError.unsupported })
+        let session = NativeEditorSession()
+        session.useDeviceRendering(renderSessions)
+        // Opened on flaky Wi-Fi: the server has never answered the capabilities question.
+        fake.capabilitiesError = .offline
+        await session.load(api: fake, threadID: threadID)
+        let key = try XCTUnwrap(session.deviceRenderKey)
+        XCTAssertEqual(key.jobID, jobID)
+
+        await session.refreshDeviceRender()
+        XCTAssertEqual(fake.deviceFetchCount, 0, "no reconcile against a made-up .disabled")
+        XCTAssertNil(renderSessions.presentations[key], "no 'Rendering on iPhone is not available' card")
+
+        // Once the server has answered, a later failed read keeps that answer.
+        fake.capabilitiesError = nil
+        fake.phoneRenderingCapabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1], verifiedFeatures: [])
+        await session.refreshDeviceRender()
+        XCTAssertEqual(fake.deviceFetchCount, 1)
+        fake.capabilitiesError = .requestFailed(status: 503)
+        await session.refreshDeviceRender()
+        XCTAssertEqual(fake.deviceFetchCount, 2, "reconciled with the last real capabilities")
+    }
+
+    // MARK: P-a: the post-save preview converges
+
+    private func savedSession() async -> (NativeEditorSession, EditorCommitSpy) {
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant(generation: "g1"),
+            commitResponse: EditorCommitResponse(ok: true, generation: "g2",
+                sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false),
+                revisionNumber: 4, revisionHash: "r4", expectedDuration: nil))
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: UUID())
+        session.previewPollInterval = .milliseconds(10)
+        session.setClipTiming(clipID: "s1", durationS: 1.1)
+        await session.save()
+        return (session, fake)
+    }
+
+    func testPreviewFollowsANewerGenerationSavedFromAnotherDevice() async throws {
+        let (session, fake) = await savedSession()
+        XCTAssertEqual(session.saveState, .previewPending)
+        // The iPad saved on top of this phone's g2 and its render finished first.
+        fake.authoritativeVariant = Self.variant(generation: "g3")
+        let saved = await settle { session.saveState == .saved }
+        XCTAssertTrue(saved, "waiting for g2 can never end once the server is on g3: \(session.saveState)")
+        XCTAssertEqual(session.document.revision.baseGeneration, "g3")
+    }
+
+    func testPreviewNeverTreatsThePreSaveVideoAsNewer() async throws {
+        let (session, fake) = await savedSession()
+        session.previewPollBudget = 4
+        session.retryPreviewRefresh()
+        fake.authoritativeVariant = Self.variant(generation: "g1")
+        let settled = await settle { if case .previewFailed = session.saveState { true } else { false } }
+        XCTAssertTrue(settled, "the old g1 video is not this save's preview")
+    }
+
+    func testOfflinePollsDoNotSpendThePreviewBudget() async throws {
+        let (session, fake) = await savedSession()
+        session.previewPollBudget = 2
+        fake.editorVariantScript = Array(repeating: .failure(.offline), count: 4)
+        session.retryPreviewRefresh()
+        fake.authoritativeVariant = Self.variant(generation: "g2")
+        let saved = await settle { session.saveState == .saved }
+        XCTAssertTrue(saved, "four offline polls with a budget of two must still reach the ready preview: \(session.saveState)")
+    }
+
+    func testPreviewPollErrorsNeverShowConflictCopy() async throws {
+        let (session, fake) = await savedSession()
+        session.previewPollBudget = 2
+        fake.editorVariantError = .conflict
+        session.retryPreviewRefresh()
+        let failed = await settle { if case .previewFailed = session.saveState { true } else { false } }
+        XCTAssertTrue(failed)
+        guard case let .previewFailed(message) = session.saveState else { return }
+        XCTAssertFalse(message.contains("changed elsewhere"), message)
     }
 }

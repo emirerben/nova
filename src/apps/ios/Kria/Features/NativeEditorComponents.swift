@@ -99,8 +99,6 @@ struct NativeEditorSaveBanner: View {
                     .background(KriaColor.softZinc)
                     .accessibilityIdentifier("native-editor-retry-device-render")
             }
-        case .refreshFailed(let message):
-            banner(title: "Couldn’t refresh this edit", detail: message, systemImage: "arrow.clockwise", tint: .orange)
         case .loadFailed(let message):
             banner(title: "Couldn’t load this edit", detail: message, systemImage: "exclamationmark.triangle", tint: .red)
         case .previewFailed(let message):
@@ -129,6 +127,45 @@ struct NativeEditorSaveBanner: View {
 
     private func banner(title: String, detail: String, systemImage: String, tint: Color) -> some View {
         NativeEditorBannerRow(title: title, detail: detail, systemImage: systemImage, tint: tint, identifier: "native-editor-save-state")
+    }
+}
+
+/// Background refresh health, kept out of the save banner so it can never hide a save or render
+/// button. Temporary trouble shows as a quiet one-line chip; only a lost edit target asks for anything.
+struct NativeEditorRefreshIndicator: View {
+    @ObservedObject var session: NativeEditorSession
+    let onBackToChat: () -> Void
+
+    @ViewBuilder var body: some View {
+        switch session.refreshSync {
+        case .idle:
+            EmptyView()
+        case .reconnecting:
+            chip("Offline. Kria will catch up when you’re back online.", systemImage: "wifi.slash")
+        case .newVersionRendering:
+            chip("New version rendering… You can keep editing this one.", systemImage: "hourglass")
+        case .targetLost(let message):
+            VStack(spacing: 0) {
+                NativeEditorBannerRow(title: "This edit isn’t linked to the project anymore", detail: message,
+                    systemImage: "link", tint: KriaColor.ink, identifier: "native-editor-target-lost")
+                Button("Back to chat", action: onBackToChat)
+                    .font(KriaFont.body(12).weight(.semibold))
+                    .foregroundStyle(KriaColor.ink)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(KriaColor.softZinc)
+                    .accessibilityIdentifier("native-editor-target-lost-back")
+            }
+        }
+    }
+
+    private func chip(_ text: String, systemImage: String) -> some View {
+        Label(text, systemImage: systemImage)
+            .font(KriaFont.body(12))
+            .foregroundStyle(KriaColor.zinc)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .accessibilityIdentifier("native-editor-refresh-sync")
     }
 }
 
