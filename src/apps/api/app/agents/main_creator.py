@@ -121,7 +121,11 @@ log = structlog.get_logger()
 # v78 (KRI-821): a named cut of a repeated line records which take (`cut_line_occurrences`).
 # v79 combines main's v77 (KRI-815 + KRI-816) with KRI-821's v78.
 # v80 combines main's v79 (KRI-815/816/821) with KRI-827's keep_text_off (branch v78).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v80"
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v82"
+# KRI-724: the Nth time a quoted phrase is said carries `speech_remove` {quote, occurrence}
+# beside its cut_lines, and an engine/motor noise ask carries `noise_reduction: "engine"`, so
+# the phone Talking worker cuts / filters from facts, never from the words (KRI-667) (v76,
+# on top of v75).
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -498,7 +502,10 @@ part where I say ...") => {"speech_cleanup": true, "cut_lines": ["with bread, no
 stretch in the creator's exact words, quoted or described, never translated; when they say
 which time a repeated line to cut ("cut the FIRST take of 'welcome to my channel'", "the last
 time I say ...") also add {"cut_line_occurrences": {"welcome to my channel": "first"}} with
-"first", "second", "third" or "last", and keep that word in the description. Quoted speech
+"first", "second", "third" or "last", and keep that word in the description. For a numbered
+occurrence also add {"speech_remove": {"quote": "Neredesin", "occurrence": 2}}: the quoted
+words exactly as written, never translated, and the time it is said (1 = the first).
+Quoted speech
 bounds use the timing requirement's "start_line"/"end_line", never a cut line; ordered clips
 or places still use the order requirement's "start"/"end". Captions =>
 {"captions": "on"}, {"captions": "off"} or {"captions":
@@ -522,8 +529,11 @@ requirement with {"audio_intent": "source_muted"}; "keep it low / quieter under 
 not a mute and records no audio_intent.
 Record any requested processing, noise/wind removal, volume change, music or speech selection
 as a SEPARATE requirement with its complete description; never certify those changes with
-`source_unchanged`. For "original camera audio, remove only the wind noise", record both the
-unchanged-source intent and a separate wind-removal requirement. After an explicit simpler
+`source_unchanged`. Lowering or removing the engine/motor noise in the footage's own sound
+("reduce the engine noise", "motor sesini kıs") is such an `audio` requirement with
+{"noise_reduction": "engine"}; never for music, muting or keeping the noise. For "original
+camera audio, remove only the wind noise", record both the unchanged-source intent and a
+separate wind-removal requirement. After an explicit simpler
 choice drops wind removal, preserve the source-audio requirement and its typed intent.
 Merely narrating that footage was captured "from A to B", at sunset and then at night, or during
 two activities is not such an ask. Compatible requirements with the same kind and scope coexist.

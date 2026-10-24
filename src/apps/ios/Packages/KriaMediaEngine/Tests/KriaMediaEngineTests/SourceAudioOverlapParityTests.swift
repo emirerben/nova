@@ -48,6 +48,70 @@ final class SourceAudioOverlapParityTests: XCTestCase {
         }
     }
 
+    /// The phone Voiceover route uses unit clip selection gains with one
+    /// shared, already-ducked original-audio gain. Exercise the real preview
+    /// composition and final AAC export with three distinct tones so this
+    /// cannot pass if the unselected camera source leaks, narration vanishes,
+    /// or the shared gain is applied twice.
+    @MainActor func testVoiceoverSelectedSourceAudioMatchesPreviewAndExport() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let picture = try await video(directory, "picture")
+        let unselected = try await mux(picture, try tone(directory, "unselected", 431), directory.appendingPathComponent("unselected.mov"))
+        let selected = try await mux(picture, try tone(directory, "selected", 719), directory.appendingPathComponent("selected.mov"))
+        let narration = try tone(directory, "narration", 997)
+        let root = try XCTUnwrap(#filePath.range(of: "/src/apps/ios/"))
+        let font = URL(fileURLWithPath: String(#filePath[..<root.lowerBound]))
+            .appendingPathComponent("src/apps/api/assets/fonts/Inter-Regular.ttf")
+        let urls = ["unselected": unselected, "selected": selected, "narration": narration, "font": font]
+        let assets = try urls.keys.sorted().map { id in
+            MediaAsset(id: id, relativePath: id, fingerprint: try SHA256Fingerprinter().fingerprint(file: try XCTUnwrap(urls[id])))
+        }
+        let manifest = try RenderAssetManifest(assets: assets.map { asset in
+            RenderAssetReference(id: asset.id, fingerprint: try RenderFingerprint(try XCTUnwrap(asset.fingerprint)),
+                source: asset.id == "font" ? .library(catalog: .font, catalogID: "Inter-Regular.ttf", generation: try XCTUnwrap(asset.fingerprint).hex) : .original(mediaID: asset.id))
+        })
+        let recipe = EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: 96, height: 160),
+            assets: assets,
+            tracks: [
+                TimelineTrack(id: "video", kind: .video, clips: [
+                    TimelineClip(id: "slot-0", sourceAssetID: "unselected", sourceDuration: 1, timelineStart: 0, volume: 0),
+                    TimelineClip(id: "slot-1", sourceAssetID: "selected", sourceDuration: 1, timelineStart: 1, volume: 1),
+                ]),
+                TimelineTrack(id: "narration", kind: .audio, clips: [
+                    TimelineClip(id: "voice", sourceAssetID: "narration", sourceDuration: 2, timelineStart: 0, volume: 1),
+                ]),
+            ], audio: AudioMixRecipe(originalVolume: 0.0875, narrationAssetID: "narration"), assetManifest: manifest,
+            textLayers: [PortableTextLayer(id: "spoken-20dk", start: 1.2, end: 1.8, anchorX: 48, anchorY: 80, rotationDegrees: 0,
+                runs: [PositionedTextRun(text: "20 dk", fontAssetID: "font", fontSize: 24, x: 15, baselineY: 80,
+                                         letterSpacing: 0, shaped: true, fill: TextInk(red: 1, green: 1, blue: 1, alpha: 1),
+                                         stroke: TextInk(red: 0, green: 0, blue: 0, alpha: 1), strokeWidth: 1)])])
+        let preview = try await LivePreviewComposition(recipe: recipe, assetURLs: urls)
+        let output = directory.appendingPathComponent("voiceover-selected.mp4")
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none)
+            .export(recipe: recipe, assetURLs: urls, outputURL: output)
+        for (label, asset, mix) in [("preview", preview.preview.playerItem.asset, preview.preview.playerItem.audioMix),
+                                    ("export", AVURLAsset(url: output) as AVAsset, nil)] {
+            let pcm = try await decode(asset, mix)
+            for channel in 0..<2 {
+                XCTAssertLessThan(try amplitude(pcm, 0.5, 431, channel: channel), 0.01, "\(label): unselected source leaks")
+                XCTAssertLessThan(try amplitude(pcm, 0.5, 719, channel: channel), 0.01, "\(label): selected source starts early")
+                XCTAssertGreaterThan(try amplitude(pcm, 0.5, 997, channel: channel), 0.2, "\(label): narration missing")
+                XCTAssertGreaterThan(try amplitude(pcm, 1.5, 719, channel: channel), 0.025, "\(label): selected source missing")
+                XCTAssertLessThan(try amplitude(pcm, 1.5, 431, channel: channel), 0.01, "\(label): unselected source leaks")
+                XCTAssertGreaterThan(try amplitude(pcm, 1.5, 997, channel: channel), 0.2, "\(label): narration missing")
+            }
+            XCTAssertLessThan(pcm.map { abs($0) }.max() ?? 1, 1, "\(label): mix clips")
+        }
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: output))
+        generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+        let before = try await generator.image(at: CMTime(seconds: 1.2 - 1.0 / 30, preferredTimescale: 600)).image
+        let visible = try await generator.image(at: CMTime(seconds: 1.2 + 1.0 / 30, preferredTimescale: 600)).image
+        XCTAssertLessThan(brightPixels(before), 10, "spoken row appears before its narration timestamp")
+        XCTAssertGreaterThan(brightPixels(visible), 30, "20 dk appears within one rendered frame of its narration timestamp")
+    }
+
     private func assertBand(_ pcm: [Float], at time: Double, first: [Double]?, second: [Double]?, label: String) throws {
         for channel in 0..<2 {
             let a = try amplitude(pcm, time, 431, channel: channel), b = try amplitude(pcm, time, 719, channel: channel)
@@ -55,6 +119,17 @@ final class SourceAudioOverlapParityTests: XCTestCase {
             else { XCTAssertLessThan(a, 0.01, "\(label) first tone at \(time)s channel \(channel)") }
             if let second { XCTAssertEqual(b, second[channel], accuracy: 0.02, "\(label) second tone at \(time)s channel \(channel)") }
             else { XCTAssertLessThan(b, 0.01, "\(label) second tone at \(time)s channel \(channel)") }
+        }
+    }
+
+    private func brightPixels(_ image: CGImage) -> Int {
+        let width = image.width, height = image.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return stride(from: 0, to: pixels.count, by: 4).reduce(into: 0) { count, index in
+            if pixels[index] > 220, pixels[index + 1] > 220, pixels[index + 2] > 220 { count += 1 }
         }
     }
 
