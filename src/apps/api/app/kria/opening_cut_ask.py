@@ -391,3 +391,103 @@ __all__ = [
     "unread_line_sides",
     "wants_take_window",
 ]
+
+
+@dataclass(frozen=True)
+class NamedCutAsk:
+    """A spoken line the creator named to cut out of the take (KRI-821), and the brief
+    requirements that asked for it."""
+
+    quote: str
+    requirement_ids: tuple[str, ...]
+    # Which time the line is said to cut when the take says it more than once (a retake):
+    # 1 = first, 2 = second, ..., -1 = last. None = the creator didn't say which.
+    occurrence: int | None = None
+
+
+# KRI-821: "cut the FIRST take of 'welcome to my channel'". The model records which one in
+# `facts["cut_line_occurrences"]` ({line: "first" | "second" | "third" | "last"}); it is
+# honoured only when the approved requirement text says that ordinal too, so a model guess
+# never picks which take of the creator's line is removed.
+_OCCURRENCE_WORDS: dict[int, frozenset[str]] = {
+    1: frozenset({"first", "1st", "ilk", "birinci"}),
+    2: frozenset({"second", "2nd", "ikinci"}),
+    3: frozenset({"third", "3rd", "ucuncu"}),
+    -1: frozenset({"last", "final", "latter", "sonuncu", "son"}),
+}
+_OCCURRENCE_VALUES = {"first": 1, "second": 2, "third": 3, "last": -1}
+
+
+def _named_occurrence(req: BriefRequirement, line: str) -> int | None:
+    """The approved ordinal for ``line`` (None when not recorded or not in the text)."""
+    raw = req.facts.get("cut_line_occurrences") if isinstance(req.facts, Mapping) else None
+    if not isinstance(raw, Mapping):
+        return None
+    key = tuple(fold_tokens(line))
+    value = next(
+        (v for k, v in raw.items() if isinstance(k, str) and tuple(fold_tokens(k)) == key),
+        None,
+    )
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        occurrence = _OCCURRENCE_VALUES.get(value.strip().lower())
+    elif isinstance(value, int) and value in _OCCURRENCE_WORDS:
+        occurrence = value
+    else:
+        occurrence = None
+    if occurrence is None:
+        return None
+    text_tokens = set(fold_tokens(" ".join(x for x in (req.description, req.literal) if x)))
+    return occurrence if text_tokens & _OCCURRENCE_WORDS[occurrence] else None
+
+
+def _said_in_requirement(req: BriefRequirement, line: str) -> bool:
+    """The line's words appear, in order, in the requirement's own text.
+
+    ``cut_lines`` is what the model that read the message recorded; the requirement text is
+    what the creator approved. A line the requirement does not carry is never cut.
+    """
+    line_tokens = fold_tokens(line)
+    text_tokens = fold_tokens(" ".join(x for x in (req.description, req.literal) if x))
+    width = len(line_tokens)
+    return bool(width) and any(
+        text_tokens[i : i + width] == line_tokens for i in range(len(text_tokens) - width + 1)
+    )
+
+
+def named_cut_asks(requirements: Iterable[BriefRequirement]) -> tuple[NamedCutAsk, ...]:
+    """Every live requirement's named cut lines (``facts["cut_lines"]``, KRI-792), each once."""
+    from app.kria.brief_checks import named_cut_lines  # noqa: PLC0415
+
+    order: list[tuple[str, ...]] = []
+    found: dict[tuple[str, ...], tuple[str, list[str]]] = {}
+    occurrences: dict[tuple[str, ...], int] = {}
+    for req in requirements:
+        if not req.live:
+            continue
+        for line in named_cut_lines(req):
+            key = tuple(fold_tokens(line))
+            if not key or not _said_in_requirement(req, line):
+                continue
+            if key not in found:
+                order.append(key)
+                found[key] = (line, [])
+            if req.id not in found[key][1]:
+                found[key][1].append(req.id)
+            occurrence = _named_occurrence(req, line)
+            if occurrence is not None:
+                occurrences.setdefault(key, occurrence)
+    return tuple(
+        NamedCutAsk(
+            quote=found[key][0],
+            requirement_ids=tuple(found[key][1]),
+            occurrence=occurrences.get(key),
+        )
+        for key in order
+    )
+
+
+def brief_named_cuts(brief: CreativeBrief | None) -> tuple[NamedCutAsk, ...]:
+    """`named_cut_asks` over a brief's live requirements (empty without one)."""
+    return named_cut_asks(brief.live()) if brief is not None else ()

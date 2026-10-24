@@ -716,6 +716,11 @@ class Settings(BaseSettings):
     # `fly secrets set TEXT_BEND_ENABLED=false` (api + worker) + restart.
     text_bend_enabled: bool = True
     text_bend_min_client_protocol: int = 9
+    # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
+    # `voiceover`). The capability `original_audio` is advertised to app builds declaring
+    # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,
+    # so they never receive the key (the row would open at a wrong level).
+    voiceover_original_audio_min_client_protocol: int = 15
     # KRI-742: voice dictation in the chat composers. `POST /dictation/transcribe` (Whisper) and
     # the `voice_dictation` capability the iOS mic button reads. Default TRUE; this is the kill
     # switch only. False: the route 404s and the capability is not advertised, so the app hides

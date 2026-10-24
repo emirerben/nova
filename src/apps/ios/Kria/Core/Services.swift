@@ -1105,7 +1105,9 @@ enum KriaClientProtocolContract {
     /// 13: accepts durable background output checks and resumes status polling.
     /// 14 (KRI-802): answers a reply that asks a choice card and a clip picker together on ONE turn (the first
     /// answer waits for the second). The server asks those two together only to this protocol.
-    static let version = 14
+    /// 15 (KRI-821): opens Sounds > Original audio on a phone Voiceover edit (narrated or montage `voiceover`) at
+    /// the variant's saved `original_audio_level`. The server advertises `original_audio` there only to this protocol.
+    static let version = 15
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -2575,8 +2577,10 @@ extension DraftSnapshot {
                 sections["audio_mix"] = .object(audioMix)
             }
             // The creator's own original-audio level (Sounds > Original audio). Only a phone-rendered
-            // guided edit honors it, so no other variant's persisted value reaches the document.
-            if !isIntentionalEmpty, authoritativeVariant["resolved_archetype"]?.stringValue == "guided_story",
+            // guided or Voiceover (narrated / montage `voiceover`, KRI-821) edit honors it, so no other
+            // variant's persisted value reaches the document.
+            if !isIntentionalEmpty,
+               ["guided_story", "narrated", "voiceover"].contains(authoritativeVariant["resolved_archetype"]?.stringValue ?? ""),
                authoritativeVariant["render_destination"]?.stringValue == "device",
                case .number? = authoritativeVariant["original_audio_level"] {
                 var audioMix = Self.object(sections["audio_mix"]) ?? [:]

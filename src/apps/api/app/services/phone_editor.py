@@ -169,6 +169,10 @@ _VOICEOVER_FIT_SECTIONS = frozenset({"landscape_fit"})
 # pinned recipe's `drawing_layers` (`with_drawings`) on EVERY Save of every device
 # archetype, whichever sections it carries.
 _DRAWING_SECTIONS = frozenset({"drawings"})
+# KRI-821: ...and the footage's own sound level (Sounds > Original audio, `mix.original_level`
+# only), written onto the pinned recipe's `audio.original_volume` by `_apply_original_level`.
+# The narration and any music bed keep their pinned levels.
+_ORIGINAL_LEVEL_SECTIONS = frozenset({"mix"})
 
 
 def _resolved_landscape_fit(
@@ -1399,6 +1403,22 @@ def _voiceover_allows_editor_media(recipe: EditRecipeV2) -> bool:
     )
 
 
+def _apply_original_level(recipe: EditRecipeV2, variant: dict, prep: dict) -> EditRecipeV2:
+    """Play the footage's own sound at the creator's saved level (KRI-821).
+
+    Only ``audio.original_volume`` changes: the narration clip and a music bed are their
+    own audio-track clips and keep their pinned volumes. A music level is not a phone
+    Voiceover control, so a Save carrying one is refused rather than dropped.
+    """
+    if prep.get("mix_override") is not None:
+        raise ValueError("music level isn't supported on phone Voiceover edits yet")
+    level = variant.get("original_audio_level")
+    if isinstance(level, bool) or not isinstance(level, (int, float)):
+        raise ValueError("phone Voiceover original audio level is missing")
+    audio = recipe.audio.model_copy(update={"original_volume": max(0.0, min(1.0, float(level)))})
+    return recipe.model_copy(update={"audio": audio})
+
+
 def _compile_narrated_editor_commit(
     staged: Any,
     assembly: dict,
@@ -1430,6 +1450,7 @@ def _compile_narrated_editor_commit(
     cut_active = bool(active_sections & _VOICEOVER_CUT_SECTIONS)
     text_active = bool(active_sections & _NARRATED_TEXT_SECTIONS)
     drawings_active = bool(active_sections & _DRAWING_SECTIONS)
+    original_active = bool(active_sections & _ORIGINAL_LEVEL_SECTIONS)
     lanes_ok = phone_voiceover_editor_lanes_supported(require_client=False)
     media_ok = phone_voiceover_editor_media_supported(require_client=False)
     text_ok = phone_narrated_title_edits_supported(require_client=False)
@@ -1441,7 +1462,12 @@ def _compile_narrated_editor_commit(
         raise ValueError("phone Voiceover titles aren't editable yet")
     # A caption edit, or a Save with nothing else to do, is a caption Save.
     caption_save = bool(caption_active) or not (
-        lanes_active or media_active or cut_active or text_active or drawings_active
+        lanes_active
+        or media_active
+        or cut_active
+        or text_active
+        or drawings_active
+        or original_active
     )
     if caption_save and not phone_narrated_caption_edits_supported():
         raise ValueError("phone Narrated captions aren't editable yet")
@@ -1449,6 +1475,7 @@ def _compile_narrated_editor_commit(
     allowed = (
         _NARRATED_EDITOR_SECTIONS
         | _VOICEOVER_CUT_SECTIONS
+        | _ORIGINAL_LEVEL_SECTIONS
         | (_VOICEOVER_LANE_SECTIONS if lanes_ok else frozenset())
         | (_VOICEOVER_MEDIA_SECTIONS if media_ok else frozenset())
         | (_NARRATED_TEXT_SECTIONS if text_ok else frozenset())
@@ -1503,6 +1530,8 @@ def _compile_narrated_editor_commit(
         recipe = _commit_voiceover_media(
             recipe, assembly=assembly, variant=variant, prep=prep, video_track_id="narrated"
         )
+    if original_active:
+        recipe = _apply_original_level(recipe, variant, prep)
     recipe = with_drawings(recipe, variant.get("drawings"))
     validate_phone_pilot_recipe(recipe, allow_editor_media=_voiceover_allows_editor_media(recipe))
     request = make_device_request(
@@ -1578,7 +1607,11 @@ def _compile_voiceover_montage_editor_commit(
     cut_active = bool(active_sections & _VOICEOVER_CUT_SECTIONS)
     # KRI-589: a drawings-only Save touches no lane the sound-effect / Visuals rollout owns.
     # (An empty Save is not drawings-only: `set() <= x` is true, so it keeps its old gates.)
-    only_drawings = bool(active_sections) and active_sections <= _DRAWING_SECTIONS
+    # KRI-821: an Original-audio Save is the same kind of lane-free Save.
+    original_active = bool(active_sections & _ORIGINAL_LEVEL_SECTIONS)
+    only_drawings = bool(active_sections) and active_sections <= (
+        _DRAWING_SECTIONS | _ORIGINAL_LEVEL_SECTIONS
+    )
     if (
         (lanes_active or not cut_active)
         and not only_drawings
@@ -1594,6 +1627,7 @@ def _compile_voiceover_montage_editor_commit(
         - _VOICEOVER_CUT_SECTIONS
         - _VOICEOVER_FIT_SECTIONS
         - _DRAWING_SECTIONS
+        - _ORIGINAL_LEVEL_SECTIONS
     )
     if unsupported_sections:
         name = sorted(unsupported_sections)[0]
@@ -1637,6 +1671,8 @@ def _compile_voiceover_montage_editor_commit(
         recipe = _commit_voiceover_media(
             recipe, assembly=assembly, variant=variant, prep=prep, video_track_id="montage"
         )
+    if original_active:
+        recipe = _apply_original_level(recipe, variant, prep)
     recipe = with_drawings(recipe, variant.get("drawings"))
     validate_phone_pilot_recipe(recipe, allow_editor_media=_voiceover_allows_editor_media(recipe))
     request = make_device_request(

@@ -117,7 +117,11 @@ log = structlog.get_logger()
 # v77 combines both v76 branches (KRI-816 starts_fresh + KRI-815 voiceover script section).
 # v77 (KRI-827): "no text on her face or on the plate" => `keep_text_off` facts.
 # v78 combines main's v77 (KRI-815 + KRI-816) with KRI-827's v77 (keep_text_off).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v78"
+# v77 (KRI-821): "mute the camera / crowd sound" is a typed `source_muted` audio intent.
+# v78 (KRI-821): a named cut of a repeated line records which take (`cut_line_occurrences`).
+# v79 combines main's v77 (KRI-815 + KRI-816) with KRI-821's v78.
+# v80 combines main's v79 (KRI-815/816/821) with KRI-827's keep_text_off (branch v78).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v80"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -491,7 +495,10 @@ particular shot, photo or badge => {"closing": "<the creator's words for it>"}; 
 filler sounds or retakes from the speech => {"speech_cleanup": true}, keep them =>
 {"speech_cleanup": false}; cut out particular spoken words (a slip, a half question, a line, "the
 part where I say ...") => {"speech_cleanup": true, "cut_lines": ["with bread, no,"]}, one item per
-stretch in the creator's exact words, quoted or described, never translated. Quoted speech
+stretch in the creator's exact words, quoted or described, never translated; when they say
+which time a repeated line to cut ("cut the FIRST take of 'welcome to my channel'", "the last
+time I say ...") also add {"cut_line_occurrences": {"welcome to my channel": "first"}} with
+"first", "second", "third" or "last", and keep that word in the description. Quoted speech
 bounds use the timing requirement's "start_line"/"end_line", never a cut line; ordered clips
 or places still use the order requirement's "start"/"end". Captions =>
 {"captions": "on"}, {"captions": "off"} or {"captions":
@@ -509,6 +516,10 @@ mark the object on a frame; never describe where it is yourself).
 Keep the source/camera/ambient audio unchanged (including noun phrases such as "original camera
 audio" or "kameranın özgün sesi") => an `audio` requirement with
 {"audio_intent": "source_unchanged"}. This fact describes ONLY unprocessed source sound.
+Mute or remove the footage's own sound (camera, crowd, ambient, original audio) so only the
+voice is heard ("mute the crowd noise under my voice", "kamera sesini kapat") => an `audio`
+requirement with {"audio_intent": "source_muted"}; "keep it low / quieter under my voice" is
+not a mute and records no audio_intent.
 Record any requested processing, noise/wind removal, volume change, music or speech selection
 as a SEPARATE requirement with its complete description; never certify those changes with
 `source_unchanged`. For "original camera audio, remove only the wind noise", record both the

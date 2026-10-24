@@ -58,6 +58,7 @@ _DIRECT_SECTIONS = (
     "lyric_line_suppressions",
     "mix",
     "original_audio_level",
+    "original_audio_level_source",
     "smart_music_treatment",
     "orientation",
     "sound_effects",

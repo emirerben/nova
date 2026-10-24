@@ -697,8 +697,15 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
     if caps.get("automatic_cut") is True and variant.get("speech_cut_candidates"):
         families.append("automatic_cut")
     music_ops = caps.get("music_operations") or {}
+    original_audio = caps.get("original_audio")
     if (
         caps.get("mix") is True
+        # KRI-821: a phone Voiceover edit's footage level (`set_mix original_level`).
+        or (
+            variant.get("resolved_archetype") in {"narrated", "voiceover"}
+            and isinstance(original_audio, dict)
+            and original_audio.get("editable") is True
+        )
         or caps.get("swap_song") is True
         or any(
             value is True or (isinstance(value, dict) and value.get("editable") is True)
@@ -1162,6 +1169,14 @@ def build_editor_snapshot(
             # `original_level` would be silently dropped, so it is not offered.
             if not _is_guided_native(job, variant):
                 snapshot["mix"]["original_level"] = variant.get("original_audio_level")
+        if caps.get("mix") is not True and variant.get("resolved_archetype") in {
+            "narrated",
+            "voiceover",
+        }:
+            # KRI-821: the family is open only for the footage level (`original_audio`);
+            # the voice/music balance has no control here (Save refuses music_level).
+            snapshot["mix"].pop("music_level", None)
+            snapshot["mix"]["music_level_locked"] = True
         bed = _background_bed(caps, variant, guided_native=_is_guided_native(job, variant))
         if bed is not None:
             snapshot["mix"]["background_music"] = bed
