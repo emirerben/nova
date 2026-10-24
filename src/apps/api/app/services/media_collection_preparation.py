@@ -161,6 +161,7 @@ async def prepare_story_snapshot(db, owner, story, item):
         story.collection_id,
         story.collection_revision,
         moment_ids=[UUID(value["id"]) for value in story.moments_json],
+        retained_story=story,
     )
     current = {str(value.id): value for value in evidence.moments}
     if any(value["id"] not in current for value in story.moments_json):

@@ -282,3 +282,65 @@ unverified sources still require a usable creator window; no highlights or timin
 are fabricated to fill that gap. No paid/provider calls, account flags, production
 memory, merge or deployment were performed. Main4499189663c31e1274ff249a9afc53cd2cdc75d5
 is integrated additively; other authors' freeze-frame/editor work is preserved.
+
+## Isolated current-main compatibility qualification — 24 October 2026
+
+External KRI-845/#1781 changes the video metadata prompt from `2026-10-13.1`
+to `2026-10-23.1`. The derived moment index spec includes that prompt, so an
+unchanged saved idea can remain readable while its exact old moment IDs disappear
+from current search and selection refuses `Story source changed`.
+
+Read-only, repeatable-read observations on the deployed API and `light` worker
+confirmed this for all five retained harbor moments. Ownership, selection, IDs,
+text, windows, source generation and hash still matched. The only frozen-versus-row
+evidence difference was `source_checked_at`, an availability-check timestamp.
+Two retained READY fact records per source reproduced every original fact digest
+and moment UUID. These were metadata reads; no original selection/recovery,
+indexing, analysis/provider call, source/session mutation or phone action ran.
+The original incident therefore remains unfulfilled on deployed code.
+
+The isolated compatibility repair admits only an already persisted story's exact
+timed IDs across this reviewed metadata-version pair, with unchanged video-v8
+and OpenAI transcript contracts. It checks the current owned collection/source,
+frozen-versus-row evidence (excluding only `source_checked_at`), generation/hash,
+exact retained READY fact identity, recomputed fact digest, deterministic interval
+and UUID, and recomputed quality/coverage. The existing live object generation/size,
+attachment path, revision, approval, content/caption, prepared execution and
+concurrency checks still apply. Unknown/future specs and whole-source-context
+legacy fallback remain refused. New search, generation, indexing and cache rules
+are unchanged. No stale rows become general candidates and no old facts are
+promoted to new analysis.
+
+The index's existing interval-quality algorithm is shared with the retained-fact
+proof; its output and timed identity algorithm are unchanged. A counterexample
+changing both the stored row and frozen window failed the initial UUID-only proof;
+the final proof also requires the exact row interval to be present in the retained
+facts. Changing both frozen and row quality is likewise rejected by recomputing
+quality from those facts. Raw failed diagnostic runs are retained.
+
+Qualification uses fresh main `6c9b71fc6d05913afb7b41e433e00dc10fb51c5f`
+(including external #1781–1783) plus author head
+`2befa49fc40465fe1298bb1b32d3f3af5c4d0000` in a separate integration worktree.
+The author branch is untouched. The existing full affected HTTP/PostgreSQL journeys
+pass: **114 passed**. Expanded shared approval/runtime, KRI-845 and free replay
+qualification: **2,462 passed, 15 skipped, 7 expected failures**. Counts overlap.
+The native subtree `0e22ae53161ebe15470e4a7763745b2f94a12f12` exactly matches
+the previously green CI merge `9ff13cf185fe9a84614b5e5cf3a300714df6d43a`;
+no new native/device/export result is claimed. Retained actual Mac exports remain
+on their recorded engine and are not relabelled as new physical output.
+
+Evidence is retained in the isolated worktree's `.dev/compatibility-deployed-read.json`,
+`deployed-saved-eligibility-{api,light}.log`,
+`deployed-saved-eligibility-facts-api.log`, `retained-context-integration.log` and
+`current-main-compatibility-api.log`. API/light observed image revision:
+`2c6d6aed29bedb0ab1bc5f426283ad77ca93e1c6`, digest
+`sha256:6ad9f71f5ec5556dabc9584406d923c3491f6085f06b89517398c6ef1f94c7b0`.
+`run_kria_turn` and `execute_kria_approval` eligibility/approval checks execute
+on `light`'s control/maintenance queues. The stopped main render worker had the
+same image metadata; no process was started there. Its later prepared-story
+renderer checks the frozen compiled execution, rather than source-moment search.
+
+This is a locally tested compatibility diff for semantic review. Publication,
+fresh CI for any revised PR head, matching deployment/native build, QA-copy flow
+and the explicitly authorized original-session test remain separate stages.
+No merge, deployment, rollout or original-session retry authority is inferred.

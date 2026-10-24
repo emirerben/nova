@@ -16,11 +16,11 @@ from typing import Any
 
 from fastapi import HTTPException
 from google.api_core.exceptions import NotFound
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
-from app.models import MediaAsset, MediaAssetSource, MediaSourceMoment
+from app.models import MediaAsset, MediaAssetAnalysis, MediaAssetSource, MediaSourceMoment
 from app.schemas.clip_understanding import _clean_text
 from app.schemas.media_collections import (
     CollectionIndexBody,
@@ -201,6 +201,36 @@ def _valid_context_bounds(start: float, end: float, duration: Any) -> bool:
     )
 
 
+def _interval_quality(analysis: dict, duration: float, interval: dict) -> dict:
+    raw_quality_spans = analysis.get("unusable_spans")
+    if not isinstance(raw_quality_spans, list):
+        raw_quality_spans = []
+    quality_spans = []
+    for raw in raw_quality_spans[:20]:
+        if not isinstance(raw, dict):
+            continue
+        start, end = _number(raw.get("start_s")), _number(raw.get("end_s"))
+        if (
+            start is not None
+            and end is not None
+            and 0 <= start < end <= duration
+            and start < interval["end_s"]
+            and end > interval["start_s"]
+        ):
+            quality_spans.append(
+                {
+                    "start_s": start,
+                    "end_s": end,
+                    "reason": _clean_text(raw.get("reason"), 80),
+                }
+            )
+    return {
+        "source_visibility": clip_record(analysis, kind="video").visibility[:160],
+        "overlapping_unusable_spans": quality_spans[:3],
+        "verification": "cached_evidence_only",
+    }
+
+
 async def index_collection(
     db: AsyncSession, owner: uuid.UUID, identifier: uuid.UUID, body: CollectionIndexBody
 ) -> CollectionIndexOut:
@@ -286,10 +316,6 @@ async def index_collection(
                 context.append(asset.id)
             else:
                 unusable_timing.append(asset.id)
-        visibility = clip_record(analysis or {}, kind="video").visibility
-        raw_quality_spans = (analysis or {}).get("unusable_spans")
-        if not isinstance(raw_quality_spans, list):
-            raw_quality_spans = []
         if capped:
             truncated.append(asset.id)
         await db.execute(
@@ -298,25 +324,6 @@ async def index_collection(
             )
         )
         for interval in intervals:
-            quality_spans = []
-            for raw in raw_quality_spans[:20]:
-                if not isinstance(raw, dict):
-                    continue
-                start, end = _number(raw.get("start_s")), _number(raw.get("end_s"))
-                if (
-                    start is not None
-                    and end is not None
-                    and 0 <= start < end <= duration
-                    and start < interval["end_s"]
-                    and end > interval["start_s"]
-                ):
-                    quality_spans.append(
-                        {
-                            "start_s": start,
-                            "end_s": end,
-                            "reason": _clean_text(raw.get("reason"), 80),
-                        }
-                    )
             identity = json.dumps([str(source.id), version, interval], sort_keys=True)
             db.add(
                 MediaSourceMoment(
@@ -343,11 +350,7 @@ async def index_collection(
                             if whole_context
                             else {}
                         ),
-                        "quality": {
-                            "source_visibility": visibility[:160],
-                            "overlapping_unusable_spans": quality_spans[:3],
-                            "verification": "cached_evidence_only",
-                        },
+                        "quality": _interval_quality(analysis or {}, duration, interval),
                         "complete_timed_speech": isinstance((transcript or {}).get("words"), list)
                         and all(
                             _timed_word(word, duration) is not None
@@ -377,6 +380,161 @@ async def index_collection(
     )
 
 
+def _retained_timed_spec() -> tuple[str, list[tuple[str, str, str, str]]] | None:
+    # KRI-845 adds optional props/actions/visual-quality facts. It does not revoke
+    # already reviewed intervals from this exact predecessor. Future contracts
+    # need a separate compatibility decision; new searches always use _index_spec.
+    video = (
+        "nova.video.clip_metadata",
+        "gemini-2.5-flash",
+        "2026-10-23.1",
+        "video-v8/source-facts/filter-policy-v1/semantic-complete-v2",
+    )
+    transcript = (
+        "nova.media.transcript",
+        "whisper:openai-api:whisper-1",
+        "source-transcription/v2",
+        "words-v1/beat-v1/source-facts/filter-policy-v1",
+    )
+    if facts._spec("video", None) != video or facts._spec("video", "transcript") != transcript:
+        return None
+    previous = (*video[:2], "2026-10-13.1", video[3])
+    versions = [previous, transcript]
+    spec = hashlib.sha256(json.dumps([INDEX_VERSION, *versions]).encode()).hexdigest()
+    return spec, versions
+
+
+def _stable_moment(raw: dict) -> dict:
+    value = MediaMomentOut.model_validate(raw).model_dump(mode="json")
+    value["evidence"].pop("source_checked_at", None)
+    return value
+
+
+async def _retained_timed_ids(db, owner, collection, story, available) -> list[uuid.UUID]:
+    """Re-prove exact persisted timed choices; never admit generic stale search rows."""
+    contract = _retained_timed_spec()
+    if (
+        contract is None
+        or story is None
+        or story.user_id != owner
+        or story.collection_id != collection.id
+        or story.collection_revision != collection.revision
+        or not 1 <= len(story.moments_json) <= 8
+    ):
+        return []
+    spec, versions = contract
+    result = []
+    for frozen in story.moments_json:
+        if (frozen.get("evidence") or {}).get("index_spec") != spec:
+            continue
+        moment = await db.scalar(
+            select(MediaSourceMoment).where(
+                MediaSourceMoment.id == uuid.UUID(frozen["id"]),
+                MediaSourceMoment.user_id == owner,
+            )
+        )
+        if moment is None:
+            continue
+        pair = available.get(moment.asset_id)
+        if pair is None:
+            continue
+        asset, source = pair
+        evidence = moment.evidence_json
+        if (
+            source.id != moment.source_id
+            or asset.kind != "video"
+            or source.role != "analysis_proxy"
+            or evidence.get("index_spec") != spec
+            or evidence.get("analyzer_versions") != [list(v) for v in versions]
+            or evidence.get("generation") != source.object_generation
+            or evidence.get("uploaded_sha256") != source.uploaded_sha256
+            or evidence.get("evidence_scope", "timed_moment") != "timed_moment"
+            or evidence.get("fact_version") != moment.fact_version
+        ):
+            continue
+        current = MediaMomentOut(
+            id=moment.id,
+            asset_id=asset.id,
+            source_id=source.id,
+            generation=source.object_generation,
+            start_s=moment.start_s,
+            end_s=moment.end_s,
+            kind=moment.kind,
+            text=moment.text,
+            uncertain=moment.uncertain,
+            evidence_scope="timed_moment",
+            evidence=evidence,
+        ).model_dump(mode="json")
+        if _stable_moment(current) != _stable_moment(frozen):
+            continue
+        source_ref = facts._Source(
+            str(asset.id),
+            str(source.id),
+            str(owner),
+            asset.kind,
+            source.role,
+            source.object_path,
+            source.object_generation,
+            source.uploaded_sha256,
+            source.status,
+        )
+        identity = facts._key(source_ref, None).source_identity
+        retained = []
+        for name, model, prompt, schema in versions:
+            fact = await db.scalar(
+                select(MediaAssetAnalysis).where(
+                    MediaAssetAnalysis.user_id == owner,
+                    MediaAssetAnalysis.source_identity == identity,
+                    MediaAssetAnalysis.analyzer == name,
+                    MediaAssetAnalysis.model == model,
+                    MediaAssetAnalysis.prompt_version == prompt,
+                    MediaAssetAnalysis.schema_version == schema,
+                    MediaAssetAnalysis.status == "ready",
+                )
+            )
+            if fact is None or not isinstance(fact.result_json, dict):
+                break
+            retained.append(fact.result_json)
+        if len(retained) != 2:
+            continue
+        version = hashlib.sha256(
+            json.dumps([spec, *retained], sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        duration = _number((asset.metadata_json or {}).get("duration_s"))
+        if version != moment.fact_version or duration is None or duration <= 0:
+            continue
+        intervals, capped = source_intervals(*retained, duration)
+        # The deterministic UUID binds the original fact digest, source and full
+        # interval (including wording/uncertainty), not just supplied bounds.
+        interval = dict(
+            kind=moment.kind,
+            start_s=moment.start_s,
+            end_s=moment.end_s,
+            text=moment.text,
+            uncertain=moment.uncertain,
+        )
+        complete_speech = isinstance(retained[1].get("words"), list) and all(
+            _timed_word(word, duration) is not None for word in retained[1]["words"]
+        )
+        if (
+            evidence.get("quality") != _interval_quality(retained[0], duration, interval)
+            or evidence.get("complete_timed_speech") != complete_speech
+            or evidence.get("intervals_truncated") != capped
+            or evidence.get("time_basis") != "source_seconds"
+            or evidence.get("verification") != "cached_analysis_only"
+        ):
+            continue
+        if (
+            interval in intervals
+            and uuid.uuid5(
+                uuid.NAMESPACE_URL, json.dumps([str(source.id), version, interval], sort_keys=True)
+            )
+            == moment.id
+        ):
+            result.append(moment.id)
+    return result
+
+
 async def search_moments(
     db: AsyncSession,
     owner: uuid.UUID,
@@ -390,6 +548,7 @@ async def search_moments(
     end_s: float | None = None,
     all_candidates: bool = False,
     moment_ids: list[uuid.UUID] | None = None,
+    retained_story=None,
 ) -> MomentSearchOut:
     row = await owned_collection(db, owner, identifier, revision=revision)
     selected = members(row)
@@ -442,6 +601,22 @@ async def search_moments(
         for member in selected
         if member.source_id in sources and member.source_id not in indexed
     ]
+    retained_ids = (
+        await _retained_timed_ids(db, owner, row, retained_story, available)
+        if retained_story is not None and moment_ids is not None
+        else []
+    )
+    current_or_retained = MediaSourceMoment.evidence_json["index_spec"].astext == _index_spec(
+        "video"
+    )
+    if retained_ids:
+        current_or_retained = or_(
+            current_or_retained,
+            and_(
+                MediaSourceMoment.id.in_(retained_ids),
+                MediaSourceMoment.evidence_json["index_spec"].astext == _retained_timed_spec()[0],
+            ),
+        )
     vector = func.to_tsvector("simple", MediaSourceMoment.text)
     terms = func.plainto_tsquery("simple", query)
     statement = (
@@ -455,7 +630,7 @@ async def search_moments(
             MediaAsset.archived_at.is_(None),
             MediaAssetSource.user_id == owner,
             MediaAssetSource.status == "available",
-            MediaSourceMoment.evidence_json["index_spec"].astext == _index_spec("video"),
+            current_or_retained,
         )
         .limit(101)
     )

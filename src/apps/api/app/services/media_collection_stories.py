@@ -101,7 +101,9 @@ async def read_saved_stories(db, owner, identifier, revision, story_ids=None):
     )
 
 
-async def candidate_evidence(db, owner, identifier, revision, query="", *, moment_ids=None):
+async def candidate_evidence(
+    db, owner, identifier, revision, query="", *, moment_ids=None, retained_story=None
+):
     evidence = await media_moments.search_moments(
         db,
         owner,
@@ -111,6 +113,7 @@ async def candidate_evidence(db, owner, identifier, revision, query="", *, momen
         limit=100,
         all_candidates=True,
         moment_ids=moment_ids,
+        retained_story=retained_story,
     )
     collection = await media_collections.owned_collection(db, owner, identifier, revision=revision)
     eligible = await media_collections.eligible_sources(

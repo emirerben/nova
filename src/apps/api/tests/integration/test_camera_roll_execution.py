@@ -104,6 +104,49 @@ _RECOVERABLE_CASES = {"held", "empty-caption", "whitespace-caption", "lost-telem
         )
         for changed in ("prepared-context", "prepared-context-missing", "story-context")
     ]
+    + [
+        pytest.param(
+            "retained:" + condition,
+            False,
+            False,
+            _ACCEPTED_CAPTION,
+            True,
+            "held" if condition == "held" else None,
+            id="retained-spec-" + condition,
+        )
+        for condition in (
+            "valid",
+            "held",
+            "generation",
+            "hash",
+            "path",
+            "window",
+            "frozen-window",
+            "text",
+            "quality",
+            "frozen-quality",
+            "missing-fact",
+            "changed-fact",
+            "wrong-fact-identity",
+            "unknown-spec",
+            "future-spec",
+            "foreign-moment",
+            "stale-collection",
+            "nonready-fact",
+        )
+    ]
+    + [
+        pytest.param(
+            "retained:valid",
+            False,
+            changed,
+            _ACCEPTED_CAPTION,
+            True,
+            None,
+            id="retained-spec-after-approval-" + changed,
+        )
+        for changed in ("source", "story", "prepared-window", "prepared-caption", "approval")
+    ]
     # Seed the historical hold, then use the real HTTP/worker/approval chain.
     # This is recovery of an existing selection, not success in a new project.
     + [
@@ -142,6 +185,21 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
 ):
     client, assets, sources, owner, _app = collection_world
     source_context = with_content_plan == "whole-source-context"
+    retained_condition = (
+        with_content_plan.split(":", 1)[1]
+        if isinstance(with_content_plan, str) and with_content_plan.startswith("retained:")
+        else None
+    )
+    if retained_condition:
+        monkeypatch.setattr(settings, "whisper_backend", "openai-api")
+        from dataclasses import replace
+
+        from app.agents.clip_metadata import ClipMetadataAgent
+
+        current_metadata_spec = ClipMetadataAgent.spec
+        monkeypatch.setattr(
+            ClipMetadataAgent, "spec", replace(current_metadata_spec, prompt_version="2026-10-13.1")
+        )
     if recovery_case:
         from app.routes import creation_threads
 
@@ -291,7 +349,7 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
     collection_id = uuid.UUID(path.rsplit("/", 1)[1])
     selected_members = selection(assets, sources)
     additional_context = None
-    if recovery_case == "held":
+    if recovery_case == "held" and not retained_condition:
         # An existing partial idea may predate another member's completed facts.
         # Enrich that member during index refresh without changing membership or
         # any of the two accepted source windows.
@@ -441,6 +499,98 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         db.add(story)
         await db.commit()
         story_id, thread_id, item_id = story.id, thread.id, item.id
+    if retained_condition:
+        import copy
+
+        from app.services import media_moments
+
+        monkeypatch.setattr(ClipMetadataAgent, "spec", current_metadata_spec)
+        current_search = await client.get(
+            f"{path}/moments", params={"query": "ferry", "expected_revision": 1}
+        )
+        assert current_search.status_code == 200 and current_search.json()["moments"] == []
+        assert all(
+            m["evidence"]["index_spec"] != media_moments._index_spec("video") for m in moments
+        )
+        async with AsyncSessionLocal() as db:
+            moment = await db.get(MediaSourceMoment, uuid.UUID(moments[0]["id"]))
+            source = await db.get(MediaAssetSource, moment.source_id)
+            stored = await db.get(MediaCollectionStory, story_id)
+            if retained_condition in {"generation", "hash", "path"}:
+                if retained_condition == "generation":
+                    metadata_by_path[source.object_path] = SimpleNamespace(
+                        generation="changed", size=source.byte_count
+                    )
+                elif retained_condition == "hash":
+                    moment.evidence_json = {**moment.evidence_json, "uploaded_sha256": "b" * 64}
+                    frozen = copy.deepcopy(stored.moments_json)
+                    frozen[0]["evidence"]["uploaded_sha256"] = "b" * 64
+                    stored.moments_json = frozen
+                else:
+                    # Verified source rows are immutable in PostgreSQL. Change
+                    # the mutable attachment binding, not that invariant.
+                    bound = await db.get(PlanItem, item_id)
+                    attached = copy.deepcopy(bound.clip_assignments)
+                    attached[0]["gcs_path"] += ".changed"
+                    bound.clip_assignments = attached
+            elif retained_condition in {"window", "frozen-window"}:
+                moment.end_s -= 0.1
+                if retained_condition == "frozen-window":
+                    frozen = copy.deepcopy(stored.moments_json)
+                    frozen[0]["end_s"] = moment.end_s
+                    stored.moments_json = frozen
+            elif retained_condition == "text":
+                moment.text = "Unreviewed replacement observation"
+            elif retained_condition in {"quality", "frozen-quality"}:
+                e = copy.deepcopy(moment.evidence_json)
+                e["quality"]["source_visibility"] = "Changed quality"
+                moment.evidence_json = e
+                if retained_condition == "frozen-quality":
+                    frozen = copy.deepcopy(stored.moments_json)
+                    frozen[0]["evidence"]["quality"] = e["quality"]
+                    stored.moments_json = frozen
+            elif retained_condition in {
+                "missing-fact",
+                "changed-fact",
+                "wrong-fact-identity",
+                "nonready-fact",
+            }:
+                fact = await db.scalar(
+                    select(MediaAssetAnalysis).where(
+                        MediaAssetAnalysis.source_id == source.id,
+                        MediaAssetAnalysis.analyzer == "nova.video.clip_metadata",
+                        MediaAssetAnalysis.prompt_version == "2026-10-13.1",
+                    )
+                )
+                if retained_condition == "missing-fact":
+                    await db.delete(fact)
+                elif retained_condition == "changed-fact":
+                    fact.result_json = {**fact.result_json, "description": "Changed retained facts"}
+                elif retained_condition == "nonready-fact":
+                    fact.status = "failed"
+                else:
+                    fact.source_identity += "/wrong-source"
+            elif retained_condition == "future-spec":
+                monkeypatch.setattr(
+                    ClipMetadataAgent,
+                    "spec",
+                    replace(current_metadata_spec, prompt_version="2099-01-01.1"),
+                )
+            elif retained_condition == "unknown-spec":
+                moment.evidence_json = {**moment.evidence_json, "index_spec": "f" * 64}
+                frozen = copy.deepcopy(stored.moments_json)
+                frozen[0]["evidence"]["index_spec"] = "f" * 64
+                stored.moments_json = frozen
+            elif retained_condition == "foreign-moment":
+                frozen = copy.deepcopy(stored.moments_json)
+                frozen[0]["source_id"] = sources[2]
+                stored.moments_json = frozen
+            elif retained_condition == "stale-collection":
+                from app.models import MediaCollection
+
+                (await db.get(MediaCollection, collection_id)).revision += 1
+            await db.commit()
+
     # Preserve the native attachment event identities so choosing again exercises
     # the actual repeat-attachment HTTP boundary before selection recovery.
     initial_revision = 0
@@ -482,6 +632,17 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         f"{path}/stories/{story_id}/select",
         json=selection_body,
     )
+    if retained_condition not in {None, "valid", "held"}:
+        assert selected.status_code == 409, selected.text
+        async with AsyncSessionLocal() as db:
+            assert (
+                await db.scalar(
+                    select(CreatorAgentTurn).where(CreatorAgentTurn.thread_id == thread_id)
+                )
+                is None
+            )
+            assert (await db.get(PlanItem, item_id)).current_job_id is None
+        return
     assert selected.status_code == 200, selected.text
     accepted = selected.json()
     if recovery_case:
@@ -790,7 +951,7 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         fingerprint = approval_fingerprint(approval)
         approval_id, draft_revision = approval.id, approval.draft_revision
         thread_revision = db.get(CreationThread, thread_id).revision
-    if recovery_case == "held":
+    if recovery_case == "held" and not retained_condition:
         # Refreshing the index after approval preparation cannot invalidate a
         # previously selected timed story or replace its pinned windows/caption.
         async with AsyncSessionLocal() as db:
