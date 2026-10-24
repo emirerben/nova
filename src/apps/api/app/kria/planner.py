@@ -280,7 +280,7 @@ def _enrich_best_parts_snapshot(
     )
     from app.services.creator_render_contract import build_render_contract  # noqa: PLC0415
     from app.services.length_planning import build_length_plan  # noqa: PLC0415
-    from app.services.length_policy import creator_duration_s, natural_length_owner  # noqa: PLC0415
+    from app.services.length_policy import creator_duration, natural_length_owner  # noqa: PLC0415
 
     if natural_length_owner(strategy) not in {"footage", "voiceover", "song"}:
         return media_snapshot
@@ -292,7 +292,8 @@ def _enrich_best_parts_snapshot(
     )
     del rows
     creator_target = strategy.get("creator_duration_s")
-    creator_target_s = creator_duration_s(brief=brief) or (
+    proven = creator_duration(brief=brief)
+    creator_target_s = (proven.seconds if proven is not None else None) or (
         float(creator_target)
         if isinstance(creator_target, (int, float)) and creator_target > 0
         else None
@@ -378,6 +379,8 @@ def _enrich_best_parts_snapshot(
             {**strategy, "voiceover_duration_s": recording},
             media_snapshot,
             creator_target_s=creator_target_s,
+            # KRI-847: a brief ceiling ("at most 10 seconds") caps the plan instead of fixing it.
+            creator_target_bound=proven.bound if proven is not None else "exact",
             selected_ids=selected,
             order_ids=contract.order_ids if contract is not None else (),
             closing_quote=closing_quote,

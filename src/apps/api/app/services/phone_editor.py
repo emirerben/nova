@@ -359,6 +359,8 @@ def _relax_requirement(
             (staged.all_candidates or {}).get("creator_strategy") or {},
             rebound,
             mode=length_policy.check_mode,
+            # KRI-847: this rebind never changes the length, so a ceiling stays a ceiling.
+            duration_bound=length_policy.requested_duration_bound,
         )
     return True
 
@@ -528,6 +530,10 @@ def _rebind_editor_render_contract(
             (staged.all_candidates or {}).get("creator_strategy") or {},
             rebound,
             mode=length_policy.check_mode,
+            # KRI-847: a timeline Save names a concrete new length (exact); other saves keep it.
+            duration_bound=(
+                "exact" if "duration_s" in changes else length_policy.requested_duration_bound
+            ),
         )
 
 

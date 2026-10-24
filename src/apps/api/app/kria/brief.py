@@ -440,13 +440,18 @@ def _complete_change(target: BriefRequirement, update: BriefUpdate) -> BriefUpda
     """KRI-805: a partial change keeps every field it leaves out; a complete one replaces."""
     if update.operation != "change" or (update.kind is not None and update.scope is not None):
         return update
+    facts = {**target.facts, **update.facts}
+    if "duration_s" in update.facts and "duration_bound" not in update.facts:
+        # KRI-847: a new length is exact until the update says it is a ceiling again, so
+        # "at most 10 seconds" then "make it 15 seconds" does not become "at most 15".
+        facts.pop("duration_bound", None)
     return update.model_copy(
         update={
             "kind": update.kind or target.kind,
             "scope": update.scope or target.scope,
             "literal": target.literal if update.literal is None else update.literal,
             "description": target.description if update.description is None else update.description,
-            "facts": {**target.facts, **update.facts},
+            "facts": facts,
         }
     )
 
