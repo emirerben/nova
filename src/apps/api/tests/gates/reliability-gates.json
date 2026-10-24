@@ -2956,6 +2956,50 @@
         "Cafe T2 and Don Julio T3 iPhone re-send after deploy (T3 needs TALKING_MULTI_CLIP_ENABLED on)"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-848-song-genre-honesty",
+      "tickets": [
+        "KRI-848",
+        "KRI-829"
+      ],
+      "symptom": "Don Julio M1 asked 'Suggest an upbeat tango song for it'. The chat-time song freeze passed the ask to the music matcher only as a soft mood signal; the matcher always returns a track, MusicLabels.genre cannot hold 'tango' (coerced to 'other'), and Main Creator writes its copy before the match, so any library track could be presented as the tango suggestion and the reply never named the song.",
+      "boundary": "reply",
+      "status": "open_pr",
+      "owner": "KRI-848",
+      "paths": [
+        "src/apps/api/app/services/music_genre.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/tasks/generative_build.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_music_genre_honesty.py",
+        "tests/kria/test_kri679_music_mood.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The real M1 brief shape (r6/r7 keep-audible + r8 tango ask, all audio/global) through the real _gate_unresolved_choices -> _freeze_licensed_music_section -> _match_best_track -> _run_music_matcher -> MusicMatcherAgent classes, then build_receipts + reply_from_receipts; only MusicMatcherAgent.run (a ranker that ignores the ask, like prod) and the catalog read are canned. Red on main: the reply never names the song or says there is no tango track, a tango-tagged track outranked by a pop track is never suggested, and the frozen section records nothing about the genre.",
+        "live_model": "Not run; no paid calls. No prompt or model call changed.",
+        "native_output": "not_applicable; chat reply text and frozen section only, no media change.",
+        "production": "Not deployed. Whether the prod library holds any tango-labelled track was not checked offline."
+      },
+      "neighbours_covered": [
+        "no fitting track (says so, names the closest) vs a fitting track outranked or outside the matcher's top rows",
+        "mood-only asks and the keep-audible asks stay silent",
+        "everyday words (house, pop, dance) only right next to a music word; negated genres and genre lists never asked",
+        "enum synonyms fit; narrow aliases (house, folk, orchestral) need the word itself, else the family track is offered as the closest; 'other' is never a wildcard",
+        "EN + TR copy; summary kept vs replaced by real receipts; 1000-char summary cap; reused and pre-fix frozen sections; matcher failure"
+      ],
+      "neighbours_gap": [
+        "The song classifier is told to keep genre words out of vibe_tags; the check also reads mood and the classifier rationale, but a real tango track whose labels never say it is still reported as 'none found' (safe direction). Better recall needs a classifier prompt + paid relabel.",
+        "Render-time song matches (no chat ask) and chats without a Creative Brief, with a voiceover or with non-licensed audio get no genre check.",
+        "A song title in the ask ('like Tango in the Night') is read as a genre; the song notice can be cut by reply_from_receipts' 1200-char cap on a very long receipts list (not the M1 path)."
+      ],
+      "follow_ups": [
+        "Don Julio M1 iPhone re-send after deploy: reply names the suggested song and says tango only if its labels say tango"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }
