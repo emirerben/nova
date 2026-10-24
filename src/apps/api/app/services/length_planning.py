@@ -14,6 +14,7 @@ from app.pipeline.best_parts import (
     BestPartsResult,
     select_best_parts,
     select_moment_windows,
+    select_pinned_moment_windows,
 )
 from app.schemas.edit_proposal import (
     MIN_PROPOSAL_DURATION_S,
@@ -29,6 +30,18 @@ from app.services.single_hero_policy import (
 )
 
 LENGTH_PLAN_VERSION = 1
+# KRI-723: an envelope that records the creator's named moments (``moments``). Only such an
+# envelope is written as v2, so every other plan stays byte-identical v1.
+MOMENT_LENGTH_PLAN_VERSION = 2
+SUPPORTED_LENGTH_PLAN_VERSIONS = frozenset({LENGTH_PLAN_VERSION, MOMENT_LENGTH_PLAN_VERSION})
+
+
+def supported_length_plan_version(envelope: Mapping[str, Any] | None) -> bool:
+    """The one version check every reader of an approved envelope uses (KRI-723)."""
+    version = envelope.get("version") if isinstance(envelope, Mapping) else None
+    return type(version) is int and version in SUPPORTED_LENGTH_PLAN_VERSIONS
+
+
 # A still has no measured source duration.  This is deliberately kept here,
 # rather than imported from ``unified_montage``, so the shared proposal plan
 # does not depend on the renderer (which reads this envelope).
@@ -238,8 +251,17 @@ def build_length_plan(
     spoken_order: Mapping[str, Any] | None = None,
     named_lines: Sequence[Mapping[str, Any]] | None = None,
     still_holds: Mapping[str, float] | None = None,
+    pinned_moments: Sequence[Mapping[str, Any]] | None = None,
+    skipped_moments: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the approved, serializable source-window plan.
+
+    KRI-723: ``pinned_moments`` (``named_moments.Pin.json()``, the creator's final order) are
+    the named moments of the edit's one take with their authority: the creator's own pointed
+    window, a grounded interval, or "you pick". Each gets exactly one window, in that order,
+    and the plan records them as ``moments`` (envelope v2) so the worker plays them unchanged
+    and the receipt judges each by its evidence. ``skipped_moments`` ("not in my clips") ride
+    along as ``skipped_moments``.
 
     KRI-824: ``still_holds`` (media id -> seconds, ``asset_holds.asset_holds``) are photos
     the creator gave their own length; each one's window is exactly that long.
@@ -451,6 +473,7 @@ def build_length_plan(
             moment_max_s,
             natural_duration_s,
             moment_each_s,
+            pinned_moments,
         )
     ):
         result = moment_windows
@@ -569,8 +592,13 @@ def build_length_plan(
         capacity_raw_s = result.capacity_s if result is not None else 0.0
     else:
         capacity_raw_s = physical_capacity_s
+    moments_record = (
+        _moments_record(pinned_moments, windows)
+        if pinned_moments and result is not None and result.parts
+        else None
+    )
     plan: dict[str, Any] = {
-        "version": LENGTH_PLAN_VERSION,
+        "version": LENGTH_PLAN_VERSION if moments_record is None else MOMENT_LENGTH_PLAN_VERSION,
         "owner": owner,
         "natural_owner": natural_owner,
         "target_duration_s": creator_target_s,
@@ -596,6 +624,10 @@ def build_length_plan(
         "windows": windows,
         "conflicts": conflicts,
     }
+    if moments_record is not None:
+        plan["moments"] = moments_record
+        if skipped_moments:
+            plan["skipped_moments"] = [dict(row) for row in skipped_moments]
     if closing_quote is not None:
         quote = dict(closing_quote)
         held = any(part.reason == "closing_quote" for part in (result.parts if result else ()))
@@ -628,6 +660,7 @@ def _moment_or_quote_windows(
     moment_max_s: float | None,
     natural_duration_s: float | None = None,
     moment_each_s: float | None = None,
+    pinned_moments: Sequence[Mapping[str, Any]] | None = None,
 ) -> BestPartsResult | None:
     """Moments inside long takes, and/or a held closing line; None keeps the selector.
 
@@ -649,6 +682,28 @@ def _moment_or_quote_windows(
         moment_count = moment_max_s = moment_each_s = None
         if creator_target_s is None:
             creator_target_s = natural_duration_s
+    if pinned_moments and natural_owner == "footage" and len(sources) == 1:
+        # KRI-723: the creator's named moments of the one take, each where it really is.
+        fixed = sum(
+            (_number(pin.get("source_end_s")) or 0.0) - (_number(pin.get("source_start_s")) or 0.0)
+            for pin in pinned_moments
+            if pin.get("origin") == "creator_answer"
+        )
+        flexible = sum(1 for pin in pinned_moments if pin.get("origin") != "creator_answer")
+        # The creator's own length for each moment wins; else what their total leaves.
+        width = moment_each_s or DEFAULT_MOMENT_S
+        if (
+            moment_each_s is None
+            and creator_target_s is not None
+            and flexible
+            and creator_target_s - fixed > 0
+        ):
+            width = (creator_target_s - fixed) / flexible
+        pinned_windows = select_pinned_moment_windows(
+            sources[0], pinned_moments, width_s=max(width, 0.8)
+        )
+        if pinned_windows is not None:
+            return pinned_windows
     pinned: tuple[str, float, float] | None = None
     if isinstance(closing_quote, Mapping) and closing_quote.get("status") == "found":
         media_id = closing_quote.get("media_id")
@@ -707,6 +762,57 @@ def _moment_or_quote_windows(
     )
 
 
+def _moments_record(
+    pins: Sequence[Mapping[str, Any]], windows: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]] | None:
+    """``moments[]`` of a v2 envelope: each pin with the window that plays it.
+
+    The pinned selector returns exactly one window per pin, in pin order; anything else (a
+    fallback to the plain windows) records no moments, so no receipt can claim them.
+    """
+    if len(windows) != len(pins):
+        return None
+    out: list[dict[str, Any]] = []
+    for index, (pin, window) in enumerate(zip(pins, windows, strict=True)):
+        if window.get("reason") not in _MOMENT_WINDOW_REASONS.get(str(pin.get("origin")), ()):
+            return None
+        out.append({**dict(pin), "media_id": window["media_id"], "window_index": index})
+    return out
+
+
+_MOMENT_WINDOW_REASONS = {
+    "creator_answer": ("creator_answer",),
+    "grounded": ("grounded_moment",),
+    "ai_pick_by_request": ("ai_pick_by_request",),
+}
+
+
+def _check_moments(envelope: Mapping[str, Any], windows: Sequence[Any]) -> None:
+    """KRI-723: a v2 envelope's moments point at their windows, and a creator-pointed window
+    is exactly the creator's interval. Anything else was changed after approval."""
+    moments = envelope.get("moments")
+    if not isinstance(moments, list) or not moments:
+        raise ValueError("invalid length plan moments")
+    seen: set[int] = set()
+    for moment in moments:
+        if not isinstance(moment, Mapping) or moment.get("origin") not in _MOMENT_WINDOW_REASONS:
+            raise ValueError("invalid length plan moments")
+        index = moment.get("window_index")
+        if type(index) is not int or not 0 <= index < len(windows) or index in seen:
+            raise ValueError("invalid length plan moments")
+        seen.add(index)
+        window = windows[index]
+        if not isinstance(window, Mapping) or window.get("media_id") != moment.get("media_id"):
+            raise ValueError("length plan moment window changed")
+        if window.get("reason") not in _MOMENT_WINDOW_REASONS[str(moment["origin"])]:
+            raise ValueError("length plan moment window changed")
+        if moment["origin"] == "creator_answer":
+            for key in ("source_start_s", "source_end_s"):
+                got, want = _number(window.get(key)), _number(moment.get(key))
+                if got is None or want is None or abs(got - want) > 0.001:
+                    raise ValueError("length plan moment window changed")
+
+
 def _overlaps_other_approved_window(
     windows: list, current: Mapping[str, Any], start: float, end: float
 ) -> bool:
@@ -740,12 +846,16 @@ def read_length_plan(
 
     if envelope is None:
         return None
-    if type(envelope.get("version")) is not int or envelope.get("version") != LENGTH_PLAN_VERSION:
+    if not supported_length_plan_version(envelope):
         raise ValueError("unsupported length plan version")
     sources = envelope.get("sources")
     windows = envelope.get("windows")
     if not isinstance(sources, list) or not isinstance(windows, list):
         raise ValueError("invalid length plan envelope")
+    if envelope.get("version") == MOMENT_LENGTH_PLAN_VERSION:
+        _check_moments(envelope, windows)
+    elif "moments" in envelope:
+        raise ValueError("invalid length plan moments")
     if envelope.get("conflicts"):
         raise ValueError("approved length plan still needs a constraint answer")
     actual = {str(getattr(clip, "media_id", "")): clip for clip in clips}

@@ -661,6 +661,44 @@ Rules:
 Not yet: concrete montage/speech/text/audio decisions still resolve inside the
 render (KRI-723/724/725); the snapshot refuses drift but does not hold compiler output.
 
+## Named moments of one take (KRI-723, first slice)
+
+"Six moments from it, in this order: A, B, C ..." names actions, not windows. Six ordinal
+energy windows in the right count and order are **not** evidence of six actions, so they never
+read `met`.
+
+- **Which moments.** `services/named_moments.named_moments`: resolved `then` order rows that
+  name the edit's only video (one row listing them, or one row per moment). Rows naming only
+  Visuals ride along. A moment count that disagrees with the named moments is not guessed at.
+- **Evidence, no model call.** `ground()` matches the creator's words against stored
+  `best_moments` / `understanding.notable_moments` (`start_s`, `end_s`, `description`) with the
+  KRI-828 scorer (now shared). One best match = `grounded`; a tie (or two moments on one
+  interval) = `ambiguous`; none = `unlocated`. Model prose, even with timestamps, never counts.
+- **Ask before approval.** In `_gate_unresolved_choices`, an unlocated/ambiguous moment on a
+  turn stamped `answers_moment_questions` (app protocol >= `moment_order_min_client_protocol`,
+  **999 = dark until the iOS card ships**) returns `moment_order_question` instead of a draft.
+  Asked once per moment-set digest; a free-text reply proceeds with today's windows.
+- **Answer.** `SubmitTurnBody.moment_order` (`point` / `skip` / `delegate` per moment, in the
+  creator's final order). `runtime._validate_moment_order`: 409 `moment_order_stale` (old
+  question, re-uploaded take), 404 `moment_order_media_not_found` (not this thread's take),
+  422 `moment_order_invalid` / `moment_order_overlap`. The echo models read has no digits.
+  `fold_moment_orders` re-reads it from thread events; the key is the creator's folded words on
+  that file generation, so a reworded moment or re-uploaded take is re-asked.
+- **Envelope v2.** `build_length_plan(pinned_moments=...)` gives each moment one window in the
+  creator's order (a pointed window exactly as given; a grounded one centred on its evidence;
+  "you pick" from the strongest free moment) and records `moments[]` (+ `skipped_moments`).
+  Only such an envelope is v2; every other plan stays byte-identical v1. Readers use
+  `supported_length_plan_version()`; `read_length_plan` refuses a v2 whose creator-pointed
+  window was changed.
+- **Execution and receipt.** The worker plays the envelope windows in order; Visual seating
+  and freeze ("freeze the frame on the bite") use the located moments. `_moment_outcomes` is
+  `met` only when the cut shows the evidenced interval; without evidence a row is `partial`
+  `not_located` (a format limit: it never blocks the render, never claims the action).
+
+Not in this slice: several takes interleaved, the user-song / lip-sync variants, text and
+music frozen once, and the iOS card itself. Proof: `tests/kria/test_kri723_moment_authority_m2.py`
+(`KRI723_ARTIFACT=<dir>` writes `report.json`) and `tests/kria/test_kri723_moment_order_turns_postgres.py`.
+
 ## Route resolution (KRI-470 PR-D)
 
 `services/render_route.py:resolve_route` is the one function that maps an approved plan

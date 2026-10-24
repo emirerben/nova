@@ -5415,10 +5415,10 @@ def _approved_length_plan_envelope(snapshot: Mapping[str, Any]) -> Mapping[str, 
     if envelope is None:
         return None
     from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
-    from app.services.length_planning import LENGTH_PLAN_VERSION  # noqa: PLC0415
+    from app.services.length_planning import supported_length_plan_version  # noqa: PLC0415
 
     BriefBinding.model_validate(binding).resolve()
-    if not isinstance(envelope, Mapping) or envelope.get("version") != LENGTH_PLAN_VERSION:
+    if not isinstance(envelope, Mapping) or not supported_length_plan_version(envelope):
         raise ValueError("approved_length_plan_invalid")
     if envelope.get("conflicts"):
         raise ValueError("approved_length_plan_needs_choice")

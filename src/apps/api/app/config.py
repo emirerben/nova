@@ -837,6 +837,14 @@ class Settings(BaseSettings):
     # turn. Kill switch: `fly secrets set KRIA_QUESTION_BATCH_MIN_CLIENT_PROTOCOL=999`
     # (api + worker) + restart; messages sent after it get one question per turn again.
     kria_question_batch_min_client_protocol: int = 14
+    # KRI-723: an app build declaring `X-Kria-Client-Protocol` >= this answers a
+    # `moment_order_question` ("put your moments in order and show me where each one is"),
+    # asked before approval when the clip record cannot place a moment the creator named.
+    # Lower builds are never asked: they get today's windows and an honest "couldn't find
+    # it" receipt. No model call either way. DARK (999) until the iOS moment card ships: set
+    # it to the protocol that build declares (never a number another feature already took).
+    # Kill switch: `fly secrets set MOMENT_ORDER_MIN_CLIENT_PROTOCOL=999` (api) + restart.
+    moment_order_min_client_protocol: int = 999
     # KRI-815: with footage and no voiceover, Kria chat writes a footage-grounded voiceover
     # script (`voiceover_script` on the reply) instead of a narrated draft that can only fail at
     # approval. Independent of TRANSCRIPT_HELPER_ENABLED. Kill switch: false + restart (api +

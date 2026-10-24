@@ -124,7 +124,7 @@ def montage_blockers(
         PLAN_AUTHORITY_FIELD,
         build_render_contract,
     )
-    from app.services.length_planning import LENGTH_PLAN_VERSION  # noqa: PLC0415
+    from app.services.length_planning import supported_length_plan_version  # noqa: PLC0415
     from app.services.length_policy import creator_duration_s  # noqa: PLC0415
     from app.services.phone_destination import phone_drawable_visual_kinds  # noqa: PLC0415
     from app.services.phone_sources import bind_phone_sources  # noqa: PLC0415
@@ -169,7 +169,7 @@ def montage_blockers(
     envelope = media.get("length_plan")
     if envelope is not None and (
         not isinstance(envelope, Mapping)
-        or envelope.get("version") != LENGTH_PLAN_VERSION
+        or not supported_length_plan_version(envelope)
         or envelope.get("conflicts")
     ):
         # An open length choice is the gate's own question (KRI-476), never a second one.
