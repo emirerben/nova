@@ -47,7 +47,9 @@ from app.services.device_render import (
 from app.services.job_storage_paths import project_media_reference_lock_key
 
 RETRY_FIELD = "render_retry"
-_NEEDS_CHANGE = {"unsupported_recipe", "cancelled_by_user"}
+# A user Stop is a resumable pause, never a reason to ask for a change: resuming
+# re-delivers the same approved recipe.
+_NEEDS_CHANGE = {"unsupported_recipe", "contract_changed"}
 _MISSING_ORIGINAL = {"original_missing", "missing_original", "original_unavailable"}
 
 

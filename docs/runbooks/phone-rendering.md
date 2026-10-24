@@ -30,6 +30,34 @@ path starts with new, explicitly consented analysis-proxy uploads.
 
 Rollback: set `PHONE_RENDERING_ENABLED=false`. This blocks new attempts while
 preserving published outputs and allowing already-reserved exports to finalize.
+A pinned recipe the phone has not started is held: `GET /device-render` keeps its
+real `awaiting_device` phase with `phone_rendering_paused: true` (a waiting state,
+never a synthetic `needs_attention` that `/retry` would refuse). Asset grants and
+new reservations answer 503 `problem.code: phone_rendering_paused` (the phone parks
+and retries; an attempt already reserved still finalizes), and a failure report under
+the hold is acknowledged as `paused` without failing the record, variant or Job.
+
+Phone render lifecycle (killer-screens train):
+- A user Stop (`cancelled_by_user`) is a resumable pause: the record keeps its
+  phase, the project keeps its label, no chat failure card; `GET` reports
+  `paused_by_user`, and `/device-render/retry` resumes the same identity. The
+  phone re-sends the Stop report until the server accepts it.
+- `/device-render/retry` re-delivers the pinned recipe directly, also for
+  chat-approved (runtime-v2) renders; `retry_requires_approval` is always false.
+- Phone-facing 409s carry `problem.code` beside the legacy `detail`:
+  `superseded` (with `active_job_id` when a newer Job owns the project),
+  `render_cancelled`, `editor_empty`, `contract_changed`, `requires_change`,
+  `published`, `not_awaiting_retry`, `output_unverified`.
+- A contract refusal found on `GET` is persisted once (`contract_changed`).
+- A reaped render restarts on its own when a phone build reopens the project.
+- Verification that could not run is requeued for the same bytes for up to
+  24h (`verification_unavailable` after that); a real rejection is
+  `output_check_failed`. A check whose record the fence moved past is closed as
+  `superseded` and never fails the newer attempt.
+- The phone waits on a running check with 2-30 s backoff for 15 min, then parks
+  the finished MP4 without re-uploading; parked renders resume on foreground.
+- A failure on an edit whose variant has an accepted output never relabels the
+  variant or Job.
 The pilot does not satisfy or remove the remaining KRI-29 release gates.
 
 ## Adding media to a saved guided edit (KRI-145)

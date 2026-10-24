@@ -57,6 +57,9 @@ struct ChatWorkspaceView: View {
             if let previous, previous != identifier { Task { await model.discardIfAbandoned(previous) } }
         }
         .onChange(of: scenePhase) { _, phase in
+            // Phone renders parked by a background suspension or an outage
+            // continue on their own when Kria comes back (S3-c, S3-d).
+            if phase == .active { Task { await model.deviceRenders.resumeParked() } }
             guard phase == .background, let id = model.selectedProject?.id else { return }
             Task { await model.discardIfAbandoned(id) }
         }

@@ -35,7 +35,8 @@ final class DeviceRenderCoordinatorTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let exporter = RecordingExporter(), publisher = RecordingPublisher()
         await publisher.setFailure(true)
-        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(), publisher: publisher)
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(), publisher: publisher,
+                                                      retryPolicy: .immediate)
         let request = request()
         try await coordinator.start(request, decision: CapabilityDecision(route: .local))
         await coordinator.waitUntilIdle()
@@ -129,9 +130,9 @@ final class DeviceRenderCoordinatorTests: XCTestCase {
         XCTAssertEqual(calls.first?.reasonCode, .thermal)
     }
 
-    /// KRI-114 P0-2: a source-resolution error during local export must report
-    /// `export_failed` (source/export errors), never the generic fallback.
-    func testSourceResolutionFailureReportsExportFailedReasonCode() async throws {
+    /// A missing original is the creator's to fix (relink it), so it reports its own
+    /// `original_missing` code instead of a generic `export_failed` (prod fafa1746).
+    func testSourceResolutionFailureReportsOriginalMissingReasonCode() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let exporter = RecordingExporter(), publisher = RecordingPublisher(), reporter = RecordingFailureReporter()
@@ -148,7 +149,17 @@ final class DeviceRenderCoordinatorTests: XCTestCase {
         let calls = await reporter.calls
         XCTAssertEqual(calls.count, 1)
         XCTAssertEqual(calls.first?.identity, identity)
-        XCTAssertEqual(calls.first?.reasonCode, .exportFailed)
+        XCTAssertEqual(calls.first?.reasonCode, .originalMissing)
+    }
+
+    /// Prod c3e51ae5 reported `missingAsset("1")` as a generic export failure. A missing
+    /// asset that is one of the recipe's originals is `original_missing`; a missing font
+    /// or library file is still an export failure the creator cannot relink.
+    func testMissingAssetIsOriginalMissingOnlyForTheRecipesOwnOriginals() {
+        let recipe = MediaEngineFixtures.recipe(assetIDs: ["1"])
+        XCTAssertEqual(DeviceRenderFailureReasonCode.forRenderFailure(MediaEngineError.missingAsset("1"), recipe: recipe), .originalMissing)
+        XCTAssertEqual(DeviceRenderFailureReasonCode.forRenderFailure(MediaEngineError.missingAsset("font-7"), recipe: recipe), .exportFailed)
+        XCTAssertEqual(DeviceRenderFailureReasonCode.forRenderFailure(SourceAssetError.changedOriginal("1")), .originalMissing)
     }
 
     /// KRI-114 P0-2 review fix: plain `cancel()` is used by housekeeping (a
@@ -345,6 +356,223 @@ final class DeviceRenderCoordinatorTests: XCTestCase {
     }
     #endif
 
+    // MARK: - Stop is a resumable pause the server always learns about (TLA+ ClientServerAgree)
+
+    /// Offline at the moment of Stop: the report must keep going until the server
+    /// accepts it, or the phone says "stopped" while the server waits for a day.
+    func testStopReportIsRetriedUntilTheServerAcceptsIt() async throws {
+        let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
+        let exporter = RecordingExporter(holdFirst: true)
+        let reporter = ScriptedReporter(outcomes: [.transient, .transient, .accepted])
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(),
+                                                      publisher: RecordingPublisher(), failureReporter: reporter, retryPolicy: .immediate)
+        let deviceRequest = request()
+        try await coordinator.start(deviceRequest, decision: CapabilityDecision(route: .local))
+        await exporter.waitStarted()
+        try await coordinator.cancelByUser()
+        await coordinator.waitForPendingReport()
+        let calls = await reporter.calls
+        XCTAssertEqual(calls.map(\.reasonCode), [.cancelledByUser, .cancelledByUser, .cancelledByUser])
+        XCTAssertTrue(calls.allSatisfy { $0.identity == deviceRequest.identity })
+        let receipt = await coordinator.snapshot()
+        XCTAssertEqual(receipt?.phase, .cancelled)
+        XCTAssertNil(receipt?.pendingReport)
+        await exporter.release()
+    }
+
+    /// The app is killed before the Stop report lands: the next launch delivers it.
+    func testUndeliveredStopReportIsSentAgainAfterRelaunch() async throws {
+        let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
+        let exporter = RecordingExporter(holdFirst: true), stuck = BlockingReporter()
+        let first = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(),
+                                                publisher: RecordingPublisher(), failureReporter: stuck, retryPolicy: .immediate)
+        let deviceRequest = request()
+        try await first.start(deviceRequest, decision: CapabilityDecision(route: .local))
+        await exporter.waitStarted()
+        try await first.cancelByUser()
+        await stuck.waitStarted()
+
+        let reporter = ScriptedReporter(outcomes: [.accepted])
+        let relaunched = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(),
+                                                     publisher: RecordingPublisher(), failureReporter: reporter, retryPolicy: .immediate)
+        try await relaunched.recover()
+        await relaunched.waitForPendingReport()
+        let calls = await reporter.calls
+        XCTAssertEqual(calls.map(\.reasonCode), [.cancelledByUser])
+        XCTAssertEqual(calls.first?.identity, deviceRequest.identity)
+        let pending = await relaunched.snapshot()?.pendingReport
+        XCTAssertNil(pending)
+        await stuck.release(); await exporter.release()
+    }
+
+    /// A refused report (e.g. the render already published) stops; it never loops.
+    func testRefusedReportIsNotRetried() async throws {
+        let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
+        let exporter = RecordingExporter(holdFirst: true), reporter = ScriptedReporter(outcomes: [.rejected])
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(),
+                                                      publisher: RecordingPublisher(), failureReporter: reporter, retryPolicy: .immediate)
+        try await coordinator.start(request(), decision: CapabilityDecision(route: .local))
+        await exporter.waitStarted()
+        try await coordinator.cancelByUser()
+        await coordinator.waitForPendingReport()
+        let calls = await reporter.calls
+        XCTAssertEqual(calls.count, 1)
+        let pending = await coordinator.snapshot()?.pendingReport
+        XCTAssertNil(pending)
+        await exporter.release()
+    }
+
+    // MARK: - Transient network trouble waits; it is never a device failure (S3-c)
+
+    func testOfflineDuringPreparationWaitsAndFinishesWithoutReporting() async throws {
+        let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
+        let publisher = FlakyPublisher(failures: [URLError(.notConnectedToInternet), AppError(transient: true)])
+        let reporter = ScriptedReporter(outcomes: [.accepted])
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: RecordingExporter(), sources: FixtureSources(),
+                                                      publisher: publisher, failureReporter: reporter, retryPolicy: .immediate)
+        try await coordinator.start(request(), decision: CapabilityDecision(route: .local))
+        await coordinator.waitUntilIdle()
+        let phase = await coordinator.snapshot()?.phase
+        XCTAssertEqual(phase, .synced)
+        let calls = await reporter.calls
+        XCTAssertTrue(calls.isEmpty, "a connectivity blip must never tell the server the phone gave up")
+    }
+
+    /// An outage longer than the retries parks the attempt where the next poll's
+    /// `start` continues it, still without a needs-attention screen or a report.
+    func testLongOutageParksResumableAndTheNextStartContinues() async throws {
+        let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
+        let publisher = FlakyPublisher(failures: Array(repeating: URLError(.timedOut), count: 3))
+        let reporter = ScriptedReporter(outcomes: [.accepted])
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: RecordingExporter(), sources: FixtureSources(),
+                                                      publisher: publisher, failureReporter: reporter, retryPolicy: .immediate)
+        let deviceRequest = request()
+        try await coordinator.start(deviceRequest, decision: CapabilityDecision(route: .local))
+        await coordinator.waitUntilIdle()
+        let parked = await coordinator.snapshot()
+        XCTAssertEqual(parked?.phase, .preparing)
+        XCTAssertNil(parked?.error, "a parked render is waiting, never worded as a failure")
+        try await coordinator.start(deviceRequest, decision: CapabilityDecision(route: .local))
+        await coordinator.waitUntilIdle()
+        let final = await coordinator.snapshot()?.phase
+        XCTAssertEqual(final, .synced)
+        let calls = await reporter.calls
+        XCTAssertTrue(calls.isEmpty)
+    }
+
+    /// A non-transient app error (a real 4xx refusal) still fails and is reported.
+    func testNonTransientAppErrorStillReports() async throws {
+        let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
+        let publisher = FlakyPublisher(failures: [AppError(transient: false)])
+        let reporter = ScriptedReporter(outcomes: [.accepted])
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: RecordingExporter(), sources: FixtureSources(),
+                                                      publisher: publisher, failureReporter: reporter, retryPolicy: .immediate)
+        try await coordinator.start(request(), decision: CapabilityDecision(route: .local))
+        await coordinator.waitUntilIdle()
+        await coordinator.waitForPendingReport()
+        let phase = await coordinator.snapshot()?.phase
+        XCTAssertEqual(phase, .needsAttention)
+        let calls = await reporter.calls
+        XCTAssertEqual(calls.map(\.reasonCode), [.unknown])
+    }
+
+    /// Offline on the subway, phone locked past the background window while the
+    /// coordinator waits between retries: the suspension parks it, never a Stop.
+    func testSuspensionDuringATransientRetryWaitParksResumable() async throws {
+        let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
+        let publisher = FlakyPublisher(failures: [URLError(.notConnectedToInternet)])
+        let reporter = ScriptedReporter(outcomes: [.accepted]), background = RecordingBackground()
+        let gate = SleepGate()
+        let policy = DeviceRenderRetryPolicy(transientDelays: [.seconds(60)], reportBackoffCap: .zero) { delay in
+            await gate.enter()
+            try await Task.sleep(for: delay)
+        }
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: RecordingExporter(), sources: FixtureSources(),
+                                                      publisher: publisher, failureReporter: reporter, retryPolicy: policy,
+                                                      backgroundExecution: background)
+        try await coordinator.start(request(), decision: CapabilityDecision(route: .local))
+        await gate.waitEntered()
+        await background.expire()
+        await coordinator.waitUntilIdle()
+        let parked = await coordinator.snapshot()
+        XCTAssertEqual(parked?.phase, .preparing, "a suspension is not 'Rendering stopped'")
+        XCTAssertNil(parked?.error)
+        try await coordinator.recover()
+        await coordinator.waitUntilIdle()
+        let final = await coordinator.snapshot()?.phase
+        XCTAssertEqual(final, .synced)
+        let calls = await reporter.calls
+        XCTAssertTrue(calls.isEmpty)
+    }
+
+    /// The upload landed and the server is still checking it: wait in `.localReady`
+    /// with no error and no retry loop; the next recover resumes without re-encoding.
+    func testVerificationStillRunningParksTheFinishedExportWithoutRetrying() async throws {
+        let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
+        let exporter = RecordingExporter(), publisher = CheckingPublisher(pendingFirst: 1)
+        let reporter = ScriptedReporter(outcomes: [.accepted])
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(),
+                                                      publisher: publisher, failureReporter: reporter, retryPolicy: .immediate)
+        try await coordinator.start(request(), decision: CapabilityDecision(route: .local))
+        await coordinator.waitUntilIdle()
+        let parked = await coordinator.snapshot(), publishes = await publisher.publishes
+        XCTAssertEqual(parked?.phase, .localReady)
+        XCTAssertNil(parked?.error)
+        XCTAssertEqual(publishes, 1, "a pending check is not retried in place")
+        try await coordinator.recover()
+        await coordinator.waitUntilIdle()
+        let final = await coordinator.snapshot()?.phase, exports = await exporter.count
+        XCTAssertEqual(final, .synced)
+        XCTAssertEqual(exports, 1)
+        let calls = await reporter.calls
+        XCTAssertTrue(calls.isEmpty)
+    }
+
+    // MARK: - Leaving Kria mid-render is a suspension, not export_failed (S3-d)
+
+    func testBackgroundExpiryKeepsTheFinishedExportAndRecoverPublishesIt() async throws {
+        let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
+        let exporter = RecordingExporter(holdFirst: true), publisher = RecordingPublisher()
+        let reporter = ScriptedReporter(outcomes: [.accepted]), background = RecordingBackground()
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(),
+                                                      publisher: publisher, failureReporter: reporter, retryPolicy: .immediate,
+                                                      backgroundExecution: background)
+        try await coordinator.start(request(), decision: CapabilityDecision(route: .local))
+        await exporter.waitStarted()
+        await background.expire()
+        await exporter.release()
+        await coordinator.waitUntilIdle()
+        let parked = await coordinator.snapshot()
+        XCTAssertEqual(parked?.phase, .localReady, "the encoded file survives the suspension")
+        XCTAssertNil(parked?.error)
+        try await coordinator.recover()
+        await coordinator.waitUntilIdle()
+        let final = await coordinator.snapshot()?.phase, exports = await exporter.count
+        XCTAssertEqual(final, .synced)
+        XCTAssertEqual(exports, 1, "foregrounding publishes the same file, no re-encode")
+        let calls = await reporter.calls, ended = await background.ended
+        XCTAssertTrue(calls.isEmpty)
+        XCTAssertGreaterThanOrEqual(ended, 1, "every background window is ended")
+    }
+
+    #if canImport(AVFoundation)
+    func testSystemInterruptedExportParksResumableWithoutReporting() async throws {
+        let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
+        let reporter = ScriptedReporter(outcomes: [.accepted])
+        let interrupted = NSError(domain: AVFoundationErrorDomain, code: -11847)
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: ThrowingExporter(error: interrupted), sources: FixtureSources(),
+                                                      publisher: RecordingPublisher(), failureReporter: reporter, retryPolicy: .immediate)
+        try await coordinator.start(request(), decision: CapabilityDecision(route: .local))
+        await coordinator.waitUntilIdle()
+        let phase = await coordinator.snapshot()?.phase
+        XCTAssertEqual(phase, .preparing)
+        let calls = await reporter.calls
+        XCTAssertTrue(calls.isEmpty)
+    }
+    #endif
+
+    private func scratch() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) }
+
     private func request(revision: Int = 1, clipDuration: Double = 2, maxExportDurationS: Double? = nil) -> DeviceRenderRequest {
         DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: UUID(), variantID: "original_text", recipeRevision: revision, recipeDigest: "digest-\(revision)"), recipe: MediaEngineFixtures.recipe(clipDuration: clipDuration), maxExportDurationS: maxExportDurationS)
     }
@@ -426,5 +654,81 @@ private actor RecordingPublisher: DeviceRenderPublishing {
         published.append(identity)
         declaredTails.append(brandTail)
         return .published
+    }
+}
+
+extension DeviceRenderRetryPolicy {
+    static let immediate = DeviceRenderRetryPolicy(transientDelays: [.zero, .zero], reportBackoffCap: .zero, sleep: { _ in await Task.yield() })
+}
+private struct AppError: DeviceRenderTransientFailure, LocalizedError {
+    let transient: Bool
+    var isTransientDeviceRenderFailure: Bool { transient }
+    var errorDescription: String? { transient ? "Kria hit a problem on its side." : "Refused." }
+}
+private actor ScriptedReporter: DeviceRenderFailureReporter {
+    private var outcomes: [DeviceRenderReportOutcome]
+    private(set) var calls: [(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode)] = []
+    init(outcomes: [DeviceRenderReportOutcome]) { self.outcomes = outcomes }
+    func report(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode, detail: String) async {}
+    func deliver(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode, detail: String) async -> DeviceRenderReportOutcome {
+        calls.append((identity, reasonCode))
+        return outcomes.count > 1 ? outcomes.removeFirst() : (outcomes.first ?? .accepted)
+    }
+}
+private actor BlockingReporter: DeviceRenderFailureReporter {
+    private var started: CheckedContinuation<Void, Never>?, held: CheckedContinuation<Void, Never>?, didStart = false
+    func waitStarted() async { if !didStart { await withCheckedContinuation { started = $0 } } }
+    func release() { held?.resume(); held = nil }
+    func report(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode, detail: String) async {}
+    func deliver(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode, detail: String) async -> DeviceRenderReportOutcome {
+        didStart = true; started?.resume(); started = nil
+        await withCheckedContinuation { held = $0 }
+        return .rejected
+    }
+}
+private actor FlakyPublisher: DeviceRenderPublishing {
+    private var failures: [Error]
+    init(failures: [Error]) { self.failures = failures }
+    func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool {
+        if !failures.isEmpty { throw failures.removeFirst() }
+        return true
+    }
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication { .published }
+}
+private actor RecordingBackground: DeviceRenderBackgroundExecution {
+    private var expiring: (@Sendable () -> Void)?
+    private(set) var ended = 0
+    func begin(name: String, expiring: @escaping @Sendable () -> Void) async -> @Sendable () async -> Void {
+        self.expiring = expiring
+        return { [weak self] in await self?.end() }
+    }
+    private func end() { ended += 1 }
+    /// Fires the system's expiration handler and lets the coordinator's hop land.
+    func expire() async {
+        expiring?()
+        for _ in 0..<20 { await Task.yield() }
+    }
+}
+private actor SleepGate {
+    private var entered = false, waiter: CheckedContinuation<Void, Never>?
+    func enter() { entered = true; waiter?.resume(); waiter = nil }
+    func waitEntered() async { if !entered { await withCheckedContinuation { waiter = $0 } } }
+}
+private actor CheckingPublisher: DeviceRenderPublishing {
+    private var pending: Int
+    private(set) var publishes = 0
+    init(pendingFirst: Int) { pending = pendingFirst }
+    func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { true }
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
+        publishes += 1
+        if pending > 0 { pending -= 1; throw DeviceRenderVerificationPending() }
+        return .published
+    }
+}
+private struct ThrowingExporter: LocalExporting {
+    let error: Error
+    let brandTail = "none"
+    func export(recipe: EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String, progress: (@Sendable (Double) -> Void)?) async throws -> ExportCheckpoint {
+        throw error
     }
 }

@@ -101,6 +101,13 @@ class DeviceRenderStatusOut(DeviceRenderStatus):
     retry_requires_approval: bool = False
     # Read-time hint; older strict worker status records remain readable.
     output_verification_required: bool = False
+    # Read-time hint: the creator tapped Stop on the phone and has not resumed.
+    # A pause is not a failure (the record keeps its phase, the project keeps its
+    # label); resuming re-delivers the same pinned recipe without approval.
+    paused_by_user: bool = False
+    # Read-time hint: phone rendering is rolled back for this account while the recipe
+    # has not started. A waiting state, not a failure; it starts when rendering returns.
+    phone_rendering_paused: bool = False
 
 
 class DeviceAssetDownloadBody(_DeviceModel):
@@ -176,11 +183,24 @@ DeviceFailureReasonCode = Literal[
     "insufficient_storage",
     "thermal",
     "unsupported_recipe",
+    # A user Stop. Recorded as a resumable pause, never as a failure.
     "cancelled_by_user",
     # Server-only today: the stale-render reaper stamps it when a phone went a day
     # without a word (app/tasks/device_render_reaper.py). The phone has its own copy
     # for it (KRI-141), so it must not share the catch-all "unknown".
     "timed_out",
+    # This build's renderer cannot read the recipe's version: updating the app fixes it.
+    "renderer_outdated",
+    # The phone cannot render right now for a reason of its own (not storage or heat).
+    "device_unavailable",
+    # An original clip (or its analysis proxy) is not on this phone; relinking fixes it.
+    "original_missing",
+    # Server-only: the uploaded video failed Kria's own output check (a real rejection).
+    "output_check_failed",
+    # Server-only: the check of the uploaded bytes could not run for a day.
+    "verification_unavailable",
+    # Server-only: the approved requirements behind a pinned recipe changed.
+    "contract_changed",
     "unknown",
 ]
 
@@ -195,7 +215,8 @@ class DeviceRenderFailureBody(_DeviceModel):
 
 class DeviceRenderFailureOut(_DeviceModel):
     identity: DeviceRenderIdentity
-    phase: Literal["needs_attention"]
+    # "paused" acknowledges a user Stop: the record keeps waiting for the same phone.
+    phase: Literal["needs_attention", "paused"]
     reason_code: DeviceFailureReasonCode
 
 

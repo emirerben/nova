@@ -14,6 +14,8 @@ import SwiftData
         Perf.begin("launch.toPixels")
         Perf.begin("launch.init")
         defer { Perf.end("launch.init") }
+        // Every phone render coordinator keeps encoding briefly in the background.
+        UIKitDeviceRenderBackgroundExecution.install()
         #if DEBUG
         // First, before anything can touch `URLSession.shared`: AsyncImage loads gallery posters through it.
         PerfPosterURLProtocol.registerIfNeeded()

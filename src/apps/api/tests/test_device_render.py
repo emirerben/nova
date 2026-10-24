@@ -367,7 +367,7 @@ def test_mark_device_failed_uses_default_detail_when_empty():
     job, _ = _fixture()
     status = mark_device_failed(job, "original_text", reason_code="thermal", detail="")
     assert status.reason
-    assert "device" in status.reason.lower()
+    assert "iphone" in status.reason.lower()
 
 
 @pytest.mark.parametrize("phase", ["published", "needs_attention"])

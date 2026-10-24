@@ -129,7 +129,9 @@ def test_kill_switch_blocks_new_upload_reservations(fixture, monkeypatch):
         f"/me/jobs/{fixture.job.id}/device-render/uploads",
         json={**body(fixture), "file_size_bytes": 12, "sha256": "a" * 64},
     )
-    assert response.status_code == 404
+    # A rollout hold: the phone waits and asks again instead of failing (S3-b).
+    assert response.status_code == 503
+    assert response.json()["problem"]["code"] == "phone_rendering_paused"
     routes._owned_job.assert_awaited_once()
     fixture.db.execute.assert_not_called()
 
@@ -256,9 +258,19 @@ def test_kill_switch_holds_unstarted_recipes_without_mutating_them(fixture, monk
     monkeypatch.setattr(settings, "phone_rendering_enabled", False)
     response = fixture.client.get(f"/me/jobs/{fixture.job.id}/device-render?variant_id=first")
     assert response.status_code == 200
-    assert response.json()["phase"] == "needs_attention"
-    # The kill-switch override is response-only — the underlying pinned phase
-    # is never overwritten. The poll-touch write (last_polled_at, throttled)
+    # S3-b: the hold is a waiting state on the real phase. A synthetic
+    # needs_attention made every Try again a 409 from `/retry`.
+    assert response.json()["phase"] == "awaiting_device"
+    assert response.json()["phone_rendering_paused"] is True
+    assert "paused" in response.json()["reason"]
+    retry = fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/retry",
+        json={"identity": fixture.request.identity.model_dump(mode="json")},
+    )
+    assert retry.status_code == 409
+    assert retry.json()["problem"]["code"] == "not_awaiting_retry"
+    # The hold is response-only — the underlying pinned phase is never
+    # overwritten. The poll-touch write (last_polled_at, throttled)
     # is an orthogonal bookkeeping commit and is expected here.
     assert device_record(fixture.job, "first")["status"]["phase"] == "awaiting_device"
     assert device_record(fixture.job, "first")["last_polled_at"]
@@ -632,8 +644,10 @@ def test_visual_download_requires_phone_rendering_for_the_user(fixture, monkeypa
     else:
         monkeypatch.setattr(settings, "phone_rendering_enabled", False)
     response = download_asset(fixture, asset_id=asset.id)
-    assert response.status_code == 404
+    # A rollout hold is temporary: the phone waits (503) instead of failing (S3-b).
+    assert response.status_code == 503
     assert response.json()["detail"] == "Phone rendering is unavailable"
+    assert response.json()["problem"]["code"] == "phone_rendering_paused"
     # The persisted Job marker may keep an in-flight device render alive after
     # a rollout rollback, so eligibility is decided only after ownership load.
     routes._owned_job.assert_awaited_once()

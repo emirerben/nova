@@ -164,9 +164,23 @@ enum DeviceRenderButtonTitle {
                 return
             }
             guard ["awaiting_device", "syncing"].contains(status.phase) else { throw APIError.invalidResponse }
+            if status.phoneRenderingPaused {
+                // A rollout hold (S3-b): wait without starting. A grant or upload
+                // would be refused, and that refusal is not the phone's failure.
+                observations.removeValue(forKey: key)?.cancel()
+                let finished = saved?.request == request ? saved?.outputURL : nil
+                presentations[key] = DeviceRenderPresentation(
+                    phase: finished == nil ? .preparing : .localReady,
+                    localFile: status.outputVerificationRequired ? nil : finished,
+                    message: status.reason
+                )
+                return
+            }
             if saved?.request != request || retry {
                 try await coordinator.start(request, decision: decision)
-            } else if observations[key] == nil {
+            } else if !(await coordinator.isBusy()) {
+                // A parked render (suspension, outage, pending check) resumes on
+                // every reconcile, not only when nothing is observing it.
                 try await coordinator.recover()
             }
             guard tickets[key] == ticket else { return }
@@ -275,6 +289,18 @@ enum DeviceRenderButtonTitle {
         if let saved = await entries[key]?.snapshot() { presentations[key] = presentation(saved, for: key) }
     }
 
+    /// Resumes every render that parked while idle (a background suspension, a long
+    /// outage, a check still running). Called when the app returns to the foreground,
+    /// so a parked render continues on its own instead of sitting on "Preparing".
+    func resumeParked() async {
+        for (key, coordinator) in entries {
+            guard !(await coordinator.isBusy()), requests[key] != nil else { continue }
+            try? await coordinator.recover()
+            guard await coordinator.isBusy() else { continue }
+            await observe(key, coordinator: coordinator)
+        }
+    }
+
     func stopAll() async {
         tickets.removeAll()
         for observer in observations.values { observer.cancel() }
@@ -305,7 +331,9 @@ enum DeviceRenderButtonTitle {
                 var presentation = self.presentation(saved, for: key)
                 presentation.exportProgress = state.exportProgress
                 if self.presentations[key] != presentation { self.presentations[key] = presentation }
-                if ![.preparing, .rendering, .syncing].contains(saved.phase), !state.isBusy {
+                // Idle means nothing will change until something resumes it
+                // (`reconcile`/`resumeParked` start a new observation then).
+                if !state.isBusy {
                     self.observations[key] = nil
                     return
                 }

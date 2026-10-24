@@ -1,5 +1,6 @@
 import Foundation
 import KriaMediaEngine
+import UIKit
 
 struct DeviceRenderStatusResponse: Decodable, Sendable {
     let phase: String
@@ -16,11 +17,15 @@ struct DeviceRenderStatusResponse: Decodable, Sendable {
     let baseGeneration: String?
     let retryRequiresApproval: Bool
     let outputVerificationRequired: Bool
-    private enum CodingKeys: String, CodingKey { case phase, request, reason, reasonCode = "reason_code", publishedGeneration = "published_generation", baseGeneration = "base_generation", retryRequiresApproval = "retry_requires_approval", outputVerificationRequired = "output_verification_required" }
-    init(phase: String, request: DeviceRenderRequest, reason: String? = nil, reasonCode: String? = nil, publishedGeneration: String? = nil, baseGeneration: String? = nil, retryRequiresApproval: Bool = false, outputVerificationRequired: Bool = false) {
+    /// Phone rendering is rolled back for this account while the recipe waits. A hold,
+    /// not a failure: the phone shows a waiting state and does not start the render.
+    let phoneRenderingPaused: Bool
+    private enum CodingKeys: String, CodingKey { case phase, request, reason, reasonCode = "reason_code", publishedGeneration = "published_generation", baseGeneration = "base_generation", retryRequiresApproval = "retry_requires_approval", outputVerificationRequired = "output_verification_required", phoneRenderingPaused = "phone_rendering_paused" }
+    init(phase: String, request: DeviceRenderRequest, reason: String? = nil, reasonCode: String? = nil, publishedGeneration: String? = nil, baseGeneration: String? = nil, retryRequiresApproval: Bool = false, outputVerificationRequired: Bool = false, phoneRenderingPaused: Bool = false) {
         self.phase = phase; self.request = request; self.reason = reason; self.reasonCode = reasonCode; self.publishedGeneration = publishedGeneration; self.baseGeneration = baseGeneration
         self.retryRequiresApproval = retryRequiresApproval
         self.outputVerificationRequired = outputVerificationRequired
+        self.phoneRenderingPaused = phoneRenderingPaused
     }
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -31,6 +36,7 @@ struct DeviceRenderStatusResponse: Decodable, Sendable {
         baseGeneration = try container.decodeIfPresent(String.self, forKey: .baseGeneration)
         retryRequiresApproval = try container.decodeIfPresent(Bool.self, forKey: .retryRequiresApproval) ?? false
         outputVerificationRequired = try container.decodeIfPresent(Bool.self, forKey: .outputVerificationRequired) ?? false
+        phoneRenderingPaused = try container.decodeIfPresent(Bool.self, forKey: .phoneRenderingPaused) ?? false
         let raw = try container.decode(JSONValue.self, forKey: .request)
         request = try RecipeJSON.decoder().decode(DeviceRenderRequest.self, from: JSONEncoder().encode(raw))
         try request.recipe.validate()
@@ -133,10 +139,14 @@ extension KriaAPI {
         if result.status == "published" { return }
         guard result.status == "checking" else { throw APIError.invalidResponse }
         // The committed worker check survives app suspension or a lost HTTP
-        // response. Poll only lightweight status reads, never completion POSTs.
-        // A network failure leaves the local receipt resumable; no rerender.
-        for _ in 0..<450 {
-            try await Task.sleep(for: .seconds(2))
+        // response. Poll only lightweight status reads, never completion POSTs,
+        // backing off from 2 s to 30 s. A network failure leaves the local
+        // receipt resumable; no rerender.
+        let deadline = ContinuousClock.now + .seconds(15 * 60)
+        var delay = Duration.seconds(2)
+        while ContinuousClock.now < deadline {
+            try await Task.sleep(for: delay)
+            delay = min(delay * 2, .seconds(30))
             let status = try await deviceRender(jobID: body.identity.jobID, variantID: body.identity.variantID)
             guard status.request.identity == body.identity else { throw APIError.conflict }
             if status.phase == "published" {
@@ -145,7 +155,9 @@ extension KriaAPI {
             }
             guard status.phase == "syncing" else { throw APIError.conflict }
         }
-        throw URLError(.timedOut)
+        // Still checking: not a failure and not a reason to upload again. The
+        // coordinator parks the finished file and the next recover keeps waiting.
+        throw DeviceRenderVerificationPending()
     }
     func reportDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, reasonCode: String, detail: String) async throws -> DeviceRenderFailureAck {
         try await request(
@@ -163,23 +175,77 @@ extension KriaAPI {
     }
 }
 
-/// Reports on-device render failures the server should learn about (so it
-/// doesn't wait indefinitely for a device that has already given up), without
-/// the media-engine package depending on app networking. Best-effort: a
-/// failure to report never crashes or retry-loops the coordinator.
+/// Reports on-device render failures and user Stops the server should learn about
+/// (so it doesn't wait indefinitely for a device that has already given up), without
+/// the media-engine package depending on app networking. `deliver` tells the
+/// coordinator whether the server took the report, so a Stop sent while offline is
+/// re-sent until it lands instead of leaving phone and server disagreeing.
 struct APIDeviceRenderFailureReporter: DeviceRenderFailureReporter {
     let api: any KriaAPIClient
     func report(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode, detail: String) async {
+        _ = await deliver(identity: identity, reasonCode: reasonCode, detail: detail)
+    }
+    func deliver(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode, detail: String) async -> DeviceRenderReportOutcome {
         do {
             _ = try await api.reportDeviceRenderFailure(
                 jobID: identity.jobID, identity: identity,
                 reasonCode: reasonCode.rawValue, detail: String(detail.prefix(2000))
             )
+            return .accepted
         } catch {
             #if DEBUG
             NativePreviewDiagnostics.record("device-render-failure-report-failed", fields: ["reason": reasonCode.rawValue])
             #endif
+            return Self.outcome(for: error)
         }
+    }
+    /// No answer, a 5xx or rate limiting is worth sending again; any other answer
+    /// (published, superseded, signed out) is the server's final word.
+    static func outcome(for error: Error) -> DeviceRenderReportOutcome {
+        if error is CancellationError || (error as? URLError)?.code == .cancelled { return .transient }
+        if case let APIError.requestFailed(status, _) = error, status == 429 { return .transient }
+        return RequestFailureCause(error) == .other ? .rejected : .transient
+    }
+}
+
+/// Offline, a 5xx or rate limiting while the coordinator grants assets, checks the
+/// recipe is current, or uploads: the render waits and retries instead of failing.
+extension APIError: DeviceRenderTransientFailure {
+    var isTransientDeviceRenderFailure: Bool {
+        switch self {
+        case .offline: true
+        case let .requestFailed(status, _): status == 429 || RequestFailureCause(status: status) == .server
+        default: false
+        }
+    }
+}
+
+/// Keeps a phone render running for the short window iOS grants after the creator
+/// leaves Kria. When the window expires the coordinator stops the encode and keeps
+/// the receipt resumable, so coming back continues it instead of "export failed".
+struct UIKitDeviceRenderBackgroundExecution: DeviceRenderBackgroundExecution {
+    @MainActor private final class Window {
+        var identifier: UIBackgroundTaskIdentifier = .invalid
+        func end() {
+            guard identifier != .invalid else { return }
+            UIApplication.shared.endBackgroundTask(identifier)
+            identifier = .invalid
+        }
+    }
+
+    static func install() { DeviceRenderBackground.install(Self()) }
+
+    func begin(name: String, expiring: @escaping @Sendable () -> Void) async -> @Sendable () async -> Void {
+        let window = await MainActor.run { () -> Window in
+            let window = Window()
+            window.identifier = UIApplication.shared.beginBackgroundTask(withName: name) {
+                expiring()
+                // iOS terminates an app that keeps an expired task open.
+                MainActor.assumeIsolated { window.end() }
+            }
+            return window
+        }
+        return { await window.end() }
     }
 }
 
@@ -224,6 +290,18 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
             catch APIError.conflict { return .superseded }
         }
         let fingerprint = try await Task.detached { try SHA256Fingerprinter().fingerprint(file: file) }.value
+        // This attempt's bytes already reached storage (a previous publish of the
+        // same file): resume its completion and check instead of re-uploading.
+        let marker = file.deletingPathExtension().appendingPathExtension("uploaded")
+        let markerText = "\(attemptID.uuidString.lowercased())\n\(fingerprint.hex)"
+        if current.phase == "syncing", (try? String(contentsOf: marker, encoding: .utf8)) == markerText {
+            do { try await api.completeDeviceExport(complete); return .published }
+            catch APIError.conflict {
+                if !(try await isCurrent(identity)) { return .superseded }
+                // The server lost the upload (e.g. the reservation expired): upload again.
+                try? FileManager.default.removeItem(at: marker)
+            }
+        }
         let reservation = try await api.reserveDeviceExport(DeviceExportUploadBody(identity: identity, attemptID: attemptID, fileSizeBytes: fingerprint.byteCount, sha256: fingerprint.hex, brandTail: brandTail))
         guard reservation.attemptID == attemptID, Self.acceptsStorageURL(reservation.uploadURL), reservation.expiresAt > Date() else { throw APIError.invalidResponse }
         var put = URLRequest(url: reservation.uploadURL)
@@ -234,6 +312,7 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
         // A create-only PUT can return 412 after a lost success response. The server validates
         // the generation and checksum before attaching it, so this is safe to reconcile.
         guard (200..<300).contains(response.statusCode) || response.statusCode == 412 else { throw APIError.requestFailed(status: response.statusCode) }
+        try? Data(markerText.utf8).write(to: marker, options: .atomic)
         try Task.checkCancellation()
         do { try await api.completeDeviceExport(complete); return .published }
         catch APIError.conflict {
