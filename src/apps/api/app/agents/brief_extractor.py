@@ -37,7 +37,8 @@ from app.pipeline.prompt_loader import load_prompt
 # v20 combines delegation v18 with subtitle-semantics v19 in the shared brief.
 # v21 (KRI-816): shared brief section teaches the typed `starts_fresh` declaration.
 # v22 (KRI-827): the shared brief section also records `keep_text_off` facts.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-24-v22"
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-24-v26"
+# v21 (KRI-842): the shared brief records `clip_sound` (one clip's sound under / after a voice).
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
