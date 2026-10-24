@@ -65,8 +65,8 @@ def model_answer(
     requirements: Iterable[Any], *, scope: str | None = None
 ) -> cu.UnclearAnswer | None:
     """The answer the model recorded from the creator's own words, if any: ``omit``, or the
-    typed words (the last live requirement carrying one wins). Applies to every span unless a
-    structured answer names the span."""
+    typed words (the last live requirement carrying one wins). A scoped correction applies
+    only at previously confirmed source windows, never as a global caption default."""
     requirements = list(requirements)
     if scope is not None and not _pinned_answers(requirements, scope=scope):
         return None
@@ -93,11 +93,16 @@ def recorded_answers(
 ) -> list[cu.UnclearAnswer]:
     """The structured answers ``answered_brief`` pinned on the ask requirements."""
     requirements = list(requirements)
-    if model_answer(requirements, scope=scope) is not None:
-        # A typed correction ends the question, so no newer tap can exist. Older
-        # pinned taps must not override the creator's replacement words or omit.
-        return []
-    return _pinned_answers(requirements, scope=scope)
+    answers = _pinned_answers(requirements, scope=scope)
+    correction = model_answer(requirements, scope=scope)
+    if correction is not None:
+        # Wording changes the confirmed source windows, never every newly detected
+        # occurrence. Keep the original target even if later analysis moves the words.
+        return [
+            cu.UnclearAnswer(correction.action, answer.start_s, answer.end_s, correction.text)
+            for answer in answers
+        ]
+    return answers
 
 
 def _pinned_answers(
@@ -280,8 +285,6 @@ def unsettled(
 ) -> list[tuple[int, cu.UnclearSpan]]:
     """The spans no recorded answer (structured or typed) has settled yet, with their position
     among all spans."""
-    if model_answer(requirements, scope=scope) is not None:
-        return []
     answers = recorded_answers(requirements, scope=scope)
     open_spans: list[tuple[int, cu.UnclearSpan]] = []
     used: set[int] = set()
@@ -320,9 +323,8 @@ def draft_state(
     if finding.state != cu.STATE_UNCLEAR:
         return {"state": finding.state, "spans": []}
     scope = media_scope(row_identity(finding.row), finding.ask)
-    default = model_answer(requirements, scope=scope)
     decisions = cu.decide(
-        finding.spans, recorded_answers(requirements, scope=scope), ask_active=True, default=default
+        finding.spans, recorded_answers(requirements, scope=scope), ask_active=True
     )
     return {
         "state": "applied",
@@ -436,9 +438,7 @@ def apply_to_cues(
         ):
             raise UnclearTargetRequired(clarification_prompt())
         return list(cues), {"state": render.state, "spans": []}
-    out, report = cu.apply_unclear_answers(
-        cues, targets, answers, ask_active=True, default=model_answer(live, scope=scope)
-    )
+    out, report = cu.apply_unclear_answers(cues, targets, answers, ask_active=True)
     return out, {"state": "applied", "spans": report.rows()}
 
 

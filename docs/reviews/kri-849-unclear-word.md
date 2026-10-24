@@ -159,3 +159,19 @@ bound to the question stay unresolved rather than becoming guessed caption text.
 The positive writer cases now ask a real question before the creator types their answer,
 and the PostgreSQL acceptance case submits a second real turn before expecting approval.
 The replacement negatives start with typed-only facts and no earlier tapped window.
+
+## Integration review: target-window authority (2026-10-24)
+
+Three further red cases kept the same immutable source, request and heard word pair while
+moving only the analysis window by ten seconds. Neither an old tap nor an old typed reply
+may authorize that new occurrence. The question digest now includes its canonical source
+time bounds (the same millisecond bounds recorded on the answer), so a moved occurrence
+requires a fresh decision. Legacy questions whose digest never included a window do not
+match the new question identity. Matching a historical reply verifies its original target;
+the handler cannot silently reconstruct a different time interval under the same digest.
+
+A later wording correction now rewrites only the already confirmed answer windows. It is
+never used as a global default for newly detected spans. Those confirmed bounds survive
+analysis changes, while a newly detected, separate occurrence remains a question. The
+96-case gate/writer suite passes, retaining same-window typed, tap, omission, missing-hearing,
+and caption-timing mapping controls.

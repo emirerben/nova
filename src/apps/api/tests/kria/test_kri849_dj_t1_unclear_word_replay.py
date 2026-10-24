@@ -1639,3 +1639,51 @@ async def test_a_fresh_pick_does_not_inherit_a_legacy_typed_only_answer(monkeypa
     variant = write_captions(monkeypatch, approved_binding(row, brief, strategy))
     assert "sal marina" in caption_text(variant)
     assert "old creator wording" not in caption_text(variant)
+
+
+@pytest.mark.parametrize("reply_kind", ["tap", "typed"])
+async def test_same_heard_words_at_a_new_time_cannot_reuse_an_old_question(monkeypatch, reply_kind):
+    original = take_row()
+    question = asked(await gate(monkeypatch, brief_for(), original))
+    assert question is not None
+    events = [question_event(question)]
+    brief = brief_for()
+    if reply_kind == "typed":
+        brief = brief_for(unclear_answer="sal de mar")
+        events.append(message_event("sal de mar", "original-word-answer"))
+    else:
+        events.append(tap_event(question, "use_2"))
+    retimed = take_row()
+    for segment in retimed["analysis"]["understanding"]["speech"]["segments"]:
+        segment["start_s"] += 10
+        segment["end_s"] += 10
+    result = await gate(monkeypatch, brief, retimed, events)
+    current = asked(result)
+    assert current is not None and not result.plan.intents
+    assert current["input_digest"] != question["input_digest"]
+
+
+async def test_later_typed_correction_keeps_the_confirmed_window_when_analysis_moves(monkeypatch):
+    from app.kria.unclear_word_ask import ask_text, media_scope, recorded_answers, row_identity
+
+    _, brief = await answered(monkeypatch, take_row(), LEAVE_OUT)
+    corrected = brief.model_copy(
+        update={
+            "requirements": [
+                req.model_copy(update={"facts": {**req.facts, "unclear_answer": "sal de mar"}})
+                if req.facts.get("ask_if_unclear")
+                else req
+                for req in brief.requirements
+            ]
+        }
+    )
+    old_scope = media_scope(row_identity(take_row()), ask_text(corrected.live()))
+    old_answers = recorded_answers(corrected.live(), scope=old_scope)
+    assert old_answers and old_answers[0].text == "sal de mar"
+    assert old_answers[0].start_s < 10
+    retimed = take_row()
+    for segment in retimed["analysis"]["understanding"]["speech"]["segments"]:
+        segment["start_s"] += 10
+        segment["end_s"] += 10
+    result = await gate(monkeypatch, corrected, retimed)
+    assert asked(result) is not None and not result.plan.intents

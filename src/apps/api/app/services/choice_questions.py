@@ -3206,7 +3206,6 @@ def _unclear_word(
         ask_requirements,
         detect,
         media_scope,
-        model_answer,
         row_identity,
         unsettled,
     )
@@ -3228,8 +3227,6 @@ def _unclear_word(
         return None
     identity = row_identity(finding.row)
     scope = media_scope(identity, finding.ask)
-    if model_answer(live, scope=scope) is not None:
-        return None
     ids = tuple(sorted(str(req.id) for req in asks))
     choices = [
         choice
@@ -3320,7 +3317,7 @@ def unclear_word_choice(
         ),
         reason=say(en="What should the captions say?", tr="Altyazıda ne yazsın?"),
         options=tuple(options),
-        input_digest=_digest(CONFLICT_UNCLEAR_WORD, list(identity), list(span.key), ask),
+        input_digest=_digest(CONFLICT_UNCLEAR_WORD, list(identity), list(span.key), ask, window),
         answer_detail=detail,
     )
 
