@@ -10344,6 +10344,20 @@ def _narrated_alignment_receipts(
     ]
 
 
+def _record_clip_sound_event(event: str, error: Exception | None, plan: Any) -> None:
+    """Pipeline-trace event for a clip-sound plan (KRI-842); observability only, never raises."""
+    try:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event(
+            "narrated",
+            event,
+            {"receipt": plan.receipt, **({"error": str(error)[:300]} if error else {})},
+        )
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+
+
 @phone_text_generation
 def _run_phone_narrated_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
@@ -10387,6 +10401,11 @@ def _run_phone_narrated_job(
     from app.pipeline.narrated_alignment import (  # noqa: PLC0415
         align_script_to_voiceover,  # noqa: PLC0415
         contiguous_step_timings,
+    )
+    from app.pipeline.phone_clip_sound import (  # noqa: PLC0415
+        plan_narrated_clip_sound,
+        reconcile_clip_sound,
+        refused_plan,
     )
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
     from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
@@ -10879,6 +10898,45 @@ def _run_phone_narrated_job(
             bed_level = max(0.0, min(1.0, bed_level))
             mix = 1.0 - bed_level
 
+            # KRI-842: "that clip's own sound under my voice" / "after my voice ends, this
+            # clip plays on", read off the approved brief's `clip_sound` facts. Without such
+            # an ask nothing below changes and the recipe is the one this job always made.
+            clip_sound_plan = None
+            if narrated_brief is not None:
+                from app.kria.narrated_clip_sound_ask import (  # noqa: PLC0415
+                    brief_clip_sound_asks,
+                )
+
+                clip_sound_asks = brief_clip_sound_asks(narrated_brief)
+                if clip_sound_asks:
+                    from app.services.creator_render_contract import (  # noqa: PLC0415
+                        read_render_contract,
+                    )
+
+                    try:
+                        confirmed_duration_s = getattr(
+                            read_render_contract(snapshot), "duration_s", None
+                        )
+                    except Exception:  # noqa: BLE001 - pinning re-reads, and refuses, a bad one
+                        confirmed_duration_s = None
+                    try:
+                        clip_sound_plan = plan_narrated_clip_sound(
+                            clip_sound_asks,
+                            steps=steps,
+                            bindings=bindings,
+                            media_snapshot=(snapshot.get("creator_brief_binding") or {}).get(
+                                "media_snapshot"
+                            ),
+                            # A length the creator confirmed binds the finished video, tail too.
+                            target_duration_s=confirmed_duration_s,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - an ask never costs the video
+                        log.warning("phone_clip_sound.plan_failed", job_id=job_id, error=str(exc))
+                        clip_sound_plan = refused_plan(clip_sound_asks, steps)
+                        _record_clip_sound_event("clip_sound_refused", exc, clip_sound_plan)
+                    steps = clip_sound_plan.steps
+                    _record_clip_sound_event("clip_sound", None, clip_sound_plan)
+
             opening_title_end_s = narrated_title_end_s(
                 transcript.words[0].end_s if transcript.words else None
             )
@@ -10976,9 +11034,35 @@ def _run_phone_narrated_job(
                         visuals=visuals,
                         source_audio_media_ids=source_audio_ids,
                         resolved_text_elements=spoken_rows,
+                        **(
+                            {
+                                "under_voice_media_ids": clip_sound_plan.under_voice_media_ids,
+                                "voice_tail": clip_sound_plan.voice_tail,
+                            }
+                            if clip_sound_plan is not None
+                            else {}
+                        ),
                     )
                     break
-                except UnsupportedPhonePlan as exc:
+                except ValueError as exc:
+                    # An ask for one clip's own sound never costs the creator their video: the
+                    # compile that refused it is retried without the tail, then without the
+                    # gains (a lane error is the lane's, below).
+                    degraded = (
+                        clip_sound_plan.degrade()
+                        if clip_sound_plan is not None and not isinstance(exc, SubtitledLaneError)
+                        else None
+                    )
+                    if degraded is not None:
+                        log.warning(
+                            "phone_clip_sound.render_refused", job_id=job_id, error=str(exc)
+                        )
+                        clip_sound_plan = degraded
+                        steps = clip_sound_plan.steps
+                        _record_clip_sound_event("clip_sound_refused", exc, clip_sound_plan)
+                        continue
+                    if not isinstance(exc, UnsupportedPhonePlan):
+                        raise
                     # A beat lane never fails the job: drop the lane that failed
                     # (every lane when the error names none), then recompile.
                     if lanes is None or beat_receipt is None:
@@ -11134,6 +11218,10 @@ def _run_phone_narrated_job(
             # KRI-519: the same creator-safe receipt Talking keeps; the chat's
             # render notes read it to say which named moment never came up.
             new_entry["phone_beat_receipt"] = beat_receipt
+        if clip_sound_plan is not None:
+            # KRI-842: what the pinned recipe plays for each clip-sound ask, read back from
+            # the recipe itself (the receipts judge this, never the global bed level).
+            new_entry["clip_sound"] = reconcile_clip_sound(recipe, clip_sound_plan.receipt)
         if existing_index is not None:
             variants[existing_index] = new_entry
         else:

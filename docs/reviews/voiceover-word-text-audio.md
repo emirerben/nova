@@ -90,3 +90,18 @@ The locally retained N1 transcription contains “20” at 16.086–16.296 secon
 helper matched the creator's “yirmi dakika” trigger and placed “20 dk” at
 16.086–18.086 seconds. This verifies reuse of the saved recording timings, not a
 new live transcription or visual inspection of a full real-media export.
+
+## Combined integration with KRI-842 (2026-10-24)
+
+Failure modes verified before the correction: a post-voice tail makes the clip
+list longer than the narrated steps; applying the binary source selection to
+that list raises a strict-zip error. A quiet per-clip gain also needs to survive
+the editor response and its next Save rather than turning back into a unit gain.
+The two new route/save replays failed on the combined code before the fix.
+
+Clip-scoped gains now own the detailed mix. A broad source selection applies
+beneath the voice without changing the tail. The timeline projects the pinned
+fractional gains for clip-scoped sound, and Save accepts bounded fractional gains.
+Legacy source-only selection keeps its binary markers. All 100 focused sound,
+selection, save, worker and prompt checks pass in the combined tree. Native CI
+and the full request's original-media listening checks remain separate gates.

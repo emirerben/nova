@@ -164,14 +164,24 @@ def _with_source_audio_volumes(
     bindings: list[PhoneSourceBinding],
     pool: list[str],
     variant: dict,
+    recipe: EditRecipeV2,
 ) -> list[dict]:
-    """Add the unit source-audio marker to every slot of an explicit selection."""
+    """Project the pinned clip gain for selected or clip-scoped source audio."""
     selected = _selected_source_audio_ids(variant)
-    if selected is None:
+    clip_scoped = isinstance(variant.get("clip_sound"), dict)
+    if selected is None and not clip_scoped:
+        return slots
+    track_id = (
+        _NARRATED_TRACK_ID
+        if variant.get("resolved_archetype") == "narrated"
+        else _VOICEOVER_TRACK_ID
+    )
+    clips = [clip for clip, _index, _binding in _clip_rows(recipe, track_id, bindings, pool)]
+    if len(clips) != len(slots):
         return slots
     by_proxy = {binding.proxy_path: binding for binding in bindings}
     rows: list[dict] = []
-    for slot in slots:
+    for slot, clip in zip(slots, clips, strict=True):
         index = slot.get("clip_index")
         binding = (
             by_proxy.get(pool[index]) if isinstance(index, int) and 0 <= index < len(pool) else None
@@ -181,9 +191,15 @@ def _with_source_audio_volumes(
         rows.append(
             {
                 **slot,
-                # This is a selection marker, not the final mixed gain. The
-                # native renderer multiplies it once by audio.original_volume.
-                "source_audio_volume": 1.0 if binding.media_id in selected else 0.0,
+                # Keep fractional under-voice gain and the tail's full gain.
+                # The renderer applies audio.original_volume once afterward.
+                "source_audio_volume": (
+                    float(clip.volume)
+                    if clip_scoped
+                    else 1.0
+                    if binding.media_id in selected
+                    else 0.0
+                ),
             }
         )
     return rows
@@ -312,7 +328,7 @@ def project_phone_voiceover_timeline(
         if projected is None:
             return None
         slots = _with_source_audio_volumes(
-            projected[2], bindings=bindings, pool=pool, variant=variant
+            projected[2], bindings=bindings, pool=pool, variant=variant, recipe=recipe
         )
         return {
             "pool": pool,
@@ -325,7 +341,7 @@ def project_phone_voiceover_timeline(
     if not timeline:
         return None
     slots = _with_source_audio_volumes(
-        timeline["slots"], bindings=bindings, pool=pool, variant=variant
+        timeline["slots"], bindings=bindings, pool=pool, variant=variant, recipe=recipe
     )
     return {
         "pool": pool,
