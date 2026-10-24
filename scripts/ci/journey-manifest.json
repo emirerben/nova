@@ -603,6 +603,29 @@
       ]
     },
     {
+      "id": "kri-845-clip-detail-evidence",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri845_clip_detail_evidence.py tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/evals/test_clip_metadata_evals.py tests/evals/test_clip_request_resolver_evals.py tests/agents/test_clip_metadata.py tests/services/test_kri520_clip_intent_copy.py tests/pipeline/test_clip_cache.py tests/schemas/test_clip_intents.py",
+      "paths": [
+        "src/apps/api/app/agents/clip_metadata.py",
+        "src/apps/api/app/agents/clip_request_resolver.py",
+        "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
+        "src/apps/api/app/pipeline/clip_cache.py",
+        "src/apps/api/app/schemas/clip_intents.py",
+        "src/apps/api/app/schemas/clip_understanding.py",
+        "src/apps/api/app/services/clip_understanding.py",
+        "src/apps/api/app/services/creator_sessions.py",
+        "src/apps/api/prompts/analyze_clip.txt",
+        "src/apps/api/prompts/clip_request_resolver.txt",
+        "src/apps/api/tests/fixtures/agent_evals/clip_metadata/golden/kri845_cafe_tray_clip_props_actions_good.json",
+        "src/apps/api/tests/fixtures/agent_evals/clip_metadata/golden/kri845_fast_pan_blurry_table_good.json",
+        "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri845_cafe_look_alike_skip.json",
+        "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri845_dj_menus_and_blurry_table.json",
+        "src/apps/api/tests/fixtures/kri845_m1_clip_detail.json",
+        "src/apps/api/tests/kria/test_kri845_clip_detail_evidence.py"
+      ]
+    },
+    {
       "id": "kri-585-spoken-order",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri585_spoken_order_montage.py tests/pipeline/test_unified_montage_spoken_order.py tests/services/test_spoken_roles.py",

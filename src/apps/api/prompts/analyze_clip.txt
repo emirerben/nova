@@ -35,6 +35,12 @@ Return a JSON object with these exact fields:
 
 - "people_note": string — one short phrase on who is visible (e.g. "two women in workout clothes", "a toddler and an adult"). "" if no people are visible.
 
+- "props": list of 0–6 strings — the distinctive physical objects the clip is about, each with the words a viewer would use to tell it from a look-alike: colour, material, size, count ("red enamel kettle", "stack of folded towels", "two wooden crates", "orange road cone"). Name what the object IS (read any printing or labels on it), not just what shape it has. Skip ordinary scenery (walls, floor, a generic table) unless it is the subject. [] if nothing distinctive is visible.
+
+- "actions": list of 0–4 short verb phrases, in the order they happen, saying what the people do, with which prop. Say which way things move: puts something down or picks it up, walks in or walks off, hands something over or takes it ("walks in carrying a red kettle", "sets the kettle on the stove", "bends over and picks up a crate", "walks off with the crate", "stacks towels on a shelf"). Describe the physical movement, not the mood. [] if nothing happens.
+
+- "visual_quality": string — one short phrase on how the footage itself looks: how the camera moves AND whether the detail stays crisp. Judge the clip as a whole, not one frame. Edges that are smeared, doubled or ghosted for much of the clip count as blurry, even when you can still tell what the clip shows; so do out-of-focus footage, heavy shake and a partly covered lens. Name the problem plainly ("blurry, fast pan", "out of focus", "shaky handheld", "lens partly covered"). A fast camera move that keeps the detail crisp is "fast pan, stays sharp"; crisp, static footage is "sharp and steady". Do not judge brightness here.
+
 - "brands": list of strings — brand, product, mascot, logo, or named identity visibly present in the clip (e.g. ["Arçelik", "Çelik robot mascot"]). Return [] if none are clearly visible.
 
 - "text_safe_zone": object {"x": float, "y": float, "w": float, "h": float} OR null — the largest CALM rectangle where a big intro caption can sit without fighting the footage (faces, the main subject, busy edges, burned-in text). Reason in terms of the FINAL vertical 9:16 short (imagine the center vertical crop of this footage), NOT the raw frame. All four values are normalized 0.0–1.0 of that 9:16 frame: x,y = top-left corner, w,h = width,height. Prefer real negative space (open sky, a wall, blurred background). Return null if the frame is too busy for any confident safe rectangle.
