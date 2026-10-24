@@ -218,6 +218,7 @@ def _visible(plan) -> list:  # noqa: ANN001
 
 def _shows(plan, requirement, frame: float) -> bool:  # noqa: ANN001
     """Whether the plan already carries ``requirement``'s exact words where it asks."""
+    from app.kria.brief_route import chapter_list  # noqa: PLC0415
     from app.pipeline.sequence_text_evidence import text_matches  # noqa: PLC0415
 
     rows = [
@@ -225,6 +226,16 @@ def _shows(plan, requirement, frame: float) -> bool:  # noqa: ANN001
         for e in _visible(plan)
     ]
     matches = text_matches(rows, requirement.text, role="any", tolerance_s=frame)
+    if (
+        not matches
+        and requirement.role == "any"
+        and requirement.duration_s is None
+        and chapter_list(requirement.text, [row["text"] for row in rows]) is not None
+    ):
+        # KRI-545, mirrored from ``verify_phone_recipe``: a literal that lists chapter
+        # names ("Sabah, Akşam") is drawn as those names, each its own clip label, never as
+        # one line. The plan already shows it; putting the list back would override it.
+        return True
     total = float(plan.resolved_duration_s)
     if requirement.duration_s is not None:
         wanted = min(requirement.duration_s, total)

@@ -190,6 +190,25 @@ def test_words_already_on_screen_as_a_sequence_are_left_alone():
 
 
 @pytest.mark.usefixtures("_verified")
+def test_a_chapter_list_drawn_as_clip_labels_is_left_alone():
+    """KRI-545: "Sabah, Akşam" is drawn as two labels; the verifier passes it, so must we."""
+    plan, bindings = _plan_with(
+        _title("My day"),
+        TextElement(id="label-sabah", text="Sabah", start_s=0.0, end_s=1.5),
+        TextElement(id="label-aksam", text="Akşam", start_s=1.5, end_s=3.0),
+    )
+    contract = CreatorRenderContract(generation_id="g").rebind(
+        exact_texts=(TextRequirement(role="any", text="Sabah, Akşam"),)
+    )
+    repaired, notes = repair_plan_for_contract(plan, contract)
+    assert notes == [] and repaired is plan
+    result = compile_phone_guided_repaired(plan, bindings, contract=contract)
+    assert result.notes == []
+    assert [e.text for e in result.plan.text_elements] == ["My day", "Sabah", "Akşam"]
+    _verify(contract, result.recipe)
+
+
+@pytest.mark.usefixtures("_verified")
 def test_a_copied_look_never_changes_the_drawn_words():
     plan, bindings = _plan_with(_title("MY OWN COPY", text_case="upper"))
     contract = CreatorRenderContract(generation_id="g").rebind(
