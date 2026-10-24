@@ -1,0 +1,98 @@
+{
+  "_comment": "KRI-826: cloud Skia `_authored_lines` rows (Inter-Bold.ttf, wrap_lines=false), recorded on macOS (Apple Color Emoji widths). The iOS AuthoredTextFit tests assert the same rows; tests/pipeline/test_text_overlay_skia.py re-checks the emoji-free cases on every platform.",
+  "font_file": "Inter-Bold.ttf",
+  "cases": [
+    {
+      "text": "Bugün İstanbul’da ılık bir akşam 🌅 şimdi Kadıköy’de çay içiyoruz ☕️ 👨‍👩‍👧 50% {off}: a\\b",
+      "size_px": 72,
+      "canvas": [
+        1080,
+        1920
+      ],
+      "rows": [
+        "Bugün İstanbul’da ılık bir",
+        "akşam 🌅 şimdi Kadıköy’de",
+        "çay içiyoruz ☕️ 👨‍👩‍👧 50%",
+        "{off}: a\\b"
+      ],
+      "fitted_size_px": 72,
+      "has_emoji": true
+    },
+    {
+      "text": "Bugün İstanbul’da ılık bir akşam 🌅 şimdi Kadıköy’de çay içiyoruz ☕️ 👨‍👩‍👧 50% {off}: a\\b",
+      "size_px": 72,
+      "canvas": [
+        1080,
+        1350
+      ],
+      "rows": [
+        "Bugün İstanbul’da ılık bir",
+        "akşam 🌅 şimdi Kadıköy’de",
+        "çay içiyoruz ☕️ 👨‍👩‍👧 50%",
+        "{off}: a\\b"
+      ],
+      "fitted_size_px": 72,
+      "has_emoji": true
+    },
+    {
+      "text": "Bugün İstanbul’da ılık bir akşam şimdi Kadıköy’de çay içiyoruz ve simit yiyoruz",
+      "size_px": 72,
+      "canvas": [
+        1080,
+        1920
+      ],
+      "rows": [
+        "Bugün İstanbul’da ılık bir",
+        "akşam şimdi Kadıköy’de",
+        "çay içiyoruz ve simit",
+        "yiyoruz"
+      ],
+      "fitted_size_px": 72,
+      "has_emoji": false
+    },
+    {
+      "text": "Short line\n\nstays put",
+      "size_px": 72,
+      "canvas": [
+        1080,
+        1920
+      ],
+      "rows": [
+        "Short line",
+        "",
+        "stays put"
+      ],
+      "fitted_size_px": 72,
+      "has_emoji": false
+    },
+    {
+      "text": "chimichurri + salsa criolla ve Julio’s 🔥 asado akşam yemeği",
+      "size_px": 96,
+      "canvas": [
+        1080,
+        1920
+      ],
+      "rows": [
+        "chimichurri + salsa",
+        "criolla ve Julio’s 🔥",
+        "asado akşam",
+        "yemeği"
+      ],
+      "fitted_size_px": 96,
+      "has_emoji": true
+    },
+    {
+      "text": "Supercalifragilisticexpialidocious",
+      "size_px": 200,
+      "canvas": [
+        1080,
+        1920
+      ],
+      "rows": [
+        "Supercalifragilisticexpialidocious"
+      ],
+      "fitted_size_px": 54,
+      "has_emoji": false
+    }
+  ]
+}

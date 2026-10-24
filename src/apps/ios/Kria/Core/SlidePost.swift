@@ -14,6 +14,18 @@ struct SlidePostText: Codable, Equatable, Sendable {
 struct SlidePostTextElement: Codable, Equatable, Identifiable, Sendable {
     static let defaultFont = "Inter-Bold"
     static let maxLength = 120
+    /// The longest start of `text` the server takes (`maxLength` code points) that never splits a character:
+    /// an emoji ZWJ sequence, a flag or a letter with its accent stays whole or is left out whole (KRI-826).
+    static func clipped(_ text: String) -> String {
+        var scalars = 0
+        var kept = ""
+        for character in text {
+            scalars += character.unicodeScalars.count
+            guard scalars <= maxLength else { break }
+            kept.append(character)
+        }
+        return kept
+    }
     static let sizeRange = 8...200
     var id: String
     var text: String
@@ -1197,7 +1209,7 @@ private struct SlidePostItemResponse: Decodable {
         pasteNotice = nil
         switch await PasteboardIntake.load(from: providers) {
         case .text(let text):
-            let fitted = String(String.UnicodeScalarView(text.unicodeScalars.prefix(SlidePostTextElement.maxLength)))
+            let fitted = SlidePostTextElement.clipped(text)
             if addText(slideID: slideID, text: fitted) == nil {
                 pasteNotice = "A slide can have up to \(SlidePostEdits.maxTexts) texts. Remove one to paste another."
             } else if fitted != text {

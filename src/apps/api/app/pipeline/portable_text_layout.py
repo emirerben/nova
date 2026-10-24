@@ -638,7 +638,7 @@ def _compile_staggered_content(overlay, *, text, canvas, font, size, font_asset,
         (index, row)
         for index, line in enumerate(text.split("\n"))
         for row in (
-            [line]
+            cloud._authored_rows(line, font, max_width, spacing)
             if overlay.get("wrap_lines") is False
             else cloud._wrap_text_to_lines(line, font, max_width, spacing)
         )

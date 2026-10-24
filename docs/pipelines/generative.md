@@ -170,6 +170,37 @@ keyboard-tick SFX. Existing saved/tombstoned text and user-authored typewriter e
 are not migrated or retimed. Roll back open-to-all v3 selection by setting both default
 preset secrets empty; stored assignments remain pinned.
 
+## Creator-written text: literal copy and frame fit (KRI-826)
+
+**Literal copy.** A label or caption the creator wrote prints exactly as they typed it: "+",
+"’", emoji (with ZWJ sequences and variation selectors), Turkish ı İ ş ğ and typed line breaks.
+`ground_label` / `ground_caption` print the creator's own span from the request
+(`creator_literal_span`), never the model's copy. Every symbol in the model's copy must appear
+in that span, so an invented "!" or "🔥" grounds nothing, and "+" rewritten as "and" never
+matches. Model, vision and record labels keep the 3-word / 24-character tag rules and the label
+charset. A creator label is bounded only by the montage label bar: at most two lines of
+Fraunces 58px in a 0.82 x 1080 box (`app/pipeline/text_fit.py`). Past that, the KRI-804 reply
+says it runs past two lines. The text is never cut.
+
+**Frame fit for hand-edited text (`wrap_lines=false`).** The creator's own lines from the iOS
+Slider and video editors follow one rule in every renderer: cloud Skia `_authored_lines`, the
+phone compile (`portable_text_layout`, which calls it), iOS `AuthoredTextLayout` /
+`AuthoredTextFit`, and the slide canvas/export (`SlidePostTextCanvas`):
+
+- an explicit line break is always a hard break;
+- a line that fits the frame's safe width (0.9 x canvas width; `max_width_frac` is ignored)
+  stays one line at the creator's size (KRI-564);
+- a wider line soft-wraps at word boundaries at that width;
+- only a single word still wider than that shrinks the whole text, never below
+  `min(size, 24)`.
+
+Cloud Skia also shapes any text its face can't fully draw (`_auto_shape`), so inline emoji
+draw through the system emoji face (Noto Color Emoji in the prod image) instead of as boxes.
+Parity guards: `test_both_renderers_honor_authored_line_fit`,
+`test_authored_line_fit_matches_the_recorded_cross_platform_rows` and the iOS
+`AuthoredTextFitTests` (`tests/fixtures/kri826_authored_fit_rows.json`). Verify artifact:
+`make verify-overlays ARGS="--fixtures"` (`kri826_*.json`).
+
 ## Key files
 
 - `src/apps/api/app/tasks/generative_build.py` — `orchestrate_generative_job` Celery

@@ -1,10 +1,9 @@
 """What Kria says when the creator's own words can't be a clip label (KRI-678, KRI-804).
 
-A clip label is a short tag: the label charset, ``CREATOR_LABEL_MAX_CHARS`` and
-``CREATOR_LABEL_MAX_WORDS`` for the creator's own words. "chimichurri + salsa criolla"
-has a character a label can't show; the reply used to name one reason at a time, and
-"What shorter label?" gave the creator nothing to pick. Now it names every reason, in the
-chat's language, and offers ways forward the creator can tap:
+KRI-826: the creator's own label words print as written ("chimichurri + salsa criolla",
+emoji, a line break they typed). The only reason left is the label bar itself: the
+words run past its two lines (``creator_label_fits``), or there is nothing to show. The
+reply names that, in the chat's language, and offers ways forward the creator can tap:
 
 * keep the words exactly as written: the described-shot caption lane prints them on that
   clip (KRI-296), with none of a label's bounds;
@@ -22,12 +21,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from app.kria.reply_language import say
+from app.pipeline.text_fit import CREATOR_LABEL_MAX_LINES
 from app.schemas.clip_intents import (
-    CREATOR_LABEL_MAX_CHARS,
-    CREATOR_LABEL_MAX_WORDS,
     clean_creator_caption_text,
     creator_label_problems,
-    label_blocked_characters,
     shorter_creator_label,
 )
 from app.schemas.edit_proposal import CREATOR_SHOT_LABEL_MAX_CHARS
@@ -39,6 +36,8 @@ _QUOTE_MAX_CHARS = 80
 # The chat reply holds 1200 characters (`KriaTurnPlan.response`); the turn may append a
 # line ("Your current draft is unchanged."), so the question stays well inside it.
 _QUESTION_MAX_CHARS = 1000
+# Room kept for the closing lines ("3 more of your labels ...", "What would you like?").
+_QUESTION_TRAILER_CHARS = 120
 
 
 @dataclass(frozen=True)
@@ -90,36 +89,24 @@ def _quoted(text: str) -> str:
 
 def _reasons(text: str) -> str:
     """Every reason ``text`` can't be a label, as one clause in the chat's language."""
-    limit = CREATOR_LABEL_MAX_CHARS
     reasons: list[str] = []
     for problem in creator_label_problems(text):
-        if problem == "characters":
-            shown = say(en=" or ", tr=" ya da ").join(
-                f'"{chars}"' for chars in label_blocked_characters(text)
-            )
+        if problem == "too_long":
             reasons.append(
                 say(
-                    en=f"a label can't show {shown}",
-                    tr=f"etiket {shown} gösteremez",
+                    en=f"it runs past the {CREATOR_LABEL_MAX_LINES} lines a clip label holds",
+                    tr=f"klip etiketinin {CREATOR_LABEL_MAX_LINES} satırına sığmıyor",
                 )
             )
-        elif problem == "too_long":
+        elif problem == "characters":
             reasons.append(
                 say(
-                    en=f"it's {len(text)} characters (a label holds up to {limit})",
-                    tr=f"{len(text)} karakter (etiket en fazla {limit} karakter alır)",
-                )
-            )
-        elif problem == "too_many_words":
-            words = len(text.split())
-            reasons.append(
-                say(
-                    en=f"it's {words} words (a label holds up to {CREATOR_LABEL_MAX_WORDS})",
-                    tr=f"{words} kelime (etiket en fazla {CREATOR_LABEL_MAX_WORDS} kelime alır)",
+                    en="it has a hidden control character a label can't show",
+                    tr="etiketin gösteremeyeceği gizli bir kontrol karakteri var",
                 )
             )
         else:
-            reasons.append(say(en="it has no letters to show", tr="gösterilecek harf yok"))
+            reasons.append(say(en="it has nothing to show", tr="gösterilecek bir şey yok"))
     return say(en=", and ", tr=" ve ").join(reasons)
 
 
@@ -187,7 +174,8 @@ def label_text_reply(texts: Sequence[str], *, keep: bool = True) -> LabelTextRep
             ),
             _way_forward(keeps, shorter),
         ]
-        if parts and len(" ".join([*parts, *about])) > _QUESTION_MAX_CHARS:
+        budget = _QUESTION_MAX_CHARS - _QUESTION_TRAILER_CHARS
+        if parts and len(" ".join([*parts, *about])) > budget:
             left_out += 1
             continue
         parts.extend(about)
