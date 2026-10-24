@@ -387,10 +387,107 @@ async def reject_story(db, owner, identifier, story_id, body):
     return story_out(row)
 
 
+async def _recoverable_selection_hold(db, thread, item, turn, story):
+    """Recognize only the historical empty-brief hold, without changing it."""
+    from sqlalchemy import select
+
+    from app.config import settings
+    from app.kria.approval_readiness import digest
+    from app.kria.brief import load_latest_brief
+    from app.kria.brief_binding import media_identity, snapshot_media
+    from app.models import (
+        CreationThreadEvent,
+        CreatorAgentApproval,
+        CreatorAgentTurn,
+        CreatorEditDraft,
+        CreatorPreparedExecution,
+        Job,
+    )
+
+    if (
+        not settings.brief_binding_for(thread.creator_id)
+        or not settings.approval_readiness_for(thread.creator_id)
+        or turn.status != "completed"
+        or turn.error is not None
+        or thread.status != "active"
+        or thread.runtime_version != 2
+        or thread.active_job_id is not None
+        or item is None
+        or item.current_job_id is not None
+        or item.edit_proposal is not None
+        or story_out(story).rejected
+    ):
+        return False
+    source = await db.get(CreationThreadEvent, turn.source_event_id)
+    held = (
+        await db.get(CreationThreadEvent, turn.observed_event_id)
+        if turn.observed_event_id
+        else None
+    )
+    if (
+        source is None
+        or source.thread_id != thread.id
+        or source.role != "user"
+        or (source.payload or {}).get("camera_roll_story")
+        != {
+            "story_id": str(story.id),
+            "story_revision": story.revision,
+        }
+        or held is None
+        or held.thread_id != thread.id
+        or held.role != "assistant"
+        or held.event_type != "assistant_response"
+        or held.revision != thread.revision
+        or (held.payload or {}).get("turn_id") != str(turn.id)
+    ):
+        return False
+    coverage = (held.payload or {}).get("brief_coverage") or {}
+    if not isinstance(coverage, dict):
+        return False
+    report = coverage.get("approval_readiness") or {}
+    if not isinstance(report, dict):
+        return False
+    if (
+        coverage.get("stage") != "draft"
+        or coverage.get("reason") != "approval_requirements_not_ready"
+        or report.get("ready") is not False
+        or report.get("brief_version") != 0
+        or report.get("requirements") != []
+        or report.get("brief_digest") != digest(None)
+        or report.get("prepared_evidence_digest") != digest(None)
+        or report.get("media_digest") != digest(media_identity(snapshot_media(item)))
+        or report.get("policy_problem")
+        not in {
+            "I need to establish the requested changes before offering approval.",
+            "Onay sunmadan önce istenen değişiklikleri belirlemem gerekiyor.",
+        }
+        or await load_latest_brief(db, thread.id) is not None
+    ):
+        return False
+    for model in (CreatorEditDraft, CreatorAgentApproval, CreatorPreparedExecution):
+        if await db.scalar(select(model.id).where(model.thread_id == thread.id).limit(1)):
+            return False
+    if await db.scalar(select(Job.id).where(Job.content_plan_item_id == item.id).limit(1)):
+        return False
+    return (
+        await db.scalar(
+            select(CreatorAgentTurn.id)
+            .where(
+                CreatorAgentTurn.thread_id == thread.id,
+                CreatorAgentTurn.id != turn.id,
+            )
+            .limit(1)
+        )
+        is None
+    )
+
+
 async def select_story(db, owner, identifier, story_id, body):
+    from sqlalchemy import select
+
     from app.config import settings
     from app.kria.api_schemas import SubmitTurnBody, TurnAccepted
-    from app.kria.runtime import submit_turn
+    from app.kria.runtime import _owned_thread, submit_turn
     from app.models import CreationThread, CreatorAgentTurn, PlanItem
     from app.services.media_collection_preparation import prepare_story_snapshot
 
@@ -399,14 +496,88 @@ async def select_story(db, owner, identifier, story_id, body):
             422, "The verified draft flow is unavailable; keep this story for later"
         )
     row, duplicate = await owned_story(db, owner, identifier, story_id, body)
-    if duplicate:
-        if duplicate["type"] != "selection" or duplicate.get("thread_id") != str(body.thread_id):
+    if duplicate and (
+        duplicate["type"] != "selection" or duplicate.get("thread_id") != str(body.thread_id)
+    ):
+        raise HTTPException(409, "Selection identity reused")
+    thread = await _owned_thread(db, thread_id=body.thread_id, creator_id=owner, lock=True)
+    item = await db.get(PlanItem, thread.active_plan_item_id, with_for_update=True)
+    # The immutable user event/turn is authoritative even if selection telemetry
+    # was lost after submit_turn committed. Never trust telemetry alone.
+    turn = await db.scalar(
+        select(CreatorAgentTurn).where(
+            CreatorAgentTurn.thread_id == thread.id,
+            CreatorAgentTurn.client_event_id == body.client_event_id,
+        )
+    )
+    if turn is not None:
+        from app.models import CreationThreadEvent
+
+        source = await db.get(CreationThreadEvent, turn.source_event_id)
+        reference = {"story_id": str(row.id), "story_revision": body.expected_story_revision}
+        if source is None or (source.payload or {}).get("camera_roll_story") != reference:
             raise HTTPException(409, "Selection identity reused")
-        turn = await db.get(CreatorAgentTurn, uuid.UUID(duplicate["turn_id"]))
-        thread = await db.get(CreationThread, body.thread_id)
+        if body.recover_held_turn_id is not None:
+            if body.recover_held_turn_id != turn.id:
+                raise HTTPException(409, "Held selection identity changed")
+            recovery_id = f"camera-roll-recover-{turn.id}"
+            successor = await db.scalar(
+                select(CreatorAgentTurn).where(
+                    CreatorAgentTurn.thread_id == thread.id,
+                    CreatorAgentTurn.client_event_id == recovery_id,
+                )
+            )
+            if successor is not None:
+                recovered_source = await db.get(CreationThreadEvent, successor.source_event_id)
+                if recovered_source is None or (recovered_source.payload or {}).get(
+                    "camera_roll_story"
+                ) != {
+                    **reference,
+                    "recovered_from_turn_id": str(turn.id),
+                }:
+                    raise HTTPException(409, "Recovery identity reused")
+                return TurnAccepted(
+                    turn_id=str(successor.id),
+                    thread_revision=thread.revision,
+                    status=successor.status,
+                    replayed=True,
+                ), successor.status == "pending"
+            if (
+                body.expected_thread_revision != thread.revision
+                or row.revision != body.expected_story_revision
+                or not await _recoverable_selection_hold(db, thread, item, turn, row)
+            ):
+                raise HTTPException(
+                    409, "This project changed; review its current draft before continuing"
+                )
+            await prepare_story_snapshot(db, owner, row, item)
+            return await submit_turn(
+                db,
+                thread_id=thread.id,
+                creator_id=owner,
+                body=SubmitTurnBody(
+                    message=(
+                        f"Prepare chosen story {row.id} revision {row.revision}: "
+                        f"{row.story_json['title']} (retry held selection {turn.id})"
+                    ),
+                    expected_thread_revision=body.expected_thread_revision,
+                    client_event_id=recovery_id,
+                ),
+                _camera_roll_story={**reference, "recovered_from_turn_id": str(turn.id)},
+            )
+        recoverable = (
+            row.revision == body.expected_story_revision
+            and await _recoverable_selection_hold(db, thread, item, turn, row)
+        )
         return TurnAccepted(
-            turn_id=str(turn.id), thread_revision=thread.revision, status=turn.status
+            turn_id=str(turn.id),
+            thread_revision=thread.revision,
+            status=turn.status,
+            replayed=True,
+            recoverable_held_turn_id=str(turn.id) if recoverable else None,
         ), turn.status == "pending"
+    if duplicate or body.recover_held_turn_id is not None:
+        raise HTTPException(409, "Held selection was not found in this project")
     if story_out(row).rejected:
         raise HTTPException(409, "Choose another story; this version was rejected")
     thread = await db.get(CreationThread, body.thread_id)

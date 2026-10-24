@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from app.models import (
     CreationThread,
     CreatorAgentApproval,
     CreatorAgentSession,
+    CreatorAgentTurn,
     CreatorEditDraft,
     Job,
     MediaAsset,
@@ -33,10 +35,11 @@ from app.tasks.kria_runtime import _claim_approval_dispatch, run_kria_turn
 from tests.integration.test_media_collections import collection_world, selection  # noqa: F401, F811
 
 _ACCEPTED_CAPTION = "A crossing  and an arrival.\n\nKeep this spacing."
+_RECOVERABLE_CASES = {"held", "empty-caption", "whitespace-caption", "lost-telemetry"}
 
 
 @pytest.mark.parametrize(
-    "with_content_plan,fractional_end,change_before_approval,caption,readiness_enabled",
+    "with_content_plan,fractional_end,change_before_approval,caption,readiness_enabled,recovery_case",
     [
         pytest.param(
             content,
@@ -44,6 +47,7 @@ _ACCEPTED_CAPTION = "A crossing  and an arrival.\n\nKeep this spacing."
             changed,
             _ACCEPTED_CAPTION if content else None,
             True,
+            None,
             id=(
                 f"{'content' if content else 'legacy'}-"
                 f"{'fractional' if fractional else 'whole'}-"
@@ -54,9 +58,9 @@ _ACCEPTED_CAPTION = "A crossing  and an arrival.\n\nKeep this spacing."
         for fractional in (False, True)
         for changed in (False, True)
     ]
-    + [pytest.param(True, False, False, "", True, id="explicit-empty-caption")]
+    + [pytest.param(True, False, False, "", True, None, id="explicit-empty-caption")]
     + [
-        pytest.param(True, False, changed, _ACCEPTED_CAPTION, True, id=f"changed-{changed}")
+        pytest.param(True, False, changed, _ACCEPTED_CAPTION, True, None, id=f"changed-{changed}")
         for changed in (
             "story",
             "source",
@@ -67,8 +71,33 @@ _ACCEPTED_CAPTION = "A crossing  and an arrival.\n\nKeep this spacing."
         )
     ]
     + [
-        pytest.param(False, True, False, None, False, id="legacy-readiness-off"),
-        pytest.param(True, False, False, "", False, id="empty-caption-readiness-off"),
+        pytest.param(False, True, False, None, False, None, id="legacy-readiness-off"),
+        pytest.param(True, False, False, "", False, None, id="empty-caption-readiness-off"),
+    ]
+    # Seed the historical hold, then use the real HTTP/worker/approval chain.
+    # This is recovery of an existing selection, not success in a new project.
+    + [
+        pytest.param(True, False, False, value, True, case, id=f"recover-{case}")
+        for case, value in (
+            ("held", _ACCEPTED_CAPTION),
+            ("empty-caption", ""),
+            ("whitespace-caption", "   \n "),
+            ("changed-thread", _ACCEPTED_CAPTION),
+            ("changed-media", _ACCEPTED_CAPTION),
+            ("changed-story", _ACCEPTED_CAPTION),
+            ("changed-collection", _ACCEPTED_CAPTION),
+            ("changed-generation", _ACCEPTED_CAPTION),
+            ("pending-job", _ACCEPTED_CAPTION),
+            ("running-job", _ACCEPTED_CAPTION),
+            ("completed-job", _ACCEPTED_CAPTION),
+            ("prepared", _ACCEPTED_CAPTION),
+            ("approved", _ACCEPTED_CAPTION),
+            ("other-refusal", _ACCEPTED_CAPTION),
+            ("cancelled", _ACCEPTED_CAPTION),
+            ("lost-telemetry", _ACCEPTED_CAPTION),
+            ("reused-recovery-key", _ACCEPTED_CAPTION),
+            ("flags-off", _ACCEPTED_CAPTION),
+        )
     ],
 )
 async def test_selection_prepares_common_draft_then_explicit_approval_freezes_execution(
@@ -79,8 +108,13 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
     with_content_plan,
     caption,
     readiness_enabled,
+    recovery_case,
 ):
     client, assets, sources, owner, _app = collection_world
+    if recovery_case:
+        from app.routes import creation_threads
+
+        _app.include_router(creation_threads.router, prefix="/creation-threads")
     monkeypatch.setattr(settings, "kria_runtime_v2_enabled", True)
     monkeypatch.setattr(settings, "guided_edit_capability_enabled", True)
     monkeypatch.setattr(settings, "kria_brief_binding_enabled", readiness_enabled)
@@ -302,18 +336,265 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         db.add(story)
         await db.commit()
         story_id, thread_id, item_id = story.id, thread.id, item.id
+    # Preserve the native attachment event identities so choosing again exercises
+    # the actual repeat-attachment HTTP boundary before selection recovery.
+    initial_revision = 0
+    if recovery_case:
+        from app.kria.runtime import _append_event
+
+        async with AsyncSessionLocal() as db:
+            thread = await db.get(CreationThread, thread_id)
+            for index, assignment in enumerate(assignments):
+                media_id = assignment["media_id"]
+                await _append_event(
+                    db,
+                    thread,
+                    role="user",
+                    event_type="media_attached",
+                    content=None,
+                    client_event_id=f"ios-library-{media_id}",
+                    payload={
+                        "media": [{"media_id": media_id}],
+                        "library_selections": [
+                            {
+                                "media_id": media_id,
+                                "asset_id": assets[index],
+                                "source_id": sources[index],
+                            }
+                        ],
+                    },
+                )
+            initial_revision = thread.revision
+            await db.commit()
+    selection_body = {
+        "expected_revision": 1,
+        "expected_story_revision": 1,
+        "client_event_id": "selection-1",
+        "thread_id": str(thread_id),
+        "expected_thread_revision": initial_revision,
+    }
     selected = await client.post(
         f"{path}/stories/{story_id}/select",
-        json={
-            "expected_revision": 1,
-            "expected_story_revision": 1,
-            "client_event_id": "selection-1",
-            "thread_id": str(thread_id),
-            "expected_thread_revision": 0,
-        },
+        json=selection_body,
     )
     assert selected.status_code == 200, selected.text
     accepted = selected.json()
+    if recovery_case:
+        from app.kria.approval_readiness import digest
+        from app.kria.brief_binding import media_identity, snapshot_media
+        from app.kria.runtime import _append_event
+
+        original_turn_id = accepted["turn_id"]
+        if recovery_case in {"prepared", "approved"}:
+            assert (await asyncio.to_thread(run_kria_turn.run, original_turn_id))[
+                "status"
+            ] == "awaiting_approval"
+            if recovery_case == "approved":
+                async with AsyncSessionLocal() as db:
+                    approval = await db.scalar(
+                        select(CreatorAgentApproval).where(
+                            CreatorAgentApproval.thread_id == thread_id
+                        )
+                    )
+                    thread = await db.get(CreationThread, thread_id)
+                    await decide_approval(
+                        db,
+                        thread_id=thread_id,
+                        creator_id=owner.id,
+                        approval_id=approval.id,
+                        decision="approve",
+                        body=ApprovalDecisionBody(
+                            expected_thread_revision=thread.revision,
+                            expected_draft_revision=approval.draft_revision,
+                            expected_approval_fingerprint=approval_fingerprint(approval),
+                        ),
+                    )
+        else:
+            # Historical, saved incident shape. No responsible planner/checker is
+            # mocked: the successor below runs today's real preparation chain.
+            async with AsyncSessionLocal() as db:
+                turn = await db.get(CreatorAgentTurn, uuid.UUID(original_turn_id))
+                thread = await db.get(CreationThread, thread_id)
+                item = await db.get(PlanItem, item_id)
+                null_digest = hashlib.sha256(b"null").hexdigest()
+                held = await _append_event(
+                    db,
+                    thread,
+                    role="assistant",
+                    event_type="assistant_response",
+                    content="I held this first draft back.",
+                    payload={
+                        "turn_id": str(turn.id),
+                        "brief_coverage": {
+                            "stage": "draft",
+                            "reason": "approval_requirements_not_ready",
+                            "approval_readiness": {
+                                "ready": False,
+                                "brief_version": 0,
+                                "requirements": [],
+                                "brief_digest": null_digest,
+                                "prepared_evidence_digest": null_digest,
+                                "media_digest": digest(media_identity(snapshot_media(item))),
+                                "policy_problem": (
+                                    "The renderer cannot make this effect."
+                                    if recovery_case == "other-refusal"
+                                    else "I need to establish the requested changes "
+                                    "before offering approval."
+                                ),
+                            },
+                        },
+                    },
+                )
+                turn.observed_event_id = held.id
+                turn.status = "cancelled" if recovery_case == "cancelled" else "completed"
+                turn.completed_at = datetime.now(UTC)
+                if recovery_case == "lost-telemetry":
+                    (await db.get(MediaCollectionStory, story_id)).events_json = []
+                await db.commit()
+        # Same attachment identities used by SavedMediaReuse: no new revision,
+        # no source mutation. The route returns the current project each time.
+        async with AsyncSessionLocal() as db:
+            retry_revision = (await db.get(CreationThread, thread_id)).revision
+        for index, assignment in enumerate(assignments):
+            media_id = assignment["media_id"]
+            attached = await client.post(
+                f"/creation-threads/{thread_id}/media",
+                json={
+                    "expected_revision": retry_revision,
+                    "client_event_id": f"ios-library-{media_id}",
+                    "media": [
+                        {
+                            "media_id": media_id,
+                            "library_asset_id": assets[index],
+                            "library_source_id": sources[index],
+                            "kind": "video",
+                            "filename": "qa.mp4",
+                            "content_type": "video/mp4",
+                        }
+                    ],
+                },
+            )
+            assert attached.status_code == 200, attached.text
+            assert attached.json()["revision"] == retry_revision
+        replay = await client.post(f"{path}/stories/{story_id}/select", json=selection_body)
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["turn_id"] == original_turn_id
+        if recovery_case == "cancelled":
+            assert replay.json()["status"] == "cancelled"
+        elif recovery_case != "approved":
+            assert replay.json()["status"] == (
+                "awaiting_approval" if recovery_case == "prepared" else "completed"
+            )
+        if recovery_case in _RECOVERABLE_CASES:
+            assert replay.json().get("recoverable_held_turn_id") == original_turn_id
+        elif recovery_case in {"other-refusal", "cancelled", "prepared", "approved"}:
+            assert replay.json().get("recoverable_held_turn_id") is None
+        if recovery_case == "flags-off":
+            monkeypatch.setattr(settings, "kria_approval_readiness_enabled", False)
+        if recovery_case == "reused-recovery-key":
+            async with AsyncSessionLocal() as db:
+                thread = await db.get(CreationThread, thread_id)
+                unrelated = await _append_event(
+                    db,
+                    thread,
+                    role="user",
+                    event_type="user_message",
+                    content="Another request",
+                    payload={},
+                    client_event_id=f"camera-roll-recover-{original_turn_id}",
+                )
+                db.add(
+                    CreatorAgentTurn(
+                        thread_id=thread_id,
+                        source_event_id=unrelated.id,
+                        client_event_id=f"camera-roll-recover-{original_turn_id}",
+                        request_digest="a" * 64,
+                        status="pending",
+                    )
+                )
+                await db.commit()
+        if recovery_case.startswith("changed-") or recovery_case.endswith("-job"):
+            async with AsyncSessionLocal() as db:
+                thread = await db.get(CreationThread, thread_id)
+                if recovery_case == "changed-thread":
+                    await _append_event(
+                        db,
+                        thread,
+                        role="user",
+                        event_type="user_message",
+                        content="Keep my later edit",
+                    )
+                elif recovery_case == "changed-media":
+                    item = await db.get(PlanItem, item_id)
+                    item.clip_gcs_paths = ["different-source.mp4"]
+                elif recovery_case == "changed-story":
+                    (await db.get(MediaCollectionStory, story_id)).revision += 1
+                elif recovery_case == "changed-collection":
+                    from app.models import MediaCollection
+
+                    (await db.get(MediaCollection, collection_id)).revision += 1
+                elif recovery_case == "changed-generation":
+                    metadata_by_path[assignments[0]["gcs_path"]] = SimpleNamespace(
+                        generation="changed", size=1000
+                    )
+                else:
+                    # Even a historical Job no longer pointed to by current_job_id
+                    # makes this a used project, not a pre-draft hold.
+                    db.add(
+                        Job(
+                            user_id=owner.id,
+                            content_plan_item_id=item_id,
+                            raw_storage_path=f"users/{owner.id}/qa-only",
+                            selected_platforms=[],
+                            status={
+                                "pending-job": "queued",
+                                "running-job": "processing",
+                                "completed-job": "variants_ready",
+                            }[recovery_case],
+                        )
+                    )
+                await db.commit()
+        recovery_body = {
+            **selection_body,
+            "expected_thread_revision": retry_revision,
+            "recover_held_turn_id": original_turn_id,
+        }
+        attempts = await asyncio.gather(
+            *[
+                client.post(f"{path}/stories/{story_id}/select", json=recovery_body)
+                for _ in range(2)
+            ]
+        )
+        if recovery_case not in _RECOVERABLE_CASES:
+            assert all(response.status_code == 409 for response in attempts), [
+                r.text for r in attempts
+            ]
+            async with AsyncSessionLocal() as db:
+                assert len(
+                    (
+                        await db.scalars(
+                            select(CreatorAgentTurn).where(CreatorAgentTurn.thread_id == thread_id)
+                        )
+                    ).all()
+                ) == (2 if recovery_case == "reused-recovery-key" else 1)
+                assert (await db.get(PlanItem, item_id)).current_job_id is None
+            return
+        assert all(response.status_code == 200 for response in attempts), [r.text for r in attempts]
+        accepted = attempts[0].json()
+        assert accepted["turn_id"] == attempts[1].json()["turn_id"] != original_turn_id
+        async with AsyncSessionLocal() as db:
+            original = await db.get(CreatorAgentTurn, uuid.UUID(original_turn_id))
+            assert original.status == "completed" and original.observed_event_id is not None
+            assert (
+                len(
+                    (
+                        await db.scalars(
+                            select(CreatorAgentTurn).where(CreatorAgentTurn.thread_id == thread_id)
+                        )
+                    ).all()
+                )
+                == 2
+            )
     async with AsyncSessionLocal() as db:
         assert (
             await db.scalars(
@@ -326,6 +607,11 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         approval = db.scalar(
             select(CreatorAgentApproval).where(CreatorAgentApproval.thread_id == thread_id)
         )
+        assert str(approval.turn_id) == accepted["turn_id"]
+        if recovery_case:
+            assert str(approval.turn_id) != original_turn_id, (
+                "Recovery requires a fresh approval identity"
+            )
         draft = db.get(CreatorEditDraft, approval.draft_id)
         assert draft.snapshot_json["prepared_collection_story"]["story_id"] == str(story_id)
         frozen = draft.snapshot_json["prepared_collection_story"]
@@ -466,6 +752,20 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         creator_guided_attempt_id=claim.creator_guided_attempt_id,
     )
     assert dispatched.outcome == "dispatched", dispatched
+    if recovery_case:
+        replay = await client.post(f"{path}/stories/{story_id}/select", json=recovery_body)
+        assert replay.status_code == 200 and replay.json()["turn_id"] == accepted["turn_id"]
+        repeated_dispatch = await asyncio.to_thread(
+            dispatch_item_render_for,
+            str(item_id),
+            0,
+            creator_strategy=claim.strategy,
+            creator_guided_attempt_id=claim.creator_guided_attempt_id,
+        )
+        assert repeated_dispatch.outcome == "already_active"
+        with sync_session() as db:
+            jobs = db.scalars(select(Job).where(Job.content_plan_item_id == item_id)).all()
+            assert len(jobs) == 1 and str(jobs[0].id) == dispatched.job_id
     from app.tasks.generative_build import _guided_execution_plan
 
     with sync_session() as db:
@@ -567,3 +867,56 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
                 plan_blocks.load_plan_events(db, thread_id), str(dispatched.job_id)
             )
         assert sections["post_caption"]["payload"]["text"] == caption
+
+
+async def test_ready_source_without_timed_evidence_stays_unindexed_without_retry(
+    collection_world,  # noqa: F811
+):
+    """Completed facts without intervals are not evidence of a queued analysis."""
+    client, assets, sources, _owner, _app = collection_world
+    async with AsyncSessionLocal() as db:
+        rows = (
+            await db.scalars(
+                select(MediaAssetAnalysis).where(
+                    MediaAssetAnalysis.source_id == uuid.UUID(sources[0])
+                )
+            )
+        ).all()
+        assert len(rows) == 2 and all(row.status == "ready" for row in rows)
+        for row in rows:
+            row.result_json = (
+                {"words": []}
+                if row.analyzer == "nova.media.transcript"
+                else {
+                    "understanding": {"notable_moments": []},
+                    "important_moments": [],
+                    "best_moments": [],
+                }
+            )
+        await db.commit()
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    assert (await client.put(path, json=selection(assets, sources))).status_code == 200
+    indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
+    assert indexed.status_code == 200, indexed.text
+    assert assets[0] in indexed.json()["missing_analysis_asset_ids"]
+    found = await client.get(f"{path}/moments", params={"query": "ferry", "expected_revision": 1})
+    assert found.status_code == 200, found.text
+    assert assets[0] in found.json()["unindexed_asset_ids"]
+    async with AsyncSessionLocal() as db:
+        assert (
+            await db.scalars(
+                select(MediaSourceMoment).where(
+                    MediaSourceMoment.source_id == uuid.UUID(sources[0])
+                )
+            )
+        ).all() == []
+        rows = (
+            await db.scalars(
+                select(MediaAssetAnalysis).where(
+                    MediaAssetAnalysis.source_id == uuid.UUID(sources[0])
+                )
+            )
+        ).all()
+        assert len(rows) == 2 and all(row.status == "ready" for row in rows)
+    # collection_world rejects every download/provider analysis attempt. No
+    # highlights are fabricated and the original READY facts stay unchanged.

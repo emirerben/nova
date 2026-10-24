@@ -1,9 +1,9 @@
 """Bounded, owned catalogue selections. Never accepts a Photos identifier or bytes."""
 
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from app.schemas.research import StoryResearch
 
@@ -134,7 +134,9 @@ class StoryContentPlan(BaseModel):
     why_it_works: str = Field(min_length=1, max_length=500)
     opening_text: str = Field(min_length=1, max_length=100)
     closing_text: str | None = Field(default=None, min_length=1, max_length=100)
-    caption: str = Field(default="", max_length=300)
+    caption: Annotated[str, StringConstraints(strip_whitespace=False)] = Field(
+        default="", max_length=300
+    )
     beat_reasons: list[str] = Field(min_length=1, max_length=8)
 
     @model_validator(mode="after")
@@ -208,3 +210,4 @@ class StoryCorrectionBody(StoryReviewBody):
 class StorySelectionBody(StoryReviewBody):
     thread_id: UUID
     expected_thread_revision: int = Field(ge=0)
+    recover_held_turn_id: UUID | None = None

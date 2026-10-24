@@ -129,6 +129,23 @@ def prepare(args):
     recipe = compile_phone_guided_plan(
         GuidedStoryExecutionPlan.model_validate(compiled), bindings
     )
+    # The host exporter resolves the same bundled typography as the iPhone.
+    # Copy only the compiler-pinned font bytes into the retained proof bundle.
+    for asset in recipe.assets:
+        if asset.id.startswith("font-"):
+            name = asset.id.removeprefix("font-")
+            if Path(name).name != name:
+                raise ValueError("Invalid compiled font asset")
+            font = ROOT / "src/apps/api/assets/fonts" / name
+            if (
+                hashlib.sha256(font.read_bytes()).hexdigest() != asset.fingerprint.hex
+                or font.stat().st_size != asset.fingerprint.byte_count
+            ):
+                raise ValueError("Bundled font differs from its pinned fingerprint")
+            target = args.output / "inputs" / name
+            shutil.copyfile(font, target)
+            paths[asset.id] = str(target.resolve())
+            device_paths[asset.id] = str(target.relative_to(args.output))
     request = make_device_request(
         job_id=uuid.uuid4(), variant_id="camera-roll-proof", revision=1, recipe=recipe
     )

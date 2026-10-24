@@ -10646,6 +10646,12 @@
             "title": "Expected Thread Revision",
             "type": "integer"
           },
+          "recover_held_turn_id": {
+            "format": "uuid",
+            "nullable": true,
+            "title": "Recover Held Turn Id",
+            "type": "string"
+          },
           "thread_id": {
             "format": "uuid",
             "title": "Thread Id",
@@ -11994,6 +12000,12 @@
       },
       "TurnAccepted": {
         "properties": {
+          "recoverable_held_turn_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Recoverable Held Turn Id",
+            "type": "string"
+          },
           "replayed": {
             "default": false,
             "title": "Replayed",

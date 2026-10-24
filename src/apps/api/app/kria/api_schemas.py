@@ -183,6 +183,9 @@ class TurnAccepted(BaseModel):
     thread_revision: int
     status: TurnStatus
     replayed: bool = False
+    recoverable_held_turn_id: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class TurnCancelBody(_StrictBody):
