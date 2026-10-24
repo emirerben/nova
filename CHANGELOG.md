@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.97.0] - 2026-10-24
+
+### Changed
+- fix(kria): ask which line of the take to open / end on when a quoted line isn't said (KRI-844) (#1787) <!-- release-pr: 1787 -->
+
 ## [0.81.96.0] - 2026-10-24
 
 ### Changed
