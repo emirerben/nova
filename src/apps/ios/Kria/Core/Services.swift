@@ -1110,7 +1110,8 @@ enum KriaClientProtocolContract {
     /// 16 (KRI-828): decodes the `freezeFrame` recipe capability (a creator's freeze frame: a main-track
     /// `holdDuration` longer than one frame, the clip's last frame held). The server plans a freeze only for
     /// this protocol inside an HTTP request; older builds cannot decode the case and fail the recipe.
-    static let version = 16
+    /// 18: decodes and grants immutable `processed_audio` source derivatives.
+    static let version = 18
     static let header = "X-Kria-Client-Protocol"
 }
 

@@ -7299,13 +7299,51 @@ def _run_phone_subtitled_job(
                     snapshot, storage_path=gcs_path, duration_s=float(probe.duration_s)
                 )
             )
+            # Explicit word removals need the full original transcript even when
+            # automatic cleanup was declined. Never infer cut times from corrected cues.
+            explicit_source_transcript = None
+            explicit_asks = _phone_speech_cut_asks(snapshot)
+            if (
+                explicit_asks
+                and not multi_clip
+                and not (speech_cleanup_snapshot or opening_cut_snapshot)
+            ):
+                explicit_source_transcript = transcribe_whisper_cached(
+                    clip_path, language=caption_language_req
+                )
+            explicit_words = (
+                speech_cleanup_snapshot.source_words()
+                if speech_cleanup_snapshot
+                else opening_cut_snapshot.source_words()
+                if opening_cut_snapshot
+                else explicit_source_transcript.words
+                if explicit_source_transcript is not None
+                else None
+            )
             cleanup_cut_plan = cut_plan
             cut_plan, take_window_receipts = _phone_opening_cut(
                 snapshot,
                 cut_plan,
                 speech_cleanup_snapshot.source_words() if speech_cleanup_snapshot else (),
                 duration_s=float(probe.duration_s),
-                off_words=opening_cut_snapshot.source_words() if opening_cut_snapshot else None,
+                off_words=explicit_words,
+            )
+            cut_plan, explicit_cut_receipts = _phone_explicit_speech_cuts(
+                explicit_asks,
+                cut_plan,
+                explicit_words,
+                duration_s=float(probe.duration_s),
+                multiple_sources=multi_clip,
+                low_confidence=(
+                    bool(explicit_source_transcript.low_confidence)
+                    if explicit_source_transcript is not None
+                    else bool(
+                        (speech_cleanup_snapshot or opening_cut_snapshot)
+                        and (
+                            speech_cleanup_snapshot or opening_cut_snapshot
+                        ).analysis.safety_signals.transcript_low_confidence
+                    )
+                ),
             )
             # True when the plan is the start/end cut alone (cleanup off): captions remap
             # through it, but it is never reported as a speech-cleanup outcome.
@@ -7442,10 +7480,16 @@ def _run_phone_subtitled_job(
                 # `_resolve_verbatim_caption_language` + `_cut_caption_words`.
                 # The cut itself and `raw_words` stay on the spoken words.
                 words_snapshot = speech_cleanup_snapshot or opening_cut_snapshot
-                assert words_snapshot is not None and cut_plan is not None  # noqa: S101
-                words = words_snapshot.source_words()
+                assert cut_plan is not None  # noqa: S101
+                words = (
+                    words_snapshot.source_words()
+                    if words_snapshot is not None
+                    else explicit_source_transcript.words
+                )
                 detected_lang, _lang_source = resolve_spoken_caption_language(
-                    words_snapshot.analysis.language,
+                    words_snapshot.analysis.language
+                    if words_snapshot is not None
+                    else explicit_source_transcript.language,
                     transcript_text=" ".join(word.text for word in words),
                     fallback=language,
                 )
@@ -8372,6 +8416,27 @@ def _run_phone_subtitled_job(
                 except Exception:  # noqa: BLE001
                     pass
 
+            from app.pipeline.explicit_speech_audio import (  # noqa: PLC0415
+                protect_explicit_speech_cut_audio,
+            )
+            from app.services.phone_noise_reduction import (  # noqa: PLC0415
+                prepare_phone_noise_reduction,
+            )
+
+            recipe = protect_explicit_speech_cut_audio(
+                recipe, source_media_id=binding.media_id, cuts=explicit_cut_receipts
+            )
+
+            recipe, processed_audio_receipt, engine_noise_receipt = prepare_phone_noise_reduction(
+                recipe,
+                snapshot,
+                source=binding,
+                local_path=clip_path,
+                temporary_dir=tmpdir,
+                job_id=job_id,
+                multiple_sources=multi_clip,
+            )
+
     if not media_lanes_enabled:
         validate_phone_pilot_recipe(recipe, allow_editor_media=bool(cutaways))
     else:
@@ -8457,6 +8522,22 @@ def _run_phone_subtitled_job(
             new_entry["phone_lane_receipt"] = lane_receipt
         if sfx_duck is not None:
             new_entry[SFX_DUCK_RECEIPT_FIELD] = sfx_duck
+        if engine_noise_receipt is not None:
+            new_entry["engine_noise_reduction"] = engine_noise_receipt
+        if processed_audio_receipt is not None:
+            from app.pipeline.phone_processed_audio import (
+                PHONE_PROCESSED_AUDIO_FIELD,  # noqa: PLC0415
+            )
+
+            processed = dict(current.get(PHONE_PROCESSED_AUDIO_FIELD) or {})
+            processed[variant_id] = {
+                processed_audio_receipt.source_media_id: processed_audio_receipt.model_dump(
+                    mode="json"
+                )
+            }
+            current[PHONE_PROCESSED_AUDIO_FIELD] = processed
+        if explicit_cut_receipts:
+            new_entry["explicit_speech_cuts"] = explicit_cut_receipts
         if take_window_receipts:
             # KRI-628 / KRI-790: whether the video starts (`opening_cut`) and ends
             # (`end_cut`) at the lines the creator quoted; the brief receipt's evidence at
@@ -8610,6 +8691,74 @@ def _run_phone_subtitled_job(
             ),
         },
     )
+
+
+def _phone_speech_cut_asks(snapshot: dict) -> tuple:
+    """Read only the immutable approved brief, never free-form renderer input."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.speech_cut_ask import brief_speech_cuts  # noqa: PLC0415
+
+    try:
+        return brief_speech_cuts(
+            BriefBinding.model_validate(snapshot.get("creator_brief_binding")).resolve()
+        )
+    except (ValueError, TypeError):
+        return ()
+
+
+def _phone_explicit_speech_cuts(
+    asks: tuple,
+    cut_plan: CutPlan | None,
+    words: Any,
+    *,
+    duration_s: float,
+    multiple_sources: bool = False,
+    low_confidence: bool = False,
+) -> tuple[CutPlan | None, list[dict[str, Any]]]:
+    """Apply creator-selected word spans on the source clock, with honest receipts.
+
+    Every request is resolved on the same uncut words, so removing the first
+    occurrence never renumbers a later request. Multi-source scope is refused.
+    """
+    from app.pipeline.explicit_speech_cut import (  # noqa: PLC0415
+        ExplicitSpeechCutRequest,
+        build_explicit_speech_cut,
+    )
+
+    receipts = []
+    for ask in asks:
+        receipt = {
+            "version": 1,
+            "requirement_ids": list(ask.requirement_ids),
+            "quote": ask.quote,
+            "occurrence": ask.occurrence,
+            "status": "not_applied",
+        }
+        try:
+            if multiple_sources:
+                raise ValueError("multiple_sources")
+            if words is None:
+                raise ValueError("missing_word_timings")
+            if low_confidence:
+                raise ValueError("uncertain_transcript")
+            result = build_explicit_speech_cut(
+                words,
+                ExplicitSpeechCutRequest(phrase=ask.quote, occurrence=ask.occurrence),
+                duration_s=duration_s,
+                existing_plan=cut_plan,
+            )
+            cut_plan = result.plan
+            receipt.update(result.receipt)
+            receipt.update(
+                requirement_ids=list(ask.requirement_ids),
+                quote=ask.quote,
+                occurrence=ask.occurrence,
+                status="applied",
+            )
+        except ValueError as exc:
+            receipt["reason"] = str(exc)
+        receipts.append(receipt)
+    return cut_plan, receipts
 
 
 def _phone_opening_cut_snapshot(

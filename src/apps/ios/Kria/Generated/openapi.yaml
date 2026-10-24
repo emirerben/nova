@@ -317,7 +317,7 @@
         "type": "object"
       },
       "ArchetypeFallbackOut": {
-        "description": "Typed shape for assembly_plan[\"archetype_fallback\"] on the status response.\n\nField-level allowlist: whatever else a hand-edited JSONB row carries under that\nkey, only these two documented fields reach the public payload (Pydantic strips\nunknown keys). Mirrored by `ArchetypeFallback` in the web app's\nplan-generate-gate.ts \u2014 keep in sync.",
+        "description": "Typed shape for assembly_plan[\"archetype_fallback\"] on the status response.\n\nField-level allowlist: whatever else a hand-edited JSONB row carries under that\nkey, only these two documented fields reach the public payload (Pydantic strips\nunknown keys). Mirrored by `ArchetypeFallback` in the web app's\nplan-generate-gate.ts — keep in sync.",
         "properties": {
           "declared": {
             "default": null,
@@ -750,7 +750,7 @@
       },
       "CarouselMomentEditRequest": {
         "additionalProperties": false,
-        "description": "Partial carousel-moment config for the carousel editor panel.\n\nAll fields optional \u2014 an omitted field keeps the variant's persisted\nvalue; the top-level `EditVariantRequest.carousel_moment` itself is what\ncarries the absent/null/dict tri-state (see `dispatch_edit_variant`):\nomitting `carousel_moment` entirely leaves the moment unchanged, an\nexplicit top-level `null` removes it, and a `CarouselMomentEditRequest`\nbody here partial-merges over whatever's persisted (present keys win,\nabsent keys keep). Enum/range validation happens in\n`dispatch_edit_variant`, matching every other loosely-typed field on\n`EditVariantRequest` (font_family, effect, text_color, ...).",
+        "description": "Partial carousel-moment config for the carousel editor panel.\n\nAll fields optional — an omitted field keeps the variant's persisted\nvalue; the top-level `EditVariantRequest.carousel_moment` itself is what\ncarries the absent/null/dict tri-state (see `dispatch_edit_variant`):\nomitting `carousel_moment` entirely leaves the moment unchanged, an\nexplicit top-level `null` removes it, and a `CarouselMomentEditRequest`\nbody here partial-merges over whatever's persisted (present keys win,\nabsent keys keep). Enum/range validation happens in\n`dispatch_edit_variant`, matching every other loosely-typed field on\n`EditVariantRequest` (font_family, effect, text_color, ...).",
         "properties": {
           "duration_s": {
             "default": null,
@@ -2950,7 +2950,8 @@
                 "audioDucking",
                 "slidePosts",
                 "semanticCamera",
-                "musicBed"
+                "musicBed",
+                "processedAudio"
               ],
               "type": "string"
             },
@@ -3073,7 +3074,8 @@
                 "audioDucking",
                 "slidePosts",
                 "semanticCamera",
-                "musicBed"
+                "musicBed",
+                "processedAudio"
               ],
               "type": "string"
             },
@@ -3315,7 +3317,7 @@
         "type": "object"
       },
       "EditorCommitMix": {
-        "description": "Editor mix section. `music_level` maps onto the existing per-variant `mix`\nsemantics (voice/bed balance \u2014 voiceover variants only). `original_level` is the\nfootage's own sound level: persisted on every variant, and honored by the phone\nrenderer for guided-story edits (including creator-song videos, where it plays WITH\nthe song; unset keeps the song video's camera silent) and by the cloud renderer for\nsong variants (footage plays UNDER the song) and original-audio variants (footage\nvolume). Cloud voiceover variants refuse it (422 original_audio_voiceover_unsupported).",
+        "description": "Editor mix section. `music_level` maps onto the existing per-variant `mix`\nsemantics (voice/bed balance — voiceover variants only). `original_level` is the\nfootage's own sound level: persisted on every variant, and honored by the phone\nrenderer for guided-story edits (including creator-song videos, where it plays WITH\nthe song; unset keeps the song video's camera silent) and by the cloud renderer for\nsong variants (footage plays UNDER the song) and original-audio variants (footage\nvolume). Cloud voiceover variants refuse it (422 original_audio_voiceover_unsupported).",
         "properties": {
           "music_level": {
             "default": null,
@@ -3361,7 +3363,7 @@
         "type": "object"
       },
       "EditorCommitRequest": {
-        "description": "One atomic editor Save: every provided section validates first; nothing\npersists unless ALL sections are valid. `base_generation` is the baseline the\nclient loaded (the variant's `render_generation_id`, falling back to\n`render_finished_at` for variants never edited through the editor) \u2014 a moved\nbaseline means another tab/render won and the commit 409s (baseline_conflict).",
+        "description": "One atomic editor Save: every provided section validates first; nothing\npersists unless ALL sections are valid. `base_generation` is the baseline the\nclient loaded (the variant's `render_generation_id`, falling back to\n`render_finished_at` for variants never edited through the editor) — a moved\nbaseline means another tab/render won and the commit 409s (baseline_conflict).",
         "properties": {
           "accepted_suggestion_ids": {
             "default": null,
@@ -8344,6 +8346,84 @@
         "title": "PreviousValue",
         "type": "object"
       },
+      "ProcessedAudioRenderAsset": {
+        "additionalProperties": false,
+        "description": "A job-owned, immutable audio derivative for one bound phone source.\n\nThe storage object name is deliberately absent.  It remains private job\nstate and the download grant derives it only from a trusted receipt stored\nwith the variant that created this asset.",
+        "properties": {
+          "fingerprint": {
+            "$ref": "#/components/schemas/RenderFingerprint"
+          },
+          "generation": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Generation",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "job_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "processed_audio",
+            "enum": [
+              "processed_audio"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "render_generation": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Render Generation",
+            "type": "string"
+          },
+          "source_generation": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Source Generation",
+            "type": "string"
+          },
+          "source_media_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Source Media Id",
+            "type": "string"
+          },
+          "variant_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Variant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "job_id",
+          "variant_id",
+          "render_generation",
+          "source_media_id",
+          "source_generation",
+          "generation",
+          "fingerprint"
+        ],
+        "title": "ProcessedAudioRenderAsset",
+        "type": "object"
+      },
       "ProtectedRegionIn": {
         "additionalProperties": false,
         "description": "KRI-827: the creator marks what to keep text off (\"the plate\"): a box on one frame of\none of their clips, normalized to the upright source frame. The server checks the clip\nis this thread's and stamps its generation; old clients omit it.",
@@ -8525,6 +8605,7 @@
                 "mapping": {
                   "library": "#/components/schemas/LibraryRenderAsset",
                   "original": "#/components/schemas/OriginalRenderAsset",
+                  "processed_audio": "#/components/schemas/ProcessedAudioRenderAsset",
                   "song": "#/components/schemas/SongRenderAsset",
                   "visual": "#/components/schemas/VisualRenderAsset",
                   "voiceover": "#/components/schemas/VoiceoverRenderAsset"
@@ -8546,6 +8627,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/SongRenderAsset"
+                },
+                {
+                  "$ref": "#/components/schemas/ProcessedAudioRenderAsset"
                 }
               ]
             },
@@ -9120,7 +9204,7 @@
         "type": "object"
       },
       "SlideFraming": {
-        "description": "How this slide's media is framed (KRI-44).\n\n``orientation`` picks the slide's own export canvas (\"landscape\" =\n1920x1080, TikTok photo profile only). ``source_crop`` is a normalized,\ntop-left-origin rectangle in the UPRIGHT (display) frame of the source,\ncover-fitted into that canvas \u2014 the same space as ``NormalizedSourceCrop``\nso device and cloud agree. See ``app/kria/framing.py``.",
+        "description": "How this slide's media is framed (KRI-44).\n\n``orientation`` picks the slide's own export canvas (\"landscape\" =\n1920x1080, TikTok photo profile only). ``source_crop`` is a normalized,\ntop-left-origin rectangle in the UPRIGHT (display) frame of the source,\ncover-fitted into that canvas — the same space as ``NormalizedSourceCrop``\nso device and cloud agree. See ``app/kria/framing.py``.",
         "properties": {
           "orientation": {
             "default": "portrait",
@@ -9352,7 +9436,7 @@
         "type": "object"
       },
       "SlidePostDraftBody": {
-        "description": "PUT /{item_id}/slide-post request \u2014 a full replacement of the draft's\nuser-editable fields. `version`/`rendered_version`/`user_edited` are\nserver-owned and never accepted from the client.",
+        "description": "PUT /{item_id}/slide-post request — a full replacement of the draft's\nuser-editable fields. `version`/`rendered_version`/`user_edited` are\nserver-owned and never accepted from the client.",
         "properties": {
           "aspect": {
             "default": null,
@@ -11799,7 +11883,7 @@
         "type": "object"
       },
       "TimelineSlotEdit": {
-        "description": "One slot as posted by the timeline editor.\n\n`slot_id=None` marks a NEW slot (the server assigns a uuid4). `clip_index`\nindexes into `job.all_candidates[\"clip_paths\"]` \u2014 clients never send paths.\nBeat slots size in `duration_beats` (walked against the real grid); slots\nwith `duration_beats=None` (no-grid variants, footage-trimmed slots, or the\nexact terminal tail after a grid's final usable beat) send their exact\nwindow in `duration_s`.",
+        "description": "One slot as posted by the timeline editor.\n\n`slot_id=None` marks a NEW slot (the server assigns a uuid4). `clip_index`\nindexes into `job.all_candidates[\"clip_paths\"]` — clients never send paths.\nBeat slots size in `duration_beats` (walked against the real grid); slots\nwith `duration_beats=None` (no-grid variants, footage-trimmed slots, or the\nexact terminal tail after a grid's final usable beat) send their exact\nwindow in `duration_s`.",
         "properties": {
           "clip_index": {
             "title": "Clip Index",
