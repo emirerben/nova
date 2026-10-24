@@ -97,6 +97,36 @@ def voiceover_music_gain(voice_mix: float) -> float:
     return max(0.0, min(1.0 - mix, _VOICEOVER_MUSIC_BED_MAX_GAIN))
 
 
+def _validated_source_audio_selection(
+    source_audio_media_ids: tuple[str, ...] | list[str] | None,
+    *,
+    bindings_by_media_id: dict[str, PhoneSourceBinding],
+    used_media_ids: set[str],
+) -> frozenset[str] | None:
+    """Validate an explicit camera-audio selection for this visual cut."""
+    if source_audio_media_ids is None:
+        return None
+    if not isinstance(source_audio_media_ids, (tuple, list)) or not all(
+        isinstance(media_id, str) and media_id for media_id in source_audio_media_ids
+    ):
+        raise ValueError("source audio selection must contain non-empty media ids")
+    selected = frozenset(source_audio_media_ids)
+    unknown = sorted(selected - bindings_by_media_id.keys())
+    if unknown:
+        raise ValueError(f"source audio selection has unknown media ids: {', '.join(unknown)}")
+    unused = sorted(selected - used_media_ids)
+    if unused:
+        raise ValueError(
+            f"source audio selection has media ids not used by this edit: {', '.join(unused)}"
+        )
+    silent = sorted(
+        media_id for media_id in selected if not bindings_by_media_id[media_id].original.has_audio
+    )
+    if silent:
+        raise ValueError(f"source audio selection has silent media ids: {', '.join(silent)}")
+    return selected
+
+
 def compile_phone_voiceover_montage_plan(
     decision: GenerativeVariantDecision,
     bindings: tuple[PhoneSourceBinding, ...],
@@ -105,6 +135,7 @@ def compile_phone_voiceover_montage_plan(
     narration: PhoneNarrationBed | None = None,
     target_lufs: float | None = None,
     resolved_text_elements: list[dict] | None = None,
+    source_audio_media_ids: tuple[str, ...] | list[str] | None = None,
 ) -> EditRecipeV2:
     """See the module docstring for the general contract.
 
@@ -274,6 +305,26 @@ def compile_phone_voiceover_montage_plan(
 
     if len({clip.id for clip in clips}) != len(clips):
         raise ValueError("phone montage clips must have unique identities")
+    selected_source_audio = _validated_source_audio_selection(
+        source_audio_media_ids,
+        bindings_by_media_id=bindings_by_media_id,
+        used_media_ids={
+            clip_id_to_media_id[step.clip_id]
+            for step in decision.assembly_steps
+            if step.clip_id in clip_id_to_media_id
+        },
+    )
+    if selected_source_audio is not None:
+        clips = [
+            clip.model_copy(
+                update={
+                    "volume": 1.0
+                    if clip_id_to_media_id[step.clip_id] in selected_source_audio
+                    else 0.0
+                }
+            )
+            for clip, step in zip(clips, decision.assembly_steps, strict=True)
+        ]
     total_duration_s = cursor
     from app.services.phone_text_styling import register_generation_timeline
 

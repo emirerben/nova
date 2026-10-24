@@ -525,7 +525,18 @@ def merge_requirements(
 # video", "animated with typewriter", "bottom left", "placeholder"). A later turn that only
 # changes the words ("the hook should say ...") restates the requirement without them; the
 # creator never withdrew them, so a same-kind, same-scope change keeps them unless it sets them.
-STICKY_FACTS = frozenset({"first_clip", "last_clip", "animation", "position", "placeholder"})
+# KRI-841: so is the video a Talking edit ends on (`ending_clip`) and whether it keeps its sound.
+STICKY_FACTS = frozenset(
+    {
+        "first_clip",
+        "last_clip",
+        "animation",
+        "position",
+        "placeholder",
+        "ending_clip",
+        "keep_audio",
+    }
+)
 
 
 def _carry_sticky_facts(target: BriefRequirement, update: BriefUpdate) -> dict[str, Any]:

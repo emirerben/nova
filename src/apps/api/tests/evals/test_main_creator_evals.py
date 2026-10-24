@@ -78,6 +78,27 @@ def test_main_creator_eval(
             _pin_range_is_grounded(PinnedText(**pin), evidence.pinned_texts or "") for pin in pinned
         )
 
+    fullscreen_beats = fixture.meta.get("fullscreen_reaction_beats")
+    if fullscreen_beats:
+        # KRI-840: "show the photo full screen when he says X" is a reaction beat with
+        # display_mode "fullscreen" and a short hold (never overlay_display, which spreads the
+        # photos evenly); a corner card omits the field; the brief records both asks' display.
+        assert result.output is not None
+        strategy = result.output["action"]["strategy"]
+        assert not strategy.get("overlay_display")
+        beats = {beat["beat_id"]: beat for beat in strategy["reaction_beats"]}
+        for beat_id, max_hold_s in fullscreen_beats["fullscreen"].items():
+            assert beats[beat_id]["display_mode"] == "fullscreen", beats[beat_id]
+            assert 0.5 <= beats[beat_id]["hold_s"] <= max_hold_s, beats[beat_id]
+        for beat_id in fullscreen_beats["corner"]:
+            assert beats[beat_id].get("display_mode", "pip") == "pip", beats[beat_id]
+        asked = {
+            trigger: update["facts"].get("display_mode")
+            for update in result.output["brief_updates"]
+            for trigger in update["facts"].get("triggers", [])
+        }
+        assert asked == fullscreen_beats["brief_display"]
+
     if fixture.meta.get("manual_visual_removal"):
         assert result.output is not None
         assert result.output["action"]["kind"] == "ask_user", (
@@ -402,6 +423,27 @@ def test_main_creator_eval(
             assert beat.get("visual_id") or beat.get("sound"), beat
         assert strategy.get("closing_media") is not None
         assert strategy.get("licensed_sfx") is None
+
+    ending_meta = fixture.meta.get("ending_clip")
+    if ending_meta:
+        # KRI-841: "add the X video at the very end with its own sound" on a phone Talking edit
+        # is the strategy's `ending_clip` (never a pop-in card or a closing photo), and the
+        # brief records it as a `style` requirement with the `ending_clip` fact: never as a
+        # `last_clip` ordering ask, which the render contract cannot verify on a Talking edit.
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        strategy = action["strategy"]
+        assert strategy["edit_format"] == "subtitled"
+        assert strategy.get("ending_clip") == ending_meta
+        assert all(
+            beat.get("visual_id") != ending_meta["media_id"]
+            for beat in strategy.get("reaction_beats") or []
+        )
+        assert strategy.get("closing_media") is None
+        facts = [update.get("facts") or {} for update in result.output.get("brief_updates") or []]
+        assert any(f.get("ending_clip") and f.get("keep_audio") is True for f in facts)
+        assert not any(f.get("last_clip") for f in facts)
 
     if fixture.meta.get("single_clip_talking_scope"):
         # KRI-238: "all" media on a one-clip phone Talking edit is that clip.

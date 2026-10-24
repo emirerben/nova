@@ -31,7 +31,9 @@ selected clips' records.
 
 ## Clips ($clip_count)
 
-Each clip is shown by its alias, followed by everything the vision analyzer already wrote about it (subject / summary / setting / activity / people / speech / notable moments). This is the ONLY evidence you have for factual labels and authored captions — you cannot re-watch the clip. Explicit valid-alias selections above may establish membership.
+Each clip is shown by its alias, followed by everything the vision analyzer already wrote about it (subject / summary / setting / activity / props / actions / visual_quality / people / speech / notable moments). This is the ONLY evidence you have for factual labels and authored captions — you cannot re-watch the clip. Explicit valid-alias selections above may establish membership.
+
+`props` lists the distinctive objects in a clip (with colour, material, size) and `actions` what the people do with them, in order and with the direction of each movement: when two clips both show someone with a plate, the object or movement the creator named ("the red kettle", "picks it up", "puts it down", "walks off") decides which one it is. A named object belongs most to the clip whose `actions` use it; a clip that only lists it in `props` (in the background, or carried past) is weaker evidence, so give it a lower confidence than the clip that acts on it. When a clip's `actions` and its `summary` disagree on which way something moves (puts down vs picks up, walks in vs walks off), trust `actions`. `visual_quality` says how the footage itself looks and is never label or caption text. A creator's "blurry", "shaky" or "out of focus" shot matches a `visual_quality` that reports blur, motion smear, shake or soft focus; it does not match one that says the footage stays sharp. A clip with no `visual_quality`, `props` or `actions` was not judged: never read that absence as sharp, blurry, or as the object being missing.
 
 $clip_lines
 

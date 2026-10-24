@@ -36,6 +36,7 @@ from app.kria.brief import (
     render_brief_request,
 )
 from app.kria.brief_binding import BriefBindingRequestTooLongError
+from app.kria.brief_binding import snapshot_media as _draft_media
 from app.kria.brief_checks import (
     NARRATED_ALIGNMENT_FIELD,
     _is_spoken_text_cue,
@@ -44,6 +45,7 @@ from app.kria.brief_checks import (
     build_receipts,
     clip_speed_notice,
     defers_caption_words_to_phone_render,
+    defers_to_narrated_render,
     describe_text_look,
     is_judged,
     judged_at_render,
@@ -1374,6 +1376,17 @@ def _complete_draft_turn(
                         facts,
                         phone_talking=phone_talking,
                         caption_words_at_render=talking_writer,
+                        # KRI-842: one clip's own sound is judged on the draft that the phone
+                        # Voiceover compiler will render, against the footage it will play.
+                        phone_narrated=defers_to_narrated_render(
+                            creator_id=thread.creator_id,
+                            edit_format=document.strategy.get("edit_format") or item.edit_format,
+                            audio_strategy=document.strategy.get("audio_strategy"),
+                            clip_paths=item.clip_gcs_paths or (),
+                        ),
+                        media_snapshot=planned.media_snapshot
+                        if planned.media_snapshot is not None
+                        else _draft_media(item),
                         # KRI-790: quoted boundaries and length use the same kept window.
                         take_window=(
                             _draft_take_window(

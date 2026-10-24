@@ -9,8 +9,9 @@ city", "the pub videos") never needs a new field, enum or keyword list.
 `app/schemas/clip_understanding.py::ClipUnderstanding` — `subject`, `summary`,
 `setting`, `activity`, `people{count, speaks_to_camera, note}`,
 `speech{has_speech, to_camera, transcript}`, `on_screen_text`, `brands`,
-`content_type`, `audio_type`, `notable_moments`. Everything is free text or a
-plain flag. It is AI-written evidence and is never on-screen copy by itself.
+`content_type`, `audio_type`, `notable_moments`, and (KRI-845) `props`,
+`actions`, `visual_quality`. Everything is free text or a plain flag. It is
+AI-written evidence and is never on-screen copy by itself.
 
 ## One writer, one reader
 
@@ -42,7 +43,13 @@ transcripts are third-party text that ends up in agent prompts.
   `tests/pipeline/test_guided_story_clip_understanding.py`.
 - **Versioning.** `ANALYSIS_VERSION = 8` is video-only; photos stay fresh at 6
   (`_MIN_FRESH_ANALYSIS_VERSION_BY_KIND`). Re-analysis is lazy. `clip_cache`
-  invalidates through `CACHE_SCHEMA_VERSION` + the analyzer `prompt_version`.
+  invalidates through `CACHE_SCHEMA_VERSION` (`s4` since KRI-845) + the analyzer
+  `prompt_version` (`2026-10-23.1`). KRI-845 did NOT bump `ANALYSIS_VERSION`
+  (that would re-run every stored video analysis, prod-wide and paid):
+  `analysis_is_stale` and `kria_clip_understanding._needs_understanding` never read
+  `prompt_version`, so a clip whose record is already non-empty keeps it. Only
+  clips analysed after the deploy carry `props` / `actions` / `visual_quality`;
+  footage attached earlier needs a fresh attach (a new chat) to get them.
 - **Generative candidate cache.** `generative_build._clip_meta_from_cache`
   derives accepted fields from `ClipMeta`, preserving understanding on fast
   reburns. Legacy rows use dataclass defaults; unknown keys are ignored. Guard:
@@ -509,6 +516,51 @@ measurements in `tests/fixtures/kri680_tigre_m1_clip_records.json`; the resolver
 model is a stand-in, so a live replay is still the proof of the model's match).
 Apply: `fly secrets set CLIP_EXPOSURE_FACT_ENABLED=true --app nova-video` +
 restart api and worker.
+
+## Props, actions and visual quality (KRI-845)
+
+"Skip the short clip where Caro bends and puts the plate on the table" could not
+tell the café clip M1_05 (carries a plate, bends, lowers it out of frame; no tray)
+from M1_08 (the creator's FIRST clip: holds the only black tray, picks up a plate,
+walks off); "the big wooden menus" read as "a waiter carrying a tray"; "the blurry
+shot of the empty table" matched nothing. The analyzer prompt asked for none of
+what separates them, so `analyze_clip.txt` now also asks for three fields:
+
+- `props`: 0-6 distinctive objects with colour / material / size ("black round tray").
+- `actions`: 0-4 verb phrases in order, with the prop and the direction of each
+  movement (puts down vs picks up, walks in vs walks off).
+- `visual_quality`: one phrase on how the footage looks: the camera move AND whether
+  the detail stays crisp. Smeared, doubled or ghosted edges for much of the clip are
+  "blurry" even when the subject is recognisable; a fast move that stays crisp is
+  "fast pan, stays sharp"; crisp static footage is "sharp and steady". Never
+  brightness (that is `visibility`, KRI-680).
+
+Path: `ClipMetadataOutput` -> `ClipMeta.clip_props` / `clip_actions` /
+`clip_visual_quality` -> `understanding_payload` -> `ClipUnderstanding.props` /
+`actions` / `visual_quality` (each `exclude_if` empty, so a record written before
+the change is byte-identical) -> `prompt_view()` -> the clip request resolver
+prompt, which says how to use them (a creator's "blurry" shot matches a reported
+blur, never "stays sharp"; a clip without the fields was not judged). The Main
+Creator's chat evidence (`creator_sessions._chat_evidence`) pops the three keys: its
+input is unchanged.
+
+Limits: nothing deterministic compares a skip with a first-clip pin. When the
+evidence is right the pin resolves to the tray clip and the skip to the other one;
+when the resolver reads the evidence onto the wrong clips, the code follows it
+(`test_known_limit_fully_swapped_evidence_is_followed_not_second_guessed`). A skip
+that names the same clip as a pin still asks (KRI-761). A singular skip ("the blurry shot")
+that the resolver matches on two clips at 0.9 drops both without asking: there is no singular-ask rule
+(`test_known_limit_two_blurry_pans_for_a_singular_skip_both_go`). Label and caption grounding
+(`vision_evidence_text`) reads `props` and `actions` like the other model-written fields, never
+`visual_quality`. Blur comes from the model's
+judgment of the frames: no sharpness number separates Don Julio M1_04 (blurry) from
+M1_06 (sharp).
+
+Coverage: `tests/kria/test_kri845_clip_detail_evidence.py` (authored analyzer
+outputs in `tests/fixtures/kri845_m1_clip_detail.json`; the resolver is a stand-in,
+so what Gemini writes and reads is the live check), four replay goldens under
+`tests/fixtures/agent_evals/`. Evidence, measurements and the paid-check plan:
+`docs/reviews/kri-845-clip-detail.md`.
 
 ## Kria thread clips: one loop per item, and Visuals queue fairness
 
