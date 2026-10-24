@@ -245,6 +245,17 @@ def ground_excerpt(
     )
 
 
+def exact_line_count(words: Sequence[Any], line: str, *, min_after_s: float = 0.0) -> int:
+    """How many times ``line`` is said, as the exact run of folded tokens, from ``min_after_s``.
+
+    The places `ground_line` / `ground_excerpt` choose its FIRST exact match among (KRI-844):
+    1 means the text names one place in the take, 2 or more that a grounding takes the first.
+    """
+    stream = _token_stream([_word_dict(w) for w in words or []])
+    tokens = [t.text for t in stream if t.start_s >= min_after_s - 1e-6]
+    return len(_find_all(tokens, fold_tokens(line)))
+
+
 # KRI-790: a line the creator quotes from memory ("Hi, I'm Karolina, I'm from Ecuador") can
 # differ from what was transcribed ("Hi, I'm Carolina from Ecuador") by a letter and a dropped
 # short word. As token counts that is 5 of 8 (below FUZZY_MIN_OVERLAP); as folded text it is
@@ -482,6 +493,7 @@ __all__ = [
     "MIN_SPEECH_WORDS",
     "GroundedExcerpt",
     "attach_segments_to_analysis",
+    "exact_line_count",
     "ground_excerpt",
     "sentence_groups",
     "spoken_word_count",

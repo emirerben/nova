@@ -314,7 +314,8 @@ class ChoiceAnswer(_CreatorModel):
     depended on; ``requirement_ids`` link it to the brief requirements it resolves.
     ``source`` is ``creator`` for a tapped/typed answer and ``creator_delegated`` when the
     creator explicitly left the choice to us ("you choose"; the draft then says so).
-    An unanswered question never produces an answer.
+    An unanswered question never produces an answer. ``value`` is the picked text, for a
+    question whose options are lines of the creator's own footage (KRI-844).
     """
 
     conflict: str = Field(min_length=1, max_length=80)
@@ -323,6 +324,10 @@ class ChoiceAnswer(_CreatorModel):
     input_digest: str = Field(min_length=1, max_length=64)
     requirement_ids: list[str] = Field(default_factory=list, max_length=16)
     source: Literal["creator", "creator_delegated"] = "creator"
+    # KRI-844: the text the answer picked, when the option is a piece of the creator's own
+    # footage (the spoken line of a take they chose to open / end on). Omitted when unset, so
+    # every stored answer stays byte-identical.
+    value: str | None = Field(default=None, max_length=300, exclude_if=lambda value: value is None)
 
 
 class CreativeStrategy(_CreatorModel):
