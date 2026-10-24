@@ -653,6 +653,19 @@ three extra lanes on top of the unchanged speaker clip + captions:
   main video track with per-clip `volume=0` (muted), which sidesteps the five
   "exactly one clip" gates (capabilities `max_clips`, upload/register routes,
   `phone_format:subtitled`, `subtitled_clip_count_unsupported`, the compiler).
+  **KRI-841, an ending with its own sound.** "Add the X video at the very end with its own
+  sound" is the strategy's `ending_clip` (`{media_id, keep_audio}`), repaired at approval. The
+  worker plays it LAST on the main track at volume 1 -- a Visuals video through this lane
+  (`SubtitledEndingClip.volume`; the admin lane above never sets it, so it stays muted), or one of
+  the item's own clips (multi-clip Talking) as the final speaker -- and keeps it out of every
+  mid-talk placement (cards, full-screen sequence, beats, cutaways); it survives 2+ speakers.
+  `variants[i].phone_ending_clip` is the receipt, read back from the COMPILED recipe: `status`
+  `applied|dropped`, `reason` (`not_found`, `is_speaker`, `lane_request_ending_wins`,
+  `visual_videos_not_verified`, `audio_mix_not_verified`, `media_lanes_disabled`, `bind_failed`,
+  `over_length_limit`, ...), `has_audio` (the source has a sound track; None = unknown), `volume`,
+  `start_s`/`end_s`. The brief check reads it: a dropped ending is "Couldn't". An ending that would
+  break the creator's stated length ("under 30 s", a confirmed 25 s; the pin counts the 1.6 s brand
+  ending) is dropped, not the whole render: `check_recipe_duration` is the pin's own rule.
 
 **Lane failures never terminalize the job.** Visuals are bound per lane
 (`bind_phone_visual_assets`, gated by `stillImages` / `visualVideos` in
@@ -2498,7 +2511,7 @@ to `TALKING_MULTI_CLIP_MAX_CLIPS` (10) clips.
   No room: receipt `unplaced` with upload position, shown as chat render notes.
 - **v1 limits**: speech cleanup refused for any multi-clip Talking (KRI-720); with
   2+ speakers the KRI-174 lanes (cards, sounds, beats) and KRI-547 face fill are
-  skipped (`lanes_skipped`); cloud Talking still uses only the first clip, so keep
+  skipped (`lanes_skipped`; a KRI-841 Visuals ending still plays); cloud Talking still uses only the first clip, so keep
   the flag off until the cloud renderer lands (plans/027 phase 3).
 - **Receipt**: `variants[i].phone_talking_multi_clip` (speakers, cutaways, unplaced,
   per-clip roles); trace event `phone/talking_multi_clip_roles`.
