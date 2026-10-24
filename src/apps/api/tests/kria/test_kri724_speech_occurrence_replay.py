@@ -675,3 +675,62 @@ def test_a_named_cut_with_an_equal_count_of_other_takes_cuts_nothing():
     [receipt] = receipts
     assert receipt["status"] != "applied" and receipt["reason"] == "pinned_occurrence_missing"
     assert plan.keep_segments == no_op_plan(30.0).keep_segments
+
+
+# -- 15: pause cleanup on: the sentence estimate lands in a removed pause -----------------
+# Failure modes: (a) the estimate sits in a pause cleanup removed while the word itself plays
+# -> must still be placed; (b) a Gemini segment start in leading silence, 2 of 2 -> the
+# ordinal word right where the cut closes; (c) the picked word itself cut out and the render
+# hears the same count -> never another occurrence; (d) a word right after the cut that the
+# ordinal does not name -> never placed as the pick.
+
+
+def _cleaned(words: list[tuple[str, float]], removed: list[tuple[float, float]]):
+    from app.pipeline.silence_cut import Removal
+
+    removals = [Removal(start_s=a, end_s=b, reason="pause") for a, b in removed]
+    timeline = []
+    for text, start in words:
+        mapped = remap_time(start, removals)
+        if mapped is not None:
+            timeline.append({"text": text, "start_s": mapped, "end_s": mapped + 0.4})
+    return timeline, (lambda t: remap_time(t, removals))
+
+
+def _pinned(ordinal: int, of: int, approx_s: float) -> SpokenTextAsk:
+    pin = OccurrencePin(ordinal=ordinal, of=of, approx_s=approx_s)
+    return SpokenTextAsk("r9", "MEROPE", ("Merope",), pin=pin)
+
+
+def test_an_estimate_in_a_removed_pause_still_places_the_kept_word():
+    # "Hi Merope is here, see you" 10-14 s; real "Merope" at 12.0 after a 10.3-12.0 pause.
+    timeline, to_timeline = _cleaned(
+        [("Hi", 10.0), ("Merope", 12.0), ("is", 12.5), ("here", 12.8)], [(10.3, 12.0)]
+    )
+    (hit, missed) = find_pinned_word(timeline, _pinned(1, 1, 10.46), to_timeline=to_timeline)
+    assert missed is None and hit[1] == pytest.approx(10.3)
+
+
+def test_a_segment_start_in_leading_silence_keeps_the_ordinal_pick():
+    timeline, to_timeline = _cleaned(
+        [("Merope", 1.0), ("Merope", 11.2), ("is", 11.7), ("great", 12.0)], [(1.7, 11.0)]
+    )
+    (hit, missed) = find_pinned_word(timeline, _pinned(2, 2, 10.0), to_timeline=to_timeline)
+    assert missed is None and hit[1] == pytest.approx(1.9)
+
+
+def test_a_cut_out_pick_with_cleanup_on_is_never_swapped():
+    # The picked word (11.2) itself is cut; the render still hears two (another at 30 s).
+    timeline, to_timeline = _cleaned(
+        [("Merope", 1.0), ("Merope", 11.2), ("Merope", 30.0)], [(9.0, 12.0)]
+    )
+    (hit, missed) = find_pinned_word(timeline, _pinned(2, 2, 10.0), to_timeline=to_timeline)
+    assert hit is None and missed == "pinned_occurrence_cut"
+
+
+def test_a_word_where_the_cut_closes_that_the_ordinal_does_not_name_is_never_placed():
+    timeline, to_timeline = _cleaned(
+        [("Merope", 1.0), ("Merope", 12.1), ("Merope", 30.0)], [(9.0, 12.0)]
+    )
+    (hit, missed) = find_pinned_word(timeline, _pinned(1, 3, 10.0), to_timeline=to_timeline)
+    assert hit is None and missed == "pinned_occurrence_cut"

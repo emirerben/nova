@@ -121,21 +121,21 @@ def find_pinned_word(
 ) -> tuple[tuple[str, float, float] | None, str | None]:
     """KRI-724: the occurrence of ``ask``'s word the creator picked, on ``words``' timeline.
 
-    ``to_timeline`` maps the pin's source time onto that timeline (None inside a cut). Returns
+    ``to_timeline`` maps the pin's source time onto that timeline (None inside a cut; the
+    word playing where that cut closes can still be the pick, `_pinned_across_cut`). Returns
     ``(hit, None)``, or ``(None, reason)``: ``pinned_occurrence_cut`` when the picked moment
     was cut out, ``pinned_occurrence_missing`` when the take's words don't hold it."""
     from app.kria.opening_cut_ask import select_occurrence  # noqa: PLC0415
 
     pin = ask.pin
     assert pin is not None  # noqa: S101 - only called for a pinned ask
+    hits = spoken_word_occurrences(words, ask.triggers)
     approx = pin.approx_s
     if approx is not None and to_timeline is not None:
-        approx = to_timeline(approx)
-        if approx is None:
-            # The picked moment was cut out: never fall back to the ordinal (another
-            # occurrence the render hears would take its place).
-            return None, "pinned_occurrence_cut"
-    hits = spoken_word_occurrences(words, ask.triggers)
+        mapped = to_timeline(approx)
+        if mapped is None:
+            return _pinned_across_cut(hits, pin, _cut_point(approx, to_timeline))
+        approx = mapped
     # The ordinal decides first; the picked time (when it survived the cut) is the fallback.
     picked = select_occurrence(
         [(start, end) for _t, start, end in hits], dataclasses.replace(pin, approx_s=approx)
@@ -143,6 +143,48 @@ def find_pinned_word(
     if picked is None:
         return None, "pinned_occurrence_missing"
     return next(hit for hit in hits if (hit[1], hit[2]) == picked), None
+
+
+# How far past a cut-out picked time `_cut_point` looks for where the take resumes.
+_CUT_PROBE_STEP_S = 0.02
+_CUT_PROBE_MAX_S = 120.0
+
+
+def _cut_point(source_s: float, to_timeline: Callable[[float], float | None]) -> float | None:
+    """Where the take resumes on the timeline after the cut holding ``source_s``."""
+    for step in range(1, int(_CUT_PROBE_MAX_S / _CUT_PROBE_STEP_S) + 1):
+        mapped = to_timeline(source_s + step * _CUT_PROBE_STEP_S)
+        if mapped is not None:
+            return mapped
+    return None
+
+
+def _pinned_across_cut(
+    hits: Sequence[tuple[str, float, float]], pin: Any, cut_point: float | None
+) -> tuple[tuple[str, float, float] | None, str | None]:
+    """The picked word when its (sentence-estimated) time fell inside a cut.
+
+    The estimate spreads a sentence's words by character share, so it can land in a pause
+    speech cleanup removed while the word itself plays right where the cut closes. The word
+    nearest that point is the pick only when it sits within ``_MAX_PIN_DRIFT_S`` of it and,
+    when the render hears the count the question offered, the ordinal names that same word.
+    Otherwise the picked moment really was cut: never another occurrence in its place."""
+    from app.kria.opening_cut_ask import _MAX_PIN_DRIFT_S  # noqa: PLC0415
+
+    ordered = sorted(hits, key=lambda hit: hit[1])
+    if cut_point is None or not ordered or pin.ordinal is None:
+        return None, "pinned_occurrence_cut"
+    index = min(range(len(ordered)), key=lambda i: abs(ordered[i][1] - cut_point))
+    gaps = [
+        abs(ordered[j][1] - ordered[index][1]) / 2.0
+        for j in (index - 1, index + 1)
+        if 0 <= j < len(ordered)
+    ]
+    if abs(ordered[index][1] - cut_point) > min([_MAX_PIN_DRIFT_S, *gaps]):
+        return None, "pinned_occurrence_cut"
+    if len(ordered) == pin.of and index != pin.ordinal - 1:
+        return None, "pinned_occurrence_cut"
+    return ordered[index], None
 
 
 def spoken_text_element(

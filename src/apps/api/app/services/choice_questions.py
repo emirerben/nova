@@ -1807,6 +1807,7 @@ def _speech_occurrence(
                     take.media_id,
                     _norm_text(ask.text),
                     [_norm_text(t) for t in ask.triggers],
+                    _norm_text(ask.speaker or ""),  # a restated speaker reopens the question
                     [round(a, 2) for a, _b in spans],
                 ),
                 effects=effects,

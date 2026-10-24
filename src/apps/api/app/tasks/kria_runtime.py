@@ -113,6 +113,7 @@ from app.routes.generative_jobs import (
 )
 from app.services.choice_questions import (
     CONFLICT_ORDER_BASIS,
+    CONFLICT_SPEECH_OCCURRENCE,
     CONFLICT_TITLE_TEXT,
     CONFLICT_WHICH_VOICE,
     KEEP_OPEN_REASON,
@@ -660,7 +661,12 @@ def _unresolved_choice_plan(
                 ),
                 KEEP_OPEN_REASON,
             )
-        if conflict.kind in (CONFLICT_ORDER_BASIS, CONFLICT_TITLE_TEXT, CONFLICT_WHICH_VOICE):
+        if conflict.kind in (
+            CONFLICT_ORDER_BASIS,
+            CONFLICT_TITLE_TEXT,
+            CONFLICT_WHICH_VOICE,
+            CONFLICT_SPEECH_OCCURRENCE,  # KRI-724: only the creator knows who says it
+        ):
             # The option labels follow the chat's language (the conflict is built under
             # the turn's binding) and the matcher accepts them, so they are quoted as is.
             quoted = [f'"{o.label}"' for o in conflict.options]
