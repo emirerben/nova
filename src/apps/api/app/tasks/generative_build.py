@@ -4419,6 +4419,57 @@ def _creator_landscape_fit(all_candidates: dict | None) -> str:
     return fit if fit in ("fill", "fit") else "fill"
 
 
+def _phone_pin_contract(snapshot: dict) -> Any:
+    """The contract ``pin_device_request`` will verify this variant against, or ``None``.
+
+    Read here only so the compile can repair toward it; an unreadable contract is left to
+    the pin-time check, which refuses it with its own typed reason.
+    """
+    from app.services.creator_render_contract import (  # noqa: PLC0415
+        CreatorRenderContractError,
+    )
+    from app.services.device_render import _contract_for_variant  # noqa: PLC0415
+
+    try:
+        return _contract_for_variant(snapshot, "guided_story")
+    except CreatorRenderContractError:
+        return None
+
+
+def _phone_repair_notes(
+    snapshot: dict, contract: Any, duration_s: float, notes: list[str]
+) -> list[str]:
+    """Every "What Kria changed" line for a phone plan, recorded in the job's trace.
+
+    ``notes`` are the compile repairs; the planner's own (``unified_montage.repair_notes``:
+    asks the approved draft could not meet, KRI-129) and a confirmed length the footage
+    could not fill join them. One channel: the variant's ``phone_repair_notes`` ->
+    ``render_notes`` on the thread, shown with the finished video.
+    """
+    from app.services.creator_render_contract import creator_length_note  # noqa: PLC0415
+    from app.services.length_policy_state import read_length_policy  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    planned = (snapshot.get("unified_montage") or {}).get("repair_notes") or []
+    merged = [note for note in planned if isinstance(note, str) and note]
+    merged.extend(note for note in notes if note not in merged)
+    if contract is not None:
+        try:
+            policy = read_length_policy(snapshot, contract)
+        except ValueError:
+            policy = None  # unreadable: the pin-time check refuses it on its own terms
+        length_note = creator_length_note(contract, duration_s, length_policy=policy)
+        if length_note is not None and length_note not in merged:
+            merged.append(length_note)
+    if merged:
+        record_pipeline_event(
+            "phone_plan",
+            "phone_plan_repaired",
+            {"generation_id": snapshot.get("creator_generation_id"), "notes": merged},
+        )
+    return merged
+
+
 @phone_text_generation
 def _run_phone_guided_job(
     job_id: str,
@@ -4573,17 +4624,22 @@ def _run_phone_guided_job(
         )
     # KRI-286: deterministic repairs (sequence effect, unqualified font) are applied
     # and noted instead of failing the job after approval. Kwargs are forwarded as-is.
+    # The pinned contract lets the repair put back confirmed text the plan lost, which
+    # the pin-time check below would otherwise refuse (KRI-129: the creator's words win).
+    contract = _phone_pin_contract(snapshot)
     compiled = compile_phone_guided_repaired(
         plan,
         bindings,
+        contract=contract,
         visuals=visuals,
         narration=narration_bed,
         song=song_bed,
         sound_effects=sound_effects,
         landscape_fit="fit" if landscape_fit == "fit" else "fill",
     )
-    recipe, repair_notes = compiled.recipe, compiled.notes
+    recipe, repair_notes = compiled.recipe, list(compiled.notes)
     validate_phone_pilot_recipe(recipe)
+    repair_notes = _phone_repair_notes(snapshot, contract, recipe.duration, repair_notes)
     repaired_plan_payload = copy.deepcopy(raw_plan) if current_phone_text_policy() else None
     if compiled.plan is not plan:
         repaired_plan_payload = compiled.plan.model_dump(mode="json", exclude_none=False)
@@ -6229,6 +6285,39 @@ def _save_request_recovery(
     return True
 
 
+def _repaired_downstream_requirement_ids(brief: Any, contract: Any) -> set[str]:
+    """Brief asks a later stage repairs and reports itself, so the planner's note skips them.
+
+    A confirmed literal the contract pins is put back on screen at compile time
+    (``phone_plan_repair.repair_plan_for_contract``), and the video's own length is reported
+    from the compiled recipe (``creator_length_note``). Their planning receipts would say
+    the opposite of what the creator then sees.
+    """
+    import unicodedata  # noqa: PLC0415
+
+    from app.kria.freeze_ask import times_one_moment  # noqa: PLC0415
+
+    pinned = {
+        " ".join(unicodedata.normalize("NFC", row.text).split())
+        for row in (contract.exact_texts if contract is not None else ())
+    }
+    skipped: set[str] = set()
+    for requirement in brief.live() if brief is not None else ():
+        literal = " ".join(unicodedata.normalize("NFC", requirement.literal or "").split())
+        if requirement.kind == "text" and literal and literal in pinned:
+            skipped.add(str(requirement.id))
+        elif (
+            requirement.kind == "timing"
+            and requirement.scope == "global"
+            and requirement.facts.get("duration_s") is not None
+            and not times_one_moment(requirement)
+            and contract is not None
+            and contract.duration_s is not None
+        ):
+            skipped.add(str(requirement.id))
+    return skipped
+
+
 def _unified_montage_clips(
     clip_paths: Sequence[str],
     entries: Sequence[Mapping[str, Any]],
@@ -6556,47 +6645,33 @@ def _run_phone_unified_montage_job(
         if snapshot.get("creator_brief_binding") and any(
             needs_creator_choice(row) for row in record["requirement_receipts"]
         ):
-            from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+            from app.kria.brief_checks import render_repair_notes  # noqa: PLC0415
             from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
+            # KRI-129 (founder rule): the creator approved this draft, so it renders and
+            # says what it could not do. Refusing here after approval ("should I try again
+            # or simplify?") was 10 of 30 pre-render failures in prod (2026-10); the
+            # question belongs before approval (`phone_montage_preflight`). The receipts
+            # keep their honest status for the chat's receipt summary.
             failures = [row for row in record["requirement_receipts"] if needs_creator_choice(row)]
+            with _worker_reply_language(snapshot):
+                notes = render_repair_notes(
+                    failures,
+                    skip_requirement_ids=_repaired_downstream_requirement_ids(brief, contract),
+                )
             record_pipeline_event(
                 "montage",
                 "requirement_recovery",
                 {
                     "stage": "compile",
-                    "decision": "ask_before_simplifying",
+                    "decision": "render_with_notes",
                     "generation_id": generation,
                     "requirement_receipts": failures,
+                    "notes": notes,
                 },
             )
-            from app.kria.brief_checks import render_block_recovery  # noqa: PLC0415
-
-            with _worker_reply_language(snapshot):
-                block = render_block_recovery(failures)
-            recovery_message = block.message
-            if not _save_request_recovery(
-                job_id,
-                snapshot,
-                ownership_epoch=ownership_epoch,
-                message=recovery_message,
-                receipts=record["requirement_receipts"],
-            ):
-                return None
-            if block.decline_reason:
-                # A blocker the creator answers directly (a title with no words): typed,
-                # so the thread gets `needs_choice` + the way forward, not a bare failure.
-                from app.services.creator_render_contract import (  # noqa: PLC0415
-                    CreatorRenderContractError,
-                )
-
-                raise CreatorRenderContractError(
-                    recovery_message,
-                    decline_reason=block.decline_reason,  # type: ignore[arg-type]
-                    field_path=block.field_path,
-                    alternative=block.alternative,
-                )
-            raise UnsupportedPhonePlan(recovery_message)
+            if notes:
+                record["repair_notes"] = notes
 
     with _sync_session() as db:
         entry_row = _lock_owned_entry_job(db, job_id)
@@ -10738,6 +10813,8 @@ def _run_phone_narrated_job(
     from app.tasks.template_orchestrate import _probe_duration  # noqa: PLC0415
 
     generation = snapshot.get("creator_generation_id")
+    # "What Kria changed" lines for asks the approved edit could not meet (KRI-129).
+    narrated_repair_notes: list[str] = []
     if not isinstance(generation, str) or not generation:
         raise ValueError("Phone rendering requires an immutable approved generation")
     bindings = tuple(
@@ -11029,31 +11106,26 @@ def _run_phone_narrated_job(
                     step_clip_ids = list(ordered_ids)
                 else:
                     if snapshot.get("creator_brief_binding") and len(ordered_ids) > 1:
+                        # KRI-129: the approved edit renders with the in-order split below
+                        # and says so, instead of refusing after approval (prod 38caaebd /
+                        # ef8e35b8, "I couldn't match the narration to the actions").
+                        from app.kria.brief_checks import (  # noqa: PLC0415
+                            narrated_alignment_repair_note,
+                        )
+
+                        with _worker_reply_language(snapshot):
+                            narrated_repair_notes.append(narrated_alignment_repair_note())
                         record_pipeline_event(
                             "narrated",
                             "requirement_recovery",
                             {
                                 "stage": "alignment",
-                                "decision": "ask_before_simplifying",
+                                "decision": "render_with_notes",
                                 "reason": "spoken_word_alignment_unavailable",
                                 "generation_id": generation,
+                                "notes": narrated_repair_notes,
                             },
                         )
-                        from app.kria.brief_checks import (  # noqa: PLC0415
-                            narrated_alignment_recovery,
-                        )
-
-                        # KRI-592: no chat language is bound here, so this stores the
-                        # English copy; the chat observer re-words it for a Turkish chat.
-                        recovery_message = narrated_alignment_recovery()
-                        if not _save_request_recovery(
-                            job_id,
-                            snapshot,
-                            ownership_epoch=ownership_epoch,
-                            message=recovery_message,
-                        ):
-                            return None
-                        raise UnsupportedPhonePlan(recovery_message)
                     n_clips = len(ordered_ids)
                     target_count = max(1, min(n_clips, len(phrases)))
                     if len(phrases) > target_count:
@@ -11207,29 +11279,27 @@ def _run_phone_narrated_job(
                     bound=bool(snapshot.get("creator_brief_binding")),
                 )
             if narrated_failures:
-                from app.kria.brief_checks import render_block_recovery  # noqa: PLC0415
+                from app.kria.brief_checks import render_repair_notes  # noqa: PLC0415
 
+                # KRI-129: the approved edit renders and says what it could not do; the
+                # receipts keep their honest status for the chat's receipt summary.
+                with _worker_reply_language(snapshot):
+                    narrated_repair_notes.extend(
+                        note
+                        for note in render_repair_notes(narrated_failures)
+                        if note not in narrated_repair_notes
+                    )
                 record_pipeline_event(
                     "narrated",
                     "requirement_recovery",
                     {
                         "stage": "compile",
-                        "decision": "ask_before_simplifying",
+                        "decision": "render_with_notes",
                         "generation_id": generation,
                         "requirement_receipts": narrated_failures,
+                        "notes": narrated_repair_notes,
                     },
                 )
-                with _worker_reply_language(snapshot):
-                    recovery_message = render_block_recovery(narrated_failures).message
-                if not _save_request_recovery(
-                    job_id,
-                    snapshot,
-                    ownership_epoch=ownership_epoch,
-                    message=recovery_message,
-                    receipts=narrated_record["requirement_receipts"],
-                ):
-                    return None
-                raise UnsupportedPhonePlan(recovery_message)
 
             # Cloud's `_mix_user_voiceover` knob is `voiceover_bed_level`
             # (direct bed gain, ~0.25 default); this compiler's `mix`
@@ -11565,6 +11635,10 @@ def _run_phone_narrated_job(
             # KRI-842: what the pinned recipe plays for each clip-sound ask, read back from
             # the recipe itself (the receipts judge this, never the global bed level).
             new_entry["clip_sound"] = reconcile_clip_sound(recipe, clip_sound_plan.receipt)
+        if narrated_repair_notes:
+            # Creator-visible (job projection -> render_notes): what the approved edit
+            # could not do (KRI-129: never a silent override).
+            new_entry["phone_repair_notes"] = list(narrated_repair_notes)
         if existing_index is not None:
             variants[existing_index] = new_entry
         else:

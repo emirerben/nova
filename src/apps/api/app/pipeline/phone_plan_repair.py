@@ -17,6 +17,8 @@ as a terminal ``phone_plan_unsupported``. This module moves the answer earlier:
 Repairs (all deterministic, all noted):
   sequence effect outside the composite-safe set -> ``fade-in``
   unqualified font / text effect                 -> qualified default font / ``fade-in``
+  a text window past the end of the timeline     -> clamped onto the timeline
+  confirmed on-screen text the plan lost         -> placed back (``repair_plan_for_contract``)
 
 NOT repaired: a transition whose outgoing source is genuinely too short (a
 hole in the timeline). No plan-level edit can conjure footage; the reject keeps
@@ -28,6 +30,7 @@ lanes add kwargs (e.g. ``landscape_fit``) and they must pass through verbatim.
 
 from __future__ import annotations
 
+import unicodedata
 from typing import Any, NamedTuple
 
 import structlog
@@ -125,6 +128,40 @@ def _repair_unqualified_fonts(plan, exc: PhoneFontUnqualified) -> tuple[Any, lis
     return plan.model_copy(update=lanes), notes
 
 
+_TEXT_LANES = ("text_elements", "context_label_text_elements")
+# Prod 5df2e3ec (2026-09-25): ``EditRecipeV2`` rejected the compiled recipe with a raw
+# Pydantic "text layer exceeds the timeline" that reached the creator verbatim.
+_TEXT_PAST_TIMELINE = "text layer exceeds the timeline"
+_MIN_TEXT_WINDOW_S = 0.1
+
+
+def _repair_text_past_timeline(plan) -> tuple[Any, list[str]]:  # noqa: ANN001
+    """Clamp text windows that run past the timeline onto it; drop only wholly-late text."""
+    total = float(plan.resolved_duration_s)
+    clamped = dropped = 0
+    lanes: dict[str, list] = {}
+    for lane in _TEXT_LANES:
+        elements = []
+        for element in getattr(plan, lane):
+            if element.end_s <= total + 1e-9:
+                elements.append(element)
+                continue
+            if element.start_s > total - _MIN_TEXT_WINDOW_S:
+                dropped += 1
+                continue
+            elements.append(element.model_copy(update={"end_s": total}))
+            clamped += 1
+        lanes[lane] = elements
+    notes: list[str] = []
+    if clamped:
+        notes.append("Ended a text that ran past the end of your video with the video")
+    if dropped:
+        notes.append("Left out a text that started after your video ends")
+    if not notes:
+        return plan, []
+    return plan.model_copy(update=lanes), notes
+
+
 def repair_plan_for_phone(plan, exc: Exception) -> tuple[Any, list[str]]:  # noqa: ANN001
     """Deterministic plan repair for one reject; ``(plan, [])`` when it is not repairable."""
     if isinstance(exc, PhoneCapabilityUnavailable):
@@ -133,20 +170,248 @@ def repair_plan_for_phone(plan, exc: Exception) -> tuple[Any, list[str]]:  # noq
         return _repair_sequence_effects(plan)
     if isinstance(exc, PhoneFontUnqualified):
         return _repair_unqualified_fonts(plan, exc)
+    if _TEXT_PAST_TIMELINE in str(exc):
+        return _repair_text_past_timeline(plan)
     # "transition_window" and every other reject: no plan-level edit can fix them.
     return plan, []
 
 
-def compile_phone_guided_repaired(plan, bindings, **kwargs: Any) -> RepairedCompile:  # noqa: ANN001
+# --- confirmed on-screen text (KRI-129: the creator's words win) ---------------------
+#
+# Prod, 2026-10: six approved phone edits were refused at pin time with "This edit is
+# missing confirmed on-screen text." (150d30b4, be180d9f: the montage planner wrote its own
+# title over the creator's confirmed one, or dropped its emoji). The contract pinned the
+# exact words; nothing put them back. ``repair_plan_for_contract`` puts each confirmed text
+# the plan lost back on screen BEFORE compile, in the slot the contract names, and says so.
+# ``verify_phone_recipe`` stays the authority at pin time: this only removes the refusal
+# for a plan that can be made to show the words.
+
+_TITLE_ID = "guided-title"
+_TITLE_HOLD_S = 2.2
+_TITLE_Y = 0.16
+_LABEL_Y = 0.78
+_STACK_STEP_Y = 0.09
+
+
+def _normal(text: object) -> str:
+    # Mirrors ``creator_render_contract._normal``: wrapping is layout, not new words.
+    return " ".join(unicodedata.normalize("NFC", str(text)).split())
+
+
+def _quoted(text: str) -> str:
+    flat = _normal(text)
+    return f"\u201c{flat if len(flat) <= 60 else flat[:57].rstrip() + '...'}\u201d"
+
+
+def _is_title(element) -> bool:  # noqa: ANN001
+    return element.id == _TITLE_ID or element.id.startswith(_TITLE_ID + "::sequence-")
+
+
+def _visible(plan) -> list:  # noqa: ANN001
+    return [
+        element
+        for lane in (*_TEXT_LANES, "narration_label_text_elements")
+        for element in getattr(plan, lane)
+        if not element.removed and element.text.strip()
+    ]
+
+
+def _shows(plan, requirement, frame: float) -> bool:  # noqa: ANN001
+    """Whether the plan already carries ``requirement``'s exact words where it asks."""
+    from app.pipeline.sequence_text_evidence import text_matches  # noqa: PLC0415
+
+    rows = [
+        {"element_id": e.id, "text": e.text, "start_s": e.start_s, "end_s": e.end_s}
+        for e in _visible(plan)
+    ]
+    matches = text_matches(rows, requirement.text, role="any", tolerance_s=frame)
+    total = float(plan.resolved_duration_s)
+    if requirement.duration_s is not None:
+        wanted = min(requirement.duration_s, total)
+        matches = [r for r in matches if r["end_s"] - r["start_s"] + frame >= wanted]
+    if requirement.role == "opening":
+        matches = [r for r in matches if r["start_s"] <= frame]
+    elif requirement.role == "closing":
+        matches = [r for r in matches if r["end_s"] >= total - frame]
+    elif requirement.role == "clip":
+        windows = _clip_windows(plan, requirement)
+        matches = [
+            r
+            for r in matches
+            if any(r["start_s"] >= s - frame and r["end_s"] <= e + frame for s, e in windows)
+        ]
+    return bool(matches)
+
+
+def _clip_windows(plan, requirement) -> list[tuple[float, float]]:  # noqa: ANN001
+    clips = [m for m in plan.story_timeline if m.lane == "clip"]
+    if requirement.shot_index is not None:
+        clips = clips[requirement.shot_index : requirement.shot_index + 1]
+    elif requirement.media_id:
+        clips = [m for m in clips if m.media_id == requirement.media_id]
+    return [(float(m.output_start_s), float(m.output_end_s)) for m in clips]
+
+
+def _new_text(plan, template, **updates: Any):  # noqa: ANN001
+    from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+
+    if template is not None:
+        # Copy the look, never the identity: no sequence lineage, no case transform (the
+        # verifier compares the drawn words), no block or caption binding.
+        return template.model_copy(
+            update={
+                "word_timings": None,
+                "animation_phases": None,
+                "source_params": None,
+                "visual_block_id": None,
+                "text_case": None,
+                "removed": False,
+                **updates,
+            }
+        )
+    return TextElement(
+        role="generative_intro",
+        position="custom",
+        x_frac=0.5,
+        font_family=getattr(plan.typography, "font", None) or "Fraunces",
+        size_px=64,
+        color="#FFF8F0",
+        stroke_width=0,
+        shadow_enabled=True,
+        shadow_style="standard",
+        effect="static",
+        alignment="center",
+        max_width_frac=0.84,
+        **updates,
+    )
+
+
+def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tuple[Any, list[str]]:  # noqa: ANN001
+    """Put every confirmed exact text the plan lost back on screen; ``(plan, notes)``.
+
+    Slots, in the contract's own words: an ``opening`` text becomes the title (retexted,
+    or added at 0 s); a ``closing`` text is added over the last seconds; a ``clip`` text
+    goes on that clip's window (retexting its label when one is there); an ``any`` text
+    takes the title slot when the planner filled it with its own copy, otherwise it is
+    added over the opening. A text already shown but too briefly or in the wrong place is
+    held / moved, never duplicated. Nothing else in the plan changes.
+    """
+    if contract is None or not contract.exact_texts:
+        return plan, []
+    total = float(plan.resolved_duration_s)
+    required = {_normal(r.text) for r in contract.exact_texts}
+    texts = list(plan.text_elements)
+    notes: list[str] = []
+    added = 0
+    current = plan
+    seen: set[tuple[str, str, str | None, int | None]] = set()
+    for requirement in contract.exact_texts:
+        key = (
+            _normal(requirement.text),
+            requirement.role,
+            requirement.media_id,
+            requirement.shot_index,
+        )
+        if key in seen or _shows(current, requirement, frame_s):
+            continue
+        seen.add(key)
+        literal = requirement.text
+        hold = min(total, max(requirement.duration_s or 0.0, _TITLE_HOLD_S))
+        same = [i for i, e in enumerate(texts) if not e.removed and _normal(e.text) == key[0]]
+        title = [i for i, e in enumerate(texts) if _is_title(e) and not e.removed]
+        if same and requirement.role in {"opening", "any"}:
+            # The words are there, just too briefly or not from the start: hold / move them.
+            element = texts[same[0]]
+            start = 0.0 if requirement.role == "opening" else element.start_s
+            end = min(total, max(element.end_s - element.start_s + start, start + hold))
+            texts[same[0]] = element.model_copy(update={"start_s": start, "end_s": end})
+            notes.append(f"Kept your text {_quoted(literal)} on screen longer")
+        elif (
+            requirement.role in {"opening", "any"}
+            and title
+            and all(_normal(texts[i].text) not in required for i in title)
+        ):
+            # The planner wrote its own title where the creator's confirmed words belong.
+            first = texts[title[0]]
+            end = max(max(texts[i].end_s for i in title), hold)
+            replacement = _new_text(
+                current, first, id=_TITLE_ID, text=literal, start_s=0.0, end_s=min(total, end)
+            )
+            texts = [e for i, e in enumerate(texts) if i not in title]
+            texts.insert(title[0], replacement)
+            notes.append(f"Used your title {_quoted(literal)} exactly as you wrote it")
+        elif requirement.role == "clip":
+            windows = _clip_windows(current, requirement)
+            if not windows:
+                continue  # no such clip in the plan: the pin-time check stays the authority
+            start, end = windows[0]
+            label = next(
+                (
+                    i
+                    for i, e in enumerate(texts)
+                    if e.id.startswith("clip-label")
+                    and not e.removed
+                    and e.start_s >= start - frame_s
+                    and e.end_s <= end + frame_s
+                    and _normal(e.text) not in required
+                ),
+                None,
+            )
+            if label is not None:
+                texts[label] = texts[label].model_copy(update={"text": literal, "text_case": None})
+            else:
+                added += 1
+                texts.append(
+                    _new_text(
+                        current,
+                        None,
+                        id=f"contract-text-{added}",
+                        text=literal,
+                        start_s=start,
+                        end_s=end,
+                        y_frac=_LABEL_Y,
+                    )
+                )
+            notes.append(f"Added your text {_quoted(literal)} on its clip")
+        else:
+            added += 1
+            closing = requirement.role == "closing"
+            start = total - hold if closing else 0.0
+            template = texts[title[0]] if title else None
+            texts.append(
+                _new_text(
+                    current,
+                    template,
+                    id=f"contract-text-{added}",
+                    text=literal,
+                    start_s=max(0.0, start),
+                    end_s=min(total, start + hold) if not closing else total,
+                    y_frac=min(0.7, _TITLE_Y + _STACK_STEP_Y * (added if title else added - 1)),
+                )
+            )
+            notes.append(f"Added your text {_quoted(literal)} on screen")
+        current = current.model_copy(update={"text_elements": texts})
+    if not notes:
+        return plan, []
+    return current, list(dict.fromkeys(notes))
+
+
+def compile_phone_guided_repaired(  # noqa: ANN001
+    plan, bindings, *, contract: Any = None, **kwargs: Any
+) -> RepairedCompile:
     """Compile + pilot-validate, repairing known rejects (see module docstring).
 
-    ``kwargs`` go to ``compile_phone_guided_plan`` verbatim. Raises the compile /
-    validation error unchanged when it is not repairable (or a repair did not help).
+    ``contract`` (the job's pinned ``CreatorRenderContract``, when it has one) first puts
+    back any confirmed exact text the plan lost (``repair_plan_for_contract``). ``kwargs``
+    go to ``compile_phone_guided_plan`` verbatim. Raises the compile / validation error
+    unchanged when it is not repairable (or a repair did not help).
     """
     allow_editor_media = bool(kwargs.get("allow_editor_media", False))
-    notes: list[str] = []
+    current, contract_notes = repair_plan_for_contract(plan, contract)
+    if contract_notes:
+        log.info("phone_plan_contract_repaired", notes=contract_notes)
+    notes: list[str] = list(contract_notes)
     attempted: set[str] = set()
-    current = plan
     for _ in range(_MAX_REPAIR_PASSES + 1):
         try:
             # Looked up on the module at call time so a patched compiler is honoured.

@@ -10,12 +10,9 @@ from __future__ import annotations
 import uuid
 from types import SimpleNamespace
 
-import pytest
-
 import app.tasks.generative_build as gb
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_binding import BriefBinding
-from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.tasks import kria_runtime
 from tests.tasks.test_narrated_caption_language import (
     _HINTED_EN,
@@ -145,20 +142,22 @@ def test_the_render_ready_review_lists_the_record_receipts(monkeypatch):
     assert by_id["r3"]["verification"] == "checked" and by_id["r4"]["verification"] == "unchecked"
 
 
-def test_a_last_clip_that_misses_asks_before_pinning_a_recipe(monkeypatch):
+def test_a_last_clip_that_misses_renders_and_says_so(monkeypatch):
     # The agent seats the sunset clip first: "End on the sunset valley" cannot be met.
-    job, snapshot, binding = _setup(monkeypatch, order=["c2", "c0", "c1"])
+    # KRI-129: the approved edit renders; the note says exactly what it missed.
+    job, snapshot, _binding = _setup(monkeypatch, order=["c2", "c0", "c1"])
 
-    with pytest.raises(UnsupportedPhonePlan, match="The sunset valley is clip 1 of 3"):
-        gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
 
-    assert "_device_render_v1" not in job.assembly_plan
-    assert "narrated_alignment" not in job.assembly_plan
-    recovery = job.assembly_plan["request_recovery"]
-    assert "Should I try again or simplify this request?" in recovery["message"]
-    assert recovery["binding_digest"] == binding.digest
-    [receipt] = [r for r in recovery["requirement_receipts"] if r["requirement_id"] == "r3"]
+    assert job.status == "awaiting_device"
+    assert "request_recovery" not in job.assembly_plan
+    record = job.assembly_plan["narrated_alignment"]
+    [receipt] = [r for r in record["requirement_receipts"] if r["requirement_id"] == "r3"]
     assert receipt["status"] == "not_possible" and receipt["verification"] == "checked"
+    [variant] = job.assembly_plan["variants"]
+    [note] = variant["phone_repair_notes"]
+    assert "The sunset valley is clip 1 of 3" in note
+    assert "Should I try again" not in note
 
 
 def test_an_unbound_job_records_the_steps_but_no_receipts_and_never_blocks(monkeypatch):
@@ -229,17 +228,13 @@ def test_the_record_helper_matches_labels_by_basename_or_source_id():
     ]
 
 
-def test_a_turkish_chat_missed_last_clip_asks_in_turkish(monkeypatch):
-    """KRI-765: the worker writes the block recovery in the chat's language, not half and half."""
+def test_a_turkish_chat_missed_last_clip_is_noted_in_turkish(monkeypatch):
+    """KRI-765: the worker writes the note in the chat's language, not half and half."""
     job, snapshot, _binding = _setup(monkeypatch, order=["c2", "c0", "c1"])
     snapshot["creator_reply_language"] = "tr"
 
-    with pytest.raises(UnsupportedPhonePlan) as caught:
-        gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
 
-    message = job.assembly_plan["request_recovery"]["message"]
-    assert message == str(caught.value)
-    assert message.endswith(
-        "Taslağın kaydedildi. Tekrar mı deneyeyim, yoksa isteği sadeleştireyim mi?"
-    )
-    assert "Should I try again" not in message and "Your draft is saved" not in message
+    [note] = job.assembly_plan["variants"][0]["phone_repair_notes"]
+    assert "sunset valley" in note.lower() or "gün batımı" in note.lower()
+    assert "clip 1 of 3" not in note

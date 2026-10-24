@@ -10,9 +10,10 @@ by the phone planner ten seconds after approval: "This draft is about 4.7s; you 
 ``tests/fixtures/kri775_merope_m2_turns.json`` holds both renders' approved brief, strategy
 and media snapshot (the 68 s take's clip record: duration, timed speech, best moments,
 answers) exactly as prod pinned them, plus prod's own length plan and refusal. The first
-two tests replay prod's recorded brief and reproduce prod's failure: the real gate rebuilds
-prod's length plan and the real phone worker refuses it on prod's own "about 4.7s; you asked
-for 14s" (on 857ab6738 its whole message and every receipt match prod word for word).
+two tests replay prod's recorded brief: the real gate rebuilds prod's length plan, and the
+real phone worker judges it on prod's own "about 4.7s; you asked for 14s" (every receipt
+matches prod word for word). Prod refused the render there; since KRI-129's repair lane the
+worker renders the approved draft and carries that receipt as a "What Kria changed" note.
 
 The six-windows and buildable tests replay the same turns with the creator's messages run
 through ``carry_moment_ask`` the way the planner does since KRI-776 (#1711). The freeze test
@@ -152,6 +153,7 @@ def prod_flags(monkeypatch: pytest.MonkeyPatch) -> None:
 class WorkerOutcome:
     refusal: str | None
     receipts: list[dict]
+    notes: tuple[str, ...] = ()
 
     @property
     def failures(self) -> list[dict]:
@@ -236,6 +238,13 @@ def run_worker(
     monkeypatch.setattr(gb, "_sync_session", contextlib.nullcontext)
     monkeypatch.setattr(gb, "_lock_owned_entry_job", plan_stops_at_the_pin)
     monkeypatch.setattr(brief_checks, "plan_facts_from_unified_montage", judged)
+    import app.services.pipeline_trace as pipeline_trace  # noqa: PLC0415
+
+    def traced(stage, event, data=None):  # noqa: ANN001, ANN202
+        if event == "requirement_recovery":
+            seen["notes"] = tuple((data or {}).get("notes") or ())
+
+    monkeypatch.setattr(pipeline_trace, "record_pipeline_event", traced)
     try:
         result = gb._run_phone_unified_montage_job(
             str(uuid.uuid4()), snapshot, candidates, ownership_epoch=1
@@ -246,7 +255,11 @@ def run_worker(
     receipts = brief_checks.build_receipts(
         brief.live(), read_record(seen["record"]), include_unchecked=True
     )
-    return WorkerOutcome(refusal=None, receipts=[r.model_dump(mode="json") for r in receipts])
+    return WorkerOutcome(
+        refusal=None,
+        receipts=[r.model_dump(mode="json") for r in receipts],
+        notes=seen.get("notes", ()),
+    )
 
 
 def planned_turn(render: dict) -> PlannedKriaTurn:
@@ -338,17 +351,18 @@ async def test_the_gate_rebuilds_the_length_plan_prod_approved(
 
 
 @pytest.mark.parametrize("index", [0, 1], ids=["job-417eecd4", "job-50f67a06"])
-def test_the_phone_worker_refuses_it_on_prods_length_shortfall(
+def test_the_phone_worker_renders_prods_length_shortfall_and_says_so(
     monkeypatch: pytest.MonkeyPatch, index: int
 ) -> None:
-    """On 857ab6738 (= prod 6b689783a for these paths) the worker's message and every
-    receipt equal prod's word for word. Pinned here is the part the sibling fixes leave
-    alone (KRI-777 rewords the freeze row, KRI-778 the message): the refusal itself and the
-    total-length receipt, "about 4.7s; you asked for 14s"."""
+    """On 857ab6738 (= prod 6b689783a for these paths) every receipt equals prod's word for
+    word, and prod refused the render on them. KRI-129: the approved draft now renders (it
+    reaches the job lock) and the "What Kria changed" notes carry the same total-length
+    receipt, "about 4.7s; you asked for 14s"."""
     render = RENDERS[index]
     outcome = run_worker(monkeypatch, render)
-    assert outcome.refusal is not None
+    assert outcome.refusal is None
     assert "This draft is about 4.7s; you asked for 14s." in render["prod_message"]
+    assert "This draft is about 4.7s; you asked for 14s." in outcome.notes
     ours = {row["requirement_id"]: row for row in outcome.receipts}
     assert (ours["r7"]["status"], ours["r7"]["verification"], ours["r7"]["reason"]) == (
         "partial",
