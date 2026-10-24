@@ -252,9 +252,12 @@ def run_worker(
     except UnsupportedPhonePlan as exc:
         return WorkerOutcome(refusal=str(exc), receipts=seen["receipts"])
     assert result is None and seen.get("planned"), "the plan must reach the job lock"
-    receipts = brief_checks.build_receipts(
-        brief.live(), read_record(seen["record"]), include_unchecked=True
-    )
+    from app.kria.reply_language import reply_language_for  # noqa: PLC0415
+
+    with reply_language_for(reply_language):  # the worker binds the chat's language
+        receipts = brief_checks.build_receipts(
+            brief.live(), read_record(seen["record"]), include_unchecked=True
+        )
     return WorkerOutcome(
         refusal=None,
         receipts=[r.model_dump(mode="json") for r in receipts],
