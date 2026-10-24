@@ -12,6 +12,9 @@ struct AttachmentSheet: View {
     let capabilities: CreationCapabilities?
     /// False until the account's capabilities have loaded; uploads wait for them.
     var capabilitiesLoaded = true
+    /// KRI-815: opened from a script card: the sheet starts on the voiceover step (any format) and shows this
+    /// script to read while recording. Nil = the sheet as before.
+    var voiceoverScript: VoiceoverScript? = nil
     let refresh: () async -> Void
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var auth: AuthStore
@@ -61,6 +64,7 @@ struct AttachmentSheet: View {
         thread: CreationThread?,
         capabilities: CreationCapabilities?,
         capabilitiesLoaded: Bool = true,
+        voiceoverScript: VoiceoverScript? = nil,
         refresh: @escaping () async -> Void
     ) {
         self.projectID = projectID
@@ -71,9 +75,12 @@ struct AttachmentSheet: View {
         self.capabilities = capabilities
         self.capabilitiesLoaded = capabilitiesLoaded
         self.refresh = refresh
-        let initialRole: CreationMediaRole = format?.usesVisualPool == true ? .visual : .clip
+        // A script is for a recording: never on a Visuals-only (slide) project.
+        let script = format?.usesVisualPool == true ? nil : voiceoverScript
+        self.voiceoverScript = script
+        let initialRole: CreationMediaRole = script != nil ? .voiceover : (format?.usesVisualPool == true ? .visual : .clip)
         _role = State(initialValue: initialRole)
-        _step = State(initialValue: initialRole == .visual ? .overlays : .footage)
+        _step = State(initialValue: script != nil ? .voiceover : (initialRole == .visual ? .overlays : .footage))
     }
 
     /// Slides may only use the existing PlanItemAsset Visuals pool. Keeping
@@ -81,7 +88,7 @@ struct AttachmentSheet: View {
     /// from offering primary footage or voiceover before the picker appears.
     private var usesVisualPoolOnly: Bool { format?.usesVisualPool == true }
     private var narrated: Bool { (format ?? thread.map { CreationFormat(thread: $0) }) == .narrated }
-    private var hasVoiceoverStep: Bool { narrated || media.contains(where: \.isVoiceover) }
+    private var hasVoiceoverStep: Bool { narrated || voiceoverScript != nil || media.contains(where: \.isVoiceover) }
     /// "Add your song" appears only when the server advertises `media.song` (feature on for this account and
     /// protocol), and only for montage-style projects: a song replaces the soundtrack of cut footage.
     private var hasSongStep: Bool {
@@ -398,6 +405,10 @@ struct AttachmentSheet: View {
     private var voiceoverStep: some View {
         VStack(alignment: .leading, spacing: 20) {
             AttachmentHeading(title: recorder.hasRecording ? (recorder.isImported ? "Review voiceover" : "Review recording") : (recorder.isRecording ? "Recording voiceover" : "Add voiceover"), subtitle: recorder.hasRecording ? "Listen before adding this recording to your video." : "Record here or upload a voiceover you’ve already made.")
+            if let voiceoverScript, !recorder.hasRecording {
+                VoiceoverScriptReadAlong(script: voiceoverScript)
+                    .id("\(voiceoverScript.scriptID)-\(voiceoverScript.revision)")
+            }
             if !recorder.hasRecording {
                 FootageDurationCard(summary: footageDurationSummary)
                     .accessibilityIdentifier("footage-duration")

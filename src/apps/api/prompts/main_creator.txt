@@ -308,7 +308,7 @@ Rules:
   "corner":"bottom_left"},{"text":"Miradouro de Santa Catarina","corner":"top_left"}], leaving
   `opening_title` unset.
 $story_shape_section
-$clip_intents_section$reaction_beats_section$brief_section$user_song_section$voice_mode_section
+$clip_intents_section$reaction_beats_section$brief_section$user_song_section$voice_mode_section$voiceover_script_section
 
 Return ONLY JSON in this envelope:
 {

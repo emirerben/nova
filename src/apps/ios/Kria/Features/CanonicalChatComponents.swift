@@ -202,6 +202,15 @@ struct ChatMessageRow: View {
     /// Tappable answers for a plain `assistant_response` question. nil = not the newest unanswered question
     /// (or no options): no chips are drawn, so history never keeps stale tappable answers.
     var replyOptionsMode: ReplyOptionsMode? = nil
+    /// KRI-815: how to present `message.voiceoverScript`. nil (old server, flag off, no script) = the reply text,
+    /// which holds the script too.
+    var voiceoverScriptMode: VoiceoverScriptCardMode? = nil
+
+    /// With the script card shown, the reply text drops the script it ends with (the card holds it).
+    private var shownContent: String {
+        guard voiceoverScriptMode != nil, let script = message.voiceoverScript else { return message.displayedContent }
+        return script.reply(from: message.displayedContent)
+    }
 
     private static let userBubbleShape = UnevenRoundedRectangle(
         topLeadingRadius: 18,
@@ -243,14 +252,14 @@ struct ChatMessageRow: View {
                 }
                 // With receipts and a server `reply_lead`, the lead replaces the long prose: the receipt rows
                 // below carry each fact once. No lead (old server) = today's text, unchanged.
-                ChatResponseText(content: message.displayedContent, startedAt: responseStartedAt)
+                ChatResponseText(content: shownContent, startedAt: responseStartedAt)
                     .font(KriaFont.body(14))
                     .foregroundStyle(KriaColor.ink)
                     .lineSpacing(4)
-                    .copyableMessage(message.displayedContent, previewShape: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .copyableMessage(shownContent, previewShape: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     // On the text, not the stack: a stack's label is applied to
                     // every child, which read each option chip as the question.
-                    .accessibilityLabel("Kria: \(message.displayedContent)")
+                    .accessibilityLabel("Kria: \(shownContent)")
                 if !message.options.isEmpty, let onSelectOption {
                     QuestionOptionsRow(
                         options: message.options,
@@ -282,6 +291,10 @@ struct ChatMessageRow: View {
                         .id(question.questionID)
                 }
                 if questionBatch == nil { choiceCard }
+                if let script = message.voiceoverScript, let voiceoverScriptMode {
+                    VoiceoverScriptCard(script: script, mode: voiceoverScriptMode)
+                        .id("\(script.scriptID)-\(script.revision)")
+                }
                 if !message.receipts.isEmpty {
                     RequirementChipsView(
                         receipts: message.receipts, requirements: requirements, titlesReady: briefSettled,
