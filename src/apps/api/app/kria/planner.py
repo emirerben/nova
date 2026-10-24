@@ -4324,8 +4324,6 @@ async def _gate_unresolved_choices(
         plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
         arguments = apply_intent.arguments
     planned = replace(planned, plan=plan)
-    if not settings.kria_choice_questions_enabled and not strategy.get("editorial_plan"):
-        return planned
     brief: CreativeBrief | None = None
     # Only a creator with a brief BINDING has a dispatch contract that reads the brief, so
     # only they can be asked a brief-derived question that anything would later refuse
@@ -4337,6 +4335,18 @@ async def _gate_unresolved_choices(
                 brief = apply_updates(
                     brief, planned.brief_updates, source_turn_id=None, creator_text=creator_text
                 )
+    from app.kria.unclear_word_ask import clarification_question  # noqa: PLC0415
+
+    clarification = clarification_question(
+        brief, planned.media_snapshot, strategy=strategy, creator_id=creator_id
+    )
+    if clarification is not None:
+        return replace(
+            planned,
+            plan=KriaTurnPlan(mode="respond", turn_value="question", response=clarification),
+        )
+    if not settings.kria_choice_questions_enabled and not strategy.get("editorial_plan"):
+        return planned
     events = await _load_thread_events(db, thread_id)
     music_inputs = {
         "media": (planned.media_snapshot or {}).get("clip_assignments"),

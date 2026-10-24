@@ -18,9 +18,9 @@ Pure: no I/O, no model, no clock. Used twice and kept identical on purpose:
 
 Safety rules (each pinned by ``tests/kria/test_kri849_dj_t1_unclear_word_replay.py``):
 
-* Not comparable -> no spans and no change (a different language, a missing hearing, too little in
-  common, more than :data:`MAX_SPANS` spans). Never flood a creator with questions, never wipe
-  captions on a bad comparison.
+* Not comparable -> no invented spans (a different language, a missing hearing, too little in
+  common, more than :data:`MAX_SPANS` spans). The caller must request a grounded target before
+  approval or render; this pure comparison never guesses a window or wipes unrelated captions.
 * Noise is not a disagreement: fillers, case, punctuation, accents, digits, near-identical
   spellings, an unmatched run at either edge of the take, and a word the creator listed to spell
   (whisper-1 writes "Creole sauce" for the listed "salsa criolla").

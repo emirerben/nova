@@ -41,8 +41,8 @@ Extraction / fact
 Detection
  3. whisper-1 has no confidence: use disagreement between the two hearings; both agreeing -> no
     question (known gap: a shared wrong word still ships; the draft line says so honestly).
- 4. The hearings are not comparable (different language, a hearing missing, too little in common,
-    more than two spans): ask nothing, change nothing, and say so honestly in the draft line.
+ 4. The hearings are not comparable: request the missing target before approval. Without a
+    grounded window a legacy render declines rather than printing a guess or deleting captions.
  5. Noise must not nag: fillers, punctuation, accents, digits, a word the creator listed to spell
     (whisper-1 writes "Creole sauce" for the listed "salsa criolla") are not unclear words.
 Gate / question
@@ -697,8 +697,10 @@ async def test_the_creator_typing_the_word_writes_exactly_those_words(
 # == 3. fail closed ==========================================
 
 
+@pytest.mark.parametrize("missing_hearing", [False, True])
 async def test_later_typed_correction_replaces_the_earlier_tapped_caption_answer(
     monkeypatch: pytest.MonkeyPatch,
+    missing_hearing: bool,
 ) -> None:
     """A partial brief correction must not leave an earlier tap owning the caption window."""
     from app.kria.brief import BriefUpdate, apply_updates
@@ -719,6 +721,8 @@ async def test_later_typed_correction_replaces_the_earlier_tapped_caption_answer
         source_turn_id="later-correction",
         creator_text="Actually, write sal de mar there",
     )
+    if missing_hearing:
+        row = take_row(drop_gemini=True)
     variant = write_captions(
         monkeypatch,
         approved_binding(row, corrected, strategy, latest="Actually, write sal de mar there"),
@@ -805,16 +809,67 @@ async def test_hearings_that_agree_ask_nothing_and_change_nothing(
         ),
     ],
 )
-async def test_hearings_that_cannot_be_compared_ask_nothing_and_touch_nothing(
+async def test_uncomparable_hearings_require_a_target_before_approval_or_render(
     monkeypatch: pytest.MonkeyPatch, baseline: dict, gemini: str | None
 ) -> None:
-    """4: never flood the creator with questions, never wipe captions on a bad comparison."""
+    """4: unknown localization stays unresolved; neither guessing nor blanket deletion is safe."""
+    from app.services.creator_render_contract import CreatorRenderContractError
+
     row = take_row(gemini=gemini, drop_gemini=gemini is None)
     brief = brief_for()
     result = await gate(monkeypatch, brief, row)
-    assert asked(result) is None and result.plan.mode == "act"
-    variant = write_captions(monkeypatch, approved_binding(row, brief, latest="go"))
-    assert variant["caption_cues"] == baseline["caption_cues"]
+    assert result.plan.mode == "respond" and result.plan.turn_value == "question"
+    assert not result.plan.intents and guesses_in(result.plan.response) == []
+    assert "where" in result.plan.response.casefold()
+    blocked = approval_blocker(strategy_for(), brief, row, [])
+    assert blocked is not None and blocked[0].mode == "respond"
+    with pytest.raises(CreatorRenderContractError) as refused:
+        write_captions(monkeypatch, approved_binding(row, brief, latest="go"))
+    assert refused.value.decline_reason == "needs_choice"
+    assert refused.value.field_path == "captions"
+
+
+async def test_a_grounded_omission_survives_a_missing_second_hearing(
+    monkeypatch: pytest.MonkeyPatch,
+    baseline: dict,
+) -> None:
+    strategy, brief = await answered(monkeypatch, take_row(), LEAVE_OUT)
+    row = take_row(drop_gemini=True)
+    result = await gate(monkeypatch, brief, row)
+    assert result.plan.mode == "act"
+    variant = write_captions(monkeypatch, approved_binding(row, brief, strategy))
+    assert_clean_and_untouched(variant, baseline, SPAN_S)
+
+
+@pytest.mark.parametrize("questions_enabled", [False, True])
+async def test_an_unknown_target_cannot_be_bypassed_by_repeated_go_ahead(
+    monkeypatch: pytest.MonkeyPatch,
+    questions_enabled: bool,
+) -> None:
+    monkeypatch.setattr(settings, "kria_choice_questions_enabled", questions_enabled)
+    row, brief = take_row(drop_gemini=True), brief_for(unclear_answer="omit")
+    events = []
+    for number in range(3):
+        result = await gate(monkeypatch, brief, row, events)
+        assert result.plan.mode == "respond" and not result.plan.intents
+        events.extend(
+            [
+                tag_event("assistant", {}, "assistant_question", result.plan.response),
+                message_event("go ahead", f"unresolved-{number}"),
+            ]
+        )
+        assert approval_blocker(strategy_for(), brief, row, events) is not None
+
+
+async def test_the_missing_target_question_is_turkish_in_a_turkish_chat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.kria.reply_language import reply_language_for
+
+    with reply_language_for("tr"):
+        result = await gate(monkeypatch, brief_for(), take_row(drop_gemini=True))
+        assert result.plan.mode == "respond" and result.plan.turn_value == "question"
+        assert "neresinde" in result.plan.response and "Which" not in result.plan.response
 
 
 async def test_a_word_the_creator_listed_is_not_an_unclear_word(
@@ -1263,25 +1318,21 @@ async def test_a_failing_step_still_drops_the_answered_window_and_says_it_could_
     assert all(guesses_in(r.reason or "") == [] for r in receipts)
 
 
-async def test_a_failing_step_with_nothing_readable_still_renders_and_says_so(
+async def test_a_failing_step_with_no_readable_target_declines_without_guessing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.kria import unclear_word_ask  # noqa: PLC0415
+    from app.services.creator_render_contract import CreatorRenderContractError
 
     row = take_row()
     binding = approved_binding(row, brief_for(), latest="go")
     monkeypatch.setattr(unclear_word_ask, "apply_to_cues", boom)
     monkeypatch.setattr(unclear_word_ask, "detect", boom)
 
-    variant = write_captions(monkeypatch, binding)
-
-    assert variant["caption_unclear"] == {"state": "error", "spans": []}
-    receipts = build_receipts(
-        brief_for().live(), plan_facts_from_phone_variant(variant), include_unchecked=True
-    )
-    line = ask_receipt({r.requirement_id: r for r in receipts}, brief_for())
-    assert line.status != "met" and "couldn't check" in line.reason.casefold()
-    assert all(guesses_in(r.reason or "") == [] for r in receipts)
+    with pytest.raises(CreatorRenderContractError) as refused:
+        write_captions(monkeypatch, binding)
+    assert refused.value.decline_reason == "needs_choice"
+    assert refused.value.field_path == "captions"
 
 
 def test_the_quoted_spelling_asks_reach_the_unclear_word_step(

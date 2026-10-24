@@ -43,7 +43,7 @@ disagreement is the unclear word.
 | Render (`_run_phone_subtitled_job`, after creator spellings) | Acts on tapped windows, approval-time spans recomputed from the pinned snapshot, and comparable render-time spans. An unanswered span is left out (fail closed). An error drops the pinned windows and says so. |
 | Receipts | Draft: "around 0:09 in your clip". Finished video: the edited-video time. No receipt quotes a heard guess. |
 
-## Evidence
+## Initial evidence (before the integration corrections below)
 
 - `tests/kria/test_kri849_dj_t1_unclear_word_replay.py` (71 cases) and `tests/agents/test_kri849_unclear_word_prompt.py` (2):
   - **On main 6453cbca6:** 67 of 73 fail (no question, guess in captions, old placeholder line, no detector).
@@ -76,8 +76,10 @@ disagreement is the unclear word.
 
 - A live Main Creator v76 emitting `ask_if_unclear` / `unclear_answer` is unverified (no paid calls).
 - If both hearings agree on a wrong word, the guess still ships. The draft says both listens agreed.
-- The real whisper-1 and Gemini hearings of the T1 take may not be comparable. Then nothing is asked and the
-  draft says so honestly.
+- Missing or non-comparable hearings leave the target unresolved. The planner and approval
+  backstop ask which caption word/line and where in the clip; a legacy render without any
+  grounded target declines with `needs_choice`, rather than printing a guess or removing
+  unrelated captions. A later creator correction retains a previously confirmed window.
 - When the ask is active, a new unclear stretch found only at render is left out without a question. The
   receipt says what was left out.
 - Not covered:
@@ -105,3 +107,22 @@ before the correction: the captions omitted the word instead of showing
 `sal de mar`. A model-recorded typed answer now takes precedence over older taps;
 with it present the gate no longer offers a new tap. The 74-case writer/prompt
 replay passes, including the new correction and existing wrong-word controls.
+
+## Integration review: unavailable comparison (2026-10-24)
+
+The earlier non-comparable control incorrectly allowed approval and unchanged disputed
+captions. The replacement gate-to-writer cases reproduced this on missing, different-language,
+and insufficient hearings before implementation. These now remain questions before approval;
+repeated "go ahead" messages and a disabled choice-card flag cannot settle the unknown target.
+The writer and error fallback decline when no window is available. Existing confirmed
+windows, later typed corrections, and unrelated caption timings are preserved. A creator's
+replacement wording alone is insufficient when its target cannot be located; the question
+continues to request that location instead of claiming the correction was applied.
+
+The correction first reproduced four failures through the real gate/writer replay and
+an additional approval-card bypass on real PostgreSQL with choice cards disabled.
+The corrected runtime/gate/writer suite passes 85 cases, including both flag states,
+repeated unanswered replies, Turkish clarification, and preservation of existing answers.
+The no-guess requirement remains persisted after the question. Replacement wording or
+"omit" without a located target cannot create an approval card. The broader choice,
+narrated-cut, duration, audio-save and freeze/protocol integration run passed 836 cases.

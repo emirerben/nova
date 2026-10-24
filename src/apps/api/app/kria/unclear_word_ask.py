@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any
 
 from app.pipeline import caption_unclear as cu
@@ -76,7 +77,7 @@ def model_answer(requirements: Iterable[Any]) -> cu.UnclearAnswer | None:
 def _number(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
-    return float(value)
+    return float(value) if isfinite(value) else None
 
 
 def recorded_answers(requirements: Iterable[Any]) -> list[cu.UnclearAnswer]:
@@ -86,6 +87,11 @@ def recorded_answers(requirements: Iterable[Any]) -> list[cu.UnclearAnswer]:
         # A typed correction ends the question, so no newer tap can exist. Older
         # pinned taps must not override the creator's replacement words or omit.
         return []
+    return _pinned_answers(requirements)
+
+
+def _pinned_answers(requirements: Iterable[Any]) -> list[cu.UnclearAnswer]:
+    """The creator-confirmed windows, including a window whose wording was corrected later."""
     out: list[cu.UnclearAnswer] = []
     for req in ask_requirements(requirements):
         rows = _facts(req).get(ANSWERS_FACT)
@@ -94,10 +100,65 @@ def recorded_answers(requirements: Iterable[Any]) -> list[cu.UnclearAnswer]:
                 continue
             action = row.get("action")
             start, end = _number(row.get("start_s")), _number(row.get("end_s"))
-            if action not in (cu.ACTION_OMIT, cu.ACTION_USE) or start is None or end is None:
+            if (
+                action not in (cu.ACTION_OMIT, cu.ACTION_USE)
+                or start is None
+                or end is None
+                or not 0 <= start < end
+            ):
                 continue
             out.append(cu.UnclearAnswer(action, start, end, _text(row.get("text"))))
     return out
+
+
+class UnclearTargetRequired(ValueError):
+    """An active no-guess ask has no grounded window the writer can safely change."""
+
+
+def clarification_prompt() -> str:
+    from app.kria.reply_language import say  # noqa: PLC0415
+
+    return say(
+        en=(
+            "I couldn't locate the unclear word reliably. Which caption word or line do you "
+            "mean, and where is it in the clip? Give its time and the wording, or identify "
+            "the part to leave out."
+        ),
+        tr=(
+            "Anlaşılmayan kelimenin yerini güvenle bulamıyorum. Hangi altyazı kelimesini ya da "
+            "cümlesini kastediyorsun ve klibin neresinde? Zamanını ve yazılacak kelimeleri "
+            "ya da çıkarılacak kısmı söyle."
+        ),
+    )
+
+
+def clarification_question(
+    brief: Any,
+    media_snapshot: Mapping[str, Any] | None,
+    *,
+    strategy: Mapping[str, Any],
+    creator_id: object,
+) -> str | None:
+    """Keep a no-guess request unresolved when neither evidence nor an answer locates it."""
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        brief_caption_spellings,
+        defers_caption_words_to_phone_render,
+    )
+
+    live = brief.live() if brief is not None else []
+    if not ask_requirements(live) or _pinned_answers(live):
+        return None
+    if not defers_caption_words_to_phone_render(
+        creator_id=creator_id,
+        edit_format=strategy.get("edit_format"),
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=(media_snapshot or {}).get("clip_paths") or (),
+    ):
+        return None
+    finding = detect(
+        live, media_snapshot, strategy=strategy, spellings=brief_caption_spellings(brief)
+    )
+    return clarification_prompt() if finding.state == cu.STATE_NOT_COMPARABLE else None
 
 
 # -- the pre-approval comparison ------------------------------------------------------------------
@@ -305,6 +366,9 @@ def apply_to_cues(
         window = _caption_window(map_window, answer.start_s or 0.0, answer.end_s or 0.0)
         if window is not None:
             answers.append(cu.UnclearAnswer(answer.action, window[0], window[1], answer.text))
+    for answer in _pinned_answers(live):
+        window = _caption_window(map_window, answer.start_s or 0.0, answer.end_s or 0.0)
+        if window is not None:
             estimated.append(window)
     approval = detect(live, binding.media_snapshot, spellings=spellings)
     for span in approval.spans:
@@ -322,6 +386,12 @@ def apply_to_cues(
             targets.append(cu.UnclearSpan(lo, hi, "", "", -1, -1, key=(), precise=False))
     targets.sort(key=lambda span: span.start_s)
     if not targets:
+        if (
+            render.state == cu.STATE_NOT_COMPARABLE
+            and not _pinned_answers(live)
+            and not approval.spans
+        ):
+            raise UnclearTargetRequired(clarification_prompt())
         return list(cues), {"state": render.state, "spans": []}
     out, report = cu.apply_unclear_answers(
         cues, targets, answers, ask_active=True, default=model_answer(live)
@@ -336,7 +406,7 @@ def fallback_omit(
     inside the windows the pinned binding names, by the simplest means (the binding's own JSON,
     no comparison, no answers applied), and report ``state: "error"`` so the finished-video line
     says the unclear word could not be checked. ``None`` when the binding holds no active ask;
-    ``error`` with no spans when no window could be read."""
+    an active ask without any readable window requires clarification."""
     from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
 
     try:
@@ -367,6 +437,8 @@ def fallback_omit(
         windows.extend((span.start_s, span.end_s) for span in found.spans)
     except Exception:  # noqa: BLE001 - best effort
         pass
+    if not windows:
+        raise UnclearTargetRequired(clarification_prompt())
     mapped = [m for lo, hi in windows if (m := _caption_window(map_window, lo, hi)) is not None]
     merged = _merge_windows(mapped)
     out = cu.drop_windows(cues, merged) if merged else list(cues)

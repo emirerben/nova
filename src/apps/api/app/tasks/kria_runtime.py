@@ -610,6 +610,7 @@ def _unresolved_choice_plan(
     has_draft: bool = False,
     creator_id: Any = None,
     client_protocol: int | None = None,
+    allow_choices: bool = True,
 ) -> tuple[KriaTurnPlan, str] | None:
     """KRI-476 backstop: the reply that replaces a draft an unresolved choice blocks.
 
@@ -644,6 +645,20 @@ def _unresolved_choice_plan(
         else ""
     )
     history = list(events)
+    from app.kria.unclear_word_ask import clarification_question  # noqa: PLC0415
+
+    clarification = clarification_question(
+        brief, media_snapshot, strategy=strategy, creator_id=creator_id
+    )
+    if clarification is not None:
+        return (
+            KriaTurnPlan(
+                mode="respond", turn_value="question", response=f"{clarification}{unchanged}"
+            ),
+            "unresolved_requirement",
+        )
+    if not allow_choices:
+        return None
     capability = ChoiceCapability(
         creator_id=creator_id,
         voice_route=settings.voice_behind_footage_enabled,
@@ -1910,7 +1925,10 @@ def _complete_draft_turn(
             )
             snapshot, snapshot_hash = canonical_snapshot(document)
         choice_gate = (
-            settings.kria_choice_questions_enabled
+            (
+                settings.kria_choice_questions_enabled
+                or settings.brief_binding_for(thread.creator_id)
+            )
             and apply_intent.tool_name == "draft.apply_strategy"
             and bool(document.strategy)
         )
@@ -1949,6 +1967,7 @@ def _complete_draft_turn(
                 has_draft=head is not None,
                 creator_id=thread.creator_id if binding_on else None,
                 client_protocol=client_protocol,
+                allow_choices=settings.kria_choice_questions_enabled,
             )
             if blocked is not None:
                 blocked_plan, blocked_reason = blocked

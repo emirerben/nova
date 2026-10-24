@@ -88,10 +88,19 @@ def _plan_and_asks(*, unclear_answer: str | None):
     return plan, asks, rows
 
 
-async def _run_turn(monkeypatch: pytest.MonkeyPatch, *, unclear_answer: str | None):
+async def _run_turn(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    unclear_answer: str | None,
+    missing_hearing: bool = False,
+    questions_enabled: bool = True,
+):
     plan, asks, rows = _plan_and_asks(unclear_answer=unclear_answer)
     user_id, thread_id, _session_id = _seed_runtime_project()
-    take = FIXTURE["take_row"]
+    take = copy.deepcopy(FIXTURE["take_row"])
+    if missing_hearing:
+        take["analysis"].pop("transcript", None)
+        take["analysis"]["understanding"]["speech"].pop("transcript", None)
     with sync_session() as db:
         thread = db.get(CreationThread, thread_id)
         db.execute(
@@ -130,7 +139,7 @@ async def _run_turn(monkeypatch: pytest.MonkeyPatch, *, unclear_answer: str | No
         "main_creator_agent_enabled": True,
         "kria_creative_brief_enabled": True,
         "kria_brief_binding_enabled": True,
-        "kria_choice_questions_enabled": True,
+        "kria_choice_questions_enabled": questions_enabled,
         "phone_rendering_enabled": True,
         "phone_render_user_ids": [],
         "phone_subtitled_rendering_enabled": True,
@@ -141,6 +150,50 @@ async def _run_turn(monkeypatch: pytest.MonkeyPatch, *, unclear_answer: str | No
     accepted = await _submit(user_id, thread_id, FIXTURE["creator_request"], 2)
     result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
     return accepted, result, thread_id, rows
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("questions_enabled", [False, True])
+@pytest.mark.parametrize("answer", [None, "omit", "sal de mar"])
+async def test_missing_comparison_cannot_create_an_approval_card(
+    monkeypatch: pytest.MonkeyPatch,
+    questions_enabled: bool,
+    answer: str | None,
+) -> None:
+    from app.kria.brief import load_latest_brief_sync
+
+    try:
+        accepted, result, thread_id, _rows = await _run_turn(
+            monkeypatch,
+            unclear_answer=answer,
+            missing_hearing=True,
+            questions_enabled=questions_enabled,
+        )
+        assert result["status"] != "awaiting_approval", result
+        with sync_session() as db:
+            kept = load_latest_brief_sync(db, thread_id)
+            assert kept is not None and any(
+                req.facts.get("ask_if_unclear") for req in kept.live()
+            ), "the no-guess requirement must survive the question transaction"
+            approvals = db.execute(
+                select(CreatorAgentApproval).where(
+                    CreatorAgentApproval.turn_id == uuid.UUID(accepted.turn_id)
+                )
+            ).all()
+            replies = (
+                db.execute(
+                    select(CreationThreadEvent.content).where(
+                        CreationThreadEvent.thread_id == thread_id,
+                        CreationThreadEvent.role == "assistant",
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert not approvals
+        assert any("where" in (reply or "").casefold() for reply in replies)
+    finally:
+        await async_engine.dispose()
 
 
 @pytest.mark.asyncio

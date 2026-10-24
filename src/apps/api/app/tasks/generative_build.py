@@ -9980,12 +9980,13 @@ def _apply_unclear_words(
 ) -> tuple[list, dict | None]:
     """KRI-849: the caption cues with the word the creator asked to be asked about left out (or
     written as they chose), per the approved brief pinned on the job. Returns ``(cues,
-    receipt)``; the receipt is ``None`` without the ask. The render never fails on it: when the
-    step raises, a minimal fallback still drops the words in the windows the binding names and
-    the receipt says ``error`` (the finished-video line then says it could not be checked)."""
+    receipt)``; the receipt is ``None`` without the ask. A failed step still drops grounded
+    windows and reports the error. Without any safe target the render declines and asks for
+    clarification instead of publishing uncertain captions or removing unrelated words."""
     from app.kria import unclear_word_ask  # noqa: PLC0415
     from app.pipeline.silence_cut import remap_words  # noqa: PLC0415
     from app.pipeline.transcribe import Word  # noqa: PLC0415
+    from app.services.creator_render_contract import CreatorRenderContractError  # noqa: PLC0415
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
     def to_captions(start_s: float, end_s: float) -> tuple[float, float] | None:
@@ -9997,6 +9998,15 @@ def _apply_unclear_words(
         return (moved[0]["start_s"], moved[0]["end_s"]) if moved else None
 
     binding = snapshot.get("creator_brief_binding")
+
+    def target_decline() -> CreatorRenderContractError:
+        return CreatorRenderContractError(
+            unclear_word_ask.clarification_prompt(),
+            decline_reason="needs_choice",
+            field_path="captions",
+            alternative=unclear_word_ask.clarification_prompt(),
+        )
+
     try:
         out, receipt = unclear_word_ask.apply_to_cues(
             cues,
@@ -10004,13 +10014,15 @@ def _apply_unclear_words(
             spellings=_phone_caption_spellings(snapshot, quoted),
             map_window=to_captions,
         )
-    except Exception as exc:  # noqa: BLE001 - the render goes on; the fallback below is the net
+    except unclear_word_ask.UnclearTargetRequired as exc:
+        raise target_decline() from exc
+    except Exception as exc:  # noqa: BLE001 - preserve grounded omissions via the fallback
         log.warning("phone_unclear_words.failed", error=str(exc)[:200])
         try:
             out, receipt = unclear_word_ask.fallback_omit(cues, binding, map_window=to_captions)
-        except Exception as inner:  # noqa: BLE001 - nothing readable: say so, change nothing
+        except Exception as inner:  # noqa: BLE001 - no safe target: never publish the guess
             log.warning("phone_unclear_words.fallback_failed", error=str(inner)[:200])
-            out, receipt = cues, {"state": "error", "spans": []}
+            raise target_decline() from inner
     if receipt is not None:
         try:
             record_pipeline_event(
