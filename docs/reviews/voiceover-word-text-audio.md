@@ -6,6 +6,12 @@ and the broken-boat clip's sound beneath recorded narration. The fixture redacts
 recording URL. Original recordings and a saved transcription were found locally;
 they are not committed. Native export verification uses labelled synthetic media.
 
+## Landed integration verification — 24 October 2026
+
+The implementation from PR #1759 landed as a reviewed prerequisite in PR #1760, squash commit `20b59cef3`. Its reviewed revision `3eec0340b` passed the full backend workflow and all three iPhone validation legs: [#1760 CI checks](https://github.com/emirerben/nova/pull/1760/checks). Selected Voiceover source audio retains its protocol-17 floor; the combined app advertises protocol 18 for processed-audio support.
+
+This PR now records verification and reconciles its history with the landed implementation; it does not introduce another renderer or roll back the newer protocol. The original compound-request and production-rollout limits above remain open. Per-clip fractional gains and after-Voiceover tail integration are separately tracked in PR #1786.
+
 ## Timeline decisions
 
 1. Duration: the pinned EditRecipeV2 video track and existing `replace_voiceover_cut`
