@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.101.0] - 2026-10-24
+
+### Changed
+- feat(montage): ask the creator to point at named moments before approval (KRI-723) (#1808) <!-- release-pr: 1808 -->
+
 ## [0.81.100.0] - 2026-10-24
 
 ### Changed
