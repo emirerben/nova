@@ -44,6 +44,7 @@ from app.kria.freeze_ask import (
     planned_freeze_ids,
     times_one_moment,
 )
+from app.kria.narrated_clip_sound_ask import AFTER_VOICE, ClipSoundAsk, requirement_clip_sound
 from app.kria.noise_reduction_ask import wants_engine_noise_reduction
 from app.kria.reply_language import current_reply_language, say
 from app.kria.speech_cut_ask import SpeechCutAsk, requirement_speech_cut
@@ -57,6 +58,13 @@ from app.kria.style_asks import (
     moment_ask,
     text_look_facts,
     value_matches,
+)
+from app.pipeline.caption_language import (
+    ASK_END,
+    LANGUAGE_NAMES,
+    LANGUAGE_WORDS,
+    can_deliver_caption_language,
+    caption_language_verdict,
 )
 from app.pipeline.caption_spelling import extract_spelling_asks, is_mishearing
 from app.pipeline.explicit_speech_cut import speech_cut_tokens
@@ -267,6 +275,24 @@ class NamedLineFact:
 
 
 @dataclass(frozen=True)
+class EndingClipFact:
+    """The video a phone Talking edit ends on, with its own sound (KRI-841).
+
+    ``status`` is "planned" (a draft whose repaired strategy keeps it), "applied" (the finished
+    video really ends on it: ``volume`` is read back from the compiled recipe) or "dropped"
+    (the server repair or the phone worker could not append it; ``reason`` is a machine code).
+    """
+
+    status: str
+    keep_audio: bool = True
+    volume: float | None = None
+    reason: str | None = None
+    # Whether the ending's source has an audio track at all (the worker's `has_audio`):
+    # False means "its own sound" is silence; None = the render did not say.
+    has_audio: bool | None = None
+
+
+@dataclass(frozen=True)
 class PlanFacts:
     """What a drafted plan verifiably contains. Missing facts stay None/empty."""
 
@@ -417,6 +443,9 @@ class PlanFacts:
     capped_beat_hits: tuple[tuple[str, int, int], ...] = ()
     # The strategy's audio strategy ("voiceover", "original_audio", ...); None = unknown.
     audio_strategy: str | None = None
+    # The strategy's render program ("native", "guided"); None = unknown. KRI-889: a
+    # guided story's voiceover is not cut around named lines.
+    render_program: str | None = None
     # How loud the footage's own sound plays under the creator's voice (0..1; 1.0 = full
     # volume). None = unknown, never guessed.
     voiceover_bed_level: float | None = None
@@ -538,6 +567,26 @@ class PlanFacts:
     # talk (`overlay_display` "fullscreen*", or a render's overlay receipt of that layout), not
     # at a spoken word. A word-timed full-screen ask that only this covers is a "partial".
     fullscreen_sequence: bool = False
+    # KRI-841: a video appended after the talk. ``ending_clip_known`` is True where the facts
+    # can speak to the ending at all (a draft read against its manifest, or a finished Talking
+    # render); only then does None mean "the edit does not end on a video". The draft reads
+    # the REPAIRED strategy, the render its own `phone_ending_clip` receipt, never the strategy.
+    ending_clip: EndingClipFact | None = None
+    ending_clip_known: bool = False
+    # KRI-842: a draft that renders through the phone Voiceover compiler, the only writer that
+    # can play ONE clip's own sound under the voice or after it; the approved media rows its
+    # clip-sound asks are grounded in; and the clip its order intents seat last (None = none
+    # pinned). Only a draft sets them; nothing about clip sound is claimed without them.
+    phone_narrated: bool = False
+    media_snapshot: Mapping[str, Any] | None = None
+    last_clip_id: str | None = None
+    # KRI-842: a finished phone Voiceover's per-clip sound receipt (`variant["clip_sound"]`,
+    # `phone_clip_sound`): what its pinned recipe plays for each clip-sound ask. None = no
+    # receipt (older render, or no such ask): nothing is claimed.
+    clip_sound: Mapping[str, Any] | None = None
+    # KRI-842: a finished phone montage Voiceover (`resolved_archetype == "voiceover"`), which
+    # cannot play one clip's sound under or after the voice.
+    voiceover_edit: bool = False
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -563,6 +612,8 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
     from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
     from app.services.creator_capabilities import (  # noqa: PLC0415
         CAPABILITY_REACTION_BEATS,
+        ending_clip_problem,
+        repair_creator_ending_clip,
         repair_creator_reaction_beats,
     )
 
@@ -573,8 +624,17 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
     except ValueError:
         return {"reaction_beats_available": available}
     repaired, _notices = repair_creator_reaction_beats(manifest, parsed)
+    # A beat the creator named but the beats repair dropped (its photo didn't resolve).
+    kept_ids = {beat.beat_id for beat in repaired.reaction_beats or []}
+    # KRI-841: the ending video is repaired after the beats (and takes its own video out of
+    # them), exactly as `compile_strategy_to_plan` orders it.
+    repaired, _ending_notices = repair_creator_ending_clip(manifest, repaired)
+    ending: EndingClipFact | None = None
+    if repaired.ending_clip is not None:
+        ending = EndingClipFact("planned", keep_audio=repaired.ending_clip.keep_audio)
+    elif parsed.ending_clip is not None:
+        ending = EndingClipFact("dropped", reason=ending_clip_problem(manifest, parsed))
     kept = list(repaired.reaction_beats or [])
-    kept_ids = {beat.beat_id for beat in kept}
     raw_closing = parsed.closing_media
     closing = repaired.closing_media
     return {
@@ -598,6 +658,8 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
         "closing_visual_id": closing.visual_id if closing is not None else None,
         "closing_badge_requested": bool(raw_closing and raw_closing.badge_visual_id),
         "closing_badge_id": closing.badge_visual_id if closing is not None else None,
+        "ending_clip": ending,
+        "ending_clip_known": True,
     }
 
 
@@ -717,7 +779,13 @@ def plan_facts_from_strategy(
     edit_format = strategy.get("edit_format")
     caption_style = strategy.get("caption_style")
     audio_strategy = strategy.get("audio_strategy")
+    last_seats = [
+        members[0]
+        for position, _name, members, status in sequence_rows(strategy.get("resolved_clip_intents"))
+        if position == "last" and status == "resolved" and len(members) == 1
+    ]
     return PlanFacts(
+        last_clip_id=str(last_seats[-1]) if last_seats else None,
         clip_ids=tuple(str(c) for c in clip_ids),
         title=str(title) if title else None,
         per_clip_text=per_clip,
@@ -742,6 +810,9 @@ def plan_facts_from_strategy(
             dict(a)
             for a in strategy.get("choice_answers") or []
             if isinstance(a, Mapping) and a.get("kind") == "speech_occurrence"
+        ),
+        render_program=(
+            str(strategy.get("render_program")) if strategy.get("render_program") else None
         ),
         **extra,
     )
@@ -1618,6 +1689,27 @@ def _rendered_bed_level(variant: Mapping[str, Any]) -> float | None:
     return _finite_number(variant.get("voiceover_bed_level"))
 
 
+def _ending_clip_receipt_fact(receipt: object) -> EndingClipFact | None:
+    """The worker's ``phone_ending_clip`` receipt as a fact, or None when there is no usable one.
+
+    "applied" is written only from the COMPILED recipe (the last main-track clip really is that
+    media, at the volume the recipe holds), never copied from the strategy.
+    """
+    if not isinstance(receipt, Mapping):
+        return None
+    status = receipt.get("status")
+    if status not in ("applied", "dropped"):
+        return None
+    reason = receipt.get("reason")
+    return EndingClipFact(
+        status,
+        keep_audio=receipt.get("keep_audio") is not False,
+        volume=_finite_number(receipt.get("volume")),
+        reason=reason if isinstance(reason, str) and reason else None,
+        has_audio=receipt["has_audio"] if isinstance(receipt.get("has_audio"), bool) else None,
+    )
+
+
 def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFacts:
     """Facts off a rendered phone variant (KRI-537).
 
@@ -1664,11 +1756,19 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     changes.update(_beat_room_facts(variant.get("phone_beat_receipt")))
     changes.update(_overlay_sequence_facts(variant.get("phone_overlay_receipt")))
     changes.update(_rendered_caption_facts(variant))
+    receipt = variant.get("clip_sound")
+    if isinstance(receipt, Mapping):
+        changes["clip_sound"] = receipt  # KRI-842
+    if variant.get("resolved_archetype") == "voiceover":
+        changes["voiceover_edit"] = True  # KRI-842
     rendered = _rendered_clip_durations(variant)
     if rendered is not None:
         changes["clip_output_durations"] = rendered
     if changes.get("edit_format") == "subtitled":
         changes["phone_talking"] = True  # KRI-705
+        # KRI-841: a finished Talking render says whether it really ended on the video.
+        changes["ending_clip_known"] = True
+        changes["ending_clip"] = _ending_clip_receipt_fact(variant.get("phone_ending_clip"))
     return dataclasses.replace(base, **changes) if changes else base
 
 
@@ -2830,9 +2930,9 @@ def _caption_language_fact(req: BriefRequirement) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     code = value.strip().casefold().replace("_", "-").split("-")[0]
-    if code in _LANGUAGE_NAMES:
+    if code in LANGUAGE_NAMES:
         return code
-    return _LANGUAGE_WORDS.get(loose_text(value).strip())
+    return LANGUAGE_WORDS.get(loose_text(value).strip())
 
 
 def _wants_whole_take(req: BriefRequirement) -> bool:
@@ -3174,6 +3274,222 @@ def _closing_photo_ask(req: BriefRequirement, facts: PlanFacts) -> bool:
     return facts.reaction_beats_available is not False and not req.facts.get("last_clip")
 
 
+# KRI-841: "At the very end, add the cheers video with its own sound". The Main Creator's
+# `ending_clip` strategy field carries it; the brief extractor records it as the requirement's
+# `ending_clip` fact (the creator's words for the video) and `keep_audio` (false only when the
+# video should be silent). No wording is read here (KRI-667): the fact routes the ask, and the
+# older shape of the same ask (`order` + `last_clip`) is claimed only where the PLAN has an
+# ending video to judge.
+_TALKING_FORMATS = frozenset({"subtitled", "talking_head"})
+
+
+def _ending_clip_fact(req: BriefRequirement) -> bool:
+    return bool(req.facts.get("ending_clip"))
+
+
+def _asks_ending_clip(req: BriefRequirement, facts: PlanFacts) -> bool:
+    if facts.edit_format not in _TALKING_FORMATS:
+        return False  # a montage "end on clip X" is an ordering ask: `_check_order` owns it
+    if _ending_clip_fact(req):
+        return True
+    # The old shape of the ask (an `order` requirement whose `last_clip` names the video) is
+    # judged against the ending video only when the plan (or the render) carries one. Without
+    # it the ask may be about the talk itself ("end on me saying thank you"), so it keeps its
+    # old verdict. A `closing` ask (a photo held over the last seconds) is never claimed here:
+    # `_closing_photo_ask` owns it, and the extractor records video endings as `ending_clip`.
+    return bool(
+        facts.ending_clip_known
+        and facts.ending_clip is not None
+        and req.kind == "order"
+        and req.facts.get("last_clip")
+        and not (req.facts.get("first_clip") or req.facts.get("key") or req.facts.get("by"))
+    )
+
+
+# Why the video could not be put at the end, in the creator's words. The keys are the server
+# repair's codes (`creator_capabilities.ENDING_CLIP_NOTICES`) and the phone worker's receipt.
+def _ending_clip_why(code: str | None) -> str:
+    if code == "not_talking":
+        return say(
+            en="Only a talking-to-camera edit on your iPhone can end on another video",
+            tr="Başka bir videoyla yalnızca iPhone'daki konuşmalı düzenleme bitebilir",
+        )
+    if code == "not_found":
+        return say(
+            en="I couldn't find that video among your clips and Visuals",
+            tr="O videoyu kliplerin ve Visuals arasında bulamadım",
+        )
+    if code == "not_video":
+        return say(
+            en="That is a photo, not a video, so it has no sound of its own",
+            tr="Bu bir fotoğraf, video değil; kendi sesi yok",
+        )
+    if code in ("visual_videos_off", "visual_videos_not_verified"):
+        return say(
+            en="This iPhone can't play videos from Visuals yet",
+            tr="Bu iPhone Visuals'taki videoları henüz oynatamıyor",
+        )
+    if code == "only_clip":
+        return say(
+            en="It is the only clip in this edit",
+            tr="Bu düzenlemedeki tek klip bu",
+        )
+    if code in ("multi_clip_off", "talking_multi_off"):
+        return say(
+            en=(
+                "Ending on another of your clips needs a Talking edit with several clips, "
+                "which isn't available yet"
+            ),
+            tr=(
+                "Başka bir klibinle bitirmek için birden çok klipli konuşmalı düzenleme "
+                "gerekiyor, o da henüz yok"
+            ),
+        )
+    if code == "media_lanes_disabled":
+        return say(
+            en="This iPhone render can't place pictures and videos around your talk yet",
+            tr="Bu iPhone oluşturması konuşmanın çevresine resim ve video koyamıyor henüz",
+        )
+    if code == "audio_mix_not_verified":
+        return say(
+            en="This iPhone can't mix its sound into the video yet",
+            tr="Bu iPhone sesini videoya karıştıramıyor henüz",
+        )
+    if code == "muted_footage_ending_unsupported":
+        return say(
+            en="One of your own clips can only end the video with its own sound, not silent",
+            tr="Kendi kliplerinden biri videoyu ancak kendi sesiyle bitirebilir, sessiz değil",
+        )
+    if code == "not_selected":
+        return say(
+            en="You asked to leave that clip out of the edit",
+            tr="O klibi düzenlemeden çıkarmamı istemiştin",
+        )
+    if code == "over_length_limit":
+        return say(
+            en="Adding it would make the video longer than the length you asked for",
+            tr="Eklersem video istediğin süreden uzun olur",
+        )
+    if code == "not_a_video":
+        return say(
+            en="That isn't a video, so it has no sound of its own",
+            tr="Bu bir video değil, kendi sesi yok",
+        )
+    if code == "too_long":
+        return say(
+            en="That clip is too long to add at the end",
+            tr="Bu klip sona eklemek için çok uzun",
+        )
+    if code == "is_speaker":
+        return say(
+            en="That is the clip you speak in, so it can't also be added at the end",
+            tr="Konuştuğun klip bu, o yüzden sona ayrıca eklenemez",
+        )
+    if code == "lane_request_ending_wins":
+        return say(
+            en="Another request for the end of the video took its place",
+            tr="Videonun sonu için başka bir istek onun yerini aldı",
+        )
+    if code == "bind_failed":
+        return say(
+            en="I couldn't prepare that video on your iPhone",
+            tr="O videoyu iPhone'unda hazırlayamadım",
+        )
+    return say(en="I couldn't add it at the end", tr="Sona ekleyemedim")
+
+
+# The volume under which a video that is "at the end" is still muted (the recipe holds 0.0).
+_MUTED_VOLUME = 0.01
+
+
+def _check_ending_clip(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """Does the edit end on the video the creator named, with (or without) its own sound?
+
+    A draft judges the repaired strategy, the finished video its own `phone_ending_clip`
+    receipt; "Done" is never read off the strategy once a render exists.
+    """
+    if not facts.ending_clip_known:
+        return _receipt(req, "partial", _NO_CHECKER)
+    flag = _fact_flag(req, "keep_audio")
+    wants_sound = True if flag is None else flag
+    ending = facts.ending_clip
+    rendered = facts.rendered_variant
+    if ending is None:
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en=(
+                    "The finished video doesn't end on that video"
+                    if rendered
+                    else "This draft doesn't end on that video"
+                ),
+                tr=(
+                    "Biten video o videoyla bitmiyor"
+                    if rendered
+                    else "Bu taslak o videoyla bitmiyor"
+                ),
+            )
+            + ".",
+        )
+    if ending.status == "dropped":
+        return _receipt(req, "not_possible", _ending_clip_why(ending.reason) + ".")
+    if ending.status == "planned":
+        if ending.keep_audio == wants_sound:
+            return _receipt(req, "met", None)
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en=(
+                    "This draft ends on that video but muted, not with its own sound"
+                    if wants_sound
+                    else "This draft ends on that video with its own sound, not muted"
+                ),
+                tr=(
+                    "Bu taslak o videoyla bitiyor ama sessiz, kendi sesiyle değil"
+                    if wants_sound
+                    else "Bu taslak o videoyla kendi sesiyle bitiyor, sessiz değil"
+                ),
+            )
+            + ".",
+        )
+    # applied: the compiled recipe ends on the video; judge the volume it holds.
+    if wants_sound and ending.has_audio is False:
+        # The recipe plays the clip at full volume, but its file has no audio track.
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en="The finished video ends on that video, but that video has no sound of its own",
+                tr="Biten video o videoyla bitiyor ama o videonun kendi sesi yok",
+            )
+            + ".",
+        )
+    audible = ending.volume is not None and ending.volume > _MUTED_VOLUME
+    if wants_sound and not audible:
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en="The finished video ends on that video but plays muted, without its own sound",
+                tr="Biten video o videoyla bitiyor ama sessiz çalıyor, kendi sesi yok",
+            )
+            + ".",
+        )
+    if not wants_sound and audible:
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en="The finished video ends on that video with its own sound, not muted",
+                tr="Biten video o videoyla kendi sesiyle bitiyor, sessiz değil",
+            )
+            + ".",
+        )
+    return _receipt(req, "met", None)
+
+
 def _wants_cleanup(req: BriefRequirement) -> bool:
     """A speech-cleanup ask (pauses, retakes, filler) in the creator's own words."""
     if req.kind not in _CLEANUP_KINDS or _wants_whole_take(req) or _wants_whole_line(req):
@@ -3468,6 +3784,52 @@ _FREEZE_NOT_GROUNDED = (
     "I couldn't tell which moment to freeze, so that moment plays normally. "
     "Tell me what happens in the moment to hold, like who is in it and what they do"
 )
+# KRI-900: the moment is known but nobody picked the instant in it, so nothing is held. The
+# receipt goes on with the moment's seconds and asks for the second (`_check_freeze`).
+_FREEZE_NEEDS_FRAME = "I found that moment"
+# KRI-900: "freeze the first frame / at the start": a hold sits where a cut ends, so the
+# opening frame is never held, and the end of the first cut is not what was asked.
+_FREEZE_FIRST_FRAME = (
+    "A freeze holds the frame where a shot ends, so I can't hold the opening frame, and it "
+    'plays normally. Tell me the second of the clip to freeze on, like "freeze at 2 seconds"'
+)
+
+# KRI-842: one clip's own sound on a phone Voiceover edit (see `kria.narrated_clip_sound_ask`).
+_CLIP_SOUND_UNDER_VOICE_MET = "That clip's own sound plays softly under your voice"
+_CLIP_PLAYS_ON_MET = "That clip plays on with its own sound after your voice ends"
+_ONLY_LAST_CLIP_PLAYS_ON = (
+    "Only the last clip can play on after your voice, and that isn't the last clip in this edit"
+)
+_ONLY_ONE_CLIP_PLAYS_ON = "Only one clip can play on after your voice"
+_CLIP_SOUND_NOT_BUILT = "I couldn't play that clip's own sound in this edit"
+_CLIP_NOT_IN_EDIT = (
+    "That clip isn't one of the video clips in this edit, so I couldn't play its own sound"
+)
+_CLIP_HAS_NO_SOUND = "That clip has no sound of its own to play"
+_CLIP_SOUND_NO_ROOM = (
+    "That clip has no footage left after the part under your voice, so nothing plays on after it"
+)
+_CLIP_LINE_TOO_LONG = "That line is too long to play on after your voice (6 seconds at most)"
+_CLIP_PLAYS_ON_PAST_LENGTH = (
+    "Playing that clip on after your voice would take the video past the length you asked for"
+)
+_CLIP_SOUND_EDITED = "You changed the cut in the editor, so that clip no longer plays like this"
+_CLIP_LINE_TOO_EARLY = "That line is said too early in that clip to come after your voice"
+_CLIP_LINE_PAST_END = "That line runs past the end of that clip, so I couldn't play it whole"
+_CLIP_SOUND_REFUSED = (
+    "Your iPhone couldn't build that clip's own sound, so the video plays without it"
+)
+# A clip's own sound under or after the voice is built only by the phone Voiceover compiler.
+_CLIP_SOUND_NEEDS_PHONE_VOICEOVER = (
+    "Playing one clip's own sound under or after your voice only works in a voiceover edit "
+    "made on your iPhone, not in this one"
+)
+# A clip-scoped ask for the footage sound under the voice, without a recorded `clip_sound`:
+# the voiceover mix is one bed for every clip, never one clip's.
+_EVERY_CLIP_SOUND_UNDER_VOICE = (
+    "Every clip's own sound plays softly under your voice, not just this one"
+)
+_NO_CLIP_SOUND_UNDER_VOICE = "No clip's own sound plays under your voice"
 
 # KRI-705: what a phone Talking edit says, before approval and after render, about an ask
 # outside what it can draw. Static strings: `is_judged` / `is_format_limit` read them by prefix.
@@ -3600,6 +3962,46 @@ _REASON_TR: dict[str, str] = {
     _FREEZE_NOT_GROUNDED: (
         "Hangi anı donduracağımı anlayamadım, o yüzden o an normal akıyor. "
         "Hangi klipte kaçıncı saniyeyi tutayım, yaz"
+    ),
+    _CLIP_SOUND_UNDER_VOICE_MET: "O klibin kendi sesi seslendirmenin altında kısık çalıyor",
+    _CLIP_PLAYS_ON_MET: "O klip, seslendirme bitince kendi sesiyle devam ediyor",
+    _ONLY_LAST_CLIP_PLAYS_ON: (
+        "Seslendirmeden sonra yalnızca son klip devam edebilir ve bu düzenlemede o klip son değil"
+    ),
+    _ONLY_ONE_CLIP_PLAYS_ON: "Seslendirmeden sonra yalnızca tek bir klip devam edebilir",
+    _CLIP_SOUND_NOT_BUILT: "O klibin kendi sesini bu düzenlemede çalamadım",
+    _CLIP_NOT_IN_EDIT: (
+        "O klip bu düzenlemedeki video kliplerinden biri değil, o yüzden kendi sesini çalamadım"
+    ),
+    _CLIP_HAS_NO_SOUND: "O klibin çalacak kendi sesi yok",
+    _CLIP_SOUND_NO_ROOM: (
+        "O klipte seslendirmenin altında kalan kısımdan sonra görüntü kalmadı, o yüzden "
+        "sonrasında bir şey çalmıyor"
+    ),
+    _CLIP_LINE_TOO_LONG: ("Bu cümle seslendirmeden sonra çalmak için çok uzun (en fazla 6 saniye)"),
+    _CLIP_PLAYS_ON_PAST_LENGTH: (
+        "O klibi seslendirmeden sonra çalmak videoyu istediğin uzunluğun dışına çıkarırdı"
+    ),
+    _CLIP_LINE_TOO_EARLY: (
+        "Bu cümle o klipte seslendirmeden sonra gelemeyecek kadar erken söyleniyor"
+    ),
+    _CLIP_LINE_PAST_END: "Bu cümle o klibin sonundan taşıyor, o yüzden tam çalamadım",
+    _CLIP_SOUND_REFUSED: (
+        "iPhone'un o klibin kendi sesini oluşturamadı, o yüzden video o ses olmadan çalıyor"
+    ),
+    _CLIP_SOUND_NEEDS_PHONE_VOICEOVER: (
+        "Bir klibin kendi sesini seslendirmenin altında ya da sonrasında çalmak yalnızca "
+        "iPhone'unda yapılan seslendirmeli düzenlemede mümkün, bu düzenlemede değil"
+    ),
+    _CLIP_SOUND_EDITED: "Editörde kesimi değiştirdin, o yüzden o klip artık böyle çalmıyor",
+    _EVERY_CLIP_SOUND_UNDER_VOICE: (
+        "Her klibin kendi sesi seslendirmenin altında kısık çalıyor, yalnızca bu klibinki değil"
+    ),
+    _NO_CLIP_SOUND_UNDER_VOICE: "Hiçbir klibin kendi sesi seslendirmenin altında çalmıyor",
+    _FREEZE_NEEDS_FRAME: "O anı buldum",
+    _FREEZE_FIRST_FRAME: (
+        "Donma bir çekimin bittiği karede olur, o yüzden açılış karesini tutamıyorum ve normal "
+        'oynuyor. Klibin hangi saniyesinde donsun, yaz; örneğin "2. saniyede dondur"'
     ),
     _BED_STILL_PLAYS: "Çekim sesi hâlâ çalıyor",
     _CLEANUP_PLANNED: "Konuşma temizliği uzun duraklamaları keser",
@@ -3738,6 +4140,8 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _FREEZE_NOT_GROUNDED,
     _MOMENTS_NOT_LOCATED,
     _MOMENTS_CREATOR_CALL,
+    _FREEZE_NEEDS_FRAME,
+    _FREEZE_FIRST_FRAME,
     _LIGHT_UNAVAILABLE,
     # KRI-724: the planned source cut / noise filter, and what the noise filter can't do.
     _SPEECH_CUT_DRAFT_PLAN,
@@ -3745,6 +4149,12 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _NOISE_REDUCTION_APPLIED,
     _NOISE_REDUCTION_UNAVAILABLE,
     _NOISE_REDUCTION_UNSUPPORTED,
+    # KRI-842: how a Voiceover edit plays one clip's sound is the format's, not a simpler plan.
+    _ONLY_LAST_CLIP_PLAYS_ON,
+    _ONLY_ONE_CLIP_PLAYS_ON,
+    _EVERY_CLIP_SOUND_UNDER_VOICE,
+    _NO_CLIP_SOUND_UNDER_VOICE,
+    _CLIP_SOUND_NEEDS_PHONE_VOICEOVER,
     *_TALKING_HONEST_EN,
     _VOICEOVER_SPOKEN_TEXT_PLAN,
 )
@@ -4353,6 +4763,11 @@ _NAMED_CUT_MISSED = {
         "your take has no word timings to find it in",
         "çekiminde onu bulacak kelime zamanlaması yok",
     ),
+    # KRI-889: the line was found, but cutting the voiceover file failed.
+    "cut_failed": (
+        "cutting it out of your voiceover failed",
+        "seslendirmenden kesmek başarısız oldu",
+    ),
 }
 
 
@@ -4389,6 +4804,21 @@ def _named_cut_notes(req: BriefRequirement, facts: PlanFacts) -> tuple[list[str]
     return notes, all(row.get("status") == "applied" for row in rows)
 
 
+def _cuts_named_voiceover_lines(facts: PlanFacts) -> bool:
+    """KRI-889: a narrated render cuts named lines out of the recorded voiceover.
+
+    Phone and cloud both do, behind ``NARRATED_NAMED_CUTS_ENABLED`` (read here too, so the
+    draft never promises a cut the worker won't make). A guided story is not cut.
+    """
+    from app.config import settings  # noqa: PLC0415
+
+    return (
+        _is_voiceover_edit(facts)
+        and facts.render_program != "guided"
+        and bool(settings.narrated_named_cuts_enabled)
+    )
+
+
 def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Pauses, retakes and filler the creator asked to cut, against the draft.
 
@@ -4418,8 +4848,9 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         lead, status = _CLEANUP_IF_OFFERED, "partial"
     notes = [_loc(lead)]
     if _wants_named_cuts(req):
-        if facts.phone_talking and named_cut_lines(req):
-            # KRI-821: the phone Talking render cuts each named line it finds said once.
+        if (facts.phone_talking or _cuts_named_voiceover_lines(facts)) and named_cut_lines(req):
+            # KRI-821: the phone Talking render cuts each named line it finds said once;
+            # KRI-889: so does a narrated render, out of the recorded voiceover.
             # Not certain before the render finds the line, so never "Done" (KRI-792).
             notes.append(_loc(_NAMED_CUT_AT_RENDER))
             status = "partial"
@@ -4669,6 +5100,156 @@ def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
 # A footage bed under this fraction of full volume counts as "quiet under the voice".
 _BED_QUIET_BELOW = 0.5
 
+# What a clip-sound ask that was not built says, by `phone_clip_sound` reason code (KRI-842).
+_CLIP_SOUND_MISSED = {
+    "not_in_edit": _CLIP_NOT_IN_EDIT,
+    "no_sound": _CLIP_HAS_NO_SOUND,
+    "not_last_clip": _ONLY_LAST_CLIP_PLAYS_ON,
+    "no_room": _CLIP_SOUND_NO_ROOM,
+    "line_too_long": _CLIP_LINE_TOO_LONG,
+    "one_tail_only": _ONLY_ONE_CLIP_PLAYS_ON,
+    "length_target": _CLIP_PLAYS_ON_PAST_LENGTH,
+    "line_too_early": _CLIP_LINE_TOO_EARLY,
+    "line_past_end": _CLIP_LINE_PAST_END,
+    "render_refused": _CLIP_SOUND_REFUSED,
+    "edited": _CLIP_SOUND_EDITED,
+}
+
+
+def _clip_sound_missed(
+    req: BriefRequirement, code: str | None, quote: str | None = None
+) -> RequirementReceipt:
+    """A clip-sound ask that cannot be (or was not) played, with the plain reason."""
+    if code == "line_too_early" and quote:
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en=f'"{quote}" is said too early in that clip to come after your voice',
+                tr=f'"{quote}" o klipte seslendirmeden sonra gelemeyecek kadar erken söyleniyor',
+            ),
+        )
+    if code in ("line_not_found", "line_ambiguous") and quote:
+        found = (
+            say(
+                en=f'I couldn\'t find "{quote}" in that clip',
+                tr=f'"{quote}" sözünü o klipte bulamadım',
+            )
+            if code == "line_not_found"
+            else say(
+                en=f'I couldn\'t tell exactly where "{quote}" is said in that clip',
+                tr=f'"{quote}" sözünün o klipte tam nerede söylendiğini anlayamadım',
+            )
+        )
+        tail = say(
+            en=", so nothing plays on after your voice",
+            tr=", o yüzden seslendirmeden sonra bir şey çalmıyor",
+        )
+        return _receipt(req, "not_possible", f"{found}{tail}")
+    return _receipt(req, "not_possible", _CLIP_SOUND_MISSED.get(code or "", _CLIP_SOUND_NOT_BUILT))
+
+
+def _clip_sound_met(
+    req: BriefRequirement, ask: ClipSoundAsk, line: str | None
+) -> RequirementReceipt:
+    if ask.mode != AFTER_VOICE:
+        return _receipt(req, "met", _CLIP_SOUND_UNDER_VOICE_MET)
+    if not line:
+        return _receipt(req, "met", _CLIP_PLAYS_ON_MET)
+    return _receipt(
+        req,
+        "met",
+        say(
+            en=f'{_CLIP_PLAYS_ON_MET}, so "{line}" is heard',
+            tr=f'{_REASON_TR[_CLIP_PLAYS_ON_MET]}, böylece "{line}" duyuluyor',
+        ),
+    )
+
+
+def _check_narrated_clip_sound(
+    req: BriefRequirement, ask: ClipSoundAsk, facts: PlanFacts
+) -> RequirementReceipt:
+    """One clip's own sound under the voice, or playing on after it (KRI-842).
+
+    A finished phone Voiceover is judged from its own `clip_sound` receipt (what the pinned
+    recipe plays), never from the global bed level; a draft that will render there is judged
+    from the same planning rules the worker runs. Anywhere else (a cloud render, an editor
+    turn, the worker's own mid-compile record) nothing is claimed.
+    """
+    if facts.rendered_variant:
+        if facts.edit_format != "narrated":
+            return _receipt(req, "partial", _NO_CHECKER)
+        record = facts.clip_sound if isinstance(facts.clip_sound, Mapping) else {}
+        rows = [
+            *(record.get("under_voice") or []),
+            record.get("after_voice"),
+            *(record.get("not_built") or []),
+        ]
+        row = next(
+            (r for r in rows if isinstance(r, Mapping) and r.get("requirement_id") == req.id),
+            None,
+        )
+        if row is None:
+            return _clip_sound_missed(req, None)
+        if row.get("status") == "built":
+            return _clip_sound_met(req, ask, row.get("line"))
+        return _clip_sound_missed(req, row.get("reason_code"), row.get("line") or None)
+    if facts.voiceover_edit:
+        # A finished phone montage Voiceover: it has no per-clip gains or tail to build.
+        return _receipt(req, "not_possible", _CLIP_SOUND_NEEDS_PHONE_VOICEOVER)
+    if facts.editor or facts.rendered_output:
+        return _receipt(req, "partial", _NO_CHECKER)
+    if facts.phone_narrated:
+        return _draft_clip_sound(req, ask, facts)
+    if facts.audio_strategy == "voiceover":
+        # A voiceover draft the phone Voiceover compiler will not render (a montage with a
+        # voiceover, a cloud render): said before approval, not silently dropped.
+        return _receipt(req, "not_possible", _CLIP_SOUND_NEEDS_PHONE_VOICEOVER)
+    return _receipt(req, "partial", _NO_CHECKER)
+
+
+def _draft_clip_sound(
+    req: BriefRequirement, ask: ClipSoundAsk, facts: PlanFacts
+) -> RequirementReceipt:
+    from app.pipeline.phone_clip_sound import (  # noqa: PLC0415
+        ground_trigger_line,
+        media_aliases,
+        resolve_ask_media,
+        video_media_ids,
+    )
+
+    snapshot = facts.media_snapshot
+    videos = video_media_ids(snapshot) or list(facts.clip_ids)
+    media, why = resolve_ask_media(ask, videos, snapshot)
+    if media is None:
+        return _clip_sound_missed(req, why)
+    if ask.mode != AFTER_VOICE:
+        return _clip_sound_met(req, ask, None)
+    last = facts.last_clip_id or (videos[-1] if videos else None)
+    if last is None:
+        return _receipt(req, "partial", _NO_CHECKER)
+    if last not in media_aliases(snapshot, media):
+        return _clip_sound_missed(req, "not_last_clip")
+    if not ask.triggers:
+        return _clip_sound_met(req, ask, None)
+    quote = ask.triggers[0]
+    grounded = ground_trigger_line(ask.triggers, media, snapshot)
+    if grounded.status == "found":
+        return _clip_sound_met(req, ask, grounded.quote)
+    if grounded.status == "unknown":
+        # Its speech is not analysed yet: the render finds the line, the draft cannot.
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f'{_CLIP_PLAYS_ON_MET}, but I can\'t hear "{quote}" in it yet',
+                tr=f'{_REASON_TR[_CLIP_PLAYS_ON_MET]}, ama "{quote}" sözünü henüz duyamıyorum',
+            ),
+        )
+    return _clip_sound_missed(
+        req, "line_ambiguous" if grounded.status == "ambiguous" else "line_not_found", quote
+    )
+
 
 def _bed_fix(facts: PlanFacts) -> tuple[str, str]:
     """How the creator lowers the footage bed on THIS edit (KRI-821), EN and TR.
@@ -4708,6 +5289,20 @@ def _check_voice_bed(req: BriefRequirement, facts: PlanFacts) -> RequirementRece
     voiceover = facts.audio_strategy == "voiceover"
     if level is None and not voiceover:
         return _receipt(req, "partial", _CANT_CHECK_MIX)
+    if req.scope.startswith("clip:") and not (
+        _wants_bed_muted(req) and not _wants_bed_under_voice(req)
+    ):
+        # KRI-842: the voiceover mix is one bed for every clip. A clip-scoped keep / under / low
+        # ask is met only by a recorded `clip_sound` (`_check_narrated_clip_sound`), never by the
+        # global level. A mute ask keeps its answer below: with no bed at all every clip is
+        # silent under the voice, which is true of that clip too.
+        return _receipt(
+            req,
+            "partial",
+            _NO_CLIP_SOUND_UNDER_VOICE
+            if level is not None and level <= 0
+            else _EVERY_CLIP_SOUND_UNDER_VOICE,
+        )
     pct = None if level is None else round(level * 100)
     if _wants_bed_muted(req) and not _wants_bed_under_voice(req):
         if level is not None and level <= 0:
@@ -5806,47 +6401,22 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
 _LEADING_ARTICLE_RE = re.compile(r"^(?:the|a|an|my|our|that|this|these|those|some|bu)\s+")
 _EXCERPT_CHARS = 110
 
-_LANGUAGE_NAMES: dict[str, tuple[str, str]] = {
-    "en": ("English", "İngilizce"),
-    "tr": ("Turkish", "Türkçe"),
-    "de": ("German", "Almanca"),
-    "es": ("Spanish", "İspanyolca"),
-    "fr": ("French", "Fransızca"),
-    "it": ("Italian", "İtalyanca"),
-    "ar": ("Arabic", "Arapça"),
-    "nl": ("Dutch", "Felemenkçe"),
-    "pt": ("Portuguese", "Portekizce"),
-}
-# Every spelling a creator types (diacritics stripped, see `loose_text`) -> language code.
-_LANGUAGE_WORDS: dict[str, str] = {
-    "english": "en",
-    "ingilizce": "en",
-    "turkish": "tr",
-    "turkce": "tr",
-    "german": "de",
-    "almanca": "de",
-    "spanish": "es",
-    "ispanyolca": "es",
-    "french": "fr",
-    "fransizca": "fr",
-    "italian": "it",
-    "italyanca": "it",
-    "arabic": "ar",
-    "arapca": "ar",
-    "dutch": "nl",
-    "hollandaca": "nl",
-    "felemenkce": "nl",
-    "portuguese": "pt",
-    "portekizce": "pt",
-}
-_LANG_ALT = "|".join(sorted(_LANGUAGE_WORDS, key=len, reverse=True))
+# The language table (names and every creator spelling) is shared with the dispatcher and the
+# worker: app/pipeline/caption_language.py (KRI-838).
+_LANG_ALT = "|".join(sorted(LANGUAGE_WORDS, key=len, reverse=True))
 _CAPTION_WORD = r"(?:sub\s*titles?|captions?|altyazi\w*)"
 # Most specific first: "translate the captions to English" names the target outright.
 _CAPTION_LANGUAGE_PATTERNS = (
     re.compile(rf"\btranslat\w*\s+(?:\w+\s+){{0,3}}?(?:in|into|to)\s+({_LANG_ALT})\b"),
     re.compile(rf"\b({_LANG_ALT})\s+{_CAPTION_WORD}"),
     re.compile(rf"\b{_CAPTION_WORD}\s+(?:in|into|to|as)\s+({_LANG_ALT})\b"),
-    re.compile(rf"\baltyazi\w*\s+({_LANG_ALT})\b"),
+    # "altyazılar Türkçe", and (KRI-838) the bare English wordings the patterns above miss:
+    # "make the subtitles Spanish", "subtitles should be Spanish". Only when the language
+    # closes the ask (`ASK_END`): "captions Spanish food intro", "subtitles Italian
+    # restaurant style" and "captions Dutch oven" name a topic, not the captions' language.
+    re.compile(
+        rf"\b{_CAPTION_WORD}\s+(?:(?:\w+\s+){{0,2}}?(?:be|are|is)\s+)?({_LANG_ALT})\b{ASK_END}"
+    ),
     re.compile(rf"\b({_LANG_ALT})\s+(?:olarak|cevir\w*)"),
 )
 _SPELLING_RE = re.compile(r"\b(?:spell\w*|exact\w*|yazim\w*|dogru yaz\w*)\b")
@@ -6069,13 +6639,33 @@ def _requested_caption_language(req: BriefRequirement) -> str | None:
     for pattern in _CAPTION_LANGUAGE_PATTERNS:
         found = pattern.search(wording)
         if found:
-            return _LANGUAGE_WORDS[found.group(1)]
+            return LANGUAGE_WORDS[found.group(1)]
     return None
 
 
 def _language_name(code: str) -> str:
-    english, turkish = _LANGUAGE_NAMES.get(code, (code.upper(), code.upper()))
+    english, turkish = LANGUAGE_NAMES.get(code, (code.upper(), code.upper()))
     return say(en=english, tr=turkish)
+
+
+def _read_caption_language(
+    lines: Sequence[str], asked: str, names: Sequence[str] = ()
+) -> str | None:
+    """The language the caption TEXT is in when it settles the ask, else None (KRI-838).
+
+    A render's ``caption_language`` is a label the worker stamped; the lines are what the
+    creator sees. whisper hinted to Turkish on English speech wrote English, and the label
+    said "tr", so a label-only check called English captions Turkish ("Done"). The text
+    outranks the label: the asked language when the lines are clearly in it, the language
+    they are clearly in otherwise, None when they are too short or mixed to say (the label
+    then stands). The creator's own spelling targets carry no language evidence.
+    """
+    verdict, detected = caption_language_verdict(lines, asked, ignore_terms=tuple(names))
+    if verdict == "confirmed":
+        return asked
+    if verdict == "contradicted":
+        return detected
+    return None
 
 
 def _check_caption_language(
@@ -6084,6 +6674,11 @@ def _check_caption_language(
     """The captions' language against the one the creator asked for. Spelling of names
     stays unchecked, and the reason says so when the ask was about spelling."""
     rendered = str(facts.caption_language or "").casefold().split("-")[0]
+    if facts.caption_texts:
+        rendered = (
+            _read_caption_language(facts.caption_texts, asked, _spelled_names(req) or ())
+            or rendered
+        )
     note = ""
     if _SPELLING_RE.search(loose_text(_req_text(req))):
         note = " " + say(
@@ -6198,7 +6793,7 @@ def _asked_caption_language(req: BriefRequirement) -> str | None:
     for pattern in _LOOSE_CAPTION_LANGUAGE_PATTERNS:
         match = pattern.search(wording)
         if match:
-            return _LANGUAGE_WORDS[match.group(1)]
+            return LANGUAGE_WORDS[match.group(1)]
     return None
 
 
@@ -6281,7 +6876,7 @@ def _clean_name(name: str) -> str | None:
     if not words:
         return None
     core = loose_text(" ".join(words))
-    if core in _LANGUAGE_WORDS or _CAPTION_RE.search(core):
+    if core in LANGUAGE_WORDS or _CAPTION_RE.search(core):
         return None
     return " ".join(words)
 
@@ -6516,7 +7111,10 @@ def _check_caption_words(req: BriefRequirement, facts: PlanFacts) -> Requirement
     unsure: list[str] = []
     rendered = str(facts.caption_language or "").casefold().split("-")[0]
     asked = _asked_caption_language(req)
+    names = _spelled_names(req)
     if asked is not None:
+        # The lines outrank the label (KRI-838): English words under a "tr" stamp are not Turkish.
+        rendered = _read_caption_language(lines, asked, names or ()) or rendered
         if not rendered:
             unsure.append(
                 say(
@@ -6551,7 +7149,6 @@ def _check_caption_words(req: BriefRequirement, facts: PlanFacts) -> Requirement
                 tr="Altyazılar kelime kelime değil, tam cümleler olarak açık.",
             )
         )
-    names = _spelled_names(req)
     if _asks_spelling(req):
         if not names:
             unsure.append(
@@ -6647,14 +7244,25 @@ def _caption_words_plan(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     names = _spelled_names(req)
     if asked is not None:
         language = _language_name(asked)
-        parts.append(
-            say(en=f"they'll be in {language}", tr=f"altyazılar {language} olacak")
-            if names or _asks_spelling(req)
-            else say(
-                en=f"they'll be in {language}, and I'll check that in the finished video",
-                tr=f"altyazılar {language} olacak, bunu bitmiş videoda kontrol edeceğim",
+        if not can_deliver_caption_language(asked):
+            # KRI-838: Nova cannot write captions in this language yet. Say so before the
+            # creator approves, never promise it and render the spoken language.
+            parts.append(
+                say(
+                    en=f"I can't make {language} captions yet, so they'll be in the language "
+                    "that's spoken",
+                    tr=f"Altyazıları şimdilik {language} yapamıyorum, konuşulan dilde olacaklar",
+                )
             )
-        )
+        else:
+            parts.append(
+                say(en=f"they'll be in {language}", tr=f"altyazılar {language} olacak")
+                if names or _asks_spelling(req)
+                else say(
+                    en=f"they'll be in {language}, and I'll check that in the finished video",
+                    tr=f"altyazılar {language} olacak, bunu bitmiş videoda kontrol edeceğim",
+                )
+            )
     if names:
         one = len(names) == 1
         parts.append(
@@ -7615,6 +8223,10 @@ def _has_checker(req: BriefRequirement) -> bool:
         or asks_freeze_frame(req)
     ):
         return True
+    if _ending_clip_fact(req):
+        return True  # KRI-841: judged against the plan's / render's ending video
+    if requirement_clip_sound(req) is not None:
+        return True  # KRI-842
     if asks_clip_speed(req):
         # KRI-689: judged wherever the plan knows it cannot retime (the phone montage); a plan
         # that does not say gets the neutral `_NO_CHECKER`, which `is_judged` treats as unjudged.
@@ -7656,40 +8268,63 @@ def _has_checker(req: BriefRequirement) -> bool:
     return req.kind == "order"
 
 
+def _freeze_where(freeze: Mapping[str, Any], at: str) -> tuple[str, str]:
+    """KRI-900: where the held frame is, said by what chose it (``(en, tr)``).
+
+    Only a frame the creator named (the second they picked, the cut they named) is said as
+    theirs; a frame inside a moment they did not pin down says who chose it.
+    """
+    grounding = freeze.get("grounding")
+    if grounding == "creator_frame":
+        return (
+            f"at the second you picked ({at}s into the clip)",
+            f"seçtiğin saniyede (klibin {at}. saniyesi)",
+        )
+    if grounding == "cut_position":
+        return "on the last frame of the last shot", "son çekimin son karesinde"
+    if grounding == "creator_moment":
+        return (
+            f"on the moment you picked, at its middle ({at}s into the clip)",
+            f"seçtiğin anın ortasında (klibin {at}. saniyesi)",
+        )
+    if grounding == "delegated_frame":
+        return (
+            f"on that moment ({at}s into the clip; you left the exact frame to me)",
+            f"o anda (klibin {at}. saniyesi; tam kareyi bana bıraktın)",
+        )
+    # A record from before KRI-900 (the moment's middle, never pinned down).
+    return f"on that moment ({at}s into the clip)", f"o anda (klibin {at}. saniyesi)"
+
+
 def _check_freeze(req: BriefRequirement, freeze: Mapping[str, Any]) -> RequirementReceipt:
     """KRI-828: "met" only when the plan holds a frame for this ask (``status == "held"``,
-    read off the compiled plan record and, on a finished video, its timeline)."""
+    read off the compiled plan record and, on a finished video, its timeline). KRI-900: the
+    reason says who chose the held frame, and a moment nobody pinned down holds nothing."""
     status = freeze.get("status")
     hold = _finite_number(freeze.get("hold_s"))
     frame = _finite_number(freeze.get("frame_source_s"))
     if status == "held" and hold is not None and frame is not None:
         seconds = f"{hold:g}"
-        at = f"{frame:.1f}"
+        where, where_tr = _freeze_where(freeze, f"{frame:.1f}")
         basis = freeze.get("hold_basis")
         previous = _finite_number(freeze.get("previous_hold_s"))
         if freeze.get("corrected_by") and not freeze.get("hold_requested_s"):
             # KRI-899: a later ask changed this freeze; its receipt names what now holds.
             reason = say(
-                en=(
-                    f"Freezes the frame for {seconds}s on that moment ({at}s into the clip), "
-                    "as you asked later"
-                ),
-                tr=(
-                    f"O anda kare {seconds} sn donuyor (klibin {at}. saniyesi), "
-                    "sonra istediğin gibi"
-                ),
+                en=f"Freezes the frame for {seconds}s {where}, as you asked later",
+                tr=f"Kare {seconds} sn donuyor, {where_tr}, sonra istediğin gibi",
             )
             return _receipt(req, "met", reason, verification="checked")
         if basis in {"longer", "shorter"} and previous is not None:
             longer = basis == "longer"
             reason = say(
                 en=(
-                    f"Freezes the frame for {seconds}s on that moment ({at}s into the clip); "
+                    f"Freezes the frame for {seconds}s {where}; "
                     f"you didn't say how long, so I made it {'longer' if longer else 'shorter'}"
                     f" than {previous:g}s"
                 ),
                 tr=(
-                    f"O anda kare {seconds} sn donuyor (klibin {at}. saniyesi); süre "
+                    f"Kare {seconds} sn donuyor, {where_tr}; süre "
                     f"söylemediğin için {previous:g} sn'den "
                     f"{'uzun' if longer else 'kısa'} tuttum"
                 ),
@@ -7697,17 +8332,17 @@ def _check_freeze(req: BriefRequirement, freeze: Mapping[str, Any]) -> Requireme
             return _receipt(req, "met", reason, verification="checked")
         if freeze.get("hold_stated"):
             reason = say(
-                en=f"Freezes the frame for {seconds}s on that moment ({at}s into the clip)",
-                tr=f"O anda kare {seconds} sn donuyor (klibin {at}. saniyesi)",
+                en=f"Freezes the frame for {seconds}s {where}",
+                tr=f"Kare {seconds} sn donuyor, {where_tr}",
             )
         else:
             reason = say(
                 en=(
-                    f"Freezes the frame for {seconds}s on that moment ({at}s into the clip); "
+                    f"Freezes the frame for {seconds}s {where}; "
                     "you didn't say how long, so I held it for one second"
                 ),
                 tr=(
-                    f"O anda kare {seconds} sn donuyor (klibin {at}. saniyesi); "
+                    f"Kare {seconds} sn donuyor, {where_tr}; "
                     "süre söylemediğin için bir saniye tuttum"
                 ),
             )
@@ -7717,19 +8352,54 @@ def _check_freeze(req: BriefRequirement, freeze: Mapping[str, Any]) -> Requireme
             # for a different length.
             reason = say(
                 en=(
-                    f"Freezes the frame for {seconds}s on that moment ({at}s into the clip), "
+                    f"Freezes the frame for {seconds}s {where}, "
                     f"not the {requested:g}s you asked for: a freeze holds "
                     f"{'at most' if requested > hold else 'at least'} {seconds}s"
                 ),
                 tr=(
-                    f"O anda kare {seconds} sn donuyor (klibin {at}. saniyesi), istediğin "
+                    f"Kare {seconds} sn donuyor, {where_tr}, istediğin "
                     f"{requested:g} sn değil: bir donma en "
                     f"{'fazla' if requested > hold else 'az'} {seconds} sn sürebiliyor"
                 ),
             )
             return _receipt(req, "partial", reason, verification="checked")
         return _receipt(req, "met", reason, verification="checked")
-    if status == "not_grounded":
+    if status == "declined":
+        # KRI-900: the creator answered "No freeze" before approval.
+        return _receipt(
+            req,
+            "met",
+            say(en="No freeze, as you chose", tr="Seçtiğin gibi donma yok"),
+            verification="checked",
+        )
+    if status == "needs_frame" and freeze.get("position") == "first":
+        return _receipt(req, "not_possible", _FREEZE_FIRST_FRAME)
+    moment = freeze.get("moment_source_s")
+    if (
+        status == "needs_frame"
+        and isinstance(moment, list)
+        and len(moment) == 2
+        and all(_finite_number(v) is not None for v in moment)
+    ):
+        start, end = (f"{float(v):.1f}" for v in moment)
+        middle = f"{(float(moment[0]) + float(moment[1])) / 2:.1f}"
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en=(
+                    f"{_FREEZE_NEEDS_FRAME} ({start}–{end}s into the clip) but not the exact "
+                    "frame to hold, so it plays normally. Tell me the second to freeze on, "
+                    f'like "freeze at {middle} seconds"'
+                ),
+                tr=(
+                    f"{_REASON_TR[_FREEZE_NEEDS_FRAME]} (klibin {start}–{end}. saniyeleri) ama "
+                    "tutulacak tam kareyi bilmiyorum, o yüzden normal oynuyor. Hangi saniyede "
+                    f'donsun, söyle; örneğin "{middle}. saniyede dondur"'
+                ),
+            ),
+        )
+    if status in {"not_grounded", "needs_frame"}:
         return _receipt(req, "not_possible", _FREEZE_NOT_GROUNDED)
     return _receipt(req, "not_possible", _NO_FREEZE_FRAME)
 
@@ -7761,6 +8431,10 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # This must own a timing/select row before generic timing sees its ordinal as ordinary
         # timing.  A receipt is source-space evidence, not a claim based on captions.
         return _check_explicit_speech_cut(req, speech_cut, facts)
+    clip_sound = requirement_clip_sound(req)
+    if clip_sound is not None:
+        # KRI-842: a recorded fact owns the ask, whatever words it is worded in.
+        return _check_narrated_clip_sound(req, clip_sound, facts)
     if _wants_opening_cut(req) and facts.edit_format in {"subtitled", "talking_head"}:
         # "Cut the intro, start the video at '...'": a quoted start line owns the sentence
         # (and any pauses it names); every other speech edit keeps its usual path.
@@ -7783,6 +8457,16 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
     ):
         # KRI-828: the plan carried this freeze (or says why it could not place it).
         return _check_freeze(req, facts.freeze_frames[req.id])
+    if _asks_ending_clip(req, facts):
+        # KRI-841: "add the X video at the very end with its own sound" is judged against the
+        # ending video the plan (or the finished render) holds, before the order or
+        # closing-photo checks can mistake it for either.
+        return _check_ending_clip(req, facts)
+    if _ending_clip_fact(req) and req.kind != "order":
+        # An ending video exists only on a Talking edit (claimed above). `_has_checker` says
+        # yes to the fact, so every other format answers neutral here instead of lending the
+        # ask to the closing-photo check.
+        return _receipt(req, "partial", _NO_CHECKER)
     if asks_freeze_frame(req) and (facts.rendered_variant or not facts.editor):
         # KRI-777: a draft or a finished render never holds a frame, so the draft's reply and
         # approval card say "Couldn't" instead of the model's summary promising it (KRI-700's
@@ -7986,6 +8670,7 @@ def requirements_to_check_at_draft(
     strategy: Mapping[str, Any] | None,
     item_edit_format: object,
     clip_paths: Iterable[object] = (),
+    client_protocol: int | None = None,
 ) -> list[BriefRequirement]:
     """The requirements a strategy draft can honestly be checked against.
 
@@ -7997,8 +8682,9 @@ def requirements_to_check_at_draft(
     A phone Talking draft keeps its caption-language / name-spelling asks: the render
     judges them (KRI-549), and the draft says what it will do (KRI-793,
     `PlanFacts.caption_words_at_render`). A freeze-frame ask stays unless the phone montage
-    can carry it (`freeze_plannable`, KRI-828): otherwise its "Couldn't" belongs before
-    approval (KRI-777). Otherwise this is the unchanged, full list.
+    can carry it (`freeze_plannable`, KRI-828) for ``client_protocol``, the app build that
+    sent the message (KRI-898; ``None`` = unknown, so no hold is planned): otherwise its
+    "Couldn't" belongs before approval (KRI-777). Otherwise this is the unchanged, full list.
     """
     strategy = strategy or {}
     clip_paths = list(clip_paths or ())
@@ -8025,7 +8711,10 @@ def requirements_to_check_at_draft(
         if not (
             defers
             and req.kind in UNIFIED_SETTLED_KINDS
-            and (not asks_freeze_frame(req) or freeze_plannable(req, strategy, planned))
+            and (
+                not asks_freeze_frame(req)
+                or freeze_plannable(req, strategy, planned, client_protocol=client_protocol)
+            )
         )
         and not (narrated and _settled_by_narrated_render(req, strategy))
     ]
@@ -8035,21 +8724,24 @@ def freeze_plannable(
     req: BriefRequirement,
     strategy: Mapping[str, Any] | None,
     planned: frozenset[str] | None = None,
+    *,
+    client_protocol: int | None,
 ) -> bool:
     """KRI-828: will the phone montage plan carry this freeze ask?
 
     Only a corroborated freeze ask (`freeze_spec`, or with ``planned`` -- the brief's
     `planned_freeze_ids` -- a correction of one, KRI-899), on a montage with no creator
-    song, where the phone can hold a frame (`freeze_frame_supported`). The render then
-    settles it (met, or which moment it could not find); everywhere else KRI-777's
-    "Couldn't" stays on the draft.
+    song, where the phone can hold a frame for the app build that asked
+    (`freeze_frame_planned_for`, KRI-898: ``client_protocol`` is required so every caller
+    decides which build it plans for). The render then settles it (met, or which moment it
+    could not find); everywhere else KRI-777's "Couldn't" stays on the draft.
     """
-    from app.services.phone_rollout import freeze_frame_supported  # noqa: PLC0415
+    from app.services.phone_rollout import freeze_frame_planned_for  # noqa: PLC0415
 
     return (
         (req.id in planned if planned is not None else freeze_spec(req) is not None)
         and str((strategy or {}).get("audio_strategy") or "") != "user_song"
-        and freeze_frame_supported()
+        and freeze_frame_planned_for(client_protocol)
     )
 
 
@@ -8167,7 +8859,12 @@ def _talking_honest_receipt(
                 tr=f"{_REASON_TR[prefix]}; {tr_tail}, sen {_round_s(target)} saniye istedin",
             ),
         )
-    bed_ask = _wants_bed_under_voice(req) or _wants_bed_muted(req)  # footage sound level
+    # Footage sound level; KRI-842: one clip's sound is as much a mix change a Talking edit lacks.
+    bed_ask = (
+        _wants_bed_under_voice(req)
+        or _wants_bed_muted(req)
+        or requirement_clip_sound(req) is not None
+    )
     if req.kind not in {"audio", "timing", "select"} and not bed_ask:
         return receipt
     # A speech-excerpt reading ("sesim öne çıksın", "so my voice comes through") only has a
@@ -8457,6 +9154,7 @@ __all__ = [
     "ClosingSpeechFact",
     "EngineNoiseReductionFact",
     "ExplicitSpeechCutFact",
+    "EndingClipFact",
     "NO_TITLE_REASON",
     "NARRATED_ALIGNMENT_RECOVERY",
     "RenderBlockRecovery",

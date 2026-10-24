@@ -1,0 +1,33 @@
+{
+ "_provenance": "KRI-844 Don Julio T2 (2026-10-21 kit, clip T_lucas_sauces.mp4, 12.9 s, Lucas answering in Spanish). Words: whisper.cpp ggml-medium run locally on a 16 kHz mono wav of the clip, forced -l es, -ml 1 -sow (free, no API); its per-word times are coarse (a word is stretched over the silence after it). Only the last word was retimed by hand: 'Gracias' 10.00-12.00 -> 10.74-11.46, the boundaries measured on the audio signal (RMS/silence analysis of the same wav: name exchange ends 3.70 s, 'Aca' onset 4.20 s, the sauces sentence ends 9.40 s, 'Gracias' 10.74-11.46 s, a faint tail to ~11.64 s, nothing word-like after). 'Aca' keeps whisper.cpp's 4.00 start, which lies in the silence 3.70-4.20 before the onset. A DTW pass (-nfa -dtw medium) was tried to get better word times and did not reach the bar ('Aqui' 4.34 s, 'Gracias' starting 11.18 s), so it was not used. Transcript errors (chivichurros, sardines) are whisper's own and kept.",
+ "clip": {
+  "name": "T_lucas_sauces.mp4",
+  "duration_s": 12.9
+ },
+ "language": "es",
+ "prompt": "Short talking clip of Lucas explaining the sauces. Cut my question and his name so it opens straight on \"Here we have traditional Argentinian sauces\". When he says \"Argentinian\", show the grill photo full screen for a moment. When he says chimichurri, show the chimichurri photo as a small card in the corner. End on the \"Thank you\". Hook title at the start: \"POV: the waiter explains the sauces\". Word-by-word captions. Under 10 seconds.",
+ "audio_measured_s": {
+  "name_exchange_ends": 3.7,
+  "aca_onset": 4.2,
+  "sauces_sentence_ends": 9.4,
+  "gracias_start": 10.74,
+  "gracias_end": 11.46
+ },
+ "words": [
+  {"text": "¿Qué", "start_s": 0.01, "end_s": 0.69},
+  {"text": "te", "start_s": 0.69, "end_s": 0.92},
+  {"text": "llaman?", "start_s": 0.92, "end_s": 2.0},
+  {"text": "Lucas", "start_s": 2.0, "end_s": 4.0},
+  {"text": "Acá", "start_s": 4.0, "end_s": 4.72},
+  {"text": "tenemos", "start_s": 4.72, "end_s": 6.0},
+  {"text": "salsas", "start_s": 6.0, "end_s": 6.25},
+  {"text": "tradicionales", "start_s": 6.25, "end_s": 6.81},
+  {"text": "argentinas,", "start_s": 6.81, "end_s": 7.32},
+  {"text": "salsas", "start_s": 7.32, "end_s": 7.57},
+  {"text": "criollas,", "start_s": 7.57, "end_s": 8.14},
+  {"text": "chivichurros", "start_s": 8.14, "end_s": 9.0},
+  {"text": "y", "start_s": 9.0, "end_s": 9.11},
+  {"text": "sardines", "start_s": 9.11, "end_s": 10.0},
+  {"text": "Gracias", "start_s": 10.74, "end_s": 11.46}
+ ]
+}

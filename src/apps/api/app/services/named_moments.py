@@ -125,6 +125,43 @@ def same_word(a: str, b: str) -> bool:
     return len(shorter) >= _PREFIX_LEN and longer.startswith(shorter)
 
 
+def pointed_match(target_words: Iterable[str], pointed: Sequence[str]) -> int | None:
+    """KRI-723 x KRI-900: the one creator-pointed moment a freeze's words name, else None.
+
+    ``pointed`` are the creator's words for each moment they pointed at (in order). A moment
+    matches when it shares at least two of the freeze's words (one when it has only one);
+    a tie names none. The freeze question (``choice_questions._freeze_frame``) and the render
+    (``unified_montage._freeze_on_pinned_moment``) both use this, so they never disagree.
+    """
+    target = {word for word in target_words if len(word) >= _MATCH_MIN_LEN}
+    if not target:
+        return None
+    need = min(2, len(target))
+    scored = []
+    for index, words in enumerate(pointed):
+        found = match_words(words)
+        score = sum(1 for word in target if any(same_word(word, other) for other in found))
+        if score >= need:
+            scored.append((score, index))
+    best = max((score for score, _i in scored), default=0)
+    top = [index for score, index in scored if score == best]
+    return top[0] if len(top) == 1 else None
+
+
+def pointed_moment_words(snapshot: Mapping[str, Any] | None) -> list[str]:
+    """The creator's words for each moment they pointed at, from the length plan's record."""
+    plan = (snapshot or {}).get("length_plan")
+    rows = plan.get("moments") if isinstance(plan, Mapping) else None
+    return [
+        str(row.get("words") or "")
+        for row in sorted(
+            (r for r in rows or () if isinstance(r, Mapping)),
+            key=lambda r: int(r.get("window_index", 0)),
+        )
+        if row.get("origin") == "creator_answer"
+    ]
+
+
 # -- which moments the creator named -----------------------------------------------------------
 
 

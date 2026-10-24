@@ -1775,6 +1775,7 @@ def _dispatch_item_render(
     creator_brief_binding: dict | None = None,
     creator_guided_attempt_id: str | None = None,
     creator_render_shape: dict | None = None,
+    creator_client_protocol: int | None = None,
     speech_cleanup_contract: str | None = None,
     speech_cleanup_analysis_id: str | None = None,
     speech_cleanup_choice: str | None = None,
@@ -2663,6 +2664,14 @@ def _dispatch_item_render(
                     else "background",
                 },
             }
+        if creator_client_protocol is not None:
+            # KRI-898: the app build that approved. The phone montage plans a freeze hold
+            # only for a build that plays it (`freeze_frame_planned_for`); repairs and
+            # re-dispatches reuse these candidates, so they keep it. Absent = unstamped.
+            job.all_candidates = {
+                **(job.all_candidates or {}),
+                "creator_client_protocol": int(creator_client_protocol),
+            }
         # Pin one immutable identity for this Creator-confirmed render before
         # the worker is queued.  Native variants historically received no
         # generation token until a later editor rerender, which made a ready
@@ -3134,6 +3143,7 @@ def dispatch_item_render_for(
     creator_brief_binding: dict | None = None,
     creator_guided_attempt_id: str | None = None,
     creator_render_shape: dict | None = None,
+    creator_client_protocol: int | None = None,
     speech_cleanup_contract: str | None = None,
     speech_cleanup_action: str | None = None,
     speech_cleanup_analysis_id: str | None = None,
@@ -3465,6 +3475,11 @@ def dispatch_item_render_for(
             creator_brief_binding=creator_brief_binding,
             creator_guided_attempt_id=creator_guided_attempt_id,
             creator_render_shape=creator_render_shape,
+            **(
+                {"creator_client_protocol": creator_client_protocol}
+                if creator_client_protocol is not None
+                else {}
+            ),
             speech_cleanup_contract=speech_cleanup_contract,
             speech_cleanup_analysis_id=speech_cleanup_analysis_id,
             speech_cleanup_choice=speech_cleanup_choice,
