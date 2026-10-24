@@ -330,6 +330,12 @@ class ChoiceAnswer(_CreatorModel):
     # every stored answer stays byte-identical. KRI-724: also the word / line a
     # ``speech_occurrence`` answer picked a time of.
     value: str | None = Field(default=None, max_length=300, exclude_if=lambda value: value is None)
+    # KRI-849: what an unclear-word answer is for (the span's start_s / end_s, the action and
+    # the creator's chosen words). Server-written from the tapped option; omitted when empty so
+    # every other stored answer keeps its shape.
+    detail: dict[str, str | int | float] | None = Field(
+        default=None, max_length=8, exclude_if=lambda value: not value
+    )
 
 
 class CreativeStrategy(_CreatorModel):

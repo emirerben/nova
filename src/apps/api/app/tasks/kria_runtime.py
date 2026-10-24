@@ -617,6 +617,7 @@ def _unresolved_choice_plan(
     has_draft: bool = False,
     creator_id: Any = None,
     client_protocol: int | None = None,
+    allow_choices: bool = True,
 ) -> tuple[KriaTurnPlan, str] | None:
     """KRI-476 backstop: the reply that replaces a draft an unresolved choice blocks.
 
@@ -651,6 +652,20 @@ def _unresolved_choice_plan(
         else ""
     )
     history = list(events)
+    from app.kria.unclear_word_ask import clarification_question  # noqa: PLC0415
+
+    clarification = clarification_question(
+        brief, media_snapshot, strategy=strategy, creator_id=creator_id
+    )
+    if clarification is not None:
+        return (
+            KriaTurnPlan(
+                mode="respond", turn_value="question", response=f"{clarification}{unchanged}"
+            ),
+            "unresolved_requirement",
+        )
+    if not allow_choices:
+        return None
     capability = ChoiceCapability(
         creator_id=creator_id,
         voice_route=settings.voice_behind_footage_enabled,
@@ -1420,6 +1435,14 @@ def _complete_draft_turn(
                             if phone_talking
                             else None
                         ),
+                        # KRI-849: what the draft does about "ask me instead of guessing".
+                        unclear_words=(
+                            _draft_unclear_words(
+                                brief, document.strategy, planned.media_snapshot, item
+                            )
+                            if phone_talking
+                            else None
+                        ),
                     )
                     # KRI-776: a moment ask is judged against the windows the approved length
                     # plan will cut, so the card never promises moments the plan doesn't hold.
@@ -1915,7 +1938,10 @@ def _complete_draft_turn(
             )
             snapshot, snapshot_hash = canonical_snapshot(document)
         choice_gate = (
-            settings.kria_choice_questions_enabled
+            (
+                settings.kria_choice_questions_enabled
+                or settings.brief_binding_for(thread.creator_id)
+            )
             and apply_intent.tool_name == "draft.apply_strategy"
             and bool(document.strategy)
         )
@@ -1925,9 +1951,9 @@ def _complete_draft_turn(
             binding_on = settings.brief_binding_for(thread.creator_id)
             gate_brief = brief
             if gate_brief is None and binding_on:
-                gate_brief = answered_brief(
-                    load_latest_brief_sync(db, thread.id), document.strategy
-                )
+                gate_brief = load_latest_brief_sync(db, thread.id)
+                if settings.kria_choice_questions_enabled:
+                    gate_brief = answered_brief(gate_brief, document.strategy)
             blocked = _unresolved_choice_plan(
                 document.strategy,
                 gate_brief if binding_on else None,
@@ -1954,6 +1980,7 @@ def _complete_draft_turn(
                 has_draft=head is not None,
                 creator_id=thread.creator_id if binding_on else None,
                 client_protocol=client_protocol,
+                allow_choices=settings.kria_choice_questions_enabled,
             )
             if blocked is not None:
                 blocked_plan, blocked_reason = blocked
@@ -1989,7 +2016,7 @@ def _complete_draft_turn(
 
             if brief is None:
                 brief = load_latest_brief_sync(db, thread.id)
-                if choice_gate:
+                if settings.kria_choice_questions_enabled:
                     brief = answered_brief(brief, document.strategy)
             source_event = db.get(CreationThreadEvent, turn.source_event_id)
             full_request = (
@@ -3028,6 +3055,27 @@ def _draft_take_window(
         )
     except Exception as exc:  # noqa: BLE001 - an estimate never fails a turn
         log.warning("kria_draft_take_window_failed", error=str(exc)[:200])
+        return None
+
+
+def _draft_unclear_words(
+    brief: Any, strategy: Mapping[str, Any] | None, media_snapshot: Any, item: Any
+) -> dict[str, Any] | None:
+    """KRI-849: what a phone Talking draft does about the word the creator asked to be asked
+    about (None = no such ask, or a comparison that failed: the receipts then say nothing)."""
+    from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+    from app.kria.brief_checks import brief_caption_spellings  # noqa: PLC0415
+    from app.kria.unclear_word_ask import draft_state  # noqa: PLC0415
+
+    try:
+        return draft_state(
+            brief.live(),
+            media_snapshot if media_snapshot is not None else snapshot_media(item),
+            strategy=strategy,
+            spellings=brief_caption_spellings(brief),
+        )
+    except Exception as exc:  # noqa: BLE001 - a receipt line never fails a turn
+        log.warning("kria_draft_unclear_words_failed", error=str(exc)[:200])
         return None
 
 

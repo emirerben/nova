@@ -1,0 +1,381 @@
+{
+ "_source": "KRI-849 Don Julio T1 (Talking, one 25.7 s take; kit ~/Downloads/kria-julio-test/T1_lucas_full_take_talking). NO prod run of T1 exists, so most of this is HAND-AUTHORED. RECORDED: creator_request (kit PROMPT.txt verbatim); segment/word timings of the kit's ground truth (kit README + _src/transcript_en.txt, +-0.3 s); the two hearings of the third sauce are the real prod pair of tests/fixtures/kri803_don_julio_m1_clips.json clip m1_03 (prod thread F4083F1D, 2026-10-21): Gemini 'chimichurri ... sal marina' vs whisper-1 'chivichurri ... salma y limon', re-cast onto the T1 timeline (English connector 'and' instead of Spanish 'con'). HAND-AUTHORED: the brief (shape of tests/fixtures/kri787_merope_t1_turns.json brief_v1 + KRI-789 start_line/end_line + KRI-793 spellings + the new ask_if_unclear fact the Main Creator cassette tests/fixtures/agent_evals/main_creator/kri849_dj_t1_ask_if_unclear.json records), the take row's other fields (copied from the Merope T1 row), 'Creole sauce' as whisper-1's English rendering of 'salsa criolla' (kit transcript note), and the render-time word list.",
+ "thread_id": "9d1f3a52-7c0e-4b86-a3f1-5e2c8b6d4a10",
+ "creator_id": "48b4c528-e227-50e3-9e0f-e06af2c18099",
+ "plan_item_id": "c64e5b0a-2f17-4d93-8a5e-0b7d1e9f3c21",
+ "creator_request": "Talking-to-camera edit of Lucas, our waiter at Don Julio. Start at my \"What's your name?\" and end right after the \"Cheers!\", drop all the table chatter after it. Captions for every voice. Spell the sauces right: salsa criolla, chimichurri. I didn't catch the third sauce he names: if you can't tell what he says, ask me instead of guessing. Put a \"LUCAS\" name tag when he says his name, and \"CHIMICHURRI\" in big letters when he says chimichurri. Title: \"Sauce check at Don Julio\". No text on faces. About 15 seconds.",
+ "take": {
+  "media_id": "analysis-proxy-ios-6D1E4A52-3B7C-4F18-9A2D-DJT1000000A1.mp4",
+  "gcs_path": "users/48b4c528-e227-50e3-9e0f-e06af2c18099/creation-threads/9d1f3a52-7c0e-4b86-a3f1-5e2c8b6d4a10/analysis-proxy-ios-6D1E4A52-3B7C-4F18-9A2D-DJT1000000A1.mp4",
+  "duration_s": 25.7
+ },
+ "gemini_transcript": "What's your name? Lucas. Lucas, yeah. Here we have traditional Argentinian sauces: salsa criolla, chimichurri and sal marina. Thank you. Cheers!",
+ "whisper_segments": [
+  {
+   "start_s": 0.0,
+   "end_s": 1.7,
+   "text": "What's your name?"
+  },
+  {
+   "start_s": 2.0,
+   "end_s": 2.5,
+   "text": "Lucas."
+  },
+  {
+   "start_s": 2.8,
+   "end_s": 3.6,
+   "text": "Lucas, yeah."
+  },
+  {
+   "start_s": 4.2,
+   "end_s": 9.7,
+   "text": "Here we have traditional Argentinian sauces: Creole sauce, chivichurri and salma y limón."
+  },
+  {
+   "start_s": 10.7,
+   "end_s": 11.3,
+   "text": "Thank you."
+  },
+  {
+   "start_s": 13.8,
+   "end_s": 14.8,
+   "text": "Cheers!"
+  }
+ ],
+ "brief": {
+  "version": 1,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "timing",
+    "scope": "global",
+    "facts": {
+     "duration_s": 15
+    },
+    "literal": null,
+    "description": "About 15 seconds",
+    "status": "open",
+    "source_turn_id": "5b8d2c7e-93a4-4f60-b1c8-2d7e0a9f4e13"
+   },
+   {
+    "id": "r2",
+    "kind": "timing",
+    "scope": "global",
+    "facts": {
+     "start_line": "What's your name?",
+     "end_line": "Cheers!"
+    },
+    "literal": null,
+    "description": "Start at \"What's your name?\" and end right after \"Cheers!\", drop the table chatter after it",
+    "status": "open",
+    "source_turn_id": "5b8d2c7e-93a4-4f60-b1c8-2d7e0a9f4e13"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "scope": "global",
+    "facts": {
+     "captions": "on",
+     "spellings": [
+      "salsa criolla",
+      "chimichurri"
+     ],
+     "ask_if_unclear": "the third sauce he names"
+    },
+    "literal": null,
+    "description": "Captions for every voice, spell the sauces right: salsa criolla, chimichurri. I didn't catch the third sauce he names: if you can't tell what he says, ask me instead of guessing",
+    "status": "open",
+    "source_turn_id": "5b8d2c7e-93a4-4f60-b1c8-2d7e0a9f4e13"
+   },
+   {
+    "id": "r4",
+    "kind": "text",
+    "scope": "title",
+    "facts": {},
+    "literal": "Sauce check at Don Julio",
+    "description": "Title",
+    "status": "open",
+    "source_turn_id": "5b8d2c7e-93a4-4f60-b1c8-2d7e0a9f4e13"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "scope": "global",
+    "facts": {
+     "triggers": [
+      "Lucas"
+     ]
+    },
+    "literal": "LUCAS",
+    "description": "Put a \"LUCAS\" name tag when he says his name",
+    "status": "open",
+    "source_turn_id": "5b8d2c7e-93a4-4f60-b1c8-2d7e0a9f4e13"
+   },
+   {
+    "id": "r6",
+    "kind": "text",
+    "scope": "global",
+    "facts": {
+     "triggers": [
+      "chimichurri"
+     ]
+    },
+    "literal": "CHIMICHURRI",
+    "description": "\"CHIMICHURRI\" in big letters when he says chimichurri",
+    "status": "open",
+    "source_turn_id": "5b8d2c7e-93a4-4f60-b1c8-2d7e0a9f4e13"
+   }
+  ]
+ },
+ "strategy": {
+  "pacing": "balanced",
+  "direction": "native",
+  "rationale": "A Talking edit of Lucas naming the sauces, about 15 seconds.",
+  "edit_format": "subtitled",
+  "media_scope": "selected",
+  "caption_style": "auto",
+  "opening_title": "Sauce check at Don Julio",
+  "audio_strategy": "original_audio",
+  "render_program": "native",
+  "story_structure": [
+   "Lucas says his name",
+   "He names the sauces"
+  ],
+  "target_duration_s": 15,
+  "selected_media_ids": [
+   "analysis-proxy-ios-6D1E4A52-3B7C-4F18-9A2D-DJT1000000A1.mp4"
+  ],
+  "video_reuse_policy": "once",
+  "optional_treatments": []
+ },
+ "take_row": {
+  "kind": "video",
+  "capture": {
+   "capture_time": "2025-11-19T20:41:07Z"
+  },
+  "shot_id": null,
+  "analysis": {
+   "width": 320,
+   "aspect": 0.5634,
+   "brands": [
+    "DON JULIO"
+   ],
+   "height": 568,
+   "source": "clip_metadata",
+   "pix_fmt": "yuv420p",
+   "subject": "a waiter presenting sauces at a restaurant table",
+   "duration_s": 25.7,
+   "transcript": "What's your name? Lucas. Lucas, yeah. Here we have traditional Argentinian sauces: salsa criolla, chimichurri and sal marina. Thank you. Cheers!",
+   "description": "A waiter introduces himself and names the sauces on the table; a man raises a glass.",
+   "video_codec": "h264",
+   "best_moments": [],
+   "display_width": 320,
+   "understanding": {
+    "kind": "video",
+    "brands": [
+     "DON JULIO"
+    ],
+    "people": {
+     "note": "a waiter in an apron, a man in a pastel shirt",
+     "count": 2,
+     "speaks_to_camera": true
+    },
+    "speech": {
+     "language": "en",
+     "has_speech": true,
+     "to_camera": true,
+     "transcript": "What's your name? Lucas. Lucas, yeah. Here we have traditional Argentinian sauces: salsa criolla, chimichurri and sal marina. Thank you. Cheers!",
+     "segments": [
+      {
+       "text": "What's your name?",
+       "start_s": 0.0,
+       "end_s": 1.7
+      },
+      {
+       "text": "Lucas.",
+       "start_s": 2.0,
+       "end_s": 2.5
+      },
+      {
+       "text": "Lucas, yeah.",
+       "start_s": 2.8,
+       "end_s": 3.6
+      },
+      {
+       "text": "Here we have traditional Argentinian sauces: Creole sauce, chivichurri and salma y limón.",
+       "start_s": 4.2,
+       "end_s": 9.7
+      },
+      {
+       "text": "Thank you.",
+       "start_s": 10.7,
+       "end_s": 11.3
+      },
+      {
+       "text": "Cheers!",
+       "start_s": 13.8,
+       "end_s": 14.8
+      }
+     ]
+    },
+    "summary": "A waiter introduces himself and names the sauces on the table; a man raises a glass."
+   },
+   "display_height": 568,
+   "on_screen_text": [],
+   "analysis_version": 8,
+   "rotation_degrees": 0
+  },
+  "has_audio": true,
+  "duration_s": 25.7,
+  "upload_contract": {
+   "proxy": {
+    "width": 320,
+    "height": 568,
+    "original": {
+     "kind": "video",
+     "width": 1080,
+     "height": 1920,
+     "sha256": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+     "has_audio": true,
+     "byte_count": 31457280,
+     "duration_s": 25.7,
+     "orientation_degrees": 0
+    },
+    "duration_s": 25.7,
+    "frame_rate": 30.0,
+    "timing_version": 1,
+    "orientation_degrees": 0
+   },
+   "purpose": "analysis_proxy"
+  },
+  "media_id": "analysis-proxy-ios-6D1E4A52-3B7C-4F18-9A2D-DJT1000000A1.mp4",
+  "gcs_path": "users/48b4c528-e227-50e3-9e0f-e06af2c18099/creation-threads/9d1f3a52-7c0e-4b86-a3f1-5e2c8b6d4a10/analysis-proxy-ios-6D1E4A52-3B7C-4F18-9A2D-DJT1000000A1.mp4",
+  "manifest_identity": "analysis-proxy-ios-6D1E4A52-3B7C-4F18-9A2D-DJT1000000A1.mp4",
+  "storage_generation": "1"
+ },
+ "render_words": [
+  {
+   "text": "What's",
+   "start_s": 0.01,
+   "end_s": 0.55
+  },
+  {
+   "text": "your",
+   "start_s": 0.55,
+   "end_s": 0.95
+  },
+  {
+   "text": "name?",
+   "start_s": 0.95,
+   "end_s": 1.7
+  },
+  {
+   "text": "Lucas.",
+   "start_s": 2.0,
+   "end_s": 2.5
+  },
+  {
+   "text": "Lucas,",
+   "start_s": 2.8,
+   "end_s": 3.2
+  },
+  {
+   "text": "yeah.",
+   "start_s": 3.2,
+   "end_s": 3.6
+  },
+  {
+   "text": "Here",
+   "start_s": 4.2,
+   "end_s": 4.5
+  },
+  {
+   "text": "we",
+   "start_s": 4.5,
+   "end_s": 4.7
+  },
+  {
+   "text": "have",
+   "start_s": 4.7,
+   "end_s": 4.9
+  },
+  {
+   "text": "traditional",
+   "start_s": 4.9,
+   "end_s": 5.5
+  },
+  {
+   "text": "Argentinian",
+   "start_s": 5.5,
+   "end_s": 6.1
+  },
+  {
+   "text": "sauces:",
+   "start_s": 6.1,
+   "end_s": 6.8
+  },
+  {
+   "text": "Creole",
+   "start_s": 6.9,
+   "end_s": 7.4
+  },
+  {
+   "text": "sauce,",
+   "start_s": 7.4,
+   "end_s": 7.9
+  },
+  {
+   "text": "Chivichurri",
+   "start_s": 7.9,
+   "end_s": 8.7
+  },
+  {
+   "text": "and",
+   "start_s": 8.7,
+   "end_s": 8.9
+  },
+  {
+   "text": "salma",
+   "start_s": 8.9,
+   "end_s": 9.15
+  },
+  {
+   "text": "y",
+   "start_s": 9.15,
+   "end_s": 9.25
+  },
+  {
+   "text": "limón.",
+   "start_s": 9.25,
+   "end_s": 9.7
+  },
+  {
+   "text": "Thank",
+   "start_s": 10.7,
+   "end_s": 11.0
+  },
+  {
+   "text": "you.",
+   "start_s": 11.0,
+   "end_s": 11.3
+  },
+  {
+   "text": "Cheers!",
+   "start_s": 13.8,
+   "end_s": 14.8
+  }
+ ],
+ "guess_tokens": [
+  "sarabella",
+  "sarayla",
+  "salad",
+  "sardines",
+  "sarain",
+  "sarainia",
+  "salma",
+  "limón",
+  "limon",
+  "sal marina",
+  "marina"
+ ]
+}

@@ -121,7 +121,7 @@ log = structlog.get_logger()
 # v78 (KRI-821): a named cut of a repeated line records which take (`cut_line_occurrences`).
 # v79 combines main's v77 (KRI-815 + KRI-816) with KRI-821's v78.
 # v80 combines main's v79 (KRI-815/816/821) with KRI-827's keep_text_off (branch v78).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v90"
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v91"
 # KRI-724: the Nth time a quoted phrase is said carries `speech_remove` {quote, occurrence}
 # beside its cut_lines, and an engine/motor noise ask carries `noise_reduction: "engine"`, so
 # the phone Talking worker cuts / filters from facts, never from the words (KRI-667) (v76,
@@ -133,6 +133,9 @@ MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v90"
 # v76 (KRI-842) adds the `clip_sound` fact: one clip's own sound under, or after, a voiceover.
 # KRI-847: a ceiling ("at most 15 seconds") carries `duration_bound: "at_most"` beside
 # `duration_s`, so a shorter draft meets it instead of missing 15 s +/- 10 % (v76).
+# v76 (KRI-849): "if you can't tell what he says, ask me instead of guessing" is a captions fact
+# (`ask_if_unclear`), and the creator's later answer is `unclear_answer` ("omit" or their own
+# words); the server compares two hearings of the speech and asks, it never reads the words.
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -560,7 +563,15 @@ or places still use the order requirement's "start"/"end". Captions =>
 "word_by_word"} (karaoke, one word at a time), plus {"caption_language": "en"} (a two-letter
 code) when they name the captions' language ("Türkçe altyazı" => "tr"), plus {"spellings":
 ["Oblea de la Casa", "Merope"]} when they list words or names to spell a certain way in the
-captions, each exactly as the creator wrote it (never corrected or translated); brighten or darken
+captions, each exactly as the creator wrote it (never corrected or translated), plus
+{"ask_if_unclear": "the third sauce he names"} (the creator's own words for WHICH word) when they
+say they could not make out a word and want to be asked instead of having it guessed ("I didn't
+catch the third sauce he names: if you can't tell what he says, ask me"), on the captions
+requirement, or on a `style` requirement of its own when they asked for no captions; when they
+later answer that question in their own words, record it on that same requirement as
+{"unclear_answer": "omit"} for "leave it out" / "I don't know it either, leave that word out", or
+{"unclear_answer": "<the exact word or words they typed>"} when they give the word, never
+translated; brighten or darken
 the footage itself ("brighten the dark clips", "klipleri aydınlat") => a `style` requirement with
 {"footage_light": "brighter"} or {"footage_light": "darker"}; no edit can change the footage's
 light yet, so never say in `summary` that it is brightened or darkened; keep text off something
