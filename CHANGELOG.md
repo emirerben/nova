@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.77.0] - 2026-10-24
+
+### Changed
+- fix(kria): a creator's photo length plays exactly beyond the AI 0.5-0.8 s cadence (KRI-825) (#1792) <!-- release-pr: 1792 -->
+
 ## [0.81.76.0] - 2026-10-23
 
 ### Changed
