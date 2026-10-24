@@ -115,3 +115,19 @@ The tests used the worktree's own PostgreSQL database. Models were replayed or
 unused; no live model call, production write, original-media change or phone
 operation occurred. Final pre-PR gates and exact tested revision are recorded in
 the PR evidence; local results do not certify CI, deployment or TestFlight.
+
+## Receipt consistency follow-up
+
+A final persisted-binding assertion reproduced a narrower inconsistency: the
+prepared-story approval was ready but its ordinary requirement receipt still
+looked unchecked. The runtime now forwards only an executable report row owned
+by the validated prepared-story checker into the corresponding receipt. Other
+requirements are not overwritten; a missing/changed story proof cannot fall back
+to a title-word checker. The regression requires no unresolved accepted story IDs
+and matching checked/enforced IDs before approval. The full adjacent suite passes
+again:182 checks. Explicit approval and stale-data refusals remain in place.
+
+Six mapped incident gates also passed (995 checks, overlapping the focused
+suites), and journey mapping selects10 journeys. These counts are separate
+runs and must not be added into a claimed unique test count. Final preship reruns
+the mapped gates and head-bound evidence after this follow-up commit.

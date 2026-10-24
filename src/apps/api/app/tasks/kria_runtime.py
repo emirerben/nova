@@ -1549,6 +1549,28 @@ def _complete_draft_turn(
             )
             if not readiness_report["ready"]:
                 reply_text = readiness_reply(brief, readiness_report)
+            elif document.prepared_collection_story is not None:
+                # The frozen execution checker owns this selected requirement;
+                # persist its checked verdict in the receipt as well as approval.
+                story_proofs = {
+                    row["requirement_id"]: row
+                    for row in readiness_report["requirements"]
+                    if row["evidence_owner"] == "prepared_collection_story"
+                    and row["disposition"] == "executable"
+                }
+                requirement_receipts = [
+                    {
+                        **receipt,
+                        "status": "met",
+                        "verification": "checked",
+                        "reason": story_proofs[receipt["requirement_id"]]["reason"],
+                    }
+                    if receipt["requirement_id"] in story_proofs
+                    else receipt
+                    for receipt in requirement_receipts
+                ]
+                if story_proofs and len(story_proofs) == len(readiness_report["requirements"]):
+                    reply_text = arguments.summary
         unmet_ids = [
             str(receipt.get("requirement_id"))
             for receipt in requirement_receipts

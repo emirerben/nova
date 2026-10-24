@@ -337,6 +337,11 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
             )
             assert readiness["prepared_evidence_digest"] != hashlib.sha256(b"null").hexdigest()
             assert draft.snapshot_json["brief_binding"]["state"] == "pinned"
+            coverage = draft.snapshot_json["brief_coverage"]
+            assert coverage["unresolved_ids"] == [], "A ready accepted story has no unmet choices"
+            assert set(coverage["enforced_ids"]) == {
+                row["requirement_id"] for row in readiness["requirements"]
+            }
         else:
             assert draft.snapshot_json.get("brief_binding") is None
         prepared_research = frozen.get("research")
