@@ -660,6 +660,49 @@ script, never a narrated draft that cannot render yet:
   narrated plan without a voiceover still asks to record or import instead of reaching approval.
   Independent of `TRANSCRIPT_HELPER_ENABLED`. Journey: `tests/kria/test_kri815_voiceover_script_journey.py`.
 
+## Research before approval (KRI-881)
+
+A creator who asks for sources ("Include sources for the historical facts", T06) sees the
+exact sourced wording and its sources **before** the approval card, and the render puts
+exactly that wording on exactly those clips.
+
+- **Typed ask.** Main Creator / the brief extractor record one `text` requirement, scope
+  `global`, with `facts.research = {topic, request_quote}` (prompt v81 / extractor v23).
+  `ResearchRequest` rejects a URL or private-path topic; `request_quote` must be the
+  creator's own words (`ResearchRequest.authorize` against the full creator request).
+  Never matched from words on the server; "Start fresh" withdraws it like any requirement.
+- **When.** `research_preview.with_research` runs after planning, outside every lock, for a
+  strategy draft with a render request that renders through the unified phone montage. It
+  builds the worker's own plan (`phone_montage_preflight.preflight_montage_plan`, shared with
+  KRI-775), the composer's model view (`creation_text_composition.creation_model_snapshot`)
+  and runs `researched_text.run_researched_revision` unchanged (search, copy, review).
+- **Budget.** Inline when at least `INLINE_MIN_S` (100 s) of the turn is left; otherwise
+  `tasks.prepare_kria_research` (soft 170 s / hard 200 s) runs it and the turn answers
+  "checking sources" and continues (KRI-709, bounded by `kria_turn_auto_continue_max_runs`).
+  Results are cached in Redis by `basis_digest` (research ask + strategy + media identity +
+  length plan), so the continued turn picks them up.
+- **Ready.** The reply lists each explanation (`0:11–0:20 · "Troy: …" · Source: whc.unesco.org`),
+  the `draft_applied` payload carries `research_preview` (explanations + `{title, url}`
+  sources), and `BriefBinding.prepared_research` pins the result under the binding digest
+  (absent when unused, so stored bindings keep their digest and wire shape).
+- **Failed / unmet.** A checked `not_possible` receipt with the precise reason joins the
+  KRI-775 hold-back: "a different approach, or this simpler version?" No approval card.
+- **Render.** `_run_phone_unified_montage_job` reads the pinned result from the approved
+  binding and `compose_creation_text(prepared_research=…)` replays it through
+  `researched_text.pinned_research_operations`: same consecutive clips, inside their render
+  windows, same placement rules, approved text protected from the composer. No search, no
+  rewrite. A plan it no longer fits fails the job naming the explanation.
+- **Never speech.** Sourced text is `add_text` rows with `research` provenance, never caption
+  cues, narration or voiceover inputs.
+- **Scope.** Unified phone montage only, and the non-readiness draft path (KRI-721 readiness
+  drafts keep render-time research). Guided proposals already research before their offer;
+  follow-up chat research already shows a draft first.
+- **Kill switch.** `KRIA_RESEARCH_PREVIEW_ENABLED=false` + restart api + worker: nothing runs,
+  no field is pinned, render-time research is unchanged.
+- **Proof.** `tests/evals/request_following/test_kri881_research_before_approval.py` (real
+  runtime turn over scratch Postgres + real phone worker, recorded model I/O) writes
+  `.dev/kri-881/report.json`.
+
 ## Render consent
 
 Every initial render and rerender requires a separate, expiring approval pinned

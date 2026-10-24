@@ -121,7 +121,9 @@ log = structlog.get_logger()
 # v78 (KRI-821): a named cut of a repeated line records which take (`cut_line_occurrences`).
 # v79 combines main's v77 (KRI-815 + KRI-816) with KRI-821's v78.
 # v80 combines main's v79 (KRI-815/816/821) with KRI-827's keep_text_off (branch v78).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v80"
+# v81 (KRI-881): a research / sources ask is a typed `text` requirement with `facts.research`
+# ({topic, request_quote}); the server researches it before approval.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v81"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -520,6 +522,11 @@ Mute or remove the footage's own sound (camera, crowd, ambient, original audio) 
 voice is heard ("mute the crowd noise under my voice", "kamera sesini kapat") => an `audio`
 requirement with {"audio_intent": "source_muted"}; "keep it low / quieter under my voice" is
 not a mute and records no audio_intent.
+Research, fact checking or sources for the on-screen explanations ("include sources for the
+historical facts", "research it online", "kaynakları ekle") => ONE `text` requirement, scope
+"global", the ask in `description`, with {"research": {"topic": "<a public topic, never a link or
+file name>", "request_quote": "<the creator's exact words asking for research or sources, copied
+verbatim>"}}. Never write the facts or sources yourself: the server researches before approval.
 Record any requested processing, noise/wind removal, volume change, music or speech selection
 as a SEPARATE requirement with its complete description; never certify those changes with
 `source_unchanged`. For "original camera audio, remove only the wind noise", record both the

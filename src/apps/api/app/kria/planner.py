@@ -801,6 +801,8 @@ class PlannedKriaTurn:
     # "go ahead". Server-only: never reaches `KriaTurnPlan`, which forbids extra fields.
     continuable: bool = False
     prepared_collection_story: dict | None = None
+    # KRI-881: research done before approval (`app.kria.research_preview`), server-owned.
+    prepared_research: dict | None = None
 
 
 def _fresh_if_declared(prior, updates, outputs):  # noqa: ANN001, ANN202

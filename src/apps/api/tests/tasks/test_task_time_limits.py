@@ -196,3 +196,18 @@ def test_suggester_time_limits_under_visibility_timeout() -> None:
 
     assert (soft, hard) == (60, 90)
     assert soft <= hard < visibility_timeout
+
+
+def test_research_preview_time_limits_under_visibility_timeout() -> None:
+    """`tasks.prepare_kria_research` (KRI-881) runs one grounded search + copy + review
+    (provider timeouts 55 + 60 + 45 s) before approval; acks_late, so it stays under the
+    broker visibility timeout and far from a render-sized budget."""
+    visibility_timeout = _extract_visibility_timeout(_read_source("app/worker.py"))
+    decorator = _extract_celery_task_decorator(
+        _read_source("app/tasks/kria_runtime.py"), "tasks.prepare_kria_research"
+    )
+    hard = _extract_limit_kwarg(decorator, "time_limit")
+    soft = _extract_limit_kwarg(decorator, "soft_time_limit")
+
+    assert (soft, hard) == (170, 200)
+    assert soft <= hard < visibility_timeout

@@ -107,18 +107,66 @@ def montage_blockers(
     """``None`` when this draft does not render through the unified phone montage, or
     nothing here can be judged; otherwise the checked ``order`` / ``timing`` receipts the
     worker would refuse on, in brief order, in the current reply language.
+    """
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        build_receipts,
+        needs_creator_choice,
+        plan_facts_from_unified_montage,
+    )
+    from app.kria.duplicate_uploads import montage_record_fields  # noqa: PLC0415
+
+    # The worker only refuses a draft whose brief was bound at approval.
+    if brief is None or not settings.brief_binding_for(creator_id):
+        return None
+    judged: dict[str, BriefRequirement] = {
+        req.id: req for req in brief.live() if req.kind in PREFLIGHT_KINDS
+    }
+    if not judged:
+        return None
+    planned = preflight_montage_plan(
+        creator_id=creator_id,
+        edit_format=edit_format,
+        brief=brief,
+        strategy=strategy,
+        media_snapshot=media_snapshot,
+        visuals=visuals,
+    )
+    if planned is None:
+        return None
+    plan, aliases = planned
+    record = plan.record()
+    record.update(montage_record_fields(aliases))
+    receipts = build_receipts(
+        brief.live(), plan_facts_from_unified_montage(record), include_unchecked=True
+    )
+    return [
+        receipt
+        for receipt in receipts
+        if receipt.requirement_id in judged and needs_creator_choice(receipt)
+    ]
+
+
+def preflight_montage_plan(
+    *,
+    creator_id: object,
+    edit_format: object,
+    brief: CreativeBrief | None,
+    strategy: Mapping[str, Any] | None,
+    media_snapshot: Mapping[str, Any] | None,
+    visuals: Sequence[Any] | Callable[[], Sequence[Any]],
+) -> tuple[Any, dict] | None:
+    """The worker's own phone montage plan for a draft, before approval, or ``None`` when
+    the draft does not render through the unified phone montage.
+
+    Returns ``(UnifiedMontagePlan, duplicate aliases)``. Shared by the KRI-775 blockers and
+    the KRI-881 research preview, so both judge the one plan the worker will build.
 
     Mirrors the dispatch + worker inputs: the clips dispatch hands the worker (an explicit
     selection, byte-identical uploads collapsed), their phone source receipts, the route the
     job would be stamped with, and the approved length plan.
     """
-    from app.kria.brief_checks import (  # noqa: PLC0415
-        build_receipts,
-        defers_to_unified_montage,
-        needs_creator_choice,
-        plan_facts_from_unified_montage,
-    )
-    from app.kria.duplicate_uploads import collapse_strategy, montage_record_fields  # noqa: PLC0415
+    from app.kria.brief_checks import defers_to_unified_montage  # noqa: PLC0415
+    from app.kria.duplicate_uploads import collapse_strategy  # noqa: PLC0415
     from app.pipeline.unified_montage import brief_view  # noqa: PLC0415
     from app.services.creator_render_contract import (  # noqa: PLC0415
         PLAN_AUTHORITY_FIELD,
@@ -144,13 +192,7 @@ def montage_blockers(
         _unified_montage_clips,
     )
 
-    # The worker only refuses a draft whose brief was bound at approval.
-    if brief is None or not settings.brief_binding_for(creator_id):
-        return None
-    judged: dict[str, BriefRequirement] = {
-        req.id: req for req in brief.live() if req.kind in PREFLIGHT_KINDS
-    }
-    if not judged or not isinstance(media_snapshot, Mapping):
+    if brief is None or not isinstance(media_snapshot, Mapping):
         return None
     strategy = dict(strategy or {})
     media = dict(media_snapshot)
@@ -235,16 +277,7 @@ def montage_blockers(
         approved_length_plan=envelope,
         contract=contract,
     )
-    record = plan.record()
-    record.update(montage_record_fields(aliases))
-    receipts = build_receipts(
-        brief.live(), plan_facts_from_unified_montage(record), include_unchecked=True
-    )
-    return [
-        receipt
-        for receipt in receipts
-        if receipt.requirement_id in judged and needs_creator_choice(receipt)
-    ]
+    return plan, aliases
 
 
 def with_blocked_requirements(

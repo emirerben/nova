@@ -1324,6 +1324,7 @@ def _complete_draft_turn(
         brief = None
         speed_notice: str | None = None  # KRI-689
         phone_blockers: list = []  # KRI-775
+        draft_research = None  # KRI-881
         if planned.brief_route is not None:
             # KRI-188: persist this turn's requirements (idempotent per turn),
             # then check each one deterministically against what was drafted.
@@ -1430,6 +1431,25 @@ def _complete_draft_turn(
                             if planned.media_snapshot is not None
                             else snapshot_media(item),
                         )
+                        # KRI-881: research that failed before approval is a precise limit
+                        # the creator rules on here, never a ready card.
+                        from app.kria import research_preview  # noqa: PLC0415
+
+                        draft_research = research_preview.for_draft(
+                            planned.prepared_research,
+                            brief=brief,
+                            strategy=document.strategy,
+                            media_snapshot=planned.media_snapshot
+                            if planned.media_snapshot is not None
+                            else snapshot_media(item),
+                        )
+                        if draft_research is not None and not draft_research.ready:
+                            phone_blockers = [
+                                *phone_blockers,
+                                research_preview.blocker_receipt(
+                                    draft_research.prepared, draft_research.requirement
+                                ),
+                            ]
                         checked = with_blocked_requirements(checked, brief, phone_blockers)
                 else:
                     # Editor operations verify only the requirements stated in
@@ -1511,6 +1531,10 @@ def _complete_draft_turn(
                         )
         if speed_notice:
             reply_text = f"{reply_text}\n{speed_notice}"
+        if draft_research is not None and draft_research.ready:
+            from app.kria import research_preview  # noqa: PLC0415
+
+            reply_text = f"{reply_text}\n{research_preview.preview_lines(draft_research.prepared)}"
         if brief is not None:
             # A repeated offer can have no new updates to persist in the response
             # transaction. Its receipts still name the revision it checked.
@@ -2026,6 +2050,12 @@ def _complete_draft_turn(
                             if source_event is not None
                             else None
                         ),
+                        # KRI-881: the sourced wording the reply showed, replayed at render.
+                        prepared_research=(
+                            draft_research.prepared.model_dump(mode="json")
+                            if draft_research is not None and draft_research.ready
+                            else None
+                        ),
                     ),
                     "brief_coverage": coverage,
                 }
@@ -2265,6 +2295,11 @@ def _complete_draft_turn(
                 **_state_event_fields(state_id, state_trace),
                 **({"requirement_receipts": requirement_receipts} if requirement_receipts else {}),
                 **_receipt_lead_fields(reply_lead, also_changed, requirement_receipts),
+                **(
+                    {"research_preview": _research_preview_payload(draft_research)}
+                    if draft_research is not None and draft_research.ready
+                    else {}
+                ),
             },
         )
         _append_sync_event(
@@ -2291,6 +2326,12 @@ def _complete_draft_turn(
         turn.lease_expires_at = None
         db.commit()
         return _Completion(committed=True)
+
+
+def _research_preview_payload(draft_research: Any) -> dict[str, Any]:
+    from app.kria import research_preview  # noqa: PLC0415
+
+    return research_preview.preview_payload(draft_research.prepared)
 
 
 def _renew_turn_lease(turn_id: uuid.UUID, *, lease_owner: str, lease_epoch: int) -> bool:
@@ -3060,6 +3101,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
     """Plan and execute one durable turn without holding locks across inference."""
 
     identifier = uuid.UUID(turn_id)
+    turn_started = time.monotonic()
     lease_owner = str(self.request.id or identifier)
     claimed = _claim(identifier, lease_owner)
     if claimed is None:
@@ -3106,6 +3148,16 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                 )
             )
             planned = _useful_plan(planned, user_message=user_message)
+            # KRI-881: research a typed research ask before the approval card, outside
+            # every lock; "checking sources" continues the turn when it needs more time.
+            from app.kria import research_preview  # noqa: PLC0415
+
+            planned = research_preview.with_research(
+                planned,
+                snapshot,
+                turn_id=identifier,
+                deadline=turn_started + float(run_kria_turn.soft_time_limit or 200),
+            )
             if planned.plan.mode == "respond" and planned.continuable:
                 # KRI-709: the planner stopped on a time budget with its answers saved.
                 # Run the same turn again instead of asking the creator to say "go
@@ -3404,6 +3456,23 @@ def _deferred_replan_note() -> str:
             "planı yeniden kurarım."
         ),
     )
+
+
+@celery_app.task(
+    name="tasks.prepare_kria_research",
+    soft_time_limit=170,
+    time_limit=200,
+    max_retries=0,
+)
+def prepare_kria_research(payload: dict[str, Any]) -> dict[str, str]:
+    """KRI-881: research one strategy draft before approval with a full budget.
+
+    Enqueued when a turn had too little time left; caches the result by the basis it was
+    researched for, so the continued turn finds it. Writes no thread, draft or approval.
+    """
+    from app.kria import research_preview  # noqa: PLC0415
+
+    return {"status": research_preview.run_task_body(payload)}
 
 
 @celery_app.task(

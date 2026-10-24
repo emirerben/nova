@@ -1101,7 +1101,7 @@
     {
       "id": "troya-footage-research",
       "needs_native": true,
-      "api_tests": "tests/evals/request_following/test_troya_context_journey.py tests/evals/request_following/test_researched_text.py tests/evals/request_following/test_kri816_talking_research.py tests/evals/request_following/test_kri816_historical_journey.py tests/services/test_kria_editor_clip_context.py",
+      "api_tests": "tests/evals/request_following/test_troya_context_journey.py tests/evals/request_following/test_researched_text.py tests/evals/request_following/test_kri816_talking_research.py tests/evals/request_following/test_kri816_historical_journey.py tests/evals/request_following/test_kri881_research_before_approval.py tests/services/test_kria_editor_clip_context.py",
       "xctests": [
         "KriaTests/NativeResearchSourcesTests/testSourcesSurviveDocumentSaveAndFlagChangedCopy",
         "KriaTests/NativeResearchSourcesTests/testUnsafeSourceSchemesAndPrivateHostsCannotOpen",
@@ -1118,6 +1118,8 @@
         "src/apps/api/tests/evals/request_following/test_kri816_talking_research.py",
         "src/apps/api/tests/evals/request_following/test_kri816_historical_journey.py",
         "src/apps/api/tests/fixtures/kri816_troya_historical_journey_turn.json",
+        "src/apps/api/app/kria/research_preview.py",
+        "src/apps/api/tests/evals/request_following/test_kri881_research_before_approval.py",
         "src/apps/api/app/services/phone_subtitled_editor.py",
         "src/apps/ios/Kria/Core/ResearchCitation.swift",
         "src/apps/ios/Kria/Features/NativeResearchSourcesView.swift",
