@@ -24,6 +24,13 @@ places both in the take's timed speech before approval, with the same cut the wo
 KRI-837: a line in ``start_line`` / ``end_line`` may be one word ("Cheers!" ends a take); the
 two-word floor stays for the cue reader and the legacy ``start`` / ``end`` keys, whose one
 words are titles, signs and a route's places.
+
+KRI-844: a quote the take's speech does not hold (an English quote of a Spanish take) is not
+found by either. The creator is then asked which spoken line of the take to open / end on
+(`app.services.choice_questions`, ``take_line_start`` / ``take_line_end``), and the answer
+rides the requirement as ``facts.start_line_spoken`` / ``facts.end_line_spoken``: the take's
+own words, grounded before the quote (`TakeWindowAsk.start_spoken` / ``end_spoken``). They are
+read as they are -- a one-word line ("Gracias") is a line -- and never as a quote to cut at.
 """
 
 from __future__ import annotations
@@ -46,6 +53,10 @@ OPENING_CUT_KINDS = frozenset({"select", "timing", "style"})
 # use those keys too; only a one-take Talking edit reads them as lines).
 START_LINE_FACT = "start_line"
 END_LINE_FACT = "end_line"
+# KRI-844: the take's own line the creator picked for a quote it does not hold. Named so they
+# are neither route keys (`start` / `end`) nor the quote facts above.
+START_SPOKEN_FACT = "start_line_spoken"
+END_SPOKEN_FACT = "end_line_spoken"
 _LEGACY_START_FACT = "start"
 _LEGACY_END_FACT = "end"
 _LINE_FACT_KINDS = OPENING_CUT_KINDS | {"order"}
@@ -238,6 +249,27 @@ class TakeWindowAsk:
     end_quote: str | None
     start_ids: tuple[str, ...] = ()
     end_ids: tuple[str, ...] = ()
+    # KRI-844: the take's own line picked for a quote it does not hold (grounded first).
+    start_spoken: str | None = None
+    end_spoken: str | None = None
+
+
+def _spoken_line(
+    requirements: Iterable[BriefRequirement], ids: tuple[str, ...], fact: str
+) -> str | None:
+    """The line picked for a side: ``fact`` on a live requirement that asked for that side.
+
+    Read as stored -- no minimum length (a transcript line "Gracias" is one word) -- and only
+    from a requirement that still asks for the side, so a stale pick never outlives its quote.
+    """
+    for req in requirements:
+        if req.id not in ids or not req.live or req.kind not in _LINE_FACT_KINDS:
+            continue
+        value = req.facts.get(fact) if isinstance(req.facts, Mapping) else None
+        line = value.strip() if isinstance(value, str) else ""
+        if line:
+            return line
+    return None
 
 
 def take_window_ask(requirements: Iterable[BriefRequirement]) -> TakeWindowAsk | None:
@@ -247,11 +279,15 @@ def take_window_ask(requirements: Iterable[BriefRequirement]) -> TakeWindowAsk |
     end = _first_line(reqs, requirement_end_quote)
     if start is None and end is None:
         return None
+    start_ids = start[1] if start else ()
+    end_ids = end[1] if end else ()
     return TakeWindowAsk(
         start_quote=start[0] if start else None,
         end_quote=end[0] if end else None,
-        start_ids=start[1] if start else (),
-        end_ids=end[1] if end else (),
+        start_ids=start_ids,
+        end_ids=end_ids,
+        start_spoken=_spoken_line(reqs, start_ids, START_SPOKEN_FACT),
+        end_spoken=_spoken_line(reqs, end_ids, END_SPOKEN_FACT),
     )
 
 
@@ -326,18 +362,19 @@ def _single_take(
 
 @dataclass(frozen=True)
 class TakeSpeech:
-    """A one-take Talking draft's clip and its timed speech, before approval."""
+    """The one take's timed speech as the draft sees it (sentence timings, KRI-790)."""
 
     media_id: str
     duration_s: float
-    # `segment_words` of the clip's timed sentences (source seconds).
-    words: tuple[dict[str, Any], ...]
+    segments: tuple[Mapping[str, Any], ...]
+    words: list[dict[str, Any]]
 
 
-def take_speech(
+def single_take_speech(
     media_snapshot: Mapping[str, Any] | None, strategy: Mapping[str, Any] | None = None
 ) -> TakeSpeech | None:
-    """The single take's duration and sentence-timed words; None without them."""
+    """The speech of the one video a Talking edit plays; None for zero or several clips, or a
+    take whose record holds no timed speech or no duration."""
     row = _single_take(media_snapshot, strategy)
     analysis = row.get("analysis") if isinstance(row, Mapping) else None
     if not isinstance(analysis, Mapping):
@@ -346,10 +383,19 @@ def take_speech(
     understanding = analysis.get("understanding")
     speech = understanding.get("speech") if isinstance(understanding, Mapping) else None
     segments = speech.get("segments") if isinstance(speech, Mapping) else None
-    words = segment_words(seg for seg in segments or [] if isinstance(seg, Mapping))
+    rows = (
+        tuple(seg for seg in segments if isinstance(seg, Mapping))
+        if isinstance(segments, list)
+        else ()
+    )
+    words = segment_words(rows)
     if not duration or not words:
         return None
-    return TakeSpeech(str(row.get("media_id") or ""), float(duration), tuple(words))
+    return TakeSpeech(str(row.get("media_id") or ""), duration, rows, words)
+
+
+# KRI-724's name for the same take speech.
+take_speech = single_take_speech
 
 
 def estimate_take_window(
@@ -362,25 +408,27 @@ def estimate_take_window(
 
     The worker's own cut (`app.pipeline.phone_opening_cut.apply_take_window`) run on the
     clip's timed sentences. None without a start/end ask; a line the sentences don't hold,
-    or a take with no timed speech, stays unknown (never a guessed number).
+    or a take with no timed speech, stays unknown (never a guessed number). A line the
+    creator picked from the take (KRI-844) is grounded first, the quote stays the receipt's.
     """
     ask = take_window_ask(requirements)
     if ask is None:
         return None
     unknown = TakeWindowEstimate(ask.start_quote, ask.end_quote, None, None, None)
-    take = take_speech(media_snapshot, strategy)
+    take = single_take_speech(media_snapshot, strategy)
     if take is None:
         return unknown
-    duration, words = take.duration_s, take.words
     from app.pipeline.phone_opening_cut import apply_take_window  # noqa: PLC0415
     from app.pipeline.silence_cut import no_op_plan  # noqa: PLC0415
 
     plan, start, end = apply_take_window(
-        no_op_plan(duration),
-        words,
+        no_op_plan(take.duration_s),
+        take.words,
         start_quote=ask.start_quote,
         end_quote=ask.end_quote,
-        duration_s=duration,
+        duration_s=take.duration_s,
+        start_spoken=ask.start_spoken,
+        end_spoken=ask.end_spoken,
     )
     receipts = [r for r in (start, end) if r is not None]
     start_s = start.get("start_s") if start and start["status"] == "applied" else None
@@ -395,12 +443,14 @@ def estimate_take_window(
 
 __all__ = [
     "END_LINE_FACT",
+    "END_SPOKEN_FACT",
     "OPENING_CUT_KINDS",
     "START_LINE_FACT",
+    "START_SPOKEN_FACT",
     "OpeningCutAsk",
+    "TakeSpeech",
     "TakeWindowAsk",
     "OccurrencePin",
-    "TakeSpeech",
     "TakeWindowEstimate",
     "brief_opening_cut",
     "brief_take_window",
@@ -414,6 +464,7 @@ __all__ = [
     "parse_occurrence_option",
     "segment_words",
     "select_occurrence",
+    "single_take_speech",
     "take_speech",
     "take_window_ask",
     "unread_line_sides",

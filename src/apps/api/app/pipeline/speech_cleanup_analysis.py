@@ -20,6 +20,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.config import settings
 from app.pipeline.caption_language import crosscheck_detected_language, infer_language_from_text
 from app.pipeline.silence_cut import (
     SILENCE_CUT_VERBATIM_PROMPT,
@@ -27,6 +28,13 @@ from app.pipeline.silence_cut import (
     Removal,
     build_cut_plan,
     build_cut_plan_comparison,
+)
+from app.pipeline.transcribe import TranscribeError, Transcript, Word
+from app.services.mixed_language_transcript import (
+    MAX_EXTRA_PASSES,
+    MixedPass,
+    merge_passes,
+    reference_languages,
 )
 from app.services.speech_cleanup_selection import DETECTOR_VERSION
 
@@ -220,6 +228,10 @@ class SpeechCleanupAnalysisInput(_FrozenModel):
     # language detection — see `_crosschecked_transcript`. Never cut evidence itself.
     reference_transcript: str | None = None
     reference_source: Literal["clip_analysis", "gemini_audio"] | None = None
+    # How much of the take the reference heard, in seconds (None: all of it). Gemini's own
+    # transcript of the narration covers only its opening 30 s; on a mixed take no other
+    # pass's words are taken from past it (see `_mixed_language_transcript`).
+    reference_covers_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def validate_window_and_spans(self) -> SpeechCleanupAnalysisInput:
@@ -599,6 +611,120 @@ def _public_receipt(
     )
 
 
+# How a transcription failure is told from a bug. The task adapter classifies the first pass with
+# these (`_run_engine_once`); an optional extra pass that fails like this is skipped, anything
+# else escapes.
+PROGRAMMING_ERRORS = (
+    AssertionError,
+    AttributeError,
+    ImportError,
+    KeyError,
+    NameError,
+    TypeError,
+    ValueError,
+)
+TRANSCRIPTION_PROVIDER_MODULES = frozenset({"httpcore", "httpx", "openai", "requests", "urllib3"})
+# A receipt lists at most this many stretches (a long take can change language often).
+_MAX_RECEIPT_SEGMENTS = 50
+
+
+def _optional_pass_unavailable(exc: Exception) -> bool:
+    """True when ``exc`` is a transcription/provider failure (skip the pass), False for a bug."""
+
+    if isinstance(exc, PROGRAMMING_ERRORS):
+        return False
+    if isinstance(exc, TranscribeError | TimeoutError | OSError):
+        return True
+    return type(exc).__module__.partition(".")[0] in TRANSCRIPTION_PROVIDER_MODULES
+
+
+def _word_rows(transcript: Any) -> list[dict[str, Any]]:
+    return [word.model_dump() for word in _timed_words(transcript)]
+
+
+def _mixed_language_transcript(
+    transcript: Any,
+    analysis_input: SpeechCleanupAnalysisInput,
+    transcribe: _TranscriptFn,
+    receipt: dict[str, Any],
+    languages: list[str],
+) -> tuple[Any, dict[str, Any]]:
+    """Per-stretch transcript of a take whose reference speaks several languages (KRI-843).
+
+    No single whisper language is right for such a take (an English question, a Spanish answer
+    and Turkish chatter in one clip): auto-detect translates two of the three, and the EN/TR
+    cross-check can only force one language over all of it. So the take is transcribed once more
+    in each other language the reference shows (at most `MAX_EXTRA_PASSES`, same verbatim
+    prompt) and `merge_passes` takes, stretch by stretch, the pass the reference confirms. The
+    first pass stands wherever no other pass replaces it: a stretch nothing confirms is NOT
+    dropped, because wordless sound reads as a pause to the cleanup cut, which removes it.
+    An extra pass that fails to transcribe or hears nothing is skipped (the receipt lists
+    ``failed`` and ``heard``); when no pass confirms anything the first pass stands untouched.
+    """
+
+    first_language = str(receipt["whisper_language"]).lower()
+    wanted = [language for language in languages if language != first_language]
+    wanted = wanted[:MAX_EXTRA_PASSES]
+    extras: list[MixedPass] = []
+    failed: list[str] = []
+    for language in wanted:
+        try:
+            again = transcribe(
+                analysis_input.local_media_path,
+                language=language,
+                verbatim_prompt=SILENCE_CUT_VERBATIM_PROMPT,
+            )
+        except Exception as exc:  # noqa: BLE001 - only a transcription failure skips the pass
+            if not _optional_pass_unavailable(exc):
+                raise
+            failed.append(language)
+            continue
+        rows = _word_rows(again)
+        if rows:
+            extras.append(MixedPass(language, rows))
+    receipt = {
+        **receipt,
+        "mixed": True,
+        "reference_languages": languages,
+        # Asked for / returned words / raised a transcription or provider error.
+        "tried": wanted,
+        "heard": [extra.language for extra in extras],
+        "failed": failed,
+    }
+    merged = (
+        merge_passes(
+            MixedPass(first_language, _word_rows(transcript)),
+            extras,
+            str(analysis_input.reference_transcript),
+            duration_s=analysis_input.duration_s,
+            covers_s=analysis_input.reference_covers_s,
+        )
+        if extras
+        else None
+    )
+    if merged is None:
+        return transcript, {**receipt, "segments": []}
+    words = [
+        Word(
+            text=row["text"],
+            start_s=row["start_s"],
+            end_s=row["end_s"],
+            confidence=1.0 if row["confidence"] is None else row["confidence"],
+            segment_avg_logprob=row["segment_avg_logprob"],
+            segment_no_speech_prob=row["segment_no_speech_prob"],
+        )
+        for row in merged.words
+    ]
+    combined = Transcript(
+        words=words,
+        full_text=" ".join(word.text for word in words),
+        low_confidence=bool(_value(transcript, "low_confidence") or False),
+        language=merged.language[:32],
+    )
+    segments = list(merged.segments)[:_MAX_RECEIPT_SEGMENTS]
+    return combined, {**receipt, "applied": True, "segments": segments}
+
+
 def _crosschecked_transcript(
     transcript: Any,
     analysis_input: SpeechCleanupAnalysisInput,
@@ -611,16 +737,18 @@ def _crosschecked_transcript(
     transcribing. Filler and pause decisions made on a translation cut the wrong
     audio, so on a clear EN/TR disagreement with ``reference_transcript`` the
     clip is transcribed again in the language Gemini heard; an empty second pass
-    keeps the first. Returns the transcript to analyze plus a receipt, recorded
-    whenever a reference was available (it tells a later reschedule that this
-    run already had one, see ``speech_cleanup_preflight``); None without one.
+    keeps the first. A reference that speaks two or more languages is a mixed
+    take, where one language cannot be right: it is merged per stretch instead
+    (`_mixed_language_transcript`). Returns the transcript to analyze plus a
+    receipt, recorded whenever a reference was available (it tells a later
+    reschedule that this run already had one, see ``speech_cleanup_preflight``);
+    None without one.
     """
 
     reference = (analysis_input.reference_transcript or "").strip()
     if not reference:
         return transcript, None
     whisper_language = str(_value(transcript, "language") or "")[:32]
-    heard_language = crosscheck_detected_language(whisper_language, reference_text=reference)
     receipt: dict[str, Any] = {
         "whisper_language": whisper_language,
         "reference_language": infer_language_from_text(reference),
@@ -628,6 +756,13 @@ def _crosschecked_transcript(
     }
     if analysis_input.reference_source is not None:
         receipt["reference_source"] = analysis_input.reference_source
+    if settings.speech_cleanup_mixed_language_enabled:
+        languages = reference_languages(reference)
+        if len(languages) >= 2 and _timed_words(transcript):
+            return _mixed_language_transcript(
+                transcript, analysis_input, transcribe, receipt, languages
+            )
+    heard_language = crosscheck_detected_language(whisper_language, reference_text=reference)
     if heard_language is None:
         return transcript, receipt
     retranscribed = transcribe(

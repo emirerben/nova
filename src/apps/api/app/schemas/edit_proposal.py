@@ -1725,6 +1725,31 @@ class NarrationSpeechCleanup(BaseModel):
     cut_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class NarrationNamedCuts(BaseModel):
+    """Provenance of a voiceover cut around the lines a creator named (KRI-889).
+
+    ``removed`` are the spans cut out, in raw source time and in the order they were
+    applied; ``cut_sha256`` fingerprints the keep segments the file plays
+    (`speech_cleanup_apply.keep_segments_fingerprint`). With "Clean up speech" also
+    applied it equals that provenance's ``cut_sha256`` (one combined file).
+    """
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False, frozen=True)
+
+    source_gcs_path: str = Field(min_length=1)
+    source_generation: str = Field(min_length=1)
+    source_duration_s: float = Field(gt=0)
+    removed: list[tuple[float, float]] = Field(min_length=1, max_length=8)
+    cut_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def validate_spans(self) -> NarrationNamedCuts:
+        for start_s, end_s in self.removed:
+            if not 0 <= start_s < end_s <= self.source_duration_s + 0.001:
+                raise ValueError("named cut span outside its source")
+        return self
+
+
 class NarrationTrack(BaseModel):
     """Generation-pinned recorded narration and its authoritative word timing."""
 
@@ -1743,6 +1768,11 @@ class NarrationTrack(BaseModel):
     # Set only when gcs_path is a cleaned derivative. Omission keeps legacy
     # dumps and canonical_media_digest byte-identical.
     speech_cleanup: NarrationSpeechCleanup | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    # KRI-889: set only when gcs_path was also cut around lines the creator named.
+    # Omission keeps every existing dump and digest byte-identical.
+    named_cuts: NarrationNamedCuts | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
 

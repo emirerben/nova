@@ -73,7 +73,10 @@ from app.services.choice_questions import (
     match_open_choice,
     tag_event,
 )
-from app.services.client_protocol import current_client_protocol
+from app.services.client_protocol import (
+    APPROVAL_CLIENT_PROTOCOL_FIELD,
+    current_client_protocol,
+)
 from app.services.clip_selection import ClipSelectionIn, latest_open_clip_question
 from app.services.creation_thread_titles import (
     conversation_revision_matches,
@@ -130,6 +133,30 @@ def _answers_batched_questions() -> bool:
     """KRI-802: the app sending this request answers a reply's cards together."""
     protocol = current_client_protocol()
     return protocol is not None and protocol >= settings.kria_question_batch_min_client_protocol
+
+
+async def _render_client_protocol(db: AsyncSession, turn: Any) -> int | None:
+    """KRI-898: the app build the approved render may plan a freeze hold for.
+
+    The draft promised (or refused) the freeze for the build that sent its message
+    (``client_protocol`` on the turn's source event). The render keeps that promise and
+    the approving build can only lower it: an older approving phone gets the supported,
+    hold-free plan, never a held recipe it would 426 on. A protocol-less approver (the web
+    sends no header) keeps the drafting build's stamp instead of dropping the hold the
+    draft promised. A legacy turn with no source event falls back to the approver.
+    """
+    from app.services.phone_rollout import stamped_client_protocol  # noqa: PLC0415
+
+    approver = current_client_protocol()
+    source_id = getattr(turn, "source_event_id", None)
+    source = await db.get(CreationThreadEvent, source_id) if source_id is not None else None
+    if source is None:
+        return approver
+    payload = source.payload if isinstance(source.payload, dict) else {}
+    drafted = stamped_client_protocol(payload.get("client_protocol"))
+    if drafted is None or approver is None:
+        return drafted
+    return min(drafted, approver)
 
 
 def request_digest(body: SubmitTurnBody) -> str:
@@ -1145,6 +1172,14 @@ async def submit_turn(
             # KRI-723: this app answers a moment-order card. Not part of `request_digest`;
             # older builds and the web store nothing (existing payloads byte-identical).
             **({"answers_moment_questions": True} if _answers_moment_questions() else {}),
+            # KRI-898: the app build that sent this message, so the draft plans a freeze
+            # only for a build that can play it. Not part of `request_digest`; the web and
+            # headerless callers store nothing (existing payloads byte-identical).
+            **(
+                {"client_protocol": current_client_protocol()}
+                if current_client_protocol() is not None
+                else {}
+            ),
             # KRI-756: {"suggestion": {...}} when the message equals an offered chip. Not
             # part of `request_digest`; flag off => {} (existing payloads byte-identical).
             **(
@@ -2818,6 +2853,13 @@ async def decide_approval(
             stashed["render_shape"] = render_shape_stash
         else:
             stashed.pop("render_shape", None)
+        # KRI-898: the build the render plans a freeze hold for; set-or-clear for the
+        # same reason (a retry from another phone must not inherit the first attempt's).
+        render_protocol = await _render_client_protocol(db, turn)
+        if render_protocol is not None:
+            stashed[APPROVAL_CLIENT_PROTOCOL_FIELD] = render_protocol
+        else:
+            stashed.pop(APPROVAL_CLIENT_PROTOCOL_FIELD, None)
         if stashed != (execution.result or {}):
             execution.result = stashed
     elif render_shape_stash is not None:

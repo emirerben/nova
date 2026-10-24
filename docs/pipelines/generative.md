@@ -130,6 +130,47 @@ drives a second, caption-only pass (KRI-839). A prompt merely *written* in a
 language never changes it. Known gap: Kria runtime-v2 dispatches with an LLM
 summary instead of the creator's text, so that path does not pick up requests yet.
 
+**Verified, not trusted (KRI-838):** a whisper language hint does not reliably translate
+(local whisper.cpp medium, an approximation of prod's whisper-1: a Turkish hint on English
+speech wrote the English again, a Spanish hint a loose Spanish), so the hinted pass is only a
+first try. `app/pipeline/caption_language.py` holds the one language table (nine languages:
+en, tr, de, es, fr, it, ar, nl, pt; names and every creator spelling) read by the
+dispatcher parser, the brief checks and the worker, and a deterministic text
+language-ID (`detect_text_language`, `caption_language_verdict`: confirmed /
+contradicted / unknown; short or ambiguous text is "unknown", never a failure).
+Wherever a hinted pass becomes caption words, `ensure_caption_language`
+(`app/pipeline/caption_translate.py`; phone Talking, extra speakers, phone/cloud
+Voiceover via `_narrated_caption_transcript`, cloud Talking) reads the text: in the
+requested language -> kept, no model call; not -> one structured model call translates
+the caption sentences (the creator's own spellings are passed as do-not-translate terms)
+and the new words are spread over each sentence's original span; any failure (switch
+off, provider error, malformed answer, a translation still in the wrong language) returns
+the ORIGINAL words and stamps the variant's `caption_language` with the language the text
+really is, recording `caption_language_request_unmet`. When the text cannot say, the stamp
+is an independent read of the spoken language (the language-ID on Gemini's transcript of
+the clip, or the auto-detected pass) and otherwise "" (unknown): never the request. An
+empty `caption_language` hides the web/iOS language chip and reads as "can't check" in the
+review. A set that is mostly in the requested language gets only its clearly-foreign
+sentences translated (`caption_translation`, `partial: true`); if that fails they stay and
+`caption_language_minority_untranslated` is recorded. `caption_translation` records a
+successful translation. The cut, `raw_words` (beats, overlays) and spoken-text asks keep
+the spoken words; only the captions change. The brief side reads the cue text too:
+`_check_caption_words` reports "The captions are in English, not Turkish." for English
+lines under a `tr` label, and the pre-approval line promises a language only when
+`can_deliver_caption_language` says the worker can deliver it (otherwise "I can't make
+Spanish captions yet, so they'll be in the language that's spoken"). The worker re-checks
+the same rule (`coerce_caption_language_request`), so with the switch off a Spanish ask
+is not hinted at render time either, and Arabic is never promised or rendered (its caption
+fonts and right-to-left shaping were not verified). The dispatcher parser only reads a
+language that is bound to the caption word ("Spanish subtitles", "subtitles in Spanish",
+"make the subtitles Spanish"), never "Spanish food with subtitles". Kill switch:
+`CAPTION_TRANSLATION_ENABLED=false` (+ restart api and worker; the promise reads the same
+flag, so keep them equal). Model: `CAPTION_TRANSLATION_MODEL`, empty = the caption
+correction model. Known gaps: the editor D5 re-transcribe route/task and the web
+`CaptionLanguage` type are still en/tr only; a multi-clip Talking edit stamps the main
+speaker's language; the compile-time Voiceover receipt has no cue text (the render-ready
+review reads it).
+
 **Smart Captions (server-only flag):** set `SMART_CAPTIONS_ENABLED=true` on Fly
 and restart the API/workers. There is deliberately no `NEXT_PUBLIC` twin. A
 creator is eligible only when `SUBTITLED_ARCHETYPE_ENABLED=true`, the plan item
@@ -803,6 +844,33 @@ restart (restores the bucket split for unbound jobs; bound requests ask for reco
 `tests/evals/test_narrated_clip_alignment_evals.py` (goldens recorded from the
 cacio e pepe job, a pinned-last Cappadocia case from prod 38caaebd, and the Tigre
 spoken-cue case from prod ef8e35b8, KRI-590).
+
+### Named-line cuts in a narrated voiceover (KRI-889)
+
+"Cut the line 'with bread, no'" / "cut my second 'thank you Karo'" on a narrated edit
+with a recorded voiceover cuts that line out of the voiceover FILE, phone and cloud.
+The asks come off the pinned brief (`_brief_named_cut_asks` →
+`opening_cut_ask.brief_named_cuts`, as phone Talking, KRI-821) and are grounded by
+`phone_opening_cut.apply_named_line_cuts` in the voiceover's raw-time words (never
+guessed: `not_found` / `said_more_than_once` / `occurrence_not_found` / `too_short`
+leave the voice whole). Cleanup on: the lines are cut in the same pass as the accepted
+CutPlan (`build_cleaned_narration(named_removals=...)`, one derivative under
+`speech-cleanup/{analysis}/`, fingerprint `effective_cut_fingerprint`). Cleanup off:
+`build_named_cut_narration` pins `speech-cleanup/named-cuts/{sha}.wav` with the raw
+words remapped (no filler filtering). The derivative carries `NarrationTrack.named_cuts`
+provenance; the phone bed, the device grant (`authorized_device_narration`) and
+`narration_matches_item` accept it, and the device binding is carried across editor
+Saves. Captions, step timings and title follow the shorter voice with no compiler
+change. Cloud: `_cut_named_lines` in `_render_narrated_variant`; when a line was cut
+the cut voice is kept at `variant["narrated_voiceover_path"]` and the Background Sound
+re-mix (`_run_reburn_narrated_bed_level`) plays it, never the raw recording (no kept
+voice + an applied cut ⇒ the dispatch 422s and the worker refuses). Receipts:
+`variant["named_cuts"]` (kept by the finalize whitelist); the draft promises the cut
+(`_cuts_named_voiceover_lines`) only for a non-guided narrated voiceover edit.
+`silence_cut` stays cleanup's own record. Kill switch: `NARRATED_NAMED_CUTS_ENABLED`
+(default `true`, read by worker and receipts) + restart api + worker. Not covered:
+cloud Talking, cloud self-narration, guided stories, voiceover montages. Journey test:
+`tests/kria/test_kri889_narrated_named_cut_journey.py`.
 
 Clip ORDER for native (phone) edits is set at dispatch, not by the model's
 `selected_media_ids` order: `content_plan_build._creator_intent_clip_order`

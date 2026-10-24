@@ -30,6 +30,7 @@ from app.agents._schemas.edit_format import EditFormat, RenderProgram
 from app.agents._schemas.reaction_beats import (
     MAX_REACTION_BEATS,
     ClosingMedia,
+    EndingClip,
     ReactionBeat,
 )
 from app.agents._schemas.sfx_intent import (
@@ -490,6 +491,11 @@ class CreativeStrategy(_CreatorModel):
         ),
     )
     closing_media: SkipJsonSchema[ClosingMedia | None] = Field(default=None)
+    # KRI-841: a video appended AFTER the talk with its own sound (phone Talking only). Same
+    # pattern as the two fields above: out of every derived JSON schema (the `apply_strategy`
+    # tool schema stays byte-identical), omitted from serialization when None, taught in the
+    # creator prompt only where the manifest can render it.
+    ending_clip: SkipJsonSchema[EndingClip | None] = Field(default=None)
     # KRI-374 (creator-uploaded song). Same pattern as reaction_beats above:
     # SkipJsonSchema keeps both OUT of every derived JSON schema, default None
     # and the omit-when-None serializer below keep stored strategies and every
@@ -590,6 +596,7 @@ class CreativeStrategy(_CreatorModel):
             "omitted_copy_targets",
             "reaction_beats",
             "closing_media",
+            "ending_clip",
             "song_sync",
             "resolved_song_takes",
             "song_captions",
@@ -1589,6 +1596,7 @@ __all__ = [
     "DraftVoiceoverScript",
     "ChoiceAnswer",
     "ClosingMedia",
+    "EndingClip",
     "MAX_REACTION_BEATS",
     "ReactionBeat",
     "CreatorEditPlan",

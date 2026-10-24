@@ -7,7 +7,9 @@ and write what it kept -- BEFORE opening a PR that touches the start / end cut (
 
 ``--take`` is a JSON file with the take's ``duration_s``, its word timings (``words``), its
 timed sentences (``segments``) and the brief rows (``brief_v1`` / ``brief_v2``: id -> row), the
-shape of ``tests/fixtures/kri790_merope_t1_take.json``. No model call, no network.
+shape of ``tests/fixtures/kri790_merope_t1_take.json``. No model call, no network. A row may
+carry the lines picked for a quote the take doesn't hold (``facts.start_line_spoken`` /
+``end_line_spoken``, KRI-844); they are cut exactly as the worker does.
 
 Outputs to ``--out`` (default ``.take-window-verify/``):
   - ``report.json`` -- the ask, the kept window and receipts (what the worker records), the first
@@ -217,6 +219,9 @@ def run(args: argparse.Namespace) -> int:
         duration_s=duration,
         start_ids=ask.start_ids,
         end_ids=ask.end_ids,
+        # KRI-844: the lines the creator picked for quotes the take doesn't hold.
+        start_spoken=ask.start_spoken,
+        end_spoken=ask.end_spoken,
     )
     snapshot = {
         "clip_assignments": [

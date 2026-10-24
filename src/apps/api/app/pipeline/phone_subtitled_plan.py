@@ -1,6 +1,7 @@
 """Project the single-clip "Talking to camera" (subtitled) edit format into a
 native device render program (KRI-132), optionally carrying overlay
-sticker/photo/video cards, a sound-effects track, and a muted ending clip
+sticker/photo/video cards, a sound-effects track, and an ending clip (muted,
+or playing its own sound when the creator asked, KRI-841)
 (KRI-174 Phase 1 -- see `app.pipeline.phone_subtitled_lanes`; video overlay
 cards are KRI-183).
 
@@ -107,8 +108,9 @@ _display_dims = display_dims
 # Mirrors `_render_subtitled_variant`'s own cap (generative_build.py, the
 # `probe.duration_s > 300.0` check ~line 20690): "subtitled clips are capped
 # at 5 minutes". Named up front rather than surfacing as a bare recipe
-# validation error.
-_MAX_CLIP_DURATION_S = 300.0
+# validation error. The phone worker checks the same number (KRI-841 included).
+MAX_CLIP_DURATION_S = 300.0
+_MAX_CLIP_DURATION_S = MAX_CLIP_DURATION_S
 
 # The phone story canvas for every subtitled render -- subtitled has no
 # `decision.orientation`/`extras["canvas"]` to read (unlike the montage
@@ -243,9 +245,10 @@ def compile_phone_subtitled_plan(
         source audio (``request.trim_start_s``/``trim_end_s``, KRI-182 step
         1); a trim start at or past the resolved duration is rejected
         (``SubtitledLaneError``) rather than silently emitting nothing.
-      - ``lanes.ending_clip``: an optional MUTED (``volume=0``) Visuals-pool
-        video appended to the SAME main video track right after the speaker
-        clip, extending the recipe's own duration.
+      - ``lanes.ending_clip``: an optional Visuals-pool video appended to the
+        SAME main video track right after the speaker clip, extending the
+        recipe's own duration. Muted (``volume=0``) by default; the creator's
+        "with its own sound" ask (KRI-841) sets ``SubtitledEndingClip.volume``.
 
     ``duck_sfx_under_speech`` (default ``False``, from
     ``settings.phone_sfx_speech_duck_enabled``) scales the volume of every
@@ -741,7 +744,8 @@ def _compile_ending_clip(
         source_duration=source_duration,
         timeline_start=speaker_end,
         rate=1,
-        volume=0,
+        # Muted unless the creator asked for the clip's own sound (KRI-841).
+        volume=ending.volume,
     )
     return clip, source_duration
 
@@ -1109,8 +1113,10 @@ def additional_speakers_from_recipe(
     """KRI-719: the speakers a pinned recipe plays AFTER the first one on its
     main (``"subtitled"``) track, in timeline order -- the inverse of
     ``compile_phone_subtitled_plan(additional_speakers=...)``. ``()`` for a
-    single-speaker recipe. The muted ending clip on the same track is a
-    Visuals-pool asset with no phone source binding, so it never matches."""
+    single-speaker recipe. The ending clip lane on the same track is a
+    Visuals-pool asset with no phone source binding, so it never matches. A
+    FOOTAGE ending the creator asked for (KRI-841) IS a source binding: it
+    comes back as the last speaker and so keeps its sound on Save."""
     if len(bindings) == 1:
         return ()
     main_track = next((t for t in recipe.tracks if t.id == "subtitled"), None)

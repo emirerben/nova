@@ -48,6 +48,24 @@ failure is non-fatal — the recipe still saves; the track just won't be visible
 `music_matcher` (`nova.audio.music_matcher`, Gemini Flash, text-only) ranks the full
 published-track library against a clip set using each track's Phase-1 `MusicLabels`.
 
+**Genre asks (KRI-848).** In chat, a genre the creator names ("an upbeat tango song") is
+checked in code, not left to the matcher (`app/services/music_genre.py`). Reading the ask
+leans to "not asked" whenever it is unsure, because a named genre becomes a hard filter:
+in a part of the ask that names music a genre counts only when said as music ("a house
+track", "a tango or a jazz song"), never in a source-sound ask ("keep the tango band
+audible") or a noun phrase ("music for the jazz club visit"), and a genre after a cue
+("no rap, reggaeton or rock", "tired of rap", "caz istemiyorum") is never asked. `_match_best_track` then ranks only the tracks whose labels say the genre (the
+`genre` enum value it IS, or the word in `vibe_tags` / `mood`; `other` is never a
+wildcard). The classifier `rationale` also counts, but an everyday word there ("rock")
+only right before a song noun ("rock anthem"), since it also says what clips the song
+wants; and a genre word right after "not" / "non" / "rather than" never counts. A narrow
+alias like "house" is not met by its enum family alone, so the family is only offered as
+the closest, else the whole library.
+The frozen section records `asked_genre`, `asked_genres` and `genre_fit`, and the reply
+(summary and `policy_notices`) names the song and calls it that genre only when it
+fits; otherwise it says there is none and offers the closest. Recommend-only: nothing is
+mixed in.
+
 ## Song-sections visualizer
 
 `song_sections` agent output (`MusicTrack.best_sections` + `section_version`, schema:

@@ -106,8 +106,16 @@ def _words(text: str) -> str:
 
 
 async def gate(
-    monkeypatch: pytest.MonkeyPatch, render: dict, *, events=(), answers=True, brief=None
+    monkeypatch: pytest.MonkeyPatch,
+    render: dict,
+    *,
+    events=(),
+    answers=True,
+    brief=None,
+    client_protocol: int | None = None,
 ):
+    """``client_protocol`` (KRI-898): the app build that sent the turn; ``None`` = unstamped."""
+    from dataclasses import replace  # noqa: PLC0415
     from types import SimpleNamespace  # noqa: PLC0415
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
@@ -119,7 +127,7 @@ async def gate(
     monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=list(events)))
     return await planner._gate_unresolved_choices(
         SimpleNamespace(),
-        planned_turn(render),
+        replace(planned_turn(render), client_protocol=client_protocol),
         thread_id=THREAD_ID,
         creator_id=CREATOR_ID,
         answers_moment_questions=answers,
@@ -290,8 +298,15 @@ async def test_the_freeze_holds_the_bite_the_creator_pointed_at(
     features = [f for f in settings.phone_render_verified_features if f != "freezeFrame"]
     monkeypatch.setattr(settings, "phone_render_verified_features", [*features, "freezeFrame"])
     render = RENDERS[0]
-    question = question_of(await gate(monkeypatch, render))
-    result = await gate(monkeypatch, render, events=answered_events(question, answer_for(question)))
+    # KRI-898: a freeze is planned only for an app build that plays it.
+    app = settings.freeze_frame_min_client_protocol
+    question = question_of(await gate(monkeypatch, render, client_protocol=app))
+    result = await gate(
+        monkeypatch,
+        render,
+        events=answered_events(question, answer_for(question)),
+        client_protocol=app,
+    )
     seen: dict = {}
     build = unified.plan_unified_montage
 
@@ -306,6 +321,7 @@ async def test_the_freeze_holds_the_bite_the_creator_pointed_at(
         brief=m2_brief_with_moment_ask(render),
         media=gate_media(result),
         strategy=gate_strategy(result),
+        client_protocol=app,
     )
     assert outcome.refusal is None, outcome.refusal
     holds = seen["plan"].record()["freeze_frames"]

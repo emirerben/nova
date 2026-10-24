@@ -77,6 +77,10 @@ def understanding_payload(meta: Any, *, best_moments: list[dict] | None = None) 
         content_type=getattr(meta, "clip_content_type", "") or "",
         audio_type=getattr(meta, "clip_audio_type", "") or "",
         notable_moments=_moment_notes(best_moments or []),
+        # KRI-845: ClipMeta names these `clip_*`; the record's own validators clean and cap.
+        props=getattr(meta, "clip_props", None) or [],
+        actions=getattr(meta, "clip_actions", None) or [],
+        visual_quality=getattr(meta, "clip_visual_quality", "") or "",
     )
     return record.model_dump()
 
