@@ -219,6 +219,16 @@ _KNOWN_TR_PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], str]]
         lambda m: f'"{m.group(1)}" için fotoğraf ya da çıkartma bulamadım; koymadım.',
     ),
     (
+        re.compile(  # kri667: matches our own fixed English notice, not creator text
+            r"Full screen isn't available for this edit yet, so \"(.+)\" shows as a small card "
+            r"in the corner instead\."
+        ),
+        lambda m: (
+            f'Bu düzenlemede tam ekran henüz yok; "{m.group(1)}" köşede küçük bir kart olarak '
+            "çıkacak."
+        ),
+    ),
+    (
         re.compile(r"(Day vlog|Single-hero) shape needs music; kept a regular montage\."),
         lambda m: (
             f"{_SHAPE_NAMES_TR[m.group(1)]} kurgusu için müzik gerekiyor; normal bir montaj yaptım."

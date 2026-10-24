@@ -492,6 +492,10 @@ class PlanFacts:
     # clip at its natural speed (the phone recipe has no retime for story footage). A
     # clip-speed ask is then a known miss; any other plan claims nothing about speed.
     speed_unsupported: bool = False
+    # KRI-840: the plan shows the creator's Visuals full screen at evenly spaced slots across the
+    # talk (`overlay_display` "fullscreen*", or a render's overlay receipt of that layout), not
+    # at a spoken word. A word-timed full-screen ask that only this covers is a "partial".
+    fullscreen_sequence: bool = False
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -553,6 +557,23 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
         "closing_badge_requested": bool(raw_closing and raw_closing.badge_visual_id),
         "closing_badge_id": closing.badge_visual_id if closing is not None else None,
     }
+
+
+def _draft_fullscreen_sequence(
+    strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest
+) -> bool:
+    """KRI-840: whether approving this draft lays the Visuals out full screen in even slots."""
+    from app.agents._schemas.creator_agent import FULLSCREEN_OVERLAY_DISPLAYS  # noqa: PLC0415
+    from app.services.creator_capabilities import (  # noqa: PLC0415
+        CAPABILITY_MEDIA_OVERLAY_FULLSCREEN,
+    )
+
+    capability = manifest.capabilities.get(CAPABILITY_MEDIA_OVERLAY_FULLSCREEN)
+    return bool(
+        capability is not None
+        and capability.available
+        and strategy.get("overlay_display") in FULLSCREEN_OVERLAY_DISPLAYS
+    )
 
 
 def _video_clip_count(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) -> int:
@@ -646,6 +667,7 @@ def plan_facts_from_strategy(
     extra: dict[str, Any] = {}
     if manifest is not None:
         extra = _beat_facts(strategy, manifest)
+        extra["fullscreen_sequence"] = _draft_fullscreen_sequence(strategy, manifest)
         extra["video_clip_count"] = _video_clip_count(strategy, manifest)
         extra["take_duration_s"] = _selected_video_seconds(strategy, manifest)
     edit_format = strategy.get("edit_format")
@@ -1582,6 +1604,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     changes.update(_spoken_text_facts(variant))
     changes.update(_protected_text_facts(variant))
     changes.update(_beat_room_facts(variant.get("phone_beat_receipt")))
+    changes.update(_overlay_sequence_facts(variant.get("phone_overlay_receipt")))
     changes.update(_rendered_caption_facts(variant))
     rendered = _rendered_clip_durations(variant)
     if rendered is not None:
@@ -1625,6 +1648,23 @@ def _rendered_speech_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
         facts["speech_cleanup_enabled"] = False
         facts["speech_cleanup_outcome"] = "not_run"
     return facts
+
+
+def _overlay_sequence_facts(receipt: object) -> dict[str, Any]:
+    """KRI-840: ``fullscreen_sequence`` off a variant's ``phone_overlay_receipt``.
+
+    The "use all my Visuals full screen" layout spaces its cutaways evenly across the talk
+    (``matcher: "sequence"``); a receipt that placed any of them full screen says so.
+    """
+    if not isinstance(receipt, Mapping) or receipt.get("matcher") != "sequence":
+        return {}
+    placed = receipt.get("placed")
+    if any(
+        isinstance(entry, Mapping) and entry.get("display") == "fullscreen"
+        for entry in (placed if isinstance(placed, list) else [])
+    ):
+        return {"fullscreen_sequence": True}
+    return {}
 
 
 def _rendered_caption_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
@@ -3585,7 +3625,7 @@ def _never_heard_problem(triggers: Iterable[str]) -> str:
 # with "no_safe_spot" when no spot clears the face and the captions, and the beat lane
 # with "overlap" (or arbitration with "duplicate") when another pop-in holds the spot.
 _NO_ROOM_REASONS = frozenset({"no_safe_spot"})
-_OVERLAP_REASONS = frozenset({"overlap", "duplicate"})
+_OVERLAP_REASONS = frozenset({"overlap", "duplicate", "fullscreen_overlap"})
 
 
 def _beat_room_facts(receipt: object) -> dict[str, Any]:
@@ -3710,11 +3750,60 @@ def _placement_reason(placements: Sequence[BeatFact]) -> str | None:
     )
 
 
+# KRI-840: the recorded ``facts["display_mode"]`` -> how the ask wants its photos shown.
+_DISPLAY_ASKS = {"fullscreen": "fullscreen", "pip": "pip", "corner": "pip"}
+
+
+def _display_ask(req: BriefRequirement) -> str | None:
+    """How the model recorded the photo should show: "fullscreen" or "pip", else None.
+
+    Read from the recorded fact only (KRI-667): an ask that names no display gets no display
+    verdict, however it is worded.
+    """
+    value = req.facts.get("display_mode")
+    if not isinstance(value, str):
+        return None
+    return _DISPLAY_ASKS.get("".join(ch for ch in value.casefold() if ch.isalnum()))
+
+
+def _display_problem(asked: str, triggers: Iterable[str]) -> str:
+    names = _names(f'"{trigger}"' for trigger in triggers)
+    if asked == "fullscreen":
+        return say(
+            en=f"For {names}, the photo shows as a small card in the corner, not full screen",
+            tr=f"{names} için fotoğraf tam ekran değil, köşede küçük bir kart olarak çıkıyor",
+        )
+    return say(
+        en=f"For {names}, the photo shows full screen, not as a small card in the corner",
+        tr=f"{names} için fotoğraf köşede küçük bir kart değil, tam ekran çıkıyor",
+    )
+
+
+def _sequence_problem(req: BriefRequirement, facts: PlanFacts) -> str | None:
+    """A full-screen ask at a spoken word that only the even-slot layout covers (KRI-840)."""
+    if not facts.fullscreen_sequence or _display_ask(req) != "fullscreen" or not _wants_beats(req):
+        return None
+    return say(
+        en=(
+            "Your Visuals play full screen, but spread evenly across the talk, "
+            "not timed to the word you said"
+        ),
+        tr=(
+            "Görsellerin tam ekran çıkıyor ama konuşmaya eşit aralıklarla dağılıyor, "
+            "söylediğin kelimeye göre zamanlanmıyor"
+        ),
+    )
+
+
 def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Word-triggered pop-ins and the closing shot, from the repaired strategy."""
     wants_beats = _wants_beats(req)
     wants_closing = _closing_photo_ask(req, facts)
+    asked_display = _display_ask(req) if wants_beats else None
+    sequence_problem = _sequence_problem(req, facts)
     if facts.reaction_beats is None:
+        if sequence_problem:
+            return _receipt(req, "partial", sequence_problem + ".")
         return _receipt(req, "partial", _CANT_CHECK_BEATS)
     beats = facts.reaction_beats
     problems: list[str] = []
@@ -3755,11 +3844,13 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                         ),
                     )
                     if facts.dropped_beat_triggers
-                    else say(
+                    else sequence_problem
+                    or say(
                         en="This draft has no pop-ins timed to your words",
                         tr="Bu taslakta sözlerine göre çıkan görsel yok",
                     )
                 )
+                delivered = bool(sequence_problem) and not facts.dropped_beat_triggers
         else:
             unheard = _unheard_for(facts, names)
             matched = [b for b in beats if any(_trigger_heard(n, b.trigger) for n in names)]
@@ -3803,11 +3894,13 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
             ]
             if missing:
                 problems.append(
-                    say(
+                    sequence_problem
+                    or say(
                         en=f"No pop-in for {_names(missing)}",
                         tr=f"Şunlar için çıkan görsel yok: {_names(missing)}",
                     )
                 )
+                delivered = delivered or bool(sequence_problem)
             if unresolved:
                 problems.append(
                     say(
@@ -3843,6 +3936,13 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                             tr="Çıkan görsellerin hiçbiri fotoğraf ya da çıkartma göstermiyor",
                         )
                     )
+                if asked_display is not None:
+                    shown = [b for b in placements if b.visual_id]
+                    wrong = [b for b in shown if b.display_mode != asked_display]
+                    # Pop-ins matched to the ask's own words must all show as asked; judged as
+                    # a whole (no word matched), one that does is enough.
+                    if wrong and ((names and by_name) or len(wrong) == len(shown)):
+                        problems.append(_display_problem(asked_display, [b.trigger for b in wrong]))
     if wants_closing:
         if facts.closing_visual_id is None:
             if facts.closing_requested:
@@ -7324,7 +7424,7 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # render's own pop-in receipt and mix level (`plan_facts_from_phone_variant`): judge
         # those asks.
         and not (
-            facts.reaction_beats is not None
+            (facts.reaction_beats is not None or _sequence_problem(req, facts) is not None)
             and (_wants_beats(req) or _closing_photo_ask(req, facts))
         )
         and not (_wants_bed_under_voice(req) or _wants_bed_muted(req))
