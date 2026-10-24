@@ -19,6 +19,12 @@ Failure modes (written before the code), each pinned below:
 7. A re-uploaded clip keeps an old mark that points at other bytes.
 8. A face-only ask asks for a mark (faces are sampled automatically).
 9. Approval readiness on: a marked object stays ``evidence_missing`` and is never ready.
+10. Approval readiness on, an old build or the web: readiness asks "Mark the plate" (or calls
+    the ask unsupported) on a client with no card, and the title asks that were executable
+    before KRI-901 block approval.
+11. An app build with the card, for an account the phone does not render for: the cloud
+    render ignores marks, yet the creator is asked to mark and readiness promises
+    ``protected_text_render``.
 """
 
 from __future__ import annotations
@@ -155,12 +161,15 @@ async def _chat(
     on_mark_question=None,  # noqa: ANN001
     max_turns: int = 6,
     extra_updates: tuple = (),
+    seed=None,  # noqa: ANN001
 ) -> tuple[Chat, list[dict]]:
     """Merope T1 until approval: each question answered the way the creator would. Every
     mark question is handed to ``on_mark_question(question, thread_id)`` (which returns the turn
     kwargs) or, by
     default, answered with the app's mark on the question's first clip."""
     user_id, thread_id = _seed_t1(cleanup_chosen=False)
+    if seed is not None:
+        seed(thread_id)
     chat = Chat(user_id, thread_id, [])
     asked: list[dict] = []
     payload = await _send(
@@ -251,14 +260,57 @@ async def test_the_plate_is_asked_for_before_approval_and_pinned_at_approval(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("readiness", [False, True], ids=["readiness-off", "readiness-on"])
 @pytest.mark.parametrize("protocol", [16, None], ids=["protocol-16-app", "web"])
 async def test_a_client_without_the_card_is_never_asked(
-    monkeypatch: pytest.MonkeyPatch, protocol: int | None
+    monkeypatch: pytest.MonkeyPatch, protocol: int | None, readiness: bool
 ) -> None:
+    monkeypatch.setattr(settings, "kria_approval_readiness_enabled", readiness)
     chat, asked = await _chat(monkeypatch, protocol=protocol)
     assert asked == []
     assert chat.approval is not None
     assert all("protected_region_question" not in (r.payload or {}) for r in chat.replies)
+    _assert_no_mark_verdicts(chat)
+
+
+def _cloud_take(thread_id: uuid.UUID) -> None:
+    """The same take as a cloud upload (not the phone's analysis proxy)."""
+    with sync_session() as db:
+        item = db.get(PlanItem, db.get(CreationThread, thread_id).active_plan_item_id)
+        cloud = [path.replace("/analysis-proxy-", "/upload-") for path in item.clip_gcs_paths]
+        assert cloud != item.clip_gcs_paths
+        item.clip_gcs_paths = cloud
+        item.clip_assignments = [
+            {**dict(row), "gcs_path": cloud[0]} for row in item.clip_assignments
+        ]
+        db.commit()
+
+
+def _assert_no_mark_verdicts(chat: Chat) -> None:
+    """Off the mark route readiness keeps its pre-KRI-901 verdicts: it never asks for a mark,
+    never calls the ask unsupported and never promises the phone's protected-text render."""
+    for report in _readiness_rows(chat):
+        for row in report["requirements"]:
+            assert "Mark the" not in str(row["reason"]), row
+            assert "only works on a Talking edit" not in str(row["reason"]), row
+            assert row["evidence_owner"] != "protected_text_render", row
+        assert report.get("protected_marks") is False
+
+
+@pytest.mark.asyncio
+async def test_an_account_the_phone_does_not_render_for_is_never_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """11: a protocol-17 app, but this account is outside the phone cohort: its take is a
+    cloud upload and the Talking edit renders on the cloud, which ignores marks."""
+    monkeypatch.setattr(settings, "kria_approval_readiness_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [str(uuid.uuid4())])
+    chat, asked = await _chat(monkeypatch, protocol=17, seed=_cloud_take)
+    assert asked == []
+    assert chat.approval is not None
+    _assert_no_mark_verdicts(chat)
+    claim = await _approve(chat)
+    assert not claim.brief_binding.get("protected_regions")
 
 
 @pytest.mark.asyncio

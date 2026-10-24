@@ -202,6 +202,30 @@ def _full_creator_request_sync(db, *, thread_id: uuid.UUID, through_sequence: in
     return request if len(request) <= 12_000 else None
 
 
+def _marks_route_sync(  # noqa: ANN001
+    db,
+    *,
+    thread: CreationThread,
+    turn: CreatorAgentTurn,
+    item,
+    document,
+) -> bool:
+    """KRI-901: this act turn came from an app that shows the mark card AND its draft renders
+    on the phone Talking writer (`protected_targets.marks_route`). The gate and approval
+    readiness both read this one answer, so neither asks for nor promises a mark elsewhere."""
+    from app.kria.protected_targets import marks_route  # noqa: PLC0415
+
+    source = db.get(CreationThreadEvent, turn.source_event_id)
+    payload = getattr(source, "payload", None)
+    return marks_route(
+        client_marks=isinstance(payload, dict) and payload.get("marks_protected_regions") is True,
+        creator_id=thread.creator_id,
+        strategy=document.strategy,
+        edit_format=getattr(item, "edit_format", None) or document.edit_format,
+        clip_paths=getattr(item, "clip_gcs_paths", None) or (),
+    )
+
+
 def _protected_region_gate_sync(  # noqa: ANN001
     db,
     *,
@@ -209,32 +233,30 @@ def _protected_region_gate_sync(  # noqa: ANN001
     turn: CreatorAgentTurn,
     item: PlanItem,
     brief: Any,
-    edit_format: str,
+    marks_route: bool,
     render_requested: bool,
 ) -> tuple[KriaTurnPlan, dict[str, Any]] | None:
     """KRI-901: the "Mark the plate" question, when this act turn must ask it.
 
     Asked only when every part holds: the turn would request render approval, the brief is
-    bound at approval (the mark rides the binding), the edit renders on the phone Talking
-    writer (the only one that keeps text off a marked object), the message came from an app
-    that shows the card (`marks_protected_regions`, stamped at submit), and a live
-    ``keep_text_off`` object has no current mark. One object per question, brief order.
+    bound at approval (the mark rides the binding), the turn is on the mark route (an app
+    that shows the card, and a draft the phone Talking writer renders: the only one that
+    keeps text off a marked object; `_marks_route_sync`), and a live ``keep_text_off``
+    object has no current mark. One object per question, brief order.
     """
     from app.kria.protected_targets import (  # noqa: PLC0415
-        PROTECTED_TEXT_EDIT_FORMATS,
         build_protected_region_question,
         clip_generations,
         mark_request_text,
         unmarked_object_targets,
     )
 
-    if not render_requested or not settings.brief_binding_for(thread.creator_id):
+    if not render_requested or not marks_route:
         return None
-    if edit_format not in PROTECTED_TEXT_EDIT_FORMATS:
+    if not settings.brief_binding_for(thread.creator_id):
         return None
     source = db.get(CreationThreadEvent, turn.source_event_id)
-    payload = getattr(source, "payload", None)
-    if not isinstance(payload, dict) or payload.get("marks_protected_regions") is not True:
+    if source is None:
         return None
     if brief is None:
         brief = load_latest_brief_sync(db, thread.id)
@@ -1383,6 +1405,11 @@ def _complete_draft_turn(
             thread.creator_id
         )
         readiness_report = None
+        # KRI-901: one answer for the mark gate and readiness (an app with the mark card and a
+        # draft the phone Talking writer renders); off it neither asks nor promises.
+        _marks_route = render_intent is not None and _marks_route_sync(
+            db, thread=thread, turn=turn, item=item, document=document
+        )
         brief = None
         speed_notice: str | None = None  # KRI-689
         phone_blockers: list = []  # KRI-775
@@ -1616,7 +1643,7 @@ def _complete_draft_turn(
                 editor_text_diff=document.editor_text_diff,
                 creator_request=_readiness_request,
                 protected_regions=_readiness_marks,
-                edit_format=document.edit_format,
+                protected_marks=_marks_route,
             )
             if not readiness_report["ready"]:
                 reply_text = readiness_reply(brief, readiness_report)
@@ -1775,7 +1802,7 @@ def _complete_draft_turn(
                     manifest=planned.readiness_manifest,
                     creator_request=_readiness_request,
                     protected_regions=_readiness_marks,
-                    edit_format=document.edit_format,
+                    protected_marks=_marks_route,
                 )
             requirement_receipts = [
                 {**receipt, "brief_version": brief.version} for receipt in requirement_receipts
@@ -1826,7 +1853,7 @@ def _complete_draft_turn(
             turn=turn,
             item=item,
             brief=brief,
-            edit_format=str((document.strategy or {}).get("edit_format") or document.edit_format),
+            marks_route=_marks_route,
             render_requested=render_intent is not None,
         )
         if mark_gate is not None:

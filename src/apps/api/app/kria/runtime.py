@@ -2599,6 +2599,7 @@ async def decide_approval(
                 digest,
                 readiness_matches,
                 resolve_readiness_manifest,
+                saved_protected_marks,
             )
             from app.services.choice_questions import answered_brief  # noqa: PLC0415
 
@@ -2632,7 +2633,12 @@ async def decide_approval(
                             protected_regions=list(
                                 copy_document.brief_binding.protected_regions or []
                             ),
-                            edit_format=copy_document.edit_format,
+                            protected_marks=saved_protected_marks(
+                                copy_document,
+                                creator_id=creator_id,
+                                item=copy_item,
+                                saved=saved_readiness,
+                            ),
                         )
                     ready = (
                         digest(media_identity(snapshot_media(copy_item)))

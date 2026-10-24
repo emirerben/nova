@@ -171,10 +171,6 @@ def selection_for(
     return same[-1] if same else None
 
 
-# KRI-901: the one renderer that keeps text off a marked object (`phone_protected_text` runs
-# inside the phone Talking writer). Anywhere else a mark would be ignored, so it is never asked
-# for and never promised.
-PROTECTED_TEXT_EDIT_FORMATS = frozenset({"subtitled"})
 PROTECTED_REGION_QUESTION_KEY = "protected_region_question"
 PROTECTED_REGION_ANSWER_KEY = "protected_region"
 
@@ -195,7 +191,8 @@ def clip_generations(clip_assignments: Iterable[Any]) -> dict[str, str | None]:
     for row in clip_assignments or ():
         if not isinstance(row, Mapping) or not row.get("media_id"):
             continue
-        generation = row.get("storage_generation", row.get("generation"))
+        # The same fallback `_stamp_protected_region` stamps with, so a mark is current.
+        generation = row.get("storage_generation") or row.get("generation")
         out[str(row["media_id"])] = str(generation) if generation is not None else None
     return out
 
@@ -241,13 +238,33 @@ def mark_request_text(label: str) -> str:
     )
 
 
-def mark_unsupported_text() -> str:
-    from app.kria.reply_language import say  # noqa: PLC0415
+def marks_route(
+    *,
+    client_marks: bool,
+    creator_id: object,
+    strategy: Mapping[str, Any] | None,
+    edit_format: object,
+    clip_paths: Iterable[object] = (),
+) -> bool:
+    """KRI-901: whether a "keep text off the plate" ask is asked for and promised.
 
-    return say(
-        en="Keeping text off a marked object only works on a Talking edit made on the phone.",
-        tr="Yazıyı işaretli bir nesneden uzak tutmak yalnızca telefonda yapılan "
-        "Konuşma düzenlemesinde çalışır.",
+    Both must hold: the creator's app shows the mark card (``client_marks``: stamped at
+    submit as ``marks_protected_regions``, saved on the draft's readiness), and this draft
+    really renders on the phone Talking writer, the only renderer that keeps text off a
+    marked object (`_run_phone_subtitled_job` -> `_phone_protected_plan`): phone clips, a
+    phone-rendering account, a Talking or self-narrated format, no recorded voiceover. Off
+    that route (web, older builds, the cloud render) a mark would be ignored, so nothing is
+    asked and approval readiness keeps its pre-KRI-901 verdicts."""
+    if not client_marks:
+        return False
+    from app.kria.brief_checks import defers_caption_words_to_phone_render  # noqa: PLC0415
+
+    strategy = strategy or {}
+    return defers_caption_words_to_phone_render(
+        creator_id=creator_id,
+        edit_format=strategy.get("edit_format") or edit_format,
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=clip_paths or (),
     )
 
 
@@ -354,7 +371,6 @@ __all__ = [
     "PROTECTED_REGIONS_FIELD",
     "PROTECTED_REGION_ANSWER_KEY",
     "PROTECTED_REGION_QUESTION_KEY",
-    "PROTECTED_TEXT_EDIT_FORMATS",
     "PROTECTED_TEXT_FIELD",
     "ProtectedRegionSelection",
     "ProtectedTarget",
@@ -363,7 +379,7 @@ __all__ = [
     "build_protected_region_question",
     "clip_generations",
     "mark_request_text",
-    "mark_unsupported_text",
+    "marks_route",
     "unmarked_object_targets",
     "fold_protected_regions",
     "protected_targets",

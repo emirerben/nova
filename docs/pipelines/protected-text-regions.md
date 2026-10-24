@@ -20,7 +20,9 @@ text's whole time on screen.
 
 ## Asking for the mark before approval (KRI-901)
 
-- A phone Talking (`subtitled`) act turn whose live brief keeps text off an object with no
+- An act turn on the mark route (`protected_targets.marks_route`: an app that shows the card
+  AND a draft the phone Talking writer really renders, i.e. phone clips, a phone-rendering
+  account, a Talking or self-narrated format, no recorded voiceover) whose live brief keeps text off an object with no
   current mark does not offer approval: the runtime (`tasks/kria_runtime.
   _protected_region_gate_sync`) rolls back the speculative draft and replies "Mark the plate
   on one frame so I can keep the text off it. Or tell me the text can go anywhere." with
@@ -35,11 +37,14 @@ text's whole time on screen.
 - The answer turn (`protected_region` on the turn) forces a re-plan, reaches the brief
   extractor as a neutral "I marked the plate on a frame." (never a new instruction) and is
   a structured answer for duplicate-send detection.
-- Approval readiness (flag-gated) agrees: an unmarked object is `needs_choice` with the same
-  sentence; once marked, a requirement whose only unchecked ask is `keep_text_off` is
-  `executable` with `evidence_owner="protected_text_render"` on a phone Talking edit (the
-  render receipt must still read `clear`); any other edit format is `unsupported` ("Keeping
-  text off a marked object only works on a Talking edit made on the phone.").
+- Approval readiness (flag-gated) agrees, on the same route only: an unmarked object is
+  `needs_choice` with the same sentence; once marked, a requirement whose only unchecked ask
+  is `keep_text_off` is `executable` with `evidence_owner="protected_text_render"` (the
+  render receipt must still read `clear`). Off the route (web, older builds, the cloud
+  render, other formats) readiness keeps its pre-KRI-901 verdicts and other checkers' verdicts
+  are never overwritten. The report saves `protected_marks`; approval, Retry and plan review
+  re-check it against today's route, so a draft whose account left the phone cohort is
+  prepared again rather than approved with a promise the cloud render cannot keep.
 - iOS: `ObjectMarkCard` (clip chips, the upright frame from this iPhone's original via
   `KriaCropFrameLoader`, a moment slider, a free-shape box with the crop editor's
   move/resize math). `ProtectedRegionAnswer.box(from:)` is the one (x, y, w, h) to
