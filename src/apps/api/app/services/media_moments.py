@@ -36,6 +36,7 @@ from app.services.media_library_ingest import lock_library_owner
 INDEX_VERSION = "source-intervals-v3"
 MAX_SOURCE_MOMENTS = 2000
 SOURCE_CHECK_BATCH_SIZE = 10
+WHOLE_SOURCE_CONTEXT_VERSION = "whole-source-context-v1"
 
 
 def _number(value: Any) -> float | None:
@@ -154,6 +155,52 @@ def source_intervals(analysis: dict, transcript: dict, duration: float) -> tuple
     return result[:MAX_SOURCE_MOMENTS], len(result) > MAX_SOURCE_MOMENTS
 
 
+def _whole_source_context(analysis: dict, duration: float) -> dict | None:
+    """Whole analysed source bounds, never an inferred scene/highlight window.
+
+    Keep the existing 1–20s candidate admission; longer clips need a creator
+    window, not a silently shortened 'whole clip'. One 30fps quantization frame
+    accommodates probe rounding, while both bounds must remain finite/positive.
+    """
+    if analysis.get("source") in {"probe_only", "stub"}:
+        return None
+    probed = _number(analysis.get("duration_s"))
+    if probed is None or probed <= 0 or abs(probed - duration) > 1 / 30:
+        return None
+    end = min(probed, duration)
+    if not 1 <= end <= 20:
+        return None
+    understanding = analysis.get("understanding")
+    understanding = understanding if isinstance(understanding, dict) else {}
+    description = _clean_text(analysis.get("description"), 1600) or _clean_text(
+        understanding.get("summary"), 1600
+    )
+    return {
+        "kind": "visual",
+        "start_s": 0.0,
+        "end_s": end,
+        "text": "Whole analysed clip; no localized highlight. "
+        + (
+            "Cached overall description: " + description
+            if description
+            else "No visual description is available; review the footage."
+        ),
+        "uncertain": True,
+    }
+
+
+def _valid_context_bounds(start: float, end: float, duration: Any) -> bool:
+    duration = _number(duration)
+    return (
+        duration is not None
+        and math.isfinite(end)
+        and start == 0
+        and 1 <= end <= 20
+        and end <= duration
+        and abs(end - duration) <= 1 / 30
+    )
+
+
 async def index_collection(
     db: AsyncSession, owner: uuid.UUID, identifier: uuid.UUID, body: CollectionIndexBody
 ) -> CollectionIndexOut:
@@ -162,7 +209,7 @@ async def index_collection(
     selected = members(row)
     batch = selected[body.offset : body.offset + body.limit]
     available = await eligible_sources(db, owner, batch)
-    unavailable, missing, truncated, untimed = [], [], [], []
+    unavailable, missing, truncated, untimed, context, unusable_timing = [], [], [], [], [], []
     indexed = 0
     for member in batch:
         pair = available.get(member.asset_id)
@@ -175,23 +222,26 @@ async def index_collection(
             untimed.append(asset.id)
             continue
         duration = _number((asset.metadata_json or {}).get("duration_s"))
-        if duration is None or duration <= 0:
-            missing.append(asset.id)
-            continue
         kwargs = dict(
             asset_id=str(asset.id),
             owner_id=str(owner),
             source_id=str(source.id),
             required_generation=source.object_generation,
         )
-        analysis = await asyncio.to_thread(facts.get_media_asset_analysis, **kwargs) or {}
-        transcript = (
-            await asyncio.to_thread(facts.get_media_asset_analysis, **kwargs, analyzer="transcript")
-            or {}
+        analysis = await asyncio.to_thread(facts.get_media_asset_analysis, **kwargs)
+        transcript = await asyncio.to_thread(
+            facts.get_media_asset_analysis, **kwargs, analyzer="transcript"
         )
+        if duration is None or duration <= 0:
+            (missing if analysis is None or transcript is None else unusable_timing).append(
+                asset.id
+            )
+            continue
         spec = _index_spec(asset.kind)
         version = hashlib.sha256(
-            json.dumps([spec, analysis, transcript], sort_keys=True, separators=(",", ":")).encode()
+            json.dumps(
+                [spec, analysis or {}, transcript or {}], sort_keys=True, separators=(",", ":")
+            ).encode()
         ).hexdigest()
         existing = await db.scalar(
             select(MediaSourceMoment)
@@ -202,18 +252,44 @@ async def index_collection(
             )
             .limit(1)
         )
+        if (
+            existing is not None
+            and existing.evidence_json.get("evidence_scope") == "whole_source_context"
+        ):
+            candidate = (
+                _whole_source_context(analysis, duration)
+                if analysis is not None and transcript is not None
+                else None
+            )
+            if (
+                candidate is None
+                or existing.evidence_json.get("context_contract") != WHOLE_SOURCE_CONTEXT_VERSION
+                or existing.start_s != candidate["start_s"]
+                or existing.end_s != candidate["end_s"]
+            ):
+                existing = None
         if existing is not None:
             if existing.evidence_json.get("intervals_truncated"):
                 truncated.append(asset.id)
             indexed += 1
+            if existing.evidence_json.get("context_contract") == WHOLE_SOURCE_CONTEXT_VERSION:
+                context.append(asset.id)
             continue
-        intervals, capped = source_intervals(analysis, transcript, duration)
-        visibility = clip_record(analysis, kind="video").visibility
-        raw_quality_spans = analysis.get("unusable_spans")
+        intervals, capped = source_intervals(analysis or {}, transcript or {}, duration)
+        whole_context = False
+        if not intervals:
+            if analysis is None or transcript is None:
+                missing.append(asset.id)
+            elif candidate := _whole_source_context(analysis, duration):
+                intervals = [candidate]
+                whole_context = True
+                context.append(asset.id)
+            else:
+                unusable_timing.append(asset.id)
+        visibility = clip_record(analysis or {}, kind="video").visibility
+        raw_quality_spans = (analysis or {}).get("unusable_spans")
         if not isinstance(raw_quality_spans, list):
             raw_quality_spans = []
-        if not intervals:
-            missing.append(asset.id)
         if capped:
             truncated.append(asset.id)
         await db.execute(
@@ -257,14 +333,25 @@ async def index_collection(
                         "fact_version": version,
                         "time_basis": "source_seconds",
                         "verification": "cached_analysis_only",
+                        **(
+                            {
+                                "evidence_scope": "whole_source_context",
+                                "context_contract": WHOLE_SOURCE_CONTEXT_VERSION,
+                                "semantic_localization": "none",
+                                "timing_basis": "verified_source_bounds",
+                            }
+                            if whole_context
+                            else {}
+                        ),
                         "quality": {
                             "source_visibility": visibility[:160],
                             "overlapping_unusable_spans": quality_spans[:3],
                             "verification": "cached_evidence_only",
                         },
-                        "complete_timed_speech": isinstance(transcript.get("words"), list)
+                        "complete_timed_speech": isinstance((transcript or {}).get("words"), list)
                         and all(
-                            _timed_word(word, duration) is not None for word in transcript["words"]
+                            _timed_word(word, duration) is not None
+                            for word in (transcript or {})["words"]
                         ),
                         "intervals_truncated": capped,
                         "analyzer_versions": [
@@ -285,6 +372,8 @@ async def index_collection(
         unavailable_asset_ids=unavailable,
         truncated_asset_ids=truncated,
         untimed_asset_ids=untimed,
+        context_asset_ids=context,
+        unusable_timing_asset_ids=unusable_timing,
     )
 
 
@@ -305,6 +394,10 @@ async def search_moments(
     row = await owned_collection(db, owner, identifier, revision=revision)
     selected = members(row)
     available = await eligible_sources(db, owner, selected)
+    source_durations = {
+        source.id: (asset.metadata_json or {}).get("duration_s")
+        for asset, source in available.values()
+    }
     unavailable = [member.asset_id for member in selected if member.asset_id not in available]
     sources = [source.id for _, source in available.values()]
     if source_id is not None:
@@ -319,6 +412,10 @@ async def search_moments(
                 MediaSourceMoment.source_id,
                 MediaSourceMoment.evidence_json["complete_timed_speech"].astext,
                 MediaSourceMoment.evidence_json["intervals_truncated"].astext,
+                MediaSourceMoment.evidence_json["evidence_scope"].astext,
+                MediaSourceMoment.start_s,
+                MediaSourceMoment.end_s,
+                MediaSourceMoment.evidence_json["context_contract"].astext,
             )
             .where(
                 MediaSourceMoment.user_id == owner,
@@ -328,6 +425,15 @@ async def search_moments(
             .distinct()
         )
     ).all()
+    coverage = [
+        value
+        for value in coverage
+        if value[3] != "whole_source_context"
+        or (
+            value[6] == WHOLE_SOURCE_CONTEXT_VERSION
+            and _valid_context_bounds(value[4], value[5], source_durations.get(value[0]))
+        )
+    ]
     indexed = {value[0] for value in coverage}
     full_speech = {value[0] for value in coverage if value[1] == "true"}
     capped_sources = {value[0] for value in coverage if value[2] == "true"}
@@ -420,6 +526,13 @@ async def search_moments(
             )
         )
     for moment, source in rows:
+        if moment.evidence_json.get("evidence_scope") == "whole_source_context" and (
+            moment.evidence_json.get("context_contract") != WHOLE_SOURCE_CONTEXT_VERSION
+            or not _valid_context_bounds(
+                moment.start_s, moment.end_s, source_durations.get(source.id)
+            )
+        ):
+            continue
         if source_id is None and not all_candidates and source_counts.get(source.id, 0) >= 3:
             continue
         if (
@@ -443,6 +556,7 @@ async def search_moments(
                 kind=moment.kind,
                 text=moment.text,
                 uncertain=moment.uncertain,
+                evidence_scope=moment.evidence_json.get("evidence_scope", "timed_moment"),
                 evidence={
                     **moment.evidence_json,
                     "source_checked_at": datetime.now(UTC).isoformat(),
