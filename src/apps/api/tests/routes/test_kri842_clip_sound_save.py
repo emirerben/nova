@@ -22,7 +22,6 @@ from tests.routes.test_phone_voiceover_cut_edits import (
     _variant,
     voiceover_job,
 )
-
 from tests.routes.test_phone_voiceover_editor_lanes import _reset_protocol  # noqa: F401
 
 RECEIPT = {
