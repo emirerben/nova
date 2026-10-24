@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.89.0] - 2026-10-24
+
+### Changed
+- fix(kria): a photo asked full screen at a spoken word fills the screen on phone Talking, never a corner card called "Done" (KRI-840) (#1780) <!-- release-pr: 1780 -->
+
+## [0.81.88.0] - 2026-10-24
+
+### Changed
+- docs(voiceover): record verified text and selected-audio integration (#1759) <!-- release-pr: 1759 -->
+
 ## [0.81.87.0] - 2026-10-24
 
 ### Changed
