@@ -767,6 +767,37 @@ def resolve_creator_manifest(
         and resolved_narration is not None
         and capabilities.get(f"phone_format:{normalized_format}", _unavailable("x", "x")).available
     )
+    from app.services.phone_rollout import (
+        phone_voiceover_source_audio_supported,
+        phone_voiceover_spoken_text_supported,
+    )
+
+    # Advertised only while its authoring flag is on: with the flag off the
+    # manifest (and its confirmation-fence hashes) stays byte-identical to
+    # before these lanes existed, and readers treat a missing entry as
+    # unavailable.
+    for name, enabled, supported in (
+        (
+            "phone_voiceover_spoken_text",
+            settings.phone_voiceover_spoken_text_enabled,
+            phone_voiceover_spoken_text_supported,
+        ),
+        (
+            "phone_voiceover_source_audio",
+            settings.phone_voiceover_source_audio_enabled,
+            phone_voiceover_source_audio_supported,
+        ),
+    ):
+        if not enabled:
+            continue
+        capabilities[name] = (
+            _available()
+            if is_phone_voiceover and supported()
+            else _unavailable(
+                "voiceover_feature_unavailable",
+                "This Voiceover feature needs a supported app and server release.",
+            )
+        )
     if is_phone_voiceover and phone_voiceover_reaction_beats_supported():
         capabilities[CAPABILITY_REACTION_BEATS] = _available()
         # N2: the existing full-screen rollout switch and the verified

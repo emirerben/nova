@@ -1492,6 +1492,22 @@
       ]
     },
     {
+      "id": "voiceover-word-text-selected-audio",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_voiceover_requested_capabilities.py tests/pipeline/test_phone_narrated_spoken_text.py tests/tasks/test_phone_voiceover_requested_edits.py tests/routes/test_phone_voiceover_requested_edit_roundtrip.py tests/services/test_creator_render_contract.py",
+      "xctests": [
+        "KriaTests/NativeEditorRenderCompilerTests/testNarratedSelectedSourceAudioUsesPerSlotGainOnceAndKeepsLegacySilent",
+        "KriaTests/NativeEditorSessionTests/testPhoneNarratedSelectedSourceAudioHydratesFinalBedGainOnly"
+      ],
+      "paths": [
+        "src/apps/api/app/pipeline/phone_narrated_spoken_text.py",
+        "src/apps/api/tests/kria/test_voiceover_requested_capabilities.py",
+        "src/apps/api/tests/pipeline/test_phone_narrated_spoken_text.py",
+        "src/apps/api/tests/tasks/test_phone_voiceover_requested_edits.py",
+        "src/apps/api/tests/routes/test_phone_voiceover_requested_edit_roundtrip.py"
+      ]
+    },
+    {
       "id": "kri-839-beats-spoken-words",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri839_beats_spoken_words.py tests/tasks/test_subtitled_caption_language.py",

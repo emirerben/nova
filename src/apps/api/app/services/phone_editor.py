@@ -721,6 +721,19 @@ def prepare_phone_editor_commit(
     `SoundEffect.audio_gcs_path` for the phone Talking effects a Save carries
     over without a known storage path (the caller's async catalog read,
     `generative_jobs._phone_subtitled_sfx_paths`; Save itself never queries)."""
+    from app.services.phone_voiceover_timeline import (  # noqa: PLC0415
+        require_phone_voiceover_source_audio_client,
+    )
+
+    before_variant = next(
+        (
+            row
+            for row in (job.assembly_plan or {}).get("variants", [])
+            if isinstance(row, dict) and row.get("variant_id") == variant_id
+        ),
+        None,
+    )
+    require_phone_voiceover_source_audio_client(before_variant)
     staged = _StagedJob(job)
     from app.services.finished_style_learning import learning_available, style_snapshot
 
@@ -1514,6 +1527,13 @@ def _compile_narrated_editor_commit(
         # document also sends are the caption lane's, not title text.
         title_elements = narrated_authored_text_elements(variant.get("text_elements") or [])
         recipe = replace_narrated_title(recipe, title_elements)
+    elif cut_active and variant.get("spoken_text_placement") is not None:
+        # Narration keeps its clock when footage moves. Re-project from canonical rows,
+        # so shortening then extending restores spoken text without stretching its hold.
+        recipe = replace_narrated_title(
+            recipe,
+            narrated_authored_text_elements(variant.get("narrated_title_text_elements") or []),
+        )
     if caption_save or cut_active:
         # A new cut re-bounds the captions to where the video now ends.
         caption_style = "word" if variant.get("voiceover_caption_style") == "word" else "sentence"
