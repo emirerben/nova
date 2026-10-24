@@ -404,6 +404,8 @@ def _window(slot: dict) -> tuple[float, float]:
 # Spoken edits: an explanation sits in a pause, this far from either spoken word.
 _SPEECH_PAD_S = 0.15
 _MIN_WINDOW_S = 2.0
+# Beat-cut montages: consecutive short clips group into windows about this long.
+_GROUPED_WINDOW_S = 3.0
 
 
 def _speech_lines(snapshot: dict) -> list[dict]:
@@ -482,6 +484,29 @@ def _adjacent_lines(lines: list[dict], start: float, end: float) -> list[dict]:
     ]
 
 
+def _grouped_windows(slots: list[dict], opener_end: float) -> list[tuple[float, float]]:
+    """Runs of consecutive short clips, so beat-cut montages still have readable windows.
+
+    A clip already at least ``_MIN_WINDOW_S`` long is its own window and breaks a run.
+    """
+    windows: list[tuple[float, float]] = []
+    run_start = run_end = None
+    for slot in slots:
+        start, end = _window(slot)
+        if start < opener_end or end - start >= _MIN_WINDOW_S:
+            run_start = None
+            continue
+        if run_start is None or abs(start - run_end) > 0.05:
+            run_start = start
+        run_end = end
+        if run_end - run_start >= _GROUPED_WINDOW_S:
+            windows.append((run_start, run_end))
+            run_start = None
+    if run_start is not None and run_end - run_start >= _MIN_WINDOW_S:
+        windows.append((run_start, run_end))
+    return windows
+
+
 def research_windows(snapshot: dict) -> list[dict]:
     slots = [slot for slot in snapshot.get("slots") or [] if not slot.get("removed")]
     if not slots:
@@ -512,6 +537,7 @@ def research_windows(snapshot: dict) -> list[dict]:
         # A title-only draft still has later footage to explain. Existing text/beat
         # windows are useful groupings, not an exhaustive list of available windows.
         candidates.extend(_window(slot) for slot in slots)
+        candidates.extend(_grouped_windows(slots, opener_end))
     result = []
     for start, end, *spoken in sorted(set(candidates)):
         if start < opener_end or end - start < _MIN_WINDOW_S:
