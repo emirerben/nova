@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.95.0] - 2026-10-24
+
+### Changed
+- fix(freeze): plan a freeze hold only for an app build that plays it (KRI-898) (#1809) <!-- release-pr: 1809 -->
+
 ## [0.81.94.0] - 2026-10-24
 
 ### Changed
