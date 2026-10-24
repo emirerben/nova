@@ -1938,9 +1938,9 @@ def _complete_draft_turn(
             binding_on = settings.brief_binding_for(thread.creator_id)
             gate_brief = brief
             if gate_brief is None and binding_on:
-                gate_brief = answered_brief(
-                    load_latest_brief_sync(db, thread.id), document.strategy
-                )
+                gate_brief = load_latest_brief_sync(db, thread.id)
+                if settings.kria_choice_questions_enabled:
+                    gate_brief = answered_brief(gate_brief, document.strategy)
             blocked = _unresolved_choice_plan(
                 document.strategy,
                 gate_brief if binding_on else None,
@@ -2003,7 +2003,7 @@ def _complete_draft_turn(
 
             if brief is None:
                 brief = load_latest_brief_sync(db, thread.id)
-                if choice_gate:
+                if settings.kria_choice_questions_enabled:
                     brief = answered_brief(brief, document.strategy)
             source_event = db.get(CreationThreadEvent, turn.source_event_id)
             full_request = (
