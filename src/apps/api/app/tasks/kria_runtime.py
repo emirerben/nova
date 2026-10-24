@@ -470,6 +470,12 @@ def _complete_response_turn(
                     if plan.song_order_question is not None
                     else {}
                 ),
+                # KRI-723: persisted so the answer can be validated + folded later.
+                **(
+                    {"moment_order_question": plan.moment_order_question}
+                    if plan.moment_order_question
+                    else {}
+                ),
                 # KRI-588: persisted so the answer can be validated + folded later.
                 **(
                     {"song_range_question": plan.song_range_question.model_dump(mode="json")}
@@ -2584,6 +2590,8 @@ async def _plan_with_live_agent(
                     **({"answers_clip_question": True} if answers_clip_question else {}),
                     # KRI-802: this app answers a title card and a clip picker on one turn.
                     **({"batch_questions": True} if snapshot.get("batch_questions") else {}),
+                    # KRI-723: this app answers a moment-order card.
+                    **({"moment_questions": True} if snapshot.get("moment_questions") else {}),
                     # KRI-898: the sending app build, for the choice gate's freeze question.
                     **(
                         {"client_protocol": snapshot["client_protocol"]}
@@ -2750,6 +2758,9 @@ def _answers_clip_question(source: Any) -> bool:
         # KRI-901: a mark answers the mark card: re-plan (the gate re-reads the marks), never
         # an editor follow-up that reads "I marked the plate" as a text edit.
         return True
+    if isinstance(payload.get("moment_order"), dict):
+        # KRI-723: the creator pointed at their moments; the re-plan folds the answer.
+        return True
     # A tapped choice_question option ANSWERS the open question: it must re-plan (the
     # planner folds the stored answer), never be read as a follow-up edit request.
     return isinstance(payload.get("choice_selection"), dict) and bool(
@@ -2845,6 +2856,9 @@ def _claim(
         if _answers_batched_questions(source):
             # KRI-802: the same way; only when true, so every other snapshot is unchanged.
             claimed_snapshot["batch_questions"] = True
+        if isinstance(source_payload, dict) and source_payload.get("answers_moment_questions"):
+            # KRI-723: the app answers a moment-order card (stamped at submit from its protocol).
+            claimed_snapshot["moment_questions"] = True
         sent_from = stamped_client_protocol(
             source_payload.get("client_protocol") if isinstance(source_payload, dict) else None
         )

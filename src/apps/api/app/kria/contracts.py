@@ -68,6 +68,11 @@ class KriaTurnPlan(_KriaModel):
     protected_region_question: dict[str, Any] | None = Field(
         default=None, exclude_if=lambda value: not value
     )
+    # KRI-723: "put your moments in order and show me where each one is" (named moments of one
+    # take the clip record cannot place). Same omit-when-unset rule.
+    moment_order_question: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: not value
+    )
     # KRI-282: conflict-choice payload (options to tap). Same omit-when-unset rule.
     choice_question: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: not value)
     # KRI-738: tappable lengths for a "how short/long?" question. Plain text answers (the tap

@@ -78,7 +78,12 @@ from app.schemas.text_style_intent import (
 from app.services.clip_facts import CAPTURE_ORDER_KEYS
 from app.services.clip_order_sequence import row_relations, sequence_rows
 from app.services.kria_editor_ops_diff import effective_entrance
-from app.services.length_policy import creator_duration_matches, length_owner, natural_length_owner
+from app.services.length_policy import (
+    creator_duration_satisfied,
+    duration_bound,
+    length_owner,
+    natural_length_owner,
+)
 from app.services.phone_noise_reduction import engine_noise_reduction_available
 from app.text_fold import capitalize, uses_turkish_case
 from app.text_fold import lower as text_lower
@@ -322,6 +327,11 @@ class PlanFacts:
     # the OTHER spot (one clip asked to be first and last). The earlier claim stands and the
     # edit still renders, so this is a note (partial), never a failure. Known at draft time.
     sequence_conflicts: tuple[str, ...] = ()
+    # KRI-723: the stated moments the plan cannot show are those actions (no evidence: an app
+    # that could not ask), or that the creator left to Kria / said are not in their clips, by
+    # the outcome's ``code`` (``not_located`` / ``delegated`` / ``skipped``). Honest limits the
+    # creator already knows about: noted (partial), never a failure.
+    sequence_unlocated: tuple[str, ...] = ()
     # KRI-522: the spots ("first" / "last" / "then") whose stated sequence group landed,
     # read off the same outcomes. None = this plan cannot say (not a unified montage), so a
     # stated first/last clip stays unjudged there instead of failing a plan that seated it.
@@ -436,6 +446,9 @@ class PlanFacts:
     capped_beat_hits: tuple[tuple[str, int, int], ...] = ()
     # The strategy's audio strategy ("voiceover", "original_audio", ...); None = unknown.
     audio_strategy: str | None = None
+    # The strategy's render program ("native", "guided"); None = unknown. KRI-889: a
+    # guided story's voiceover is not cut around named lines.
+    render_program: str | None = None
     # How loud the footage's own sound plays under the creator's voice (0..1; 1.0 = full
     # volume). None = unknown, never guessed.
     voiceover_bed_level: float | None = None
@@ -793,6 +806,9 @@ def plan_facts_from_strategy(
         speech_cleanup_offered=speech_cleanup_offered,
         caption_style=str(caption_style) if caption_style else None,
         audio_strategy=str(audio_strategy) if audio_strategy else None,
+        render_program=(
+            str(strategy.get("render_program")) if strategy.get("render_program") else None
+        ),
         **extra,
     )
 
@@ -957,6 +973,13 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         sequence_unmet=_sequence_problems(record, ("misplaced", None, "contained")),
         sequence_absent=_sequence_problems(record, ("absent", "unresolved")),
         sequence_conflicts=_sequence_problems(record, ("conflict",)),
+        sequence_unlocated=tuple(
+            str(row.get("code"))
+            for row in record.get("intent_outcomes") or []
+            if isinstance(row, Mapping)
+            and row.get("op") == "order"
+            and row.get("code") in _MOMENT_LIMIT_CODES
+        ),
         texts=tuple(
             str(text)
             for text in (
@@ -1931,6 +1954,7 @@ _MONTAGE_ORDER_FIELDS = (
     "sequence_unmet",
     "sequence_absent",
     "sequence_conflicts",
+    "sequence_unlocated",
     "sequence_spots_met",
     "route_start",
     "route_end",
@@ -2455,6 +2479,17 @@ _ORDER_NOT_APPLIED = (
 # KRI-778: an order the creator listed in their own words that the plan only partly placed,
 # said in their terms (what they listed), never the planner's "groups".
 _ORDER_LIST_NOT_PLACED = "I couldn't place everything you listed in the order you gave."
+# KRI-723: named moments the plan cannot show are those actions. An app that cannot answer the
+# "show me where each moment is" card gets windows nobody located; the creator hears it.
+_MOMENTS_NOT_LOCATED = (
+    "I couldn't find every moment you named in your clip, so I can't confirm the ones playing "
+    "are those moments"
+)
+# ... and the moments the creator left to Kria or said are not in their clips.
+_MOMENTS_CREATOR_CALL = (
+    "Some moments are your call: ones you said aren't in your clips, or let me pick"
+)
+_MOMENT_LIMIT_CODES = frozenset({"not_located", "delegated", "skipped"})
 # KRI-470 PR-G: what a required order says when it was not met.
 _ORDER_NOT_RECORDED = "I couldn't confirm the order your edit used."
 _ORDER_RULE_NOT_APPLIED = (
@@ -2566,12 +2601,21 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
         # The creator described the order in their own words; the plan placed (or
         # failed to place) each group and recorded which (KRI-458).
         landed = sum(status == "met" for status in facts.sequence_statuses)
-        if landed < len(facts.sequence_statuses):
+        honest = len(facts.sequence_unlocated)
+        if landed + honest < len(facts.sequence_statuses):
             return _receipt(
                 req,
                 "partial" if landed or not required else "not_possible",
                 _listed_order_miss(facts),
             )
+        if honest:
+            # KRI-723: placed as asked, but not every named moment is evidenced as itself.
+            reason = (
+                _MOMENTS_NOT_LOCATED
+                if "not_located" in facts.sequence_unlocated
+                else _MOMENTS_CREATOR_CALL
+            )
+            return _receipt(req, "partial", say(en=reason, tr=_REASON_TR[reason]))
     elif basis in _ARRIVAL_BASES and key != basis:
         # An order only the creator's words describe, and nothing in the plan applied
         # it: say so, never let a silent attachment order read as "done" (KRI-458).
@@ -3866,6 +3910,12 @@ _REASON_TR: dict[str, str] = {
         "Anlattığını kliplerle eşleştiremedim, o yüzden klipler eklediğin sırada kaldı."
     ),
     _ORDER_LIST_NOT_PLACED: "Saydığın her şeyi verdiğin sıraya yerleştiremedim.",
+    _MOMENTS_NOT_LOCATED: (
+        "Saydığın her anı klipte bulamadım, o yüzden oynayanların o anlar olduğunu doğrulayamıyorum"
+    ),
+    _MOMENTS_CREATOR_CALL: (
+        "Bazı anlar senin kararın: kliplerinde olmadığını söylediklerin ya da bana bıraktıkların"
+    ),
     _ORDER_NOT_RECORDED: "Düzenlemenin kullandığı sırayı doğrulayamadım.",
     _ORDER_RULE_NOT_APPLIED: (
         "Bu sıralama kuralını doğrulayamıyorum ve klipler kurala uyduğunu gösterebileceğim "
@@ -4078,6 +4128,8 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _NO_CLIP_SPEED,
     _NO_FREEZE_FRAME,
     _FREEZE_NOT_GROUNDED,
+    _MOMENTS_NOT_LOCATED,
+    _MOMENTS_CREATOR_CALL,
     _FREEZE_NEEDS_FRAME,
     _FREEZE_FIRST_FRAME,
     _LIGHT_UNAVAILABLE,
@@ -4696,6 +4748,11 @@ _NAMED_CUT_MISSED = {
         "your take has no word timings to find it in",
         "çekiminde onu bulacak kelime zamanlaması yok",
     ),
+    # KRI-889: the line was found, but cutting the voiceover file failed.
+    "cut_failed": (
+        "cutting it out of your voiceover failed",
+        "seslendirmenden kesmek başarısız oldu",
+    ),
 }
 
 
@@ -4732,6 +4789,21 @@ def _named_cut_notes(req: BriefRequirement, facts: PlanFacts) -> tuple[list[str]
     return notes, all(row.get("status") == "applied" for row in rows)
 
 
+def _cuts_named_voiceover_lines(facts: PlanFacts) -> bool:
+    """KRI-889: a narrated render cuts named lines out of the recorded voiceover.
+
+    Phone and cloud both do, behind ``NARRATED_NAMED_CUTS_ENABLED`` (read here too, so the
+    draft never promises a cut the worker won't make). A guided story is not cut.
+    """
+    from app.config import settings  # noqa: PLC0415
+
+    return (
+        _is_voiceover_edit(facts)
+        and facts.render_program != "guided"
+        and bool(settings.narrated_named_cuts_enabled)
+    )
+
+
 def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Pauses, retakes and filler the creator asked to cut, against the draft.
 
@@ -4761,8 +4833,9 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         lead, status = _CLEANUP_IF_OFFERED, "partial"
     notes = [_loc(lead)]
     if _wants_named_cuts(req):
-        if facts.phone_talking and named_cut_lines(req):
-            # KRI-821: the phone Talking render cuts each named line it finds said once.
+        if (facts.phone_talking or _cuts_named_voiceover_lines(facts)) and named_cut_lines(req):
+            # KRI-821: the phone Talking render cuts each named line it finds said once;
+            # KRI-889: so does a narrated render, out of the recorded voiceover.
             # Not certain before the render finds the line, so never "Done" (KRI-792).
             notes.append(_loc(_NAMED_CUT_AT_RENDER))
             status = "partial"
@@ -6230,7 +6303,9 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
         return _receipt(req, "partial", _CANT_CHECK_TIMING)
     if facts.duration_s is None:
         return _receipt(req, "partial", _CANT_CONFIRM_LENGTH)
-    if creator_duration_matches(facts.duration_s, float(target)):
+    # KRI-847: "at most 10 seconds" is the same +/- 10 % check without its lower side.
+    bound = duration_bound(req.facts)
+    if creator_duration_satisfied(facts.duration_s, float(target), bound):
         return _receipt(req, "met", None)
     if (
         natural_owner == "take"
@@ -6251,17 +6326,20 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
                 "bir kapanış var)"
             ),
         )
+    asked = _round_s(float(target))
+    asked_en = f"at most {asked}s" if bound == "at_most" else f"{asked}s"
+    asked_tr = f"en fazla {asked} saniye" if bound == "at_most" else f"{asked} saniye"
     return _receipt(
         req,
         "partial",
         say(
             en=(
                 f"This draft is about {_round_s(facts.duration_s)}s{outro}; "
-                f"you asked for {_round_s(float(target))}s."
+                f"you asked for {asked_en}."
             ),
             tr=(
                 f"Bu taslak yaklaşık {_round_s(facts.duration_s)} saniye{outro}; sen "
-                f"{_round_s(float(target))} saniye istedin."
+                f"{asked_tr} istedin."
             ),
         ),
     )
@@ -7250,8 +7328,8 @@ def narrated_alignment_recovery() -> str:
 # length ask is judged against the same draft, so a brief with two of them (café M2: a freeze
 # the brief scoped as a length, and "about 14 seconds") states the draft's length twice.
 _DRAFT_LENGTH_RE = re.compile(  # kri667: our own length sentence, never creator words
-    r"^(?:This draft is about \S+s\b.*; you asked for \S+s\."
-    r"|Bu taslak yaklaşık \S+ saniye\b.*; sen \S+ saniye istedin\.)$"
+    r"^(?:This draft is about \S+s\b.*; you asked for (?:at most )?\S+s\."
+    r"|Bu taslak yaklaşık \S+ saniye\b.*; sen (?:en fazla )?\S+ saniye istedin\.)$"
 )
 # A sentence already ends: its stop, then any closing quotes or brackets.
 _SENTENCE_END_RE = re.compile(  # kri667: punctuation only, reads no meaning
@@ -8726,12 +8804,18 @@ def _talking_honest_receipt(
                 return receipt
             en_tail = f"your take is {_round_s(take)}s"
             tr_tail = f"çekimin {_round_s(take)} saniye"
+        # KRI-847: a ceiling is worded as one ("at most 10s"), never as an exact length.
+        ceiling = duration_bound(req.facts) == "at_most"
+        asked_en = f"at most {_round_s(target)}s" if ceiling else f"{_round_s(target)}s"
+        asked_tr = (
+            f"en fazla {_round_s(target)} saniye" if ceiling else f"{_round_s(target)} saniye"
+        )
         return _receipt(
             req,
             "partial",
             say(
-                en=f"{prefix}; {en_tail} and you asked for {_round_s(target)}s",
-                tr=f"{_REASON_TR[prefix]}; {tr_tail}, sen {_round_s(target)} saniye istedin",
+                en=f"{prefix}; {en_tail} and you asked for {asked_en}",
+                tr=f"{_REASON_TR[prefix]}; {tr_tail}, sen {asked_tr} istedin",
             ),
         )
     # Footage sound level; KRI-842: one clip's sound is as much a mix change a Talking edit lacks.
@@ -8828,6 +8912,12 @@ _OUTCOME_REASON_TR = {
     "its clips are already in an earlier group": "klipleri zaten önceki bir grupta",
     "its clips are already placed at another spot": "klipleri zaten başka bir yerde",
     "the clips did not end up there": "klipler oraya gelmedi",
+    # KRI-723 (``unified_montage.MOMENT_*``).
+    "I couldn't find this moment in your clip, so I can't confirm it's the one playing": (
+        "Bu anı klipte bulamadım, o yüzden oynayanın o an olduğunu doğrulayamıyorum"
+    ),
+    "you let me pick this moment, so I chose it myself": "bu anı seçmeyi bana bıraktın, ben seçtim",
+    "you told me this moment isn't in your clips": "bu anın kliplerinde olmadığını söyledin",
     "you chose grouping first, each group in the order you filmed it": (
         "önce gruplamayı seçtin, her grup çektiğin sırada"
     ),

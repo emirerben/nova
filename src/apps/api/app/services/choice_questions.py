@@ -33,7 +33,7 @@ import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -58,6 +58,9 @@ from app.services.clip_facts import (
     order_by_capture_time,
 )
 from app.services.clip_order_sequence import ANCHOR_FACTS
+
+if TYPE_CHECKING:
+    from app.services.length_policy import DurationBound
 
 CHOICE_QUESTION_VERSION = 1
 MAX_CHOICE_OPTIONS = 6
@@ -843,6 +846,20 @@ def _rows(snapshot: Mapping[str, Any] | None) -> list[Any]:
     return list((snapshot or {}).get("clip_assignments") or [])
 
 
+def _length_asks(brief: Any) -> list[tuple[Any, float]]:
+    """The creator's own length asks: LIVE brief timing requirements with a number."""
+
+    asks = []
+    for req in _live(brief):
+        # KRI-777: a freeze's or a moment's seconds are not a length the creator asked for.
+        if req.kind != "timing" or times_one_moment(req):
+            continue
+        value = _number((req.facts or {}).get("duration_s"))
+        if value is not None:
+            asks.append((req, value))
+    return asks
+
+
 def _requested_durations(brief: Any) -> tuple[list[float], list[str], str]:
     """The creator's own lengths: LIVE brief timing requirements only.
 
@@ -851,19 +868,28 @@ def _requested_durations(brief: Any) -> tuple[list[float], list[str], str]:
     marks it ``target_duration_requested`` either way.
     """
 
-    durations: list[float] = []
-    requirement_ids: list[str] = []
+    asks = _length_asks(brief)
     quoted = ""
-    for req in _live(brief):
-        # KRI-777: a freeze's or a moment's seconds are not a length the creator asked for.
-        if req.kind != "timing" or times_one_moment(req):
-            continue
-        value = _number((req.facts or {}).get("duration_s"))
-        if value is not None:
-            durations.append(value)
-            requirement_ids.append(str(req.id))
-            quoted = quoted or " ".join(str(req.description or "").split())[:80]
-    return durations, requirement_ids, quoted
+    for req, _ in asks:
+        quoted = quoted or " ".join(str(req.description or "").split())[:80]
+    return [value for _, value in asks], [str(req.id) for req, _ in asks], quoted
+
+
+def _requested_bound(brief: Any) -> DurationBound:
+    """How `_requested_durations` are judged (KRI-847): a ceiling ("at most 10 seconds") only
+    when every one of them is."""
+
+    from app.services.length_policy import duration_bound  # noqa: PLC0415
+
+    asks = _length_asks(brief)
+    ceiling = bool(asks) and all(duration_bound(req.facts) == "at_most" for req, _ in asks)
+    return "at_most" if ceiling else "exact"
+
+
+def _facts_with_length(facts: Mapping[str, Any], seconds: Any) -> dict[str, Any]:
+    """``facts`` with the length the creator just chose by answering. It is a concrete number,
+    so a ceiling ("at most 10 seconds") on the old one ends (KRI-847)."""
+    return {**{k: v for k, v in facts.items() if k != "duration_bound"}, "duration_s": seconds}
 
 
 def _evenly_spaced(ids: Sequence[str], count: int) -> list[str]:
@@ -955,6 +981,7 @@ def _duration_vs_count(
     if _montage_exempt(strategy, cap):
         return None
     durations, requirement_ids, quoted = _requested_durations(brief)
+    bound = _requested_bound(brief)
     if not durations:
         # Only a length the CREATOR stated is a promise. The model's own pick (and the 24 s
         # default) never asks, however many clips there are.
@@ -986,6 +1013,7 @@ def _duration_vs_count(
     count = len(clip_ids)
     if count * floor_frames <= round(seconds * 1.10 * _MAX_FIT_FRAMES_FPS):
         return None
+    ceiling = bound == "at_most"
     needed = math.ceil(count * floor_frames / _MAX_FIT_FRAMES_FPS * 10 - 1e-9) / 10
     can_extend = needed <= cap.max_duration_s
     fit = max(1, int(seconds * _MAX_FIT_FRAMES_FPS) // floor_frames)
@@ -1006,7 +1034,8 @@ def _duration_vs_count(
                 f"{count} klibinden {len(subset)} tanesini kullanır, çekimlerine eşit "
                 "aralıklarla dağıtır; diğerleri dışarıda kalır.",
             ),
-            recommended=not can_extend,
+            # Extending breaks a ceiling, so "fewer clips" is the way to keep it.
+            recommended=ceiling or not can_extend,
             aliases=("fewer", "fewer clips", "use fewer", "use fewer clips", "keep it short"),
             tr_aliases=_FEWER_TR_ALIASES,
         )
@@ -1034,7 +1063,7 @@ def _duration_vs_count(
                     f"Her klip en az {floor_s:g} saniye görünür, böylece {count} klibin "
                     "hepsi kalır.",
                 ),
-                recommended=True,
+                recommended=not ceiling,
                 aliases=("extend", "extend it", "longer", "make it longer", "extend the length"),
                 tr_aliases=_EXTEND_TR_ALIASES,
             ),
@@ -1752,8 +1781,12 @@ def _freeze_frame(
     cap: ChoiceCapability,
     *,
     clip_paths: Sequence[Any] = (),
+    snapshot: Mapping[str, Any] | None = None,
 ) -> list[UnresolvedChoice]:
     """A freeze names a moment, but nothing knows the exact instant to hold (KRI-900).
+
+    A freeze naming a moment the creator already pointed at (KRI-723, the length plan's
+    ``creator_answer`` moments) is not asked: the render holds that window's last frame.
 
     "Freeze the frame on Atakan's bite": the clip record knows the bite's moment (57.0 to
     59.8 s, an interval) but not the instant of the bite, and the render must not guess one.
@@ -1777,6 +1810,10 @@ def _freeze_frame(
     live = _live(brief)
     # A second the creator typed ("freeze at 58.2 seconds") already pins the frame.
     specs = [spec for spec in live_freezes(live) if spec.target_words and spec.frame_s is None]
+    from app.services.named_moments import pointed_match, pointed_moment_words  # noqa: PLC0415
+
+    pointed = pointed_moment_words(snapshot)
+    specs = [spec for spec in specs if pointed_match(spec.target_words, pointed) is None]
     if not specs:
         return []
     audio = strategy.get("montage_audio")
@@ -2528,6 +2565,7 @@ def _length_vs_natural(
 
     strict_max = creator_max_export_duration_s(brief=brief)
     durations, requirement_ids, quoted = _requested_durations(brief)
+    bound = _requested_bound(brief)
     if len(set(durations)) != 1 or not durations:
         return None
     # The continuous-voice montage already has its own source-aware question
@@ -2560,9 +2598,13 @@ def _length_vs_natural(
             return None
         capacity = cap.max_duration_s
     asked = durations[0]
+    ceiling = bound == "at_most"
     # A ten-percent tolerance avoids a needless card for ordinary source timing
-    # rounding (e.g. a 24.0s voice rendered as 23.8s).
-    if strict_max is None and abs(asked - capacity) <= max(0.01, asked * 0.10):
+    # rounding (e.g. a 24.0s voice rendered as 23.8s). KRI-847: "at most N" drops only the
+    # shortfall side of it, so a source shorter than N needs no card. A strict whole-export
+    # maximum (KRI-629) was judged above, ending included, and keeps its own rule.
+    gap = capacity - asked if ceiling else abs(asked - capacity)
+    if strict_max is None and gap <= max(0.01, asked * 0.10):
         return None
     if owner == "footage" and asked < 3 <= capacity:
         from app.services.length_policy import creator_duration_matches  # noqa: PLC0415
@@ -2656,10 +2698,18 @@ def _length_vs_natural(
         ),
         reason=say(
             en=(
-                f"That {source} cannot make a {asked_s}-second edit without changing the "
+                f"That {source} cannot make an edit of at most {asked_s} seconds without "
+                "changing the source timing."
+                if ceiling
+                else f"That {source} cannot make a {asked_s}-second edit without changing the "
                 "source timing."
             ),
-            tr=(f"kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam."),
+            tr=(
+                f"kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video "
+                "yapamam."
+                if ceiling
+                else f"kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam."
+            ),
         ),
         options=tuple(options),
         input_digest=_digest(CONFLICT_LENGTH_VS_NATURAL, owner, asked, capacity, snapshot),
@@ -2718,10 +2768,24 @@ def _source_coverage(
             "single_hero_order_conflict",
             "insufficient_media",
             "duration_out_of_bounds",
+            "named_moments_unplaceable",
         }
     ):
         return None
-    if "single_hero_order_conflict" in codes:
+    if "named_moments_unplaceable" in codes:
+        # KRI-723: the creator's pointed moments leave no room for the rest at this length.
+        reason = say(
+            en=(
+                "Your moments can't all get their own part of this clip at this length. "
+                "Ask for a different length, or name fewer moments."
+            ),
+            tr=(
+                "Saydığın anların hepsi bu uzunlukta klipte kendi yerini alamıyor. Başka bir "
+                "uzunluk iste ya da daha az an say."
+            ),
+        )
+        label = "Update the selected clips"
+    elif "single_hero_order_conflict" in codes:
         reason = say(
             en=(
                 "The selected order conflicts with the single-hero composition. "
@@ -2747,13 +2811,24 @@ def _source_coverage(
         label = "Update the selected clips"
     elif "authored_hold_coverage" in codes:
         requested = envelope.get("target_duration_s")
+        # KRI-847: a ceiling is "at most N seconds", never "the requested N seconds".
+        ceiling = envelope.get("target_duration_bound") == "at_most"
         reason = say(
             en=(
-                f"The requested {requested:g} seconds cannot include these clips with their "
-                "approved holds. Choose fewer clips or change those holds before rendering."
+                f"A video of at most {requested:g} seconds cannot include these clips with "
+                "their approved holds. Choose fewer clips or change those holds before "
+                "rendering."
+                if ceiling
+                else f"The requested {requested:g} seconds cannot include these clips with "
+                "their approved holds. Choose fewer clips or change those holds before "
+                "rendering."
             ),
             tr=(
-                f"İstenen {requested:g} saniye, onaylı bekleme süreleriyle bu klipleri "
+                f"En fazla {requested:g} saniyelik bir video, onaylı bekleme süreleriyle bu "
+                "klipleri kapsayamıyor. Oluşturmadan önce daha az klip seç ya da bekleme "
+                "sürelerini değiştir."
+                if ceiling
+                else f"İstenen {requested:g} saniye, onaylı bekleme süreleriyle bu klipleri "
                 "kapsayamıyor. Oluşturmadan önce daha az klip seç ya da bekleme "
                 "sürelerini değiştir."
             ),
@@ -3094,7 +3169,7 @@ def collect_conflicts(
         _text_placement,
         functools.partial(_title_text, clip_paths=clip_paths),
         functools.partial(_take_line, clip_paths=clip_paths),
-        functools.partial(_freeze_frame, clip_paths=clip_paths),
+        functools.partial(_freeze_frame, clip_paths=clip_paths, snapshot=media_snapshot),
         functools.partial(_source_coverage, snapshot=media_snapshot),
         functools.partial(_holds_vs_length, snapshot=media_snapshot),
         _duration_vs_count,
@@ -4008,7 +4083,7 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                     continue
                 changed[req.id] = req.model_copy(
                     update={
-                        "facts": {**req.facts, "duration_s": data["target_duration_s"]},
+                        "facts": _facts_with_length(req.facts, data["target_duration_s"]),
                         "description": say(
                             en=(
                                 f"Keep {_clean_seconds(new)} seconds (extended from "
@@ -4061,7 +4136,7 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                     continue
                 changed[req.id] = req.model_copy(
                     update={
-                        "facts": {**req.facts, "duration_s": data["target_duration_s"]},
+                        "facts": _facts_with_length(req.facts, data["target_duration_s"]),
                         "description": say(
                             en=(
                                 f"Keep {_clean_seconds(new)} seconds (as long as your voice, "
@@ -4092,7 +4167,7 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                     continue
                 changed[req.id] = req.model_copy(
                     update={
-                        "facts": {**req.facts, "duration_s": data["target_duration_s"]},
+                        "facts": _facts_with_length(req.facts, data["target_duration_s"]),
                         "description": say(
                             en=(
                                 f"Keep {_clean_seconds(new)} seconds (the available source "

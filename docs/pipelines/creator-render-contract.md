@@ -354,6 +354,22 @@ require a declaration. A creator-named target uses ±10%; otherwise song placeme
 or a frozen music section, recorded narration, cleaned take, or selected best parts
 provide the clock. Derived lengths remain notes, not creator proof.
 
+An inclusive ceiling ("at most 10 seconds", "max 10 s", "en fazla 10 saniye", KRI-847) is not a
+±10% target. The model records it on the `timing` requirement as
+`facts.duration_bound = "at_most"` beside `duration_s` (absent or unknown = exact; a change
+that sets `duration_s` without it drops it, as does an answered length card).
+`length_policy.creator_duration_satisfied(..., "at_most")` is the exact check without its lower
+side (`0 < actual <= N + 10%`): it can only relax the existing check, never tighten it, so a
+wrong or stale fact cannot create a hard cap. It is used by the draft receipt ("you asked for
+at most 10s"), the length plan (`target_duration_bound` on the envelope), the choice cards,
+the approved music window and the render check ("You asked for at most 10 seconds; this edit
+is 11.5 seconds."). Exclusive wording ("under N", "less than N", TR "N saniyenin altında") is
+the strict whole-export cap of KRI-629 (`strict_duration_limit_s`), read from the description
+and judged on the measured export including its ending; `duration_bound` never changes it. The
+bound never rides on `CreatorRenderContract` (frozen schema, see above): dispatch writes it to
+`assembly_plan["creator_length_bounds"][contract_digest]`, and `read_length_policy` returns it
+as `state.requested_duration_bound`, so an exact job's stored keys are unchanged.
+
 `length_planning.py` freezes exact best-parts windows once at server planning, with
 source identities, capacity, deterministic ranking/fallback receipts, and generation.
 Phone and cloud compilers read that envelope. The silent cap is 120 seconds and
@@ -660,6 +676,51 @@ Rules:
 
 Not yet: concrete montage/speech/text/audio decisions still resolve inside the
 render (KRI-723/724/725); the snapshot refuses drift but does not hold compiler output.
+
+## Named moments of one take (KRI-723, first slice)
+
+"Six moments from it, in this order: A, B, C ..." names actions, not windows. Six ordinal
+energy windows in the right count and order are **not** evidence of six actions, so they never
+read `met`.
+
+- **Which moments.** `services/named_moments.named_moments`: resolved `then` order rows that
+  name the edit's only video (one row listing them, or one row per moment). Rows naming only
+  Visuals ride along. A moment count that disagrees with the named moments is not guessed at.
+- **Evidence, no model call.** `ground()` matches the creator's words against stored
+  `best_moments` / `understanding.notable_moments` (`start_s`, `end_s`, `description`) with the
+  KRI-828 scorer (now shared). One best match = `grounded`; a tie (or two moments on one
+  interval) = `ambiguous`; none = `unlocated`. Model prose, even with timestamps, never counts.
+- **Ask before approval.** In `_gate_unresolved_choices`, an unlocated/ambiguous moment on a
+  turn stamped `answers_moment_questions` (app protocol >= `moment_order_min_client_protocol`,
+  **999 = dark until the iOS card ships**) returns `moment_order_question` instead of a draft,
+  and keeps returning it until every moment is pointed at, skipped or left to Kria (a
+  free-text reply never turns into guessed windows). Pins are dark with the question: an app
+  that cannot answer keeps today's v1 windows byte-identical with an honest `not_located`
+  receipt, so 999 is a real kill switch. A selected photo beside the take is never asked
+  about (the length plan pins only all-video edits).
+- **Answer.** `SubmitTurnBody.moment_order` (`point` / `skip` / `delegate` per moment, in the
+  creator's final order). `runtime._validate_moment_order`: 409 `moment_order_stale` (old
+  question, re-uploaded take), 404 `moment_order_media_not_found` (not this thread's take),
+  422 `moment_order_invalid` / `moment_order_overlap`. The echo models read has no digits.
+  `fold_moment_orders` re-reads it from thread events; the key is the creator's folded words on
+  that file generation, so a reworded moment or re-uploaded take is re-asked.
+- **Envelope v2.** `build_length_plan(pinned_moments=...)` gives each moment one window in the
+  creator's order (a pointed window exactly as given; a grounded one centred on its evidence;
+  "you pick" / unlocated from the strongest free moment) and records `moments[]` (+
+  `skipped_moments`), whoever owns the length (a licensed-music section included). A pointed
+  window ends at the take's end (the record holds what plays). Pins that cannot all be placed
+  are a blocking `named_moments_unplaceable` conflict, never a fall-back to ordinal windows.
+  Only such an envelope is v2; every other plan stays byte-identical v1. Readers use
+  `supported_length_plan_version()`; `read_length_plan` refuses a v2 whose creator-pointed
+  window was changed.
+- **Execution and receipt.** The worker plays the envelope windows in order; Visual seating
+  and freeze ("freeze the frame on the bite") use the located moments. `_moment_outcomes` is
+  `met` only when the cut shows the evidenced interval; without evidence a row is `partial`
+  `not_located` (a format limit: it never blocks the render, never claims the action).
+
+Not in this slice: several takes interleaved, the user-song / lip-sync variants, text and
+music frozen once, and the iOS card itself. Proof: `tests/kria/test_kri723_moment_authority_m2.py`
+(`KRI723_ARTIFACT=<dir>` writes `report.json`) and `tests/kria/test_kri723_moment_order_turns_postgres.py`.
 
 ## Route resolution (KRI-470 PR-D)
 
