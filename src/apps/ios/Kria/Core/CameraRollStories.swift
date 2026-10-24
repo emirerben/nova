@@ -10,7 +10,8 @@ struct CameraRollMoment: Codable, Identifiable, Sendable {
     let kind: String
     let text: String
     let uncertain: Bool
-    enum CodingKeys: String, CodingKey { case id, generation, kind, text, uncertain; case assetID = "asset_id", sourceID = "source_id", start = "start_s", end = "end_s" }
+    var evidenceScope: String? = nil
+    enum CodingKeys: String, CodingKey { case id, generation, kind, text, uncertain; case assetID = "asset_id", sourceID = "source_id", start = "start_s", end = "end_s", evidenceScope = "evidence_scope" }
 }
 struct CameraRollContentPlan: Codable, Sendable {
     let version: Int
@@ -75,7 +76,8 @@ struct CameraRollIndexPass: Decodable, Sendable {
     let missing: [UUID]
     let unavailable: [UUID]
     let untimed: [UUID]
-    enum CodingKeys: String, CodingKey { case nextOffset = "next_offset", missing = "missing_analysis_asset_ids", unavailable = "unavailable_asset_ids", untimed = "untimed_asset_ids" }
+    var unusableTiming: [UUID]? = nil
+    enum CodingKeys: String, CodingKey { case nextOffset = "next_offset", missing = "missing_analysis_asset_ids", unavailable = "unavailable_asset_ids", untimed = "untimed_asset_ids", unusableTiming = "unusable_timing_asset_ids" }
 }
 struct CameraRollInspection: Decodable, Sendable { let answer: String; let confidence: Double; let evidence: String }
 
@@ -96,6 +98,7 @@ extension KriaAPIClient {
     func correctCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, index: Int, momentID: UUID, eventID: String) async throws -> CameraRollStory { throw APIError.unsupported }
     func rejectCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, eventID: String) async throws -> CameraRollStory { throw APIError.unsupported }
     func selectCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, threadID: UUID, threadRevision: Int, eventID: String) async throws -> TurnAccepted { throw APIError.unsupported }
+    func recoverCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, threadID: UUID, threadRevision: Int, eventID: String, heldTurnID: UUID) async throws -> TurnAccepted { throw APIError.unsupported }
     func createCameraRollStoryThread(id: UUID, revision: Int) async throws -> CreationThread { throw APIError.unsupported }
     func inspectCameraRollMoment(collectionID: UUID, revision: Int, momentID: UUID, question: String, cacheOnly: Bool) async throws -> CameraRollInspection { throw APIError.unsupported }
 }
@@ -139,6 +142,15 @@ extension KriaAPI {
         var body = storyReviewBody(story, revision: collectionRevision, eventID: eventID)
         body["thread_id"] = .string(threadID.uuidString); body["expected_thread_revision"] = .number(Double(threadRevision))
         return try await request(path: "me/media-collections/\(collectionID)/stories/\(story.id)/select", method: "POST", bodyData: JSONEncoder().encode(body), decode: TurnAccepted.self)
+    }
+    func recoverCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, threadID: UUID, threadRevision: Int, eventID: String, heldTurnID: UUID) async throws -> TurnAccepted {
+        var body = storyReviewBody(story, revision: collectionRevision, eventID: eventID)
+        body["thread_id"] = .string(threadID.uuidString)
+        body["expected_thread_revision"] = .number(Double(threadRevision))
+        body["recover_held_turn_id"] = .string(heldTurnID.uuidString)
+        let accepted = try await request(path: "me/media-collections/\(collectionID)/stories/\(story.id)/select", method: "POST", bodyData: JSONEncoder().encode(body), decode: TurnAccepted.self)
+        guard let successorID = UUID(uuidString: accepted.turnID), successorID != heldTurnID else { throw APIError.invalidResponse }
+        return accepted
     }
     func createCameraRollStoryThread(id: UUID, revision: Int) async throws -> CreationThread {
         let capabilities = try await creationCapabilities()

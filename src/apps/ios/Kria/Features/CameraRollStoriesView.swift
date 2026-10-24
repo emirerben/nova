@@ -13,6 +13,7 @@ struct CameraRollStoriesView: View {
     @State private var stories: [CameraRollStory] = []
     @State private var busy = false
     @State private var error: String?
+    @State private var heldRecovery: HeldStoryRecovery?
     @State private var inspection: String?
     @State private var question = "What is clearly visible in this interval?"
     @State private var player: AVPlayer?
@@ -31,7 +32,7 @@ struct CameraRollStoriesView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                 if !result.coverage.unindexed.isEmpty {
-                    Label("\(result.coverage.unindexed.count) \(result.coverage.unindexed.count == 1 ? "video wasn’t" : "videos weren’t") included because analysis isn’t ready.", systemImage: "info.circle")
+                    Label("\(result.coverage.unindexed.count) \(result.coverage.unindexed.count == 1 ? "video needs" : "videos need") source or analysis review before inclusion.", systemImage: "info.circle")
                         .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
                 } else if !result.coverage.incompleteSpeech.isEmpty {
                     Label("Some audio needs checking", systemImage: "info.circle")
@@ -94,6 +95,12 @@ struct CameraRollStoriesView: View {
                 }
                 if busy { ProgressView("Preparing…") }
                 if let error { Text(error).foregroundStyle(KriaColor.failureText).accessibilityIdentifier("story-error") }
+                if let heldRecovery {
+                    Button("Try this idea again") {
+                        selectionTask = Task { await recover(heldRecovery) }
+                    }.buttonStyle(KriaPrimaryButtonStyle()).disabled(busy)
+                        .accessibilityIdentifier("story-recover-held-selection")
+                }
                 }.padding(24)
             }
             .background(KriaColor.paper).kriaPage()
@@ -172,6 +179,9 @@ struct CameraRollStoriesView: View {
                         }
                         VStack(alignment: .leading, spacing: 6) {
                             Text(moment.text).font(KriaFont.body(14).weight(.medium)).lineLimit(3)
+                            if moment.evidenceScope == "whole_source_context" {
+                                Text("Whole clip · no timed highlight detected").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                            }
                             Text("\(sourceLabel(moment)) · \(moment.start, specifier: "%.1f")–\(moment.end, specifier: "%.1f")s")
                                 .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                             if let reasons = story.contentPlan?.beatReasons, reasons.indices.contains(index) {
@@ -269,7 +279,7 @@ struct CameraRollStoriesView: View {
         } catch { self.error = CameraRollCollectionFailure.message(error) }
     }
     @MainActor private func select(_ story: CameraRollStory) async {
-        busy = true; error = nil; defer { busy = false }
+        busy = true; error = nil; heldRecovery = nil; defer { busy = false }
         do {
             guard let owner = api.mediaLibraryOwner else { throw APIError.unsupported }
             let assets = collection.entries.compactMap(\.savedAsset).filter { asset in story.moments.contains { $0.assetID == asset.id } }
@@ -287,11 +297,34 @@ struct CameraRollStoriesView: View {
                 let mediaID = (source.role == "analysis_proxy" ? "analysis-proxy-" : "") + asset.id.uuidString
                 thread = try await SavedMediaReuse.attach(asset: asset, source: source, threadID: threadID, itemID: thread.activePlanItemID, role: .clip, mediaID: mediaID, owner: owner, api: api)
             }
-            _ = try await api.selectCameraRollStory(collectionID: collection.id, story: story, collectionRevision: collection.serverRevision ?? 0, threadID: threadID, threadRevision: thread.revision, eventID: "choose-\(story.id)-\(story.revision)")
+            let accepted = try await api.selectCameraRollStory(collectionID: collection.id, story: story, collectionRevision: collection.serverRevision ?? 0, threadID: threadID, threadRevision: thread.revision, eventID: "choose-\(story.id)-\(story.revision)")
+            if let heldTurnID = accepted.recoverableHeldTurnID {
+                heldRecovery = HeldStoryRecovery(story: story, threadID: threadID, heldTurnID: heldTurnID, revision: accepted.threadRevision)
+                error = "This idea stopped before a draft was prepared. Try it again to review a new draft."
+                return
+            }
             let current = try await api.project(threadID: threadID)
             await onSelected(current)
         } catch is CancellationError { self.error = "Paused. The draft chat is saved; choose this story again to continue." }
         catch { self.error = CameraRollCollectionFailure.message(error) }
+    }
+
+    private struct HeldStoryRecovery {
+        let story: CameraRollStory
+        let threadID: UUID
+        let heldTurnID: UUID
+        let revision: Int
+    }
+
+    @MainActor private func recover(_ held: HeldStoryRecovery) async {
+        busy = true; error = nil; defer { busy = false }
+        do {
+            let accepted = try await api.recoverCameraRollStory(collectionID: collection.id, story: held.story, collectionRevision: collection.serverRevision ?? 0, threadID: held.threadID, threadRevision: held.revision, eventID: "choose-\(held.story.id)-\(held.story.revision)", heldTurnID: held.heldTurnID)
+            guard let successorID = UUID(uuidString: accepted.turnID), successorID != held.heldTurnID else { throw APIError.invalidResponse }
+            let current = try await api.project(threadID: held.threadID)
+            heldRecovery = nil
+            await onSelected(current)
+        } catch { self.error = CameraRollCollectionFailure.message(error) }
     }
 }
 

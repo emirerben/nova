@@ -1083,6 +1083,14 @@
       },
       "CollectionIndexOut": {
         "properties": {
+          "context_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Context Asset Ids",
+            "type": "array"
+          },
           "indexed_sources": {
             "title": "Indexed Sources",
             "type": "integer"
@@ -1126,6 +1134,14 @@
               "type": "string"
             },
             "title": "Untimed Asset Ids",
+            "type": "array"
+          },
+          "unusable_timing_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Unusable Timing Asset Ids",
             "type": "array"
           }
         },
@@ -6326,6 +6342,15 @@
             "title": "Evidence",
             "type": "object"
           },
+          "evidence_scope": {
+            "default": "timed_moment",
+            "enum": [
+              "timed_moment",
+              "whole_source_context"
+            ],
+            "title": "Evidence Scope",
+            "type": "string"
+          },
           "generation": {
             "title": "Generation",
             "type": "string"
@@ -10646,6 +10671,12 @@
             "title": "Expected Thread Revision",
             "type": "integer"
           },
+          "recover_held_turn_id": {
+            "format": "uuid",
+            "nullable": true,
+            "title": "Recover Held Turn Id",
+            "type": "string"
+          },
           "thread_id": {
             "format": "uuid",
             "title": "Thread Id",
@@ -11994,6 +12025,12 @@
       },
       "TurnAccepted": {
         "properties": {
+          "recoverable_held_turn_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Recoverable Held Turn Id",
+            "type": "string"
+          },
           "replayed": {
             "default": false,
             "title": "Replayed",

@@ -129,6 +129,7 @@ def assess_readiness(
     editor_payload: dict | None = None,
     editor_text_diff: list[dict] | None = None,
     creator_request: str | None = None,
+    prepared_collection_story: dict | None = None,
 ) -> dict[str, Any]:
     """Account for every live ID using existing policy, checkers and contract."""
     requirements = brief.live() if brief is not None else []
@@ -191,6 +192,20 @@ def assess_readiness(
             en="I need to establish the requested changes before offering approval.",
             tr="Onay sunmadan önce istenen değişiklikleri belirlemem gerekiyor.",
         )
+    story_requirement = None
+    story_evidence_digest = None
+    if prepared_collection_story is not None:
+        from app.services.media_collection_preparation import prepared_story_readiness
+
+        try:
+            story_requirement, story_evidence_digest = prepared_story_readiness(
+                prepared_collection_story, strategy=strategy, media=media
+            )
+        except ValueError:
+            policy_problem = say(
+                en="The selected idea's execution or sources changed. Review the idea again.",
+                tr="Seçilen fikrin düzeni veya kaynakları değişti. Fikri yeniden gözden geçir.",
+            )
     ids = [m.media_id for m in manifest.media] if manifest else []
     facts = (
         plan_facts_from_editor_payload(editor_payload, editor_text_diff)
@@ -246,10 +261,26 @@ def assess_readiness(
             receipt is not None and receipt.verification == "checked" and receipt.status == "met"
         )
         owner = "brief_checks"
+        is_story_requirement = "collection_story" in req.facts
+        if is_story_requirement:
+            proven = (
+                story_requirement is not None
+                and req.kind == story_requirement.kind
+                and req.scope == story_requirement.scope
+                and req.description == story_requirement.description
+                and req.literal == story_requirement.literal
+                and req.facts == story_requirement.facts
+            )
+            owner = "prepared_collection_story"
+            if not proven:
+                # A reviewed story cannot fall back to a checker for its title's
+                # incidental words when its bound execution evidence is absent.
+                receipt = None
         # Original camera audio is an explicit executable contract commitment;
         # it is not a claim that the final mix has already been listened to.
         if (
-            contract is not None
+            not is_story_requirement
+            and contract is not None
             and _wants_source_sound_kept(req)
             and contract.original_audio == "require"
             and strategy.get("audio_strategy") == "original_audio"
@@ -279,7 +310,23 @@ def assess_readiness(
                 tr="Bu değişikliği nasıl oluşturacağımı henüz belirleyemedim.",
             )
         )
-        if proven and owner != "brief_checks":
+        if proven and owner == "prepared_collection_story":
+            reason = say(
+                en=(
+                    "The reviewed story's source windows, wording and sound "
+                    "match its frozen execution."
+                ),
+                tr=(
+                    "Gözden geçirilen hikâyenin kaynak aralıkları, metni ve sesi "
+                    "sabitlenen düzenle eşleşiyor."
+                ),
+            )
+        elif owner == "prepared_collection_story":
+            reason = policy_problem or say(
+                en="I need the selected idea's unchanged execution evidence before approval.",
+                tr="Onaydan önce seçilen fikrin değişmemiş düzen kanıtına ihtiyacım var.",
+            )
+        elif proven and owner != "brief_checks":
             reason = say(
                 en="Original camera audio is required by the render contract.",
                 tr="Oluşturma sözleşmesi kameranın özgün sesini zorunlu tutuyor.",
@@ -306,7 +353,7 @@ def assess_readiness(
             }
         ),
         "media_digest": digest(media_identity(media)),
-        "prepared_evidence_digest": digest(envelope),
+        "prepared_evidence_digest": story_evidence_digest or digest(envelope),
         "capabilities_digest": digest(
             {
                 "capabilities": manifest.capabilities if manifest else None,
@@ -410,6 +457,7 @@ async def assess_saved_document(db, item, document, *, require_same_assessment=T
         editor_payload=document.editor_payload,
         editor_text_diff=document.editor_text_diff,
         creator_request=document.brief_binding.creator_request,
+        prepared_collection_story=document.prepared_collection_story,
     )
     if digest(media_identity(snapshot_media(item))) != report["media_digest"]:
         raise ApprovalReadinessError(

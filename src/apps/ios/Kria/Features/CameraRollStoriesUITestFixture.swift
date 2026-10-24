@@ -83,6 +83,15 @@ private enum CameraRollStoryFixture {
         input?["result"] as? [String: Any] ?? ["stories": [story], "coverage": ["moments": moments, "incomplete_speech_asset_ids": [], "unindexed_asset_ids": ["CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"]]]
     }
     static var reviewStories: [[String: Any]] {
+        if ProcessInfo.processInfo.arguments.contains("-camera-roll-whole-source-context") {
+            var value = story
+            var context = moments[0]
+            context["start_s"] = 0.0; context["end_s"] = 8.166667
+            context["text"] = "Whole analysed clip; no localized highlight. Cached overall description: Synthetic red test source."
+            context["evidence_scope"] = "whole_source_context"
+            value["moments"] = [context]; value["duration_s"] = 8.166667
+            return [value]
+        }
         guard ProcessInfo.processInfo.arguments.contains("-camera-roll-multiple-ideas") else { return [story] }
         let options = [
             ("11111111-1111-1111-1111-111111111111", "Boat journey"),
@@ -187,6 +196,9 @@ private final class CameraRollStoriesFixtureServer: @unchecked Sendable {
             return (200, ["id": request.url!.lastPathComponent, "revision": body["name"] as? String == "Updated outing" ? 2 : 1])
         }
         if request.url?.path.hasSuffix("/index") == true {
+            if ProcessInfo.processInfo.arguments.contains("-collection-unusable-timing") {
+                return (200, ["next_offset": NSNull(), "missing_analysis_asset_ids": [], "unusable_timing_asset_ids": ["CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"], "unavailable_asset_ids": [], "untimed_asset_ids": []])
+            }
             if ProcessInfo.processInfo.arguments.contains("-collection-coverage-changed") {
                 return (200, ["next_offset": NSNull(), "missing_analysis_asset_ids": [CameraRollStoryFixture.assetID], "unavailable_asset_ids": [], "untimed_asset_ids": []])
             }
