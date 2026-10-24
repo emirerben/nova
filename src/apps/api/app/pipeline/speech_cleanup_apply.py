@@ -26,7 +26,7 @@ import os
 import re
 import subprocess
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -181,8 +181,12 @@ class HydratedSpeechCleanupSnapshot:
             for word in self.analysis.timed_words
         ]
 
-    def transcript(self, *, apply_cut: bool) -> Transcript:
-        """Return exact source words, optionally remapped through the accepted plan."""
+    def transcript(self, *, apply_cut: bool, plan: CutPlan | None = None) -> Transcript:
+        """Return exact source words, optionally remapped through the accepted plan.
+
+        ``plan`` (KRI-889) is the plan the audio was really cut with when it is more than
+        the accepted one: the accepted plan plus the lines the creator named to cut.
+        """
 
         words = self.source_words()
         if apply_cut:
@@ -195,7 +199,7 @@ class HydratedSpeechCleanupSnapshot:
                     end_s=float(item["end_s"]),
                     confidence=1.0,
                 )
-                for item in remap_words(words, self.cut_plan)
+                for item in remap_words(words, plan if plan is not None else self.cut_plan)
                 if not is_filler_token(item["text"])
             ]
         return Transcript(
@@ -425,28 +429,81 @@ def hydrate_job_speech_cleanup_snapshot(
 CUT_FINGERPRINT_VERSION = 1
 
 
+def keep_segments_fingerprint(
+    *,
+    storage_path: str,
+    generation: str,
+    window_start_s: float,
+    window_end_s: float,
+    keep_segments: Sequence[tuple[float, float]],
+) -> str:
+    """Hash one exact source window and the keep segments rendered from it.
+
+    Floats are rounded to microseconds so JSON round trips cannot drift it.
+    """
+
+    payload = {
+        "version": CUT_FINGERPRINT_VERSION,
+        "storage_path": storage_path,
+        "generation": generation,
+        "window_start_s": round(float(window_start_s), 6),
+        "window_end_s": round(float(window_end_s), 6),
+        "keep_segments": [
+            [round(float(start_s), 6), round(float(end_s), 6)] for start_s, end_s in keep_segments
+        ],
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def cut_fingerprint(snapshot: HydratedSpeechCleanupSnapshot) -> str:
     """Hash the exact source window and keep segments an applied CutPlan renders.
 
     A cleaned narration derivative records this value so every later boundary
     (dispatch, device grant, worker) can prove the file was cut from the same
     source generation with the same accepted plan as the Job's snapshot.
-    Floats are rounded to microseconds so JSON round trips cannot drift it.
     """
 
-    payload = {
-        "version": CUT_FINGERPRINT_VERSION,
-        "storage_path": snapshot.storage_path,
-        "generation": snapshot.generation,
-        "window_start_s": round(float(snapshot.window_start_s), 6),
-        "window_end_s": round(float(snapshot.window_end_s), 6),
-        "keep_segments": [
-            [round(float(start_s), 6), round(float(end_s), 6)]
-            for start_s, end_s in snapshot.cut_plan.keep_segments
-        ],
-    }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    return keep_segments_fingerprint(
+        storage_path=snapshot.storage_path,
+        generation=snapshot.generation,
+        window_start_s=snapshot.window_start_s,
+        window_end_s=snapshot.window_end_s,
+        keep_segments=snapshot.cut_plan.keep_segments,
+    )
+
+
+def plan_with_named_cuts(plan: CutPlan, removed: Sequence[Sequence[float]]) -> CutPlan:
+    """``plan`` with each named-line span (KRI-889, raw source time) removed too, in order."""
+
+    from app.pipeline.phone_opening_cut import cut_span  # noqa: PLC0415
+
+    duration_s = max((float(end) for _start, end in plan.keep_segments), default=0.0)
+    duration_s = max([duration_s, *(float(r.end_s) for r in plan.removed)])
+    for start_s, end_s in removed:
+        plan = cut_span(plan, float(start_s), float(end_s), duration_s=duration_s)
+    return plan
+
+
+def effective_cut_fingerprint(
+    snapshot: HydratedSpeechCleanupSnapshot, removed: Sequence[Sequence[float]]
+) -> str:
+    """`cut_fingerprint` of the accepted plan plus the named-line spans the derivative cut.
+
+    KRI-889: a narrated voiceover cut by speech cleanup AND by the lines the creator named
+    is one file; this is the fingerprint of what that file really plays. No spans: exactly
+    `cut_fingerprint`, so every plain cleanup derivative keeps verifying.
+    """
+
+    if not removed:
+        return cut_fingerprint(snapshot)
+    return keep_segments_fingerprint(
+        storage_path=snapshot.storage_path,
+        generation=snapshot.generation,
+        window_start_s=snapshot.window_start_s,
+        window_end_s=snapshot.window_end_s,
+        keep_segments=plan_with_named_cuts(snapshot.cut_plan, removed).keep_segments,
+    )
 
 
 # The cut is planned in whole samples at the output rate (the source is
@@ -474,7 +531,22 @@ def _trim_samples(start: int, end: int) -> str:
 
 
 def _cut_audio_filter(snapshot: HydratedSpeechCleanupSnapshot) -> str:
-    """FFmpeg filter graph that renders the accepted keep segments as ``[outa]``.
+    """FFmpeg filter graph that renders the accepted keep segments as ``[outa]``."""
+
+    return keep_segments_audio_filter(
+        snapshot.cut_plan.keep_segments,
+        window_start_s=snapshot.window_start_s,
+        window_end_s=snapshot.window_end_s,
+    )
+
+
+def keep_segments_audio_filter(
+    keep_segments: Sequence[tuple[float, float]],
+    *,
+    window_start_s: float,
+    window_end_s: float,
+) -> str:
+    """FFmpeg filter graph that renders ``keep_segments`` (window time) as ``[outa]``.
 
     Each cut between two kept segments crossfades: both sides borrow
     h = min(_CUT_CROSSFADE_HANDLE_S, removed/2, segment/4) of the removed
@@ -498,9 +570,9 @@ def _cut_audio_filter(snapshot: HydratedSpeechCleanupSnapshot) -> str:
 
     rate = _CUT_SAMPLE_RATE
     spans: list[tuple[int, int]] = []
-    for start_s, end_s in snapshot.cut_plan.keep_segments:
-        first = round((snapshot.window_start_s + float(start_s)) * rate)
-        end = round((snapshot.window_start_s + float(end_s)) * rate)
+    for start_s, end_s in keep_segments:
+        first = round((window_start_s + float(start_s)) * rate)
+        end = round((window_start_s + float(end_s)) * rate)
         if end > first:
             spans.append((first, end))
     if not spans:
@@ -526,9 +598,9 @@ def _cut_audio_filter(snapshot: HydratedSpeechCleanupSnapshot) -> str:
         width = end - first + lead + tail
         core = _trim_samples(2 * lead, width - 2 * tail)
         declick = min(round(_DECLICK_FADE_S * rate), (end - first) // 2)
-        if i == 0 and first > round(snapshot.window_start_s * rate) and declick > 0:
+        if i == 0 and first > round(window_start_s * rate) and declick > 0:
             core += f",afade=t=in:ns={declick}"
-        if i == n - 1 and end < round(snapshot.window_end_s * rate) and declick > 0:
+        if i == n - 1 and end < round(window_end_s * rate) and declick > 0:
             core += f",afade=t=out:ss={width - 2 * lead - declick}:ns={declick}"
         parts = [core]
         if lead:
@@ -563,9 +635,37 @@ def apply_speech_cleanup_to_audio(
     exactly as long as the keep segments.
     """
 
+    if not snapshot.cut_plan.keep_segments:
+        raise SpeechCleanupAudioApplyError("accepted CutPlan has no keep segments")
+    return apply_keep_segments_to_audio(
+        snapshot.cut_plan.keep_segments,
+        source_path,
+        output_path,
+        window_start_s=snapshot.window_start_s,
+        window_end_s=snapshot.window_end_s,
+        timeout_s=timeout_s,
+    )
+
+
+def apply_keep_segments_to_audio(
+    keep_segments: Sequence[tuple[float, float]],
+    source_path: str,
+    output_path: str,
+    *,
+    window_start_s: float,
+    window_end_s: float,
+    timeout_s: int = AUDIO_APPLY_TIMEOUT_S,
+) -> str:
+    """Render ``keep_segments`` of one source window into a narration WAV.
+
+    The same crossfaded cut as `apply_speech_cleanup_to_audio` (which delegates here), for
+    a plan that is more than the accepted one: KRI-889 cuts the lines a creator named out
+    of a narrated voiceover, with or without speech cleanup.
+    """
+
     if not source_path or not output_path or timeout_s <= 0:
         raise SpeechCleanupAudioApplyError("invalid audio application input")
-    if not snapshot.cut_plan.keep_segments:
+    if not keep_segments:
         raise SpeechCleanupAudioApplyError("accepted CutPlan has no keep segments")
     command = [
         "ffmpeg",
@@ -576,7 +676,9 @@ def apply_speech_cleanup_to_audio(
         "-i",
         source_path,
         "-filter_complex",
-        _cut_audio_filter(snapshot),
+        keep_segments_audio_filter(
+            keep_segments, window_start_s=window_start_s, window_end_s=window_end_s
+        ),
         "-map",
         "[outa]",
         "-vn",

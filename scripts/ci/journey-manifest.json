@@ -1608,6 +1608,22 @@
       ]
     },
     {
+      "id": "kri-889-narrated-named-cuts",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri889_narrated_named_cut_journey.py tests/pipeline/test_speech_cleanup_apply.py tests/services/test_guided_speech_cleanup.py tests/tasks/test_phone_subtitled_narrated_dispatch.py",
+      "xctests": [],
+      "paths": [
+        "src/apps/api/app/pipeline/speech_cleanup_apply.py",
+        "src/apps/api/app/services/guided_speech_cleanup.py",
+        "src/apps/api/app/services/device_narration_binding.py",
+        "src/apps/api/app/services/creator_execution_contract.py",
+        "src/apps/api/app/schemas/edit_proposal.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/tests/kria/test_kri889_narrated_named_cut_journey.py"
+      ]
+    },
+    {
       "id": "kri-724-precise-speech-cuts",
       "needs_native": true,
       "api_tests": [
