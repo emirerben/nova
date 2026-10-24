@@ -30,6 +30,7 @@ from app.kria.reply_language import reply_language_for
 from app.pipeline.caption_unclear import UnclearSpan
 from app.services.choice_questions import (
     CONFLICT_DURATION_VS_COUNT,
+    CONFLICT_FREEZE_FRAME,
     CONFLICT_LENGTH_VS_NATURAL,
     CONFLICT_ORDER_BASIS,
     CONFLICT_PRIORITY,
@@ -245,6 +246,57 @@ def _cases() -> dict[str, tuple[str, list]]:
     choice = unclear_word_choice(span, 0, ("r3",), ["take"], "the third sauce he names")
     assert choice is not None and choice.kind == CONFLICT_UNCLEAR_WORD
     cases["unclear_word"] = (CONFLICT_UNCLEAR_WORD, [choice])
+    # KRI-900: a freeze on a named moment asks which frame (one moment) or which moment (a
+    # tie), on a phone montage that can hold a frame.
+    freeze_strategy = {"edit_format": "montage", "audio_strategy": "original_audio"}
+    freeze_ask = BriefRequirement(
+        id="r3",
+        kind="timing",
+        scope="global",
+        description="Freeze the frame for one second on Atakan's bite",
+        facts={"freeze_frame": True},
+    )
+
+    def take(media_id: str, *descriptions: str) -> dict:
+        return {
+            "media_id": media_id,
+            "kind": "video",
+            "duration_s": 68.0,
+            "analysis": {
+                "best_moments": [
+                    {"start_s": 10.0 * i + 5, "end_s": 10.0 * i + 8, "description": text}
+                    for i, text in enumerate(descriptions)
+                ]
+            },
+        }
+
+    with (
+        patch.object(settings, "phone_rendering_enabled", True),
+        patch.object(settings, "phone_render_user_ids", []),
+        patch.object(
+            settings,
+            "phone_render_verified_features",
+            [*settings.phone_render_verified_features, "freezeFrame"],
+        ),
+    ):
+        for name, rows in (
+            ("freeze_one_moment", [take("a", "man takes first bite of dessert")]),
+            ("freeze_tied_moments", [take("a", "his bite"), take("b", "another bite")]),
+        ):
+            add(
+                name,
+                CONFLICT_FREEZE_FRAME,
+                freeze_strategy,
+                _brief(freeze_ask),
+                {
+                    "clip_assignments": rows,
+                    "clip_paths": [
+                        f"users/u/creation-threads/t/analysis-proxy-ios-{i}.mp4"
+                        for i in range(len(rows))
+                    ],
+                },
+                ChoiceCapability(creator_id="u"),
+            )
     return cases
 
 
