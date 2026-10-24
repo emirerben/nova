@@ -16,6 +16,10 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 
+# KRI-898: where `decide_approval` records the approving app build on the render execution
+# (read back by `_claim_approval_dispatch`, stamped on the Job as `creator_client_protocol`).
+APPROVAL_CLIENT_PROTOCOL_FIELD = "approval_client_protocol"
+
 _client_protocol: ContextVar[int | None] = ContextVar("kria_client_protocol", default=None)
 _in_http_request: ContextVar[bool] = ContextVar("kria_in_http_request", default=False)
 

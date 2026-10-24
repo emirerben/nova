@@ -486,26 +486,32 @@ def freehand_drawing_supported(*, require_client: bool | None = None) -> bool:
     )
 
 
-def freeze_frame_supported(*, require_client: bool | None = None) -> bool:
-    """May a phone montage plan hold a frame for the creator's freeze (KRI-828)?
+def freeze_frame_planned_for(client_protocol: int | None) -> bool:
+    """May a phone montage plan hold a frame for the creator's freeze (KRI-828, KRI-898)?
 
-    True iff ``freezeFrame`` is in ``phone_render_verified_features`` (device parity) and,
-    when an app build is asking (inside an HTTP request unless ``require_client`` says
-    otherwise), it declares at least ``freeze_frame_min_client_protocol``.
+    ``client_protocol`` is the app build the creator acted from, stamped where they act:
+    the message the draft answers (``client_protocol`` on the turn) and the approval the
+    render serves (``creator_client_protocol`` on the Job). True iff ``freezeFrame`` is in
+    ``phone_render_verified_features`` (device parity) and that build declares at least
+    ``freeze_frame_min_client_protocol``. No stamp plans no hold: the freeze stays KRI-777's
+    honest "Couldn't" and the rest of the video renders, instead of a held recipe the
+    approving phone would be told to update for (426 on the whole video).
+
+    There is deliberately no request context read here: the draft, the pre-approval check
+    and the render all run in Celery, where a context fallback would skip the build check.
     """
-    from app.services.client_protocol import (  # noqa: PLC0415
-        current_client_protocol,
-        in_http_request,
+    return (
+        "freezeFrame" in set(settings.phone_render_verified_features)
+        and client_protocol is not None
+        and client_protocol >= settings.freeze_frame_min_client_protocol
     )
 
-    if "freezeFrame" not in set(settings.phone_render_verified_features):
-        return False
-    if require_client is None:
-        require_client = in_http_request()
-    if not require_client:
-        return True
-    protocol = current_client_protocol()
-    return protocol is not None and protocol >= settings.freeze_frame_min_client_protocol
+
+def stamped_client_protocol(value: object) -> int | None:
+    """A stored app-protocol stamp read back, or ``None`` when absent or malformed."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
 
 
 def _main_track_freeze(clip: Any, track: Any, frame_rate: float) -> bool:

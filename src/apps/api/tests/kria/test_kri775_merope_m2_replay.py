@@ -166,6 +166,7 @@ def run_worker(
     media: dict | None = None,
     strategy: dict | None = None,
     reply_language: str = "en",
+    client_protocol: int | None = None,
 ) -> WorkerOutcome:
     """``_run_phone_unified_montage_job`` on an approved M2 draft, up to the pin.
 
@@ -173,6 +174,8 @@ def run_worker(
     only write text (landmark names for per-clip labels, the creation-text lane). A plan
     that passes stops at the job lock (``refusal is None``). ``receipts`` are the worker's
     own requirement receipts in both cases, read off the plan record it judged.
+    ``client_protocol`` is the app build that approved (KRI-898: dispatch stamps it on the
+    Job as ``creator_client_protocol``); ``None`` = an unstamped job.
     """
     import app.kria.brief_checks as brief_checks  # noqa: PLC0415
     import app.services.clip_facts as clip_facts  # noqa: PLC0415
@@ -203,6 +206,7 @@ def run_worker(
         "clip_paths": [source.proxy_path for source in sources],
         "edit_format": "montage",
         "creator_strategy": copy.deepcopy(strategy if strategy is not None else render["strategy"]),
+        **({"creator_client_protocol": client_protocol} if client_protocol is not None else {}),
     }
     seen: dict = {}
 

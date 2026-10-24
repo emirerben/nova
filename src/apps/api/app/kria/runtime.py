@@ -72,7 +72,10 @@ from app.services.choice_questions import (
     match_open_choice,
     tag_event,
 )
-from app.services.client_protocol import current_client_protocol
+from app.services.client_protocol import (
+    APPROVAL_CLIENT_PROTOCOL_FIELD,
+    current_client_protocol,
+)
 from app.services.clip_selection import ClipSelectionIn, latest_open_clip_question
 from app.services.creation_thread_titles import (
     conversation_revision_matches,
@@ -1060,6 +1063,14 @@ async def submit_turn(
             # the planner may ask them together. Not part of `request_digest`; older builds
             # and the web store nothing (existing payloads byte-identical).
             **({"answers_batched_questions": True} if _answers_batched_questions() else {}),
+            # KRI-898: the app build that sent this message, so the draft plans a freeze
+            # only for a build that can play it. Not part of `request_digest`; the web and
+            # headerless callers store nothing (existing payloads byte-identical).
+            **(
+                {"client_protocol": current_client_protocol()}
+                if current_client_protocol() is not None
+                else {}
+            ),
             # KRI-756: {"suggestion": {...}} when the message equals an offered chip. Not
             # part of `request_digest`; flag off => {} (existing payloads byte-identical).
             **(
@@ -2733,6 +2744,13 @@ async def decide_approval(
             stashed["render_shape"] = render_shape_stash
         else:
             stashed.pop("render_shape", None)
+        # KRI-898: the app build that approved decides whether the render may plan a
+        # freeze hold it can play; set-or-clear for the same reason (a retry from another
+        # phone must not inherit the first attempt's build).
+        if current_client_protocol() is not None:
+            stashed[APPROVAL_CLIENT_PROTOCOL_FIELD] = current_client_protocol()
+        else:
+            stashed.pop(APPROVAL_CLIENT_PROTOCOL_FIELD, None)
         if stashed != (execution.result or {}):
             execution.result = stashed
     elif render_shape_stash is not None:
