@@ -642,7 +642,9 @@ def _unresolved_choice_plan(
     )
     history = list(events)
     capability = ChoiceCapability(
-        creator_id=creator_id, voice_route=settings.voice_behind_footage_enabled
+        creator_id=creator_id,
+        voice_route=settings.voice_behind_footage_enabled,
+        speech_occurrence=settings.speech_occurrence_question_enabled,
     )
     for conflict in open_conflicts(strategy, brief, media_snapshot, capability):
         if count_asks(history, conflict.conflict_id, conflict.input_digest) < (

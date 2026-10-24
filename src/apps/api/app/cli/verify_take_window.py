@@ -16,7 +16,15 @@ Outputs to ``--out`` (default ``.take-window-verify/``):
     ``first.jpg`` / ``last.jpg`` (its first and last frames). Watch it: it must open on the
     start line and stop right after the end line.
 
-Exit code: 0 when every asked line was found and cut, 1 otherwise.
+KRI-724: ``--answer occ_2`` (``--spoken-text "MEROPE::Show MEROPE in big letters the first
+time she says Merope"`` when the brief rows carry no such ask) runs the speech-occurrence path
+too: the question the creator is asked before approval (built from ``segments``), their pick,
+the answered brief, and where the worker places the text on the cut timeline (``words``). The
+report gains ``speech_occurrence``; with ``--video`` also ``spoken_text.jpg``, the frame of
+``window.mp4`` at the placed time.
+
+Exit code: 0 when every asked line was found and cut (and, with ``--answer``, the picked
+occurrence was placed), 1 otherwise.
 """
 
 from __future__ import annotations
@@ -33,6 +41,8 @@ from app.kria.brief_checks import PlanFacts, build_receipts
 from app.kria.opening_cut_ask import estimate_take_window, take_window_ask
 from app.pipeline.phone_opening_cut import apply_take_window
 from app.pipeline.silence_cut import CutPlan, build_cut_plan, no_op_plan, remap_words
+
+_MEDIA_ID = "take"
 
 # A pause this long between words is what a cleanup of the take would cut (``--cleanup on``).
 _CLEANUP_PAUSE_S = 0.6
@@ -85,6 +95,110 @@ def _cut_video(video: Path, keep: list[tuple[float, float]], out: Path) -> dict[
     }
 
 
+def _speech_occurrence(
+    args: argparse.Namespace,
+    reqs: list[BriefRequirement],
+    snapshot: dict[str, Any],
+    words: list[dict[str, Any]],
+    plan: CutPlan,
+) -> tuple[dict[str, Any], bool]:
+    """KRI-724: the question, the creator's pick and where the worker places the text."""
+    from app.kria.spoken_text_ask import brief_spoken_texts  # noqa: PLC0415
+    from app.pipeline.phone_spoken_text import find_pinned_word  # noqa: PLC0415
+    from app.pipeline.speech_cut_state import remap_time  # noqa: PLC0415
+    from app.services.choice_questions import (  # noqa: PLC0415
+        CONFLICT_SPEECH_OCCURRENCE,
+        ChoiceCapability,
+        answered_brief,
+        build_choice_question,
+        choice_question_text,
+        collect_conflicts,
+        resolve_choices,
+    )
+
+    if args.spoken_text:
+        literal, _sep, description = args.spoken_text.partition("::")
+        reqs = [
+            *reqs,
+            BriefRequirement(
+                id="spoken",
+                kind="text",
+                scope="global",
+                literal=literal.strip(),
+                description=(description or literal).strip(),
+            ),
+        ]
+    from app.kria.brief import CreativeBrief  # noqa: PLC0415
+
+    brief = CreativeBrief(version=1, requirements=reqs)
+    strategy = {"edit_format": "subtitled", "audio_strategy": "original_audio"}
+    cap = ChoiceCapability(speech_occurrence=True)
+    asked = [
+        c
+        for c in collect_conflicts(strategy, brief, snapshot, cap)
+        if c.kind == CONFLICT_SPEECH_OCCURRENCE
+    ]
+    if not asked:
+        return {"verdict": "FAIL", "reason": "no speech_occurrence question"}, False
+    choice = asked[0]
+    key = next(
+        (o.key for o in choice.options if o.key == args.answer or o.key.startswith(args.answer)),
+        None,
+    )
+    if key is None:
+        return {"verdict": "FAIL", "reason": f"no option {args.answer}"}, False
+    question = build_choice_question(choice.candidate())
+    events = [
+        ("assistant", {"choice_question": question}),
+        ("user", {"choice_selection": {"question_id": question["question_id"], "option_key": key}}),
+    ]
+    resolution = resolve_choices(strategy, brief, snapshot, events, cap)
+    # Every answer so far (a later question, e.g. the length, may still be open).
+    answers = [dict(a) for a in resolution.answers]
+    final = answered_brief(brief, {**resolution.strategy, "choice_answers": answers})
+    asks = [
+        a for a in brief_spoken_texts(final, answers) if a.requirement_id in choice.requirement_ids
+    ]
+    report: dict[str, Any] = {
+        "question": choice_question_text(choice.candidate()),
+        "options": [o.key for o in choice.options],
+        "answer": answers,
+        "notices": list(resolution.notices),
+        "next_question": resolution.question.kind if resolution.question else None,
+    }
+    if not asks or asks[0].pin is None:
+        report.update(verdict="PASS" if key == "waive" else "FAIL", placed=None)
+        return report, key == "waive"
+    ask = asks[0]
+    timeline = remap_words(words, plan)
+    hit, missed = find_pinned_word(
+        timeline, ask, to_timeline=lambda t: remap_time(t, list(plan.removed))
+    )
+    report["pin"] = ask.pin.__dict__
+    if hit is None:
+        report.update(verdict="FAIL", placed=None, reason=missed)
+        return report, False
+    trigger, start, end = hit
+    report.update(
+        verdict="PASS",
+        placed={
+            "trigger": trigger,
+            "timeline_start_s": round(start, 3),
+            "timeline_end_s": round(end, 3),
+        },
+        # Where the first match (KRI-791's placement) would have put it, for contrast.
+        first_heard_timeline_s=next(
+            (
+                round(w["start_s"], 3)
+                for w in timeline
+                if w["text"].strip(",.!?").casefold() == ask.triggers[0].casefold()
+            ),
+            None,
+        ),
+    )
+    return report, True
+
+
 def run(args: argparse.Namespace) -> int:
     take = json.loads(Path(args.take).read_text())
     duration = float(take["duration_s"])
@@ -107,6 +221,7 @@ def run(args: argparse.Namespace) -> int:
     snapshot = {
         "clip_assignments": [
             {
+                "media_id": _MEDIA_ID,
                 "kind": "video",
                 "duration_s": duration,
                 "analysis": {
@@ -146,8 +261,23 @@ def run(args: argparse.Namespace) -> int:
         "draft_estimate": estimate.__dict__ if estimate is not None else None,
         "draft_receipts": {r.requirement_id: [r.status, r.reason] for r in draft},
     }
+    if args.answer:
+        report["speech_occurrence"], placed = _speech_occurrence(args, reqs, snapshot, words, plan)
+        ok = ok and placed
+        report["verdict"] = "PASS" if ok else "FAIL"
     if args.video:
         report["video"] = _cut_video(Path(args.video).expanduser(), plan.keep_segments, out)
+        placed_at = ((report.get("speech_occurrence") or {}).get("placed") or {}).get(
+            "timeline_start_s"
+        )
+        if placed_at is not None:
+            frame = out / "spoken_text.jpg"
+            subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{placed_at + 0.2:.3f}"]
+                + ["-i", report["video"]["path"], "-frames:v", "1", str(frame)],
+                check=True,
+            )
+            report["video"]["spoken_text_frame"] = str(frame)
     (out / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps({k: report[k] for k in ("verdict", "keep_segments", "kept_s")}))
     print(f"wrote {out / 'report.json'}")
@@ -161,6 +291,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cleanup", choices=("off", "on"), default="off")
     parser.add_argument("--video", help="the take's video file, to write window.mp4")
     parser.add_argument("--out", default=".take-window-verify")
+    parser.add_argument(
+        "--answer", help="KRI-724: the creator's pick, e.g. occ_2 (the second occurrence)"
+    )
+    parser.add_argument(
+        "--spoken-text",
+        help='KRI-724: a text-at-a-spoken-word ask, "LITERAL::description", when the brief '
+        "rows carry none",
+    )
     return run(parser.parse_args(argv))
 
 

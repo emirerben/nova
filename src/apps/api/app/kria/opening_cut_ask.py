@@ -29,7 +29,7 @@ words are titles, signs and a route's places.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -324,6 +324,34 @@ def _single_take(
     return rows[0] if len(rows) == 1 else None
 
 
+@dataclass(frozen=True)
+class TakeSpeech:
+    """A one-take Talking draft's clip and its timed speech, before approval."""
+
+    media_id: str
+    duration_s: float
+    # `segment_words` of the clip's timed sentences (source seconds).
+    words: tuple[dict[str, Any], ...]
+
+
+def take_speech(
+    media_snapshot: Mapping[str, Any] | None, strategy: Mapping[str, Any] | None = None
+) -> TakeSpeech | None:
+    """The single take's duration and sentence-timed words; None without them."""
+    row = _single_take(media_snapshot, strategy)
+    analysis = row.get("analysis") if isinstance(row, Mapping) else None
+    if not isinstance(analysis, Mapping):
+        return None
+    duration = _number(analysis.get("duration_s")) or _number(row.get("duration_s"))
+    understanding = analysis.get("understanding")
+    speech = understanding.get("speech") if isinstance(understanding, Mapping) else None
+    segments = speech.get("segments") if isinstance(speech, Mapping) else None
+    words = segment_words(seg for seg in segments or [] if isinstance(seg, Mapping))
+    if not duration or not words:
+        return None
+    return TakeSpeech(str(row.get("media_id") or ""), float(duration), tuple(words))
+
+
 def estimate_take_window(
     requirements: Iterable[BriefRequirement],
     media_snapshot: Mapping[str, Any] | None,
@@ -340,17 +368,10 @@ def estimate_take_window(
     if ask is None:
         return None
     unknown = TakeWindowEstimate(ask.start_quote, ask.end_quote, None, None, None)
-    row = _single_take(media_snapshot, strategy)
-    analysis = row.get("analysis") if isinstance(row, Mapping) else None
-    if not isinstance(analysis, Mapping):
+    take = take_speech(media_snapshot, strategy)
+    if take is None:
         return unknown
-    duration = _number(analysis.get("duration_s")) or _number(row.get("duration_s"))
-    understanding = analysis.get("understanding")
-    speech = understanding.get("speech") if isinstance(understanding, Mapping) else None
-    segments = speech.get("segments") if isinstance(speech, Mapping) else None
-    words = segment_words(row for row in segments or [] if isinstance(row, Mapping))
-    if not duration or not words:
-        return unknown
+    duration, words = take.duration_s, take.words
     from app.pipeline.phone_opening_cut import apply_take_window  # noqa: PLC0415
     from app.pipeline.silence_cut import no_op_plan  # noqa: PLC0415
 
@@ -378,6 +399,8 @@ __all__ = [
     "START_LINE_FACT",
     "OpeningCutAsk",
     "TakeWindowAsk",
+    "OccurrencePin",
+    "TakeSpeech",
     "TakeWindowEstimate",
     "brief_opening_cut",
     "brief_take_window",
@@ -386,11 +409,114 @@ __all__ = [
     "opening_quote",
     "requirement_end_quote",
     "requirement_opening_quote",
+    "answered_occurrence_pins",
+    "occurrence_option_key",
+    "parse_occurrence_option",
     "segment_words",
+    "select_occurrence",
+    "take_speech",
     "take_window_ask",
     "unread_line_sides",
     "wants_take_window",
 ]
+
+
+# ── KRI-724: which spoken occurrence the creator picked ──────────────────────────────────
+#
+# "Show MEROPE the first time SHE says Merope": the take's words carry no speaker, so before
+# approval the creator is asked which of the times the word is said they mean
+# (`choice_questions._speech_occurrence`). The answer is server-owned (a ``speech_occurrence``
+# entry in ``choice_answers``, frozen into the ``BriefBinding`` at approval); its option key
+# carries the pick, so a model-written fact can never choose an occurrence.
+
+SPEECH_OCCURRENCE_KIND = "speech_occurrence"
+OCCURRENCE_WAIVE = "waive"
+_OCCURRENCE_KEY = re.compile(  # kri667: parses our own option keys, never creator text
+    r"^occ_(?:(\d{1,2})|(all))_of_(\d{1,2})(?:_t(\d{1,6}))?$"
+)
+# The nearest-time fallback never reaches further than this from the picked time.
+_MAX_PIN_DRIFT_S = 1.0
+
+
+@dataclass(frozen=True)
+class OccurrencePin:
+    """The creator's pick among the times a word / line is said in the take.
+
+    ``ordinal`` is 1-based among ``of`` occurrences inside the kept take (None = every one);
+    ``approx_s`` is where the pick sits in the take (source seconds, from the timed sentences
+    the question was built from), for when the render's words count differently.
+    """
+
+    ordinal: int | None
+    of: int
+    approx_s: float | None = None
+
+
+def occurrence_option_key(ordinal: int | None, of: int, approx_s: float | None = None) -> str:
+    """The option key a ``speech_occurrence`` question offers for one pick."""
+    head = f"occ_{'all' if ordinal is None else ordinal}_of_{of}"
+    if ordinal is None or approx_s is None:
+        return head
+    return f"{head}_t{round(max(0.0, approx_s) * 100)}"
+
+
+def parse_occurrence_option(key: object) -> OccurrencePin | None:
+    """The pin an option key names; None for a waiver or a malformed key (``occ_9_of_4``)."""
+    match = _OCCURRENCE_KEY.match(str(key or ""))
+    if match is None:
+        return None
+    ordinal = int(match.group(1)) if match.group(1) else None
+    of = int(match.group(3))
+    if of < 1 or (ordinal is not None and not 1 <= ordinal <= of):
+        return None
+    approx = int(match.group(4)) / 100.0 if match.group(4) else None
+    return OccurrencePin(ordinal=ordinal, of=of, approx_s=approx)
+
+
+def answered_occurrence_pins(
+    answers: Iterable[Mapping[str, Any]] | None, requirement_id: str, target: str
+) -> OccurrencePin | str | None:
+    """The creator's answer for ``target`` (the trigger word / cut line) on ``requirement_id``:
+    an `OccurrencePin`, `OCCURRENCE_WAIVE`, or None when no valid answer exists."""
+    want = tuple(fold_tokens(target))
+    for answer in answers or ():
+        if not isinstance(answer, Mapping) or answer.get("kind") != SPEECH_OCCURRENCE_KIND:
+            continue
+        if requirement_id not in {str(i) for i in answer.get("requirement_ids") or []}:
+            continue
+        if tuple(fold_tokens(str(answer.get("value") or ""))) != want:
+            continue
+        option = answer.get("option")
+        if option == OCCURRENCE_WAIVE:
+            return OCCURRENCE_WAIVE
+        return parse_occurrence_option(option)
+    return None
+
+
+def select_occurrence(
+    windows: Sequence[tuple[float, float]], pin: OccurrencePin, approx_s: float | None = None
+) -> tuple[float, float] | None:
+    """The occurrence ``pin`` names among ``windows`` (time-ordered), or None.
+
+    The ordinal decides when the render hears the same number of occurrences the question
+    offered; otherwise the occurrence nearest ``approx_s`` (``pin.approx_s`` mapped onto the
+    same timeline as ``windows``), only when it is closer than both ``_MAX_PIN_DRIFT_S`` and
+    half the gap to its neighbours. Never the first match by default.
+    """
+    ordered = sorted(windows)
+    if not ordered or pin.ordinal is None:
+        return None
+    if len(ordered) == pin.of:
+        return ordered[pin.ordinal - 1]
+    target = pin.approx_s if approx_s is None else approx_s
+    if target is None:
+        return None
+    index = min(range(len(ordered)), key=lambda i: abs(ordered[i][0] - target))
+    best = ordered[index][0]
+    gaps = [
+        abs(ordered[j][0] - best) / 2.0 for j in (index - 1, index + 1) if 0 <= j < len(ordered)
+    ]
+    return ordered[index] if abs(best - target) <= min([_MAX_PIN_DRIFT_S, *gaps]) else None
 
 
 @dataclass(frozen=True)
@@ -403,6 +529,9 @@ class NamedCutAsk:
     # Which time the line is said to cut when the take says it more than once (a retake):
     # 1 = first, 2 = second, ..., -1 = last. None = the creator didn't say which.
     occurrence: int | None = None
+    # KRI-724: the creator's answer to "which one?" (`answered_occurrence_pins`), only when
+    # `brief_named_cuts` is given the approved answers.
+    pin: OccurrencePin | None = None
 
 
 # KRI-821: "cut the FIRST take of 'welcome to my channel'". The model records which one in
@@ -456,13 +585,21 @@ def _said_in_requirement(req: BriefRequirement, line: str) -> bool:
     )
 
 
-def named_cut_asks(requirements: Iterable[BriefRequirement]) -> tuple[NamedCutAsk, ...]:
-    """Every live requirement's named cut lines (``facts["cut_lines"]``, KRI-792), each once."""
+def named_cut_asks(
+    requirements: Iterable[BriefRequirement],
+    answers: Iterable[Mapping[str, Any]] | None = None,
+) -> tuple[NamedCutAsk, ...]:
+    """Every live requirement's named cut lines (``facts["cut_lines"]``, KRI-792), each once.
+
+    KRI-724: with the approved ``answers``, a line the creator answered "don't cut it" for is
+    left out and a picked occurrence rides on the ask (``pin``)."""
     from app.kria.brief_checks import named_cut_lines  # noqa: PLC0415
 
+    answers = list(answers or ())
     order: list[tuple[str, ...]] = []
     found: dict[tuple[str, ...], tuple[str, list[str]]] = {}
     occurrences: dict[tuple[str, ...], int] = {}
+    pins: dict[tuple[str, ...], OccurrencePin] = {}
     for req in requirements:
         if not req.live:
             continue
@@ -470,6 +607,11 @@ def named_cut_asks(requirements: Iterable[BriefRequirement]) -> tuple[NamedCutAs
             key = tuple(fold_tokens(line))
             if not key or not _said_in_requirement(req, line):
                 continue
+            answered = answered_occurrence_pins(answers, req.id, line) if answers else None
+            if answered == OCCURRENCE_WAIVE:
+                continue
+            if isinstance(answered, OccurrencePin):
+                pins.setdefault(key, answered)
             if key not in found:
                 order.append(key)
                 found[key] = (line, [])
@@ -483,11 +625,14 @@ def named_cut_asks(requirements: Iterable[BriefRequirement]) -> tuple[NamedCutAs
             quote=found[key][0],
             requirement_ids=tuple(found[key][1]),
             occurrence=occurrences.get(key),
+            pin=pins.get(key),
         )
         for key in order
     )
 
 
-def brief_named_cuts(brief: CreativeBrief | None) -> tuple[NamedCutAsk, ...]:
+def brief_named_cuts(
+    brief: CreativeBrief | None, answers: Iterable[Mapping[str, Any]] | None = None
+) -> tuple[NamedCutAsk, ...]:
     """`named_cut_asks` over a brief's live requirements (empty without one)."""
-    return named_cut_asks(brief.live()) if brief is not None else ()
+    return named_cut_asks(brief.live(), answers) if brief is not None else ()

@@ -489,6 +489,7 @@ FIELD_MATRIX: dict[str, FieldRule] = {
                 "input_digest",
                 "requirement_ids[]",
                 "source",
+                "value",
             )
         ),
         note=(

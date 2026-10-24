@@ -4501,6 +4501,7 @@ async def _gate_unresolved_choices(
             max_duration_s=float(MAX_PROPOSAL_DURATION_S),
             creator_id=creator_id,
             voice_route=settings.voice_behind_footage_enabled,
+            speech_occurrence=settings.speech_occurrence_question_enabled,
         ),
     )
     if resolution.question is not None:

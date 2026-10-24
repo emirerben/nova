@@ -286,7 +286,7 @@ def apply_named_line_cuts(
 ) -> tuple[CutPlan, list[dict[str, Any]]]:
     """KRI-821: cut each line the creator named out of the take, and a receipt per line.
 
-    ``cuts`` is ``(quote, requirement_ids[, occurrence])`` per named line
+    ``cuts`` is ``(quote, requirement_ids[, occurrence[, pin]])`` per named line
     (`opening_cut_ask.brief_named_cuts`). Each line is grounded in the words still in the
     kept video and the span ``[first word - LEAD_S, last word + TAIL_S]`` is removed, never
     reaching into the neighbouring words. A line said more than once (a retake) is cut only
@@ -295,38 +295,66 @@ def apply_named_line_cuts(
     (``said_more_than_once``), names an occurrence the take doesn't have
     (``occurrence_not_found``) or a cut that would leave less than ``MIN_KEPT_S``
     (``too_short``) leaves the plan untouched and its receipt says why.
+
+    KRI-724: ``pin`` is the creator's answer to "which one?" (`opening_cut_ask.OccurrencePin`,
+    source seconds): that occurrence (`select_occurrence`), or every one for "every time";
+    a pick the words don't hold is ``pinned_occurrence_missing``, never a guess.
     """
+    from app.kria.opening_cut_ask import select_occurrence  # noqa: PLC0415
+
     words = list(words)
     receipts: list[dict[str, Any]] = []
     cut = plan
     for entry in cuts:
         quote, requirement_ids = entry[0], entry[1]
         occurrence = entry[2] if len(entry) > 2 else None
+        pin = entry[3] if len(entry) > 3 else None
         receipt = _receipt(quote, requirement_ids)
         if occurrence is not None:
             receipt["occurrence"] = occurrence
+        if pin is not None:
+            receipt["pin"] = {"ordinal": pin.ordinal, "of": pin.of, "approx_s": pin.approx_s}
         receipts.append(receipt)
         hits = line_occurrences(_kept_words(cut, words), quote, duration_s=duration_s)
         if not hits:
-            receipt["reason"] = "not_found"
+            receipt["reason"] = "pinned_occurrence_missing" if pin is not None else "not_found"
             continue
         receipt["occurrences_found"] = len(hits)
-        grounded = _pick(hits, occurrence)
-        if grounded is None:
-            receipt["reason"] = (
-                "said_more_than_once" if occurrence is None else "occurrence_not_found"
-            )
-            continue
-        start_s = round(_start_before_word(words, grounded.word_start_s), 3)
-        end_s = round(_end_after_word(words, grounded.word_end_s, duration_s), 3)
-        candidate = cut_span(cut, start_s, end_s, duration_s=duration_s)
-        receipt.update(start_s=start_s, end_s=end_s)
+        if pin is not None and occurrence is None:
+            if pin.ordinal is None:
+                chosen = list(hits)
+            else:
+                window = select_occurrence([(g.word_start_s, g.word_end_s) for g in hits], pin)
+                chosen = [g for g in hits if (g.word_start_s, g.word_end_s) == window]
+            if not chosen:
+                receipt["reason"] = "pinned_occurrence_missing"
+                continue
+        else:
+            grounded = _pick(hits, occurrence)
+            if grounded is None:
+                receipt["reason"] = (
+                    "said_more_than_once" if occurrence is None else "occurrence_not_found"
+                )
+                continue
+            chosen = [grounded]
+        candidate = cut
+        spans: list[tuple[float, float]] = []
+        for grounded in chosen:
+            start_s = round(_start_before_word(words, grounded.word_start_s), 3)
+            end_s = round(_end_after_word(words, grounded.word_end_s, duration_s), 3)
+            candidate = cut_span(candidate, start_s, end_s, duration_s=duration_s)
+            spans.append((start_s, end_s))
+        receipt.update(start_s=spans[0][0], end_s=spans[-1][1])
+        if len(spans) > 1:
+            receipt["spans"] = [list(span) for span in spans]
         if _kept(candidate) < MIN_KEPT_S:
             receipt["reason"] = "too_short"
             continue
         removed_s = round(_kept(cut) - _kept(candidate), 3)
         cut = candidate
-        receipt.update(status="applied", removed_s=removed_s, exact=bool(grounded.exact))
+        receipt.update(
+            status="applied", removed_s=removed_s, exact=all(bool(g.exact) for g in chosen)
+        )
     return cut, receipts
 
 

@@ -192,6 +192,69 @@ def _cases() -> dict[str, tuple[str, list]]:
                 }
             },
         )
+    # KRI-724: which time a spoken word / line is meant, on a one-take Talking draft.
+    take = {
+        "clip_assignments": [
+            {
+                "media_id": "take",
+                "kind": "video",
+                "duration_s": 20.0,
+                "analysis": {
+                    "duration_s": 20.0,
+                    "understanding": {
+                        "speech": {
+                            "segments": [
+                                {
+                                    "text": "We are at Merope, thank you Karo.",
+                                    "start_s": 1.0,
+                                    "end_s": 5.0,
+                                },
+                                {
+                                    "text": "Merope is great, thank you Karo.",
+                                    "start_s": 8.0,
+                                    "end_s": 12.0,
+                                },
+                            ]
+                        }
+                    },
+                },
+            }
+        ]
+    }
+    talking = {"edit_format": "subtitled", "audio_strategy": "original_audio"}
+    occurrence_cap = ChoiceCapability(speech_occurrence=True)
+    add(
+        "speech_occurrence_text",
+        "speech_occurrence",
+        talking,
+        _brief(
+            BriefRequirement(
+                id="r7",
+                kind="text",
+                scope="global",
+                literal="MEROPE",
+                description="Show MEROPE the first time she says Merope",
+            )
+        ),
+        take,
+        occurrence_cap,
+    )
+    add(
+        "speech_occurrence_cut",
+        "speech_occurrence",
+        talking,
+        _brief(
+            BriefRequirement(
+                id="r8",
+                kind="audio",
+                scope="global",
+                description="Cut 'thank you Karo'",
+                facts={"speech_cleanup": True, "cut_lines": ["thank you Karo"]},
+            )
+        ),
+        take,
+        occurrence_cap,
+    )
     for code, strategy in (
         ("single_hero_order_conflict", {}),
         ("insufficient_media", {}),

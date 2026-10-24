@@ -831,6 +831,13 @@ class Settings(BaseSettings):
     # Default TRUE; kill switch = false + restart (the field is dropped, no question is
     # asked, the montage behaves exactly as before).
     kria_choice_questions_enabled: bool = True
+    # KRI-724: on a one-take phone Talking draft, ask the creator which time a spoken word /
+    # line is meant ("the first time SHE says Merope"; a line to cut said twice) before
+    # approval, and render exactly that occurrence. Default false; on = Fly secret
+    # SPEECH_OCCURRENCE_QUESTION_ENABLED=true (api + worker) + restart. Off: the question is
+    # never asked and renders read the first match exactly as before (answers only exist
+    # where it was asked). Rollout + order: docs/pipelines/creator-render-contract.md.
+    speech_occurrence_question_enabled: bool = False
     # KRI-802: an app build declaring `X-Kria-Client-Protocol` >= this answers a reply's
     # choice card and clip picker on one turn, so the planner asks a title-wording question
     # and a clip picker in the same reply. Lower builds and the web keep one question per
