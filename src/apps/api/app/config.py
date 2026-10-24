@@ -716,6 +716,11 @@ class Settings(BaseSettings):
     # `fly secrets set TEXT_BEND_ENABLED=false` (api + worker) + restart.
     text_bend_enabled: bool = True
     text_bend_min_client_protocol: int = 9
+    # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
+    # `voiceover`). The capability `original_audio` is advertised to app builds declaring
+    # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,
+    # so they never receive the key (the row would open at a wrong level).
+    voiceover_original_audio_min_client_protocol: int = 15
     # KRI-742: voice dictation in the chat composers. `POST /dictation/transcribe` (Whisper) and
     # the `voice_dictation` capability the iOS mic button reads. Default TRUE; this is the kill
     # switch only. False: the route 404s and the capability is not advertised, so the app hides
@@ -823,6 +828,12 @@ class Settings(BaseSettings):
     # turn. Kill switch: `fly secrets set KRIA_QUESTION_BATCH_MIN_CLIENT_PROTOCOL=999`
     # (api + worker) + restart; messages sent after it get one question per turn again.
     kria_question_batch_min_client_protocol: int = 14
+    # KRI-815: with footage and no voiceover, Kria chat writes a footage-grounded voiceover
+    # script (`voiceover_script` on the reply) instead of a narrated draft that can only fail at
+    # approval. Independent of TRANSCRIPT_HELPER_ENABLED. Kill switch: false + restart (api +
+    # worker): a narrated draft without a voiceover still never reaches approval; Kria asks the
+    # creator to record or import one, with no script.
+    kria_voiceover_script_enabled: bool = True
     # KRI-470: "one plan, obeyed everywhere". Evaluated ONCE, when a creator
     # render contract is stamped onto a new job (`creator_plan_authority_version`
     # in `Job.all_candidates`); workers branch on that stamp, never on this live
@@ -830,6 +841,12 @@ class Settings(BaseSettings):
     # unstamped = legacy behaviour. Default TRUE; kill switch = false + restart
     # api and worker (affects new jobs only).
     kria_plan_authority_enabled: bool = True
+    # KRI-722: mint one immutable prepared execution snapshot at approve and stamp
+    # it on the approval, execution and Job. Read ONCE at approve; workers branch on
+    # the stamp (`creator_prepared_execution`), never on this flag. False = new
+    # approvals are unstamped = legacy. Kill switch: fly secret false + restart
+    # api and worker (already-stamped work keeps being verified).
+    kria_prepared_execution_enabled: bool = True
     # KRI-189 (KRI-185 P3): clip facts -- capture time, place name and a
     # best-guess landmark per clip, each with provenance. Gates SERVER
     # CONSUMPTION only: the landmark agent run, exposing facts to the Main

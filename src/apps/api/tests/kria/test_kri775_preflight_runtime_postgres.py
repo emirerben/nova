@@ -31,7 +31,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.database import engine as async_engine
 from app.database import sync_session
-from app.kria.brief import BriefUpdate, CreativeBrief
+from app.kria.brief import BriefUpdate, CreativeBrief, apply_updates
 from app.models import (
     CreationThread,
     CreationThreadEvent,
@@ -134,7 +134,16 @@ async def _first_turn(monkeypatch: pytest.MonkeyPatch, *, five_seconds: bool = F
     photo_id = uuid.uuid4()
     render = _m2_render(photo_id, five_seconds=five_seconds)
     user_id, thread_id = _seed_m2(render, photo_id)
-    gated = await run_gate(monkeypatch, render, brief=CreativeBrief.model_validate(render["brief"]))
+    # KRI-824: the gate previews the brief this turn persists, stamped from the same creator
+    # message, exactly as `plan_live_turn` does.
+    stamped = apply_updates(
+        None, _updates(render), source_turn_id=None, creator_text=FIXTURE["creator_messages"][0]
+    )
+    gated = await run_gate(
+        monkeypatch,
+        render,
+        brief=CreativeBrief(version=len(stamped.requirements), requirements=stamped.requirements),
+    )
     calls = {"n": 0}
 
     async def _planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
@@ -191,13 +200,17 @@ async def test_the_m2_draft_is_held_back_with_the_reason_and_a_choice(monkeypatc
     reply = _latest_reply(thread_id)
     assert reply.event_type == "assistant_response"
     content = str(reply.content)
-    assert "- Partly: About 14 seconds (This draft is about 4.7s; you asked for 14s)" in content
+    # KRI-824: the photo's "1 second" is that photo's time now, so "About 14 seconds" is met
+    # and no longer a reason; the order the phone cannot place still holds the draft back.
+    assert "About 14 seconds" not in content
+    assert "- Partly: Caro arriving with tray" in content
     assert "I held this first draft back." in content
     assert content.endswith("Should I try a different approach, or make this simpler version?")
     question = (reply.payload or {}).get("choice_question") or {}
     assert {option["key"] for option in question.get("options", [])} >= {"simpler_version"}
     receipts = {r["requirement_id"]: r for r in reply.payload["requirement_receipts"]}
-    assert (receipts["r7"]["status"], receipts["r7"]["verification"]) == ("partial", "checked")
+    assert (receipts["r1"]["status"], receipts["r1"]["verification"]) == ("partial", "checked")
+    assert "r7" not in receipts
 
 
 async def _choose_simpler(monkeypatch):  # noqa: ANN001, ANN202
@@ -230,8 +243,10 @@ async def test_choosing_the_simpler_version_never_loops_into_the_same_hold_back(
             .first()
         )
     live = {row["id"] for row in latest.requirements if row.get("status") != "superseded"}
-    # The agreed omissions are out of the brief: the creator's "yes" was taken.
-    assert "r7" not in live, live
+    # The agreed omissions are out of the brief: the creator's "yes" was taken. The 14 s
+    # length was met (KRI-824), so it was never one of them.
+    assert "r1" not in live, live
+    assert "r7" in live, live
 
 
 @pytest.mark.xfail(

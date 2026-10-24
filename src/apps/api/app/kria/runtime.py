@@ -28,6 +28,7 @@ from app.kria.api_schemas import (
     ApprovalDecisionOut,
     ApprovalSnapshotOut,
     DeltaEvent,
+    ProtectedRegionIn,
     SubmitTurnBody,
     ThreadDeltaOut,
     TurnAccepted,
@@ -140,6 +141,8 @@ def request_digest(body: SubmitTurnBody) -> str:
         # KRI-441: additive the same way, so every pre-existing digest holds.
         | ({"scope"} if body.scope is None else set())
         | ({"manual_edits"} if body.manual_edits is None else set())
+        # KRI-827: additive the same way.
+        | ({"protected_region"} if body.protected_region is None else set())
     )
     encoded = json.dumps(
         body.model_dump(mode="json", exclude=excluded),
@@ -292,6 +295,60 @@ async def _apply_song_range_answer(
     item = await db.get(PlanItem, thread.active_plan_item_id, with_for_update=True)
     if item is not None and getattr(item, "song_gcs_path", None):
         apply_song_range(thread, item, chosen)
+
+
+async def _stamp_protected_region(
+    db: AsyncSession, thread: CreationThread, region: ProtectedRegionIn
+) -> dict:
+    """KRI-827: the creator's mark, checked and stamped by the server.
+
+    The clip must be one of THIS thread's clips (its active plan item's media); anything
+    else -- another creator's media id, a clip removed from the item -- is a 404, so a
+    mark can never point the tracker at media the creator does not own. The clip's
+    storage generation is read from the item, never from the client: a later re-upload or
+    swap then invalidates the mark instead of reusing it on other bytes."""
+    from app.kria.protected_targets import ProtectedRegionSelection  # noqa: PLC0415
+
+    item = (
+        await db.get(PlanItem, thread.active_plan_item_id) if thread.active_plan_item_id else None
+    )
+    plan = await db.get(ContentPlan, item.content_plan_id) if item is not None else None
+    owned = plan is not None and plan.user_id == thread.creator_id
+    assignments = list(getattr(item, "clip_assignments", None) or []) if owned else []
+    match = next(
+        (
+            row
+            for row in assignments
+            if isinstance(row, dict) and str(row.get("media_id")) == region.media_id
+        ),
+        None,
+    )
+    if match is None:
+        raise RuntimeFailure(
+            404,
+            "protected_region_media_not_found",
+            "That clip isn't part of this video. Mark the object on one of your clips.",
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        )
+    generation = match.get("storage_generation") or match.get("generation")
+    try:
+        mark = ProtectedRegionSelection(
+            label=region.label,
+            media_id=region.media_id,
+            source_t_s=region.source_t_s,
+            box=region.box,
+            generation=str(generation) if generation is not None else None,
+        )
+    except ValueError as exc:
+        raise RuntimeFailure(
+            422,
+            "protected_region_invalid",
+            "That mark is too small or outside the frame. Draw a box around the object.",
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        ) from exc
+    return mark.model_dump(mode="json")
 
 
 async def _validate_choice_selection(
@@ -706,6 +763,11 @@ async def submit_turn(
         await _validate_song_order(db, thread, body.song_order)
     if body.song_range is not None and settings.song_filming_range_enabled:
         await _apply_song_range_answer(db, thread, body.song_range)
+    protected_region = (
+        await _stamp_protected_region(db, thread, body.protected_region)
+        if body.protected_region is not None
+        else None
+    )
     if choice_selection is not None and not choice_reanswer:
         # A derived re-answer targets a question the server asked and has closed
         # (KRI-794); every client-sent selection must still answer the open one.
@@ -957,6 +1019,8 @@ async def submit_turn(
                 if body.song_order is not None and settings.user_song_montage_enabled
                 else {}
             ),
+            # KRI-827: the creator's checked + stamped mark (never client-stamped).
+            **({"protected_region": protected_region} if protected_region is not None else {}),
             # KRI-588: flag off -> dropped silently, nothing stored.
             **(
                 {"song_range": body.song_range.model_dump(mode="json")}
@@ -2059,6 +2123,93 @@ async def _validated_render_shape(
     return chosen
 
 
+async def _mint_prepared_execution(
+    db: AsyncSession,
+    *,
+    approval: CreatorAgentApproval,
+    draft: CreatorEditDraft,
+    thread: CreationThread,
+    item: PlanItem | None,
+    execution: CreatorAgentExecution | None,
+    retry_execution: CreatorAgentExecution | None,
+) -> None:
+    """KRI-722: pin one immutable prepared execution to this approval.
+
+    Runs after every approve gate, in the approving transaction, so a refused
+    approval never leaves a snapshot behind. A render retry keeps the snapshot of
+    the attempt it retries (same authority); its claim mints the new attempt id.
+    """
+
+    from app.kria import prepared_execution as prepared  # noqa: PLC0415
+    from app.models import CreatorPreparedExecution  # noqa: PLC0415
+
+    if retry_execution is not None:
+        retry = (retry_execution.result or {}).get("render_retry") or {}
+        source = await db.get(
+            CreatorAgentExecution, _optional_uuid(retry.get("source_execution_id"))
+        )
+        source_approval = (
+            await db.get(
+                CreatorAgentApproval, _optional_uuid((source.result or {}).get("approval_id"))
+            )
+            if source is not None
+            else None
+        )
+        # An unstamped (legacy) source attempt keeps the legacy retry path.
+        if getattr(source_approval, "prepared_execution_id", None) is not None:
+            approval.prepared_execution_id = source_approval.prepared_execution_id
+        return
+    if not settings.kria_prepared_execution_enabled or item is None:
+        return
+    document = _parse_draft_document(draft.snapshot_json)
+    if document is None:
+        return
+    try:
+        snapshot = prepared.build_snapshot(
+            creator_id=approval.creator_id,
+            thread_id=thread.id,
+            approval_id=approval.id,
+            draft=draft,
+            document=document,
+            sources=await prepared.load_source_identities(db, item, approval.creator_id),
+            execution_result=execution.result if execution is not None else None,
+            latest_brief=(
+                await load_latest_brief(db, thread.id) if document.brief_binding is None else None
+            ),
+        )
+    except ValueError as exc:
+        log.warning("kria_prepared_execution_refused", approval_id=str(approval.id), error=str(exc))
+        raise RuntimeFailure(
+            409,
+            prepared.STALE,
+            "This edit could not be prepared for rendering. Ask Kria to prepare it again.",
+            phase="approval",
+            recovery="refresh_replan",
+        ) from exc
+    row = CreatorPreparedExecution(
+        creator_id=approval.creator_id,
+        thread_id=thread.id,
+        approval_id=approval.id,
+        draft_id=draft.id,
+        draft_revision=int(draft.draft_revision),
+        schema_version=snapshot.schema_version,
+        snapshot=snapshot.model_dump(mode="json"),
+        snapshot_digest=snapshot.digest,
+    )
+    db.add(row)
+    # The snapshot row references the approval and the approval references it back:
+    # insert the snapshot first, then point the approval at it.
+    await db.flush()
+    approval.prepared_execution_id = row.id
+
+
+def _optional_uuid(value: object) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(value)) if value else None
+    except (TypeError, ValueError):
+        return None
+
+
 async def decide_approval(
     db: AsyncSession,
     *,
@@ -2637,6 +2788,16 @@ async def decide_approval(
                 "media_snapshot": snapshot_media(grant_item),
             },
         }
+    if decision == "approve":
+        await _mint_prepared_execution(
+            db,
+            approval=approval,
+            draft=draft,
+            thread=thread,
+            item=plan_item or await db.get(PlanItem, session.plan_item_id),
+            execution=execution,
+            retry_execution=retry_execution if is_render_retry else None,
+        )
     approval.status = "approved" if decision == "approve" else "denied"
     if decision == "deny":
         turn.status = "completed"

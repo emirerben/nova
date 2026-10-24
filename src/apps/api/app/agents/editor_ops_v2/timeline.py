@@ -466,11 +466,14 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
     ops = _ops()
     patch = dict(op.get("patch") or {})
     on_device = state.variant.get("render_destination") == "device"
-    guided = ops._is_guided_native(state.job, state.variant)
+    source_window_timeline = ops._is_guided_native(
+        state.job, state.variant
+    ) or ops._is_authored_phone_native(state.job, state.variant)
     if "look_preset" in patch and (on_device or not _clip_capability(state, "looks")):
         raise _err("Looks are not available for this edit")
     if "playback_rate" in patch and (
-        on_device or not guided or not _clip_capability(state, "playback_rate")
+        not source_window_timeline
+        or not _clip_capability(state, "playback_rate", default=not on_device)
     ):
         raise _err("Speed changes are not available for this edit")
     if "source_crop" in patch and not _clip_capability(state, "source_crop", default=False):
@@ -500,6 +503,11 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
         rate = float(patch["playback_rate"]) if "playback_rate" in patch and not image else rate_old
         duration = ops._slot_duration(row)
         in_s = float(row.get("in_s") or 0.0)
+        source_span = (
+            float(row["source_end_s"]) - in_s
+            if row.get("source_end_s") is not None
+            else duration * rate_old
+        )
         if "in_s" in patch and not image:
             in_s = float(patch["in_s"])
             row["in_s"] = in_s
@@ -508,18 +516,22 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
             row["playback_rate"] = rate
             if "duration_s" not in patch:
                 # "speed up clip 2" keeps the same footage, so the clip gets shorter.
-                duration = duration * rate_old / rate
+                duration = source_span / rate
+            row["source_end_s"] = in_s + source_span
             touched = True
         if "duration_s" in patch:
             duration = float(patch["duration_s"])
             touched = True
+        if touched and "source_end_s" in row:
+            row["source_end_s"] = in_s + (duration * rate if "duration_s" in patch else source_span)
         if touched:
+            requested_duration = duration
             source = row.get("source_duration_s")
             if not image and isinstance(source, (int, float)) and source > 0:
                 # A start point the creator (or model) chose is kept; otherwise a clip
                 # that outgrows the footage after its start reaches back into the footage
                 # before it.
-                slide = "in_s" not in patch
+                slide = "in_s" not in patch and "playback_rate" not in patch
                 if not slide and (float(source) - in_s) / rate < MIN_CLIP_S:
                     raise _err("That start point leaves too little footage in the clip")
                 new_in, duration = _fit_window(
@@ -535,7 +547,11 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
             if duration < MIN_CLIP_S:
                 raise _err("A clip cannot be shorter than 0.1 seconds")
             row["duration_beats"] = None
-            row["duration_s"] = round(duration, 3)
+            row["duration_s"] = round(duration, 6 if "source_end_s" in row else 3)
+            if "source_end_s" in row and (
+                duration != requested_duration or float(row.get("in_s") or 0) != in_s
+            ):
+                row["source_end_s"] = float(row.get("in_s") or 0) + duration * rate
             applied += 1
         if "look_preset" in patch:
             row["look_preset"] = patch["look_preset"]
@@ -633,6 +649,10 @@ def _write_durations(state: Any, idx: list[int], durations: list[float]) -> None
                 row["in_s"] = round(new_in, 3)
         row["duration_beats"] = None
         row["duration_s"] = round(durations[pos], 3)
+        if row.get("source_end_s") is not None:
+            row["source_end_s"] = round(
+                float(row.get("in_s") or 0.0) + durations[pos] * ops._slot_rate(row), 6
+            )
     state.changed.add("timeline")
 
 

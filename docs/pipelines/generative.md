@@ -170,6 +170,37 @@ keyboard-tick SFX. Existing saved/tombstoned text and user-authored typewriter e
 are not migrated or retimed. Roll back open-to-all v3 selection by setting both default
 preset secrets empty; stored assignments remain pinned.
 
+## Creator-written text: literal copy and frame fit (KRI-826)
+
+**Literal copy.** A label or caption the creator wrote prints exactly as they typed it: "+",
+"’", emoji (with ZWJ sequences and variation selectors), Turkish ı İ ş ğ and typed line breaks.
+`ground_label` / `ground_caption` print the creator's own span from the request
+(`creator_literal_span`), never the model's copy. Every symbol in the model's copy must appear
+in that span, so an invented "!" or "🔥" grounds nothing, and "+" rewritten as "and" never
+matches. Model, vision and record labels keep the 3-word / 24-character tag rules and the label
+charset. A creator label is bounded only by the montage label bar: at most two lines of
+Fraunces 58px in a 0.82 x 1080 box (`app/pipeline/text_fit.py`). Past that, the KRI-804 reply
+says it runs past two lines. The text is never cut.
+
+**Frame fit for hand-edited text (`wrap_lines=false`).** The creator's own lines from the iOS
+Slider and video editors follow one rule in every renderer: cloud Skia `_authored_lines`, the
+phone compile (`portable_text_layout`, which calls it), iOS `AuthoredTextLayout` /
+`AuthoredTextFit`, and the slide canvas/export (`SlidePostTextCanvas`):
+
+- an explicit line break is always a hard break;
+- a line that fits the frame's safe width (0.9 x canvas width; `max_width_frac` is ignored)
+  stays one line at the creator's size (KRI-564);
+- a wider line soft-wraps at word boundaries at that width;
+- only a single word still wider than that shrinks the whole text, never below
+  `min(size, 24)`.
+
+Cloud Skia also shapes any text its face can't fully draw (`_auto_shape`), so inline emoji
+draw through the system emoji face (Noto Color Emoji in the prod image) instead of as boxes.
+Parity guards: `test_both_renderers_honor_authored_line_fit`,
+`test_authored_line_fit_matches_the_recorded_cross_platform_rows` and the iOS
+`AuthoredTextFitTests` (`tests/fixtures/kri826_authored_fit_rows.json`). Verify artifact:
+`make verify-overlays ARGS="--fixtures"` (`kri826_*.json`).
+
 ## Key files
 
 - `src/apps/api/app/tasks/generative_build.py` — `orchestrate_generative_job` Celery
@@ -603,17 +634,25 @@ For a `narrated` / `subtitled` variant `plan_facts_from_phone_variant` sets
 (`silence_cut_outcome` applied / no_change; a device render without one → not_run). The
 captions and cleanup checkers judge those when `rendered_variant` is set; a real editor
 turn still answers "can't check". Cleanup does not verify a named-line request from the
-brief, so that request stays "Partly" with the editor note even when an eligible retake
-is removed. KRI-551 can remove a detector-backed retake only after explicit retake-aware
-consent, with both rollout flags enabled; otherwise a restarted sentence stays in. A cloud
-variant whose fields are not filled yet stays unknown. `_approved_generation_review` also
-appends `speech_cleanup_review_note(variant)` (counts read from `silence_cut.removed`, plus
+brief (a generic cleanup record cannot prove the requested line was removed, even when an
+eligible retake is removed), so such an ask ("the restart of the kilometer thirty sentence")
+stays "Partly" and says "I can't cut out one exact line yet or confirm it's gone, so it may
+still be in your video" (`_NAMED_CUTS_STAY`, KRI-846 + KRI-551). It never points at the
+editor: no editor action cuts a spoken line (talking-source slots can't be trimmed or split,
+the server refuses any change to their windows with 409 `TIMELINE_STALE`, and the Narrated
+editor trims pictures, not the voice). It says "may still be", never "stays", because KRI-551
+can remove a detector-backed retake after explicit retake-aware consent, with both rollout
+flags enabled; otherwise a restarted sentence stays in. The real phrase cut is KRI-724. A
+cloud variant whose fields are not filled yet stays unknown. `_approved_generation_review`
+also appends `speech_cleanup_review_note(variant)` (counts read from `silence_cut.removed`, plus
 "a sentence you restarted stays in" unless a retake cut could have run), independent of the
 brief binding, so a render whose binding was lost still says what cleanup did not cut. See the
 [bounded KRI-551 consent evidence](../reviews/kri-551-consented-retakes.md); original-output
 and device acceptance remain in the [KRI-829 ledger](../reviews/kri-829-original-output-acceptance.md). Guards:
 `tests/kria/test_brief_rendered_speech_facts.py`, the KRI-541 cases in
-`tests/tasks/test_marathon_render_ready_review.py`, `tests/tasks/test_kri551_cleanup_review_note.py`.
+`tests/tasks/test_marathon_render_ready_review.py`, `tests/tasks/test_kri551_cleanup_review_note.py`,
+`tests/kria/test_kri846_no_blocked_editor_advice.py` (also pins the talking-source window refusal;
+it fails on purpose when KRI-724 makes those windows editable, so the copy is reconsidered).
 
 ### Phone Talking face-filled vertical crop (KRI-547, `PHONE_SPEAKER_FACE_FILL_ENABLED`)
 

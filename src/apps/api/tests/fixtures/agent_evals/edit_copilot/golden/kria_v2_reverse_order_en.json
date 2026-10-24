@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-10-23-v87",
+  "prompt_version": "2026-10-24-v89",
   "input": {
     "utterance": "Can you reverse the order?",
     "prior_turns": [],

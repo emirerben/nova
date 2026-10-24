@@ -458,11 +458,15 @@ def test_phone_restore_keeps_pinned_independent_narration(saved_original):
 
 
 @pytest.mark.parametrize("treatment_key", ["background_music_treatment", "smart_music_treatment"])
-def test_phone_restore_keeps_independent_music_treatment(treatment_key):
+@pytest.mark.parametrize("rate", [0.25, 0.5, 1, 2, 4])
+def test_phone_restore_keeps_independent_music_treatment(treatment_key, rate):
     from app.kria.recipes import AssetFingerprint, MediaAsset, TimelineClip, TimelineTrack
     from app.kria.render_assets import LibraryRenderAsset, RenderFingerprint
 
     job, variant, previous = fixture()
+    variant["user_timeline"]["slots"][0].update(
+        playback_rate=rate, source_end_s=5, duration_s=round(3 / rate * 30) / 30
+    )
     previous.assets.append(
         MediaAsset(
             id="bed",
@@ -505,7 +509,9 @@ def test_phone_restore_keeps_independent_music_treatment(treatment_key):
     variant["mix"] = 0.2
     recipe = compile_phone_authored_timeline(job, variant, previous)
     clip = next(track for track in recipe.tracks if track.id == "bed").clips[0]
-    assert clip.source_duration == 3
+    assert clip.rate == 1
+    assert clip.source_start == 0
+    assert clip.source_duration == min(10, round(3 / rate * 30) / 30)
     # KRI-470 PR-G: the bed plays through its track clip, at the creator's mix. Naming the
     # asset in `audio.music_asset_id` too would make the device play it a second time from
     # source 0 (the KRI-481 double play), which the contract verifier now refuses.

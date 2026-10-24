@@ -2323,6 +2323,19 @@
               "default": null,
               "title": "Source Duration S"
             },
+            "source_end_s": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source End S"
+            },
             "source_start_locked": {
               "anyOf": [
                 {
@@ -2962,6 +2975,58 @@
           "title": "MontageBlock",
           "type": "object"
         },
+        "ProtectedRegionIn": {
+          "additionalProperties": false,
+          "description": "KRI-827: the creator marks what to keep text off (\"the plate\"): a box on one frame of\none of their clips, normalized to the upright source frame. The server checks the clip\nis this thread's and stamps its generation; old clients omit it.",
+          "properties": {
+            "box": {
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "title": "Box",
+              "type": "array"
+            },
+            "label": {
+              "maxLength": 60,
+              "minLength": 1,
+              "title": "Label",
+              "type": "string"
+            },
+            "media_id": {
+              "maxLength": 160,
+              "minLength": 1,
+              "title": "Media Id",
+              "type": "string"
+            },
+            "source_t_s": {
+              "maximum": 3600.0,
+              "minimum": 0.0,
+              "title": "Source T S",
+              "type": "number"
+            }
+          },
+          "required": [
+            "label",
+            "media_id",
+            "source_t_s",
+            "box"
+          ],
+          "title": "ProtectedRegionIn",
+          "type": "object"
+        },
         "SolidBackground": {
           "properties": {
             "color": {
@@ -3557,6 +3622,17 @@
           "minLength": 1,
           "title": "Message",
           "type": "string"
+        },
+        "protected_region": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProtectedRegionIn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "scope": {
           "anyOf": [
@@ -4545,7 +4621,7 @@
               "image_hold_s": {
                 "anyOf": [
                   {
-                    "maximum": 0.8,
+                    "maximum": 10.0,
                     "minimum": 0.1,
                     "type": "number"
                   },

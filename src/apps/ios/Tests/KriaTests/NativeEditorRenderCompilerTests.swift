@@ -1202,12 +1202,20 @@ import KriaMediaEngine
         _ = try await LivePreviewComposition(recipe: program.recipe, assetURLs: program.assetURLs)
         let textID = try XCTUnwrap(session.document.textElements.first?.id)
         XCTAssertEqual(session.document.textElements.first?.raw["position"], .string("custom"))
-        for content in ["This entire sentence stays on one line even past the old width", "First\nSecond", "First\n\nThird", "First\n"] {
+        // KRI-826: the creator's lines stay hard breaks, but a line wider than the frame's safe width
+        // soft-wraps inside it (KRI-564 kept it on one line, running off both sides).
+        let long = "This entire sentence used to stay on one line even past the frame's own width"
+        for content in [long, "First\nSecond", "First\n\nThird", "First\n"] {
             session.updateTextContent(id: textID, content: content)
             XCTAssertEqual(session.document.textElements.first { $0.id == textID }?.raw["wrap_lines"], .bool(false))
             let edited = try compiler.compile(document: session.document, clips: session.timelineClips, items: session.timelineItems, sources: sources)
             let layer = try XCTUnwrap(edited.recipe.textLayers.first { $0.id == textID })
-            XCTAssertEqual(layer.runs.map(\.text), content.components(separatedBy: "\n").map { $0.isEmpty ? " " : $0 })
+            if content == long {
+                XCTAssertGreaterThan(layer.runs.count, 1)
+                XCTAssertEqual(layer.runs.map(\.text).joined(separator: " "), long)
+            } else {
+                XCTAssertEqual(layer.runs.map(\.text), content.components(separatedBy: "\n").map { $0.isEmpty ? " " : $0 })
+            }
             _ = try await LivePreviewComposition(recipe: edited.recipe, assetURLs: edited.assetURLs)
         }
         await session.prepareFixtureSourcePreview(url: url)

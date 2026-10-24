@@ -70,6 +70,12 @@ class KriaTurnPlan(_KriaModel):
     reply_options: list[str] | None = Field(
         default=None, max_length=4, exclude_if=lambda value: not value
     )
+    # KRI-815: a footage-grounded voiceover script (or the honest "couldn't write it" record)
+    # with its record/import continuation; see `app.kria.voiceover_script`. Spoken words only:
+    # never overlay/caption text and never creator intent. Same omit-when-unset rule.
+    voiceover_script: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: not value
+    )
 
     @field_validator("intents")
     @classmethod

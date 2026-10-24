@@ -1,6 +1,6 @@
 .PHONY: dev dev-web dev-api api-install-dev test test-api test-quality build lint verify \
         ios-generate ios-build ios-test ios-verify \
-        kria-replay verify-kria \
+        kria-replay verify-kria verify-protected-text \
         local-render local-render-build local-render-up local-render-down \
         local-render-logs local-render-migrate verify-overlays verify-motion-performance \
         carousel-capture carousel-verify verify-editor-timeline \
@@ -30,6 +30,12 @@ kria-replay:
 
 verify-kria:
 	KRIA_VERIFY_PYTHON="$(abspath $(API_PYTHON))" bash scripts/verify-kria.sh
+
+# KRI-827: text stays off the creator's marked object (and faces) for every row's whole
+# visible interval; writes .protected-verify/report.json + montage.png, exits 1 on a false
+# "clear".
+verify-protected-text:
+	(cd $(API_DIR) && $(API_LOCAL_PYTHON) -m app.cli.verify_protected_text --out $(abspath .protected-verify))
 
 # ── Native iOS ───────────────────────────────────────────────────────────────
 

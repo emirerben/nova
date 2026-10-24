@@ -7,6 +7,7 @@ persisted approval. Workers report only durable receipts and observed Job truth.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import time
 import uuid
 from collections.abc import Mapping, Sequence
@@ -86,6 +87,7 @@ from app.kria.reply_language import (
     say,
     thread_reply_language,
 )
+from app.kria.voiceover_script import event_content as voiceover_script_content
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -200,6 +202,23 @@ def _full_creator_request_sync(db, *, thread_id: uuid.UUID, through_sequence: in
     return request if len(request) <= 12_000 else None
 
 
+def _protected_regions_sync(db, *, thread_id: uuid.UUID, through_sequence: int) -> list[dict]:  # noqa: ANN001
+    """KRI-827: the creator's marks of what to keep text off, from their own turns only."""
+    from app.kria.protected_targets import fold_protected_regions  # noqa: PLC0415
+
+    return fold_protected_regions(
+        db.execute(
+            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == thread_id,
+                CreationThreadEvent.role == "user",
+                CreationThreadEvent.sequence <= through_sequence,
+            )
+            .order_by(CreationThreadEvent.sequence)
+        ).all()
+    )
+
+
 @dataclass(frozen=True)
 class _ClaimsExhausted:
     successor_turn_id: str | None = None
@@ -232,6 +251,9 @@ class _ApprovalDispatchClaim:
     # failure after the pointer moves can put it back (never leave an orphan target).
     prior_item_status: str | None = None
     creator_guided_attempt_id: str | None = None
+    # KRI-722: {id, digest, schema_version, attempt_id, approval_id, draft_id,
+    # draft_revision, binding_digest} for a stamped approval; None = legacy.
+    prepared_execution: dict[str, Any] | None = None
 
 
 def _snapshot(thread: CreationThread) -> dict[str, Any]:
@@ -332,7 +354,8 @@ def _complete_response_turn(
             thread,
             role="assistant",
             event_type="assistant_response",
-            content=plan.response,
+            # KRI-815: a drafted script is also readable as prose by clients without the card.
+            content=voiceover_script_content(plan),
             payload={
                 "turn_id": str(turn.id),
                 "turn_value": plan.turn_value,
@@ -355,6 +378,8 @@ def _complete_response_turn(
                     else {}
                 ),
                 **({"choice_question": plan.choice_question} if plan.choice_question else {}),
+                # KRI-815: the script card + its record/import continuation (spoken words only).
+                **({"voiceover_script": plan.voiceover_script} if plan.voiceover_script else {}),
                 # KRI-738: tappable lengths; the prose above still lists them for old clients.
                 **({"options": plan.reply_options} if plan.reply_options else {}),
                 **(
@@ -1992,6 +2017,15 @@ def _complete_draft_turn(
                             if choice_gate
                             else None
                         ),
+                        protected_regions=(
+                            _protected_regions_sync(
+                                db,
+                                thread_id=thread.id,
+                                through_sequence=int(source_event.sequence),
+                            )
+                            if source_event is not None
+                            else None
+                        ),
                     ),
                     "brief_coverage": coverage,
                 }
@@ -3436,6 +3470,76 @@ def extract_kria_brief(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
     return {"turn_id": turn_id, "status": "done", "route": str(route)}
 
 
+def _verify_prepared_execution(
+    db: Any,
+    *,
+    approval: CreatorAgentApproval,
+    draft: CreatorEditDraft,
+    document: KriaDraftDocument,
+    item: PlanItem,
+    execution: CreatorAgentExecution,
+) -> tuple[dict[str, Any] | None, Any]:
+    """KRI-722: (attempt record, None) when the approved snapshot still holds, else
+    (None, PreparedExecutionError). The first refusal is written to the row for audit.
+
+    A fresh claim re-derives every source identity and mints a new attempt id. An
+    accepted redelivery (lost acknowledgement, outcome_unknown) of the same snapshot
+    keeps its attempt and is not re-fenced: its inputs passed at the original claim and
+    its Job may already be rendering, so a later deploy, flag flip or source change
+    must not cancel work that was already dispatched (as the legacy media fence does).
+    """
+
+    from app.kria import prepared_execution as prepared  # noqa: PLC0415
+    from app.models import CreatorPreparedExecution  # noqa: PLC0415
+
+    row = db.get(CreatorPreparedExecution, approval.prepared_execution_id)
+    accepted = (execution.result or {}).get(prepared.RESULT_FIELD)
+    try:
+        if row is None or row.creator_id != approval.creator_id:
+            raise prepared.PreparedExecutionError(prepared.STALE, "The prepared edit is missing.")
+        if (
+            execution.status == "accepted"
+            and isinstance(accepted, dict)
+            and accepted.get("id") == str(row.id)
+        ):
+            return dict(accepted), None
+        snapshot = prepared.parse(row)
+        if row.invalidated_at is not None:
+            raise prepared.PreparedExecutionError(
+                row.invalidation_code or prepared.STALE, "The prepared edit was invalidated."
+            )
+        prepared.verify(
+            snapshot,
+            draft=draft,
+            document=document,
+            thread_id=approval.thread_id,
+            sources=prepared.load_source_identities_sync(db, item, approval.creator_id),
+        )
+    except prepared.PreparedExecutionError as exc:
+        if row is not None and row.invalidated_at is None:
+            row.invalidated_at = datetime.now(UTC)
+            row.invalidation_code = exc.code
+        log.info(
+            "kria_prepared_execution_refused",
+            approval_id=str(approval.id),
+            code=exc.code,
+            changed=exc.changed,
+        )
+        return None, exc
+    return (
+        prepared.attempt_record(
+            row,
+            snapshot.digest,
+            prepared.new_attempt_id(),
+            approval_id=str(approval.id),
+            draft_id=str(draft.id),
+            draft_revision=int(draft.draft_revision),
+            binding_digest=snapshot.binding_digest,
+        ),
+        None,
+    )
+
+
 def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim | None:
     """Consume exact consent into a durable accepted execution.
 
@@ -3600,6 +3704,23 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                 target_valid = False
                 log.info("kria_creative_copy_blocked", phase="dispatch", thread_id=str(thread.id))
 
+        prepared_record: dict[str, Any] | None = None
+        prepared_failure: Any = None
+        if (
+            target_valid
+            and document is not None
+            and getattr(approval, "prepared_execution_id", None) is not None
+        ):
+            prepared_record, prepared_failure = _verify_prepared_execution(
+                db,
+                approval=approval,
+                draft=draft,
+                document=document,
+                item=item,
+                execution=execution,
+            )
+            target_valid = prepared_failure is None
+
         if (
             target_valid
             and execution.status == "accepted"
@@ -3686,12 +3807,20 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                 target_valid = False
         now = datetime.now(UTC)
         if not target_valid:
+            stale_code = (
+                CREATIVE_COPY_PENDING
+                if copy_problem
+                else prepared_failure.code
+                if prepared_failure is not None
+                else "approval_target_stale"
+            )
             approval.status = "cancelled"
             execution.status = "stale"
             execution.error = {
-                "code": CREATIVE_COPY_PENDING if copy_problem else "approval_target_stale",
+                "code": stale_code,
                 "retryable": False,
                 "recovery": "refresh_replan",
+                **({"changed": prepared_failure.changed} if prepared_failure is not None else {}),
             }
             execution.completed_at = now
             turn.status = "failed"
@@ -3717,12 +3846,21 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                 payload={
                     "turn_id": str(turn.id),
                     "approval_id": str(approval.id),
-                    "code": CREATIVE_COPY_PENDING if copy_problem else "approval_target_stale",
+                    "code": stale_code,
                     "recovery": "refresh_replan",
                 },
             )
             db.commit()
             return None
+
+        if prepared_record is not None and document.kind == "editor" and current_job is not None:
+            # An editor approval re-pins its target variant inside this claim, so the
+            # Job carries the stamp before the recipe is pinned (the pin copies it).
+            prepared_record = {**prepared_record, "variant_id": approval.target_variant_id}
+            prepared_job_before = (current_job.all_candidates, current_job.assembly_plan)
+            from app.kria.prepared_execution import stamp_job  # noqa: PLC0415
+
+            stamp_job(current_job, prepared_record)
 
         creator_guided_attempt_id = None
         strategy_payload: dict[str, Any] | None = None
@@ -3926,6 +4064,9 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                         error_type=type(exc).__name__,
                         error=str(getattr(exc, "detail", None) or exc),
                     )
+                    if prepared_record is not None:
+                        # Nothing was pinned: the Job keeps the attempt it had.
+                        current_job.all_candidates, current_job.assembly_plan = prepared_job_before
                     approval.status = "cancelled"
                     execution.status = "failed"
                     execution.error = {"code": code, "retryable": False, "recovery": "revise"}
@@ -3987,10 +4128,15 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
         execution.target_generation_id = target_generation_id
         if editor_prep is not None:
             execution.result = {**(execution.result or {}), "editor_prep": editor_prep}
+        if prepared_record is not None:
+            from app.kria.prepared_execution import RESULT_FIELD  # noqa: PLC0415
+
+            execution.result = {**(execution.result or {}), RESULT_FIELD: prepared_record}
         turn.status = "executing"
         session.status = "executing"
         db.commit()
         return _ApprovalDispatchClaim(
+            prepared_execution=prepared_record,
             approval_id=approval.id,
             execution_id=execution.id,
             thread_id=thread.id,
@@ -5366,6 +5512,12 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
                 if getattr(claim, "render_shape", None)
                 else {}
             ),
+            # KRI-722: the verified snapshot + attempt (absent = legacy call).
+            **(
+                {"prepared_execution": claim.prepared_execution}
+                if getattr(claim, "prepared_execution", None)
+                else {}
+            ),
         )
         outcome = result.outcome
         result_job_id = result.job_id
@@ -5453,7 +5605,13 @@ def _unified_montage_review(
         return default_text, []
     if not settings.creative_brief_for(thread.creator_id):
         return default_text, []
-    brief = load_latest_brief_sync(db, thread.id)
+    from app.kria.prepared_execution import pinned_brief_for_job  # noqa: PLC0415
+
+    # KRI-722: an accepted attempt reports against the brief it was approved with;
+    # later chat cannot change it. Unstamped (legacy) Jobs keep the latest-brief read.
+    stamped, brief = pinned_brief_for_job(db, job, thread.id)
+    if not stamped:
+        brief = load_latest_brief_sync(db, thread.id)
     if brief is None:
         return default_text, []
     if record.get("brief_version") != brief.version:
@@ -5759,6 +5917,12 @@ def _approved_generation_requirements_review(
         # KRI-537: the variant's phone_beat_receipt and voiceover_bed_level are the render's
         # evidence for pop-in and mix asks; the text-lane facts alone cannot see them.
         facts = plan_facts_from_phone_variant(variant)
+        # KRI-821: a mix receipt names only a control this variant (and app build) has.
+        from app.routes.generative_jobs import original_audio_recovery  # noqa: PLC0415
+
+        facts = dataclasses.replace(
+            facts, original_audio_control=original_audio_recovery(job, variant)
+        )
     known = {receipt.requirement_id for receipt in receipts}
     receipts.extend(
         build_receipts(
@@ -6937,11 +7101,23 @@ def prune_kria_drafts() -> dict[str, int]:
         if not candidates:
             db.commit()
             return {"pruned": 0}
+        from app.models import CreatorPreparedExecution  # noqa: PLC0415
+
+        candidate_draft_ids = [row.id for row in candidates]
         protected = set(
             db.execute(
-                select(CreatorAgentApproval.draft_id).where(
-                    CreatorAgentApproval.draft_id.in_([row.id for row in candidates]),
+                select(CreatorAgentApproval.draft_id)
+                .where(
+                    CreatorAgentApproval.draft_id.in_(candidate_draft_ids),
                     CreatorAgentApproval.status.in_({"pending", "approved", "consumed"}),
+                )
+                # KRI-722: a draft a live prepared execution was approved from (and that
+                # its retries re-verify against) stays restorable.
+                .union(
+                    select(CreatorPreparedExecution.draft_id).where(
+                        CreatorPreparedExecution.draft_id.in_(candidate_draft_ids),
+                        CreatorPreparedExecution.invalidated_at.is_(None),
+                    )
                 )
             ).scalars()
         )

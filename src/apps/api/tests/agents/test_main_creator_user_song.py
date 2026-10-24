@@ -46,10 +46,15 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v71 (KRI-814) adds the typed `delegates_all_choices` declaration: brief-on hashes only.
 # v72 (KRI-814) re-reads unrecorded earlier creator lines: brief-on hashes only.
 # v74 combines subtitle semantics and delegation; brief-off matches subtitle v73 exactly.
+# v76 (KRI-816) teaches the typed `starts_fresh` declaration: brief-on hashes only.
+# v77 (KRI-827) adds `keep_text_off` facts to the brief section: brief-on hashes only.
+# v77 (KRI-821) teaches the typed `source_muted` audio intent: brief-on hashes only.
+# v78 (KRI-821) teaches `cut_line_occurrences` for a repeated named cut: brief-on hashes only.
+# v80 combines KRI-827 keep_text_off with KRI-821: brief-on hashes re-pinned.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "bf51b31e7238e2286a68be7275ec9a502085f667f4885053353116f9c9ea1b12",
+    (True, True): "e091619111da20a56e03ec76f35515d8015ae65917feabef0287246671eb78d3",
     (True, False): "e33c7b44e601b95b61036b2806cc2111d8aa20204994881bf8fe128534b5cf3c",
-    (False, True): "d004dd784a572ce4d5dea3fd98fd9f5e17688271bafc14b2627ed3c1b96b57c4",
+    (False, True): "454a0de68ed73a53d33d0c85b256b48678a5331ce5a83b2931ada0498d79b6ec",
     (False, False): "6e32911313c9667767209df7d6d929db36873990e5dceb2d27549ba179569c1d",
 }
 
@@ -120,7 +125,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-23-v75"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-24-v80"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

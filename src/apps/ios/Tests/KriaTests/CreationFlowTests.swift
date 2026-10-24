@@ -243,6 +243,35 @@ import UIKit
         XCTAssertTrue(order.accept(newest))
     }
 
+    /// KRI-823 wire contract, using the shapes `list_threads`/`_job_projection` send. A record-only delivery
+    /// failure (refused EDIT, expired repair permission) arrives ONLY as `delivery_phase`; an older server sends
+    /// no `delivery_phase` and must keep today's mapping.
+    func testDeliveryPhaseOnTheWireDrivesStatusAndKeepsTheLastAcceptedCut() throws {
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let jobID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+        func summary(_ variant: [String: Any], job status: String = "awaiting_device") throws -> ProjectSummary {
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Self.thread(runtime: 1)) as? [String: Any])
+            object["active_job_id"] = jobID
+            object["job"] = ["id": jobID, "status": status, "variants": [variant]]
+            return try decoder.decode(CreationThread.self, from: JSONSerialization.data(withJSONObject: object)).summary
+        }
+        let lastCut: [String: Any] = ["variant_id": "original_text", "render_status": "awaiting_device", "render_destination": "device",
+                                      "output_url": "https://fixture.invalid/last.mp4", "poster_url": "https://fixture.invalid/last.jpg"]
+
+        var refused = lastCut; refused["delivery_phase"] = "needs_attention"
+        let failed = try summary(refused)
+        XCTAssertEqual(failed.status, .failed)
+        XCTAssertEqual(failed.deliveryNeedsAttention, true)
+        XCTAssertEqual(failed.outputURL?.absoluteString, "https://fixture.invalid/last.mp4", "The last accepted cut stays playable")
+        XCTAssertEqual(failed.posterURL?.absoluteString, "https://fixture.invalid/last.jpg")
+
+        var live = lastCut; live["delivery_phase"] = "awaiting_device"
+        XCTAssertEqual(try summary(live).status, .rendering)
+        XCTAssertEqual(try summary(lastCut).status, .rendering, "An older server without delivery_phase keeps today's mapping")
+        XCTAssertEqual(try summary(["variant_id": "original_text", "render_status": "ready", "output_url": "https://fixture.invalid/c.mp4"],
+                                   job: "variants_ready").status, .ready, "A cloud job is unchanged")
+    }
+
     private static func thread(runtime: Int) -> Data {
         Data("""
         {"id":"\(PreviewFixtures.projectID.uuidString)","title":"Test","status":"active","revision":4,"runtime_version":\(runtime),"updated_at":"2026-09-10T10:00:00Z","state":{},"events":[]}

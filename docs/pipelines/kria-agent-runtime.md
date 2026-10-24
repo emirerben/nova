@@ -253,8 +253,13 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   v64-shaped reply (key-less `order` with quoted `start` / `end`) on a one-video edit, and
   `choice_questions.one_clip_edit` keeps both the order_basis question and the render
   contract quiet about any free-form order rule on one clip.
-- **Clip speed (KRI-689).** The phone montage plays every clip at natural speed
-  (`phone_guided_plan` refuses a `playback_rate` other than 1). A speed ask ("speed the
+- **Clip speed (KRI-689).** Initial creation still does not author requested clip speed.
+  Post-creation phone editing supports 0.25–4x in the clip control and editor chat when
+  `variableSpeed` is verified: it preserves the exact source selection, changes output
+  duration, and carries the rate through preview, Save and export. Captions, narration,
+  lip-sync and unprojected timed effects remain explicitly locked; website speed controls
+  are separate work. See `plans/playback-speed.md` for the contract and measured evidence.
+  The initial-creation notice below remains necessary. A speed ask ("speed the
   river shots up 2x", slow motion, time-lapse, "2 kat hızlandır") used to be dropped
   silently and only listed under "Have a look at these in the video" after the render.
   `brief_checks.clip_speed_notice` now adds one plain sentence to the draft reply and the
@@ -627,6 +632,33 @@ reply English and prompts byte-identical).
   turn plan or strategy refusal without `say()`. Worker refusal text is re-worded at the chat
   side by exact text (`kria_runtime._WORKER_TEXT_TR`); one with no Turkish twin is left out,
   never shown in English. Allowlist: `tests/kria/turkish_chat_guard.py`.
+
+## Voiceover script before a recording (KRI-815)
+
+With footage attached and no voiceover, a request for words to say over the clips gets a
+script, never a narrated draft that cannot render yet:
+
+- Main Creator may answer `draft_voiceover_script` (only offered when
+  `MainCreatorInput.voiceover_script_available`: flag on, a video clip attached, no
+  `item.voiceover_gcs_path`). Its `request_evidence` must be the creator's own words, or the
+  turn asks instead. The model never writes the script.
+- A narrated `audio_strategy: "voiceover"` proposal with no voiceover attached takes the same
+  path before the strategy check (`_plan_creator_action`), so no draft, approval or Job is
+  minted; claim-time `voiceover_required` stays as the backstop.
+- `app/kria/voiceover_script.py` builds one prompt line per attached video clip from the
+  stored clip understanding (no new vision call), runs `nova.voiceover.script_writer`, and
+  persists `voiceover_script` on the `assistant_response` payload: `script_id`, per-thread
+  `revision`, `source_media_ids`, `item_id`, `language`, `needs_check` (the writer's list plus a
+  backstop for numbers and names absent from the inputs) and the `record_or_import`
+  continuation. The event `content` also carries the script, so clients without the card read it.
+- A revision keeps `script_id` and `source_media_ids`, bumps `revision`, and writes no brief
+  version. A writer failure is `status: "failed"` with no text.
+- The app shows the card when `voiceover_script_cards` is advertised; Record / Import open the
+  voiceover step with the script to read. The upload uses the normal, ownership-checked voiceover
+  attach; the next turn plans the narrated edit as usual.
+- Kill switch `KRIA_VOICEOVER_SCRIPT_ENABLED=false` (api + worker restart): no script, but a
+  narrated plan without a voiceover still asks to record or import instead of reaching approval.
+  Independent of `TRANSCRIPT_HELPER_ENABLED`. Journey: `tests/kria/test_kri815_voiceover_script_journey.py`.
 
 ## Render consent
 

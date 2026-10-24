@@ -21,6 +21,7 @@ from app.agents._schemas.creator_agent import (
     STORY_LINE_MAX_CHARS,
     CreativeStrategy,
     CreatorAgentOutput,
+    DraftVoiceoverScript,
     ProposeStrategy,
     ResolvedCreatorManifest,
 )
@@ -110,7 +111,17 @@ log = structlog.get_logger()
 # v72 (KRI-814): earlier creator lines never read into the brief are read with the current one.
 # v74 combines delegation v72 with subtitle-semantics v73, retaining all instructions.
 # v75 adds N2 fullscreen photo-then-original sequences to the complete v74 union.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-23-v75"
+# v76 (KRI-816): a typed `starts_fresh` declaration withdraws the saved brief ("Start fresh").
+# v76 (KRI-815): `$voiceover_script_section` teaches `draft_voiceover_script` when footage is
+# attached and no voiceover is (a script request returns a script, not a doomed narrated draft).
+# v77 combines both v76 branches (KRI-816 starts_fresh + KRI-815 voiceover script section).
+# v77 (KRI-827): "no text on her face or on the plate" => `keep_text_off` facts.
+# v78 combines main's v77 (KRI-815 + KRI-816) with KRI-827's v77 (keep_text_off).
+# v77 (KRI-821): "mute the camera / crowd sound" is a typed `source_muted` audio intent.
+# v78 (KRI-821): a named cut of a repeated line records which take (`cut_line_occurrences`).
+# v79 combines main's v77 (KRI-815 + KRI-816) with KRI-821's v78.
+# v80 combines main's v79 (KRI-815/816/821) with KRI-827's keep_text_off (branch v78).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v80"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -334,6 +345,25 @@ invent or quote lyrics, and never promise cuts matched to lyrics.
 """.strip("\n")
 
 
+# KRI-815: rendered into `$voiceover_script_section` (same line-suffix trick as the sections
+# above) ONLY when the server says a script can be drafted (footage attached, no voiceover,
+# flag on); "" otherwise, so every other prompt is byte-identical.
+_VOICEOVER_SCRIPT_PROMPT_SECTION = """
+VOICEOVER SCRIPT (footage attached, no voiceover recorded yet)
+When the creator asks you to WRITE the words they will say over their clips (a voiceover or
+narration script, "what should I say", "write me a script for these clips"), or asks to change
+the script you drafted earlier in this conversation ("make it shorter", "say it in Turkish"),
+answer with this action instead of `ask_user` or `propose_strategy`:
+{"action": {"kind": "draft_voiceover_script", "request_evidence": "verbatim excerpt of the
+creator's message asking for the script or the change", "revision_note": "the creator's
+requested change to the earlier draft, verbatim, or null for a new script"}}
+Do not write the script yourself: the server writes it from what the clips show. Do not
+propose a narrated or voiceover edit before the creator has recorded or imported a voiceover;
+that edit cannot render yet. Any other request (a montage, music, text, an edit that keeps the
+clips' own sound) is planned exactly as usual.
+""".strip("\n")
+
+
 # Camera-audio guidance uses `$voice_mode_section` only on a phone source-audio
 # manifest. Per-clip sound needs plan authority; the spoken modes additionally
 # need the voice route. Other manifests keep the same prompt bytes.
@@ -465,7 +495,10 @@ particular shot, photo or badge => {"closing": "<the creator's words for it>"}; 
 filler sounds or retakes from the speech => {"speech_cleanup": true}, keep them =>
 {"speech_cleanup": false}; cut out particular spoken words (a slip, a half question, a line, "the
 part where I say ...") => {"speech_cleanup": true, "cut_lines": ["with bread, no,"]}, one item per
-stretch in the creator's exact words, quoted or described, never translated. Quoted speech
+stretch in the creator's exact words, quoted or described, never translated; when they say
+which time a repeated line to cut ("cut the FIRST take of 'welcome to my channel'", "the last
+time I say ...") also add {"cut_line_occurrences": {"welcome to my channel": "first"}} with
+"first", "second", "third" or "last", and keep that word in the description. Quoted speech
 bounds use the timing requirement's "start_line"/"end_line", never a cut line; ordered clips
 or places still use the order requirement's "start"/"end". Captions =>
 {"captions": "on"}, {"captions": "off"} or {"captions":
@@ -475,10 +508,18 @@ code) when they name the captions' language ("Türkçe altyazı" => "tr"), plus 
 captions, each exactly as the creator wrote it (never corrected or translated); brighten or darken
 the footage itself ("brighten the dark clips", "klipleri aydınlat") => a `style` requirement with
 {"footage_light": "brighter"} or {"footage_light": "darker"}; no edit can change the footage's
-light yet, so never say in `summary` that it is brightened or darkened.
+light yet, so never say in `summary` that it is brightened or darkened; keep text off something
+in the frame ("no text on her face or on the plate", "yüzüme ve tabağa yazı gelmesin") => a
+`style` requirement with {"keep_text_off": [{"kind": "face"}, {"kind": "object", "label":
+"plate"}]}, each object in the creator's own words, never translated (the app asks the creator to
+mark the object on a frame; never describe where it is yourself).
 Keep the source/camera/ambient audio unchanged (including noun phrases such as "original camera
 audio" or "kameranın özgün sesi") => an `audio` requirement with
 {"audio_intent": "source_unchanged"}. This fact describes ONLY unprocessed source sound.
+Mute or remove the footage's own sound (camera, crowd, ambient, original audio) so only the
+voice is heard ("mute the crowd noise under my voice", "kamera sesini kapat") => an `audio`
+requirement with {"audio_intent": "source_muted"}; "keep it low / quieter under my voice" is
+not a mute and records no audio_intent.
 Record any requested processing, noise/wind removal, volume change, music or speech selection
 as a SEPARATE requirement with its complete description; never certify those changes with
 `source_unchanged`. For "original camera audio, remove only the wind noise", record both the
@@ -541,6 +582,11 @@ messages, those messages were never read into the brief: treat them as part of t
 MESSAGE. Record every requirement any of them states as an `add`, and set
 `delegates_all_choices` to true only when neither they nor the current message state any
 requirement.
+Also return a top-level boolean `starts_fresh`. Set it to true ONLY when the CURRENT USER
+MESSAGE asks to start over and drop what it asked for before ("Start fresh", "start over from
+scratch", "forget my earlier instructions", "Baştan başla", "sıfırdan yap"). The server then
+withdraws every requirement in the contract, so record as an `add` each requirement the current
+message itself states, even one the contract already had. Otherwise set it to false.
 """.strip("\n")
 
 
@@ -563,6 +609,9 @@ class MainCreatorInput(BaseModel):
     # KRI-520: the chat's language (app.kria.reply_language). None/"en" => the
     # prompt is byte-identical and the field is left out of input dumps.
     reply_language: str | None = Field(default=None, max_length=8, exclude_if=lambda v: v is None)
+    # KRI-815: footage attached, no voiceover, script flag on. False => the prompt is
+    # byte-identical, the field is left out of input dumps, and the action is refused.
+    voiceover_script_available: bool = Field(default=False, exclude_if=lambda v: not v)
 
 
 class MainCreatorOutput(BaseModel):
@@ -576,6 +625,8 @@ class MainCreatorOutput(BaseModel):
     # requirement and delegates every choice. Only ever True with no `brief_updates`; the
     # server, never the strategy or summary prose, turns it into an empty brief version.
     delegates_all_choices: bool = Field(default=False, exclude_if=lambda v: not v)
+    # KRI-816: typed "start fresh": the planner withdraws every saved requirement.
+    starts_fresh: bool = Field(default=False, exclude_if=lambda v: not v)
     creative_decision: CreativeCopyDecision | None = Field(
         default=None, exclude_if=lambda v: v is None
     )
@@ -705,6 +756,10 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             ),
             # KRI-479: "" (no `phone_source_audio`) adds no bytes; same line-suffix trick.
             voice_mode_section=_camera_audio_mode_section(input.capability_manifest),
+            # KRI-815: "" (no script possible) adds no bytes; same line-suffix trick.
+            voiceover_script_section=(
+                "\n" + _VOICEOVER_SCRIPT_PROMPT_SECTION if input.voiceover_script_available else ""
+            ),
         )
         # KRI-520: the reply-language instruction goes last, where it wins over the
         # English examples above. "" for English/unknown: byte-identical prompt.
@@ -738,6 +793,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     else:
                         raise ValueError("propose_strategy must explain its duration in rationale")
             action = CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(raw_action)
+            if isinstance(action, DraftVoiceoverScript) and not input.voiceover_script_available:
+                # KRI-815: only offered with footage and no voiceover; elsewhere it is a miss.
+                raise ValueError("draft_voiceover_script is not available for this project")
             if isinstance(action, ProposeStrategy):
                 # Share the compiler's exact policy: guided planning never
                 # echoes opaque IDs, while native planning remains bounded to
@@ -862,6 +920,16 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         reaction_beats=len(strategy.reaction_beats or ()),
                     )
                     strategy = strategy.model_copy(update={"execution_contract": None})
+                strategy = _repair_unrecorded_voiceover(
+                    input.capability_manifest,
+                    strategy,
+                    source_audio_stated=input.brief_enabled
+                    and _states_source_audio(
+                        data.get("brief_updates"),
+                        input.creator_request,
+                        starts_fresh=data.get("starts_fresh") is True,
+                    ),
+                )
                 strategy = normalize_creator_strategy_media(
                     input.capability_manifest,
                     strategy,
@@ -902,6 +970,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 delegates_all_choices=input.brief_enabled
                 and data.get("delegates_all_choices") is True
                 and not brief_updates,
+                starts_fresh=input.brief_enabled and data.get("starts_fresh") is True,
             )
         except ValidationError as exc:
             # Tell the retry which contract fields failed, without echoing
@@ -959,6 +1028,14 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 # the rule so the retry can change course instead of repeating
                 # the same strategy blind (KRI-238).
                 self._schema_feedback = str(exc)[:300]
+                if _non_pydantic_error_class(exc) in _FORMAT_REFUSAL_CLASSES:
+                    # KRI-816 T06: name the formats that CAN render, so the retry picks
+                    # one instead of spending every attempt on the same refusal.
+                    renderable = _renderable_edit_formats(input.capability_manifest)
+                    if renderable:
+                        self._schema_feedback += (
+                            "; edit_format values that can render here: " + ", ".join(renderable)
+                        )
             raise _classed_schema_error(
                 f"main_creator: invalid output: {exc}", _non_pydantic_error_class(exc)
             ) from exc
@@ -1303,7 +1380,118 @@ def _schema_error_class(exc: ValidationError) -> str:
     return _clean_error_class(",".join(parts) or "validation_error")
 
 
+# A saved audio requirement as the server renders it (`brief._render_requirement`):
+# `- [rN] [audio/<scope>] <text> facts={...}`, facts last with sorted keys.
+_SAVED_AUDIO_PATTERN = r"^- \[(?P<id>r\d+)\] \[audio/[^\]]+\] .* facts=\{(?P<facts>[^{}]*)\}$"
+_SAVED_AUDIO_LINE = re.compile(_SAVED_AUDIO_PATTERN)  # kri667: server-rendered typed facts
+_AUDIO_INTENT_FACT = re.compile(r"(?:^|; )audio_intent: (?P<intent>[^;]+)")  # kri667: typed facts
+
+
+def _states_source_audio(
+    brief_updates: object, creator_request: str = "", *, starts_fresh: bool = False
+) -> bool:
+    """The creator's brief records "keep the original camera sound" (a typed fact).
+
+    This turn's own audio updates win, including a change or removal that targets a
+    saved audio requirement by id (kind may be omitted, KRI-805). With none, the saved
+    brief's live audio requirements still hold (KRI-816 T06 already had it as r4), unless
+    this turn starts fresh or a saved audio requirement asks for another audio intent.
+    """
+    try:
+        updates = parse_brief_updates(brief_updates)
+    except Exception:  # noqa: BLE001 - an unreadable batch is refused by the parse below
+        return False
+    saved: dict[str, str] = {
+        match.group("id"): match.group("facts")
+        for line in creator_request.splitlines()
+        if (match := _SAVED_AUDIO_LINE.match(line.strip()))
+    }
+    audio = [
+        update
+        for update in updates
+        if update.kind == "audio"
+        or (update.operation != "add" and update.target_requirement_id in saved)
+    ]
+    if audio:
+        return any(
+            update.operation != "remove" and update.facts.get("audio_intent") == "source_unchanged"
+            for update in audio
+        )
+    if starts_fresh:
+        return False
+    intents = {
+        match.group("intent").strip()
+        for facts in saved.values()
+        if (match := _AUDIO_INTENT_FACT.search(facts))
+    }
+    return intents == {"source_unchanged"}
+
+
+def _repair_unrecorded_voiceover(manifest, strategy, *, source_audio_stated: bool):
+    """Drop a model-invented voiceover when nothing is recorded (KRI-816, T06).
+
+    Only when the creator's brief records that they asked for their original camera
+    sound (a typed fact, never a word match). A format the model chose is never
+    swapped here: an unavailable format stays a named policy refusal (KRI-129, no
+    silent overrides).
+    """
+    from app.agents._schemas.edit_format import coerce_edit_format  # noqa: PLC0415
+
+    if (
+        source_audio_stated
+        and strategy.audio_strategy == "voiceover"
+        and not manifest.has_voiceover
+        and coerce_edit_format(strategy.edit_format) not in NARRATED_EDIT_FORMATS
+    ):
+        log.info("main_creator_unrecorded_voiceover_repaired")
+        strategy = strategy.model_copy(update={"audio_strategy": "original_audio"})
+    return strategy
+
+
+_FORMAT_REFUSAL_CLASSES = frozenset(
+    {"policy_edit_format_unavailable", "policy_phone_format_unavailable"}
+)
+
+
+def _renderable_edit_formats(manifest: ResolvedCreatorManifest) -> list[str]:
+    """Edit formats this manifest can render now (the iPhone's when it is a phone edit)."""
+    capabilities = manifest.capabilities
+    prefix = (
+        "phone_format:"
+        if any(name.startswith("phone_format:") for name in capabilities)
+        else "edit_format:"
+    )
+    return sorted(
+        name.removeprefix(prefix)
+        for name, capability in capabilities.items()
+        if name.startswith(prefix)
+        and capability.available
+        and (
+            capabilities.get(f"edit_format:{name.removeprefix(prefix)}") is None
+            or capabilities[f"edit_format:{name.removeprefix(prefix)}"].available
+        )
+    )
+
+
+# Closed, value-free tags for server policy refusals (KRI-816): the old catch-all
+# `policy_refusal` hid which rule ended the T06 turn.
+_POLICY_REFUSAL_TAGS: tuple[tuple[str, str], ...] = (
+    ("is unavailable", "policy_edit_format_unavailable"),
+    ("does not support voiceover", "policy_phone_voiceover_unavailable"),
+    ("phone rendering requires bound video", "policy_phone_media_unavailable"),
+    ("montage audio sources", "policy_montage_audio_sources"),
+    ("montage cadence sources", "policy_montage_cadence_sources"),
+    ("requires at least one attached clip", "policy_native_no_clip"),
+    ("selected_media_ids must reference", "policy_unknown_media"),
+)
+
+
 def _non_pydantic_error_class(exc: Exception) -> str:
+    from app.agents._schemas.creator_policy import (  # noqa: PLC0415
+        PhoneFormatUnavailableError,
+        PhoneMediaUnavailableError,
+    )
+
     if isinstance(exc, UserSongUnavailableError):
         return "user_song_unavailable"
     if isinstance(exc, json.JSONDecodeError):
@@ -1315,7 +1503,17 @@ def _non_pydantic_error_class(exc: Exception) -> str:
         return "strategy_duration_missing"
     if "brief_updates" in message:
         return "brief_updates_invalid"
-    return "policy_refusal" if isinstance(exc, ValueError) else type(exc).__name__.lower()
+    if isinstance(exc, PhoneFormatUnavailableError):
+        return (
+            "policy_phone_voiceover_unavailable"
+            if getattr(exc, "voiceover", False)
+            else "policy_phone_format_unavailable"
+        )
+    if isinstance(exc, PhoneMediaUnavailableError):
+        return "policy_phone_media_unavailable"
+    if isinstance(exc, ValueError):
+        return next((tag for key, tag in _POLICY_REFUSAL_TAGS if key in message), "policy_refusal")
+    return type(exc).__name__.lower()
 
 
 def _clean_error_class(value: str) -> str:

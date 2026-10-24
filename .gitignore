@@ -19,6 +19,8 @@ tmp/
 
 # Pre-PR overlay-verify outputs (reports + montages from `make verify-overlays`)
 .overlay-verify/
+# KRI-827 `make verify-protected-text` outputs
+.protected-verify/
 
 # Take-window verify outputs (`python -m app.cli.verify_take_window`, KRI-790)
 .take-window-verify/

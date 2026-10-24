@@ -27,6 +27,10 @@ class _Rows:
     def all(self):
         return self._rows
 
+    def scalar(self):
+        # KRI-820 backlog COUNT: an empty shared queue.
+        return 0
+
 
 class _Session:
     def __init__(self, rows, *, preview_rows=()):  # noqa: ANN001
@@ -81,7 +85,10 @@ def _asset(*, attempts: int):
 
 
 def test_reconcile_requeues_with_new_fenced_attempt(monkeypatch) -> None:
+    # Only a never-dispatched (`uploaded`) row is requeued. A queued/analyzing
+    # row past its declared deadline is terminal instead (KRI-820).
     asset = _asset(attempts=1)
+    asset.status = "uploaded"
     session = _Session([asset])
 
     @contextmanager
@@ -98,6 +105,7 @@ def test_reconcile_requeues_with_new_fenced_attempt(monkeypatch) -> None:
     assert asset.status == "queued"
     assert asset.analysis_attempt_count == 2
     assert asset.analysis_attempt_token != "old"
+    assert asset.analysis_deadline_at is not None
     publish.assert_called_once_with(
         args=[str(asset.id), False],
         queue="visuals-analysis",
@@ -105,6 +113,7 @@ def test_reconcile_requeues_with_new_fenced_attempt(monkeypatch) -> None:
             "pool_asset_attempt_token": asset.analysis_attempt_token,
             "x-correlation-id": "batch-correlation",
         },
+        expires=asset.analysis_deadline_at,
     )
 
 
@@ -413,6 +422,7 @@ def test_reconcile_does_not_delete_reservation_renewed_during_cleanup(monkeypatc
 
 def test_reconcile_publish_failure_becomes_safe_retryable_failure(monkeypatch) -> None:
     asset = _asset(attempts=1)
+    asset.status = "uploaded"
     session = _Session([asset])
 
     @contextmanager

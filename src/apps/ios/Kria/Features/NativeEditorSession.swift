@@ -660,6 +660,10 @@ struct NativeEditorTemporaryVideo {
                 doc.clips[kept.index].inS = kept.inS
                 doc.clips[kept.index].durationS = kept.durationS
                 doc.clips[kept.index].durationBeats = nil
+                if doc.clips[kept.index].raw["source_end_s"] != nil {
+                    let rate = Self.explicitPlaybackRate(doc.clips[kept.index])
+                    doc.clips[kept.index].raw["source_end_s"] = .number(kept.inS + kept.durationS * rate)
+                }
             }
             let removedSlots = plan.dropped.sorted().map { doc.clips[$0] }
             for slot in removedSlots {
@@ -1587,8 +1591,12 @@ struct NativeEditorTemporaryVideo {
                 // would replay a trimmed clip sped up or slowed down.
                 sourceSpan = NativeNarratedSourceTiming.span(target: movingDuration, available: available)
             } else {
+                let selectedSpan = Self.number(slot.raw["source_end_s"]).flatMap { end -> Double? in
+                    let span = end - sourceStart
+                    return span.isFinite && span > 0 ? span : nil
+                }
                 sourceSpan = min(
-                    Self.number(slot.raw["native_source_span_s"]) ?? movingDuration,
+                    selectedSpan ?? Self.number(slot.raw["native_source_span_s"]) ?? movingDuration,
                     available ?? .greatestFiniteMagnitude
                 )
             }
@@ -3456,6 +3464,9 @@ struct NativeEditorTemporaryVideo {
         slot.inS = abs(resized.start - slot.inS) < 1e-9 ? slot.inS : resized.start
         slot.durationS = abs(resized.length - currentDuration) < 1e-9 && slot.durationS != nil
             ? slot.durationS : max(minimumClipDuration, resized.length)
+        if slot.raw["source_end_s"] != nil {
+            slot.raw["source_end_s"] = .number(resized.start + resized.length * rate)
+        }
         slot.durationBeats = nil; next.clips[index] = slot
         // Later clips ripple by construction (windows are a walk of the slot durations); the
         // per-clip labels must ripple with them, derived from the gesture baseline every update.
@@ -3534,6 +3545,9 @@ struct NativeEditorTemporaryVideo {
         transactDocument(section: .timeline) {
             $0.clips[index].inS = start
             if start != slot.inS { $0.clips[index].raw["source_start_locked"] = .bool(true) }
+            if let selectedEnd = slot.raw["source_end_s"]?.numberValue {
+                $0.clips[index].raw["source_end_s"] = .number(start + max(0, selectedEnd - slot.inS))
+            }
         }
     }
 
@@ -3601,7 +3615,11 @@ struct NativeEditorTemporaryVideo {
             if let inS { slot.inS = max(0, inS) }
             if let durationS { slot.durationS = max(minimumClipDuration, durationS) }
             if let durationBeats { slot.durationBeats = durationBeats }
-            if inS != nil || durationS != nil { slot.durationBeats = nil }
+            if inS != nil || durationS != nil {
+                slot.durationBeats = nil
+                // Generic timeline callers don't provide a source window.
+                slot.raw.removeValue(forKey: "source_end_s")
+            }
         }
     }
     func setClipSourceWindow(clipID: String, startS: Double, endS: Double) {
@@ -5858,6 +5876,40 @@ struct NativeEditorTemporaryVideo {
     /// fall-back to the timeline section would wrongly say yes.
     var serverOffersClipCrop: Bool { document.capabilities["clips.source_crop"] != nil }
     var canCropClips: Bool { document.capabilities["clips.source_crop"]?.editable == true }
+    /// Speed is a native-render operation. It must be explicitly advertised;
+    /// the editable timeline capability alone is never enough to expose it.
+    var serverOffersClipPlaybackRate: Bool { document.capabilities["clips.playback_rate"] != nil }
+    var canSetClipPlaybackRate: Bool { document.capabilities["clips.playback_rate"]?.editable == true }
+    /// These lanes are stored on the output clock and currently have no
+    /// source-anchor projection. Refuse a speed edit while any is present so
+    /// it cannot silently detach a creator's timed work from its footage.
+    var clipSpeedBlockedReason: String? {
+        if GuidedLabelRebase.hasLabels(document.textElements, includeFreeText: ridesGuidedTimeline), !canEditSection(.text) {
+            return "Speed isn’t available while this edit’s text timing is locked."
+        }
+        if !document.captionCues.isEmpty { return "Speed isn’t available while captions are timed to this edit." }
+        if !document.mediaOverlays.isEmpty { return "Speed isn’t available while media overlays are timed to this edit." }
+        if !document.visualBlocks.isEmpty { return "Speed isn’t available while visuals are timed to this edit." }
+        if !document.motionScenes.isEmpty { return "Speed isn’t available while motion is timed to this edit." }
+        if !document.cameraEffects.isEmpty { return "Speed isn’t available while camera effects are timed to this edit." }
+        if !document.soundEffects.isEmpty { return "Speed isn’t available while sound effects are timed to this edit." }
+        if !document.drawings.isEmpty { return "Speed isn’t available while drawings are timed to this edit." }
+        if document.carouselMoment != nil { return "Speed isn’t available while a carousel changes this edit’s timing." }
+        return nil
+    }
+
+    /// A photo can still crop, but has no source timeline to retime.
+    func speedBlockedReason(for selection: EditorSelection?) -> String? {
+        guard let selection, selection.kind == .clip else { return nil }
+        if let found = sourceWindowSlot(for: selection) {
+            let kind = found.slot.raw["media_kind"]?.stringValue ?? found.slot.raw["kind"]?.stringValue
+            if kind == "image" { return "Photos do not have playback speed." }
+            if let url = found.clip.sourceClipIndex.flatMap({ resolvedSources?[$0] })?.url, isStill(url) {
+                return "Photos do not have playback speed."
+            }
+        }
+        return rendersOnDevice ? clipSpeedBlockedReason : nil
+    }
 
     /// Why Crop is greyed out for the selected clip, or nil when it is available.
     func cropBlockedReason(for selection: EditorSelection?) -> String? {
@@ -5912,7 +5964,7 @@ struct NativeEditorTemporaryVideo {
         return value
     }
 
-    private func sourceWindowSlot(for selection: EditorSelection?) -> (slot: EditorTimelineSlot, clip: EditorClip)? {
+    func sourceWindowSlot(for selection: EditorSelection?) -> (slot: EditorTimelineSlot, clip: EditorClip)? {
         guard let selection, selection.kind == .clip,
               let clip = timelineClips.first(where: { $0.id.uuidString == selection.id }),
               let slot = document.clips.first(where: { $0.id == clip.slotID }) else { return nil }
@@ -5930,14 +5982,14 @@ struct NativeEditorTemporaryVideo {
     }
 
     /// Output seconds the slot lasts, as the render compiler reads it (`durationS`, else the projected span).
-    private func sourceWindowLength(slot: EditorTimelineSlot, clip: EditorClip) -> Double {
+    func sourceWindowLength(slot: EditorTimelineSlot, clip: EditorClip) -> Double {
         max(minimumClipDuration, slot.durationS ?? (clip.trimOut - clip.trimIn))
     }
 
     /// The playback rate the clip really plays at, derived the way the render compiler and the server do: an
     /// explicit `playback_rate`, else projected source span / slot length. That covers slowed narrated clips
     /// (`native_source_span_s`, no `playback_rate`) and older retimes that live only in the source span.
-    private func effectiveSourceRate(slot: EditorTimelineSlot, clip: EditorClip) -> Double {
+    func effectiveSourceRate(slot: EditorTimelineSlot, clip: EditorClip) -> Double {
         if let explicit = slot.raw["playback_rate"]?.numberValue, explicit.isFinite, explicit > 0 { return explicit }
         let derived = (clip.trimOut - clip.trimIn) / sourceWindowLength(slot: slot, clip: clip)
         return derived.isFinite && derived > 0 ? derived : 1
@@ -5972,6 +6024,9 @@ struct NativeEditorTemporaryVideo {
             slot.inS = max(0, window.start)
             if moved { slot.raw["source_start_locked"] = .bool(true) }
             if resized { slot.durationS = max(minimumClipDuration, window.length); slot.durationBeats = nil }
+            if slot.raw["source_end_s"] != nil {
+                slot.raw["source_end_s"] = .number(KriaSourceWindowGeometry.sourceEnd(window, rate: rate))
+            }
         }
         return true
     }

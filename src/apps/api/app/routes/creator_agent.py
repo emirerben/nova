@@ -119,9 +119,11 @@ from app.routes.generative_jobs import (
 from app.schemas.clip_intents import ResolvedClipIntent
 from app.schemas.edit_proposal import (
     MAX_PROPOSAL_DURATION_S,
+    PHOTO_GROUP_PATTERN,
     MixedMediaTimingProfile,
     MontageCadenceConstraint,
     PinnedText,
+    binds_mixed_media_timing,
     recognize_cadence_reuse_policy,
     recognize_explicit_cadence_reuse_policy,
     recognize_image_layout,
@@ -795,7 +797,7 @@ def _explicit_guided_voiceover_request(request: str, manifest: Any) -> bool:
     return bool(
         manifest.has_voiceover
         and (
-            recognize_mixed_media_timing(request) is not None
+            binds_mixed_media_timing(recognize_mixed_media_timing(request))
             or _explicit_media_scope(request, manifest) == "all"
         )
     )
@@ -1498,16 +1500,20 @@ def _apply_explicit_render_intent(
         # valid pool images outside the guided proposal while the assistant
         # still promised a photo sequence. Promote only an affirmative,
         # sub-second photo request that explicitly places photos among videos.
+        # KRI-824: only an ask about the photos as a group ("photos", "every photo")
+        # sets this cadence for every still. One named photo ("the beach photo 0.5
+        # seconds") is that photo's own stamped hold (``app.kria.asset_holds``), never
+        # a profile that would pin every other photo to the same length.
         normalized = request.casefold()
         photo_subsecond = bool(
             re.search(
-                r"\b(?:photos?|images?|stills?|pictures?)\b.{0,80}"
+                PHOTO_GROUP_PATTERN + r".{0,80}"
                 # "0,3 s": a decimal comma, as Turkish and most of Europe type it.
                 r"(?:\b0?\.[0-9]+|(?<![\d.,])0,[0-9]+)\s*(?:s|sec(?:ond)?s?)\b",
                 normalized,
             )
             or re.search(
-                r"\b(?:photos?|images?|stills?|pictures?)\b.{0,80}"
+                PHOTO_GROUP_PATTERN + r".{0,80}"
                 r"\b[1-9][0-9]{0,2}\s*(?:ms|milliseconds?)\b",
                 normalized,
             )
@@ -1522,7 +1528,7 @@ def _apply_explicit_render_intent(
         )
         if photo_subsecond and has_video_context and not timing_negated:
             numeric_match = re.search(
-                r"\b(?:photos?|images?|stills?|pictures?)\b.{0,80}?"
+                PHOTO_GROUP_PATTERN + r".{0,80}?"
                 r"(\b0?\.[0-9]+|(?<![\d.,])0,[0-9]+|\b[1-9][0-9]{0,2})\s*"
                 r"(?:s|sec(?:ond)?s?|ms|milliseconds?)\b",
                 normalized,
@@ -1532,6 +1538,9 @@ def _apply_explicit_render_intent(
                 image_hold_s = float(numeric_match.group(1).replace(",", "."))
                 if "ms" in numeric_match.group(0) or "millisecond" in numeric_match.group(0):
                     image_hold_s /= 1000
+                # KRI-825 review: this legacy fallback only reads the 0.1-0.8 s quick-photo
+                # band. A longer photo length is the recognizer's (own-length, negation and
+                # quote checks); a first number here may be a title's or a video's seconds.
                 if not 0.1 <= image_hold_s <= 0.8:
                     image_hold_s = None
             mixed_media_timing = MixedMediaTimingProfile(
@@ -1548,7 +1557,7 @@ def _apply_explicit_render_intent(
         if guided_voiceover is not None and guided_voiceover.available:
             updates["execution_contract"] = GUIDED_VOICEOVER_EXECUTION_CONTRACT
             updates["render_program"] = "guided"
-    if mixed_media_timing is not None:
+    if binds_mixed_media_timing(mixed_media_timing):
         # A rapid still sequence among longer video moments is an exact-cut
         # montage contract. Keep the guided render program (so pool photos are
         # first-class media), but send the specialist through its source-aware
@@ -2393,7 +2402,7 @@ def _fallback_strategy(manifest: Any, *, user_message: str = "") -> CreativeStra
     uses_guided_voiceover = bool(
         manifest.has_voiceover
         and getattr(manifest, "narration", None) is not None
-        and (mixed_media_timing is not None or media_scope == "all")
+        and (binds_mixed_media_timing(mixed_media_timing) or media_scope == "all")
         and guided_voiceover is not None
         and guided_voiceover.available
     )

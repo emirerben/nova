@@ -18,6 +18,7 @@ from app.kria.freeze_ask import times_one_moment
 from app.schemas.edit_proposal import recognize_total_duration_s
 from app.services.choice_questions import (
     CONFLICT_DURATION_VS_COUNT,
+    CONFLICT_HOLDS_VS_LENGTH,
     CONFLICT_LENGTH_VS_NATURAL,
     CONFLICT_VOICE_VS_DURATION,
 )
@@ -210,7 +211,12 @@ KNOWN_AUDIO_SOURCES: frozenset[str] = frozenset(
     {source for sources in NATURAL_OWNER_DECLARATION.values() for source in sources}
 )
 _DURATION_CONFLICTS: frozenset[str] = frozenset(
-    {CONFLICT_DURATION_VS_COUNT, CONFLICT_VOICE_VS_DURATION, CONFLICT_LENGTH_VS_NATURAL}
+    {
+        CONFLICT_DURATION_VS_COUNT,
+        CONFLICT_HOLDS_VS_LENGTH,
+        CONFLICT_VOICE_VS_DURATION,
+        CONFLICT_LENGTH_VS_NATURAL,
+    }
 )
 
 

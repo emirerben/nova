@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
+from app.kria.asset_holds import HOLD_TOLERANCE_S, hold_seconds
 from app.kria.brief import BriefRequirement, CreativeBrief, normalize_style_intent
 from app.kria.brief_route import (
     END_KEYS,
@@ -375,6 +376,12 @@ class PlanFacts:
     # How loud the footage's own sound plays under the creator's voice (0..1; 1.0 = full
     # volume). None = unknown, never guessed.
     voiceover_bed_level: float | None = None
+    # KRI-821: how the creator can change the footage's own sound level on THIS variant:
+    # "editor" = the live capability map for this app build opens Sounds > Original audio
+    # (the chat edit works too); "chat" = a phone Voiceover edit whose level a chat edit
+    # recompiles (`set_mix original_level`), app build unknown; None = no control (cloud
+    # render, unknown). Never guessed: a receipt names only the control recorded here.
+    original_audio_control: str | None = None
     closing_requested: bool = False
     closing_visual_id: str | None = None
     closing_badge_requested: bool = False
@@ -399,6 +406,9 @@ class PlanFacts:
     # KRI-628: whether a phone Talking render started at the line the creator quoted
     # (`variant["opening_cut"]`): "applied" or "not_applied", and why not. None = no
     # receipt (no such ask, a draft, or an older render): nothing is claimed.
+    # KRI-821: a phone Talking render's named-line cuts (`variant["named_cuts"]`, one receipt
+    # per line the creator named). None = no such record: nothing about a named cut is claimed.
+    named_cuts: tuple[Mapping[str, Any], ...] | None = None
     opening_cut: str | None = None
     opening_cut_reason: str | None = None
     opening_cut_quote: str | None = None
@@ -412,6 +422,10 @@ class PlanFacts:
     # KRI-706: True when the rendered opening title still sits on the speaker's face
     # (`variant["opening_title_placement"]["face_collision"]`). None = no such receipt.
     title_face_collision: bool | None = None
+    # KRI-827: per requirement that carries "no text on <face|object>", what a phone Talking
+    # render's protected-text receipt says (`variant["protected_text_regions"]`):
+    # (requirement_id, verdict, labels). None = no such receipt: nothing is claimed.
+    protected_text: tuple[tuple[str, str, tuple[str, ...]], ...] | None = None
     # KRI-707: how a phone Talking render handled each text-on-a-spoken-word ask
     # (`variant["spoken_text_placement"]`). None = no such receipt (no such ask, a draft,
     # or an older render): nothing is claimed.
@@ -461,6 +475,10 @@ class PlanFacts:
     # KRI-760: the lines the creator asked to hear whole, as the plan record holds them and the
     # finished timeline confirms. None = this plan recorded none (nothing is claimed).
     named_lines: tuple[NamedLineFact, ...] | None = None
+    # KRI-824: the photos the creator gave their own seconds, as the plan record holds them
+    # ({requirement_id, media_id, hold_s, rendered_s}); a finished timeline's own still
+    # lengths replace ``rendered_s``. None = no montage record to read (nothing is claimed).
+    asset_holds: tuple[Mapping[str, Any], ...] | None = None
     # KRI-689: True when the plan was laid out by the phone unified montage, which plays every
     # clip at its natural speed (the phone recipe has no retime for story footage). A
     # clip-speed ask is then a known miss; any other plan claims nothing about speed.
@@ -835,6 +853,9 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         source_durations_s=_source_durations(record.get("clip_durations_s")),
         song_bed=bool(record.get("user_song")),
         speed_unsupported=True,
+        asset_holds=tuple(
+            row for row in record.get("asset_holds") or [] if isinstance(row, Mapping)
+        ),
         **_montage_caption_facts(record.get("captions")),
     )
 
@@ -1455,6 +1476,24 @@ def _phone_receipt_facts(receipt: object, *, timed: bool) -> dict[str, Any]:
     return facts
 
 
+def _rendered_bed_level(variant: Mapping[str, Any]) -> float | None:
+    """How loud the footage's own sound plays under the voice on a rendered phone variant.
+
+    KRI-821: an editor Save (``original_audio_level``, ``original_audio_level_source ==
+    "editor"``) is what the device recipe plays (`phone_authored_timeline` /
+    `phone_editor._apply_original_level`), so it wins over the render's
+    ``voiceover_bed_level``. A montage ``voiceover`` variant records only the former.
+    """
+    archetype = variant.get("resolved_archetype")
+    saved = _finite_number(variant.get("original_audio_level"))
+    if saved is not None and (
+        archetype == "voiceover"
+        or (archetype == "narrated" and variant.get("original_audio_level_source") == "editor")
+    ):
+        return saved
+    return _finite_number(variant.get("voiceover_bed_level"))
+
+
 def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFacts:
     """Facts off a rendered phone variant (KRI-537).
 
@@ -1481,17 +1520,21 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     ):
         changes["measured_export_duration_s"] = measured
     changes["outro_s"] = _declared_outro_s(variant)
-    bed = _finite_number(variant.get("voiceover_bed_level"))
+    bed = _rendered_bed_level(variant)
     if bed is not None:
         changes["voiceover_bed_level"] = max(0.0, bed)
         changes["audio_strategy"] = "voiceover"
-    elif variant.get("resolved_archetype") == "narrated":
+    elif variant.get("resolved_archetype") in {"narrated", "voiceover"}:
         changes["audio_strategy"] = "voiceover"
     changes.update(_rendered_speech_facts(variant))
     changes.update(_speaker_framing_facts(variant))
     changes.update(_opening_cut_facts(variant))
+    named = variant.get("named_cuts")
+    if isinstance(named, list):
+        changes["named_cuts"] = tuple(row for row in named if isinstance(row, Mapping))
     changes.update(_title_face_facts(variant))
     changes.update(_spoken_text_facts(variant))
+    changes.update(_protected_text_facts(variant))
     changes.update(_beat_room_facts(variant.get("phone_beat_receipt")))
     changes.update(_rendered_caption_facts(variant))
     rendered = _rendered_clip_durations(variant)
@@ -1613,6 +1656,30 @@ def _rendered_clip_cuts(
     return [(media_id, start, end) for _at, _index, media_id, start, end in cuts]
 
 
+def _rendered_holds(
+    holds: tuple[Mapping[str, Any], ...] | None, variant: Mapping[str, Any]
+) -> tuple[Mapping[str, Any], ...] | None:
+    """KRI-824: each held photo's seconds as the finished timeline plays them."""
+    rows = variant.get("story_timeline")
+    if not holds or not isinstance(rows, list):
+        return holds
+    played: dict[str, float] = {}
+    for row in rows:
+        if not isinstance(row, Mapping) or row.get("kind") != "image":
+            continue
+        start = _finite_number(row.get("output_start_s"))
+        end = _finite_number(row.get("output_end_s"))
+        media_id = row.get("media_id")
+        if isinstance(media_id, str) and start is not None and end is not None and end > start:
+            played[media_id] = played.get(media_id, 0.0) + (end - start)
+    return tuple(
+        {**hold, "rendered_s": round(played[hold["media_id"]], 4)}
+        if hold.get("media_id") in played
+        else hold
+        for hold in holds
+    )
+
+
 def _same_file_positions(
     ids: Sequence[str], fingerprints: Mapping[str, str]
 ) -> tuple[tuple[int, ...], ...] | None:
@@ -1699,6 +1766,7 @@ def plan_facts_from_rendered_montage(
         or plan.cut_lengths_s,
         cut_clip_ids=tuple(media_id for media_id, _start, _end in cuts) or plan.cut_clip_ids,
         source_durations_s=plan.source_durations_s,
+        asset_holds=_rendered_holds(plan.asset_holds, variant),
         song_bed=plan.song_bed,
         speed_unsupported=plan.speed_unsupported,
         source_audio_kept=kept if isinstance(kept, bool) else None,
@@ -2867,6 +2935,10 @@ def _cut_lines(req: BriefRequirement) -> list[str]:
     ]
 
 
+# KRI-821: the phone Talking worker cuts these lines (`opening_cut_ask.brief_named_cuts`).
+named_cut_lines = _cut_lines
+
+
 # Single quote marks the brief writer swaps in for the creator's double quotes (KRI-792:
 # 'with bread, no,'). The curly closing one is also the apostrophe iOS types.
 _SINGLE_QUOTES = "'‘’"
@@ -2949,7 +3021,7 @@ _FOOTAGE_SOUND_STRICT = (
     rf"|video|camera) {_SOUND_NOUN}"
     r"|(?:sound|audio|noise)s? (?:of|from|in) the (?:footage|clips?|video|crowd)"
     r"|kalabalik\w*|orijinal ses\w*|ortam ses\w*|[çc]ekim\w* ses\w*"
-    r"|klip\w* ses\w*|video\w* ses\w*)"
+    r"|klip\w* ses\w*|video\w* ses\w*|kamera\w* ses\w*)"
 )
 # "background noise" counts for a keep-it-quiet ask, not for a mute (that may mean
 # noise reduction on the voice recording).
@@ -2961,10 +3033,12 @@ _BED_NOISE_RE = re.compile(rf"\b{_FOOTAGE_SOUND_LOOSE}\b|\bg[üu]r[üu]lt[üu]")
 _BED_NAMED_RE = re.compile(rf"\b{_FOOTAGE_SOUND_STRICT}\b")
 # Quiet wording about the bed. Bare adjectives ("soft", "calm") only count with
 # under/beneath, which are in the list themselves.
+# The `pos` group marks position words ("under my voice"), which say where the bed plays,
+# not how loud: "mute the crowd noise under my voice" is still a mute (KRI-821).
 _BED_QUIET_RE = re.compile(
-    r"\b(?:quiet(?:er)?|low(?:er)?|down|under|beneath|below|underneath|duck(?:ed|ing)?"
-    r"|in the background|turned down)\b"
-    r"|\bkisik|\bkis(?:il|ili|in)|\bd[üu][şs][üu]k|\balt[iı]nda|\barka planda|\bsessiz"
+    r"\b(?:quiet(?:er)?|low(?:er)?|down|(?P<pos>under|beneath|below|underneath)"
+    r"|duck(?:ed|ing)?|in the background|turned down)\b"
+    r"|\bkisik|\bkis(?:il|ili|in)|\bd[üu][şs][üu]k|\b(?P<pos_tr>alt[iı]nda)|\barka planda|\bsessiz"
 )
 # The opposite direction ("raise the crowd noise", "not too quiet").
 _BED_UP_RE = re.compile(
@@ -2977,9 +3051,22 @@ _BED_MUTE_RE = re.compile(
 )
 
 
+# KRI-821: the typed mute the model records for "mute the camera / crowd sound"
+# (main_creator._BRIEF_PROMPT_SECTION). A recorded `audio_intent` decides; the wording
+# recognisers below only read briefs written before it (KRI-667).
+SOURCE_MUTED_INTENT = "source_muted"
+
+
+def _typed_audio_intent(req: BriefRequirement) -> str | None:
+    value = req.facts.get("audio_intent") if isinstance(req.facts, Mapping) else None
+    return value if isinstance(value, str) else None
+
+
 def _wants_bed_under_voice(req: BriefRequirement) -> bool:
     """Keep the footage's own sound (crowd, ambience, original audio) low under the voice."""
     if req.kind not in _BEAT_KINDS or _wants_beats(req) or _wants_cleanup(req):
+        return False
+    if _typed_audio_intent(req) is not None:
         return False
     text = _req_text(req)
     return bool(
@@ -2987,14 +3074,50 @@ def _wants_bed_under_voice(req: BriefRequirement) -> bool:
     )
 
 
+def _asks_bed_level(text: str) -> bool:
+    """Level wording about the bed ("lower", "quiet"), not just where it plays ("under")."""
+    return any(
+        m.group("pos") is None and m.group("pos_tr") is None for m in _BED_QUIET_RE.finditer(text)
+    )
+
+
 def _wants_bed_muted(req: BriefRequirement) -> bool:
-    """Mute or remove the footage's own sound, with no "keep it low" wording."""
+    """Mute or remove the footage's own sound, with no keep / lower / raise wording.
+
+    KRI-821: the typed ``source_muted`` is the brief writer's reading, never enough alone:
+    the approved requirement text must itself name the footage sound and say mute/remove,
+    and must not ask to keep it, lower it or raise it. Untyped (pre-v77) briefs are read by
+    the same words for their receipt only; `footage_mute_ask` renders a mute from typed
+    asks alone.
+    """
     if req.kind not in _BEAT_KINDS or _wants_beats(req) or _wants_cleanup(req):
+        return False
+    intent = _typed_audio_intent(req)
+    if intent is not None and (req.kind != "audio" or intent != SOURCE_MUTED_INTENT):
         return False
     text = _req_text(req)
     return bool(
-        _BED_NAMED_RE.search(text) and _BED_MUTE_RE.search(text) and not _BED_QUIET_RE.search(text)
+        _BED_NAMED_RE.search(text)
+        and _BED_MUTE_RE.search(text)
+        and not _KEEP_VERB_RE.search(text)
+        and not _BED_UP_RE.search(text)
+        and not _asks_bed_level(text)
     )
+
+
+def renders_bed_mute(req: BriefRequirement) -> bool:
+    """KRI-821: this live requirement makes the render play the footage at 0 under the voice.
+
+    Only a typed ``source_muted`` the approved text corroborates (`_wants_bed_muted`); a
+    wording-only reading never decides the render.
+    """
+    return req.live and _typed_audio_intent(req) == SOURCE_MUTED_INTENT and _wants_bed_muted(req)
+
+
+# KRI-821: public names for the readers that decide what the render does with the bed
+# (`app.kria.footage_mute_ask`), so render and receipt share one recogniser.
+wants_bed_muted = _wants_bed_muted
+wants_bed_under_voice = _wants_bed_under_voice
 
 
 def _has_duration_target(req: BriefRequirement) -> bool:
@@ -3049,8 +3172,21 @@ _CLEANUP_IF_OFFERED = (
     "If Clean up speech is offered when you approve, choose it to cut the long pauses"
 )
 _CLEANUP_UNAVAILABLE = "Speech cleanup isn't available for this project yet, so the pauses stay"
-_NAMED_CUTS_NEED_EDITOR = (
-    "I have not confirmed that exact spoken line was removed; check it in the editor"
+# KRI-846: said as a plain limit, never as editor work: no editor action cuts a spoken line
+# out (talking-source slots can't be trimmed or split, the server refuses any change to their
+# windows with 409 TIMELINE_STALE, and a Narrated editor trims pictures, not the voice).
+# KRI-551: a consented retake cleanup may have removed the line, and a generic cleanup record
+# (even one with a retake) cannot prove it, so it says "may still be", never "stays". One
+# static string for every speech format: `_loc` translates exact keys only and the
+# review-note dedupe compares text.
+_NAMED_CUTS_STAY = (
+    "I can't cut out one exact line yet or confirm it's gone, so it may still be in your video"
+)
+# KRI-821: a named line the phone Talking render could not cut (its receipt says why).
+_NAMED_CUT_STILL_IN = "Still in your video"
+# KRI-821: a phone Talking draft cuts each named line the render finds said once.
+_NAMED_CUT_AT_RENDER = (
+    "I'll cut the line you named out of your take if I find it said once, and tell you after"
 )
 _CAPTIONS_WORD_BY_WORD = "words light up as you say them"
 # KRI-541: what speech cleanup did on a finished render.
@@ -3172,8 +3308,13 @@ _REASON_TR: dict[str, str] = {
     _CLEANUP_UNAVAILABLE: (
         "Konuşma temizliği bu proje için henüz yok, o yüzden duraklamalar kalıyor"
     ),
-    _NAMED_CUTS_NEED_EDITOR: (
-        "o belirli konuşulan cümlenin kaldırıldığını doğrulamadım; editörde kontrol et"
+    _NAMED_CUT_STILL_IN: "Videonda hâlâ var",
+    _NAMED_CUT_AT_RENDER: (
+        "Söylediğin cümleyi çekiminde bir kez geçiyorsa keseceğim ve sonra sana söyleyeceğim"
+    ),
+    _NAMED_CUTS_STAY: (
+        "belirli bir cümleyi henüz tam olarak kesemiyorum ve çıkarıldığını doğrulayamıyorum, "
+        "o yüzden videoda kalmış olabilir"
     ),
     _CAPTIONS_WORD_BY_WORD: "kelimeler sen söylerken yanıyor",
     _CLEANUP_DONE: "Konuşma temizliği uzun duraklamaları kesti",
@@ -3264,6 +3405,8 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _CLEANUP_DONE,
     _CLEANUP_NOTHING_TO_CUT,
     _CLEANUP_NOT_RUN,
+    _NAMED_CUT_STILL_IN,
+    _NAMED_CUT_AT_RENDER,
     _BED_STILL_PLAYS,
     _NO_CLIP_SPEED,
     _NO_FREEZE_FRAME,
@@ -3791,13 +3934,69 @@ def _check_speech_excerpts(req: BriefRequirement, facts: PlanFacts) -> Requireme
     return _receipt(req, "partial", "; ".join(problems) + ".")
 
 
+_NAMED_CUT_MISSED = {
+    "not_found": ("I couldn't find it in your take", "çekiminde bulamadım"),
+    "said_more_than_once": (
+        "you say it more than once, so tell me which one to cut: the first, second or last",
+        "bunu birden fazla kez söylüyorsun, hangisini keseyim söyle: ilkini, ikincisini ya da"
+        " sonuncusunu",
+    ),
+    "occurrence_not_found": (
+        "you don't say it that many times",
+        "bunu o kadar çok kez söylemiyorsun",
+    ),
+    "too_short": (
+        "cutting it would leave too little video",
+        "kesersem çok az video kalırdı",
+    ),
+    "cleanup_off": (
+        "your take has no word timings to find it in",
+        "çekiminde onu bulacak kelime zamanlaması yok",
+    ),
+}
+
+
+def _named_cut_notes(req: BriefRequirement, facts: PlanFacts) -> tuple[list[str], bool] | None:
+    """KRI-821: what a phone Talking render did with each line this ask named to cut.
+
+    ``(notes, all_cut)`` off the render's ``named_cuts`` receipts for this requirement;
+    None when the render carries no such record (another format: `_NAMED_CUTS_STAY`).
+    """
+    if facts.named_cuts is None:
+        return None
+    rows = [row for row in facts.named_cuts if req.id in (row.get("requirement_ids") or [])]
+    if not rows:
+        return None
+    notes: list[str] = []
+    for row in rows:
+        quote = str(row.get("quote") or "")
+        if row.get("status") == "applied":
+            removed = _finite_number(row.get("removed_s")) or 0.0
+            notes.append(
+                say(
+                    en=f'Cut "{quote}" ({_round_s(removed)}s)',
+                    tr=f'"{quote}" kesildi ({_round_s(removed)} sn)',
+                )
+            )
+            continue
+        en, tr = _NAMED_CUT_MISSED.get(str(row.get("reason") or ""), _NAMED_CUT_MISSED["not_found"])
+        notes.append(
+            say(
+                en=f'{_NAMED_CUT_STILL_IN}: "{quote}" ({en})',
+                tr=f'{_REASON_TR[_NAMED_CUT_STILL_IN]}: "{quote}" ({tr})',
+            )
+        )
+    return notes, all(row.get("status") == "applied" for row in rows)
+
+
 def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Pauses, retakes and filler the creator asked to cut, against the draft.
 
     Speech cleanup (the preflight check the creator confirms at approval) cuts long
     pauses and non-word sounds out of a Talking or voiceover edit. A retake count or
     other generic cleanup record cannot confirm that a requested spoken line was removed,
-    so a retake or "the bit where I say X" stays partial for editor verification.
+    so a retake or "the bit where I say X" stays partial, with the limit stated plainly
+    (KRI-846: never as editor work, since no editor action cuts a spoken line).
     A length the same sentence names ("keep it under 45 s") follows the cut take.
     Every honest outcome here is a limit of the format, not a simplification.
     """
@@ -3819,8 +4018,14 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         lead, status = _CLEANUP_IF_OFFERED, "partial"
     notes = [_loc(lead)]
     if _wants_named_cuts(req):
-        notes.append(_loc(_NAMED_CUTS_NEED_EDITOR))
-        status = "partial"
+        if facts.phone_talking and named_cut_lines(req):
+            # KRI-821: the phone Talking render cuts each named line it finds said once.
+            # Not certain before the render finds the line, so never "Done" (KRI-792).
+            notes.append(_loc(_NAMED_CUT_AT_RENDER))
+            status = "partial"
+        else:
+            notes.append(_loc(_NAMED_CUTS_STAY))
+            status = "partial"
     cleanup = _receipt(req, status, "; ".join(notes) if status == "partial" else None)
     return _merge_cleanup_timing(req, facts, cleanup)
 
@@ -3828,6 +4033,11 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
 def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """KRI-541: the cleanup ask against what a finished render's speech cleanup did."""
     outcome = facts.speech_cleanup_outcome
+    named = _named_cut_notes(req, facts) if _wants_named_cuts(req) else None
+    if named is not None and not _CLEANUP_NOUN_RE.search(_req_text(req)):
+        # KRI-821: an ask that only names lines to cut is answered by the render's own
+        # per-line receipts, whatever speech cleanup did (it never cuts a named line).
+        return _receipt(req, "met" if named[1] else "partial", "; ".join(named[0]))
     if outcome == "applied":
         lead, status = _CLEANUP_DONE, "met"
     elif outcome == "no_change":
@@ -3835,12 +4045,23 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
     elif outcome == "not_run":
         lead, status = _CLEANUP_NOT_RUN, "partial"
     else:
+        if named is not None:
+            # KRI-821: cleanup off (no cleanup record), but the named lines were cut on their own.
+            return _receipt(req, "met" if named[1] else "partial", "; ".join(named[0]))
         return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
     notes = [_loc(lead)]
     if _wants_named_cuts(req):
-        # The generic cut record cannot prove that this requested line was the removed span.
-        notes.append(_loc(_NAMED_CUTS_NEED_EDITOR))
-        status = "partial"
+        if named is not None:
+            # KRI-821: the render's own per-line receipt says whether the line is gone.
+            notes.extend(named[0])
+            if not named[1]:
+                status = "partial"
+            elif outcome == "applied":
+                return _receipt(req, "met", "; ".join(named[0]))
+        else:
+            # The generic cut record cannot prove that this requested line was the removed span.
+            notes.append(_loc(_NAMED_CUTS_STAY))
+            status = "partial"
     if status == "met" and outcome == "applied":
         return _receipt(req, "met", None)
     return _receipt(req, status, "; ".join(notes))
@@ -3931,16 +4152,13 @@ def speech_cleanup_review_note(
                 ),
             )
         ]
-    if not retakes and not retake_cut_possible and _loc(_NAMED_CUTS_NEED_EDITOR) not in text:
+    if not retakes and not retake_cut_possible and _loc(_NAMED_CUTS_STAY) not in text:
         sentences.append(
             say(
-                en=(
-                    "It only cuts pauses and filler sounds, so a sentence you restarted stays "
-                    "in; trim it in the editor."
-                ),
+                en="It only cuts pauses and filler sounds, so a sentence you restarted stays in.",
                 tr=(
                     "Yalnızca duraklamaları ve dolgu seslerini keser; baştan başladığın bir "
-                    "cümle videoda kalır, onu editörde kırp."
+                    "cümle videoda kalır."
                 ),
             )
         )
@@ -4052,6 +4270,31 @@ def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
 _BED_QUIET_BELOW = 0.5
 
 
+def _bed_fix(facts: PlanFacts) -> tuple[str, str]:
+    """How the creator lowers the footage bed on THIS edit (KRI-821), EN and TR.
+
+    Names the editor's Sounds > Original audio row only when the live capability map said
+    it is editable for this variant and app build, and the chat edit only on a phone
+    Voiceover edit whose level Save recompiles (`PlanFacts.original_audio_control`);
+    anything else (cloud render, unknown) states the plain limit, never a control the
+    creator cannot use.
+    """
+    if facts.original_audio_control == "editor":
+        return (
+            "turn it down in the editor under Sounds > Original audio, or tell me to mute it",
+            "editörde Sesler > Orijinal ses bölümünden kıs ya da bana kapatmamı söyle",
+        )
+    if facts.original_audio_control == "chat":
+        return (
+            "tell me to mute it and I'll take it out",
+            "kapatmamı söylersen çıkarırım",
+        )
+    return (
+        "this edit has no control to turn it down yet",
+        "bu düzenlemede onu kısacak bir ayar henüz yok",
+    )
+
+
 def _check_voice_bed(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """ "Keep the crowd noise quiet under my voice" / "mute the crowd noise".
 
@@ -4069,19 +4312,26 @@ def _check_voice_bed(req: BriefRequirement, facts: PlanFacts) -> RequirementRece
     if _wants_bed_muted(req) and not _wants_bed_under_voice(req):
         if level is not None and level <= 0:
             return _receipt(req, "met", None)
+        if level is None and renders_bed_mute(req):
+            # KRI-821: an approved typed mute renders the bed at 0 on every voiceover lane
+            # (`footage_mute_ask.approved_bed_level`; a montage voiceover fully ducks it).
+            # A wording-only (pre-v77) mute renders nothing, so it is never claimed here.
+            return _receipt(
+                req,
+                "met",
+                say(
+                    en="Your footage sound is muted under your voice",
+                    tr="Çekim sesi sesinin altında kapalı",
+                ),
+            )
+        fix_en, fix_tr = _bed_fix(facts)
         if level is not None and level >= 1.0:
             return _receipt(
                 req,
                 "partial",
                 say(
-                    en=(
-                        f"{_BED_STILL_PLAYS} at full volume alongside your voice; "
-                        "lower it in the editor's mix"
-                    ),
-                    tr=(
-                        f"{_REASON_TR[_BED_STILL_PLAYS]}, sesinle aynı seviyede; "
-                        "ayarı editördeki karışımdan düşür"
-                    ),
+                    en=f"{_BED_STILL_PLAYS} at full volume alongside your voice; {fix_en}",
+                    tr=f"{_REASON_TR[_BED_STILL_PLAYS]}, sesinle aynı seviyede; {fix_tr}",
                 ),
             )
         about_en = "" if pct is None else f" (about {pct}%)"
@@ -4090,14 +4340,8 @@ def _check_voice_bed(req: BriefRequirement, facts: PlanFacts) -> RequirementRece
             req,
             "partial",
             say(
-                en=(
-                    f"{_BED_STILL_PLAYS} softly under your voice{about_en}; "
-                    "lower it in the editor's mix"
-                ),
-                tr=(
-                    f"{_REASON_TR[_BED_STILL_PLAYS]}, sesinin altında kısık{about_tr}; "
-                    "ayarı editördeki karışımdan düşür"
-                ),
+                en=f"{_BED_STILL_PLAYS} softly under your voice{about_en}; {fix_en}",
+                tr=f"{_REASON_TR[_BED_STILL_PLAYS]}, sesinin altında kısık{about_tr}; {fix_tr}",
             ),
         )
     if level is None:
@@ -4713,6 +4957,103 @@ def _with_spoken_text_speaker(
     return combine_receipts(base, _receipt(req, "partial", _SPOKEN_TEXT_FIRST_HEARD))
 
 
+def _protected_text_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    from app.kria.protected_targets import (  # noqa: PLC0415
+        PROTECTED_TEXT_FIELD,
+        protected_text_fingerprint,
+        stale_protected_text,
+    )
+
+    receipt = variant.get(PROTECTED_TEXT_FIELD)
+    if (
+        isinstance(receipt, Mapping)
+        and receipt.get("measured_fingerprint")
+        and receipt["measured_fingerprint"] != protected_text_fingerprint(variant)
+    ):
+        # The text, captions or bars changed after the render measured them (an editor
+        # Save, a text edit): the old verdict describes a video the creator no longer has.
+        receipt = stale_protected_text(receipt, "edited_text")
+    targets = receipt.get("targets") if isinstance(receipt, Mapping) else None
+    if not isinstance(targets, list):
+        return {}
+    by_req: dict[str, list[tuple[str, str]]] = {}
+    for target in targets:
+        if not isinstance(target, Mapping):
+            continue
+        label = "face" if target.get("kind") == "face" else str(target.get("label") or "")
+        for req_id in target.get("requirement_ids") or []:
+            by_req.setdefault(str(req_id), []).append(
+                (label, str(target.get("status") or "unverified"))
+            )
+    rank = {
+        "clear": 0,
+        "unverified": 1,
+        "stale": 2,
+        "no_selection": 2,
+        "invalidated": 2,
+        "other_source": 2,
+    }
+    rows = []
+    for req_id, entries in by_req.items():
+        verdict = max((status for _, status in entries), key=lambda s: rank.get(s, 3))
+        labels = tuple(label for label, status in entries if status != "clear")
+        rows.append((req_id, verdict, labels))
+    return {"protected_text": tuple(rows)}
+
+
+def _with_protected_text(
+    req: BriefRequirement, facts: PlanFacts, base: RequirementReceipt
+) -> RequirementReceipt:
+    """KRI-827: "no text on her face or on the plate" is met only when the render measured
+    every text clear of every named target over each text's whole time on screen, against
+    an object the tracker actually saw. Anything else says what is missing."""
+    row = next((r for r in facts.protected_text or () if r[0] == req.id), None)
+    if row is None or row[1] == "clear":
+        return base
+    _, verdict, labels = row
+    # The object in the creator's own words; a face target is "your face" in either language.
+    named = ", ".join("your face" if label == "face" else f"the {label}" for label in labels)
+    named = named or "it"
+    named_tr = ", ".join("yüzün" if label == "face" else label for label in labels) or "o"
+    if verdict == "no_selection":
+        reason = say(
+            en=f"Mark {named} on a frame so I can keep the text off it",
+            tr=f"Yazıyı uzak tutabilmem için {named_tr} bir karede işaretle",
+        )
+    elif verdict == "invalidated":
+        reason = say(
+            en=f"The clip changed since you marked {named}; mark it again",
+            tr=f"{named_tr} işaretlediğinden beri klip değişti; tekrar işaretle",
+        )
+    elif verdict == "stale":
+        reason = say(
+            en=f"You changed the edit after I placed the text, so I can't confirm it still "
+            f"stays off {named}",
+            tr=f"Yazıyı yerleştirdikten sonra düzenlemeyi değiştirdin; hâlâ {named_tr} "
+            "üstünde olmadığını doğrulayamıyorum",
+        )
+    elif verdict == "other_source":
+        reason = say(
+            en=f"You marked {named} on a different clip than the one I put the text on; "
+            "mark it on the speaking clip",
+            tr=f"{named_tr} yazının olduğu klipte değil başka bir klipte işaretledin; "
+            "konuşan klipte işaretle",
+        )
+    elif verdict == "unverified":
+        reason = say(
+            en=f"I kept the text away from where {named} was, but lost sight of it for "
+            "part of the video, so I can't confirm it stays clear",
+            tr=f"Yazıyı {named_tr} olduğu yerden uzak tuttum ama videonun bir kısmında onu "
+            "göremedim, açıkta kaldığını doğrulayamıyorum",
+        )
+    else:
+        reason = say(
+            en=f"Some text still covers {named}; there was no spot clear of it",
+            tr=f"Bazı yazılar hâlâ {named_tr} üstünde; açıkta bir yer kalmadı",
+        )
+    return combine_receipts(base, _receipt(req, "partial", reason))
+
+
 def _title_face_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
     placement = variant.get("opening_title_placement")
     if isinstance(placement, Mapping) and isinstance(placement.get("face_collision"), bool):
@@ -4849,7 +5190,41 @@ def _check_opening_cut(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
     return _receipt(req, "met", None)
 
 
+def _hold_row(req: BriefRequirement, facts: PlanFacts) -> Mapping[str, Any] | None:
+    """KRI-824: the plan's applied-hold row for ``req``; only the item's photos have one."""
+    if req.authority is None or hold_seconds(req) is None or not facts.asset_holds:
+        return None
+    return next((r for r in facts.asset_holds if r.get("requirement_id") == req.id), None)
+
+
+def _check_asset_hold(req: BriefRequirement, row: Mapping[str, Any]) -> RequirementReceipt:
+    """KRI-824: "keep the beach photo on screen for 1 second", judged on that photo."""
+    asked = hold_seconds(req) or 0.0
+    rendered = _finite_number(row.get("rendered_s"))
+    if rendered is None:
+        return _receipt(
+            req,
+            "partial",
+            say(en="This photo isn't in the video.", tr="Bu fotoğraf videoda yok."),
+        )
+    if abs(rendered - asked) <= HOLD_TOLERANCE_S:
+        return _receipt(req, "met", None)
+    return _receipt(
+        req,
+        "partial",
+        say(
+            en=f"This photo plays {_round_s(rendered)}s; you asked for {asked:g}s.",
+            tr=f"Bu fotoğraf {_round_s(rendered)} saniye görünüyor; sen {asked:g} saniye istedin.",
+        ),
+    )
+
+
 def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    hold_row = _hold_row(req, facts)
+    if hold_row is not None:
+        # A creator-stamped photo length the plan applied (KRI-824). Any other clip-scoped
+        # length (a video clip, an unstamped model number) keeps the clip paths below.
+        return _check_asset_hold(req, hold_row)
     from app.services.length_policy import (  # noqa: PLC0415
         strict_duration_limit_s,
         strict_duration_matches,
@@ -6727,6 +7102,22 @@ def _has_checker(req: BriefRequirement) -> bool:
 
 
 def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if facts.protected_text is not None and any(r[0] == req.id for r in facts.protected_text):
+        # KRI-827: "no text on her face or on the plate" is judged by the render's own
+        # measurement of every text against every named target. Any other ask on the same
+        # requirement ("brighten the clips and no text on the plate") keeps its own checker;
+        # the protected-text verdict folds into it, never replaces it.
+        from app.kria.protected_targets import KEEP_TEXT_OFF_KEY  # noqa: PLC0415
+
+        rest = req.model_copy(
+            update={"facts": {k: v for k, v in req.facts.items() if k != KEEP_TEXT_OFF_KEY}}
+        )
+        base = _check_requirement(rest, facts) if _has_checker(rest) else _receipt(req, "met", None)
+        return _with_protected_text(req, facts, base)
+    return _check_requirement(req, facts)
+
+
+def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if _wants_opening_cut(req) and facts.edit_format in {"subtitled", "talking_head"}:
         # "Cut the intro, start the video at '...'": a quoted start line owns the sentence
         # (and any pauses it names); every other speech edit keeps its usual path.

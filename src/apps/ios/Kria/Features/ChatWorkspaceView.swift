@@ -510,6 +510,8 @@ private struct CreationWorkspaceView: View {
     /// The server's reason the last confirmation was rejected, shown inside the card.
     @State private var confirmationConflict: CreationConfirmationConflict?
     @State private var showsAttachments = false
+    /// KRI-815: the script the attachment sheet shows on its voiceover step; nil = the sheet as before.
+    @State private var attachmentScript: VoiceoverScript?
     @State private var showsResult = false
     /// Live plan & review: the "Review your video" sheet, opened from the feed's CTA / Change or the project.
     @State private var reviewPresentation: ReviewPlanPresentation?
@@ -959,7 +961,8 @@ private struct CreationWorkspaceView: View {
                            choiceQuestionMode: choiceQuestionMode(for: message),
                            questionBatch: asksTogether(message) ? questionBatches[message.id] ?? QuestionBatch() : nil,
                            songRangeMode: songRangeMode(for: message),
-                           replyOptionsMode: replyOptionsMode(for: message))
+                           replyOptionsMode: replyOptionsMode(for: message),
+                           voiceoverScriptMode: voiceoverScriptMode(for: message))
                 .id(entry.id)
             if let operationID = message.memoryOperationID {
                 SavedTextPreferenceUndo(operationID: operationID, api: model.api)
@@ -1116,6 +1119,38 @@ private struct CreationWorkspaceView: View {
         }
     }
 
+    /// KRI-815: the script card only when the server advertises it. Interactive on the newest script of THIS
+    /// project (its item, its latest revision); every other script card is read-only text.
+    private func voiceoverScriptMode(for message: ChatTranscriptMessage) -> VoiceoverScriptCardMode? {
+        guard capabilities?.voiceoverScriptCardsEnabled == true, let script = message.voiceoverScript else { return nil }
+        let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
+            if case .message(let message) = entry.content { message } else { nil }
+        }
+        let scripts = messages.compactMap(\.voiceoverScript)
+        // A draft is live while it is the newest draft; a failed draft only while no draft exists to record.
+        let current = script.isDraft ? scripts.last(where: \.isDraft) : (scripts.contains(where: \.isDraft) ? nil : scripts.last)
+        let index = messages.firstIndex(where: { $0.id == message.id }) ?? messages.endIndex
+        let alreadyPlanned = messages[index...].contains { $0.role == .user && $0.content == script.recordedMessage }
+        guard transcriptIsFresh, current == script, !alreadyPlanned,
+              script.itemID == fullThread?.activePlanItemID else { return .readOnly }
+        let voiceoverAttached = CreationAttachedMedia.parse(threadState).contains(where: \.isVoiceover)
+        return .active(
+            voiceoverAttached: voiceoverAttached,
+            isSending: isSending || isActing || isThinking,
+            record: { openVoiceoverStep(with: $0) },
+            importVoiceover: { openVoiceoverStep(with: $0) },
+            planWithVoiceover: { script in Task { await send(message: script.recordedMessage) } }
+        )
+    }
+
+    /// KRI-815: the attachment sheet, opened on the voiceover step with this script to read along.
+    private func openVoiceoverStep(with script: VoiceoverScript) {
+        guard canAttachMedia else { return }
+        attachmentScript = script
+        scrollRequest += 1
+        showsAttachments = true
+    }
+
     /// KRI-802: this reply asks a choice card and a clip picker together (servers send that only to protocol 14
     /// builds), and both cards are shown. Their answers then wait for each other and go out on one turn.
     private func asksTogether(_ message: ChatTranscriptMessage) -> Bool {
@@ -1209,6 +1244,7 @@ private struct CreationWorkspaceView: View {
 
     private func openAttachments() {
         guard canAttachMedia else { return }
+        attachmentScript = nil
         scrollRequest += 1
         showsAttachments = true
     }
@@ -1481,6 +1517,7 @@ private struct CreationWorkspaceView: View {
                 thread: fullThread,
                 capabilities: capabilities,
                 capabilitiesLoaded: capabilitiesAreAuthoritative,
+                voiceoverScript: attachmentScript,
                 refresh: {
                     if !capabilitiesAreAuthoritative { await refreshCapabilities() }
                     await refreshNow()
@@ -1671,11 +1708,7 @@ private struct CreationWorkspaceView: View {
             if feedHostsDeviceBuild {
                 planFeedView
             } else if let deviceRenderKey {
-                DeviceRenderPanel(key: deviceRenderKey, sessions: model.deviceRenders,
-                    retryApproved: model.deviceRenders.retryNeedsApproval(deviceRenderKey) ? { await retryApprovedRender() } : nil) {
-                    await refreshCapabilities()
-                    await refreshDeviceRender(retry: true)
-                }
+                deviceRenderPanel(deviceRenderKey)
             } else if showsPlanFeed {
                 planFeedView
             } else {
@@ -1735,6 +1768,21 @@ private struct CreationWorkspaceView: View {
                     }
                 }
             }
+        case .failed where fullThread == nil && currentProject.deliveryNeedsAttention == true:
+            // KRI-823: the list row already knows this is a delivery failure; wait
+            // for the full thread's Retry card instead of flashing "wasn't made".
+            ProgressView("Opening your project…")
+                .frame(maxWidth: .infinity, minHeight: 120)
+                .accessibilityIdentifier("delivery-resolving")
+                .id("delivery-resolving")
+        case .failed where fullThread?.deliveryNeedsAttention == true && deviceRenderKey != nil:
+            // KRI-823: a device delivery failure keeps its device Retry/Stop card,
+            // the same one the rendering stage hosts, never the generic failure.
+            if feedHostsDeviceBuild {
+                planFeedView
+            } else if let deviceRenderKey {
+                deviceRenderPanel(deviceRenderKey)
+            }
         case .failed:
             if failedWorkspacePresentation == .legacyCreationConfirmation, let thread = fullThread {
                 CreationConfirmationStage(
@@ -1768,6 +1816,18 @@ private struct CreationWorkspaceView: View {
                     ).id("failed")
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func deviceRenderPanel(_ key: DeviceRenderKey) -> some View {
+        DeviceRenderPanel(key: key, sessions: model.deviceRenders,
+            retryApproved: model.deviceRenders.retryNeedsApproval(key) ? { await retryApprovedRender() } : nil) {
+            await refreshCapabilities()
+            await refreshDeviceRender(retry: true)
+            // The retry re-pins the delivery server-side without a thread revision;
+            // re-read the project so drawer, detail and chat leave Needs attention.
+            await refreshNow()
         }
     }
 
@@ -2200,7 +2260,7 @@ private struct CreationWorkspaceView: View {
     private var deviceRenderKey: DeviceRenderKey? {
         guard let job = fullThread?.job, let jobID = UUID(uuidString: job.id),
               let variant = job.variants.first(where: {
-                  $0.renderDestination == "device" || $0.renderStatus == "awaiting_device"
+                  $0.renderDestination == "device" || $0.renderStatus == "awaiting_device" || $0.deliveryPhase != nil
               }), let variantID = variant.variantID else { return nil }
         return DeviceRenderKey(projectID: project.id, jobID: jobID, variantID: variantID)
     }
@@ -2389,7 +2449,8 @@ private struct CreationWorkspaceView: View {
             lastFullProjectionRevision: lastFullProjectionRevision,
             incomingRevision: delta.threadRevision,
             receivedEvents: fresh,
-            isRendering: currentProject.status == .rendering
+            // A device delivery changes without a thread revision (KRI-823).
+            isRendering: currentProject.status == .rendering || fullThread?.deliveryNeedsAttention == true
         ) {
             if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
         }
@@ -2778,6 +2839,8 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
     var replyLead: String? = nil
     /// Deliberate extra changes no request claimed; shown as one muted line under the receipts.
     var alsoChanged: [String] = []
+    /// KRI-815: the voiceover script this reply carries, when the server sent one.
+    var voiceoverScript: VoiceoverScript? = nil
 
     /// True only with receipts AND a lead: an old server (no lead) or a reply without receipts renders `content`.
     var usesReplyLead: Bool { !receipts.isEmpty && !(replyLead ?? "").isEmpty }
@@ -2831,7 +2894,8 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
         let songRangeQuestion = role == .assistant ? SongRangeQuestion.parse(payload: event.payload) : nil
         let songRangeAnswer = role == .user ? SongRangeAnswer.parse(payload: event.payload) : nil
         let memoryOperationID = event.payload?["kind"]?.stringValue == "creator_memory_receipt" ? event.payload?["operation_id"]?.stringValue : nil
-        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts, clipQuestion: clipQuestion, songOrderQuestion: songOrderQuestion, songOrderAnswer: songOrderAnswer, choiceQuestion: choiceQuestion, songRangeQuestion: songRangeQuestion, songRangeAnswer: songRangeAnswer, memoryOperationID: memoryOperationID, replyOptions: replyExtras?.options ?? [], replyLead: replyExtras?.lead, alsoChanged: replyExtras?.alsoChanged ?? [])
+        let voiceoverScript = role == .assistant ? VoiceoverScript.parse(payload: event.payload) : nil
+        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts, clipQuestion: clipQuestion, songOrderQuestion: songOrderQuestion, songOrderAnswer: songOrderAnswer, choiceQuestion: choiceQuestion, songRangeQuestion: songRangeQuestion, songRangeAnswer: songRangeAnswer, memoryOperationID: memoryOperationID, replyOptions: replyExtras?.options ?? [], replyLead: replyExtras?.lead, alsoChanged: replyExtras?.alsoChanged ?? [], voiceoverScript: voiceoverScript)
     }
 }
 

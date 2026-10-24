@@ -663,7 +663,7 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/schemas/guided_edit_revision.py",
-                (True, "covered", "kri-561-song-order"),
+                (True, "covered", "kri-561-song-order,kri-689-clip-speed"),
             ),
             (
                 "src/apps/api/app/kria/speaker_framing_ask.py",
@@ -699,7 +699,7 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/prompts/main_creator.txt",
-                (True, "covered", "kri-586-hook-copy"),
+                (True, "covered", "kri-586-hook-copy,kri-815-voiceover-script"),
             ),
             (
                 "src/apps/api/tests/fixtures/agent_evals/main_creator/kri586_generate_after_choice.json",

@@ -15,7 +15,7 @@ import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import Literal
+from typing import Any, Literal
 
 import structlog
 from celery.exceptions import Retry
@@ -76,6 +76,28 @@ def _item_direction_snapshot(session, item: PlanItem, plan: ContentPlan) -> dict
         return thread_snapshot
     plan_snapshot = getattr(plan, "creator_direction_snapshot", None)
     return plan_snapshot if isinstance(plan_snapshot, dict) else None
+
+
+def _approved_voiceover_bed_level(
+    item: Any, creator_brief_binding: dict | None, audio_mode: str
+) -> float | None:
+    """The bed level this render plays the footage at under the creator's voice (KRI-821).
+
+    Read only from the approved, pinned brief binding (never from a model suggestion). A
+    binding that does not validate keeps the item's level; dispatch already refused a stale
+    one before reaching here.
+    """
+    item_level = float(item.voiceover_bed_level) if item.voiceover_bed_level is not None else None
+    if creator_brief_binding is None or audio_mode != "voiceover":
+        return item_level
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.footage_mute_ask import approved_bed_level  # noqa: PLC0415
+
+    try:
+        brief = BriefBinding.model_validate(creator_brief_binding).brief
+    except ValueError:
+        return item_level
+    return approved_bed_level(brief, item_level)
 
 
 def _item_chat_language(
@@ -1725,6 +1747,7 @@ def _dispatch_item_render(
     speech_cleanup_preflight_snapshot: dict | None = None,
     speech_cleanup_preflight_outcome: dict | None = None,
     speech_cleanup_outcome_analysis_id: str | None = None,
+    prepared_execution: dict | None = None,
 ) -> DispatchResult:
     """Mint a generative Job for an item's clips, persist it, dispatch its render.
 
@@ -2539,8 +2562,10 @@ def _dispatch_item_render(
             # from all_candidates unless the user selected the masonry preset.
             montage_preset=coerce_montage_preset(getattr(item, "montage_preset", None)),
             # Original-audio bed level for the narrated archetype (None → Kria default).
-            voiceover_bed_level=(
-                float(item.voiceover_bed_level) if item.voiceover_bed_level is not None else None
+            # KRI-821: an explicit "mute the camera sound" in the approved brief renders
+            # the footage silent under the voice (`footage_mute_ask.approved_bed_level`).
+            voiceover_bed_level=_approved_voiceover_bed_level(
+                item, creator_brief_binding, audio_mode
             ),
             # Narrated caption style ("sentence" | "word"; None → sentence captions).
             voiceover_caption_style=(
@@ -2617,6 +2642,18 @@ def _dispatch_item_render(
             "creator_generation_id": (job.assembly_plan or {}).get("creator_generation_id")
             or uuid.uuid4().hex,
         }
+        if prepared_execution is not None:
+            # KRI-722: the approved snapshot + this attempt, beside the plan-authority
+            # stamp. Workers and publication guards branch on it; absent = legacy.
+            from app.kria.prepared_execution import stamp_job  # noqa: PLC0415
+
+            stamp_job(
+                job,
+                {
+                    **prepared_execution,
+                    "generation_id": job.assembly_plan["creator_generation_id"],
+                },
+            )
         if creator_brief_binding is not None:
             from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
 
@@ -2715,6 +2752,18 @@ def _dispatch_item_render(
                         **job.assembly_plan,
                         CONTRACT_FIELD: contract.model_dump(mode="json"),
                     }
+                    from app.kria.prepared_execution import STAMP_FIELD  # noqa: PLC0415
+
+                    if isinstance(job.assembly_plan.get(STAMP_FIELD), dict):
+                        # The contract digest is per attempt (it covers this Job's
+                        # generation), so it is recorded here, not in the snapshot.
+                        job.assembly_plan = {
+                            **job.assembly_plan,
+                            STAMP_FIELD: {
+                                **job.assembly_plan[STAMP_FIELD],
+                                "contract_digest": contract.digest,
+                            },
+                        }
                     from app.services.length_policy_state import (  # noqa: PLC0415
                         LENGTH_POLICY_FIELD,
                         stamp_length_policy,
@@ -3046,6 +3095,7 @@ def dispatch_item_render_for(
     expected_speech_cleanup_analysis_id: str | None = None,
     expected_slide_post_version: int | None = None,
     reject_active_creator_session: bool = False,
+    prepared_execution: dict | None = None,
 ) -> DispatchResult:
     """Load + lock a plan item, re-check for an active render, then dispatch.
 
@@ -3373,6 +3423,8 @@ def dispatch_item_render_for(
             speech_cleanup_preflight_snapshot=recovery_snapshot,
             speech_cleanup_preflight_outcome=recovery_outcome,
             speech_cleanup_outcome_analysis_id=recovery_outcome_analysis_id,
+            # KRI-722: absent = byte-identical legacy call.
+            **({"prepared_execution": prepared_execution} if prepared_execution else {}),
         )
 
 

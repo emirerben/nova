@@ -46,6 +46,11 @@ Added after review, before the PR merged:
 16. iOS types a typographic apostrophe ("Julio’s"), which a label refused.
 17. Several long labels push the reply past the chat's 1200-character limit.
 18. A kept text longer than the montage's own creator bound (120) fails the plan.
+
+KRI-826 reversed the "+" refusal: the creator's own label words print as written ("+",
+emoji, "’", a typed line break), bounded only by the label bar's two lines. So "+" is
+the label (`tests/kria/test_kri826_creator_text_literal.py`), and the words that still
+can't be a label here are ones that run past those two lines (``LONG``).
 """
 
 from __future__ import annotations
@@ -93,10 +98,13 @@ from app.tasks import kria_runtime
 
 PLUS = "chimichurri + salsa criolla"  # chat 1 + 2: 27 characters with a "+"
 AMP = "chimichurri & salsa criolla"  # chat 3: 27 characters
-LONG_PLUS = "chimichurri + salsa criolla picante"  # both problems at once
+# Three lines of the label bar (KRI-826); without its last word it fits on two.
+LONG = "chimichurri + salsa criolla y provoleta de la casa con pan casero"
+SHORT = "chimichurri + salsa criolla y provoleta de la casa con pan"
 SHOT = "the sauce bowls"
-KEEP_PLUS = f'Keep "{PLUS}" exactly as written'
-USE_AMP = f'Use "{AMP}" instead'
+KEEP_LONG = f'Keep "{LONG}" exactly as written'
+USE_SHORT = f'Use "{SHORT}" instead'
+TOO_LONG_REASON = "it runs past the 2 lines a clip label holds"
 
 # Chat 3's upload ids: M1_08 (the three bowls close up) and M1_03 (Lucas points into them).
 BOWLS = "analysis-proxy-ios-051F8034-D6F7-493A-B2D4-E1517DCD4F2E.mp4"
@@ -203,42 +211,40 @@ async def _plan(monkeypatch, rows, *, messages: list[str], brief_labels=(), **kw
 
 
 def test_every_reason_is_named_with_the_limit_and_a_fitting_suggestion() -> None:
-    assert creator_label_problems(LONG_PLUS) == ("characters", "too_long")
-    reply = label_text_reply([LONG_PLUS])
+    assert creator_label_problems(LONG) == ("too_long",)
+    reply = label_text_reply([LONG])
     assert reply is not None
-    assert f'"{LONG_PLUS}" can\'t be a clip label' in reply.question
-    assert 'can\'t show "+"' in reply.question
-    assert f"it's {len(LONG_PLUS)} characters (a label holds up to {CREATOR_LABEL_MAX_CHARS})" in (
-        reply.question
-    )
+    assert f'"{LONG}" can\'t be a clip label' in reply.question
+    assert TOO_LONG_REASON in reply.question
     # Never "which ...": this is a question about the words, not about clips.
     assert "which" not in reply.question.lower()
     keep, use = reply.options
-    assert keep == f'Keep "{LONG_PLUS}" exactly as written'
+    assert keep == KEEP_LONG
     suggestion = use.removeprefix('Use "').removesuffix('" instead')
-    assert suggestion == "chimichurri & salsa criolla"
-    # The suggestion prints, and is made only of the creator's own words.
+    assert suggestion == SHORT
+    # The suggestion prints, and is made only of the creator's own words and symbols.
     assert clean_creator_label_text(suggestion) == suggestion
-    assert set(suggestion.split()) - {"&"} <= set(LONG_PLUS.split())
+    assert set(suggestion.split()) <= set(LONG.split())
 
 
 def test_the_reply_follows_the_chat_language() -> None:
     with reply_language_for("tr"):
-        reply = label_text_reply([LONG_PLUS])
+        reply = label_text_reply([LONG])
     assert reply is not None
     assert "klip etiketi olamaz" in reply.question
-    assert 'etiket "+" gösteremez' in reply.question
-    assert f"{len(LONG_PLUS)} karakter (etiket en fazla {CREATOR_LABEL_MAX_CHARS}" in reply.question
-    assert reply.options[0] == f'"{LONG_PLUS}" yazdığım gibi kalsın'
+    assert "klip etiketinin 2 satırına sığmıyor" in reply.question
+    assert reply.options[0] == f'"{LONG}" yazdığım gibi kalsın'
     assert "Can't" not in reply.question and "label holds" not in reply.question
 
 
 def test_a_suggestion_only_drops_a_whole_word_and_must_print() -> None:
-    assert shorter_creator_label(PLUS) == AMP
-    assert shorter_creator_label(AMP) is None  # nothing to fix
-    # Cutting two words would break a name apart: no suggestion, never "... Costa Aires".
-    assert shorter_creator_label("Parque de la Costa Lunapark Buenos Aires") is None
-    assert shorter_creator_label("Oblea de la casa 🇦🇷") == "Oblea de la casa"
+    assert shorter_creator_label(LONG) == SHORT
+    assert shorter_creator_label(PLUS) is None  # nothing to fix: it prints
+    assert shorter_creator_label(AMP) is None
+    # Cutting two words would break a name apart: no suggestion.
+    three_lines = "Parque de la Costa con los chicos de la facultad y mi hermana Lucía"
+    assert shorter_creator_label(three_lines) is None
+    assert shorter_creator_label("Oblea de la casa 🇦🇷") is None  # the flag prints too
 
 
 # 11: the creator bound, measured, is for the creator's words only ------------------------
@@ -247,7 +253,7 @@ def test_a_suggestion_only_drops_a_whole_word_and_must_print() -> None:
 def test_the_creator_bound_is_the_measured_one_and_model_copy_keeps_24() -> None:
     assert (LABEL_MAX_CHARS, CREATOR_LABEL_MAX_CHARS) == (24, 28)
     assert creator_label_problems(AMP) == ()
-    assert creator_label_problems(PLUS) == ("characters",)
+    assert creator_label_problems(PLUS) == ()
     record = ClipUnderstanding(subject="chimichurri and salsa criolla sauce bowls")
     grounded = {
         source: ground_label(
@@ -269,16 +275,18 @@ def test_the_creator_bound_is_the_measured_one_and_model_copy_keeps_24() -> None
 
 
 @pytest.mark.asyncio
-async def test_chat_1_a_label_with_a_plus_is_one_question_with_answers_to_tap(monkeypatch):
-    models, planned = await _plan(monkeypatch, [_row("label", PLUS)], messages=[_prompt(PLUS)])
+async def test_chat_1_a_label_too_long_for_the_bar_is_one_question_with_answers_to_tap(
+    monkeypatch,
+):
+    models, planned = await _plan(monkeypatch, [_row("label", LONG)], messages=[_prompt(LONG)])
 
     assert models.resolved == []  # never the clip picker for a text problem
     resolution = planned.resolution
     assert resolution.status == "needs_creator"
     assert resolution.error_code == "label_text_unusable"
     assert resolution.clip_question is None
-    assert resolution.reply_options == (KEEP_PLUS, USE_AMP)
-    assert 'can\'t show "+"' in resolution.question
+    assert resolution.reply_options == (KEEP_LONG, USE_SHORT)
+    assert TOO_LONG_REASON in resolution.question
 
 
 @pytest.mark.asyncio
@@ -286,18 +294,18 @@ async def test_keep_as_written_prints_the_words_as_the_shot_caption_on_every_lat
     monkeypatch,
 ):
     for messages in (
-        [_prompt(PLUS), KEEP_PLUS],
+        [_prompt(LONG), KEEP_LONG],
         # A later turn about something else: the planner writes the label again.
-        [_prompt(PLUS), KEEP_PLUS, "Make it 12 seconds instead."],
+        [_prompt(LONG), KEEP_LONG, "Make it 12 seconds instead."],
     ):
-        models, planned = await _plan(monkeypatch, [_row("label", PLUS)], messages=messages)
+        models, planned = await _plan(monkeypatch, [_row("label", LONG)], messages=messages)
 
         assert planned.resolution.error_code != "label_text_unusable"
-        assert models.resolved == [("text_bowls", "caption", PLUS)]
+        assert models.resolved == [("text_bowls", "caption", LONG)]
         (caption,) = planned.resolution.intents
         assert (caption.op, caption.caption_text, caption.caption_grounding) == (
             "caption",
-            PLUS,
+            LONG,
             "creator_text",
         )
         assert [a.media_id for a in caption.assignments] == [BOWLS]
@@ -305,21 +313,21 @@ async def test_keep_as_written_prints_the_words_as_the_shot_caption_on_every_lat
 
 @pytest.mark.asyncio
 async def test_keep_as_written_converts_only_the_label_it_names(monkeypatch):
-    other = "Lunch + friends at Don Julio"
+    other = "Lunch with all my friends at Don Julio in Palermo Soho on a Sunday"
     waiter_ask = f'Put "{other}" on the waiter clip'
     rows = [
-        _row("label", PLUS),
+        _row("label", LONG),
         {**_row("label", other, intent_id="text_waiter"), "source_quote": waiter_ask},
     ]
-    messages = [f"{_prompt(PLUS)} {waiter_ask}.", KEEP_PLUS]
+    messages = [f"{_prompt(LONG)} {waiter_ask}.", KEEP_LONG]
     _models, planned = await _plan(monkeypatch, rows, messages=messages)
 
     # The other unprintable label is still asked about, by itself.
     assert planned.resolution.error_code == "label_text_unusable"
     assert other in planned.resolution.question
-    assert PLUS not in planned.resolution.question
+    assert LONG not in planned.resolution.question
     assert [(i.op, i.creator_text) for i in planned.requested_intents] == [
-        ("caption", PLUS),
+        ("caption", LONG),
         ("label", other),
     ]
 
@@ -372,19 +380,19 @@ async def test_chat_3_the_dictated_text_the_planner_left_out_is_placed(monkeypat
 @pytest.mark.asyncio
 async def test_a_dictated_text_no_label_can_print_goes_as_the_shot_caption(monkeypatch):
     models, planned = await _plan(
-        monkeypatch, [], messages=[_prompt(PLUS)], brief_labels=[BriefLabel(PLUS, SHOT)]
+        monkeypatch, [], messages=[_prompt(LONG)], brief_labels=[BriefLabel(LONG, SHOT)]
     )
 
     assert not planned.resolution.needs_creator
-    assert [(op, text) for _id, op, text in models.resolved] == [("caption", PLUS)]
+    assert [(op, text) for _id, op, text in models.resolved] == [("caption", LONG)]
     (caption,) = planned.resolution.intents
     contract = build_render_contract(
         {"resolved_clip_intents": [caption.model_dump(mode="json")]},
         generation_id="g",
-        brief=_brief(PLUS),
+        brief=_brief(LONG),
     )
     assert contract is not None and not contract.unresolved
-    assert [(t.role, t.text, t.media_id) for t in contract.exact_texts] == [("clip", PLUS, BOWLS)]
+    assert [(t.role, t.text, t.media_id) for t in contract.exact_texts] == [("clip", LONG, BOWLS)]
 
 
 # 7, 8, 13: the render contract backstop -----------------------------------------------------
@@ -428,9 +436,9 @@ def test_unplaced_words_a_label_cant_print_are_a_text_question_not_which_clip() 
     for language in ("en", "tr"):
         with reply_language_for(language):
             contract = build_render_contract(
-                {"resolved_clip_intents": []}, generation_id="g", brief=_brief(LONG_PLUS)
+                {"resolved_clip_intents": []}, generation_id="g", brief=_brief(LONG)
             )
-            expected = label_text_reply([LONG_PLUS], keep=False)
+            expected = label_text_reply([LONG], keep=False)
         assert contract is not None and expected is not None
         assert list(contract.unresolved) == [expected.question]
         assert "which clip" not in contract.unresolved[0]
@@ -451,7 +459,7 @@ def test_printable_words_nobody_placed_still_ask_which_clip() -> None:
 
 
 def test_the_draft_backstop_asks_about_the_words_with_answers_to_tap() -> None:
-    brief = _brief(LONG_PLUS)
+    brief = _brief(LONG)
     blocked = kria_runtime._unresolved_choice_plan(
         {"resolved_clip_intents": []}, brief, None, contract_brief=brief, has_draft=True
     )
@@ -459,10 +467,10 @@ def test_the_draft_backstop_asks_about_the_words_with_answers_to_tap() -> None:
     plan, reason = blocked
     assert reason == "label_text_unusable"
     assert plan.turn_value == "question"
-    expected = label_text_reply([LONG_PLUS], keep=False)
+    expected = label_text_reply([LONG], keep=False)
     assert expected is not None
     # 15: nothing on this path turns the words into a caption, so no "keep" answer.
-    assert plan.reply_options == [f'Use "{AMP}" instead']
+    assert plan.reply_options == [USE_SHORT]
     assert plan.response.startswith(expected.question)
     assert "which clip" not in plan.response
 
@@ -472,7 +480,7 @@ def test_the_draft_backstop_asks_about_the_words_with_answers_to_tap() -> None:
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "kri593_tigre_voiceover_turn.json"
 CASE: dict[str, Any] = json.loads(FIXTURE.read_text())
 MANIFEST = CASE["main_creator_input"]["capability_manifest"]
-KITCHEN_ASK = f'Put "{PLUS}" on the kitchen clip.'
+KITCHEN_ASK = f'Put "{LONG}" on the kitchen clip.'
 
 
 class _Db:
@@ -496,7 +504,7 @@ async def test_the_planner_turn_carries_the_answers_the_phone_shows_as_chips(
         "brief_updates": [],
     }
     output = MainCreatorAgent(model_client=None).parse(json.dumps(raw), agent_input)
-    row = {**_row("label", PLUS), "attribute": "the kitchen clip", "source_quote": KITCHEN_ASK}
+    row = {**_row("label", LONG), "attribute": "the kitchen clip", "source_quote": KITCHEN_ASK}
     _Models(monkeypatch, [row])
     monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=[]))
     monkeypatch.setattr(planner, "_kick_clip_understanding", AsyncMock())
@@ -530,8 +538,8 @@ async def test_the_planner_turn_carries_the_answers_the_phone_shows_as_chips(
     plan = planned.plan
     assert (plan.mode, plan.turn_value) == ("respond", "question")
     assert plan.clip_question is None
-    assert plan.reply_options == [KEEP_PLUS, USE_AMP]
-    assert 'can\'t show "+"' in (plan.response or "")
+    assert plan.reply_options == [KEEP_LONG, USE_SHORT]
+    assert TOO_LONG_REASON in (plan.response or "")
 
 
 # 14-18: found in review ---------------------------------------------------------------------
@@ -554,31 +562,36 @@ async def test_without_safe_captions_the_words_stay_a_label_and_keep_is_not_offe
     models, planned = await _plan(
         monkeypatch,
         [],
-        messages=[_prompt(PLUS)],
-        brief_labels=[BriefLabel(PLUS, SHOT)],
+        messages=[_prompt(LONG)],
+        brief_labels=[BriefLabel(LONG, SHOT)],
         shot_captions=False,
     )
     assert models.resolved == []
     assert planned.resolution.error_code == "label_text_unusable"
-    assert planned.resolution.reply_options == (USE_AMP,)
+    assert planned.resolution.reply_options == (USE_SHORT,)
     # A "keep" message (typed, or tapped earlier) changes nothing: no caption is made.
     _models, planned = await _plan(
         monkeypatch,
-        [_row("label", PLUS)],
-        messages=[_prompt(PLUS), KEEP_PLUS],
+        [_row("label", LONG)],
+        messages=[_prompt(LONG), KEEP_LONG],
         shot_captions=False,
     )
-    assert [(i.op, i.creator_text) for i in planned.requested_intents] == [("label", PLUS)]
-    assert planned.resolution.reply_options == (USE_AMP,)
+    assert [(i.op, i.creator_text) for i in planned.requested_intents] == [("label", LONG)]
+    assert planned.resolution.reply_options == (USE_SHORT,)
 
 
 def test_a_typographic_apostrophe_prints_in_a_label() -> None:
     assert creator_label_problems("Julio’s chimichurri") == ()
-    assert shorter_creator_label("Julio’s chimichurri + salsa") == "Julio’s chimichurri & salsa"
+    # KRI-826: nothing to shorten; the "+" and the "’" print exactly as typed.
+    assert clean_creator_label_text("Julio’s chimichurri + salsa") == "Julio’s chimichurri + salsa"
+    assert shorter_creator_label("Julio’s chimichurri + salsa") is None
 
 
 def test_many_long_labels_keep_the_reply_inside_the_chat_limit() -> None:
-    texts = [f"{word} + the longest dish name on the whole menu today" for word in "abcdefgh"]
+    texts = [
+        f"{word} + the longest dish name on the whole menu today at Don Julio in Palermo"
+        for word in "abcdefgh"
+    ]
     reply = label_text_reply(texts)
     assert reply is not None
     assert len(reply.question) <= 1000
@@ -593,7 +606,7 @@ def test_words_longer_than_the_montage_holds_are_never_kept_as_written() -> None
     assert not any(option.startswith("Keep") for option in reply.options)
 
 
-def _group_recipe(media_ids: list[str], placements: list[tuple[float, float]]):
+def _group_recipe(media_ids: list[str], placements: list[tuple[float, float]], text: str = PLUS):
     """Synthetic output recipe: one second per identified source, real typed verifier input."""
     from app.kria.recipes_v2 import EditRecipeV2
     from tests.kria.test_portable_text import text_document
@@ -623,7 +636,7 @@ def _group_recipe(media_ids: list[str], placements: list[tuple[float, float]]):
             }
         )
     layer = document["text_layers"][0]
-    layer["runs"][0]["text"] = PLUS
+    layer["runs"][0]["text"] = text
     document["text_layers"] = [
         {**copy.deepcopy(layer), "id": f"caption-{index}", "start": start, "end": end}
         for index, (start, end) in enumerate(placements)

@@ -582,6 +582,85 @@ adapter it keeps the pre-PR conservative refusal, so nothing is lifted on an unk
 route. `verify_cloud_variant` picks the adapter from the variant
 (`cloud_adapter_for_variant`).
 
+## Prepared execution snapshot (KRI-722)
+
+One immutable row per approved edit, `creator_prepared_executions` (migration 0125),
+ties consent to everything that runs under it. Code: `app/kria/prepared_execution.py`.
+Failure matrix: `docs/reviews/kri-722-prepared-execution.md`.
+
+```text
+ draft (immutable revision + snapshot_hash)
+        |
+ decide_approval: every gate passes ──> mint snapshot (same transaction)
+        |     approval.prepared_execution_id = snapshot.id
+        |     snapshot: draft id/revision/hash, approval id, readiness digest,
+        |     brief version + digest, binding digest, route, sources[] (path, media id,
+        |     original/analysis_proxy role, object generation, trim window),
+        |     worker capabilities digest, per-decision digests with origin,
+        |     compiled refs. No signed URLs or credentials (validator refuses them).
+        v
+ _claim_approval_dispatch: verify against live rows
+        |     draft hash, binding digest, capabilities, source generation + lineage
+        |     mismatch -> execution stale, code prepared_execution_stale /
+        |                 prepared_execution_source_lineage / prepared_execution_unsupported
+        |     ok -> new attempt_id; execution.result["prepared_execution"]
+        v
+ dispatch (strategy) or claim (editor): Job stamp
+        |     all_candidates["creator_prepared_execution"] = {id, digest, schema_version}
+        |     assembly_plan["creator_prepared_execution"] = {id, digest, attempt_id,
+        |        approval_id, draft_id, draft_revision, generation_id, contract_digest,
+        |        variant_id (editor only)}
+        v
+ device pin copies {id, attempt_id} into the variant record;
+ publication refuses a record whose attempt is not the Job's current one
+```
+
+Rules:
+
+- **Stamp, not flag.** `KRIA_PREPARED_EXECUTION_ENABLED` (default on) is read once,
+  at approve. Workers branch on the stamp. Unstamped Jobs (historical, flag off)
+  run the legacy path unchanged. The strict `CreatorRenderContract` model is not
+  touched, so stored contract digests do not move. The contract digest is per
+  attempt (it covers the Job's `creator_generation_id`), so it lives on the Job
+  stamp, not in the snapshot.
+- **Versions.** `SCHEMA_VERSION` and `COMPILER_VERSION` are refused when above the
+  worker's own (`prepared_execution_unsupported`, recovery `refresh_replan`). An
+  old worker without this code ignores the stamp (legacy), the same rolling-deploy
+  exposure as the plan-authority stamp.
+- **Retry (KRI-674).** The retry approval references its source attempt's snapshot.
+  `claim_render_retry` re-verifies it, mints a new `attempt_id`, moves the Job stamp
+  to it (`retry_of_attempt_id` names the previous one) and re-pins the recipe.
+  No planner runs. A snapshot a dispatch claim already invalidated is refused.
+- **Redelivery.** An accepted execution that already carries the
+  `prepared_execution` record for the same snapshot (lost acknowledgement,
+  outcome unknown) returns that record without re-fencing draft, binding,
+  capabilities or sources. Its Job may already be rendering; a deploy or flag
+  flip in between must not cancel it or invalidate the snapshot.
+- **Receipts.** A stamped Job's unified-montage receipts read the approved brief.
+  With a brief binding it comes from the Job's binding, checked against the
+  snapshot's binding digest. Without one (creators outside the binding cohort) the
+  snapshot pins the brief version current at approval (`brief_version` +
+  `brief_digest`), and the reader loads exactly that `creative_brief_versions` row.
+  Later chat cannot change what an accepted attempt reports. Unstamped Jobs, and
+  snapshots approved with no brief at all, keep the latest-brief read.
+- **Scoped decisions.** `decisions` is a map of per-key digests (`text`, `length`,
+  `order`, `audio`, `direction`, `editor`, `shape`, `speech_cleanup`), each with an
+  `origin` (`creator`, `creator_answer`, `model_default`, `system`) taken from
+  provenance only. Strategy groups are planner output, so `model_default` even when
+  a brief requirement asked for something inside them (field-level creator
+  attribution is KRI-824). Editor drafts are `model_default` (Kria chat edits, undo
+  baselines, comparisons) unless the payload is the creator's own editor state
+  carried unchanged (`client_state_id` set, no `changes`, no text diff).
+  Approval-card answers (`render_shape`, `speech_cleanup`) are `creator_answer`.
+  `changed_decisions()` names the keys two snapshots disagree on (for KRI-723+).
+- **Retention.** `prune_kria_drafts` keeps a draft body while a non-invalidated
+  snapshot references it.
+- **Cloud attempts** are fenced by `creator_generation_id` (each strategy dispatch
+  mints a new Job and generation; the stamp records it). Cloud exact retry is KRI-723.
+
+Not yet: concrete montage/speech/text/audio decisions still resolve inside the
+render (KRI-723/724/725); the snapshot refuses drift but does not hold compiler output.
+
 ## Route resolution (KRI-470 PR-D)
 
 `services/render_route.py:resolve_route` is the one function that maps an approved plan

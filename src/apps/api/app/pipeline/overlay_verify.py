@@ -407,7 +407,7 @@ def missing_rendered_glyphs(overlay: dict) -> list[str]:
     # Skia's cmap catches unmapped codepoints; `missing_glyphs` also catches a
     # mapped-but-wrong glyph (a dotless ı drawn with a dot, a blank outline).
     flagged = set(missing_glyphs(resolution.name, text))
-    shaped = _uses_shaped_paragraph(overlay)
+    shaped = _uses_shaped_paragraph(overlay, typeface, text)
     mgr = tos.skia.FontMgr.RefDefault() if shaped else None
     missing = []
     for ch in needed_chars(text):
@@ -429,9 +429,19 @@ def missing_rendered_glyphs(overlay: dict) -> list[str]:
     return missing
 
 
-def _uses_shaped_paragraph(overlay: dict) -> bool:
-    """Mirror of the renderer's shaped-text switch (`_draw_frame`)."""
-    return overlay.get("effect") == "smooth-type" or bool(overlay.get("shape_text"))
+def _uses_shaped_paragraph(overlay: dict, typeface=None, text: str = "") -> bool:  # noqa: ANN001
+    """Mirror of the renderer's shaped-text switch (`_draw_frame`).
+
+    KRI-826: the renderer also shapes any text its face can't fully draw (inline emoji,
+    `tos._auto_shape`), except font-cycle, which draws with an override font.
+    """
+    if overlay.get("effect") == "smooth-type" or bool(overlay.get("shape_text")):
+        return True
+    return (
+        overlay.get("effect") != "font-cycle"
+        and typeface is not None
+        and tos._auto_shape(typeface, text, False)
+    )
 
 
 def verify_overlay(

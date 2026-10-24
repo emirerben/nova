@@ -13,6 +13,9 @@ struct ResearchCitation: Identifiable {
     let endS: Double
     let mediaIDs: [String]
     let timelineBinding: [[String: JSONValue]]
+    /// KRI-816: a spoken (Talking) edit has no editable clips; its explanation is
+    /// bound to the spoken lines around the pause it sits in.
+    var speechBinding: [[String: JSONValue]] = []
     let sources: [Source]
     let searchEntryHTML: String
     let retrievedAt: String
@@ -44,15 +47,30 @@ struct ResearchCitation: Identifiable {
         if case .array(let values) = value["timeline_binding"] {
             binding = values.compactMap { if case .object(let row) = $0 { row } else { nil } }
         } else { binding = [] }
+        let speech: [[String: JSONValue]]
+        if case .array(let values) = value["speech_binding"] {
+            speech = values.compactMap { if case .object(let row) = $0 { row } else { nil } }
+        } else { speech = [] }
         return ResearchCitation(id: text.id, originalText: original, startS: start, endS: end,
-                                mediaIDs: mediaIDs, timelineBinding: binding, sources: sources, searchEntryHTML: html, retrievedAt: retrieved)
+                                mediaIDs: mediaIDs, timelineBinding: binding, speechBinding: speech,
+                                sources: sources, searchEntryHTML: html, retrievedAt: retrieved)
     }
 
-    func matches(_ text: EditorTextElement, clips: [EditorTimelineSlot]) -> Bool {
+    func matches(_ text: EditorTextElement, clips: [EditorTimelineSlot], captions: [EditorCaptionCue] = []) -> Bool {
         guard text.text == originalText, abs(text.startS - startS) < 0.001,
               abs(text.endS - endS) < 0.001 else { return false }
         // Compare the persisted canonical cuts rather than inventing another timeline clock.
         let active = clips.filter { !$0.removed }
+        if active.isEmpty, !speechBinding.isEmpty {
+            // Every bound spoken line must still be said, unchanged, at the same time.
+            return speechBinding.allSatisfy { row in
+                guard case .string(let said) = row["text"], case .number(let from) = row["start_s"],
+                      case .number(let to) = row["end_s"] else { return false }
+                return captions.contains { cue in
+                    cue.text == said && abs(cue.startS - from) < 0.001 && abs(cue.endS - to) < 0.001
+                }
+            }
+        }
         guard !timelineBinding.isEmpty, timelineBinding.count == active.count else { return false }
         return zip(timelineBinding, active).allSatisfy { row, clip in
             guard case .number(let index) = row["clip_index"], Int(index) == clip.clipIndex,
