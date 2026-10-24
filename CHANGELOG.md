@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.83.0] - 2026-10-24
+
+### Changed
+- feat(kria): render creator-requested freeze frames on the chosen moment (KRI-828) (#1799) <!-- release-pr: 1799 -->
+
 ## [0.81.82.0] - 2026-10-24
 
 ### Changed
