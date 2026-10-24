@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.86.0] - 2026-10-24
+
+### Fixed
+- fix(research): place researched facts on beat-cut montages (#1803) <!-- release-pr: 1803 -->
+
 ## [0.81.85.0] - 2026-10-24
 
 ### Changed
