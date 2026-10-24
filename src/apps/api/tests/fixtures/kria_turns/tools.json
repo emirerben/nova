@@ -2877,6 +2877,102 @@
           "title": "MediaTransform",
           "type": "object"
         },
+        "MomentOrderAnswerIn": {
+          "additionalProperties": false,
+          "description": "KRI-723: the answer to a ``moment_order_question``; old clients omit it.",
+          "properties": {
+            "answers": {
+              "items": {
+                "$ref": "#/$defs/MomentPointIn"
+              },
+              "maxItems": 24,
+              "minItems": 1,
+              "title": "Answers",
+              "type": "array"
+            },
+            "question_id": {
+              "maxLength": 80,
+              "minLength": 1,
+              "title": "Question Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "question_id",
+            "answers"
+          ],
+          "title": "MomentOrderAnswerIn",
+          "type": "object"
+        },
+        "MomentPointIn": {
+          "additionalProperties": false,
+          "description": "KRI-723: one row of a ``moment_order`` answer, in the creator's final order.\n\n``point``: the creator's window on the take, on the original's clock. ``skip``: \"this\nisn't in my clips\". ``delegate``: \"you pick\". The server checks the clip is this thread's\nand the window fits it; the storage generation is never the client's.",
+          "properties": {
+            "action": {
+              "enum": [
+                "point",
+                "skip",
+                "delegate"
+              ],
+              "title": "Action",
+              "type": "string"
+            },
+            "media_id": {
+              "anyOf": [
+                {
+                  "maxLength": 160,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Media Id"
+            },
+            "moment_key": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Moment Key",
+              "type": "string"
+            },
+            "source_end_s": {
+              "anyOf": [
+                {
+                  "maximum": 3600.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source End S"
+            },
+            "source_start_s": {
+              "anyOf": [
+                {
+                  "maximum": 3600.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source Start S"
+            }
+          },
+          "required": [
+            "moment_key",
+            "action"
+          ],
+          "title": "MomentPointIn",
+          "type": "object"
+        },
         "MontageBlock": {
           "properties": {
             "audio_policy": {
@@ -3622,6 +3718,17 @@
           "minLength": 1,
           "title": "Message",
           "type": "string"
+        },
+        "moment_order": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MomentOrderAnswerIn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "protected_region": {
           "anyOf": [

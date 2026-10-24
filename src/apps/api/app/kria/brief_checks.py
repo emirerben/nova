@@ -328,6 +328,11 @@ class PlanFacts:
     # the OTHER spot (one clip asked to be first and last). The earlier claim stands and the
     # edit still renders, so this is a note (partial), never a failure. Known at draft time.
     sequence_conflicts: tuple[str, ...] = ()
+    # KRI-723: the stated moments the plan cannot show are those actions (no evidence: an app
+    # that could not ask), or that the creator left to Kria / said are not in their clips, by
+    # the outcome's ``code`` (``not_located`` / ``delegated`` / ``skipped``). Honest limits the
+    # creator already knows about: noted (partial), never a failure.
+    sequence_unlocated: tuple[str, ...] = ()
     # KRI-522: the spots ("first" / "last" / "then") whose stated sequence group landed,
     # read off the same outcomes. None = this plan cannot say (not a unified montage), so a
     # stated first/last clip stays unjudged there instead of failing a plan that seated it.
@@ -975,6 +980,13 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         sequence_unmet=_sequence_problems(record, ("misplaced", None, "contained")),
         sequence_absent=_sequence_problems(record, ("absent", "unresolved")),
         sequence_conflicts=_sequence_problems(record, ("conflict",)),
+        sequence_unlocated=tuple(
+            str(row.get("code"))
+            for row in record.get("intent_outcomes") or []
+            if isinstance(row, Mapping)
+            and row.get("op") == "order"
+            and row.get("code") in _MOMENT_LIMIT_CODES
+        ),
         texts=tuple(
             str(text)
             for text in (
@@ -1964,6 +1976,7 @@ _MONTAGE_ORDER_FIELDS = (
     "sequence_unmet",
     "sequence_absent",
     "sequence_conflicts",
+    "sequence_unlocated",
     "sequence_spots_met",
     "route_start",
     "route_end",
@@ -2488,6 +2501,17 @@ _ORDER_NOT_APPLIED = (
 # KRI-778: an order the creator listed in their own words that the plan only partly placed,
 # said in their terms (what they listed), never the planner's "groups".
 _ORDER_LIST_NOT_PLACED = "I couldn't place everything you listed in the order you gave."
+# KRI-723: named moments the plan cannot show are those actions. An app that cannot answer the
+# "show me where each moment is" card gets windows nobody located; the creator hears it.
+_MOMENTS_NOT_LOCATED = (
+    "I couldn't find every moment you named in your clip, so I can't confirm the ones playing "
+    "are those moments"
+)
+# ... and the moments the creator left to Kria or said are not in their clips.
+_MOMENTS_CREATOR_CALL = (
+    "Some moments are your call: ones you said aren't in your clips, or let me pick"
+)
+_MOMENT_LIMIT_CODES = frozenset({"not_located", "delegated", "skipped"})
 # KRI-470 PR-G: what a required order says when it was not met.
 _ORDER_NOT_RECORDED = "I couldn't confirm the order your edit used."
 _ORDER_RULE_NOT_APPLIED = (
@@ -2599,12 +2623,21 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
         # The creator described the order in their own words; the plan placed (or
         # failed to place) each group and recorded which (KRI-458).
         landed = sum(status == "met" for status in facts.sequence_statuses)
-        if landed < len(facts.sequence_statuses):
+        honest = len(facts.sequence_unlocated)
+        if landed + honest < len(facts.sequence_statuses):
             return _receipt(
                 req,
                 "partial" if landed or not required else "not_possible",
                 _listed_order_miss(facts),
             )
+        if honest:
+            # KRI-723: placed as asked, but not every named moment is evidenced as itself.
+            reason = (
+                _MOMENTS_NOT_LOCATED
+                if "not_located" in facts.sequence_unlocated
+                else _MOMENTS_CREATOR_CALL
+            )
+            return _receipt(req, "partial", say(en=reason, tr=_REASON_TR[reason]))
     elif basis in _ARRIVAL_BASES and key != basis:
         # An order only the creator's words describe, and nothing in the plan applied
         # it: say so, never let a silent attachment order read as "done" (KRI-458).
@@ -3922,6 +3955,12 @@ _REASON_TR: dict[str, str] = {
         "Anlattığını kliplerle eşleştiremedim, o yüzden klipler eklediğin sırada kaldı."
     ),
     _ORDER_LIST_NOT_PLACED: "Saydığın her şeyi verdiğin sıraya yerleştiremedim.",
+    _MOMENTS_NOT_LOCATED: (
+        "Saydığın her anı klipte bulamadım, o yüzden oynayanların o anlar olduğunu doğrulayamıyorum"
+    ),
+    _MOMENTS_CREATOR_CALL: (
+        "Bazı anlar senin kararın: kliplerinde olmadığını söylediklerin ya da bana bıraktıkların"
+    ),
     _ORDER_NOT_RECORDED: "Düzenlemenin kullandığı sırayı doğrulayamadım.",
     _ORDER_RULE_NOT_APPLIED: (
         "Bu sıralama kuralını doğrulayamıyorum ve klipler kurala uyduğunu gösterebileceğim "
@@ -4143,6 +4182,8 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _NO_CLIP_SPEED,
     _NO_FREEZE_FRAME,
     _FREEZE_NOT_GROUNDED,
+    _MOMENTS_NOT_LOCATED,
+    _MOMENTS_CREATOR_CALL,
     _FREEZE_NEEDS_FRAME,
     _FREEZE_FIRST_FRAME,
     _LIGHT_UNAVAILABLE,
@@ -9031,6 +9072,12 @@ _OUTCOME_REASON_TR = {
     "its clips are already in an earlier group": "klipleri zaten önceki bir grupta",
     "its clips are already placed at another spot": "klipleri zaten başka bir yerde",
     "the clips did not end up there": "klipler oraya gelmedi",
+    # KRI-723 (``unified_montage.MOMENT_*``).
+    "I couldn't find this moment in your clip, so I can't confirm it's the one playing": (
+        "Bu anı klipte bulamadım, o yüzden oynayanın o an olduğunu doğrulayamıyorum"
+    ),
+    "you let me pick this moment, so I chose it myself": "bu anı seçmeyi bana bıraktın, ben seçtim",
+    "you told me this moment isn't in your clips": "bu anın kliplerinde olmadığını söyledin",
     "you chose grouping first, each group in the order you filmed it": (
         "önce gruplamayı seçtin, her grup çektiğin sırada"
     ),

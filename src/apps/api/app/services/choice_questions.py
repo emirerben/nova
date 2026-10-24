@@ -1790,8 +1790,12 @@ def _freeze_frame(
     cap: ChoiceCapability,
     *,
     clip_paths: Sequence[Any] = (),
+    snapshot: Mapping[str, Any] | None = None,
 ) -> list[UnresolvedChoice]:
     """A freeze names a moment, but nothing knows the exact instant to hold (KRI-900).
+
+    A freeze naming a moment the creator already pointed at (KRI-723, the length plan's
+    ``creator_answer`` moments) is not asked: the render holds that window's last frame.
 
     "Freeze the frame on Atakan's bite": the clip record knows the bite's moment (57.0 to
     59.8 s, an interval) but not the instant of the bite, and the render must not guess one.
@@ -1815,6 +1819,10 @@ def _freeze_frame(
     live = _live(brief)
     # A second the creator typed ("freeze at 58.2 seconds") already pins the frame.
     specs = [spec for spec in live_freezes(live) if spec.target_words and spec.frame_s is None]
+    from app.services.named_moments import pointed_match, pointed_moment_words  # noqa: PLC0415
+
+    pointed = pointed_moment_words(snapshot)
+    specs = [spec for spec in specs if pointed_match(spec.target_words, pointed) is None]
     if not specs:
         return []
     audio = strategy.get("montage_audio")
@@ -2769,10 +2777,24 @@ def _source_coverage(
             "single_hero_order_conflict",
             "insufficient_media",
             "duration_out_of_bounds",
+            "named_moments_unplaceable",
         }
     ):
         return None
-    if "single_hero_order_conflict" in codes:
+    if "named_moments_unplaceable" in codes:
+        # KRI-723: the creator's pointed moments leave no room for the rest at this length.
+        reason = say(
+            en=(
+                "Your moments can't all get their own part of this clip at this length. "
+                "Ask for a different length, or name fewer moments."
+            ),
+            tr=(
+                "Saydığın anların hepsi bu uzunlukta klipte kendi yerini alamıyor. Başka bir "
+                "uzunluk iste ya da daha az an say."
+            ),
+        )
+        label = "Update the selected clips"
+    elif "single_hero_order_conflict" in codes:
         reason = say(
             en=(
                 "The selected order conflicts with the single-hero composition. "
@@ -3328,7 +3350,7 @@ def collect_conflicts(
         _text_placement,
         functools.partial(_title_text, clip_paths=clip_paths),
         functools.partial(_take_line, clip_paths=clip_paths),
-        functools.partial(_freeze_frame, clip_paths=clip_paths),
+        functools.partial(_freeze_frame, clip_paths=clip_paths, snapshot=media_snapshot),
         functools.partial(_source_coverage, snapshot=media_snapshot),
         functools.partial(_holds_vs_length, snapshot=media_snapshot),
         _duration_vs_count,

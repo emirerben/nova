@@ -262,8 +262,12 @@ def _enrich_best_parts_snapshot(
     named_lines: Sequence[Mapping[str, Any]] | None = None,
     camera_sound: bool = False,
     visual_photo_ids: Sequence[str] | None = None,
+    moment_pins: Any = None,
 ) -> dict | None:
     """Attach source-bounded footage capacity before the choice collector runs.
+
+    ``moment_pins`` (KRI-723, ``named_moments.MomentDecision``): the creator's named moments of
+    the one take with their pinned authority; the length plan plays exactly those windows.
 
     ``closing_quote`` is ``spoken_quotes.ground_closing_quote``'s record of the line the
     creator asked to end on (KRI-597); ``named_lines`` is ``_ground_spoken_lines``' record of
@@ -399,6 +403,12 @@ def _enrich_best_parts_snapshot(
             spoken_order=seats.record() if seats is not None else None,
             named_lines=named,
             still_holds=still_holds,
+            pinned_moments=(
+                [pin.json() for pin in moment_pins.pins] if moment_pins is not None else None
+            ),
+            skipped_moments=(
+                [pin.json() for pin in moment_pins.skipped] if moment_pins is not None else None
+            ),
         )
 
     # KRI-585: the clips' words seat the welcome's line and a quiet ending. "Fast cuts" is
@@ -2645,6 +2655,7 @@ def _with_wording_question(wording: PlannedKriaTurn, planned: PlannedKriaTurn) -
         or plan.choice_question
         or plan.song_order_question is not None
         or plan.song_range_question is not None
+        or plan.moment_order_question
         or plan.reply_options
         or planned.continuable
         or any(word and title and (word in title or title in word) for word in words)
@@ -4185,6 +4196,8 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
     """Fence planning against source replacement while providers are running."""
     from app.kria.brief_binding import media_identity, snapshot_media  # noqa: PLC0415
 
+    # KRI-723: the app answers a moment-order card (stamped at submit); the gate reads it.
+    answers_moment_questions = bool(kwargs.pop("moment_questions", False))
     # KRI-898: the sending app build rides the planned turn to the choice gate only.
     client_protocol = kwargs.pop("client_protocol", None)
     item = await db.get(PlanItem, kwargs["item_id"])
@@ -4220,6 +4233,7 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
         creator_id=kwargs["creator_id"],
         item_id=kwargs["item_id"],
         creator_text=kwargs.get("user_message"),
+        answers_moment_questions=answers_moment_questions,
     )
 
 
@@ -4231,8 +4245,13 @@ async def _gate_unresolved_choices(
     creator_id: uuid.UUID,
     item_id: uuid.UUID | None = None,
     creator_text: str | None = None,
+    answers_moment_questions: bool = False,
 ) -> PlannedKriaTurn:
     """KRI-476: an unresolved material choice never becomes an approvable draft.
+
+    ``answers_moment_questions`` (KRI-723): the app that sent this turn can answer a
+    ``moment_order_question`` (stamped at submit from its protocol). Only then is a creator
+    whose named moments the clip record cannot place asked to point at them.
 
     ``creator_text`` is this turn's creator message: the brief it previews stamps
     authority from it exactly as the persisted version will (KRI-824), so the length plan
@@ -4417,6 +4436,27 @@ async def _gate_unresolved_choices(
     camera_sound = settings.spoken_order_enabled and keeps_camera_sound(
         planned.brief_manifest, strategy
     )
+    # KRI-723: the creator's named moments of one take. Grounded ones are pinned; for the
+    # rest an app that can answer is asked, before any approval card, to point at them.
+    moments = _moment_decision(
+        strategy,
+        planned.media_snapshot,
+        brief,
+        events,
+        can_ask=answers_moment_questions and settings.clip_intents_enabled,
+    )
+    if moments.question is not None:
+        from app.services.named_moments import question_text  # noqa: PLC0415
+
+        return replace(
+            planned,
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="question",
+                response=question_text(moments.question),
+                moment_order_question=moments.question,
+            ),
+        )
     enriched_snapshot = _enrich_best_parts_snapshot(
         strategy,
         planned.media_snapshot,
@@ -4425,6 +4465,7 @@ async def _gate_unresolved_choices(
         named_lines=named_lines,
         camera_sound=camera_sound,
         visual_photo_ids=_held_visual_pool(planned.brief_manifest, strategy),
+        moment_pins=moments,
     )
     if enriched_snapshot is not planned.media_snapshot:
         planned = replace(planned, media_snapshot=enriched_snapshot)
@@ -4567,6 +4608,7 @@ async def _gate_unresolved_choices(
         named_lines=named_lines,
         camera_sound=camera_sound,
         visual_photo_ids=_held_visual_pool(planned.brief_manifest, resolution.strategy),
+        moment_pins=moments,
     )
     return _with_narration_note(
         replace(
@@ -4579,6 +4621,32 @@ async def _gate_unresolved_choices(
         final_brief,
         camera_sound=camera_sound,
         closing_quote=closing_quote,
+    )
+
+
+def _moment_decision(
+    strategy: Mapping[str, Any],
+    media_snapshot: Mapping[str, Any] | None,
+    brief: CreativeBrief | None,
+    events: Sequence[tuple[str, Any]],
+    *,
+    can_ask: bool,
+) -> Any:
+    """KRI-723: the named moments' pins, or the question that gets them (no model call)."""
+    from app.services.length_planning import DEFAULT_MOMENT_S  # noqa: PLC0415
+    from app.services.named_moments import decide, named_moments  # noqa: PLC0415
+
+    if not settings.clip_intents_enabled:
+        return decide(None, (), can_ask=False, default_window_s=DEFAULT_MOMENT_S)
+    ask = brief_moment_ask(brief)
+    moment_set = named_moments(
+        strategy, media_snapshot, moment_count=ask.count if ask is not None else None
+    )
+    return decide(
+        moment_set,
+        events,
+        can_ask=can_ask,
+        default_window_s=(ask.each_s if ask is not None and ask.each_s else DEFAULT_MOMENT_S),
     )
 
 
