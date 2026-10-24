@@ -506,6 +506,26 @@ recording. **Rollback:**
 `fly secrets set PHONE_NARRATED_RENDERING_ENABLED=false --app nova-video` +
 `fly machine restart <id>` (api + worker).
 
+**One clip's own sound (KRI-842).** The footage bed above is one gain for every
+clip. An `audio` requirement scoped `clip:<media id>` with `facts.clip_sound`
+(`under_voice` / `after_voice` plus the spoken `triggers`; read by
+`app.kria.narrated_clip_sound_ask`, taught by Main Creator v76 and Brief
+Extractor v21) moves the gain onto each clip's `volume` (`original_volume` 1.0):
+only the asked clips play under the voice, and the last clip is split into its
+voiced part (silent, cut to end in the pause before the line) plus a contiguous
+full-volume tail that starts where the voice ends
+(`app.pipeline.phone_clip_sound`; the line is grounded with
+`spoken_quotes.named_line_records`). What was built is `variant["clip_sound"]`,
+re-read from the pinned recipe by every editor Save (`reconcile_clip_sound`), and
+`brief_checks` judges the asks from it before approval and on the finished video;
+a clip-scoped ask with no recorded fact is never "met" by the global bed. No flag:
+without the fact the recipe is unchanged. No new capability or client protocol.
+A creator-confirmed length that the tail would break drops the tail instead of
+failing the render, and so does a compile the device refuses (tail first, then the
+gains: the asks say `render_refused`). The same facts on a voiceover edit the phone
+Voiceover compiler does not render (montage with a voiceover, cloud) get a plain
+"Couldn't" before approval and on the finished video.
+
 **Cleaned narration delivery (KRI-277).** Guided and narrated phone jobs pin a
 private `narration_binding` beside the device request. It binds the recipe's
 voiceover asset and fingerprint to the cleaned `NarrationTrack`, including its
@@ -2653,12 +2673,34 @@ word. No model or prompt is involved:
   if I find those lines") and the length line measures that part, not the whole
   take. After render: met only when every asked line was cut.
 
+- **A quote the take does not hold (KRI-844).** `ground_line` is same-language, so an
+  English quote of a Spanish take ("Here we have traditional Argentinian sauces" over
+  "Acá tenemos salsas tradicionales argentinas", Don Julio T2) is `not_found` and the
+  whole take used to ship. For a one-video phone Talking edit with timed speech, the
+  gate (`choice_questions._take_line`) now asks BEFORE approval which line of the
+  take to open on (`take_line_start`) and, once that is answered, which to end on
+  (`take_line_end`). Options are the take's own lines (`take_lines.take_lines`:
+  clause punctuation starts a line, and so does a Title-case word inside a run the
+  ASR left unpunctuated, so "Lucas Acá tenemos ..." is two lines), the ones most like
+  the quote when more than five, and a "none of these" answer. The pick is `ChoiceAnswer.value`; `answered_brief` copies it to
+  `facts.start_line_spoken` / `facts.end_line_spoken`, and `apply_take_window`
+  (`start_spoken` / `end_spoken`, draft estimate and worker alike) grounds it before
+  the quote. A pick is stored as the line plus the neighbouring words that make it name
+  one place in the take (grounding takes a text's first match, so a bare "Gracias" would
+  land inside "muchas gracias"); a line said twice is the first for a start, the last for
+  an end. Receipts keep the creator's quote (+ `spoken`). A found quote never asks;
+  "none of these" and a pick the worker's words don't hold leave today's honest
+  `not_found`. `length_vs_natural` still compares a length ask with the whole take,
+  not the part the lines keep.
+
 Gap: cleanup off with no checked preflight snapshot still reports `cleanup_off`.
 Verify on a real take (writes `report.json`, and with `--video` a `window.mp4` to
 watch): `cd src/apps/api && python -m app.cli.verify_take_window --take
 tests/fixtures/kri790_merope_t1_take.json --video <take.mp4>`.
 Tests: `tests/pipeline/test_phone_take_window.py`, `tests/pipeline/test_phone_opening_cut.py`,
-`tests/kria/test_kri837_one_word_end_line.py`.
+`tests/kria/test_kri837_one_word_end_line.py`,
+`tests/kria/test_kri844_take_line_ask.py`,
+`tests/kria/test_kri844_dj_t2_cross_language_replay.py` (fixture `kri844_dj_t2_take.json`).
 
 ### Text on a spoken word on phone Talking edits (KRI-707)
 

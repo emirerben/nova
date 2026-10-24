@@ -131,6 +131,7 @@ from app.services.job_phases import (
     record_sub_phase,
 )
 from app.services.job_storage_paths import JOB_POSTER_PATH_PREFIX, owned_job_output_path
+from app.services.music_genre import asked_genres, genre_shortlist
 from app.services.phone_text_styling import (
     current_phone_text_policy,
     generation_style_fields,
@@ -3900,6 +3901,7 @@ def _run_generative_job_impl(
                         speech_cleanup_uses_preflight=speech_cleanup_snapshot_contract,
                         clip_id_to_gcs=clip_id_to_gcs,
                         caption_language_request=all_candidates.get("caption_language_request"),
+                        named_cut_asks=_brief_named_cut_asks(immutable_job_plan),
                     )
                 elif spec.get("archetype") == "subtitled":
                     result = _render_subtitled_variant(
@@ -4852,7 +4854,10 @@ def _resolve_phone_voiceover_bed(
 
     if not voiceover_gcs_path:
         return None
-    cleaned = narration is not None and narration.speech_cleanup is not None
+    # KRI-889: a voiceover cut around the lines the creator named is a derivative too.
+    cleaned = narration is not None and (
+        narration.speech_cleanup is not None or narration.named_cuts is not None
+    )
     with _sync_session() as db:
         from app.models import PlanItem  # noqa: PLC0415
 
@@ -9339,6 +9344,68 @@ def _phone_opening_cut_snapshot(
         return None
 
 
+def _brief_named_cut_asks(snapshot: Mapping[str, Any]) -> list[tuple[str, Any, int | None]]:
+    """KRI-889: ``(quote, requirement_ids, occurrence)`` per line the approved brief names to cut.
+
+    Read deterministically off the brief pinned on the job (``creator_brief_binding``), the
+    same `brief_named_cuts` the phone Talking cut reads (KRI-821). Empty without a binding,
+    with the narrated named-cut kill switch off, or when the binding is unreadable (logged).
+    """
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.opening_cut_ask import brief_named_cuts  # noqa: PLC0415
+
+    raw_binding = snapshot.get("creator_brief_binding")
+    if not raw_binding or not settings.narrated_named_cuts_enabled:
+        return []
+    try:
+        brief = BriefBinding.model_validate(raw_binding).resolve()
+        return [(cut.quote, cut.requirement_ids, cut.occurrence) for cut in brief_named_cuts(brief)]
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+        log.warning("narrated_named_cuts.binding_unreadable", error=str(exc)[:200])
+        return []
+
+
+def _named_cut_spans(receipts: Sequence[Mapping[str, Any]]) -> list[tuple[float, float]]:
+    """The spans the applied named-line receipts cut, in the order they were applied."""
+    return [
+        (float(row["start_s"]), float(row["end_s"]))
+        for row in receipts
+        if row.get("status") == "applied"
+    ]
+
+
+def _mark_named_cuts_failed(receipts: Sequence[dict[str, Any]] | None) -> None:
+    """Turn every applied named-line receipt into ``cut_failed`` (the voice stayed whole)."""
+    for row in receipts or []:
+        if row.get("status") == "applied":
+            row.update(status="not_applied", reason="cut_failed")
+            row.pop("removed_s", None)
+
+
+def _record_named_cut_receipts(stage: str, receipts: Sequence[Mapping[str, Any]]) -> None:
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    try:
+        record_pipeline_event(stage, "named_cuts", {"named_cuts": list(receipts)})
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+
+
+def _missed_named_cuts(
+    asks: Sequence[tuple[str, Any, int | None]], reason: str
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "version": 1,
+            "quote": quote,
+            "requirement_ids": list(ids),
+            "status": "not_applied",
+            "reason": reason,
+        }
+        for quote, ids, _occurrence in asks
+    ]
+
+
 def _phone_opening_cut(
     snapshot: dict,
     cut_plan: CutPlan | None,
@@ -9429,6 +9496,8 @@ def _phone_opening_cut(
                     duration_s=duration_s,
                     start_ids=ask.start_ids,
                     end_ids=ask.end_ids,
+                    start_spoken=ask.start_spoken,
+                    end_spoken=ask.end_spoken,
                 )
                 receipts = {
                     field: receipt
@@ -9978,7 +10047,9 @@ def _phone_talking_spoken_text_rows(
     return rows, receipt
 
 
-def _phone_narrated_cleaned_narration(job_id: str, snapshot: dict) -> NarrationTrack:
+def _phone_narrated_cleaned_narration(
+    job_id: str, snapshot: dict, *, named_removals: Sequence[tuple[float, float]] = ()
+) -> NarrationTrack:
     """Apply this Job's accepted CutPlan to the item's CURRENT recorded
     voiceover and return the cleaned derivative.
 
@@ -9995,6 +10066,8 @@ def _phone_narrated_cleaned_narration(job_id: str, snapshot: dict) -> NarrationT
     `GuidedSpeechCleanupError`) so a cleaning failure fails the whole job
     through the SAME path as every other required-cleanup mismatch
     (`_run_generative_job`'s outer ``except SpeechCleanupFailure``).
+
+    ``named_removals`` (KRI-889): the lines the creator named, cut in the same file.
     """
     from app.models import PlanItem  # noqa: PLC0415
     from app.services.guided_speech_cleanup import (  # noqa: PLC0415
@@ -10028,10 +10101,99 @@ def _phone_narrated_cleaned_narration(job_id: str, snapshot: dict) -> NarrationT
         owner_id = job.user_id
         owner_item_id = item.id
     try:
-        return build_cleaned_narration(raw, payload, owner_id=owner_id, item_id=owner_item_id)
+        return build_cleaned_narration(
+            raw,
+            payload,
+            owner_id=owner_id,
+            item_id=owner_item_id,
+            named_removals=named_removals,
+        )
     except GuidedSpeechCleanupError as exc:
         reason = "apply_failed" if exc.code == SPEECH_CLEANUP_UNAVAILABLE else "snapshot_mismatch"
         raise SpeechCleanupFailure(reason, exc.message) from exc
+
+
+def _phone_narrated_named_cut_narration(
+    job_id: str,
+    voiceover_gcs_path: str,
+    asks: Sequence[tuple[str, Any, int | None]],
+    *,
+    transcribe: Callable[[str], Any],
+) -> tuple[NarrationTrack | None, Any, list[dict[str, Any]] | None]:
+    """KRI-889: cut the lines the creator named out of a cleanup-off narrated voiceover.
+
+    Transcribes the item's CURRENT raw recording (generation-pinned, the same whisper
+    call the render makes) and grounds each named line in its words
+    (`phone_opening_cut.apply_named_line_cuts`: never guessed). When any line is cut,
+    pins a shorter derivative (`guided_speech_cleanup.build_named_cut_narration`) whose
+    words are the raw words remapped through that cut. Returns ``(derivative or None,
+    raw transcript, receipts)``; the transcript is reused so the recording is heard once.
+    Fail-open: an unreadable voiceover returns ``(None, None, None)`` (the bed check
+    fails the job as before) and a failed cut keeps the whole voice, receipts saying so.
+    """
+    from app import storage  # noqa: PLC0415
+    from app.models import PlanItem  # noqa: PLC0415
+    from app.pipeline.phone_opening_cut import apply_named_line_cuts  # noqa: PLC0415
+    from app.pipeline.silence_cut import no_op_plan  # noqa: PLC0415
+    from app.services.guided_speech_cleanup import (  # noqa: PLC0415
+        GuidedSpeechCleanupError,
+        build_named_cut_narration,
+    )
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        item_id = job.content_plan_item_id if job is not None else None
+        item = db.get(PlanItem, item_id) if item_id is not None else None
+        if (
+            item is None
+            or getattr(item, "audio_mode", None) != "voiceover"
+            or item.voiceover_gcs_path != voiceover_gcs_path
+            or not item.voiceover_generation
+            or not item.voiceover_duration_s
+            or float(item.voiceover_duration_s) <= 0
+        ):
+            return None, None, None
+        raw = NarrationTrack(
+            gcs_path=str(item.voiceover_gcs_path),
+            generation=str(item.voiceover_generation),
+            duration_s=float(item.voiceover_duration_s),
+        )
+        owner_id = job.user_id
+        owner_item_id = item.id
+    with tempfile.TemporaryDirectory(prefix="nova_named_cut_", ignore_cleanup_errors=True) as tmp:
+        suffix = os.path.splitext(raw.gcs_path)[1].lower() or ".m4a"
+        local = os.path.join(tmp, f"voiceover{suffix}")
+        try:
+            storage.download_generation_to_file(raw.gcs_path, local, generation=raw.generation)
+        except Exception as exc:  # noqa: BLE001 - the bed check reports a missing voiceover
+            log.warning("narrated_named_cuts.download_failed", job_id=job_id, error=str(exc)[:200])
+            return None, None, None
+        transcript = transcribe(local)
+    words = list(getattr(transcript, "words", None) or [])
+    try:
+        _plan, receipts = apply_named_line_cuts(
+            no_op_plan(raw.duration_s), words, asks, duration_s=raw.duration_s
+        )
+    except Exception as exc:  # noqa: BLE001 - a missed cut is reported, never fatal
+        log.warning("narrated_named_cuts.ground_failed", job_id=job_id, error=str(exc)[:200])
+        return None, transcript, _missed_named_cuts(asks, "cut_failed")
+    spans = _named_cut_spans(receipts)
+    if not spans:
+        return None, transcript, receipts
+    try:
+        narration = build_named_cut_narration(
+            raw,
+            words,
+            spans,
+            language=getattr(transcript, "language", "") or "",
+            owner_id=owner_id,
+            item_id=owner_item_id,
+        )
+    except (GuidedSpeechCleanupError, ValueError) as exc:
+        log.warning("narrated_named_cuts.cut_failed", job_id=job_id, error=str(exc)[:200])
+        _mark_named_cuts_failed(receipts)
+        return None, transcript, receipts
+    return narration, transcript, receipts
 
 
 def _narrated_caption_transcript(
@@ -10352,6 +10514,20 @@ def _narrated_alignment_receipts(
     ]
 
 
+def _record_clip_sound_event(event: str, error: Exception | None, plan: Any) -> None:
+    """Pipeline-trace event for a clip-sound plan (KRI-842); observability only, never raises."""
+    try:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event(
+            "narrated",
+            event,
+            {"receipt": plan.receipt, **({"error": str(error)[:300]} if error else {})},
+        )
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+
+
 @phone_text_generation
 def _run_phone_narrated_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
@@ -10395,6 +10571,11 @@ def _run_phone_narrated_job(
     from app.pipeline.narrated_alignment import (  # noqa: PLC0415
         align_script_to_voiceover,  # noqa: PLC0415
         contiguous_step_timings,
+    )
+    from app.pipeline.phone_clip_sound import (  # noqa: PLC0415
+        plan_narrated_clip_sound,
+        reconcile_clip_sound,
+        refused_plan,
     )
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
     from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
@@ -10520,6 +10701,23 @@ def _run_phone_narrated_job(
     speech_cleanup_outcome_context: dict[str, Any] | None = None
     cleaned_narration: NarrationTrack | None = None
     effective_voiceover_gcs_path = voiceover_gcs_path
+    # KRI-889: lines the creator named to cut out of the voiceover. None = no such ask,
+    # so the render below runs exactly as before.
+    named_cut_asks = _brief_named_cut_asks(snapshot)
+    named_cut_receipts: list[dict[str, Any]] | None = None
+    raw_transcript: Any = None
+
+    def _transcribe_raw(path: str) -> Any:
+        # KRI-519: seed whisper with the creator's trigger phrases, like
+        # Talking (KRI-178), or a name or "medal" comes back misspelled
+        # and the beat never fires. No beats: the call stays unchanged.
+        vocabulary_prompt = trigger_vocabulary_prompt(beats, closing) if beats_enabled else None
+        return transcribe_whisper(
+            path,
+            model=settings.narrated_whisper_model,
+            **({"verbatim_prompt": vocabulary_prompt} if vocabulary_prompt else {}),
+        )
+
     if cleanup_required:
         try:
             speech_cleanup_snapshot = hydrate_job_speech_cleanup_snapshot(snapshot).require_source(
@@ -10536,9 +10734,41 @@ def _run_phone_narrated_job(
         speech_cleanup_outcome_context = speech_cleanup_snapshot.outcome_context(
             analysis_view="full_clip"
         )
-        cleaned_narration = _phone_narrated_cleaned_narration(job_id, snapshot)
-        effective_voiceover_gcs_path = cleaned_narration.gcs_path
+        named_removals: list[tuple[float, float]] = []
+        if named_cut_asks:
+            # KRI-889: ground each named line in the snapshot's exact words and cut it in
+            # the same pass as the accepted plan (one file, one fingerprint).
+            from app.pipeline.phone_opening_cut import apply_named_line_cuts  # noqa: PLC0415
 
+            try:
+                _named_plan, named_cut_receipts = apply_named_line_cuts(
+                    speech_cleanup_snapshot.cut_plan,
+                    speech_cleanup_snapshot.source_words(),
+                    named_cut_asks,
+                    duration_s=speech_cleanup_snapshot.window_duration_s,
+                )
+            except Exception as exc:  # noqa: BLE001 - a missed cut is reported, never fatal
+                log.warning("narrated_named_cuts.ground_failed", error=str(exc)[:200])
+                named_cut_receipts = _missed_named_cuts(named_cut_asks, "cut_failed")
+            named_removals = _named_cut_spans(named_cut_receipts)
+        try:
+            cleaned_narration = _phone_narrated_cleaned_narration(
+                job_id, snapshot, named_removals=named_removals
+            )
+        except SpeechCleanupFailure as exc:
+            if not named_removals:
+                raise
+            # A named cut fails open: keep the voice whole, the cleanup cut still applies.
+            log.warning("narrated_named_cuts.cut_failed", job_id=job_id, error=str(exc)[:200])
+            _mark_named_cuts_failed(named_cut_receipts)
+            cleaned_narration = _phone_narrated_cleaned_narration(job_id, snapshot)
+        effective_voiceover_gcs_path = cleaned_narration.gcs_path
+    elif named_cut_asks:
+        cleaned_narration, raw_transcript, named_cut_receipts = _phone_narrated_named_cut_narration(
+            job_id, voiceover_gcs_path, named_cut_asks, transcribe=_transcribe_raw
+        )
+        if cleaned_narration is not None:
+            effective_voiceover_gcs_path = cleaned_narration.gcs_path
     narration = _resolve_phone_voiceover_bed(
         job_id, effective_voiceover_gcs_path, narration=cleaned_narration
     )
@@ -10549,6 +10779,9 @@ def _run_phone_narrated_job(
         )
 
     with pipeline_trace_for(job_id):
+        if named_cut_receipts is not None:
+            # Inside the job trace, or the admin job-debug view never sees it.
+            _record_named_cut_receipts("narrated", named_cut_receipts)
         with tempfile.TemporaryDirectory(
             prefix="nova_phone_narrated_", ignore_cleanup_errors=True
         ) as tmpdir:
@@ -10581,18 +10814,11 @@ def _run_phone_narrated_job(
                     full_text=" ".join(word.text for word in cleaned_narration.words),
                     language=cleaned_narration.language or "",
                 )
+            elif raw_transcript is not None:
+                # KRI-889: no named line was cut; the raw recording was already heard.
+                transcript = raw_transcript
             else:
-                # KRI-519: seed whisper with the creator's trigger phrases, like
-                # Talking (KRI-178), or a name or "medal" comes back misspelled
-                # and the beat never fires. No beats: the call stays unchanged.
-                vocabulary_prompt = (
-                    trigger_vocabulary_prompt(beats, closing) if beats_enabled else None
-                )
-                transcript = transcribe_whisper(
-                    voiceover_local,
-                    model=settings.narrated_whisper_model,
-                    **({"verbatim_prompt": vocabulary_prompt} if vocabulary_prompt else {}),
-                )
+                transcript = _transcribe_raw(voiceover_local)
 
             guide_narrative_order = _resolve_narrative_order(
                 narrative_shot_count, clip_id_to_gcs, job_id=job_id, strict=False
@@ -10887,6 +11113,45 @@ def _run_phone_narrated_job(
             bed_level = max(0.0, min(1.0, bed_level))
             mix = 1.0 - bed_level
 
+            # KRI-842: "that clip's own sound under my voice" / "after my voice ends, this
+            # clip plays on", read off the approved brief's `clip_sound` facts. Without such
+            # an ask nothing below changes and the recipe is the one this job always made.
+            clip_sound_plan = None
+            if narrated_brief is not None:
+                from app.kria.narrated_clip_sound_ask import (  # noqa: PLC0415
+                    brief_clip_sound_asks,
+                )
+
+                clip_sound_asks = brief_clip_sound_asks(narrated_brief)
+                if clip_sound_asks:
+                    from app.services.creator_render_contract import (  # noqa: PLC0415
+                        read_render_contract,
+                    )
+
+                    try:
+                        confirmed_duration_s = getattr(
+                            read_render_contract(snapshot), "duration_s", None
+                        )
+                    except Exception:  # noqa: BLE001 - pinning re-reads, and refuses, a bad one
+                        confirmed_duration_s = None
+                    try:
+                        clip_sound_plan = plan_narrated_clip_sound(
+                            clip_sound_asks,
+                            steps=steps,
+                            bindings=bindings,
+                            media_snapshot=(snapshot.get("creator_brief_binding") or {}).get(
+                                "media_snapshot"
+                            ),
+                            # A length the creator confirmed binds the finished video, tail too.
+                            target_duration_s=confirmed_duration_s,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - an ask never costs the video
+                        log.warning("phone_clip_sound.plan_failed", job_id=job_id, error=str(exc))
+                        clip_sound_plan = refused_plan(clip_sound_asks, steps)
+                        _record_clip_sound_event("clip_sound_refused", exc, clip_sound_plan)
+                    steps = clip_sound_plan.steps
+                    _record_clip_sound_event("clip_sound", None, clip_sound_plan)
+
             opening_title_end_s = narrated_title_end_s(
                 transcript.words[0].end_s if transcript.words else None
             )
@@ -10984,9 +11249,35 @@ def _run_phone_narrated_job(
                         visuals=visuals,
                         source_audio_media_ids=source_audio_ids,
                         resolved_text_elements=spoken_rows,
+                        **(
+                            {
+                                "under_voice_media_ids": clip_sound_plan.under_voice_media_ids,
+                                "voice_tail": clip_sound_plan.voice_tail,
+                            }
+                            if clip_sound_plan is not None
+                            else {}
+                        ),
                     )
                     break
-                except UnsupportedPhonePlan as exc:
+                except ValueError as exc:
+                    # An ask for one clip's own sound never costs the creator their video: the
+                    # compile that refused it is retried without the tail, then without the
+                    # gains (a lane error is the lane's, below).
+                    degraded = (
+                        clip_sound_plan.degrade()
+                        if clip_sound_plan is not None and not isinstance(exc, SubtitledLaneError)
+                        else None
+                    )
+                    if degraded is not None:
+                        log.warning(
+                            "phone_clip_sound.render_refused", job_id=job_id, error=str(exc)
+                        )
+                        clip_sound_plan = degraded
+                        steps = clip_sound_plan.steps
+                        _record_clip_sound_event("clip_sound_refused", exc, clip_sound_plan)
+                        continue
+                    if not isinstance(exc, UnsupportedPhonePlan):
+                        raise
                     # A beat lane never fails the job: drop the lane that failed
                     # (every lane when the error names none), then recompile.
                     if lanes is None or beat_receipt is None:
@@ -11127,7 +11418,10 @@ def _run_phone_narrated_job(
         if projected_cut is not None:
             new_entry["narrated_timings"] = projected_cut[0]
             new_entry["narrated_clip_assignments"] = projected_cut[1]
-        if cleaned_narration is not None:
+        if named_cut_receipts is not None:
+            # KRI-889: one receipt per named line; the chat's receipts read it.
+            new_entry["named_cuts"] = named_cut_receipts
+        if speech_cleanup_outcome_context is not None:
             # Admin/debug parity with the cloud `required_v1` narrated
             # render, and the source `_speech_cleanup_outcome_context` the
             # device-export completion route (`app.routes.device_render.
@@ -11142,6 +11436,10 @@ def _run_phone_narrated_job(
             # KRI-519: the same creator-safe receipt Talking keeps; the chat's
             # render notes read it to say which named moment never came up.
             new_entry["phone_beat_receipt"] = beat_receipt
+        if clip_sound_plan is not None:
+            # KRI-842: what the pinned recipe plays for each clip-sound ask, read back from
+            # the recipe itself (the receipts judge this, never the global bed level).
+            new_entry["clip_sound"] = reconcile_clip_sound(recipe, clip_sound_plan.receipt)
         if existing_index is not None:
             variants[existing_index] = new_entry
         else:
@@ -22635,7 +22933,10 @@ def _match_best_track(
 ) -> MusicTrack | None:
     """Top-1 matched track, or None if the library has no confident match.
 
-    ``music_ask`` is the creator's own words about the music (KRI-679), if any.
+    ``music_ask`` is the creator's own words about the music (KRI-679), if any. A genre it
+    names (KRI-848) is a hard limit: the matcher ranks only the tracks whose labels say it,
+    else the closest family the library has, else all (the caller reports the genre as
+    not found).
     ``run_context`` owns a pre-render (chat) match; see ``_run_music_matcher``.
     """
     plan_item_id = run_context.plan_item_id if run_context is not None else None
@@ -22653,7 +22954,7 @@ def _match_best_track(
             return None
         ranked = _run_music_matcher(
             clip_metas=clip_metas,
-            candidate_tracks=candidates,
+            candidate_tracks=genre_shortlist(candidates, asked_genres(music_ask)),
             n_variants=1,
             job_id=job_id,
             music_ask=music_ask,
@@ -23422,6 +23723,7 @@ def _discard_generation_storage(
         "subject_matte_path",
         "visual_blocks_base_path",
         "motion_base_path",
+        "narrated_voiceover_path",
     ),
 ) -> None:
     """Synchronous cleanup for exact outputs rejected by a terminal DB write.
@@ -26888,6 +27190,91 @@ def _narrated_storyboard_text_elements(
     return elements
 
 
+def _cut_named_lines(
+    asks: Sequence[tuple[str, Any, int | None]],
+    *,
+    voiceover_local: str,
+    cleaned_local: str,
+    variant_dir: str,
+    transcript: Any,
+    snapshot: HydratedSpeechCleanupSnapshot | None,
+    job_id: str,
+) -> tuple[str, Any, list[dict[str, Any]]]:
+    """KRI-889: the cloud narrated voiceover with the lines the creator named cut out.
+
+    ``snapshot`` is the accepted cleanup snapshot when cleanup applies: the lines are then
+    grounded in its exact words and cut in the same pass as its plan (fillers filtered as
+    cleanup does). Otherwise ``transcript`` is the raw recording's own words and only the
+    named lines go (an explicit cleanup-off keeps every other word). Returns ``(audio the
+    assembler plays, transcript in that audio's time, receipts)``. Fail-open: a line not
+    found, or a failed cut, keeps the audio and transcript it was given.
+    """
+    from app.pipeline.phone_opening_cut import apply_named_line_cuts  # noqa: PLC0415
+    from app.pipeline.silence_cut import no_op_plan, remap_words  # noqa: PLC0415
+    from app.pipeline.speech_cleanup_apply import apply_keep_segments_to_audio  # noqa: PLC0415
+    from app.pipeline.transcribe import Transcript, Word  # noqa: PLC0415
+    from app.tasks.template_orchestrate import _probe_duration  # noqa: PLC0415
+
+    try:
+        if snapshot is not None:
+            base_plan = snapshot.cut_plan
+            words: list[Any] = snapshot.source_words()
+            window = (snapshot.window_start_s, snapshot.window_end_s)
+        else:
+            duration_s = float(_probe_duration(voiceover_local) or 0.0)
+            if duration_s <= 0:
+                raise ValueError("voiceover duration unknown")
+            base_plan = no_op_plan(duration_s)
+            words = list(transcript.words)
+            window = (0.0, duration_s)
+        plan, receipts = apply_named_line_cuts(
+            base_plan, words, asks, duration_s=window[1] - window[0]
+        )
+    except Exception as exc:  # noqa: BLE001 - a missed cut is reported, never fatal
+        log.warning("narrated_named_cuts.ground_failed", job_id=job_id, error=str(exc)[:200])
+        receipts = _missed_named_cuts(asks, "cut_failed")
+        _record_named_cut_receipts("narrated", receipts)
+        return cleaned_local, transcript, receipts
+    if not _named_cut_spans(receipts):
+        _record_named_cut_receipts("narrated", receipts)
+        return cleaned_local, transcript, receipts
+    out = os.path.join(variant_dir, "voiceover_named_cut.wav")
+    try:
+        apply_keep_segments_to_audio(
+            plan.keep_segments,
+            voiceover_local,
+            out,
+            window_start_s=window[0],
+            window_end_s=window[1],
+        )
+    except SpeechCleanupAudioApplyError as exc:
+        log.warning("narrated_named_cuts.cut_failed", job_id=job_id, error=str(exc)[:200])
+        _mark_named_cuts_failed(receipts)
+        _record_named_cut_receipts("narrated", receipts)
+        return cleaned_local, transcript, receipts
+    if snapshot is not None:
+        cut_transcript = snapshot.transcript(apply_cut=True, plan=plan)
+    else:
+        # Raw float mapping, like the cleanup path: every kept span keeps its exact length.
+        cut_words = [
+            Word(
+                text=str(item["text"]),
+                start_s=float(item["start_s"]),
+                end_s=float(item["end_s"]),
+                confidence=1.0,
+            )
+            for item in remap_words(words, plan)
+        ]
+        cut_transcript = Transcript(
+            words=cut_words,
+            full_text=" ".join(word.text for word in cut_words),
+            low_confidence=bool(getattr(transcript, "low_confidence", False)),
+            language=getattr(transcript, "language", "") or "",
+        )
+    _record_named_cut_receipts("narrated", receipts)
+    return out, cut_transcript, receipts
+
+
 def _render_narrated_variant(
     *,
     job_id: str,
@@ -26908,8 +27295,15 @@ def _render_narrated_variant(
     speech_cleanup_uses_preflight: bool | None = None,
     clip_id_to_gcs: Mapping[str, str] | None = None,
     caption_language_request: str | None = None,
+    named_cut_asks: Sequence[tuple[str, Any, int | None]] = (),
 ) -> dict[str, Any]:
     """Render one narrated walkthrough variant.
+
+    ``named_cut_asks`` (KRI-889, `_brief_named_cut_asks`): lines the creator named to cut.
+    Each is grounded in the voiceover's raw-time words and cut out of the audio the
+    assembler plays (with the accepted cleanup plan, when there is one), and the captions
+    and step timings follow the shorter voice. ``variant["named_cuts"]`` holds a receipt
+    per line. No asks: unchanged.
 
     New ``required_v1`` Jobs consume the immutable voiceover snapshot: its exact
     CutPlan produces the audio fed to the assembler and its exact timed words
@@ -27077,6 +27471,16 @@ def _render_narrated_variant(
             transcript = transcribe_whisper(
                 voiceover_local,
                 model=settings.narrated_whisper_model,
+            )
+        if named_cut_asks:
+            effective_voiceover_local, transcript, base["named_cuts"] = _cut_named_lines(
+                named_cut_asks,
+                voiceover_local=voiceover_local,
+                cleaned_local=effective_voiceover_local,
+                variant_dir=variant_dir,
+                transcript=transcript,
+                snapshot=active_snapshot if cleanup_from_snapshot else None,
+                job_id=job_id,
             )
         from app.pipeline.narrated_assembler import NarratedClip  # noqa: PLC0415
 
@@ -27381,6 +27785,25 @@ def _render_narrated_variant(
                 storage_generation,
             )
             upload_public_read(base_path, base_gcs)
+        # KRI-889: a voice with named lines cut exists only in this render's temp dir.
+        # Keep it, so the Background Sound re-mix plays the same cut voice the
+        # persisted timings and captions were measured on (never the raw recording).
+        narrated_voiceover_gcs: str | None = None
+        if effective_voiceover_local != voiceover_local and _named_cut_spans(
+            base.get("named_cuts") or []
+        ):
+            from app.storage import upload_local_file  # noqa: PLC0415
+
+            narrated_voiceover_gcs = _variant_storage_key(
+                job_id, f"variant_{rank}_{variant_id}_voice.wav", storage_generation
+            )
+            try:
+                upload_local_file(effective_voiceover_local, narrated_voiceover_gcs, "audio/wav")
+            except Exception as exc:  # noqa: BLE001 - the re-mix refuses without it
+                log.warning(
+                    "narrated_named_cuts.voice_upload_failed", job_id=job_id, error=str(exc)[:200]
+                )
+                narrated_voiceover_gcs = None
         cloud_ctx = spec.get("cloud_evidence_ctx")
         cloud_receipt = None
         if cloud_ctx is not None:
@@ -27430,6 +27853,11 @@ def _render_narrated_variant(
             ),
             **({"cloud_evidence": cloud_receipt} if cloud_receipt is not None else {}),
             "base_video_path": base_gcs,
+            **(
+                {"narrated_voiceover_path": narrated_voiceover_gcs}
+                if narrated_voiceover_gcs
+                else {}
+            ),
             "caption_cues": caption_cues or None,
             "text_elements": storyboard_elements,
             "text_elements_materialized_from": (
@@ -31861,7 +32289,12 @@ def _run_reburn_narrated_bed_level(
     narrated_timings = list(variant.get("narrated_timings") or [])
     if not narrated_timings:
         raise ValueError(f"variant {variant_id} has no persisted narrated_timings")
-    voiceover_gcs_path = all_candidates.get("voiceover_gcs_path")
+    voiceover_gcs_path = variant.get("narrated_voiceover_path")
+    if not voiceover_gcs_path and _named_cut_spans(variant.get("named_cuts") or []):
+        # KRI-889: the timings and captions are in the cut voice's time; the raw
+        # recording would bring the cut line back and drift everything after it.
+        raise ValueError(f"variant {variant_id} has no persisted cut voiceover to re-mix")
+    voiceover_gcs_path = voiceover_gcs_path or all_candidates.get("voiceover_gcs_path")
     if not voiceover_gcs_path:
         raise ValueError(f"variant {variant_id} has no voiceover to re-mix")
     filming_guide = list(all_candidates.get("filming_guide") or [])
@@ -34929,6 +35362,16 @@ def _finalize_job_decision(
                     # narrated step alignment (diagnostic): keep it through finalize
                     # so the admin job-debug view + re-render diagnostics can read it.
                     "narrated_timings": r.get("narrated_timings"),
+                    # KRI-889: one receipt per line the creator named to cut out of the
+                    # voiceover; the finished video's receipts answer from it. Only
+                    # written when asked, so every other variant keeps its shape.
+                    **({"named_cuts": r["named_cuts"]} if r.get("named_cuts") is not None else {}),
+                    # KRI-889: the cut voice the Background Sound re-mix must play.
+                    **(
+                        {"narrated_voiceover_path": r["narrated_voiceover_path"]}
+                        if r.get("narrated_voiceover_path")
+                        else {}
+                    ),
                     # silence/filler cut summary (plans/010) — MUST survive
                     # finalization or the admin cut-plan viewer (T9) and the
                     # per-variant time-saved stat silently lose their data the

@@ -15,7 +15,7 @@ from app.services.creator_execution_contract import narration_matches_item
 from app.services.guided_speech_cleanup import (
     derivative_object_path,
     has_preflight_snapshot,
-    narration_speech_cleanup,
+    is_cut_derivative,
     require_guided_cleanup_binding,
 )
 
@@ -122,7 +122,11 @@ def authorized_device_narration(
     item: Any,
     asset: VoiceoverRenderAsset,
 ) -> NarrationTrack | None:
-    """Return a checked clean narration, or ``None`` for an ordinary raw asset."""
+    """Return a checked cut narration, or ``None`` for an ordinary raw asset.
+
+    A cut narration is a "Clean up speech" derivative, a voiceover cut around the lines
+    the creator named (KRI-889), or both in one file.
+    """
     raw_binding = record.get("narration_binding")
     if raw_binding is None:
         narration = _legacy_cleaned_narration(assembly, owner_id=owner_id, item=item, asset=asset)
@@ -138,7 +142,7 @@ def authorized_device_narration(
             raise ValueError("device narration binding differs from recipe")
         narration = binding.narration
     require_guided_cleanup_binding(assembly, narration)
-    if narration_speech_cleanup(narration) is None:
+    if not is_cut_derivative(narration):
         return None
     if not narration_matches_item(narration.model_dump(mode="json"), item, owner_id=owner_id):
         raise ValueError("cleaned narration source changed")

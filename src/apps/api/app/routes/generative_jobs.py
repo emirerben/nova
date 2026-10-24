@@ -5957,6 +5957,15 @@ async def dispatch_set_narrated_bed_level(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Background sound can't be re-mixed on a video rendered on your phone.",
         )
+    if not variant.get("narrated_voiceover_path") and any(
+        isinstance(row, dict) and row.get("status") == "applied"
+        for row in variant.get("named_cuts") or []
+    ):
+        # KRI-889: the cut voice was not kept; re-mixing the raw one would bring the line back.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Background sound can't be re-mixed on this video without undoing your cut.",
+        )
     render_gen_id = _mark_variant_rendering(job, variant_id)
     await db.commit()
     from app.tasks.generative_build import reburn_narrated_bed_level  # noqa: PLC0415
