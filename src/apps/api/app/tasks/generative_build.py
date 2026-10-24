@@ -8527,6 +8527,8 @@ def _run_phone_subtitled_job(
                     },
                 ),
                 "keep_segments": [list(span) for span in speaker_keep_segments],
+                # The clip the text was put on: a later mark ask names this clip.
+                "speaker_media_id": binding.media_id,
                 "speaker_position_x": speaker_position_x,
                 "landscape_fit": framed_fit,
                 # What was measured (text rows, caption geometry, bars): a later edit that

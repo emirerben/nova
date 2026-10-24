@@ -223,6 +223,7 @@ def _marks_route_sync(  # noqa: ANN001
         strategy=document.strategy,
         edit_format=getattr(item, "edit_format", None) or document.edit_format,
         clip_paths=getattr(item, "clip_gcs_paths", None) or (),
+        voiceover_path=getattr(item, "voiceover_gcs_path", None),
     )
 
 
@@ -248,7 +249,9 @@ def _protected_region_gate_sync(  # noqa: ANN001
         build_protected_region_question,
         clip_generations,
         mark_request_text,
-        unmarked_object_targets,
+        missing_object_marks,
+        rendered_speaker_media_id,
+        speaker_candidates,
     )
 
     if not render_requested or not marks_route:
@@ -260,21 +263,31 @@ def _protected_region_gate_sync(  # noqa: ANN001
         return None
     if brief is None:
         brief = load_latest_brief_sync(db, thread.id)
-    generations = clip_generations(getattr(item, "clip_assignments", None) or [])
-    missing = unmarked_object_targets(
+    clip_assignments = getattr(item, "clip_assignments", None) or []
+    generations = clip_generations(clip_assignments)
+    # The mark counts only on a clip the writer may put the text on; once a render of this
+    # item spoke from a clip, that clip is one of them, so a mark on another clip is asked
+    # for again instead of being promised and read back as ``other_source``.
+    job = getattr(item, "current_job", None)
+    variants = ((getattr(job, "assembly_plan", None) or {}).get("variants")) or []
+    missing = missing_object_marks(
         brief,
         _protected_regions_sync(db, thread_id=thread.id, through_sequence=int(source.sequence)),
         generations,
+        render_clips=speaker_candidates(
+            clip_assignments, rendered_speaker=rendered_speaker_media_id(variants)
+        ),
     )
     if not missing:
         return None
+    target, clips = missing[0]
     question = build_protected_region_question(
-        missing[0], question_id=f"mark-{turn.id.hex[:16]}", media_ids=list(generations)
+        target, question_id=f"mark-{turn.id.hex[:16]}", media_ids=clips
     )
     plan = KriaTurnPlan(
         mode="respond",
         turn_value="question",
-        response=mark_request_text(missing[0].label),
+        response=mark_request_text(target.label),
         protected_region_question=question,
     )
     return plan, question

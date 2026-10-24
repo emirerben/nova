@@ -22,13 +22,21 @@ text's whole time on screen.
 
 - An act turn on the mark route (`protected_targets.marks_route`: an app that shows the card
   AND a draft the phone Talking writer really renders, i.e. phone clips, a phone-rendering
-  account, a Talking or self-narrated format, no recorded voiceover) whose live brief keeps text off an object with no
-  current mark does not offer approval: the runtime (`tasks/kria_runtime.
+  account, a Talking or self-narrated format, no recorded voiceover: the item's
+  `voiceover_gcs_path` sends it to the Voiceover writer, which ignores marks) whose live
+  brief keeps text off an object with no current mark on a clip the writer may put the
+  text on does not offer approval: the runtime (`tasks/kria_runtime.
   _protected_region_gate_sync`) rolls back the speculative draft and replies "Mark the plate
   on one frame so I can keep the text off it. Or tell me the text can go anywhere." with
   `protected_region_question {question_id, label, requirement_ids, media_ids}` (one object
-  per question, brief order; every clip of the edit, since the speaker is only known at
-  render). A mark is current while its clip is still in the item with the same storage
+  per question, brief order). `media_ids` are the clips still missing a mark among
+  `protected_targets.speaker_candidates`: the only clip, else every clip the clip analysis
+  did not find silent (no audio / `understanding.speech` heard nothing), plus the clip a
+  past render of this item spoke from (`rendered_speaker_media_id`, from the
+  `protected_text_regions.speaker_media_id` / multi-clip receipts). The speaker is chosen at
+  render, so a mark on a clip outside that set never satisfies the ask, and a render that
+  spoke from an unmarked clip asks again for it. Approval readiness uses the same
+  candidates (without the past render). A mark is current while its clip is still in the item with the same storage
   generation; a re-upload asks again. Faces are never asked for.
 - Only app builds that show the card are asked: submit stamps `marks_protected_regions`
   on the user event when `X-Kria-Client-Protocol >= PROTECTED_REGION_MARK_MIN_CLIENT_PROTOCOL`

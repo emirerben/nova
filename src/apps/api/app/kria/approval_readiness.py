@@ -362,12 +362,18 @@ def _with_protected_marks(
         _fact_entries,
         clip_generations,
         mark_request_text,
+        speaker_candidates,
         unmarked_object_targets,
     )
 
     by_id = {req.id: req for req in requirements}
+    clip_assignments = media.get("clip_assignments") or []
+    # A mark promises protection only on a clip the writer may put the text on.
     unmarked = unmarked_object_targets(
-        brief, marks, clip_generations(media.get("clip_assignments") or [])
+        brief,
+        marks,
+        clip_generations(clip_assignments),
+        render_clips=speaker_candidates(clip_assignments),
     )
     out = []
     for row in rows:
@@ -489,6 +495,7 @@ def saved_protected_marks(
         strategy=document.strategy,
         edit_format=getattr(item, "edit_format", None) or document.edit_format,
         clip_paths=getattr(item, "clip_gcs_paths", None) or (),
+        voiceover_path=getattr(item, "voiceover_gcs_path", None),
     )
 
 

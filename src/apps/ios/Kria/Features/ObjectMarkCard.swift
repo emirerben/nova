@@ -103,7 +103,8 @@ private struct ObjectMarkActiveCard: View {
             Button(question.actionTitle) { submit(answer) }
                 .buttonStyle(KriaPrimaryButtonStyle(minHeight: 44))
                 .frame(maxWidth: .infinity)
-                .disabled(isSending || frameImage == nil)
+                // The box is sent with `time`: only once that moment's frame is the one on screen.
+                .disabled(isSending || frameImage == nil || loadedKey != frameKey)
                 .accessibilityIdentifier("object-mark-send")
         }
         .padding(14)

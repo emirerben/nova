@@ -25,11 +25,19 @@ Failure modes (written before the code), each pinned below:
 11. An app build with the card, for an account the phone does not render for: the cloud
     render ignores marks, yet the creator is asked to mark and readiness promises
     ``protected_text_render``.
+12. A 2-clip Talking edit (b-roll, then the speaker): the card opens on the b-roll, the
+    creator marks the plate there, and the ask counts as met although the render puts the
+    text on the speaker clip (``other_source``), with no way to ask again.
+13. A render of this item spoke from a clip the creator never marked (the clip analysis
+    guessed the wrong speaker): every later turn still reads the plate as marked.
+14. A recorded voiceover: the phone Voiceover writer ignores marks, yet the creator is asked
+    to mark and approval promises the protection.
 """
 
 from __future__ import annotations
 
 import asyncio
+import copy
 import uuid
 
 import pytest
@@ -43,7 +51,7 @@ from app.kria import planner
 from app.kria.api_schemas import ChoiceSelectionIn, SubmitTurnBody
 from app.kria.brief import BriefUpdate, load_latest_brief_sync
 from app.kria.runtime import submit_turn
-from app.models import CreationThread, CreatorEditDraft, PlanItem
+from app.models import CreationThread, CreatorEditDraft, Job, PlanItem
 from app.services.client_protocol import clear_request_context, set_client_protocol
 from app.tasks.kria_runtime import run_kria_turn
 from tests.kria.test_kri787_merope_t1_replay import FIXTURE, RENDERS, turn1_brief_updates
@@ -437,3 +445,215 @@ async def test_with_readiness_on_the_marked_plate_is_executable(
     # No report after the mark still asks for it.
     for report in _readiness_rows(chat):
         assert all("Mark the plate" not in str(r["reason"]) for r in report["requirements"])
+
+
+# == 12, 13: a mark counts only on the clip the text goes on ===============================
+
+BROLL = "analysis-proxy-ios-0000BROL-0000-0000-0000-000000000000.mp4"
+
+
+def _with_broll(*, broll_speaks: bool, take_speaks: bool = True):  # noqa: ANN202
+    """Seed: a b-roll clip of the table before the take, both phone proxies. The clip
+    analysis says whether each clip has speech (``understanding.speech``)."""
+
+    def seed(thread_id: uuid.UUID) -> None:
+        with sync_session() as db:
+            thread = db.get(CreationThread, thread_id)
+            item = db.get(PlanItem, thread.active_plan_item_id)
+            take = copy.deepcopy(dict(item.clip_assignments[0]))
+            broll = copy.deepcopy(take)
+            broll["media_id"] = BROLL
+            broll["gcs_path"] = take["gcs_path"].replace(TAKE, BROLL)
+            broll["manifest_identity"] = BROLL
+            broll["storage_generation"] = "7"
+            for row, speaks in ((broll, broll_speaks), (take, take_speaks)):
+                speech = row["analysis"]["understanding"]["speech"]
+                speech["has_speech"] = speaks
+                if not speaks:
+                    speech["transcript"] = ""
+            item.clip_gcs_paths = [broll["gcs_path"], take["gcs_path"]]
+            item.clip_assignments = [broll, take]
+            thread.state = {
+                **dict(thread.state or {}),
+                "media": [
+                    {"media_id": BROLL, "filename": "table"},
+                    {"media_id": TAKE, "filename": "M2_01_footage"},
+                ],
+                "media_count": 2,
+            }
+            db.commit()
+
+    return seed
+
+
+def _multi_clip_talking(monkeypatch: pytest.MonkeyPatch) -> None:
+    """KRI-719 multi-clip Talking on the phone, as in prod."""
+    from app.services.phone_rollout import PHONE_TALKING_HEAD_FEATURES
+
+    monkeypatch.setattr(settings, "talking_multi_clip_enabled", True)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        sorted({*settings.phone_render_verified_features, *PHONE_TALKING_HEAD_FEATURES}),
+    )
+
+
+def _mark_on(media_id: str):  # noqa: ANN202
+    def answer(question: dict, _thread_id: uuid.UUID) -> dict:
+        mark = _app_mark(question)
+        mark["mark"]["media_id"] = media_id
+        return mark
+
+    return answer
+
+
+@pytest.mark.asyncio
+async def test_a_two_clip_talking_edit_asks_for_the_mark_on_the_speaking_clip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """12: the card offers only the clip that speaks; a mark on the b-roll anyway (a card
+    opened before, a stale build) is asked again on the speaking clip, and the approval pins
+    the mark the render uses."""
+    _multi_clip_talking(monkeypatch)
+    marks = iter([BROLL, TAKE])
+    chat, asked = await _chat(
+        monkeypatch,
+        protocol=17,
+        seed=_with_broll(broll_speaks=False),
+        on_mark_question=lambda q, t: _mark_on(next(marks))(q, t),
+    )
+    assert [q["label"] for q in asked] == ["plate", "plate"]
+    assert [q["media_ids"] for q in asked] == [[TAKE], [TAKE]]
+    claim = await _approve(chat)
+    pinned = {m["media_id"] for m in claim.brief_binding["protected_regions"]}
+    assert TAKE in pinned
+
+
+def _rendered_from(speaker: str):  # noqa: ANN202
+    """Seed on top of the b-roll seed: a past phone Talking render of this item that spoke
+    from ``speaker`` (its multi-clip receipt), as the item's current job."""
+
+    def seed(thread_id: uuid.UUID) -> None:
+        with sync_session() as db:
+            thread = db.get(CreationThread, thread_id)
+            item = db.get(PlanItem, thread.active_plan_item_id)
+            job = Job(
+                user_id=thread.creator_id,
+                status="variants_ready",
+                mode="generative",
+                raw_storage_path="",
+                selected_platforms=["tiktok"],
+                content_plan_item_id=item.id,
+                content_plan_ownership_epoch=0,
+                all_candidates={"clip_paths": list(item.clip_gcs_paths)},
+                assembly_plan={
+                    "variants": [
+                        {
+                            "variant_id": "original_text",
+                            "resolved_archetype": "subtitled",
+                            "render_status": "ready",
+                            "phone_talking_multi_clip": {
+                                "version": 1,
+                                "speaker_media_ids": [speaker],
+                            },
+                        }
+                    ]
+                },
+            )
+            db.add(job)
+            db.flush()
+            item.current_job_id = job.id
+            db.commit()
+
+    return seed
+
+
+def test_a_render_that_spoke_from_another_clip_asks_for_that_clip() -> None:
+    """13: the clip analysis heard speech only on the b-roll, so before any render the plate
+    is asked for (and counted) on the b-roll alone. Once a render of this item spoke from the
+    take (its receipt on the item's current job, read the way the gate reads it), a b-roll
+    mark no longer satisfies the ask: the take is asked for.
+
+    (Not a chat: a seeded job is not an edit the runtime can open, and the gate reads only
+    these clip ids from it.)"""
+    from app.kria.protected_targets import (
+        ProtectedTarget,
+        clip_generations,
+        missing_object_marks,
+        rendered_speaker_media_id,
+        speaker_candidates,
+    )
+
+    _user_id, thread_id = _seed_t1(cleanup_chosen=False)
+    _with_broll(broll_speaks=True, take_speaks=False)(thread_id)
+    target = ProtectedTarget(kind="object", label="plate", requirement_ids=("r6",))
+    brief = type("Brief", (), {"live": lambda self: [_Req("r6", KEEP_OFF)]})()
+    broll_mark = {
+        "label": "plate",
+        "media_id": BROLL,
+        "source_t_s": 1.0,
+        "box": APP_BOX,
+        "generation": "7",
+    }
+
+    def gate_missing() -> list[tuple[str, tuple[str, ...]]]:
+        with sync_session() as db:
+            item = db.get(PlanItem, db.get(CreationThread, thread_id).active_plan_item_id)
+            job = item.current_job
+            variants = ((job.assembly_plan if job else None) or {}).get("variants") or []
+            rows = list(item.clip_assignments)
+        return [
+            (t.label, clips)
+            for t, clips in missing_object_marks(
+                brief,
+                [broll_mark],
+                clip_generations(rows),
+                render_clips=speaker_candidates(
+                    rows, rendered_speaker=rendered_speaker_media_id(variants)
+                ),
+            )
+        ]
+
+    assert gate_missing() == []
+    _rendered_from(TAKE)(thread_id)
+    assert gate_missing() == [(target.label, (TAKE,))]
+
+
+class _Req:
+    def __init__(self, req_id: str, facts: dict) -> None:
+        self.id = req_id
+        self.facts = facts
+
+
+# == 14: a recorded voiceover is never asked =================================================
+
+
+def _recorded_voiceover(thread_id: uuid.UUID) -> None:
+    with sync_session() as db:
+        item = db.get(PlanItem, db.get(CreationThread, thread_id).active_plan_item_id)
+        item.voiceover_gcs_path = "users/x/voiceover.m4a"
+        db.commit()
+
+
+@pytest.mark.asyncio
+async def test_a_recorded_voiceover_is_never_asked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """14: the item has a recorded voiceover, so the phone Voiceover writer renders it."""
+    from app.kria.approval_readiness import saved_protected_marks
+    from app.kria.protected_targets import marks_route
+
+    user_id, thread_id = _seed_t1(cleanup_chosen=False)
+    _recorded_voiceover(thread_id)
+    with sync_session() as db:
+        item = db.get(PlanItem, db.get(CreationThread, thread_id).active_plan_item_id)
+        kwargs = {
+            "creator_id": user_id,
+            "strategy": None,
+            "edit_format": item.edit_format,
+            "clip_paths": item.clip_gcs_paths,
+        }
+        assert marks_route(client_marks=True, **kwargs), "the take alone is on the route"
+        assert not marks_route(client_marks=True, voiceover_path=item.voiceover_gcs_path, **kwargs)
+        document = type("Doc", (), {"strategy": None, "edit_format": "subtitled"})()
+        assert not saved_protected_marks(
+            document, creator_id=user_id, item=item, saved={"protected_marks": True}
+        )
