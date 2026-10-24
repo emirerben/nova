@@ -6,6 +6,12 @@ and the broken-boat clip's sound beneath recorded narration. The fixture redacts
 recording URL. Original recordings and a saved transcription were found locally;
 they are not committed. Native export verification uses labelled synthetic media.
 
+## Landed integration verification — 24 October 2026
+
+The implementation from PR #1759 landed as a reviewed prerequisite in PR #1760, squash commit `20b59cef3`. Its reviewed revision `3eec0340b` passed the full backend workflow and all three iPhone validation legs: [#1760 CI checks](https://github.com/emirerben/nova/pull/1760/checks). Selected Voiceover source audio retains its protocol-17 floor; the combined app advertises protocol 18 for processed-audio support.
+
+This PR now records verification and reconciles its history with the landed implementation; it does not introduce another renderer or roll back the newer protocol. The original compound-request and production-rollout limits above remain open. Per-clip fractional gains and after-Voiceover tail integration are separately tracked in PR #1786.
+
 ## Timeline decisions
 
 1. Duration: the pinned EditRecipeV2 video track and existing `replace_voiceover_cut`
@@ -90,10 +96,3 @@ The locally retained N1 transcription contains “20” at 16.086–16.296 secon
 helper matched the creator's “yirmi dakika” trigger and placed “20 dk” at
 16.086–18.086 seconds. This verifies reuse of the saved recording timings, not a
 new live transcription or visual inspection of a full real-media export.
-
-
-## Landed integration verification — 24 October 2026
-
-The implementation from PR #1759 landed as a reviewed prerequisite in PR #1760, squash commit `20b59cef3c718f332dd217da5a8f618153833970`. Its reviewed revision `3eec0340bba378bdd28f6acf32ae4a7db190af69` passed the full backend workflow and all three iPhone validation legs: [CI run 40094208433](https://github.com/emirerben/nova/actions/runs/40094208433). Selected Voiceover source audio retains its protocol-17 floor; the combined app advertises protocol 18 for processed-audio support.
-
-This PR now records verification and reconciles its history with the landed implementation; it does not introduce another renderer or roll back the newer protocol. The original compound-request and production-rollout limits above remain open. Per-clip fractional gains and after-Voiceover tail integration are separately tracked in PR #1786.
