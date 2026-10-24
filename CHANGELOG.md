@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.94.0] - 2026-10-24
+
+### Changed
+- fix(freeze): position words are positions and the frozen frame is never guessed (KRI-900) (#1805) <!-- release-pr: 1805 -->
+
 ## [0.81.93.0] - 2026-10-24
 
 ### Changed
