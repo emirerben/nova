@@ -74,6 +74,21 @@ class SpokenTextAsk:
     # KRI-724: the occurrence the creator picked ("the second 'Merope'"), from the approved
     # answers only. None = no pick: the first time anyone says it.
     pin: OccurrencePin | None = None
+    # A structured selection among repeated trigger phrases.  ``None`` keeps
+    # the legacy Talking path's first-hit rule; narrated voiceovers refuse an
+    # unqualified repeat rather than inventing a moment.
+    occurrence: str | int | None = None
+
+
+def _fact_occurrence(req: BriefRequirement) -> str | int | None:
+    value = req.facts.get("occurrence")
+    if isinstance(value, str) and value in {"first", "last"}:
+        return value
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value
+    if isinstance(value, str) and value.isdecimal() and int(value) >= 1:
+        return int(value)
+    return None
 
 
 def spoken_triggers(req: BriefRequirement) -> tuple[str, ...]:
@@ -112,7 +127,17 @@ def requirement_spoken_text(req: BriefRequirement) -> SpokenTextAsk | None:
         return None
     # A speaker the model wrote wins, even "I" over a "she" in the wording.
     speaker = _fact_speaker(req) if SPOKEN_TEXT_SPEAKER_KEY in req.facts else worded_speaker
-    return SpokenTextAsk(requirement_id=req.id, text=text, triggers=triggers, speaker=speaker)
+    # Only the structured field chooses among repeats (KRI-667: no regex reads the
+    # creator's wording for it). Without it, a repeated word is ambiguous and the
+    # narrated lane asks which occurrence the creator means.
+    occurrence = _fact_occurrence(req)
+    return SpokenTextAsk(
+        requirement_id=req.id,
+        text=text,
+        triggers=triggers,
+        speaker=speaker,
+        occurrence=occurrence,
+    )
 
 
 def spoken_text_asks(requirements: Iterable[BriefRequirement]) -> tuple[SpokenTextAsk, ...]:

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.87.0] - 2026-10-24
+
+### Changed
+- fix(speech): remove exact spoken occurrences and gate engine-noise reduction (#1760) <!-- release-pr: 1760 -->
+
 ## [0.81.86.0] - 2026-10-24
 
 ### Fixed

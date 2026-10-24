@@ -18,12 +18,17 @@ from typing import Annotated, Any, Literal, Union, get_args, get_origin
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agents._schemas.creator_agent import CreativeStrategy
+from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.kria.brief import CreativeBrief
 from app.kria.brief_checks import is_spoken_text_cue
 from app.kria.brief_route import chapter_list
 from app.kria.freeze_ask import times_one_moment
 from app.kria.recipes_v2 import EditRecipeV2
-from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
+from app.kria.render_assets import (
+    OriginalRenderAsset,
+    ProcessedAudioRenderAsset,
+    VoiceoverRenderAsset,
+)
 from app.kria.reply_language import say
 from app.kria.spoken_text_ask import requirement_spoken_text
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
@@ -696,7 +701,6 @@ ADAPTER_DECLARATIONS: dict[str, AdapterDeclaration] = {
         _phone(
             "phone_narrated",
             {"require_voiceover"},
-            audio_source_ids=_VOICE_CONFLICT,
         ),
     )
 }
@@ -1181,6 +1185,22 @@ def build_render_contract(
         if position and status == "resolved" and clip_ids.intersection(members)
     }
     talking_edit = str(raw.get("edit_format") or "") in {"subtitled", "talking_head"}
+    # A word-timed text ask is omitted from the ordinary exact-copy pin only
+    # when this approval can actually use the native narrated word-text lane.
+    # Other typed voiceover strategies still need their literal pinned, so a
+    # renderer cannot silently treat a caption or title as the requested cue.
+    voiceover_spoken_text = False
+    if (
+        typed is not None
+        and typed.audio_strategy == "voiceover"
+        and typed.edit_format in NARRATED_EDIT_FORMATS
+        and typed.render_program != "guided"
+    ):
+        from app.services.phone_rollout import (
+            phone_voiceover_spoken_text_supported,  # noqa: PLC0415
+        )
+
+        voiceover_spoken_text = phone_voiceover_spoken_text_supported(require_client=False)
     edit_rows = _edit_rows(media_snapshot, typed, hidden_ids)
     one_clip = one_clip_edit(edit_rows)
     if brief:
@@ -1202,7 +1222,7 @@ def build_render_contract(
                     continue
                 durations.append(float(requirement.facts["duration_s"]))
             if requirement.kind == "text" and requirement.literal:
-                if talking_edit and (
+                if (talking_edit or voiceover_spoken_text) and (
                     requirement_spoken_text(requirement) is not None
                     or is_spoken_text_cue(requirement)
                 ):
@@ -1613,6 +1633,7 @@ def check_phone_dispatch_contract(
     snapshot_generation_id: object,
     has_voiceover_candidate: bool,
     user_song: object = None,
+    allow_voiceover_source_audio: bool = False,
 ) -> bool:
     """Gate a phone dispatch on the pinned contract; return the voiceover route.
 
@@ -1636,7 +1657,9 @@ def check_phone_dispatch_contract(
             field_path=REQUIREMENT_FIELD_PATHS["require_voiceover"],
             alternative="Record or upload your voice, or tell me to use music instead.",
         )
-    if contract.audio_source_ids and (contract.require_voiceover or user_song):
+    if contract.audio_source_ids and (
+        user_song or (contract.require_voiceover and not allow_voiceover_source_audio)
+    ):
         raise CreatorRenderContractError(
             "This renderer can't combine the confirmed soundtracks.",
             decline_reason="requirement_conflict",
@@ -2033,6 +2056,23 @@ def verify_phone_recipe(
             for clip in track.clips
         )
     }
+    # A processed-audio clip is still the creator's camera audio, merely a
+    # pinned, server-made derivative.  Treat it as its declared source for
+    # original-audio requirements; otherwise muting the video clip before
+    # adding the timed derivative would falsely look like dropped audio.
+    original_ids.update(
+        asset.source_media_id
+        for asset in manifest.values()
+        if isinstance(asset, ProcessedAudioRenderAsset)
+        and any(
+            track.kind == "audio"
+            and clip.source_asset_id == asset.id
+            and audible(track, clip)
+            and (source_audio is None or source_audio.get(asset.source_media_id) is True)
+            for track in recipe.tracks
+            for clip in track.clips
+        )
+    )
     if isinstance(bed_asset, OriginalRenderAsset) and (
         source_audio is None or source_audio.get(bed_asset.media_id) is True
     ):
