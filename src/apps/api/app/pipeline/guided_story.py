@@ -152,6 +152,16 @@ class GuidedStoryMoment(BaseModel):
     # The creator silenced this moment's own (camera) sound in the editor. Omitted when
     # unset so every stored plan keeps its exact dump. Honoured by the phone compiler.
     source_audio_muted: bool | None = Field(default=None, exclude_if=lambda value: not value)
+    # KRI-828: the creator's freeze: the frame at ``source_end_s`` holds for these seconds
+    # after the moment plays (``duration_s`` = source span / rate + hold). The clip's own
+    # sound is silent under the hold. Omitted when unset so every stored plan keeps its dump.
+    freeze_hold_s: float | None = Field(
+        # Up to `freeze_ask.MAX_FREEZE_HOLD_S` (10 s), the longest freeze a creator can ask for.
+        default=None,
+        gt=0,
+        le=10.0,
+        exclude_if=lambda value: value is None,
+    )
     output_start_s: float = Field(ge=0)
     output_end_s: float = Field(gt=0)
     duration_s: float = Field(gt=0)
@@ -554,6 +564,12 @@ def _quantize_quick_mixed_timeline(
             maximum_frames = int(math.floor(bounds.maximum_s * fps + 1e-6))
             frames = min(maximum_frames, max(minimum_frames, frames))
             image_headroom.append((desired_frames - math.floor(desired_frames), index))
+        elif moment.get("freeze_hold_s"):
+            # KRI-828: a held moment is a fixed block. Its source window ends ON the frozen
+            # frame and never grows; frame rounding lands in the hold, never in the footage.
+            original_video_end_s[index] = float(moment["source_end_s"])
+            frames = max(1, int(round(float(moment["duration_s"]) * fps)))
+            floor_video_frames[index] = frames
         else:
             original_video_end_s[index] = float(moment["source_end_s"])
             bounds = mixed_media_hold_bounds("video", mixed_media_timing)
@@ -622,7 +638,13 @@ def _quantize_quick_mixed_timeline(
         moment["duration_s"] = round(duration_s, 6)
         moment["output_start_s"] = round(start_s, 6)
         moment["output_end_s"] = round(end_s, 6)
-        if moment["kind"] == "video" and frames > floor_video_frames[index]:
+        if moment["kind"] == "video" and moment.get("freeze_hold_s"):
+            frame_s = original_video_end_s[index]
+            moment["source_end_s"] = frame_s
+            moment["freeze_hold_s"] = round(
+                duration_s - (frame_s - float(moment["source_start_s"])), 6
+            )
+        elif moment["kind"] == "video" and frames > floor_video_frames[index]:
             moment["source_end_s"] = original_video_end_s[index]
         else:
             moment["source_end_s"] = round(float(moment["source_start_s"]) + duration_s, 6)
@@ -2542,8 +2564,23 @@ def _compile_base_execution_plan_version(
                     f"Fast montage source window exceeds {ref.source_filename or ref.media_id}.",
                 )
             resolved_duration_s = round(end_s - start_s, 3)
+            resolved_source_start_s = float(cut.source_start_s)
             resolved_source_end_s = float(cut.source_end_s)
-            if ref.kind == "video":
+            hold_s = float(cut.freeze_hold_s or 0.0)
+            if ref.kind == "video" and hold_s:
+                # KRI-828: the frozen frame is the cut's last source frame and never moves;
+                # a beat that shortens the cut shortens the motion before it.
+                moving_s = round(resolved_duration_s - hold_s, 3)
+                if (
+                    moving_s < 0.1
+                    or moving_s > resolved_source_end_s - resolved_source_start_s + 0.001
+                ):
+                    raise GuidedStoryError(
+                        "guided_story_duration_impossible",
+                        "A freeze frame no longer fits its approved video source window.",
+                    )
+                resolved_source_start_s = resolved_source_end_s - moving_s
+            elif ref.kind == "video":
                 resolved_source_end_s = float(cut.source_start_s) + resolved_duration_s
                 if resolved_source_end_s > float(cut.source_end_s) + 0.001:
                     raise GuidedStoryError(
@@ -2565,8 +2602,13 @@ def _compile_base_execution_plan_version(
                         if ref.kind == "image" and snapshot.image_layout is not None
                         else "fullscreen"
                     ),
-                    "source_start_s": round(float(cut.source_start_s), 3),
+                    "source_start_s": round(resolved_source_start_s, 3),
                     "source_end_s": round(resolved_source_end_s, 3),
+                    **(
+                        {"freeze_hold_s": round(hold_s, 3)}
+                        if ref.kind == "video" and hold_s
+                        else {}
+                    ),
                     "output_start_s": start_s,
                     "output_end_s": end_s,
                     "duration_s": resolved_duration_s,
@@ -3509,6 +3551,10 @@ def compile_guided_runtime_plan(
                         else {}
                     ),
                     **({"source_audio_muted": True} if segment.get("source_audio_muted") else {}),
+                    # KRI-828: the segment owns its freeze; never inherit a base moment's.
+                    "freeze_hold_s": (
+                        float(segment["freeze_hold_s"]) if segment.get("freeze_hold_s") else None
+                    ),
                     "output_start_s": start,
                     "output_end_s": end,
                     "duration_s": float(segment["duration_s"]),
@@ -4580,9 +4626,11 @@ def _render_moments(
                 look_adjustments=moment.get("look_adjustments"),
             )
         else:
+            hold_s = float(moment.get("freeze_hold_s") or 0.0)
+            moving = os.path.join(tmpdir, f"moment_{index:02d}_moving.mp4") if hold_s else output
             _render_video_moment(
                 local_by_id[moment["media_id"]],
-                output,
+                moving,
                 start_s=float(moment["source_start_s"]),
                 end_s=float(moment["source_end_s"]),
                 layout=moment["layout"],
@@ -4594,6 +4642,13 @@ def _render_moments(
                 source_crop=moment.get("source_crop"),
                 playback_rate=float(moment.get("playback_rate") or 1.0),
             )
+            if hold_s:
+                # KRI-828: the creator's freeze clones the moment's last frame (its
+                # ``source_end_s``) for the hold. Video only: the take's own sound is
+                # restored later from the source window and stays silent under the hold.
+                output = _hold_final_frame_to_duration(
+                    moving, output, target_s=float(moment["duration_s"])
+                )
         probe = probe_video(output)
         if (
             probe.width != canvas.width
@@ -4619,6 +4674,11 @@ def _render_moments(
                 **(
                     {"playback_rate": float(moment["playback_rate"])}
                     if moment.get("playback_rate") is not None
+                    else {}
+                ),
+                **(
+                    {"freeze_hold_s": float(moment["freeze_hold_s"])}
+                    if moment.get("freeze_hold_s")
                     else {}
                 ),
                 "output_duration_s": round(float(probe.duration_s), 3),

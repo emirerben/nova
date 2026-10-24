@@ -89,6 +89,8 @@ from app.services.guided_speech_cleanup import (
 from app.services.job_storage_paths import project_media_reference_lock_key
 from app.services.phone_rollout import (
     freehand_drawing_client_supported,
+    freeze_frame_client_supported,
+    recipe_has_freeze_frame,
     recipe_has_single_word_text,
     single_word_text_client_supported,
     text_bend_client_supported,
@@ -337,6 +339,12 @@ async def get_device_render(
     ):
         # KRI-646: same for bent text; an older build cannot decode `bend`.
         raise HTTPException(426, detail={"code": "client_update_required", "feature": "text_bend"})
+    if not freeze_frame_client_supported() and recipe_has_freeze_frame(status.request.recipe):
+        # KRI-828: the worker planned a creator's freeze (a main-track hold, capability
+        # `freezeFrame`) that an older build cannot decode. Tell it to update.
+        raise HTTPException(
+            426, detail={"code": "client_update_required", "feature": "freeze_frame"}
+        )
     if not single_word_text_client_supported() and recipe_has_single_word_text(
         status.request.recipe
     ):

@@ -296,9 +296,13 @@ def test_main_video_padding_is_limited_to_one_recipe_frame(frame_rate):
     clip["hold_duration"] = 1 / frame_rate
     recipe = EditRecipeV2.model_validate(raw)
     assert "editorMedia" not in recipe.required_capabilities
+    assert "freezeFrame" not in recipe.required_capabilities
+    # KRI-828: a longer main-video hold is the creator's freeze frame, its own capability
+    # (never editor media).
     clip["hold_duration"] = 2 / frame_rate
-    with pytest.raises(ValueError, match="V2 overlay"):
-        EditRecipeV2.model_validate(raw)
+    held = EditRecipeV2.model_validate(raw)
+    assert "freezeFrame" in held.required_capabilities
+    assert "editorMedia" not in held.required_capabilities
     clip["hold_duration"] = 1 / frame_rate
     clip["overlay_above_text"] = True
     with pytest.raises(ValueError, match="V2 overlay"):

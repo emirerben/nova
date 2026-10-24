@@ -1789,13 +1789,23 @@ class FastMontageCut(BaseModel):
     role: Literal["hook", "build", "payoff"]
     transition: Literal["none"] = "none"
     beat_align: bool = False
+    # KRI-828: the creator asked to freeze this cut's last frame (``source_end_s``) for
+    # these seconds. The output is the source window plus the hold. Omitted when unset so
+    # every stored snapshot keeps its exact dump.
+    freeze_hold_s: float | None = Field(
+        # Up to `freeze_ask.MAX_FREEZE_HOLD_S` (10 s), the longest freeze a creator can ask for.
+        default=None,
+        gt=0,
+        le=10.0,
+        exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def validate_source_window(self) -> FastMontageCut:
         if self.source_end_s <= self.source_start_s:
             raise ValueError("fast montage cut source_end_s must exceed source_start_s")
         source_duration_s = self.source_end_s - self.source_start_s
-        if abs(self.output_duration_s - source_duration_s) > 0.001:
+        if abs(self.output_duration_s - source_duration_s - (self.freeze_hold_s or 0.0)) > 0.001:
             raise ValueError("fast montage output duration must match its source window")
         return self
 
