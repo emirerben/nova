@@ -224,6 +224,10 @@ class DeviceRetryBody(_DeviceModel):
     """Identity of the ``needs_attention`` record to re-pin (wrapped like the other bodies)."""
 
     identity: DeviceRenderIdentity
+    # The phone checked the pinned recipe against its own renderer and can render it now.
+    # Lets a `renderer_outdated` record be re-pinned by the build that declined it once it
+    # can render it (a protocol floor was lowered), instead of answering requires_update.
+    renders_locally: bool = False
 
 
 class DeviceRetryOut(_DeviceModel):

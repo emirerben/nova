@@ -161,6 +161,8 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func completeDeviceExport(_ body: DeviceExportCompleteBody) async throws
     func reportDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, reasonCode: String, detail: String) async throws -> DeviceRenderFailureAck
     func retryDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity) async throws -> DeviceRenderRetryAck
+    /// `rendersLocally`: this phone checked the pinned recipe and can render it now.
+    func retryDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, rendersLocally: Bool) async throws -> DeviceRenderRetryAck
 
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread
     func deleteProject(_ project: ProjectSummary) async throws
@@ -400,6 +402,9 @@ extension KriaAPIClient {
     func completeDeviceExport(_ body: DeviceExportCompleteBody) async throws { throw APIError.unsupported }
     func reportDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, reasonCode: String, detail: String) async throws -> DeviceRenderFailureAck { throw APIError.unsupported }
     func retryDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity) async throws -> DeviceRenderRetryAck { throw APIError.unsupported }
+    func retryDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, rendersLocally: Bool) async throws -> DeviceRenderRetryAck {
+        try await retryDeviceRenderFailure(jobID: jobID, identity: identity)
+    }
 
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
     func setSongRange(threadID: UUID, range: SongFilmingRange?, expectedRevision: Int, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
@@ -1743,7 +1748,7 @@ struct KriaAPI: KriaAPIClient {
             NativePreviewDiagnostics.record("http-failure", fields: ["status": String(http.statusCode)])
             #endif
             let problem = Self.decodeProblem(from: data)
-            throw APIError.requestFailed(status: http.statusCode, detail: RequestFailureDetail(Self.decodeDetail(from: data), retryAfter: http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init), code: problem?.code, problemMessage: problem?.message))
+            throw APIError.requestFailed(status: http.statusCode, detail: RequestFailureDetail(Self.decodeDetail(from: data), retryAfter: http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init), code: problem?.code, problemMessage: problem?.message, object: Self.decodeDetailObject(from: data)))
         }
         if http.statusCode == 204, let empty = EmptyProjectResponse() as? T { return (empty, http) }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .custom(ServerDateCoding.decode); return (try decoder.decode(T.self, from: data), http)
@@ -1851,6 +1856,11 @@ struct KriaAPI: KriaAPIClient {
             return loc.isEmpty ? msg : "\(loc): \(msg)"
         }
         return nil
+    }
+    /// FastAPI's object detail as JSON values (nil for any other shape).
+    private static func decodeDetailObject(from data: Data) -> [String: JSONValue]? {
+        struct Envelope: Decodable { let detail: [String: JSONValue] }
+        return try? JSONDecoder().decode(Envelope.self, from: data).detail
     }
     /// Decodes the runtime-v2 `KriaProblemOut` envelope (`{"problem": {"code",
     /// "message", ...}}`). Nil when the body isn't shaped that way, e.g. the
@@ -2340,8 +2350,12 @@ struct RequestFailureDetail: Equatable, Sendable, CustomStringConvertible {
     /// instead of a `detail` string. Kept apart from `message` so existing error copy is unchanged.
     let code: String?
     let problemMessage: String?
-    init(_ message: String?, retryAfter: TimeInterval? = nil, code: String? = nil, problemMessage: String? = nil) {
+    /// FastAPI's object `detail` (`{"detail": {"code", ...}}`), e.g. the device-render 426
+    /// that names the request it is about. Nil for string details.
+    let object: [String: JSONValue]?
+    init(_ message: String?, retryAfter: TimeInterval? = nil, code: String? = nil, problemMessage: String? = nil, object: [String: JSONValue]? = nil) {
         self.code = code
+        self.object = object
         self.problemMessage = problemMessage?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.message = trimmed?.isEmpty == false ? trimmed : nil

@@ -12,6 +12,8 @@
 	<key>KriaAPIBaseURL</key><string>$(API_BASE_URL)</string>
 	<key>KriaGoogleClientID</key><string>$(KRIA_GOOGLE_CLIENT_ID)</string>
 	<key>KriaGoogleRedirectScheme</key><string>$(KRIA_GOOGLE_REDIRECT_SCHEME)</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array><string>itms-beta</string></array>
 	<key>CFBundleURLTypes</key>
 	<array><dict><key>CFBundleURLSchemes</key><array><string>$(KRIA_GOOGLE_REDIRECT_SCHEME)</string></array></dict></array>
 	<key>UIAppFonts</key>

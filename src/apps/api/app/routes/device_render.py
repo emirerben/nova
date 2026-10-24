@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
 from app.auth import CurrentUser
+from app.config import settings
 from app.database import get_db
 from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.device_render import (
@@ -417,6 +418,23 @@ async def _settle_recorded_refusal(
 # The client protocol of the build that declined a recipe as `renderer_outdated`.
 # Only a newer build can render it, so `/retry` from the same build would only loop.
 DECLINED_PROTOCOL_FIELD = "declined_client_protocol"
+# Why that build was too old: "floor" when it was below a protocol floor the server checks
+# for this recipe (`_client_update_detail`), "renderer" for a gap only the phone can see
+# (its renderer or recipe-schema version). Only a floor gap is re-pinned automatically: for
+# it the server knows whether a newer build passes; a renderer gap is the phone's own call
+# (it shows "Try again" with `renders_locally` once it can render the recipe).
+DECLINED_GAP_FIELD = "declined_gap"
+# The newest client protocol that read this record's recipe without a 426 (it can decode
+# every feature the server gates by protocol). A `renderer_outdated` decline from an older
+# build never fails a record such a device holds, and the value survives a re-pin of the
+# same recipe, so two devices on different builds cannot fail and re-pin it in a loop.
+READER_PROTOCOL_FIELD = "max_reader_client_protocol"
+
+
+def _caller_protocol() -> int:
+    from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+
+    return current_client_protocol() or 0
 
 
 def _caller_is_newer_than_decliner(record: dict) -> bool:
@@ -425,12 +443,126 @@ def _caller_is_newer_than_decliner(record: dict) -> bool:
     A record declined before the field existed has no protocol to compare: let the
     caller try (the old behavior), since refusing would leave it no way forward.
     """
-    from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
-
     declined = record.get(DECLINED_PROTOCOL_FIELD)
     if not isinstance(declined, int) or isinstance(declined, bool):
         return True
-    return (current_client_protocol() or 0) > declined
+    return _caller_protocol() > declined
+
+
+def _reader_protocol(record: dict) -> int:
+    value = record.get(READER_PROTOCOL_FIELD)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) -> dict | None:
+    """The 426 detail this caller gets for the pinned recipe, or None when it decodes it.
+
+    One place for every feature the server gates by client protocol, so the GET can
+    check them BEFORE it re-pins anything for a build (`_auto_resume_updated`): a build
+    newer than the one that declined is not necessarily new enough for the recipe.
+    """
+    protocol = _caller_protocol()
+    if "actual_export_policy" in record and protocol < 13:
+        return {
+            "code": "client_update_required",
+            "feature": "export_verification",
+            "minimum_client_protocol": 13,
+        }
+    from app.services.phone_text_styling import (  # noqa: PLC0415
+        PHONE_TEXT_STYLE_FIELD,
+        require_phone_text_style_client,
+    )
+
+    try:
+        require_phone_text_style_client(
+            (job.assembly_plan or {}).get(PHONE_TEXT_STYLE_FIELD), require_header=True
+        )
+    except HTTPException as exc:
+        if isinstance(exc.detail, dict):
+            return dict(exc.detail)
+        return {"code": "client_update_required", "feature": "text_preferences"}
+    recipe = status.request.recipe
+    if getattr(recipe, "drawing_layers", None) and not freehand_drawing_client_supported():
+        # KRI-589: an older build rejects `drawingLayers` as an unknown recipe key and would
+        # FAIL the job instead of rendering. Tell it to update; the pinned recipe is untouched.
+        return {
+            "code": "client_update_required",
+            "feature": "drawing",
+            "minimum_client_protocol": settings.freehand_drawing_min_client_protocol,
+        }
+    if not text_bend_client_supported() and any(
+        layer.bend for layer in getattr(recipe, "text_layers", None) or []
+    ):
+        # KRI-646: same for bent text; an older build cannot decode `bend`.
+        return {
+            "code": "client_update_required",
+            "feature": "text_bend",
+            "minimum_client_protocol": settings.text_bend_min_client_protocol,
+        }
+    if not freeze_frame_client_supported() and recipe_has_freeze_frame(recipe):
+        # KRI-828: the worker planned a creator's freeze (a main-track hold, capability
+        # `freezeFrame`) that an older build cannot decode. Tell it to update.
+        return {
+            "code": "client_update_required",
+            "feature": "freeze_frame",
+            "minimum_client_protocol": settings.freeze_frame_min_client_protocol,
+        }
+    if not single_word_text_client_supported() and recipe_has_single_word_text(recipe):
+        # One-word captions (`karaoke.single_word`): an older build cannot decode the key.
+        return {
+            "code": "client_update_required",
+            "feature": "single_word_text",
+            "minimum_client_protocol": settings.single_word_text_min_client_protocol,
+        }
+    manifest = getattr(recipe, "asset_manifest", None)
+    if (
+        manifest
+        and any(isinstance(asset, ProcessedAudioRenderAsset) for asset in manifest.assets)
+        and protocol < 18
+    ):
+        # Old clients reject this new discriminator while decoding the response.
+        return {
+            "code": "client_update_required",
+            "feature": "processed_audio",
+            "minimum_client_protocol": 18,
+        }
+    return None
+
+
+def _client_update_required(update: dict, status: DeviceRenderStatus) -> HTTPException:
+    """426 for a recipe this build cannot decode. It names the request (identity and
+    phase), so the phone reports its decline for THIS request, never an older one it
+    happens to hold a finished video for."""
+    identity = status.request.identity
+    named = (
+        {"phase": status.phase, "identity": identity.model_dump(mode="json")}
+        if isinstance(identity, DeviceRenderIdentity)
+        else {}
+    )
+    return HTTPException(426, detail={**update, **named})
+
+
+def _note_reader_protocol(job: Job, variant_id: str, record: dict) -> bool:
+    """Remember the newest build that read this recipe without a 426. Returns whether
+    the record changed (the caller commits)."""
+    protocol = _caller_protocol()
+    if protocol <= _reader_protocol(record):
+        return False
+    fresh = device_record(job, variant_id)
+    fresh[READER_PROTOCOL_FIELD] = protocol
+    save_device_record(job, variant_id, fresh)
+    return True
+
+
+def _carry_reader_protocol(job: Job, variant_id: str, previous: dict) -> None:
+    """A re-pin of the same recipe keeps the newest reader: the device that could read it
+    still holds it, so an older build's decline must not fail the fresh record either."""
+    reader = max(_reader_protocol(previous), _caller_protocol())
+    if reader <= 0:
+        return
+    fresh = device_record(job, variant_id)
+    fresh[READER_PROTOCOL_FIELD] = max(reader, _reader_protocol(fresh))
+    save_device_record(job, variant_id, fresh)
 
 
 def _auto_resume_updated(
@@ -441,7 +573,15 @@ def _auto_resume_updated(
     Re-deliver the same pinned, already-consented recipe under a fresh identity so the
     updated phone renders it on its own instead of showing "Update Kria" again. Only a
     build newer than the one that declined triggers this (the declining protocol is
-    recorded with the report).
+    recorded with the report), and only one that decodes every protocol-gated feature of
+    the recipe: the caller checks `_client_update_detail` first, so a build that is newer
+    but still too old gets its 426 and the record stays as it is (no futile re-pin). And
+    only a floor gap: whether a newer build renders a renderer/schema gap is something only
+    the phone knows, so that record waits for its `renders_locally` retry instead.
+
+    Bounded: a re-pin happens only for a caller newer than the recorded decliner, and a
+    `renderer_outdated` decline is accepted only from a build at least as new as the
+    newest reader (which survives the re-pin), so each re-pin needs a strictly newer build.
     """
     from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
 
@@ -450,6 +590,7 @@ def _auto_resume_updated(
         or status.phase != "needs_attention"
         or status.reason_code != "renderer_outdated"
         or not isinstance(record.get(DECLINED_PROTOCOL_FIELD), int)
+        or record.get(DECLINED_GAP_FIELD) != "floor"
         or not _caller_is_newer_than_decliner(record)
     ):
         return False
@@ -462,6 +603,7 @@ def _auto_resume_updated(
     fresh = device_record(job, variant_id)
     fresh["auto_resumed_at"] = datetime.now(UTC).isoformat()
     save_device_record(job, variant_id, fresh)
+    _carry_reader_protocol(job, variant_id, record)
     apply_retry_variant_reset(job, variant_id)
     return True
 
@@ -494,6 +636,7 @@ def _auto_resume_reaped(
     fresh = device_record(job, variant_id)
     fresh["auto_resumed_at"] = datetime.now(UTC).isoformat()
     save_device_record(job, variant_id, fresh)
+    _carry_reader_protocol(job, variant_id, record)
     apply_retry_variant_reset(job, variant_id)
     return True
 
@@ -507,70 +650,36 @@ async def _device_render_status(
     except KeyError as exc:
         raise HTTPException(404, "Device recipe unavailable") from exc
     record, status = await _settle_recorded_refusal(db, job, variant_id, status.request.identity)
-    if _auto_resume_reaped(job, variant_id, record, status) or _auto_resume_updated(
-        job, variant_id, record, status
+    # The protocol gates run BEFORE any automatic re-pin: a build that still cannot decode
+    # the recipe gets its 426 and re-pins nothing (a re-pin it would decline is futile).
+    update = _client_update_detail(job, record, status)
+    if update is None and (
+        _auto_resume_reaped(job, variant_id, record, status)
+        or _auto_resume_updated(job, variant_id, record, status)
     ):
         await db.commit()
         record, status = _record(job, device_status(job, variant_id).request.identity)
+        update = _client_update_detail(job, record, status)
+    noted = update is None and _note_reader_protocol(job, variant_id, record)
     repair_before = copy.deepcopy(record.get("repair_authority"))
     if await _expire_repair_permission(db, job, record, status):
         record, status = _record(job, status.request.identity)
     renewed = record.get("repair_authority") != repair_before
     verification_required = "actual_export_policy" in record
-    if verification_required:
-        from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
-
-        if (current_client_protocol() or 0) < 13:
-            raise HTTPException(
-                426, detail={"code": "client_update_required", "feature": "export_verification"}
-            )
-        if status.phase == "published" and not checked_export_report(
-            record, status, str(record.get("published_attempt") or "")
-        ):
-            raise _DeviceConflict(
-                "output_unverified", "This export has no matching successful output check"
-            )
-    from app.services.phone_text_styling import (
-        PHONE_TEXT_STYLE_FIELD,
-        require_phone_text_style_client,
-    )
-
-    require_phone_text_style_client(
-        (job.assembly_plan or {}).get(PHONE_TEXT_STYLE_FIELD), require_header=True
-    )
-    if getattr(status.request.recipe, "drawing_layers", None) and (
-        not freehand_drawing_client_supported()
+    if update is not None and update.get("feature") == "export_verification":
+        if noted:
+            await db.commit()
+        raise _client_update_required(update, status)
+    if (
+        verification_required
+        and status.phase == "published"
+        and not checked_export_report(record, status, str(record.get("published_attempt") or ""))
     ):
-        # KRI-589: an older build rejects `drawingLayers` as an unknown recipe key and would
-        # FAIL the job instead of rendering. Tell it to update; the pinned recipe is untouched.
-        raise HTTPException(426, detail={"code": "client_update_required", "feature": "drawing"})
-    if not text_bend_client_supported() and any(
-        layer.bend for layer in getattr(status.request.recipe, "text_layers", None) or []
-    ):
-        # KRI-646: same for bent text; an older build cannot decode `bend`.
-        raise HTTPException(426, detail={"code": "client_update_required", "feature": "text_bend"})
-    if not freeze_frame_client_supported() and recipe_has_freeze_frame(status.request.recipe):
-        # KRI-828: the worker planned a creator's freeze (a main-track hold, capability
-        # `freezeFrame`) that an older build cannot decode. Tell it to update.
-        raise HTTPException(
-            426, detail={"code": "client_update_required", "feature": "freeze_frame"}
+        raise _DeviceConflict(
+            "output_unverified", "This export has no matching successful output check"
         )
-    if not single_word_text_client_supported() and recipe_has_single_word_text(
-        status.request.recipe
-    ):
-        # One-word captions (`karaoke.single_word`): an older build cannot decode the key.
-        raise HTTPException(
-            426, detail={"code": "client_update_required", "feature": "single_word_text"}
-        )
-    manifest = getattr(status.request.recipe, "asset_manifest", None)
-    if manifest and any(isinstance(asset, ProcessedAudioRenderAsset) for asset in manifest.assets):
-        from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
-
-        # Old clients reject this new discriminator while decoding the response.
-        if (current_client_protocol() or 0) < 18:
-            raise HTTPException(
-                426, detail={"code": "client_update_required", "feature": "processed_audio"}
-            )
+    if update is not None:
+        raise _client_update_required(update, status)
     from app.services.device_render import device_export_maximum  # noqa: PLC0415
 
     response_fields = status.model_dump()
@@ -611,7 +720,7 @@ async def _device_render_status(
             should_touch = (now - last_polled) >= timedelta(seconds=_POLL_TOUCH_THROTTLE_S)
     if should_touch:
         touch_device_poll(job, variant_id, now)
-    if should_touch or renewed:
+    if should_touch or renewed or noted:
         await db.commit()
     return status
 
@@ -1155,6 +1264,19 @@ async def report_device_failure(
         return DeviceRenderFailureOut(
             identity=body.identity, phase="paused", reason_code=body.reason_code
         )
+    if body.reason_code == "renderer_outdated" and (
+        status.phase == "syncing" or _caller_protocol() < _reader_protocol(record)
+    ):
+        # Two devices: a newer build read this recipe (or one is uploading its video). An
+        # older build being too old is no reason to fail the record that device holds;
+        # failing it would only make the newer device re-pin it, and the old one decline
+        # it again, forever. The old phone keeps its own "Update Kria".
+        return _conflict_response(
+            _DeviceConflict(
+                "held_by_newer_build",
+                "Another device with a newer version of Kria is rendering this edit.",
+            )
+        )
     try:
         mark_device_failed(
             job, body.identity.variant_id, reason_code=body.reason_code, detail=body.detail
@@ -1164,10 +1286,11 @@ async def report_device_failure(
     if body.reason_code == "renderer_outdated":
         # Remember which build declined, so `/retry` from it answers requires_update and
         # a newer build re-pins on its own (`_auto_resume_updated`).
-        from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
-
         failed = device_record(job, body.identity.variant_id)
-        failed[DECLINED_PROTOCOL_FIELD] = current_client_protocol() or 0
+        failed[DECLINED_PROTOCOL_FIELD] = _caller_protocol()
+        failed[DECLINED_GAP_FIELD] = (
+            "floor" if _client_update_detail(job, record, status) is not None else "renderer"
+        )
         save_device_record(job, body.identity.variant_id, failed)
     if not has_accepted_artifact(job, body.identity.variant_id):
         apply_device_failure_variant_update(
@@ -1201,13 +1324,20 @@ async def retry_device_export(
     record resumes under its current identity.
     """
     try:
-        return await _retry_device_export(db, user.id, job_id, body.identity)
+        return await _retry_device_export(
+            db, user.id, job_id, body.identity, renders_locally=body.renders_locally
+        )
     except _DeviceConflict as conflict:
         return _conflict_response(conflict)
 
 
 async def _retry_device_export(
-    db: AsyncSession, user_id: uuid.UUID, job_id: uuid.UUID, identity: DeviceRenderIdentity
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    job_id: uuid.UUID,
+    identity: DeviceRenderIdentity,
+    *,
+    renders_locally: bool = False,
 ) -> DeviceRetryOut:
     job = await _owned_job(db, user_id, job_id)
     try:
@@ -1228,9 +1358,16 @@ async def _retry_device_export(
             decline.get("message") if isinstance(decline, dict) else None
         ) or "This edit needs a change before it can render again. Your edit is saved."
         raise _DeviceConflict("requires_change", message)
-    if status.reason_code == "renderer_outdated" and not _caller_is_newer_than_decliner(record):
+    if (
+        status.reason_code == "renderer_outdated"
+        and not renders_locally
+        and not _caller_is_newer_than_decliner(record)
+    ):
         # The build that declined this recipe would decline the re-pin the same way:
-        # the way forward is updating Kria, never another retry (no loop).
+        # the way forward is updating Kria, never another retry (no loop). A phone that
+        # checked the pinned recipe against its own renderer and can render it now (an
+        # operator lowered a protocol floor) says so, and its retry goes through: the
+        # "Try again" it shows then works instead of flipping to "Update Kria".
         raise _DeviceConflict(
             "requires_update",
             "This edit needs a newer version of Kria. Update the app to finish it. "
@@ -1246,6 +1383,7 @@ async def _retry_device_export(
         raise _DeviceConflict("requires_change", str(exc)) from exc
     except ValueError as exc:
         raise _DeviceConflict("not_awaiting_retry", str(exc)) from exc
+    _carry_reader_protocol(job, identity.variant_id, record)
     apply_retry_variant_reset(job, identity.variant_id)
     await db.commit()
     return DeviceRetryOut(identity=new_status.request.identity, phase="awaiting_device")

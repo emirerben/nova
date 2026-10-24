@@ -878,6 +878,8 @@ struct NativeEditorTemporaryVideo {
             return "Your edit is saved. This iPhone can’t render this version; review it in chat and Kria will make one it can."
         case .updateApp:
             return "Your edit is saved. This edit needs a newer version of Kria. Update the app to finish it."
+        case .renderNow:
+            return "Your edit is saved. Kria can render it on this iPhone now."
         case .retry:
             break
         }
@@ -989,6 +991,8 @@ struct NativeEditorTemporaryVideo {
     private var pendingPlacementIDs: Set<UUID> = []
     private var editorImportsActive = true
     private var threadID: UUID?
+    /// The creation thread this edit belongs to (from open-in-editor for a gallery video).
+    var creationThreadID: UUID? { threadID }
     private var itemID: String?
     var visualItemID: String? { itemID }
     @Published private(set) var visualLibrary: [CreationVisual] = []
@@ -7986,7 +7990,7 @@ struct NativeEditorTemporaryVideo {
               let generation = pendingPreviewGeneration else { return }
         // A change-required or outdated-app reason: a retry re-pins the same recipe and
         // this iPhone declines it again. The banner offers chat or Update Kria instead.
-        guard [.retry, .resume].contains(deviceRenderNextStep) else { return }
+        guard [.retry, .resume, .renderNow].contains(deviceRenderNextStep) else { return }
         if deviceRenders.presentations[key]?.requiresServerRetry == true {
             let retried = await deviceRenders.retryNeedsAttention(key)
             guard retried else { return }

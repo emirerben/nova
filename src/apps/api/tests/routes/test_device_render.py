@@ -1649,6 +1649,10 @@ def test_device_render_with_drawings_demands_a_build_that_decodes_them(
         assert response.json()["detail"] == {
             "code": "client_update_required",
             "feature": "drawing",
+            "minimum_client_protocol": 6,
+            # The 426 names the request, so the phone reports the right one.
+            "phase": "awaiting_device",
+            "identity": fixture.request.identity.model_dump(mode="json"),
         }
         # The pinned recipe is untouched: the old build is told to update, not failed.
         assert device_record(fixture.job, "first")["status"]["phase"] == "awaiting_device"
@@ -1808,12 +1812,22 @@ def test_outdated_decline_without_a_recorded_build_still_retries(fixture, monkey
     assert _retry(fixture, "12").status_code == 200
 
 
-@pytest.mark.parametrize("protocol,resumed", [("12", False), ("13", True)], ids=str)
+@pytest.mark.parametrize("protocol,resumed", [("4", False), ("6", True)], ids=str)
 def test_opening_an_outdated_decline_re_pins_only_for_a_newer_build(
     fixture, monkeypatch, protocol, resumed
 ):
     monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
-    assert _decline_outdated(fixture).status_code == 200
+    _drawing_recipe(fixture)  # a protocol floor (drawing, 6) the server checks
+    assert _decline_outdated(fixture, "4").status_code == 200
+    assert device_record(fixture.job, "first")[routes.DECLINED_GAP_FIELD] == "floor"
+    if not resumed:  # the same build: its GET is a 426, nothing is re-pinned
+        response = fixture.client.get(
+            f"/me/jobs/{fixture.job.id}/device-render?variant_id=first",
+            headers={"X-Kria-Client-Protocol": protocol},
+        )
+        assert response.status_code == 426
+        assert device_status(fixture.job, "first").request.identity.recipe_revision == 2
+        return
 
     response = fixture.client.get(
         f"/me/jobs/{fixture.job.id}/device-render?variant_id=first",
@@ -1822,10 +1836,149 @@ def test_opening_an_outdated_decline_re_pins_only_for_a_newer_build(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    if resumed:
-        assert payload["phase"] == "awaiting_device"
-        assert payload["request"]["identity"]["recipe_revision"] == 2
-    else:
-        assert payload["phase"] == "needs_attention"
-        assert payload["reason_code"] == "renderer_outdated"
-        assert payload["request"]["identity"]["recipe_revision"] == 1
+    assert payload["phase"] == "awaiting_device"
+    assert payload["request"]["identity"]["recipe_revision"] == 3
+
+
+def test_a_renderer_gap_is_never_re_pinned_by_the_server(fixture, monkeypatch):
+    # The decliner passed every protocol floor: its renderer/schema is too old, which only a
+    # phone can judge. A newer build reads the record as it is (and its own check offers
+    # "Try again" with renders_locally if it renders it); the server never guesses.
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    assert _decline_outdated(fixture, "12").status_code == 200
+    assert device_record(fixture.job, "first")[routes.DECLINED_GAP_FIELD] == "renderer"
+
+    response = fixture.client.get(
+        f"/me/jobs/{fixture.job.id}/device-render?variant_id=first",
+        headers={"X-Kria-Client-Protocol": "13"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["phase"] == "needs_attention"
+    assert payload["reason_code"] == "renderer_outdated"
+    assert payload["request"]["identity"]["recipe_revision"] == 1
+
+
+# ---- round 3: protocol floors before the automatic re-pin; two devices ----------------------
+# Failure modes this guards (written before the code):
+#  1. A build newer than the one that declined, but still below a feature floor of the recipe
+#     (drawing 6, text_bend 9, single_word 11, freeze_frame 16, ...), opens the project: the
+#     server re-pins, the phone gets a 426 for the fresh request and declines it again
+#     (a futile re-pin; repeated for every newer-but-insufficient build).
+#  2. The 426 names no request: a phone holding a finished video of an older request cannot
+#     tell the 426 is about a newer one, keeps its old video as "synced" and never reports.
+#  3. Two devices: an old build declines as renderer_outdated a record a newer build read (or
+#     is uploading); the record fails, the newer build re-pins it, the old one declines it
+#     again, forever.
+#  4. The newest reader is lost on a re-pin, so the old build's decline of the fresh record is
+#     accepted again (the same loop, one step later).
+#  5. The newest build itself declines (its renderer really is too old): that decline must
+#     still count, or the server waits on nobody.
+#  6. The declining build can render the recipe now (an operator lowered a floor): its
+#     "Try again" answers requires_update and the card flips between Try again and Update.
+
+
+def _get(fixture, protocol):
+    return fixture.client.get(
+        f"/me/jobs/{fixture.job.id}/device-render?variant_id=first",
+        headers={"X-Kria-Client-Protocol": protocol},
+    )
+
+
+def _decline_current(fixture, protocol):
+    identity = device_status(fixture.job, "first").request.identity.model_dump(mode="json")
+    return fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/failures",
+        json={"identity": identity, "reason_code": "renderer_outdated", "detail": "too new"},
+        headers={"X-Kria-Client-Protocol": protocol},
+    )
+
+
+def test_a_newer_build_below_a_feature_floor_is_not_re_pinned(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    _drawing_recipe(fixture)  # drawing needs protocol 6
+    assert _decline_current(fixture, "4").status_code == 200
+
+    response = _get(fixture, "5")  # newer than the decliner, still too old for drawings
+
+    assert response.status_code == 426
+    detail = response.json()["detail"]
+    assert detail["feature"] == "drawing"
+    assert detail["minimum_client_protocol"] == 6
+    assert detail["phase"] == "needs_attention"
+    assert detail["identity"]["recipe_revision"] == 2
+    status = device_status(fixture.job, "first")
+    assert status.phase == "needs_attention"
+    assert status.request.identity.recipe_revision == 2
+
+    resumed = _get(fixture, "6")
+
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["phase"] == "awaiting_device"
+    assert resumed.json()["request"]["identity"]["recipe_revision"] == 3
+
+
+def test_an_older_build_cannot_fail_a_record_a_newer_build_read(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    assert _get(fixture, "15").status_code == 200
+    assert device_record(fixture.job, "first")[routes.READER_PROTOCOL_FIELD] == 15
+
+    held = _decline_current(fixture, "12")
+
+    assert held.status_code == 409
+    assert held.json()["problem"]["code"] == "held_by_newer_build"
+    assert device_status(fixture.job, "first").phase == "awaiting_device"
+
+
+def test_the_newest_reader_still_declines(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    assert _get(fixture, "15").status_code == 200
+
+    assert _decline_current(fixture, "15").status_code == 200
+
+    assert device_status(fixture.job, "first").phase == "needs_attention"
+
+
+def test_the_newest_reader_survives_the_automatic_re_pin(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    _drawing_recipe(fixture)
+    assert _get(fixture, "4").status_code == 426  # too old: not a reader
+    assert _decline_current(fixture, "4").status_code == 200
+
+    resumed = _get(fixture, "6")  # the creator updated the newer device
+
+    assert resumed.json()["request"]["identity"]["recipe_revision"] == 3
+    assert device_record(fixture.job, "first")[routes.READER_PROTOCOL_FIELD] == 6
+    held = _decline_current(fixture, "4")  # the old device declines the fresh request
+    assert held.status_code == 409
+    assert held.json()["problem"]["code"] == "held_by_newer_build"
+    assert device_status(fixture.job, "first").phase == "awaiting_device"
+
+
+def test_an_outdated_decline_never_fails_a_record_being_uploaded(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    prepared(fixture)  # another device reserved its upload: the record is syncing
+
+    held = _decline_current(fixture, "12")
+
+    assert held.status_code == 409
+    assert held.json()["problem"]["code"] == "held_by_newer_build"
+    assert device_status(fixture.job, "first").phase == "syncing"
+
+
+def test_the_declining_build_that_renders_the_recipe_now_may_retry(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    assert _decline_outdated(fixture).status_code == 200
+
+    response = fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/retry",
+        json={
+            "identity": fixture.request.identity.model_dump(mode="json"),
+            "renders_locally": True,
+        },
+        headers={"X-Kria-Client-Protocol": "12"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["identity"]["recipe_revision"] == 2

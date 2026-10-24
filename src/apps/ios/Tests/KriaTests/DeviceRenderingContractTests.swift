@@ -265,7 +265,9 @@ final class DeviceRenderingContractTests: XCTestCase {
 
         let retryBody = DeviceRenderRetryBody(identity: identity)
         let retryObject = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(retryBody)) as? [String: Any])
-        XCTAssertEqual(Set(retryObject.keys), ["identity"])
+        // `renders_locally` (DeviceRetryBody, round 3): the phone renders the pinned recipe now.
+        XCTAssertEqual(Set(retryObject.keys), ["identity", "renders_locally"])
+        XCTAssertEqual(retryObject["renders_locally"] as? Bool, false)
 
         // The real server (`DeviceRenderIdentity` in app/kria/device_render.py) has
         // no alias generator: its wire keys are plain snake_case, not the camelCase

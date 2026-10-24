@@ -202,7 +202,6 @@ struct RootView: View {
 }
 
 private struct NativeUpdateRequiredView: View {
-    private let appStoreURL = URL(string: "https://apps.apple.com/")!
     var fixtureAction: Binding<String>?
 
     var body: some View {
@@ -218,13 +217,13 @@ private struct NativeUpdateRequiredView: View {
                     Text("Update Kria to continue")
                         .font(KriaFont.display(30))
                         .multilineTextAlignment(.center)
-                    Text("This version of Kria is no longer supported. Update the app from the App Store, then reopen it.")
+                    Text("This version of Kria is no longer supported. Get the update in TestFlight, then reopen Kria.")
                         .font(KriaFont.body(16))
                         .foregroundStyle(KriaColor.zinc)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                     VStack(spacing: 12) {
-                        Link("Open the App Store", destination: appStoreURL)
+                        Link("Update Kria", destination: KriaUpdateLink.destination)
                             .buttonStyle(KriaPrimaryButtonStyle())
                             .accessibilityIdentifier("kria-update-app-store-link")
                         Link("Contact support", destination: KriaLegal.supportURL)
@@ -242,7 +241,7 @@ private struct NativeUpdateRequiredView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .environment(\.openURL, OpenURLAction { url in
             guard let fixtureAction else { return .systemAction }
-            fixtureAction.wrappedValue = url == appStoreURL ? "app-store" : "support"
+            fixtureAction.wrappedValue = KriaUpdateLink.isUpdate(url) ? "app-store" : "support"
             return .handled
         })
         .overlay(alignment: .bottom) {

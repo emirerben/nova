@@ -369,7 +369,7 @@ private actor RetryGate {
             factory: { _, request in
                 try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: SessionPublisher())
             },
-            retryFailure: { _, _ in
+            retryFailure: { _, _, _ in
                 await status.retry(to: second)
                 let data = Data("""
                 {"identity":{"jobId":"\(second.identity.jobID.uuidString)","variantId":"first","recipeRevision":2,"recipeDigest":"\(second.identity.recipeDigest)"},"phase":"awaiting_device"}
@@ -456,7 +456,7 @@ private actor RetryGate {
             factory: { _, _ in
                 try DeviceRenderCoordinator(directory: output, exporter: SessionExport(), sources: SessionSources(), publisher: SessionPublisher())
             },
-            retryFailure: { _, _ in
+            retryFailure: { _, _, _ in
                 await gate.wait()
                 let data = Data("""
                 {"identity":{"jobId":"\(second.identity.jobID.uuidString)","variantId":"first","recipeRevision":2,"recipeDigest":"\(second.identity.recipeDigest)"},"phase":"awaiting_device"}

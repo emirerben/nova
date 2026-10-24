@@ -70,8 +70,13 @@ struct DeviceRenderRecipeUnreadable: Error, Equatable, Sendable {
 
     init(identity: DeviceRenderIdentity, phase: String, publishedGeneration: String?, underlying: Error) {
         self.identity = identity; self.phase = phase; self.publishedGeneration = publishedGeneration
+        // Only a true version or schema gap is "update Kria": an unknown key, enum case or
+        // asset kind, a newer manifest version, a newer recipe schema. An asset manifest of a
+        // known shape whose values are wrong (a zero byte count, a bad digest) is not fixed by
+        // updating; it is a recipe this phone can't use, and a change in chat re-plans it.
         let outdated: Bool = switch underlying {
-        case is DecodingError, is RenderAssetError: true
+        case is DecodingError: true
+        case RenderAssetError.newerManifest: true
         case RecipeError.unsupportedSchema: true
         default: false
         }
@@ -105,6 +110,8 @@ struct DeviceRenderFailureAck: Decodable, Sendable {
 }
 struct DeviceRenderRetryBody: Encodable, Sendable {
     let identity: DeviceRenderIdentity
+    /// Encoded as `renders_locally` (RecipeJSON's snake_case strategy).
+    var rendersLocally: Bool = false
 }
 struct DeviceRenderRetryAck: Decodable, Sendable {
     let identity: DeviceRenderIdentity
@@ -204,9 +211,12 @@ extension KriaAPI {
         )
     }
     func retryDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity) async throws -> DeviceRenderRetryAck {
+        try await retryDeviceRenderFailure(jobID: jobID, identity: identity, rendersLocally: false)
+    }
+    func retryDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, rendersLocally: Bool) async throws -> DeviceRenderRetryAck {
         try await request(
             path: "me/jobs/\(jobID.uuidString)/device-render/retry", method: "POST",
-            bodyData: RecipeJSON.encoder().encode(DeviceRenderRetryBody(identity: identity)),
+            bodyData: RecipeJSON.encoder().encode(DeviceRenderRetryBody(identity: identity, rendersLocally: rendersLocally)),
             decode: DeviceRenderRetryAck.self
         )
     }

@@ -44,6 +44,19 @@ import KriaMediaEngine
 //     poll) is dropped; the old request installs and nothing reads the new one.
 // 20. A failed read on a synced video never reads again (the chat poll stops reading a
 //     settled render), so a request pinned since (an editor Save) is never picked up.
+// Round 3 (adversarial model check), written down before the fix:
+// 21. The phone loses a capability while its export for the request is still running: it
+//     shows "needs a change" and tells the server "won't render" while the export goes on
+//     and publishes (the server then refuses the decline).
+// 22. A 426 about a newer request (another device saved a feature this build can't decode)
+//     is swallowed because the phone still holds a synced video of an older request: the
+//     server waits on this phone forever. A 426 about a published request reads as a failure.
+// 23. A renderer_outdated record this build can render now shows "Try again", the retry
+//     answers requires_update ("Update Kria"), the next read shows "Try again" again.
+// 24. An asset-manifest value fault (a zero byte count) reads as "update Kria", which
+//     no update fixes; only an unknown key, kind or version is a version gap.
+// 25. A kept video (`localReady`) with a change reason shows "Retry sync" next to the change
+//     button; with renderer_outdated it has no "Update Kria" at all.
 // Each test below drives `DeviceRenderSessions` with the real coordinator,
 // receipt store and status decoder; only the network and the encoder are fakes.
 
@@ -51,6 +64,17 @@ private actor Exporter: LocalExporting {
     private(set) var calls = 0
     func export(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String, progress: (@Sendable (Double) -> Void)?) async throws -> ExportCheckpoint {
         calls += 1
+        try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("export".utf8).write(to: outputURL)
+        return ExportCheckpoint(exportID: exportID, status: .completed, progress: 1, outputURL: outputURL)
+    }
+}
+/// Renders until the test releases it, then writes the file.
+private actor GatedExporter: LocalExporting {
+    private var released = false
+    func release() { released = true }
+    func export(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String, progress: (@Sendable (Double) -> Void)?) async throws -> ExportCheckpoint {
+        while !released { try await Task.sleep(for: .milliseconds(10)) }
         try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("export".utf8).write(to: outputURL)
         return ExportCheckpoint(exportID: exportID, status: .completed, progress: 1, outputURL: outputURL)
@@ -190,7 +214,7 @@ private final class Phone: @unchecked Sendable {
             factory: { _, _ in
                 try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: NoSources(), publisher: Publisher())
             },
-            retryFailure: retry ?? { _, _ in throw APIError.unsupported },
+            retryFailure: retry ?? { _, _, _ in throw APIError.unsupported },
             reportPreparationFailure: diagnostics ?? { _, _ in },
             reportDecline: { _, identity, code, _ in try await declines.send(identity, code) },
             environment: phone.environment,
@@ -635,7 +659,7 @@ private final class Phone: @unchecked Sendable {
         let job = UUID(), request = request(job), exporter = Exporter()
         let resumed = Retries()
         let server = Server([.success(DeviceRenderStatusResponse(phase: "awaiting_device", request: request, pausedByUser: true))])
-        let sessions = sessions(server, exporter: exporter, retry: { _, identity in
+        let sessions = sessions(server, exporter: exporter, retry: { _, identity, _ in
             try await resumed.record(identity)
         })
         let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
@@ -677,7 +701,7 @@ private final class Phone: @unchecked Sendable {
     func testChangeRequiredReasonsHideTryAgainAndPointToChat() async throws {
         let job = UUID(), request = request(job)
         let server = Server([.success(DeviceRenderStatusResponse(phase: "needs_attention", request: request, reasonCode: "export_failed"))])
-        let sessions = sessions(server, retry: { _, _ in
+        let sessions = sessions(server, retry: { _, _, _ in
             throw APIError.conflict(detail: ConflictDetail("That exact text isn't in this draft. Your edit is saved.", code: "requires_change"))
         })
         let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
@@ -764,7 +788,7 @@ private final class Phone: @unchecked Sendable {
     func testOutdatedRetryRefusalLandsOnUpdateKria() async throws {
         let job = UUID(), request = request(job)
         let server = Server([.success(DeviceRenderStatusResponse(phase: "needs_attention", request: request, reasonCode: "export_failed"))])
-        let sessions = sessions(server, retry: { _, _ in
+        let sessions = sessions(server, retry: { _, _, _ in
             throw APIError.conflict(detail: ConflictDetail("This edit needs a newer version of Kria.", code: "requires_update"))
         })
         let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
@@ -830,5 +854,174 @@ private final class Phone: @unchecked Sendable {
         XCTAssertFalse(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: "original_missing", originalsMissing: true))
         let unavailable = DeviceRenderAttentionCopy.message(phase: .needsAttention, reasonCode: "device_unavailable", fallback: nil) ?? ""
         XCTAssertFalse(unavailable.localizedCaseInsensitiveContains("paused"), "device_unavailable is this iPhone, not a rollout pause")
+    }
+
+    // MARK: Round 3
+
+    func testCapabilityLostWhileTheExportRunsLetsItFinishInsteadOfDeclining() async throws {
+        let job = UUID(), declines = Declines(), exporter = GatedExporter()
+        let recipe = KriaMediaEngine.EditRecipe(assets: [MediaAsset(id: "source", relativePath: "source")],
+            tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "source", sourceDuration: 1)])],
+            requiredCapabilities: [.freehandDrawing])
+        let request = request(job, recipe: recipe)
+        let output = directory()
+        let sessions = DeviceRenderSessions(
+            fetch: { _, _ in .init(phase: "awaiting_device", request: request) },
+            factory: { _, _ in try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: NoSources(), publisher: Publisher()) },
+            reportDecline: { _, identity, code, _ in try await declines.send(identity, code) },
+            environment: Phone().environment, sleep: { _ in }
+        )
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        let rendering = await eventually { sessions.presentations[key]?.phase == .rendering }
+        XCTAssertTrue(rendering)
+
+        let unverified = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2],
+            verifiedFeatures: MediaCapability.allCases.filter { $0 != .freehandDrawing }.map(\.rawValue))
+        await sessions.reconcile(key, capabilities: unverified)
+        XCTAssertNotEqual(sessions.presentations[key]?.phase, .needsAttention)
+        XCTAssertFalse(DeviceRenderAttentionCopy.needsChange(sessions.presentations[key]), "no change screen for a video on its way")
+        await exporter.release()
+        let synced = await eventually { sessions.presentations[key]?.phase == .synced }
+        XCTAssertTrue(synced, "\(String(describing: sessions.presentations[key]))")
+        let codes = await declines.codes
+        XCTAssertEqual(codes, [], "nothing declined: the export for this request finished")
+        await sessions.stopAll()
+    }
+
+    private func updateRequired(_ identity: DeviceRenderIdentity, phase: String) throws -> Error {
+        let encoded = try JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(["identity": identity])) as! [String: Any]
+        let data = try JSONSerialization.data(withJSONObject: ["detail": ["code": "client_update_required", "feature": "drawing",
+            "phase": phase, "identity": encoded["identity"]!]])
+        struct Envelope: Decodable { let detail: [String: JSONValue] }
+        let object = try JSONDecoder().decode(Envelope.self, from: data).detail
+        return APIError.requestFailed(status: 426, detail: RequestFailureDetail(nil, object: object))
+    }
+
+    func testUpdateRequiredForANewerRequestIsReportedEvenWithASyncedOlderVideo() async throws {
+        let job = UUID(), first = request(job), second = request(job, revision: 2), declines = Declines()
+        let server = Server([awaiting(first)])
+        let sessions = sessions(server, declines: declines)
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        let synced = await eventually { sessions.presentations[key]?.phase == .synced }
+        XCTAssertTrue(synced)
+
+        // Same request: the finished video stays, nothing is reported.
+        await server.then([.failure(try updateRequired(first.identity, phase: "published"))])
+        await sessions.reconcile(key, capabilities: enabled)
+        XCTAssertEqual(sessions.presentations[key]?.phase, .synced, "a published request never reads as a failure")
+
+        // Another device saved a feature this build can't decode (request 2).
+        await server.then([.failure(try updateRequired(second.identity, phase: "awaiting_device"))])
+        await sessions.reconcile(key, capabilities: enabled)
+        let presentation = try XCTUnwrap(sessions.presentations[key])
+        XCTAssertEqual(presentation.reasonCode, "renderer_outdated")
+        XCTAssertEqual(DeviceRenderAttentionCopy.nextStep(presentation), .updateApp)
+        XCTAssertFalse(sessions.isSettled(key), "the chat poll keeps reading")
+        let reported = await eventually { await declines.sent.map(\.identity) == [second.identity] }
+        XCTAssertTrue(reported, "the decline names the newer request")
+        await sessions.stopAll()
+    }
+
+    func testUpdateRequiredForTheSameRequestKeepsItsFinishedVideo() async throws {
+        let job = UUID(), first = request(job), declines = Declines()
+        let server = Server([awaiting(first)])
+        let sessions = sessions(server, declines: declines)
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        let synced = await eventually { sessions.presentations[key]?.phase == .synced }
+        XCTAssertTrue(synced)
+        let finished = sessions.presentations[key]
+        await server.then([.failure(try updateRequired(first.identity, phase: "awaiting_device"))])
+        await sessions.reconcile(key, capabilities: enabled)
+        XCTAssertEqual(sessions.presentations[key], finished)
+        let codes = await declines.codes
+        XCTAssertEqual(codes, [])
+        await sessions.stopAll()
+    }
+
+    func testRenderableOutdatedRecordRetriesSayingThisPhoneRendersIt() async throws {
+        let job = UUID(), request = request(job)
+        actor Flags { var values: [Bool] = []; func add(_ value: Bool) { values.append(value) } }
+        let flags = Flags(), retries = Retries()
+        let server = Server([.success(DeviceRenderStatusResponse(phase: "needs_attention", request: request, reasonCode: "renderer_outdated"))])
+        let sessions = sessions(server, retry: { _, identity, rendersLocally in
+            await flags.add(rendersLocally)
+            return try await retries.record(identity)
+        })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        let presentation = try XCTUnwrap(sessions.presentations[key])
+        XCTAssertEqual(presentation.reasonCode, DeviceRenderAttentionCopy.renderableReason)
+        XCTAssertEqual(DeviceRenderAttentionCopy.nextStep(presentation), .renderNow, "the editor says Render on this iPhone, not a failure")
+        XCTAssertTrue(DeviceRenderAttentionCopy.showsRetryButton(phase: presentation.phase, reasonCode: presentation.reasonCode))
+        XCTAssertFalse(DeviceRenderAttentionCopy.offersOriginalRecovery(presentation))
+        let retried = await sessions.retryNeedsAttention(key)
+        XCTAssertTrue(retried)
+        let sent = await flags.values
+        XCTAssertEqual(sent, [true], "the server re-pins instead of answering requires_update")
+        await sessions.stopAll()
+    }
+
+    func testAnOutdatedPhoneNeverClaimsToRenderTheRecipe() async throws {
+        let job = UUID()
+        let tooNew = KriaMediaEngine.EditRecipe(rendererVersion: "kria-ios-9", assets: [MediaAsset(id: "source", relativePath: "source")],
+            tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "source", sourceDuration: 1)])])
+        let request = request(job, recipe: tooNew)
+        actor Flags { var values: [Bool] = []; func add(_ value: Bool) { values.append(value) } }
+        let flags = Flags(), retries = Retries()
+        let server = Server([.success(DeviceRenderStatusResponse(phase: "needs_attention", request: request, reasonCode: "export_failed"))])
+        let sessions = sessions(server, retry: { _, identity, rendersLocally in
+            await flags.add(rendersLocally)
+            return try await retries.record(identity)
+        })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        _ = await sessions.retryNeedsAttention(key)
+        let sent = await flags.values
+        XCTAssertEqual(sent, [false])
+        await sessions.stopAll()
+    }
+
+    func testOnlyAVersionGapInTheAssetManifestIsOutdated() throws {
+        let identity = request(UUID()).identity
+        let fault = DeviceRenderRecipeUnreadable(identity: identity, phase: "awaiting_device", publishedGeneration: nil, underlying: RenderAssetError.invalidManifest)
+        XCTAssertEqual(fault.reasonCode, "unsupported_recipe", "a bad value is a change in chat, not an update")
+        XCTAssertEqual(DeviceRenderAttentionCopy.nextStep(DeviceRenderPresentation(phase: .needsAttention, reasonCode: fault.reasonCode)), .reviewInChat)
+        let gap = DeviceRenderRecipeUnreadable(identity: identity, phase: "awaiting_device", publishedGeneration: nil, underlying: RenderAssetError.newerManifest)
+        XCTAssertEqual(gap.reasonCode, "renderer_outdated")
+        // The engine: an unknown key or a newer version is the newer shape; a zero byte count is a value fault.
+        let zero = Data(#"{"sha256":"\#(String(repeating: "a", count: 64))","byteCount":0}"#.utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode(RenderFingerprint.self, from: zero)) { XCTAssertEqual($0 as? RenderAssetError, .invalidManifest) }
+        let unknown = Data(#"{"sha256":"\#(String(repeating: "a", count: 64))","byteCount":1,"blake3":"x"}"#.utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode(RenderFingerprint.self, from: unknown)) { XCTAssertEqual($0 as? RenderAssetError, .newerManifest) }
+        let newer = Data(#"{"version":2,"assets":[]}"#.utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode(RenderAssetManifest.self, from: newer)) { XCTAssertEqual($0 as? RenderAssetError, .newerManifest) }
+    }
+
+    func testAKeptVideoOffersTheChangeOrTheUpdateNotARetrySync() {
+        let file = URL(fileURLWithPath: "/kept.mp4")
+        let change = DeviceRenderPresentation(phase: .localReady, localFile: file, reasonCode: "unsupported_recipe")
+        XCTAssertTrue(DeviceRenderAttentionCopy.needsChange(change))
+        XCTAssertFalse(DeviceRenderAttentionCopy.showsRetryButton(phase: .localReady, reasonCode: "unsupported_recipe"))
+        let update = DeviceRenderPresentation(phase: .localReady, localFile: file, reasonCode: "renderer_outdated")
+        XCTAssertTrue(DeviceRenderAttentionCopy.needsUpdate(update), "the kept video gets its Update Kria link")
+        XCTAssertEqual(DeviceRenderAttentionCopy.nextStep(update), .updateApp)
+        XCTAssertFalse(DeviceRenderAttentionCopy.showsRetryButton(phase: .localReady, reasonCode: "renderer_outdated"))
+        // A plain sync failure keeps its Retry sync.
+        XCTAssertTrue(DeviceRenderAttentionCopy.showsRetryButton(phase: .localReady, reasonCode: nil))
+        // A stale reason on another phase is not the creator's turn.
+        let stale = DeviceRenderPresentation(phase: .rendering, reasonCode: "unsupported_recipe")
+        XCTAssertFalse(DeviceRenderAttentionCopy.needsChange(stale))
+        XCTAssertFalse(DeviceRenderAttentionCopy.needsUpdate(DeviceRenderPresentation(phase: .synced, reasonCode: "renderer_outdated")))
+    }
+
+    func testUpdateKriaOpensTestFlightOrItsAppStorePage() {
+        XCTAssertEqual(KriaUpdateLink.testFlight.scheme, "itms-beta")
+        XCTAssertTrue(KriaUpdateLink.isUpdate(KriaUpdateLink.destination))
+        XCTAssertNotEqual(KriaUpdateLink.appStore.absoluteString, "https://apps.apple.com/", "never the store's home page")
+        let schemes = Bundle.main.object(forInfoDictionaryKey: "LSApplicationQueriesSchemes") as? [String]
+        XCTAssertEqual(schemes, ["itms-beta"], "canOpenURL can only see a declared scheme")
     }
 }

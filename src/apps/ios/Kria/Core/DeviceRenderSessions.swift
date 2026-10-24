@@ -114,7 +114,8 @@ enum DeviceRenderReadFailure: Equatable {
     /// There is no device render to show: the job or record is gone, or the editor draft is empty.
     case inactive
     /// The pinned recipe uses a feature this build can't decode (426 `client_update_required`).
-    case updateRequired
+    /// A current server names the request the 426 is about (nil from an older server).
+    case updateRequired(DeviceRenderUpdateTarget?)
     /// The recipe arrived, but this build can't read it.
     case unreadableRecipe(DeviceRenderRecipeUnreadable)
     case other
@@ -135,9 +136,9 @@ enum DeviceRenderReadFailure: Equatable {
             case 404, 410: self = .inactive
             // The device-render GET answers 426 only for `client_update_required`
             // (the protocol-wide `native_update_required` is `.nativeUpdateRequired`).
-            case 426: self = .updateRequired
+            case 426: self = .updateRequired(DeviceRenderUpdateTarget(detail: detail.object))
             case 408, 429, 500...599: self = .transient(.server)
-            default: self = detail.code == "client_update_required" ? .updateRequired : .other
+            default: self = detail.code == "client_update_required" ? .updateRequired(DeviceRenderUpdateTarget(detail: detail.object)) : .other
             }
         default:
             self = RequestFailureCause(error) == .connection ? .transient(.connection) : .other
@@ -150,7 +151,7 @@ enum DeviceRenderReadFailure: Equatable {
         case "superseded", "project_changed", "device_recipe_changed": return .superseded
         case "render_cancelled", "job_cancelled": return .jobCancelled
         case "editor_empty", "device_recipe_unavailable": return .inactive
-        case "client_update_required": return .updateRequired
+        case "client_update_required": return .updateRequired(nil)
         case "concurrent_update": return .transient(.server)
         default: break
         }
@@ -164,6 +165,23 @@ enum DeviceRenderReadFailure: Equatable {
         case let message? where message.hasPrefix("That project was being updated at the same time"): return .transient(.server)
         default: return .other
         }
+    }
+}
+
+/// The request a 426 `client_update_required` is about: the server names its identity and
+/// phase, so a phone holding a finished video of an older request still reports the newer
+/// one (it would otherwise wait on this phone forever) and never "fails" a published one.
+struct DeviceRenderUpdateTarget: Equatable, Sendable {
+    let identity: DeviceRenderIdentity
+    let phase: String
+
+    init(identity: DeviceRenderIdentity, phase: String) { self.identity = identity; self.phase = phase }
+
+    init?(detail: [String: JSONValue]?) {
+        guard let detail, case .string(let phase)? = detail["phase"], let raw = detail["identity"],
+              let data = try? JSONEncoder().encode(raw),
+              let identity = try? RecipeJSON.decoder().decode(DeviceRenderIdentity.self, from: data) else { return nil }
+        self.init(identity: identity, phase: phase)
     }
 }
 
@@ -204,7 +222,9 @@ enum DeviceRenderGate: Equatable {
 @Observable @MainActor final class DeviceRenderSessions {
     typealias Fetch = @Sendable (UUID, String) async throws -> DeviceRenderStatusResponse
     typealias Factory = @MainActor (DeviceRenderKey, DeviceRenderRequest) throws -> DeviceRenderCoordinator
-    typealias RetryFailure = @Sendable (UUID, DeviceRenderIdentity) async throws -> DeviceRenderRetryAck
+    /// `POST /device-render/retry`: (job, identity, renders locally). The last flag says this
+    /// phone checked the pinned recipe against its own renderer and can render it now.
+    typealias RetryFailure = @Sendable (UUID, DeviceRenderIdentity, Bool) async throws -> DeviceRenderRetryAck
     typealias ReportPreparationFailure = @Sendable (UUID, Error) async -> Void
     /// `POST /device-render/failures` for a request this phone won't render: (job, identity, reason code, detail).
     typealias ReportDecline = @Sendable (UUID, DeviceRenderIdentity, String, String) async throws -> Void
@@ -300,7 +320,9 @@ enum DeviceRenderGate: Equatable {
                     failureReporter: APIDeviceRenderFailureReporter(api: api)
                 )
             }
-        }, retryFailure: { jobID, identity in try await api.retryDeviceRenderFailure(jobID: jobID, identity: identity) },
+        }, retryFailure: { jobID, identity, rendersLocally in
+            try await api.retryDeviceRenderFailure(jobID: jobID, identity: identity, rendersLocally: rendersLocally)
+        },
         reportPreparationFailure: { jobID, error in
             let report = NativePreviewDiagnostics.previewFailure(error: error, sourceState: "device_render_preparation")
             try? await api.reportPlaybackFailure(jobID: jobID, report: report)
@@ -312,7 +334,7 @@ enum DeviceRenderGate: Equatable {
     }
 
     init(fetch: @escaping Fetch, factory: @escaping Factory,
-         retryFailure: @escaping RetryFailure = { _, _ in throw APIError.unsupported },
+         retryFailure: @escaping RetryFailure = { _, _, _ in throw APIError.unsupported },
          reportPreparationFailure: @escaping ReportPreparationFailure = { _, _ in },
          reportDecline: @escaping ReportDecline = { _, _, _, _ in },
          environment: DeviceRenderEnvironment = .live,
@@ -420,10 +442,12 @@ enum DeviceRenderGate: Equatable {
             var reasonCode = status.reasonCode, message = status.reason
             // A decline this build reported earlier (outdated renderer, rollout
             // paused) no longer holds once the phone can render the recipe:
-            // offer the retry instead of repeating "Update Kria".
+            // offer the retry instead of repeating "Update Kria". The retry tells the
+            // server this phone renders it (`renders_locally`), so the server re-pins it
+            // instead of answering requires_update: Try again works, it never flips back.
             if case .local = gate, ["renderer_outdated", "device_unavailable"].contains(reasonCode) {
-                reasonCode = nil
-                message = "Kria can render this edit on your iPhone now. Try again to start it."
+                reasonCode = DeviceRenderAttentionCopy.renderableReason
+                message = nil
             }
             // A server from before Stop became a pause records it as a failure.
             // It is still the creator's own pause: Resume, never "needs attention".
@@ -465,17 +489,20 @@ enum DeviceRenderGate: Equatable {
             // Resume (or a Stop report that landed after the creator already resumed
             // here): `/retry` lifts the pause and keeps the identity. Best effort --
             // the server takes this phone's upload either way.
-            _ = try? await retryFailure(key.jobID, request.identity)
+            _ = try? await retryFailure(key.jobID, request.identity, false)
             guard tickets[key] == ticket else { return }
         }
         // Finishing an export that already exists only uploads; heat and
         // storage gates are about encoding, so they don't hold a sync back.
-        let resumesSync = saved?.request == request && saved?.outputURL != nil && [.localReady, .syncing].contains(saved?.phase)
+        // A video already synced for this request counts too: an answer read before it
+        // published must not decline (or restart) a video that is on the server.
+        let resumesSync = saved?.request == request && saved?.outputURL != nil && [.localReady, .syncing, .synced].contains(saved?.phase)
         // An encode already running keeps going whatever the heat or free
         // space does now (the export uses the space the estimate reserved);
         // those gates only hold back starting a new one.
         var inFlight = false
-        if case .wait = gate, saved?.request == request, [.preparing, .rendering].contains(saved?.phase) {
+        let holdsBack: Bool = switch gate { case .wait, .decline: true; case .local: false }
+        if holdsBack, saved?.request == request, [.preparing, .rendering].contains(saved?.phase) {
             inFlight = await coordinator.observationSnapshot().isBusy
             guard tickets[key] == ticket else { return }
         }
@@ -490,10 +517,12 @@ enum DeviceRenderGate: Equatable {
             presentations[key] = DeviceRenderPresentation(phase: .preparing, waiting: reason)
             scheduleRetry(key, after: reason == .checking ? nil : Self.waitRecheck)
             return
-        case .decline where resumesSync:
-            // The video for this exact request is already rendered: what this phone can
-            // render no longer matters, only the upload is left (the server checks the
-            // bytes, never the phone's capabilities).
+        case .decline where resumesSync || inFlight:
+            // The video for this exact request is already rendered (or its export is
+            // already running): what this phone can render no longer matters, only the
+            // upload is left (the server checks the bytes, never the phone's capabilities).
+            // Declining now would tell the server "won't render" while the export goes on
+            // and publishes, and show "needs a change" for a video that is on its way.
             break
         case .decline(let reasonCode, let detail):
             settle(key)
@@ -546,14 +575,23 @@ enum DeviceRenderGate: Equatable {
             presentations[key] = nil
             inactiveKeys.insert(key)
             await retire(key)
-        case .updateRequired:
+        case .updateRequired(let target):
             settle(key)
-            // A server answer, but never one that unpublishes a finished video.
-            guard !holdsFinishedVideo(key) else { return }
+            if target?.phase == "published" {
+                // Published already: this build only can't decode the recipe behind it.
+                if presentations[key]?.phase != .synced { presentations[key] = DeviceRenderPresentation(phase: .synced) }
+                return
+            }
+            // A server answer, but never one that unpublishes a finished video of the same
+            // request. A 426 about a newer request (another device saved a feature this build
+            // can't decode) is reported, whatever this phone still holds for an older one.
+            let identity = target?.identity ?? requests[key]?.identity
+            if holdsFinishedVideo(key), target == nil || target?.identity == requests[key]?.identity { return }
             observations.removeValue(forKey: key)?.cancel()
-            presentations[key] = DeviceRenderPresentation(phase: .needsAttention, reasonCode: "renderer_outdated")
-            if let identity = requests[key]?.identity {
-                sendDecline(key, identity: identity, reasonCode: "renderer_outdated", detail: "Client update required for this recipe")
+            presentations[key] = DeviceRenderPresentation(phase: .needsAttention, reasonCode: DeviceRenderAttentionCopy.updateReason,
+                                                          requiresServerRetry: target?.phase == "needs_attention")
+            if let identity, target.map({ ["awaiting_device", "syncing"].contains($0.phase) }) ?? true {
+                sendDecline(key, identity: identity, reasonCode: DeviceRenderAttentionCopy.updateReason, detail: "Client update required for this recipe")
             }
         case .unreadableRecipe(let unreadable):
             settle(key)
@@ -701,7 +739,7 @@ enum DeviceRenderGate: Equatable {
     func retryNeedsAttention(_ key: DeviceRenderKey) async -> Bool {
         guard let request = requests[key] else { return false }
         do {
-            _ = try await retryFailure(key.jobID, request.identity)
+            _ = try await retryFailure(key.jobID, request.identity, rendersLocally(request, for: key))
             // A reconcile/save may have installed a newer request while the
             // retry was in flight. Its coordinator and receipt now own this
             // key; a stale retry completion must not tear them down.
@@ -741,6 +779,16 @@ enum DeviceRenderGate: Equatable {
                 : "Kria couldn’t retry this edit. \(error.localizedDescription)"
             presentations[key] = presentation
             return false
+        }
+    }
+
+    /// This phone's renderer can produce the pinned recipe (now, or once it cools or frees
+    /// space). Unknown capabilities and a decline say no.
+    private func rendersLocally(_ request: DeviceRenderRequest, for key: DeviceRenderKey) -> Bool {
+        guard let capabilities = capabilities[key] else { return false }
+        switch Self.gate(request.recipe, capabilities: capabilities, environment: environment) {
+        case .local, .wait(.cooling), .wait(.storage): return true
+        case .wait, .decline: return false
         }
     }
 

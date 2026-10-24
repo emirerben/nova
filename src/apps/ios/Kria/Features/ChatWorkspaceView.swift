@@ -63,6 +63,14 @@ struct ChatWorkspaceView: View {
             guard phase == .background, let id = model.selectedProject?.id else { return }
             Task { await model.discardIfAbandoned(id) }
         }
+        .onChange(of: model.chatRouteRequest) { _, request in
+            // "Review in chat" from the gallery editor: close the gallery (and the editor
+            // and video it presented) onto this edit's conversation, or the projects list
+            // when the conversation is unknown.
+            guard let request else { return }
+            showsGallery = false
+            if request.threadID == nil { setDrawerOpen(true) }
+        }
         .fullScreenCover(isPresented: $showsGallery) {
             NavigationStack { GalleryView(openProjects: { showsGallery = false; setDrawerOpen(true) }) }
                 .environmentObject(model)

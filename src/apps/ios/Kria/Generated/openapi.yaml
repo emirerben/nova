@@ -2603,6 +2603,11 @@
         "properties": {
           "identity": {
             "$ref": "#/components/schemas/DeviceRenderIdentity"
+          },
+          "renders_locally": {
+            "default": false,
+            "title": "Renders Locally",
+            "type": "boolean"
           }
         },
         "required": [

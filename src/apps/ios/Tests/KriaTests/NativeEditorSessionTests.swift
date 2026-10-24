@@ -5045,7 +5045,7 @@ final class NativeEditorSessionTests: XCTestCase {
             return await statusBox.response
         }, factory: { _, _ in
             try DeviceRenderCoordinator(directory: output, exporter: SessionTestExport(), sources: SessionTestSources(), publisher: SessionTestPublisher())
-        }, retryFailure: { _, _ in
+        }, retryFailure: { _, _, _ in
             await retries.increment()
             throw APIError.conflict(detail: ConflictDetail("This edit needs a change.", code: "requires_change"))
         })

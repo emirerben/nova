@@ -974,8 +974,13 @@ struct NativeEditorView: View {
     }
 
     private func reviewRetryInChat() {
-        if conversation != nil { showsConversation = true }
-        else { requestBack() }
+        if conversation != nil { showsConversation = true; return }
+        // Opened from the gallery: no conversation underneath. Open this edit's own
+        // creation thread (open-in-editor names it); going back would only reach the
+        // video detail, which has no chat and no render card.
+        if session.hasUnsavedChanges { requestBack(); return }
+        let threadID = session.creationThreadID
+        Task { await model.openCreationThread(threadID) }
     }
 
     private func requestBack() {

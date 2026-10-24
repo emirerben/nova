@@ -47,16 +47,27 @@ Phone render lifecycle (killer-screens train):
 - Phone-facing 409s carry `problem.code` beside the legacy `detail`:
   `superseded` (with `active_job_id` when a newer Job owns the project),
   `render_cancelled`, `editor_empty`, `contract_changed`, `requires_change`,
-  `requires_update`, `published`, `not_awaiting_retry`, `output_unverified`.
+  `requires_update`, `held_by_newer_build`, `published`, `not_awaiting_retry`,
+  `output_unverified`.
 - A contract refusal found on `GET` is persisted once (`contract_changed`).
 - A reaped render restarts on its own when a phone build reopens the project.
 - A recipe the phone declines is the creator's turn, never "needs attention":
   `unsupported_recipe` shows "This edit needs a change" (chat), and `/retry`
-  answers `requires_change`. `renderer_outdated` shows "Update Kria"; the record
-  stores `declined_client_protocol`, `/retry` from that build answers
-  `requires_update`, and a newer build re-pins it on `GET` by itself.
-- A phone that loses a verified capability after its export finished uploads
-  the export it has; it declines (and tells the server) only otherwise.
+  answers `requires_change`. `renderer_outdated` shows "Update Kria" (TestFlight,
+  `KriaUpdateLink`) and "Review in chat"; the record stores
+  `declined_client_protocol` and `declined_gap` (`floor` when that build failed a
+  protocol gate of the recipe, else `renderer`). `/retry` from that build answers
+  `requires_update` unless the phone sends `renders_locally` (its renderer can
+  produce the recipe now). A `floor` decline is re-pinned on `GET` by a newer build
+  that passes every gate (`_client_update_detail` runs first; one that still fails
+  gets the 426); a `renderer` decline waits for the phone's own "Try again".
+- The device-render 426 names its request (`identity`, `phase`,
+  `minimum_client_protocol`) so the phone reports the right one.
+- Two devices: the GET records `max_reader_client_protocol` (kept across re-pins of
+  the same recipe); a `renderer_outdated` from an older build, or while the record
+  is syncing, answers 409 `held_by_newer_build` and fails nothing.
+- A phone that loses a verified capability after its export started (or finished)
+  lets it finish and uploads it; it declines (and tells the server) only otherwise.
 - Verification that could not run is requeued for the same bytes for up to
   24h (`verification_unavailable` after that); a real rejection is
   `output_check_failed`. A check whose record the fence moved past is closed as

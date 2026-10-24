@@ -96,7 +96,7 @@ struct NativeEditorSaveBanner: View {
                 Button(deviceButton(step)) {
                     switch step {
                     case .reviewInChat where reviewInChat != nil: reviewInChat?()
-                    case .updateApp: openURL(DeviceRenderAttentionCopy.appStoreURL)
+                    case .updateApp: openURL(KriaUpdateLink.destination)
                     default:
                         if let retryApproved { retryApproved() }
                         else { Task { await session.retryDeviceRender() } }
@@ -107,6 +107,15 @@ struct NativeEditorSaveBanner: View {
                     .frame(maxWidth: .infinity, minHeight: 44)
                     .background(KriaColor.softZinc)
                     .accessibilityIdentifier("native-editor-retry-device-render")
+                if step == .updateApp, let reviewInChat {
+                    // Second way forward: ask Kria in chat for a version this iPhone renders.
+                    Button("Review in chat", action: reviewInChat)
+                        .font(KriaFont.body(12).weight(.semibold))
+                        .foregroundStyle(KriaColor.ink)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(KriaColor.softZinc)
+                        .accessibilityIdentifier("native-editor-device-review-in-chat")
+                }
             }
         case .loadFailed(let message):
             banner(title: "Couldn’t load this edit", detail: message, systemImage: "exclamationmark.triangle", tint: .red)
@@ -139,6 +148,7 @@ struct NativeEditorSaveBanner: View {
         case .resume: "Saved — rendering paused"
         case .reviewInChat: "Saved — this edit needs a change"
         case .updateApp: "Saved — update Kria to render this edit"
+        case .renderNow: "Saved — ready to render on this iPhone"
         case .retry: "Saved — iPhone render needs a retry"
         }
     }
@@ -148,6 +158,7 @@ struct NativeEditorSaveBanner: View {
         case .resume: "pause.circle"
         case .reviewInChat: "bubble.left"
         case .updateApp: "arrow.down.app"
+        case .renderNow: "play.circle"
         case .retry: "arrow.clockwise"
         }
     }
@@ -156,6 +167,7 @@ struct NativeEditorSaveBanner: View {
         switch step {
         case .reviewInChat where reviewInChat != nil: "Review in chat"
         case .updateApp: "Update Kria"
+        case .renderNow where retryApproved == nil: "Render on this iPhone"
         default: retryApproved == nil ? (step == .resume ? "Resume rendering" : "Retry device render") : "Review retry in chat"
         }
     }

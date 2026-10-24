@@ -43,6 +43,12 @@ struct DeviceRenderPanel: View {
             Button("Review the updated edit", action: reviewInChat)
                 .buttonStyle(KriaSecondaryButtonStyle())
                 .accessibilityIdentifier("device-render-review-in-chat")
+        } else if let reviewInChat, DeviceRenderAttentionCopy.needsUpdate(sessions.presentations[key]) {
+            // The second way forward when the build is too old: ask Kria in chat for a
+            // version this iPhone can render, instead of only waiting for an update.
+            Button("Review in chat", action: reviewInChat)
+                .buttonStyle(KriaSecondaryButtonStyle())
+                .accessibilityIdentifier("device-render-review-in-chat")
         }
         if DeviceRenderAttentionCopy.offersOriginalRecovery(sessions.presentations[key]) {
             Button("Find original files") { showsSourceRecovery = true }
@@ -192,7 +198,14 @@ enum DeviceRenderAttentionCopy {
         "contract_changed": "This edit’s approved details changed after it was prepared. Your project is saved. Review the updated edit in chat.",
         // The job was cancelled outside this iPhone (another device, the web, or Kria).
         DeviceRenderSessions.jobCancelledReason: "This render was stopped. Your project is saved.",
+        // A decline this build made earlier no longer holds: it renders the recipe now.
+        renderableReason: "Kria can render this edit on your iPhone now. Try again to start it.",
     ]
+
+    /// Set by the phone itself (never by the server): a `renderer_outdated` or
+    /// `device_unavailable` record whose recipe this build can render now. Try again
+    /// re-pins it with `renders_locally`, so the server takes it.
+    static let renderableReason = "renderable_now"
 
     /// Reasons a retry can't change: the recipe, the app version or the
     /// rollout has to change first, so "Try again" is hidden for them.
@@ -210,22 +223,34 @@ enum DeviceRenderAttentionCopy {
     static let updateReason = "renderer_outdated"
 
     /// What the creator can do next about a render that cannot finish on its own.
-    enum NextStep: Equatable { case retry, resume, reviewInChat, updateApp }
+    /// `renderNow`: this build renders a recipe it declined earlier (renderable_now); the
+    /// step starts it, nothing failed.
+    enum NextStep: Equatable { case retry, resume, reviewInChat, updateApp, renderNow }
 
     static func nextStep(_ presentation: DeviceRenderPresentation) -> NextStep {
         if needsChange(presentation) { return .reviewInChat }
-        if presentation.waiting?.isQuiet ?? true, presentation.reasonCode == updateReason { return .updateApp }
+        if needsUpdate(presentation) { return .updateApp }
+        if presentation.reasonCode == renderableReason { return .renderNow }
         return isPaused(presentation) ? .resume : .retry
     }
 
-    /// Where "Update Kria" goes.
-    static let appStoreURL = URL(string: "https://apps.apple.com/")!
+    /// Phases a change or update reason belongs to: a render that stopped here
+    /// (`needsAttention`) or one whose finished video this iPhone keeps but cannot sync
+    /// (`localReady`). On any other phase the reason is stale and the card shows the phase.
+    static let yourTurnPhases: Set<DeviceRenderPhase> = [.needsAttention, .localReady]
 
     /// A quiet network wait (a failed status read) sits on top of the card and keeps
     /// its way forward; only heat, storage or checking replace it.
     static func needsChange(_ presentation: DeviceRenderPresentation?) -> Bool {
-        guard let presentation, presentation.waiting?.isQuiet ?? true, let reasonCode = presentation.reasonCode else { return false }
+        guard let presentation, presentation.waiting?.isQuiet ?? true, yourTurnPhases.contains(presentation.phase),
+              let reasonCode = presentation.reasonCode else { return false }
         return changeReasons.contains(reasonCode)
+    }
+
+    /// This build is older than the recipe: "Update Kria" (and "Review in chat"), never a retry.
+    static func needsUpdate(_ presentation: DeviceRenderPresentation?) -> Bool {
+        guard let presentation, presentation.waiting?.isQuiet ?? true, yourTurnPhases.contains(presentation.phase) else { return false }
+        return presentation.reasonCode == updateReason
     }
 
     /// The creator's own Stop: shown as a resumable pause, never a failure.
@@ -241,6 +266,7 @@ enum DeviceRenderAttentionCopy {
         // A pause is the creator's own Stop; its originals are not the problem.
         if presentation.reasonCode == DeviceRenderSessions.pausedReason { return false }
         guard let reasonCode = presentation.reasonCode else { return true }
+        if reasonCode == renderableReason { return false }
         return !structuralReasons.contains(reasonCode) && !["thermal", "insufficient_storage"].contains(reasonCode)
     }
 
@@ -300,8 +326,10 @@ enum DeviceRenderAttentionCopy {
         // A job cancelled elsewhere is gone; retrying it would only answer 409.
         if phase == .cancelled, reasonCode == DeviceRenderSessions.jobCancelledReason { return false }
         // `renderer_outdated` is structural the same way `unsupported_recipe` is: retrying
-        // recompiles the identical, still-too-new recipe and fails identically.
-        guard phase == .needsAttention, let reasonCode else { return true }
+        // recompiles the identical, still-too-new recipe and fails identically. A kept
+        // video (`localReady`) with such a reason can't sync either: "Retry sync" would only
+        // collect the same refusal, so the card offers the change or the update instead.
+        guard yourTurnPhases.contains(phase), let reasonCode else { return true }
         return !structuralReasons.contains(reasonCode)
     }
 }
@@ -349,8 +377,8 @@ struct DeviceRenderStatusCard: View {
                         .accessibilityIdentifier("device-render-save-message")
                 }
             }
-            if presentation.phase == .needsAttention, presentation.reasonCode == DeviceRenderAttentionCopy.updateReason {
-                Link("Update Kria", destination: DeviceRenderAttentionCopy.appStoreURL)
+            if DeviceRenderAttentionCopy.needsUpdate(presentation) {
+                Link("Update Kria", destination: KriaUpdateLink.destination)
                     .buttonStyle(KriaSecondaryButtonStyle())
                     .accessibilityIdentifier("device-render-update-app")
             }
@@ -444,6 +472,7 @@ struct DeviceRenderStatusCard: View {
         case .needsAttention where presentation.reasonCode == "renderer_outdated": "Update Kria to render this edit"
         case .needsAttention where DeviceRenderAttentionCopy.needsChange(presentation): "This edit needs a change"
         case .needsAttention where presentation.reasonCode == "original_missing": "This edit needs its original clips"
+        case .needsAttention where presentation.reasonCode == DeviceRenderAttentionCopy.renderableReason: "Ready to render on this iPhone"
         case .needsAttention: originalsMissing ? "This edit needs its original clips" : "This edit needs your attention"
         case .superseded: "Your edit changed"
         }
@@ -451,6 +480,12 @@ struct DeviceRenderStatusCard: View {
     private var detail: String {
         if presentation.outputVerificationPending { return "Checking the exported picture, text and sound against your approved edit." }
         if let detail = presentation.waiting.flatMap(DeviceRenderAttentionCopy.waitingDetail) { return detail }
+        if presentation.phase == .localReady, DeviceRenderAttentionCopy.needsChange(presentation) {
+            return "You can watch and share it on this iPhone. To sync it, review the edit in chat and Kria will make a version this iPhone can render."
+        }
+        if presentation.phase == .localReady, DeviceRenderAttentionCopy.needsUpdate(presentation) {
+            return "You can watch and share it on this iPhone. Update Kria to sync it."
+        }
         if presentation.phase == .needsAttention, let reasonCode = presentation.reasonCode,
            DeviceRenderAttentionCopy.structuralReasons.contains(reasonCode) { return "Your project is saved." }
         return switch presentation.phase {
