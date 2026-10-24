@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.93.0] - 2026-10-24
+
+### Changed
+- fix(kria): end a Talking edit on the requested video with its own sound, never muted mid-talk (KRI-841) (#1784) <!-- release-pr: 1784 -->
+
 ## [0.81.92.0] - 2026-10-24
 
 ### Fixed

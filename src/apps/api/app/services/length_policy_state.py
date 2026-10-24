@@ -85,8 +85,13 @@ def check_creator_duration(
     *,
     state: LengthPolicyState | None,
     decline_type: type[Exception] = CreatorRenderContractError,
+    emit_observation: bool = True,
 ) -> dict[str, Any] | None:
-    """Only creator-proven timing is a promise; derived timing is a receipt note."""
+    """Only creator-proven timing is a promise; derived timing is a receipt note.
+
+    ``emit_observation=False`` is for a what-if probe (KRI-841: "would this ending break the
+    approved length?"): the verdict and the raise are identical, but no fleet length-check
+    observation is emitted, so a pretend decline never counts as a real creator-length one."""
     if state is not None:
         state.verify_binding(contract)
     if contract.duration_s is None:
@@ -125,7 +130,8 @@ def check_creator_duration(
         "outcome": result.outcome,
         "blocking": result.blocking,
     }
-    emit_length_check_observation(check_mode=result.mode, outcome=result.outcome)
+    if emit_observation:
+        emit_length_check_observation(check_mode=result.mode, outcome=result.outcome)
     if result.blocking:
         raise decline_type(result.decline_message)
     return observation
