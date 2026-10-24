@@ -1,6 +1,6 @@
 {
   "agent": "nova.creator.main",
-  "prompt_version": "2026-10-24-v77",
+  "prompt_version": "2026-10-24-v79",
   "input": {
     "user_message": "Write a speakable narration script for these 3 clips so I can record it.",
     "creator_context": "",

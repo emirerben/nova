@@ -58,6 +58,14 @@ def validate_set_mix(out: dict, snapshot: dict, state: Any) -> dict | None:
     """
     mix = snapshot.get("mix") if isinstance(snapshot, dict) else None
     mix = mix if isinstance(mix, dict) else {}
+    if "music_level" in out and mix.get("music_level_locked") is True:
+        # KRI-821: only the footage's own level is editable on this edit.
+        state.reject(
+            op="set_mix",
+            reason="capability_unavailable",
+            detail="this edit has no control for the voice/music balance",
+        )
+        return None
     if "original_level" in out:
         level = _num(out["original_level"])
         if level is None:

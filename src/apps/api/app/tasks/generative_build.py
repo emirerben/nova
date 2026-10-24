@@ -5316,6 +5316,10 @@ def _run_phone_voiceover_montage_job(
             "landscape_fit": decision.extras.get("assembly_landscape_fit") or "fill",
             "music_track_id": decision.music_track_id,
             "music_start_s": decision.music_start_s,
+            # KRI-821: how loud the footage's own sound plays under the voice, as pinned
+            # (0 with a matched-track bed, else `1 - mix`). The editor's Sounds > Original
+            # audio row opens at this level and its Save overrides it.
+            "original_audio_level": float(recipe.audio.original_volume),
             "ok": False,
         }
         if existing_index is not None:
@@ -8555,8 +8559,11 @@ def _phone_opening_cut(
     *,
     duration_s: float,
     off_words: Any = None,
-) -> tuple[CutPlan | None, dict[str, dict[str, Any]] | None]:
+) -> tuple[CutPlan | None, dict[str, Any] | None]:
     """KRI-628 / KRI-790: cut the phone Talking take to the lines the creator quoted.
+
+    KRI-821: and cut each line the creator named out of the middle of it (``named_cuts``, a
+    list of receipts, one per line; `phone_opening_cut.apply_named_line_cuts`).
 
     The asks are read deterministically off the approved brief pinned on the job
     (``creator_brief_binding``), never a prompt field. ``(cut_plan, None)`` without such
@@ -8569,8 +8576,11 @@ def _phone_opening_cut(
     ``off_words`` (the checked preflight words, when the job carries them) ground the
     quotes and the result is a start/end-cut-only plan. No words: ``cleanup_off``."""
     from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
-    from app.kria.opening_cut_ask import brief_take_window  # noqa: PLC0415
-    from app.pipeline.phone_opening_cut import apply_take_window  # noqa: PLC0415
+    from app.kria.opening_cut_ask import brief_named_cuts, brief_take_window  # noqa: PLC0415
+    from app.pipeline.phone_opening_cut import (  # noqa: PLC0415
+        apply_named_line_cuts,
+        apply_take_window,
+    )
     from app.pipeline.silence_cut import no_op_plan  # noqa: PLC0415
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -8578,29 +8588,42 @@ def _phone_opening_cut(
     if not raw_binding:
         return cut_plan, None
     try:
-        ask = brief_take_window(BriefBinding.model_validate(raw_binding).resolve())
+        brief = BriefBinding.model_validate(raw_binding).resolve()
+        ask = brief_take_window(brief)
+        # KRI-821: lines the creator named to cut out of the middle of the take.
+        named = [
+            (cut.quote, cut.requirement_ids, cut.occurrence) for cut in brief_named_cuts(brief)
+        ]
     except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
         log.warning("phone_opening_cut.binding_unreadable", error=str(exc)[:200])
         return cut_plan, None
-    if ask is None:
+    if ask is None and not named:
         return cut_plan, None
 
-    def _missed(reason: str) -> dict[str, dict[str, Any]]:
-        lines = (
-            ("opening_cut", ask.start_quote, ask.start_ids),
-            ("end_cut", ask.end_quote, ask.end_ids),
-        )
+    def _missed_line(quote: str, ids: Any, reason: str) -> dict[str, Any]:
         return {
-            field: {
-                "version": 1,
-                "quote": quote,
-                "requirement_ids": list(ids),
-                "status": "not_applied",
-                "reason": reason,
-            }
-            for field, quote, ids in lines
-            if quote
+            "version": 1,
+            "quote": quote,
+            "requirement_ids": list(ids),
+            "status": "not_applied",
+            "reason": reason,
         }
+
+    def _missed(reason: str) -> dict[str, Any]:
+        lines = (
+            ()
+            if ask is None
+            else (
+                ("opening_cut", ask.start_quote, ask.start_ids),
+                ("end_cut", ask.end_quote, ask.end_ids),
+            )
+        )
+        missed: dict[str, Any] = {
+            field: _missed_line(quote, ids, reason) for field, quote, ids in lines if quote
+        }
+        if named:
+            missed["named_cuts"] = [_missed_line(quote, ids, reason) for quote, ids, _ in named]
+        return missed
 
     source_words = words if cut_plan is not None else off_words
     if source_words is None:
@@ -8608,22 +8631,32 @@ def _phone_opening_cut(
         receipts = _missed("cleanup_off")
     else:
         try:
-            plan, start_receipt, end_receipt = apply_take_window(
-                cut_plan if cut_plan is not None else no_op_plan(duration_s),
-                list(source_words),
-                start_quote=ask.start_quote,
-                end_quote=ask.end_quote,
-                duration_s=duration_s,
-                start_ids=ask.start_ids,
-                end_ids=ask.end_ids,
-            )
+            plan = cut_plan if cut_plan is not None else no_op_plan(duration_s)
+            receipts = {}
+            if ask is not None:
+                plan, start_receipt, end_receipt = apply_take_window(
+                    plan,
+                    list(source_words),
+                    start_quote=ask.start_quote,
+                    end_quote=ask.end_quote,
+                    duration_s=duration_s,
+                    start_ids=ask.start_ids,
+                    end_ids=ask.end_ids,
+                )
+                receipts = {
+                    field: receipt
+                    for field, receipt in (
+                        ("opening_cut", start_receipt),
+                        ("end_cut", end_receipt),
+                    )
+                    if receipt is not None
+                }
+            if named:
+                plan, receipts["named_cuts"] = apply_named_line_cuts(
+                    plan, list(source_words), named, duration_s=duration_s
+                )
             # Cleanup off and nothing to cut (the take already is the window): no plan.
             cut_plan = plan if cut_plan is not None or plan.removed else None
-            receipts = {
-                field: receipt
-                for field, receipt in (("opening_cut", start_receipt), ("end_cut", end_receipt))
-                if receipt is not None
-            }
         except Exception as exc:  # noqa: BLE001 - a missed cut is reported, never fatal
             log.warning("phone_opening_cut.failed", error=str(exc)[:200])
             receipts = _missed("not_found")
@@ -9963,6 +9996,9 @@ def _run_phone_narrated_job(
             "voiceover_caption_style": caption_style,
             "caption_language": detected_lang,
             "voiceover_bed_level": bed_level,
+            # KRI-821: the footage gain the recipe plays (the bed, ducked), which the
+            # editor's Sounds > Original audio row opens at; an editor Save overrides it.
+            "original_audio_level": float(recipe.audio.original_volume),
             "ok": False,
         }
         # KRI-455: the editor preview draws text from the variant, not the

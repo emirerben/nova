@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-10-23-v87",
+  "prompt_version": "2026-10-24-v88",
   "input": {
     "utterance": "move the museum slide to the front but keep the current cover",
     "prior_turns": [],
