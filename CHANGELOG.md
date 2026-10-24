@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.88.0] - 2026-10-24
+
+### Changed
+- docs(voiceover): record verified text and selected-audio integration (#1759) <!-- release-pr: 1759 -->
+
 ## [0.81.87.0] - 2026-10-24
 
 ### Changed
