@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.100.0] - 2026-10-24
+
+### Changed
+- fix(kria): a creator's length ceiling is met by a shorter draft (KRI-847) (#1795) <!-- release-pr: 1795 -->
+
 ## [0.81.99.0] - 2026-10-24
 
 ### Changed
