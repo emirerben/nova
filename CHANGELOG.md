@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.96.0] - 2026-10-24
+
+### Changed
+- fix(kria): play one clip's own sound under, or after, a phone voiceover (KRI-842) (#1786) <!-- release-pr: 1786 -->
+
 ## [0.81.95.0] - 2026-10-24
 
 ### Changed
