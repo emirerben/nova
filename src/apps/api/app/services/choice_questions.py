@@ -3385,8 +3385,8 @@ def _disclosure(kind: object, option: object) -> str | None:
             )
         if basis == FREEZE_BASIS_MOMENT:
             return say(
-                en="I'm freezing the moment you picked, on its middle frame.",
-                tr="Seçtiğin anı, ortasındaki karede donduruyorum.",
+                en="I'm freezing that moment on its middle frame.",
+                tr="O anı, ortasındaki karede donduruyorum.",
             )
         return None
     if kind == CONFLICT_VOICE_VS_DURATION and str(option).startswith("length_"):
