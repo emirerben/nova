@@ -633,6 +633,33 @@ reply English and prompts byte-identical).
   side by exact text (`kria_runtime._WORKER_TEXT_TR`); one with no Turkish twin is left out,
   never shown in English. Allowlist: `tests/kria/turkish_chat_guard.py`.
 
+## Voiceover script before a recording (KRI-815)
+
+With footage attached and no voiceover, a request for words to say over the clips gets a
+script, never a narrated draft that cannot render yet:
+
+- Main Creator may answer `draft_voiceover_script` (only offered when
+  `MainCreatorInput.voiceover_script_available`: flag on, a video clip attached, no
+  `item.voiceover_gcs_path`). Its `request_evidence` must be the creator's own words, or the
+  turn asks instead. The model never writes the script.
+- A narrated `audio_strategy: "voiceover"` proposal with no voiceover attached takes the same
+  path before the strategy check (`_plan_creator_action`), so no draft, approval or Job is
+  minted; claim-time `voiceover_required` stays as the backstop.
+- `app/kria/voiceover_script.py` builds one prompt line per attached video clip from the
+  stored clip understanding (no new vision call), runs `nova.voiceover.script_writer`, and
+  persists `voiceover_script` on the `assistant_response` payload: `script_id`, per-thread
+  `revision`, `source_media_ids`, `item_id`, `language`, `needs_check` (the writer's list plus a
+  backstop for numbers and names absent from the inputs) and the `record_or_import`
+  continuation. The event `content` also carries the script, so clients without the card read it.
+- A revision keeps `script_id` and `source_media_ids`, bumps `revision`, and writes no brief
+  version. A writer failure is `status: "failed"` with no text.
+- The app shows the card when `voiceover_script_cards` is advertised; Record / Import open the
+  voiceover step with the script to read. The upload uses the normal, ownership-checked voiceover
+  attach; the next turn plans the narrated edit as usual.
+- Kill switch `KRIA_VOICEOVER_SCRIPT_ENABLED=false` (api + worker restart): no script, but a
+  narrated plan without a voiceover still asks to record or import instead of reaching approval.
+  Independent of `TRANSCRIPT_HELPER_ENABLED`. Journey: `tests/kria/test_kri815_voiceover_script_journey.py`.
+
 ## Render consent
 
 Every initial render and rerender requires a separate, expiring approval pinned

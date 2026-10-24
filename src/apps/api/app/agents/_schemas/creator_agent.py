@@ -889,6 +889,23 @@ class ProposeStrategy(_CreatorModel):
     )
 
 
+class DraftVoiceoverScript(_CreatorModel):
+    """KRI-815: the creator asked for words to SAY over their footage (a voiceover script).
+
+    The model only chooses this action and quotes the ask; it never writes the script. The
+    server checks ``request_evidence`` against the creator's own messages and has the
+    footage-grounded writer draft the script from the clips' stored understanding.
+    """
+
+    kind: Literal["draft_voiceover_script"]
+    # Verbatim excerpt of a creator message asking for the script, or a change to it.
+    request_evidence: str = Field(min_length=1, max_length=1200)
+    # The creator's requested change to the previous draft ("shorter", "funnier"), verbatim.
+    revision_note: str | None = Field(
+        default=None, max_length=600, exclude_if=lambda value: value is None
+    )
+
+
 class ReviewDecision(_CreatorModel):
     kind: Literal["review_decision"]
     decision: Literal["approve", "revise", "reject"]
@@ -1387,7 +1404,7 @@ class CreatorAutomationDecision(_CreatorModel):
 
 
 CreatorAgentOutput: TypeAlias = Annotated[
-    AskUser | ProposeStrategy | ReviewDecision,
+    AskUser | ProposeStrategy | ReviewDecision | DraftVoiceoverScript,
     Field(discriminator="kind"),
 ]
 CREATOR_AGENT_OUTPUT_ADAPTER = TypeAdapter(CreatorAgentOutput)
@@ -1562,6 +1579,7 @@ __all__ = [
     "CREATOR_CORE_CRAFT_COMMAND_ADAPTER",
     "CREATOR_CRAFT_BUNDLE_COMMAND_ADAPTER",
     "CreatorEditSnapshot",
+    "DraftVoiceoverScript",
     "ChoiceAnswer",
     "ClosingMedia",
     "MAX_REACTION_BEATS",

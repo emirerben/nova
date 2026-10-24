@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.79.0] - 2026-10-24
+
+### Changed
+- feat(kria): footage-grounded voiceover script before asking for a recording (KRI-815) (#1791) <!-- release-pr: 1791 -->
+
+## [0.81.78.0] - 2026-10-24
+
+### Changed
+- feat(text): print creator-written text exactly as typed and fit it in Slider and video edits (KRI-826) (#1797) <!-- release-pr: 1797 -->
+
+## [0.81.77.0] - 2026-10-24
+
+### Changed
+- fix(kria): a creator's photo length plays exactly beyond the AI 0.5-0.8 s cadence (KRI-825) (#1792) <!-- release-pr: 1792 -->
+
 ## [0.81.76.0] - 2026-10-23
 
 ### Changed

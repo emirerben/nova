@@ -21,6 +21,7 @@ from app.agents._schemas.creator_agent import (
     STORY_LINE_MAX_CHARS,
     CreativeStrategy,
     CreatorAgentOutput,
+    DraftVoiceoverScript,
     ProposeStrategy,
     ResolvedCreatorManifest,
 )
@@ -111,8 +112,12 @@ log = structlog.get_logger()
 # v74 combines delegation v72 with subtitle-semantics v73, retaining all instructions.
 # v75 adds N2 fullscreen photo-then-original sequences to the complete v74 union.
 # v76 (KRI-816): a typed `starts_fresh` declaration withdraws the saved brief ("Start fresh").
+# v76 (KRI-815): `$voiceover_script_section` teaches `draft_voiceover_script` when footage is
+# attached and no voiceover is (a script request returns a script, not a doomed narrated draft).
+# v77 combines both v76 branches (KRI-816 starts_fresh + KRI-815 voiceover script section).
 # v77 (KRI-827): "no text on her face or on the plate" => `keep_text_off` facts.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v77"
+# v78 combines main's v77 (KRI-815 + KRI-816) with KRI-827's v77 (keep_text_off).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v78"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -333,6 +338,25 @@ instead only if the creator explicitly asks for it. `summary` MUST say in plain 
 mode you chose (for example "I'll use your song as the background music and cut to its beat."
 or "I'll lip-sync your takes to your song, placing each one where it fits the music."). Never
 invent or quote lyrics, and never promise cuts matched to lyrics.
+""".strip("\n")
+
+
+# KRI-815: rendered into `$voiceover_script_section` (same line-suffix trick as the sections
+# above) ONLY when the server says a script can be drafted (footage attached, no voiceover,
+# flag on); "" otherwise, so every other prompt is byte-identical.
+_VOICEOVER_SCRIPT_PROMPT_SECTION = """
+VOICEOVER SCRIPT (footage attached, no voiceover recorded yet)
+When the creator asks you to WRITE the words they will say over their clips (a voiceover or
+narration script, "what should I say", "write me a script for these clips"), or asks to change
+the script you drafted earlier in this conversation ("make it shorter", "say it in Turkish"),
+answer with this action instead of `ask_user` or `propose_strategy`:
+{"action": {"kind": "draft_voiceover_script", "request_evidence": "verbatim excerpt of the
+creator's message asking for the script or the change", "revision_note": "the creator's
+requested change to the earlier draft, verbatim, or null for a new script"}}
+Do not write the script yourself: the server writes it from what the clips show. Do not
+propose a narrated or voiceover edit before the creator has recorded or imported a voiceover;
+that edit cannot render yet. Any other request (a montage, music, text, an edit that keeps the
+clips' own sound) is planned exactly as usual.
 """.strip("\n")
 
 
@@ -574,6 +598,9 @@ class MainCreatorInput(BaseModel):
     # KRI-520: the chat's language (app.kria.reply_language). None/"en" => the
     # prompt is byte-identical and the field is left out of input dumps.
     reply_language: str | None = Field(default=None, max_length=8, exclude_if=lambda v: v is None)
+    # KRI-815: footage attached, no voiceover, script flag on. False => the prompt is
+    # byte-identical, the field is left out of input dumps, and the action is refused.
+    voiceover_script_available: bool = Field(default=False, exclude_if=lambda v: not v)
 
 
 class MainCreatorOutput(BaseModel):
@@ -718,6 +745,10 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             ),
             # KRI-479: "" (no `phone_source_audio`) adds no bytes; same line-suffix trick.
             voice_mode_section=_camera_audio_mode_section(input.capability_manifest),
+            # KRI-815: "" (no script possible) adds no bytes; same line-suffix trick.
+            voiceover_script_section=(
+                "\n" + _VOICEOVER_SCRIPT_PROMPT_SECTION if input.voiceover_script_available else ""
+            ),
         )
         # KRI-520: the reply-language instruction goes last, where it wins over the
         # English examples above. "" for English/unknown: byte-identical prompt.
@@ -751,6 +782,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     else:
                         raise ValueError("propose_strategy must explain its duration in rationale")
             action = CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(raw_action)
+            if isinstance(action, DraftVoiceoverScript) and not input.voiceover_script_available:
+                # KRI-815: only offered with footage and no voiceover; elsewhere it is a miss.
+                raise ValueError("draft_voiceover_script is not available for this project")
             if isinstance(action, ProposeStrategy):
                 # Share the compiler's exact policy: guided planning never
                 # echoes opaque IDs, while native planning remains bounded to

@@ -1553,6 +1553,11 @@
             "default": false,
             "title": "Voice Dictation",
             "type": "boolean"
+          },
+          "voiceover_script_cards": {
+            "default": false,
+            "title": "Voiceover Script Cards",
+            "type": "boolean"
           }
         },
         "required": [

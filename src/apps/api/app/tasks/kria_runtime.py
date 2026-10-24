@@ -86,6 +86,7 @@ from app.kria.reply_language import (
     say,
     thread_reply_language,
 )
+from app.kria.voiceover_script import event_content as voiceover_script_content
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -352,7 +353,8 @@ def _complete_response_turn(
             thread,
             role="assistant",
             event_type="assistant_response",
-            content=plan.response,
+            # KRI-815: a drafted script is also readable as prose by clients without the card.
+            content=voiceover_script_content(plan),
             payload={
                 "turn_id": str(turn.id),
                 "turn_value": plan.turn_value,
@@ -375,6 +377,8 @@ def _complete_response_turn(
                     else {}
                 ),
                 **({"choice_question": plan.choice_question} if plan.choice_question else {}),
+                # KRI-815: the script card + its record/import continuation (spoken words only).
+                **({"voiceover_script": plan.voiceover_script} if plan.voiceover_script else {}),
                 # KRI-738: tappable lengths; the prose above still lists them for old clients.
                 **({"options": plan.reply_options} if plan.reply_options else {}),
                 **(
