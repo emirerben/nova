@@ -2293,6 +2293,8 @@ async def _mint_prepared_execution(
     document = _parse_draft_document(draft.snapshot_json)
     if document is None:
         return
+    # KRI-725: a slide post's slides/stickers are sources and its draft a compiled ref.
+    slides = prepared.targets_slides(item, document)
     try:
         snapshot = prepared.build_snapshot(
             creator_id=approval.creator_id,
@@ -2300,11 +2302,14 @@ async def _mint_prepared_execution(
             approval_id=approval.id,
             draft=draft,
             document=document,
-            sources=await prepared.load_source_identities(db, item, approval.creator_id),
+            sources=await prepared.load_source_identities(
+                db, item, approval.creator_id, slides=slides
+            ),
             execution_result=execution.result if execution is not None else None,
             latest_brief=(
                 await load_latest_brief(db, thread.id) if document.brief_binding is None else None
             ),
+            slide_post=(prepared.slide_post_draft(item),) if slides else None,
         )
     except ValueError as exc:
         log.warning("kria_prepared_execution_refused", approval_id=str(approval.id), error=str(exc))

@@ -587,7 +587,13 @@ def _next_prepared_attempt(db, approval, draft, item, job, variant_id):  # noqa:
         draft=draft,
         document=KriaDraftDocument.model_validate(draft.snapshot_json or {}),
         thread_id=approval.thread_id,
-        sources=prepared.load_source_identities_sync(db, item, approval.creator_id),
+        sources=prepared.load_source_identities_sync(
+            db,
+            item,
+            approval.creator_id,
+            slides=prepared.SLIDE_POST_REF in snapshot.compiled_refs,
+        ),
+        item=item,
     )
     record = {
         **stamp,

@@ -3730,7 +3730,13 @@ def _verify_prepared_execution(
             draft=draft,
             document=document,
             thread_id=approval.thread_id,
-            sources=prepared.load_source_identities_sync(db, item, approval.creator_id),
+            sources=prepared.load_source_identities_sync(
+                db,
+                item,
+                approval.creator_id,
+                slides=prepared.SLIDE_POST_REF in snapshot.compiled_refs,
+            ),
+            item=item,
         )
     except prepared.PreparedExecutionError as exc:
         if row is not None and row.invalidated_at is None:
@@ -6217,6 +6223,14 @@ _JOB_FAILURE_MESSAGES_TR: dict[str, str] = {
     "phone_plan_failed": (
         "Bu düzenleme planlanırken bir şey bozuldu, bu yüzden videon oluşturulmadı. "
         "Düzenlemen ve çekimlerin kayıtlı. Tekrar dene ya da bir değişiklik iste."
+    ),
+    "prepared_execution_stale": (
+        "Onayladığın bir şey bu düzenleme oluşturulmadan önce değişti, bu yüzden videoyu "
+        "yapmadım. Kria'dan düzenlemeyi yeniden hazırlamasını iste."
+    ),
+    "prepared_execution_unsupported": (
+        "Bu düzenleme, onu oluşturan sürümden daha yeni bir Kria sürümüyle hazırlandı. "
+        "Kria'dan yeniden hazırlamasını iste."
     ),
     "originals_not_uploaded": (
         "Orijinal çekimlerin yüklenmedi, bu yüzden iPhone'unda oluşturulamıyor. Kliplerini "
