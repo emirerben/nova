@@ -37,7 +37,8 @@ DECISION_KEYS: tuple[str, ...] = (
 )
 
 _GAP = re.compile(r"^gap:KRI-\d+$")  # kri667: validates our own coverage-state literals
-_FIXED = frozenset({"executed", "declined_before_render", "not_applicable"})
+# A refused creator ask is unmet demand: it needs a gap:KRI-n owner, never a fixed state.
+_FIXED = frozenset({"executed", "not_applicable"})
 
 ApprovalPath = Literal["prepared", "not_via_approval"]
 
@@ -161,7 +162,7 @@ PREPARED_COVERAGE: dict[str, Coverage] = {
             publication_fence=_CLOUD_PUBLISH,
             decisions={
                 # Exact on-screen text asks are declined at preflight_cloud_contract.
-                "text": "declined_before_render",
+                "text": "gap:KRI-725",
                 "length": "executed",
                 # order_required + KRI-723 moments[] receipts are not produced in cloud.
                 "order": "gap:KRI-725",

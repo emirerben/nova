@@ -229,7 +229,9 @@ async def test_cloud_worker_starts_only_the_stamped_attempt(
         stamp = prepared.read_stamp(after.assembly_plan)
         if code is None:
             assert passed, (after.status, after.failure_reason, after.error_detail)
-            assert past_the_fence == [{"id": stamp["id"], "attempt_id": stamp["attempt_id"]}]
+            assert [{k: a[k] for k in ("id", "attempt_id")} for a in past_the_fence] == [
+                {"id": stamp["id"], "attempt_id": stamp["attempt_id"]}
+            ]
         else:
             assert not passed and past_the_fence == []
             assert after.status == "processing_failed"
@@ -359,6 +361,65 @@ async def test_late_publication_of_a_superseded_attempt_keeps_last_good(
         current_attempt="newer-editor-attempt",
         kept_last_good=refused["video_path"] == "last-good.mp4",
         published=accepted["video_path"],
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["upsert", "update"])
+async def test_full_job_rerender_of_an_editor_approved_variant_publishes(
+    monkeypatch, broker, past_the_fence, boundary
+):
+    """F16: a creator's full-job rerender (speech timing / speech cut) re-enters the
+    worker with the Job-level stamp. A variant an editor approval already re-pinned is
+    fenced against its own stamp, so the creator's edit publishes; only an approval
+    that lands after the run started supersedes it."""
+    monkeypatch.setattr(gb, "_attach_variant_posters", lambda result, job_id: (result, []))
+    _approval, _thread, job = await _stamped_cloud_job(monkeypatch, timed=False)
+    _seed_variant(job.id)
+    _repin_variant(job.id, "editor-attempt")
+
+    # The real worker start fence, as rerender_speech_timing re-enters it.
+    assert _run_worker(str(job.id))
+    attempt = past_the_fence[-1]
+    assert attempt is not None
+
+    def publish(video: str) -> dict:
+        result = {
+            "variant_id": "original_text",
+            "ok": True,
+            "render_status": "ready",
+            "video_path": video,
+        }
+        token = gb._PREPARED_ATTEMPT.set(attempt)
+        try:
+            if boundary == "upsert":
+                gb._upsert_variant_entry(str(job.id), result)
+            else:
+                gb._update_variant_entry(
+                    str(job.id), "original_text", result, cleanup_followup="none"
+                )
+        finally:
+            gb._PREPARED_ATTEMPT.reset(token)
+        with sync_session() as db:
+            return next(
+                v
+                for v in db.get(Job, job.id).assembly_plan["variants"]
+                if v["variant_id"] == "original_text"
+            )
+
+    accepted = publish("creator-rerender.mp4")
+    assert accepted["video_path"] == "creator-rerender.mp4", accepted
+    assert accepted["render_status"] == "ready"
+    # Negative control: a newer editor approval mid-run still supersedes this run.
+    _repin_variant(job.id, "newer-editor-attempt")
+    refused = publish("late.mp4")
+    assert refused["video_path"] == "creator-rerender.mp4"
+    assert refused["prepared_execution_code"] == prepared.SUPERSEDED
+    _record(
+        f"full_job_rerender_editor_variant[{boundary}]",
+        job=job.id,
+        published=accepted["video_path"],
+        superseded_by_newer_approval=refused["render_status"] == "failed",
     )
 
 
@@ -694,14 +755,23 @@ async def test_slide_post_renders_the_approved_draft_not_a_later_edit(
     )
 
 
+def _unready_photo(item_id, asset_id):
+    with sync_session() as db:
+        db.get(PlanItemAsset, uuid.UUID(asset_id)).media_status = "processing"
+        db.commit()
+
+
 @pytest.mark.asyncio
-async def test_slide_photo_replaced_after_dispatch_is_refused(monkeypatch, broker, local_storage):
-    """F2 at the worker: a pinned slide whose object generation moved does not render."""
+@pytest.mark.parametrize("mutate", [_replace_photo, _unready_photo], ids=["moved", "unready"])
+async def test_slide_photo_replaced_after_dispatch_is_refused(
+    monkeypatch, broker, local_storage, mutate
+):
+    """F2/F13 at the worker: a pinned asset that moved or left 'ready' does not render."""
     _, thread_id, approval = await _approved(monkeypatch)
     item_id, ids = _seed_slides(local_storage, thread_id)
     minted = _mint_slides_snapshot(approval.id, thread_id)
     job_id = _dispatch_slides(item_id, minted["record"])
-    _replace_photo(item_id, ids["blue"])
+    mutate(item_id, ids["blue"])
     # The Celery task itself, so its typed slide-policy handler terminalizes the Job.
     gb.orchestrate_generative_job.run(job_id)
     with sync_session() as db:
@@ -709,7 +779,7 @@ async def test_slide_photo_replaced_after_dispatch_is_refused(monkeypatch, broke
         assert job.status == "processing_failed"
         assert job.failure_reason == prepared.STALE
         assert not job.assembly_plan.get("variants")
-    _record("slides_worker_generation_moved", job=job_id, failure_reason=prepared.STALE)
+    _record(f"slides_worker_{mutate.__name__}", job=job_id, failure_reason=prepared.STALE)
 
 
 @pytest.mark.asyncio

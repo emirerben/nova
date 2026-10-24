@@ -810,7 +810,7 @@ pinned execution and fenced. It does not mean output proof (KRI-734). The guard 
 <!-- prepared-coverage:start -->
 | adapter | text | length | order | audio | direction | editor | shape | speech_cleanup |
 |---|---|---|---|---|---|---|---|---|
-| cloud_classic | declined_before_render | executed | gap:KRI-725 | gap:KRI-725 | executed | executed | executed | executed |
+| cloud_classic | gap:KRI-725 | executed | gap:KRI-725 | gap:KRI-725 | executed | executed | executed | executed |
 | cloud_guided_story | executed | executed | executed | gap:KRI-725 | executed | executed | executed | executed |
 | cloud_slides | executed | not_applicable | executed | not_applicable | executed | not_applicable | executed | not_applicable |
 | phone_guided_unified_montage | executed | executed | executed | executed | executed | executed | executed | not_applicable |

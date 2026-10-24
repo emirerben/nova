@@ -31,8 +31,9 @@ def test_documented_table_matches_the_code():
         {k: "executed" for k in DECISION_KEYS if k != "audio"},
         {**{k: "executed" for k in DECISION_KEYS}, "audio": "unsupported"},
         {**{k: "executed" for k in DECISION_KEYS}, "audio": "gap:later"},
+        {**{k: "executed" for k in DECISION_KEYS}, "text": "declined_before_render"},
     ],
-    ids=["missing-key", "unknown-state", "gap-without-ticket"],
+    ids=["missing-key", "unknown-state", "gap-without-ticket", "decline-without-ticket"],
 )
 def test_a_row_cannot_hide_an_unaccounted_decision(decisions):
     with pytest.raises(ValueError):

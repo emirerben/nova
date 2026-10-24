@@ -241,7 +241,9 @@ def targets_slides(item: Any, document: Any = None) -> bool:
     """
     strategy = getattr(document, "strategy", None) if document is not None else None
     if getattr(document, "kind", None) == "strategy" and isinstance(strategy, Mapping):
-        return str(strategy.get("edit_format") or "") == "slides"
+        # exclude_none dumps may omit edit_format: fall back to the item's format.
+        fmt = strategy.get("edit_format") or getattr(item, "edit_format", "")
+        return str(fmt or "") == "slides"
     return str(getattr(item, "edit_format", "") or "") == "slides"
 
 
