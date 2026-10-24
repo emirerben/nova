@@ -1,0 +1,119 @@
+---
+title: "Making the video: in the cloud or on your iPhone"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+    direction TB
+
+    %% src/apps/api/app/tasks/content_plan_build.py:3076
+    state "Kria starts the render" as dispatch
+
+    %% ---- Cloud path ----
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1715
+    state "Making your video<br/>(cloud)" as cloudRendering
+    %% src/apps/api/app/tasks/generative_build.py:678
+    state "Ready, but failed versions are<br/>greyed out with no reason" as cloudPartial
+    %% src/apps/ios/Kria/Core/Services.swift:697
+    state "Your video is ready" as ready
+
+    %% ---- Phone path ----
+    %% src/apps/api/app/tasks/generative_build.py:4660
+    state "Waiting for this iPhone" as awaitingDevice
+    %% src/apps/ios/Kria/Features/DeviceRenderPanel.swift:19
+    state "Stuck: Preparing on your iPhone,<br/>Stop does nothing, up to 24h" as ghostPreparing
+    %% src/apps/ios/Kria/Features/DeviceRenderPanel.swift:292
+    state "Preparing on your iPhone" as phonePreparing
+    %% src/apps/ios/Kria/Features/DeviceRenderPanel.swift:293
+    state "Rendering on your iPhone<br/>(keep Kria open)" as phoneRendering
+    %% src/apps/ios/Kria/Features/DeviceRenderPanel.swift:294
+    state "Ready on this iPhone" as localReady
+    %% src/apps/ios/Kria/Features/DeviceRenderPanel.swift:295
+    state "Syncing your video" as syncing
+    %% src/apps/ios/Kria/Core/DeviceRenderSessions.swift:142
+    state "Your video is synced" as synced
+    %% src/apps/ios/Kria/Features/DeviceRenderPanel.swift:297
+    state "Rendering stopped<br/>(Try again)" as stopped
+    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:212
+    state "Stuck: stopped here, server<br/>still waits up to 24h" as stoppedServerWaits
+    %% src/apps/ios/Kria/Features/DeviceRenderPanel.swift:298
+    state "This edit needs your attention<br/>(Try again)" as needsAttention
+    %% src/apps/ios/Kria/Core/DeviceRenderSessions.swift:146
+    state "Stuck: this iPhone can't render it,<br/>server not told, waits 24h" as cantRenderHere
+    %% src/apps/ios/Kria/Features/DeviceRenderPanel.swift:144
+    state "Can't render this style<br/>(start a new edit)" as structural
+    %% src/apps/api/app/tasks/device_render_reaper.py:55
+    state "Server gave up after a day<br/>(Try again)" as timedOut
+    %% src/apps/ios/Kria/Features/DeviceRenderPanel.swift:299
+    state "A newer edit is available" as superseded
+
+    %% ---- Failure screens ----
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1805
+    state "Video wasn't made" as failedCard
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1813
+    state "Degraded: Refresh project only<br/>reloads the same card" as refreshLoop
+    %% src/apps/ios/Kria/Features/CanonicalChatComponents.swift:1278
+    state "Can't be fixed by retrying<br/>(New chat button)" as nonRetryable
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:2275
+    state "Retry needs your OK again<br/>(approval card)" as retryApproval
+
+    [*] --> dispatch
+    dispatch --> cloudRendering : Cloud render
+    dispatch --> awaitingDevice : Phone render
+    dispatch --> failedCard : Start refused
+
+    cloudRendering --> ready : All versions done
+    cloudRendering --> cloudPartial : Some versions failed
+    cloudPartial --> ready : Watch the good ones
+    cloudRendering --> failedCard : Render failed
+
+    awaitingDevice --> phonePreparing : iPhone picks up the job
+    awaitingDevice --> ghostPreparing : Capabilities never loaded
+    ghostPreparing --> timedOut : 24h pass
+    ghostPreparing --> awaitingDevice : Leave and reopen the project
+    awaitingDevice --> cantRenderHere : iPhone says use cloud
+    cantRenderHere --> cantRenderHere : Tap Try again
+    cantRenderHere --> timedOut : 24h pass
+    awaitingDevice --> superseded : Newer edit approved
+    phonePreparing --> phoneRendering : Footage ready
+    phonePreparing --> needsAttention : Prep failed
+    phoneRendering --> localReady : Export finished
+    phoneRendering --> needsAttention : Export, storage or heat
+    phoneRendering --> structural : Style not supported
+    phonePreparing --> stopped : Tap Stop rendering
+    phoneRendering --> stopped : Tap Stop rendering
+    stopped --> stoppedServerWaits : Server missed the stop
+    stoppedServerWaits --> timedOut : 24h pass
+    stopped --> retryApproval : Tap Try again
+    localReady --> syncing : Upload starts
+    syncing --> synced : Upload accepted
+    syncing --> localReady : Upload failed, Retry sync
+    synced --> ready
+    needsAttention --> retryApproval : Tap Try again
+    timedOut --> retryApproval : Tap Try again
+    structural --> [*] : Start a new chat
+    retryApproval --> awaitingDevice : You approve again
+
+    failedCard --> retryApproval : Retry approved edit
+    failedCard --> refreshLoop : No retry id, tap Refresh
+    refreshLoop --> refreshLoop : Tap Refresh again
+    refreshLoop --> [*] : Type a new message
+    failedCard --> nonRetryable : Phone gate refusal
+    nonRetryable --> [*] : New chat
+    ready --> [*]
+
+    classDef working fill:#e8f0fe,stroke:#4a6fa5,color:#1b2631
+    classDef yourturn fill:#e6f4ea,stroke:#3d7a4f,color:#1b2631
+    classDef done fill:#d5f5e3,stroke:#1e8449,color:#145a32
+    classDef stuck fill:#fde7e9,stroke:#c0392b,stroke-width:3px,color:#641e16
+    classDef degraded fill:#fef5e7,stroke:#b9770e,stroke-width:2px,color:#6e2c00
+    classDef failed fill:#f4f6f7,stroke:#566573,color:#1b2631
+
+    class dispatch,cloudRendering,awaitingDevice,phonePreparing,phoneRendering,syncing,superseded working
+    class localReady,stopped,retryApproval yourturn
+    class ready,synced done
+    class ghostPreparing,stoppedServerWaits,cantRenderHere stuck
+    class cloudPartial,refreshLoop degraded
+    class needsAttention,structural,timedOut,failedCard,nonRetryable failed

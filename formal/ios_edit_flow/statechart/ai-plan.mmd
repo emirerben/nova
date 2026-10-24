@@ -1,0 +1,85 @@
+---
+title: "Planned videos: content-plan AI and planned item to render"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+    direction TB
+
+    classDef working fill:#e8f0fe,stroke:#4a6fa5,color:#1b2631
+    classDef yourturn fill:#e6f4ea,stroke:#3d7a4f,color:#1b2631
+    classDef done fill:#d5f5e3,stroke:#1e8449,color:#145a32
+    classDef stuck fill:#fde7e9,stroke:#c0392b,stroke-width:3px,color:#641e16
+    classDef degraded fill:#fef5e7,stroke:#b9770e,stroke-width:2px,color:#6e2c00
+    classDef failed fill:#f4f6f7,stroke:#566573,color:#1b2631
+
+    %% src/apps/ios/Kria/Core (only creation-threads, plan-items, generative-jobs; no content-plans calls)
+    state "iPhone: you start a video<br/>in chat" as IosStart
+    %% src/apps/api/app/routes/creation_threads.py:1649-1667 (reuses latest plan, else new plan_status edited, no AI)
+    state "Holder plan + item created<br/>(no AI involved)" as Holder
+    %% formal/ios_edit_flow/statechart/ai-turn.mmd
+    state "Chat turn and approval<br/>(see ai-turn)" as Turn
+    %% src/apps/api/app/tasks/kria_runtime.py:5476 -> content_plan_build.py:3076
+    state "Item handed to render<br/>(dispatch_item_render_for)" as DispatchItem
+    %% formal/ios_edit_flow/statechart/ai-render.mmd
+    state "Making the video<br/>(see ai-render)" as Render
+
+    %% src/apps/api/app/routes/content_plans.py:200,345 (web onboarding only)
+    state "Web: you ask for a plan" as WebStart
+    %% src/apps/api/app/tasks/content_plan_build.py:200-290 (generate_content_plan)
+    state "Kria is writing your plan<br/>(content_plan_generator 90s)" as Generating
+    %% src/apps/api/app/tasks/content_plan_build.py:381-428 (_dedup_and_replace)
+    state "Repeated ideas kept<br/>(dedup redo failed)" as DupesKept
+    %% src/apps/api/app/tasks/content_plan_build.py:200-205,290-304 (_fail, then self.retry: 2 retries, 10s apart)
+    state "Shows 'failed' while it<br/>quietly retries (2 more tries)" as PlanRetrying
+    %% src/apps/api/app/tasks/content_plan_build.py:370-375 (_fail, no error column)
+    state "Plan failed, no reason saved" as PlanFailed
+    %% src/apps/api/app/tasks/content_plan_build.py:359 (plan_status ready)
+    state "Plan ready" as PlanReady
+    %% src/apps/api/app/tasks/content_plan_build.py:4257-4470 (generate_ideas_into_plan, soft 120s, 1 retry)
+    state "Adding more ideas<br/>(retries once)" as MoreIdeas
+    %% src/apps/api/app/routes/content_plans.py:50 (no background sweep)
+    state "Worker killed: plan shows<br/>'generating' until opened" as StaleGenerating
+    %% src/apps/api/app/routes/content_plans.py:160-196 (self-heal on GET after 10 min)
+    state "Opened after 10 min:<br/>marked failed" as HealFailed
+    %% src/apps/api/app/routes/content_plans.py:195 (items exist => ready)
+    state "Opened after 10 min: shows<br/>'ready', new ideas never came" as HealReadyEmpty
+    %% src/apps/api/app/routes/plan_items.py (Generate) -> content_plan_build.py:3076
+    state "You tap Generate on an idea" as Generate
+
+    [*] --> IosStart
+    IosStart --> Holder
+    Holder --> Turn: you describe the video
+    Turn --> DispatchItem: you approve the draft
+    DispatchItem --> Render
+
+    [*] --> WebStart
+    WebStart --> Generating
+    Generating --> DupesKept: near-duplicate redo fails
+    DupesKept --> PlanReady
+    Generating --> PlanReady: plan written
+    Generating --> PlanRetrying: AI error / quota / bad JSON
+    PlanRetrying --> Generating: retry after 10s
+    PlanRetrying --> PlanFailed: 3rd try fails
+    Generating --> StaleGenerating: OOM / deploy kill
+    StaleGenerating --> HealFailed: no items yet
+    PlanFailed --> WebStart: you ask again
+    HealFailed --> WebStart: you ask again
+    PlanReady --> MoreIdeas: you ask for more ideas
+    MoreIdeas --> PlanReady: ideas added
+    MoreIdeas --> PlanFailed: both tries fail
+    MoreIdeas --> StaleGenerating: worker killed
+    StaleGenerating --> HealReadyEmpty: plan already had items
+    HealReadyEmpty --> Generate
+    PlanReady --> Generate
+    Generate --> Render: job minted in request
+
+    class IosStart,WebStart,Generate yourturn
+    class Holder,Turn,DispatchItem,Render,Generating,MoreIdeas working
+    class PlanReady done
+    class StaleGenerating stuck
+    class PlanRetrying degraded
+    class DupesKept,HealReadyEmpty degraded
+    class PlanFailed,HealFailed failed
