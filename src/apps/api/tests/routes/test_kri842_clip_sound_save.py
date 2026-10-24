@@ -23,6 +23,8 @@ from tests.routes.test_phone_voiceover_cut_edits import (
     voiceover_job,
 )
 
+from tests.routes.test_phone_voiceover_editor_lanes import _reset_protocol  # noqa: F401
+
 RECEIPT = {
     "version": 1,
     "under_voice": [{"requirement_id": "r1", "media_id": "c1", "status": "built", "gain": 0.3}],
