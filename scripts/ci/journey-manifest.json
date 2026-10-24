@@ -1720,6 +1720,16 @@
         "src/apps/api/tests/evals/test_runtime_creative_skills.py",
         "src/apps/api/tests/fixtures/creative_copy_review/"
       ]
+    },
+    {
+      "id": "killer-phone-plan-repair",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_phone_plan_contract_repair.py tests/kria/test_phone_plan_failure_classes_postgres.py",
+      "paths": [
+        "src/apps/api/app/pipeline/phone_plan_repair.py",
+        "src/apps/api/tests/tasks/test_phone_plan_contract_repair.py",
+        "src/apps/api/tests/kria/test_phone_plan_failure_classes_postgres.py"
+      ]
     }
   ]
 }
