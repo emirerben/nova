@@ -197,7 +197,9 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
         # KRI-612: a "what happens in each clip" label gets a line on every clip.
         # KRI-613: a clarifying question never names an op/field ("…for a label operation").
         # KRI-766: a spoken mention of the label's own words never outweighs the described action.
-        prompt_version="2026-10-19.1",
+        # KRI-845: clip records carry props / actions / visual_quality; the prompt says how to
+        # use them (a blurry/shaky ask matches reported blur, never "stays sharp").
+        prompt_version="2026-10-23.1",
         # Text-only match against pre-computed clip records; flash + a small
         # thinking budget mirrors clip_plan_matcher's measured setting.
         model="gemini-2.5-flash",

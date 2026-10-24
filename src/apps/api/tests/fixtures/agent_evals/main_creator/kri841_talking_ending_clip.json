@@ -1,0 +1,344 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-10-23-v76",
+  "input": {
+    "user_message": "Caro anlatırken konuştuğu yerde Cotopaxi fotoğrafı küçük kart olarak çıksın. En sona Atakan'ın ilk ısırık videosunu kendi sesiyle ekle.",
+    "creator_request": "Caro anlatırken konuştuğu yerde Cotopaxi fotoğrafı küçük kart olarak çıksın. En sona Atakan'ın ilk ısırık videosunu kendi sesiyle ekle.",
+    "creator_context": "Food creator; films short talking-to-camera dessert reviews.",
+    "item_context": "One talking-to-camera clip of Caro explaining the oblea, plus Visuals.",
+    "media_context": [
+      {
+        "media_id": "phone-a",
+        "kind": "video",
+        "creator_note": "Caro talking to camera about the oblea"
+      },
+      {
+        "media_id": "asset-6f0c1b52-0b8e-4c57-9a1e-2d3c4b5a6f70",
+        "kind": "image",
+        "duration_s": null,
+        "creator_context": null,
+        "filename": "T2_02_visual.jpg",
+        "analysis_only_not_copy": {
+          "subject": "Cotopaxi volcano"
+        }
+      },
+      {
+        "media_id": "asset-9d3a77e1-51c4-4a3e-8b09-7c1e2f3a4b55",
+        "kind": "image",
+        "duration_s": null,
+        "creator_context": null,
+        "filename": "T2_03_visual.jpg",
+        "analysis_only_not_copy": {
+          "subject": "an oblea dessert"
+        }
+      },
+      {
+        "media_id": "asset-41be0c88-27d0-4f1a-b6c3-0e9d8a7b6c11",
+        "kind": "video",
+        "duration_s": 6.4,
+        "creator_context": null,
+        "filename": "T2_04_visual.mp4",
+        "analysis_only_not_copy": {
+          "subject": "a man taking a first bite"
+        }
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-kri841",
+      "edit_format": "subtitled",
+      "render_program": "native",
+      "has_voiceover": false,
+      "media": [
+        {
+          "media_id": "phone-a",
+          "kind": "video",
+          "duration_s": 24.6
+        },
+        {
+          "media_id": "asset-6f0c1b52-0b8e-4c57-9a1e-2d3c4b5a6f70",
+          "kind": "image"
+        },
+        {
+          "media_id": "asset-9d3a77e1-51c4-4a3e-8b09-7c1e2f3a4b55",
+          "kind": "image"
+        },
+        {
+          "media_id": "asset-41be0c88-27d0-4f1a-b6c3-0e9d8a7b6c11",
+          "kind": "video",
+          "duration_s": 6.4
+        }
+      ],
+      "catalog": [],
+      "capabilities": {
+        "set_item_intent": {
+          "available": true
+        },
+        "guided_story": {
+          "available": false,
+          "reason_code": "native_render_required",
+          "reason": "this edit format or audio contract requires the native renderer"
+        },
+        "native_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": false,
+          "reason_code": "native_render_required",
+          "reason": "this edit format or audio contract requires the native renderer"
+        },
+        "dispatch_render": {
+          "available": true
+        },
+        "select_ready_variant": {
+          "available": false,
+          "reason_code": "no_ready_variant",
+          "reason": "a ready variant is required before selection"
+        },
+        "caption_style": {
+          "available": true
+        },
+        "automatic_cut": {
+          "available": true
+        },
+        "guided_voiceover": {
+          "available": false,
+          "reason_code": "requires_voiceover",
+          "reason": "guided voiceover requires a recorded voiceover"
+        },
+        "main_creator_agent": {
+          "available": false,
+          "reason_code": "rollout_disabled",
+          "reason": "main creator agent rollout is set to zero"
+        },
+        "execution": {
+          "available": true
+        },
+        "review": {
+          "available": true
+        },
+        "auto_iteration": {
+          "available": true
+        },
+        "guided_conversation": {
+          "available": true
+        },
+        "guided_direction_confirmation": {
+          "available": true
+        },
+        "guided_auto_design": {
+          "available": true
+        },
+        "transitions": {
+          "available": true
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "wide_looks cannot render on the iPhone yet"
+        },
+        "media_overlays": {
+          "available": true
+        },
+        "visual_blocks": {
+          "available": true
+        },
+        "motion_scenes": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "motion_scenes cannot render on the iPhone yet"
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "sound_effects cannot render on the iPhone yet"
+        },
+        "phone_source_audio": {
+          "available": true
+        },
+        "phone_still_images": {
+          "available": true
+        },
+        "phone_visual_videos": {
+          "available": true
+        },
+        "media_overlays:video_cards": {
+          "available": true
+        },
+        "media_overlays:fullscreen": {
+          "available": true
+        },
+        "phone_format_pending_voiceover:narrated_ready": {
+          "available": true
+        },
+        "phone_format_pending_voiceover:narrated_planned": {
+          "available": true
+        },
+        "phone_format_pending_voiceover:narrated": {
+          "available": true
+        },
+        "phone_format:montage": {
+          "available": true
+        },
+        "phone_format:talking_head": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "talking_head does not render on this iPhone yet"
+        },
+        "phone_format:day_vlog": {
+          "available": true
+        },
+        "phone_format:single_hero": {
+          "available": true
+        },
+        "phone_format:subtitled": {
+          "available": true
+        },
+        "phone_format:narrated": {
+          "available": true
+        },
+        "phone_format:narrated_planned": {
+          "available": true
+        },
+        "phone_format:narrated_ready": {
+          "available": true
+        },
+        "phone_format:slides": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "slides does not render on this iPhone yet"
+        },
+        "reaction_beats": {
+          "available": true
+        },
+        "edit_format:montage": {
+          "available": true
+        },
+        "edit_format:talking_head": {
+          "available": true
+        },
+        "edit_format:day_vlog": {
+          "available": true
+        },
+        "edit_format:single_hero": {
+          "available": true
+        },
+        "edit_format:subtitled": {
+          "available": true
+        },
+        "edit_format:narrated": {
+          "available": true
+        },
+        "edit_format:narrated_planned": {
+          "available": true
+        },
+        "edit_format:narrated_ready": {
+          "available": true
+        },
+        "edit_format:slides": {
+          "available": false,
+          "reason_code": "format_unavailable",
+          "reason": "slides is disabled or has no production renderer for this media snapshot"
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "6b008eb7ec4e6b2ca9ef1de9a9bc6db332d9cbee70a26e47f5514bdc17e0d2bc",
+      "manifest_hash": "192499e934ce54a2a7dc82c2fe94e11dbea763752d6b5f0454688eed2b932074"
+    },
+    "brief_enabled": true
+  },
+  "raw_text": "{\"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"fast_montage\", \"edit_format\": \"subtitled\", \"audio_strategy\": \"original_audio\", \"render_program\": \"native\", \"target_duration_s\": 31, \"selected_media_ids\": [\"phone-a\"], \"reaction_beats\": [{\"beat_id\": \"ecuador\", \"trigger\": \"Ecuador\", \"visual_id\": \"asset-6f0c1b52-0b8e-4c57-9a1e-2d3c4b5a6f70\", \"visual_role\": \"photo\"}], \"ending_clip\": {\"media_id\": \"asset-41be0c88-27d0-4f1a-b6c3-0e9d8a7b6c11\", \"keep_audio\": true}, \"rationale\": \"Keep Caro's whole take, pop the Cotopaxi photo when she says Ecuador, then end on Atakan's first-bite video with its own sound.\"}, \"summary\": \"Caro's full take with the Cotopaxi photo on 'Ecuador', then Atakan's first-bite video added after the talk with its own sound.\"}, \"brief_updates\": [{\"operation\": \"add\", \"kind\": \"style\", \"scope\": \"global\", \"literal\": null, \"description\": \"Show the Cotopaxi photo as a small card when she says Ecuador\", \"facts\": {\"triggers\": [\"Ecuador\"]}}, {\"operation\": \"add\", \"kind\": \"style\", \"scope\": \"global\", \"literal\": null, \"description\": \"En sona Atakan'ın ilk ısırık videosunu kendi sesiyle ekle\", \"facts\": {\"ending_clip\": \"Atakan'ın ilk ısırık videosu\", \"keep_audio\": true}}]}",
+  "output": {
+    "action": {
+      "kind": "propose_strategy",
+      "strategy": {
+        "direction": "fast_montage",
+        "edit_format": "subtitled",
+        "archetype": null,
+        "hero_media_id": null,
+        "audio_strategy": "original_audio",
+        "execution_contract": null,
+        "media_scope": null,
+        "story_structure": [],
+        "caption_style": "auto",
+        "intro_hook": null,
+        "opening_title": null,
+        "font_family": null,
+        "text_color": null,
+        "reaction_beats": [
+          {
+            "beat_id": "ecuador",
+            "trigger": "Ecuador",
+            "after": null,
+            "occurrence": "first",
+            "visual_id": "asset-6f0c1b52-0b8e-4c57-9a1e-2d3c4b5a6f70",
+            "visual_role": "photo",
+            "sound": null,
+            "hold_s": null
+          }
+        ],
+        "ending_clip": {
+          "media_id": "asset-41be0c88-27d0-4f1a-b6c3-0e9d8a7b6c11",
+          "keep_audio": true
+        },
+        "image_layout": null,
+        "pacing": "balanced",
+        "target_duration_s": 31,
+        "render_program": "native",
+        "selected_media_ids": [
+          "phone-a"
+        ],
+        "optional_treatments": [],
+        "licensed_sfx": null,
+        "mixed_media_timing": null,
+        "montage_audio": null,
+        "video_reuse_policy": "once",
+        "rationale": "Keep Caro's whole take, pop the Cotopaxi photo when she says Ecuador, then end on Atakan's first-bite video with its own sound."
+      },
+      "summary": "Caro's full take with the Cotopaxi photo on 'Ecuador', then Atakan's first-bite video added after the talk with its own sound."
+    },
+    "brief_updates": [
+      {
+        "operation": "add",
+        "target_requirement_id": null,
+        "expected_version": null,
+        "kind": "style",
+        "scope": "global",
+        "literal": null,
+        "description": "Show the Cotopaxi photo as a small card when she says Ecuador",
+        "facts": {
+          "triggers": [
+            "Ecuador"
+          ]
+        }
+      },
+      {
+        "operation": "add",
+        "target_requirement_id": null,
+        "expected_version": null,
+        "kind": "style",
+        "scope": "global",
+        "literal": null,
+        "description": "En sona Atakan'ın ilk ısırık videosunu kendi sesiyle ekle",
+        "facts": {
+          "ending_clip": "Atakan'ın ilk ısırık videosu",
+          "keep_audio": true
+        }
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "ending_clip": {
+      "media_id": "asset-41be0c88-27d0-4f1a-b6c3-0e9d8a7b6c11",
+      "keep_audio": true
+    },
+    "note": "KRI-841: a video added after the talk with its own sound is `ending_clip` (never a reaction beat or closing_media) and the brief records it as a `style` requirement with the `ending_clip` fact, never `last_clip`."
+  }
+}
