@@ -106,9 +106,16 @@ def test_turkish_exact_photo_length_is_read(text: str, seconds: float) -> None:
     assert profile.video_hold == "longer"
 
 
-def test_turkish_photo_length_outside_the_contract_is_ignored() -> None:
-    assert recognize_mixed_media_timing("fotoğraflar 1,5 saniye, videolar uzun") is None
-    assert recognize_mixed_media_timing("fotoğraflar 5 saniye olsun") is None
+def test_turkish_photo_length_is_the_creators_not_the_ai_band() -> None:
+    # KRI-825: a creator's photo length above the AI's 0.5-0.8 s cadence is kept, not
+    # dropped; only a length outside what a creator may give a photo (0.1-10 s) is ignored.
+    longer = recognize_mixed_media_timing("fotoğraflar 1,5 saniye, videolar uzun")
+    assert longer is not None and longer.image_hold_s == pytest.approx(1.5)
+    photos_only = recognize_mixed_media_timing("fotoğraflar 5 saniye olsun")
+    assert photos_only is not None and photos_only.image_hold_s == pytest.approx(5.0)
+    for out_of_range in ("fotoğraflar 12 saniye olsun", "fotoğraflar 0,05 saniye olsun"):
+        profile = recognize_mixed_media_timing(out_of_range)
+        assert profile is None or profile.image_hold_s is None
 
 
 def test_english_mixed_media_timing_is_unchanged() -> None:

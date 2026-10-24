@@ -6,7 +6,7 @@ import json
 import math
 import re
 from collections import defaultdict, deque
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import ClassVar, Literal
 
 import structlog
@@ -51,6 +51,7 @@ from app.schemas.edit_proposal import (
     clean_creator_shot_labels,
     closing_title_hold_s,
     creator_copy_match_key,
+    exact_photo_hold_s,
     media_context_group,
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
@@ -1972,6 +1973,7 @@ def _compile_fast_cuts(
     split_limit_s: float = 1.2,
     narrated: bool = False,
     single_appearance: bool = False,
+    image_split_limits: Mapping[str, float] | None = None,
 ) -> tuple[list[FastMontageCut], set[str], float]:
     """Compile a narrow provider timing violation into the persisted cut schema.
 
@@ -1994,7 +1996,13 @@ def _compile_fast_cuts(
     # >1.2s cuts when video_reuse_policy is unset, which a modern proposal
     # never leaves unset) -- the split loop below still normalizes it to the
     # active per-cut limit (KRI-129).
-    if all(cut.output_duration_s <= split_limit_s for cut in relaxed):
+    # KRI-825: a photo's creator-stated length raises only that photo's ceiling.
+    limits = image_split_limits or {}
+
+    def limit_of(cut: _RawFastMontageCut) -> float:
+        return max(split_limit_s, limits.get(cut.media_id, 0.0))
+
+    if all(cut.output_duration_s <= limit_of(cut) for cut in relaxed):
         return [_strict_fast_cut(cut) for cut in relaxed], set(), raw_total_s
 
     source_order: dict[str, int] = {}
@@ -2003,7 +2011,7 @@ def _compile_fast_cuts(
     expanded_count = 0
     for cut in relaxed:
         source_order.setdefault(cut.media_id, len(source_order))
-        part_count = math.ceil(cut.output_duration_s / split_limit_s)
+        part_count = math.ceil(cut.output_duration_s / limit_of(cut))
         part_duration_s = cut.output_duration_s / part_count
         if part_duration_s < 0.4 - _FAST_DURATION_EPSILON_S:
             raise SchemaError("edit_proposal: overlong fast cut cannot be split safely")
@@ -2186,9 +2194,18 @@ def _normalize_fast_montage_duration(
         if quick_mixed_timing
         else 1.2
     )
+    # KRI-825: the photos' creator-stated length is exact, whatever the cut ceiling.
+    # Video cuts keep their own ceiling (the photos growing never retimes the videos).
+    exact_photo_s = exact_photo_hold_s(input.mixed_media_timing)
+    image_split_limits = (
+        {media.media_id: exact_photo_s for media in input.media if media.kind == "image"}
+        if exact_photo_s is not None and input.montage_cadence is None
+        else None
+    )
     cuts, repaired_cut_ids, raw_total_s = _compile_fast_cuts(
         raw_cuts,
         split_limit_s=split_limit_s,
+        image_split_limits=image_split_limits,
         narrated=input.narration_duration_s is not None,
         single_appearance=input.video_reuse_policy in {"once", "allow_repeat"},
     )
@@ -2257,6 +2274,8 @@ def _normalize_fast_montage_duration(
                     if media.kind == "video" and source_duration_s >= 0.8
                     else min(0.4, source_duration_s)
                     if media.kind == "video" and source_duration_s > 0
+                    else exact_photo_s
+                    if media.kind == "image" and exact_photo_s is not None
                     else 0.4
                 )
             capacity_s = cut.output_duration_s - minimum_duration_s
@@ -2270,6 +2289,8 @@ def _normalize_fast_montage_duration(
                 and not quick_mixed_timing
                 else mixed_bounds.maximum_s
                 if quick_mixed_timing
+                else exact_photo_s
+                if media.kind == "image" and exact_photo_s is not None
                 else 1.2
             )
             capacity_s = max_duration_s - cut.output_duration_s
@@ -2357,7 +2378,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.19.0",
+        prompt_version="1.20.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -2442,6 +2463,21 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             "hard cuts only, preserve the exact total, and return the exact typed profile "
             "instead of null."
         )
+        exact_photo_s = exact_photo_hold_s(input.mixed_media_timing)
+        if exact_photo_s is not None and not uses_quick_photo_long_video_timing(
+            input.mixed_media_timing
+        ):
+            # KRI-825: the creator gave the photos a length and said nothing about the
+            # videos: the photos are exact, every other cut keeps its usual rules.
+            mixed_timing_note = (
+                f"PHOTO LENGTH: the creator asked every photo to hold exactly "
+                f"{exact_photo_s:g}s. Give each photo cut exactly that output_duration_s; the "
+                "1.2s cut maximum applies to video cuts only. Preserve the exact total duration."
+            )
+            mixed_timing_rule = (
+                "When PHOTO LENGTH is present, every photo holds exactly that length (never "
+                "the 0.5-0.8s default); return the exact typed profile instead of null."
+            )
         if uses_quick_photo_long_video_timing(input.mixed_media_timing):
             profile = input.mixed_media_timing
             image_bounds = mixed_media_hold_bounds("image", profile)

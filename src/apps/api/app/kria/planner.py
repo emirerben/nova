@@ -113,7 +113,11 @@ from app.pipeline.pinned_text import pin_range_grounded
 from app.routes._copilot import CopilotTurnBody, is_overlay_display_ask, run_copilot_turn
 from app.routes.generative_jobs import variant_render_baseline
 from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
-from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S, PinnedText
+from app.schemas.edit_proposal import (
+    MAX_PROPOSAL_DURATION_S,
+    MixedMediaTimingProfile,
+    PinnedText,
+)
 from app.schemas.user_song import SONG_ALIGNMENT_VERSION
 from app.services.choice_questions import (
     CONFLICT_ORDER_VS_GROUP,
@@ -228,6 +232,19 @@ def _held_visual_pool(manifest: Any, strategy: Mapping[str, Any]) -> tuple[str, 
     )
 
 
+def _timing_profile(strategy: Mapping[str, Any]) -> MixedMediaTimingProfile | None:
+    """The strategy's server-read photo/video timing (``recognize_mixed_media_timing``)."""
+    raw = strategy.get("mixed_media_timing")
+    if isinstance(raw, MixedMediaTimingProfile):
+        return raw
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        return MixedMediaTimingProfile.model_validate(raw)
+    except ValueError:
+        return None
+
+
 def _enrich_best_parts_snapshot(
     strategy: Mapping[str, Any],
     media_snapshot: dict | None,
@@ -254,7 +271,11 @@ def _enrich_best_parts_snapshot(
     """
     if not isinstance(media_snapshot, dict):
         return media_snapshot
-    from app.kria.asset_holds import asset_holds, held_visual_seconds  # noqa: PLC0415
+    from app.kria.asset_holds import asset_holds, visual_budget  # noqa: PLC0415
+    from app.pipeline.unified_montage import (  # noqa: PLC0415
+        MIN_READABLE_SHOT_S,
+        unheld_still_frames,
+    )
     from app.services.creator_render_contract import build_render_contract  # noqa: PLC0415
     from app.services.length_planning import build_length_plan  # noqa: PLC0415
     from app.services.length_policy import creator_duration_s, natural_length_owner  # noqa: PLC0415
@@ -297,23 +318,52 @@ def _enrich_best_parts_snapshot(
         ).items()
     }
 
-    # KRI-824: a photo the creator gave its own seconds gets exactly that window, and a
-    # held Visual (a pool photo outside the clip record) is budgeted off the creator's
-    # total so the footage, never the held photo, gives way.
+    # KRI-824: a photo the creator gave its own seconds gets exactly that window. KRI-825:
+    # so does every photo when the creator gave the photos a length as a group, and the
+    # creator's total is ONE budget: every placed Visual (a pool photo outside the clip
+    # record) plays its own length beside the footage -- a held one its hold, the others
+    # the montage's own pacing (``unheld_still_frames``) -- so the footage, never a photo,
+    # gives way, and the file plays the approved total.
     clip_rows = [
         row for row in media_snapshot.get("clip_assignments") or [] if isinstance(row, Mapping)
     ]
-    still_holds = {
-        media_id: hold.hold_s
-        for media_id, hold in asset_holds(
-            brief, [str(row.get("media_id")) for row in clip_rows if row.get("kind") == "image"]
-        ).items()
-    }
-    held_visual_s = held_visual_seconds(
-        brief, [str(row.get("media_id")) for row in clip_rows], visual_photo_ids
+    image_ids = [str(row.get("media_id")) for row in clip_rows if row.get("kind") == "image"]
+    own_holds = asset_holds(brief, image_ids)
+    profile = _timing_profile(strategy)
+    group_hold_s = profile.image_hold_s if profile is not None else None
+    still_holds = {media_id: hold.hold_s for media_id, hold in own_holds.items()}
+    if group_hold_s is not None:
+        for media_id in image_ids:
+            still_holds.setdefault(media_id, round(float(group_hold_s), 3))
+    budget = visual_budget(
+        brief,
+        [str(row.get("media_id")) for row in clip_rows],
+        visual_photo_ids,
+        group_hold_s=group_hold_s,
+        unheld_frames_each=unheld_still_frames(profile),
     )
-    if creator_target_s is not None and held_visual_s and creator_target_s > held_visual_s:
-        creator_target_s -= held_visual_s
+    hold_conflict: dict[str, Any] | None = None
+    if creator_target_s is not None and budget.total_s:
+        footage_s = still_photo_floor_s = sum(still_holds.values())
+        footage_s += MIN_READABLE_SHOT_S * sum(
+            1
+            for row in clip_rows
+            if row.get("kind") != "image" and (not selected or row.get("media_id") in selected)
+        )
+        if creator_target_s - budget.total_s >= footage_s - 1e-6:
+            creator_target_s = round(creator_target_s - budget.total_s, 3)
+        elif budget.held_frames or still_photo_floor_s:
+            # The creator's held photos and their total cannot both play: one question
+            # (``choice_questions._holds_vs_length``), never a silent clamp.
+            hold_conflict = {
+                "requested_s": creator_target_s,
+                "needed_s": float(math.ceil(budget.total_s + footage_s - 1e-6)),
+                "held_s": round(budget.held_s + still_photo_floor_s, 3),
+                "requirement_ids": sorted(
+                    {*budget.requirement_ids, *(h.requirement_id for h in own_holds.values())}
+                ),
+                "group_hold_s": group_hold_s,
+            }
 
     def windows_for(seats: SpokenSeats | None) -> dict[str, Any]:
         quiet_id = seats.quiet_close[0] if seats and seats.quiet_close else None
@@ -364,6 +414,10 @@ def _enrich_best_parts_snapshot(
             length_plan = plain
     enriched = dict(media_snapshot)
     enriched["length_plan"] = length_plan
+    if hold_conflict is not None:
+        enriched["still_hold_conflict"] = hold_conflict
+    else:
+        enriched.pop("still_hold_conflict", None)
     # Keep legacy readers and their receipts stable while approved workers move
     # to the versioned envelope.
     enriched["best_parts"] = list(length_plan["windows"])
