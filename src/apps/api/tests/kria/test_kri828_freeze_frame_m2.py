@@ -36,6 +36,7 @@ import os
 import shutil
 import subprocess
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -63,6 +64,9 @@ from tests.kria.test_kri775_merope_m2_replay import (
     run_worker,
 )
 from tests.pipeline.user_song_helpers import bindings_for
+
+# KRI-898: the first app build that plays a freeze (`freeze_frame_min_client_protocol`).
+FREEZE_APP = 16
 
 # Set KRI828_KEEP_DIR to keep the evidence (recipe JSON, cloud MP4, report.json).
 KEEP_DIR = os.environ.get("KRI828_KEEP_DIR")
@@ -98,8 +102,11 @@ async def gate_answering(
     brief,  # noqa: ANN001
     pick: Callable[[dict], str | None] = pick_recommended,
     max_turns: int = 6,
+    client_protocol: int | None = FREEZE_APP,
 ):  # noqa: ANN202
     """The real gate, turn after turn, with the creator answering each question it asks.
+
+    ``client_protocol`` is the app build that sent the message (KRI-898: stamped at submit).
 
     ``pick(question)`` returns the option key the creator taps, or None for a reply that
     answers nothing. Returns the gate's final ``act`` turn and every question asked, as the
@@ -111,7 +118,10 @@ async def gate_answering(
     for _ in range(max_turns):
         monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=list(events)))
         result = await planner._gate_unresolved_choices(
-            SimpleNamespace(), planned_turn(render), thread_id=THREAD_ID, creator_id=CREATOR_ID
+            SimpleNamespace(),
+            replace(planned_turn(render), client_protocol=client_protocol),
+            thread_id=THREAD_ID,
+            creator_id=CREATOR_ID,
         )
         question = result.plan.choice_question
         if result.plan.mode == "act":
@@ -154,13 +164,17 @@ async def _plan_m2(
     *,
     brief=None,  # noqa: ANN001
     pick: Callable[[dict], str | None] = pick_recommended,
+    client_protocol: int | None = FREEZE_APP,
 ):  # noqa: ANN202
     """Gate (answering its questions with ``pick``) + phone worker on the approved M2 draft;
     returns (plan, worker outcome). The worker gets the brief approval pins: the creator's
-    answers applied (``answered_brief``)."""
+    answers applied (``answered_brief``). ``client_protocol`` is the app build that drafted
+    and approved (KRI-898); the default is one that plays a freeze."""
     render = RENDERS[0]
     brief = brief if brief is not None else m2_brief_with_moment_ask(render)
-    result, _asked = await gate_answering(monkeypatch, render, brief=brief, pick=pick)
+    result, _asked = await gate_answering(
+        monkeypatch, render, brief=brief, pick=pick, client_protocol=client_protocol
+    )
     brief = answered_brief(brief, gate_strategy(result))
     captured: dict = {}
     real = unified_montage.plan_unified_montage
@@ -176,6 +190,7 @@ async def _plan_m2(
         brief=brief,
         media=gate_media(result),
         strategy=gate_strategy(result),
+        client_protocol=client_protocol,
     )
     return captured["plan"], outcome
 

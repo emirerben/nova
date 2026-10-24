@@ -8715,6 +8715,7 @@ def requirements_to_check_at_draft(
     strategy: Mapping[str, Any] | None,
     item_edit_format: object,
     clip_paths: Iterable[object] = (),
+    client_protocol: int | None = None,
 ) -> list[BriefRequirement]:
     """The requirements a strategy draft can honestly be checked against.
 
@@ -8726,8 +8727,9 @@ def requirements_to_check_at_draft(
     A phone Talking draft keeps its caption-language / name-spelling asks: the render
     judges them (KRI-549), and the draft says what it will do (KRI-793,
     `PlanFacts.caption_words_at_render`). A freeze-frame ask stays unless the phone montage
-    can carry it (`freeze_plannable`, KRI-828): otherwise its "Couldn't" belongs before
-    approval (KRI-777). Otherwise this is the unchanged, full list.
+    can carry it (`freeze_plannable`, KRI-828) for ``client_protocol``, the app build that
+    sent the message (KRI-898; ``None`` = unknown, so no hold is planned): otherwise its
+    "Couldn't" belongs before approval (KRI-777). Otherwise this is the unchanged, full list.
     """
     strategy = strategy or {}
     clip_paths = list(clip_paths or ())
@@ -8754,7 +8756,10 @@ def requirements_to_check_at_draft(
         if not (
             defers
             and req.kind in UNIFIED_SETTLED_KINDS
-            and (not asks_freeze_frame(req) or freeze_plannable(req, strategy, planned))
+            and (
+                not asks_freeze_frame(req)
+                or freeze_plannable(req, strategy, planned, client_protocol=client_protocol)
+            )
         )
         and not (narrated and _settled_by_narrated_render(req, strategy))
     ]
@@ -8764,21 +8769,24 @@ def freeze_plannable(
     req: BriefRequirement,
     strategy: Mapping[str, Any] | None,
     planned: frozenset[str] | None = None,
+    *,
+    client_protocol: int | None,
 ) -> bool:
     """KRI-828: will the phone montage plan carry this freeze ask?
 
     Only a corroborated freeze ask (`freeze_spec`, or with ``planned`` -- the brief's
     `planned_freeze_ids` -- a correction of one, KRI-899), on a montage with no creator
-    song, where the phone can hold a frame (`freeze_frame_supported`). The render then
-    settles it (met, or which moment it could not find); everywhere else KRI-777's
-    "Couldn't" stays on the draft.
+    song, where the phone can hold a frame for the app build that asked
+    (`freeze_frame_planned_for`, KRI-898: ``client_protocol`` is required so every caller
+    decides which build it plans for). The render then settles it (met, or which moment it
+    could not find); everywhere else KRI-777's "Couldn't" stays on the draft.
     """
-    from app.services.phone_rollout import freeze_frame_supported  # noqa: PLC0415
+    from app.services.phone_rollout import freeze_frame_planned_for  # noqa: PLC0415
 
     return (
         (req.id in planned if planned is not None else freeze_spec(req) is not None)
         and str((strategy or {}).get("audio_strategy") or "") != "user_song"
-        and freeze_frame_supported()
+        and freeze_frame_planned_for(client_protocol)
     )
 
 

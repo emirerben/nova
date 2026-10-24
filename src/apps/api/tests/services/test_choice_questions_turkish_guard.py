@@ -295,7 +295,8 @@ def _cases() -> dict[str, tuple[str, list]]:
                         for i in range(len(rows))
                     ],
                 },
-                ChoiceCapability(creator_id="u"),
+                # KRI-898: sent from an app build that plays a freeze hold.
+                ChoiceCapability(creator_id="u", client_protocol=16),
             )
     return cases
 

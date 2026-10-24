@@ -71,6 +71,7 @@ from tests.kria.test_kri775_merope_m2_replay import (
 from tests.kria.test_kri828_freeze_frame_m2 import (
     BITE_END_S,
     BITE_START_S,
+    FREEZE_APP,
     _phone_recipe,
     _verify_freeze,
     gate_answering,
@@ -130,6 +131,7 @@ async def _run(
         brief=answered_brief(brief, strategy),
         media=gate_media(result),
         strategy=strategy,
+        client_protocol=FREEZE_APP,  # KRI-898: approved on a build that plays the hold
     )
     monkeypatch.setattr(unified_montage, "plan_unified_montage", real)
     return asked, strategy, captured.get("plan"), outcome, result
