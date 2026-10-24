@@ -44,7 +44,9 @@ from app.kria.freeze_ask import (
     planned_freeze_ids,
     times_one_moment,
 )
+from app.kria.noise_reduction_ask import wants_engine_noise_reduction
 from app.kria.reply_language import current_reply_language, say
+from app.kria.speech_cut_ask import SpeechCutAsk, requirement_speech_cut
 from app.kria.speed_ask import asks_clip_speed
 from app.kria.spoken_text_ask import SPOKEN_TEXT_CUE_KEYS
 from app.kria.style_asks import (
@@ -57,6 +59,7 @@ from app.kria.style_asks import (
     value_matches,
 )
 from app.pipeline.caption_spelling import extract_spelling_asks, is_mishearing
+from app.pipeline.explicit_speech_cut import speech_cut_tokens
 from app.pipeline.sequence_text_evidence import complete_sequences, sequence_lineage
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.text_style_intent import (
@@ -68,6 +71,7 @@ from app.services.clip_facts import CAPTURE_ORDER_KEYS
 from app.services.clip_order_sequence import row_relations, sequence_rows
 from app.services.kria_editor_ops_diff import effective_entrance
 from app.services.length_policy import creator_duration_matches, length_owner, natural_length_owner
+from app.services.phone_noise_reduction import engine_noise_reduction_available
 from app.text_fold import capitalize, uses_turkish_case
 from app.text_fold import lower as text_lower
 
@@ -134,6 +138,29 @@ class SpokenTextFact:
     # The word it waited for: the one heard, else the first one asked for.
     trigger: str = ""
     face_collision: bool = False
+
+
+@dataclass(frozen=True)
+class ExplicitSpeechCutFact:
+    """The phone worker's source-grounded result for one requested spoken phrase cut."""
+
+    requirement_ids: tuple[str, ...]
+    quote: str
+    occurrence: int | None
+    status: str  # "applied" | "not_applied"
+    reason: str | None = None
+    start_s: float | None = None
+    end_s: float | None = None
+    word_indexes: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class EngineNoiseReductionFact:
+    """The phone worker's outcome for an explicit engine-noise treatment."""
+
+    requirement_ids: tuple[str, ...]
+    status: str  # "applied" | "not_applied"
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -342,6 +369,7 @@ class PlanFacts:
     # a title, captions, a start cut and speech cleanup; an ask outside that set is answered
     # with a plain "can't" before approval and after render (`_talking_honest_receipt`).
     phone_talking: bool = False
+    phone_voiceover_spoken_text: bool = False
     # KRI-793: True when this draft renders through the phone Talking writer, which captions
     # the take, spells the creator's listed words their way and records every caption line
     # (`defers_caption_words_to_phone_render`). A captions ask about language or spelling
@@ -360,6 +388,10 @@ class PlanFacts:
     # "no_change" (it ran and found nothing to cut), "not_run" (the render kept the whole
     # take). None = unknown or a draft.
     speech_cleanup_outcome: str | None = None
+    # KRI-??? Explicit source phrase removals.  Empty means the finished variant recorded no
+    # receipt; that absence is never evidence a phrase was removed.
+    explicit_speech_cuts: tuple[ExplicitSpeechCutFact, ...] = ()
+    engine_noise_reduction: EngineNoiseReductionFact | None = None
     # The strategy's caption style ("none", "clean", "kinetic", "karaoke",
     # "editorial", "auto"); None when the draft carries no strategy.
     caption_style: str | None = None
@@ -648,6 +680,8 @@ def plan_facts_from_strategy(
         extra = _beat_facts(strategy, manifest)
         extra["video_clip_count"] = _video_clip_count(strategy, manifest)
         extra["take_duration_s"] = _selected_video_seconds(strategy, manifest)
+        spoken_cap = manifest.capabilities.get("phone_voiceover_spoken_text")
+        extra["phone_voiceover_spoken_text"] = bool(spoken_cap and spoken_cap.available)
     edit_format = strategy.get("edit_format")
     caption_style = strategy.get("caption_style")
     audio_strategy = strategy.get("audio_strategy")
@@ -1573,6 +1607,8 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     elif variant.get("resolved_archetype") in {"narrated", "voiceover"}:
         changes["audio_strategy"] = "voiceover"
     changes.update(_rendered_speech_facts(variant))
+    changes.update(_explicit_speech_cut_facts(variant))
+    changes.update(_engine_noise_reduction_facts(variant))
     changes.update(_speaker_framing_facts(variant))
     changes.update(_opening_cut_facts(variant))
     named = variant.get("named_cuts")
@@ -1625,6 +1661,102 @@ def _rendered_speech_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
         facts["speech_cleanup_enabled"] = False
         facts["speech_cleanup_outcome"] = "not_run"
     return facts
+
+
+def _explicit_speech_cut_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    """Read only complete worker receipts; malformed rows cannot prove a spoken cut."""
+    raw = variant.get("explicit_speech_cuts")
+    if not isinstance(raw, list):
+        return {}
+    receipts: list[ExplicitSpeechCutFact] = []
+    for row in raw:
+        if not isinstance(row, Mapping):
+            continue
+        ids = row.get("requirement_ids")
+        quote = row.get("quote")
+        occurrence = row.get("occurrence")
+        status = row.get("status")
+        if (
+            not isinstance(ids, list)
+            or not ids
+            or not all(isinstance(req_id, str) and req_id for req_id in ids)
+            or not isinstance(quote, str)
+            or not quote.strip()
+            or (
+                occurrence is not None
+                and (
+                    not isinstance(occurrence, int)
+                    or isinstance(occurrence, bool)
+                    or occurrence < 1
+                )
+            )
+            or status not in {"applied", "not_applied"}
+        ):
+            continue
+        reason = row.get("reason")
+        source_span = row.get("source_span")
+        word_indexes = row.get("word_indexes")
+        start_s = end_s = None
+        indexes: tuple[int, ...] = ()
+        if isinstance(source_span, Mapping):
+            start_s = _finite_number(source_span.get("start_s"))
+            end_s = _finite_number(source_span.get("end_s"))
+        if isinstance(word_indexes, list) and all(
+            isinstance(index, int) and not isinstance(index, bool) and index >= 0
+            for index in word_indexes
+        ):
+            indexes = tuple(word_indexes)
+        # An "applied" claim needs the exact source evidence the worker cut.  Top-level
+        # convenience fields are not a substitute for its source_span contract.
+        if status == "applied" and (
+            start_s is None or end_s is None or end_s <= start_s or not indexes
+        ):
+            continue
+        receipts.append(
+            ExplicitSpeechCutFact(
+                requirement_ids=tuple(ids),
+                quote=" ".join(quote.split()),
+                occurrence=occurrence,
+                status=status,
+                reason=reason.strip() if isinstance(reason, str) and reason.strip() else None,
+                start_s=start_s,
+                end_s=end_s,
+                word_indexes=indexes,
+            )
+        )
+    return {"explicit_speech_cuts": tuple(receipts)}
+
+
+def _engine_noise_reduction_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    """Read the explicit treatment receipt; a filter's presence never implies success."""
+    raw = variant.get("engine_noise_reduction")
+    if not isinstance(raw, Mapping) or raw.get("version") != 1:
+        return {}
+    ids = raw.get("requirement_ids")
+    status = raw.get("status")
+    method = raw.get("method")
+    if (
+        not isinstance(ids, list)
+        or not ids
+        or not all(isinstance(req_id, str) and req_id for req_id in ids)
+        or status not in {"applied", "not_applied"}
+        or method != "stationary_noise_reduction"
+    ):
+        return {}
+    reason = raw.get("reason")
+    allowed_reasons = {
+        "reduced_not_isolated",
+        "unavailable",
+        "multiple_sources",
+        "processing_failed",
+    }
+    if reason not in allowed_reasons:
+        return {}
+    return {
+        "engine_noise_reduction": EngineNoiseReductionFact(
+            requirement_ids=tuple(ids), status=status, reason=reason
+        )
+    }
 
 
 def _rendered_caption_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
@@ -3269,6 +3401,10 @@ _TALKING_KEEPS_QUOTED_PART = (
     "A Talking edit keeps only the part of your take you asked for, so its length follows that part"
 )
 # KRI-707: the phone Talking worker shows the text from the word (`phone_spoken_text`).
+_VOICEOVER_SPOKEN_TEXT_PLAN = (
+    "I'll place that text on the matching words in your recording. If they repeat, I'll need "
+    "the occurrence you mean."
+)
 _TALKING_SPOKEN_TEXT_PLAN = (
     "I'll show it the moment you say that word in your take; if I don't hear the word, it "
     "won't appear"
@@ -3291,6 +3427,24 @@ _SPOKEN_TEXT_FIRST_HEARD = (
 _TALKING_SPOKEN_TEXT_NO_WORD = (
     "I couldn't tell which spoken word to wait for, so tell me the exact word to show it on"
 )
+# KRI-724: a phone Talking edit cuts the Nth time a quoted phrase is said (`speech_remove`)
+# and filters steady engine noise (`noise_reduction`), both read from brief facts.
+_SPEECH_CUT_DRAFT_PLAN = (
+    "Will locate the requested occurrence in the original speech before cutting; no guess"
+)
+_SPEECH_CUT_UNPROVEN = "Couldn't verify that exact spoken phrase occurrence was cut"
+_NOISE_REDUCTION_PLANNED = (
+    "Will reduce steady engine noise before rendering; engine and speech are not "
+    "independently isolated"
+)
+_NOISE_REDUCTION_APPLIED = (
+    "Applied noise reduction; engine and speech are not independently isolated"
+)
+_NOISE_REDUCTION_UNAVAILABLE = "Engine noise reduction isn't available for this edit"
+_NOISE_REDUCTION_UNSUPPORTED = (
+    "Engine noise reduction is only available for a single-source Talking edit"
+)
+_NOISE_REDUCTION_MISSED = "Couldn't apply engine noise reduction"
 _TALKING_HONEST_EN: tuple[str, ...] = (
     _TALKING_NO_SUCH_EDIT,
     _TALKING_NO_SPOKEN_TEXT,
@@ -3387,6 +3541,26 @@ _REASON_TR: dict[str, str] = {
         "Videoyu o cümlenin başladığı yerden başlatırım; çekiminde bulamazsam baştan açılır"
     ),
     _TALKING_WINDOW_PLAN: "Çekiminin ",
+    _VOICEOVER_SPOKEN_TEXT_PLAN: (
+        "Yazıyı kaydındaki eşleşen sözlerde göstereceğim. Sözler tekrarlanırsa hangi tekrarı "
+        "istediğini bilmem gerekecek."
+    ),
+    _SPEECH_CUT_DRAFT_PLAN: (
+        "Kesmeden önce istediğin tekrarı orijinal konuşmada bulacağım; tahmin etmeyeceğim"
+    ),
+    _SPEECH_CUT_UNPROVEN: "O konuşulan ifadenin tam o tekrarının kesildiğini doğrulayamadım",
+    _NOISE_REDUCTION_PLANNED: (
+        "Renderdan önce sabit motor gürültüsünü azaltacağım; motor sesiyle konuşmayı "
+        "birbirinden bağımsız ayıramam"
+    ),
+    _NOISE_REDUCTION_APPLIED: (
+        "Gürültü azaltma uygulandı; motor sesiyle konuşma birbirinden bağımsız ayrılmadı"
+    ),
+    _NOISE_REDUCTION_UNAVAILABLE: "Motor gürültüsü azaltma bu düzenlemede kullanılamıyor",
+    _NOISE_REDUCTION_UNSUPPORTED: (
+        "Motor gürültüsünü azaltma yalnızca tek klipli Konuşmalı düzenlemede yapılabiliyor"
+    ),
+    _NOISE_REDUCTION_MISSED: "Motor gürültüsünü azaltamadım",
     _TALKING_SPOKEN_TEXT_PLAN: (
         "Çekiminde o kelimeyi söylediğin anda yazıyı gösteririm; kelimeyi duymazsam yazı çıkmaz"
     ),
@@ -3469,7 +3643,14 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _NO_FREEZE_FRAME,
     _FREEZE_NOT_GROUNDED,
     _LIGHT_UNAVAILABLE,
+    # KRI-724: the planned source cut / noise filter, and what the noise filter can't do.
+    _SPEECH_CUT_DRAFT_PLAN,
+    _NOISE_REDUCTION_PLANNED,
+    _NOISE_REDUCTION_APPLIED,
+    _NOISE_REDUCTION_UNAVAILABLE,
+    _NOISE_REDUCTION_UNSUPPORTED,
     *_TALKING_HONEST_EN,
+    _VOICEOVER_SPOKEN_TEXT_PLAN,
 )
 _FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
     *_FORMAT_LIMIT_EN,
@@ -4962,6 +5143,18 @@ def _spoken_text_miss(req: BriefRequirement, fact: SpokenTextFact) -> Requiremen
     """KRI-707: why a rendered phone Talking edit shows no text for this ask."""
     text = f"“{fact.text or req.literal or ''}”"
     word = f"“{fact.trigger}”" if fact.trigger else say(en="that word", tr="o kelimeyi")
+    if fact.status == "ambiguous":
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"I heard {word} more than once. Choose which occurrence should show {text}.",
+                tr=(
+                    f"{word} birden fazla kez geçiyor. {text} yazısının hangi tekrarda "
+                    "görüneceğini seç."
+                ),
+            ),
+        )
     if fact.status == "not_heard":
         reason = say(
             en=f"I didn't hear you say {word} in your take, so {text} isn't shown",
@@ -6472,6 +6665,29 @@ def render_block_recovery(failures: Sequence[Mapping[str, Any]]) -> RenderBlockR
 
 
 def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    # A rendered spoken-text receipt must prove timing, not just matching caption copy.
+    if _is_voiceover_edit(facts) and _is_spoken_text_cue(req) and facts.rendered_variant:
+        spoken = _spoken_text_fact(facts, req)
+        if spoken is None:
+            return _receipt(req, "partial", _NO_CHECKER)
+        if spoken.status != "placed":
+            return _spoken_text_miss(req, spoken)
+        # The receipt is the only evidence that this particular text appeared at
+        # the spoken cue. Captions and opening-title copy can contain the same
+        # words without satisfying the timed request.
+        if _contains_text(spoken.text, _fold(req.literal or "")):
+            # Placement proves the word anchor, not extra duration/sequence promises.
+            if set(req.facts or {}) & {
+                "segmentation",
+                "sequence",
+                "timing",
+                "overlap",
+                "animation_phases",
+                "duration_s",
+            }:
+                return _receipt(req, "partial", _NO_CHECKER)
+            return _receipt(req, "met", None)
+        return _receipt(req, "partial", _NO_CHECKER)
     wanted = _fold(req.literal or "")
     if req.scope == "title" and facts.title:
         # A title written from the brief may add the route to the creator's words
@@ -6520,6 +6736,11 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         # reply says so plainly instead of holding the draft behind "a simpler version?".
         return _receipt(req, "not_possible", _TALKING_NO_SPOKEN_TEXT)
     if _is_spoken_text_cue(req) and _is_voiceover_edit(facts):
+        spoken = _spoken_text_fact(facts, req)
+        if spoken is not None:
+            return _spoken_text_miss(req, spoken)
+        if facts.phone_voiceover_spoken_text and not facts.rendered_variant:
+            return _receipt(req, "partial", _VOICEOVER_SPOKEN_TEXT_PLAN)
         # KRI-699: a voiceover edit draws its title, captions and word-timed photos/sounds,
         # never a creator text on a spoken word, so a retry can't add it. Still the
         # creator's call (held draft), not a format limit.
@@ -7114,9 +7335,87 @@ def _check_source_sound(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     )
 
 
+def _same_speech_cut_quote(left: str, right: str) -> bool:
+    return tuple(speech_cut_tokens(left)) == tuple(speech_cut_tokens(right))
+
+
+def _explicit_speech_cut_reason(reason: str | None) -> str:
+    """Translate worker-only failure codes without exposing pipeline vocabulary to creators."""
+    code = str(reason or "").strip().casefold()
+    if code in {"ambiguous_phrase_occurrence", "ambiguous_occurrence", "multiple_matches"}:
+        return say(
+            en="I found more than one matching phrase, so tell me which occurrence to cut",
+            tr="Birden fazla eşleşen ifade buldum; hangisini kesmem gerektiğini söyle",
+        )
+    if code in {"missing_target", "target_not_found", "phrase_not_found", "not_found"}:
+        return say(
+            en="I couldn't find that spoken phrase in the original audio",
+            tr="O konuşulan ifadeyi orijinal seste bulamadım",
+        )
+    if code in {"uncertain_timestamps", "overlap", "overlapping_timestamps"}:
+        return say(
+            en="I couldn't confidently place that phrase in the original speech",
+            tr="O ifadeyi orijinal konuşmada güvenle yerleştiremedim",
+        )
+    if code in {"multiple_sources", "multiple_speakers"}:
+        return say(
+            en="Choose one speaker clip before I cut that phrase",
+            tr="Bu ifadeyi kesmeden önce tek bir konuşmacı klibi seç",
+        )
+    if code in {"too_short", "would_remove_entire_take", "entire_take"}:
+        return say(
+            en="That phrase is too short to cut without removing the whole take",
+            tr="Bu ifade, çekimin tamamını kaldırmadan kesilemeyecek kadar kısa",
+        )
+    return _loc(_SPEECH_CUT_UNPROVEN)
+
+
+def _check_explicit_speech_cut(
+    req: BriefRequirement, ask: SpeechCutAsk, facts: PlanFacts
+) -> RequirementReceipt:
+    """Only an exact, requirement-bound applied worker receipt proves the removal."""
+    if facts.phone_talking and not facts.rendered_variant:
+        return _receipt(req, "partial", _loc(_SPEECH_CUT_DRAFT_PLAN))
+    if not facts.rendered_variant:
+        return _receipt(req, "partial", _NO_CHECKER)
+    matches = [
+        receipt
+        for receipt in facts.explicit_speech_cuts
+        if req.id in receipt.requirement_ids
+        and _same_speech_cut_quote(receipt.quote, ask.quote)
+        and receipt.occurrence == ask.occurrence
+    ]
+    if any(receipt.status == "applied" for receipt in matches):
+        return _receipt(req, "met", None)
+    reason = next((receipt.reason for receipt in matches if receipt.reason), None)
+    return _receipt(req, "not_possible", _explicit_speech_cut_reason(reason))
+
+
+def _check_engine_noise_reduction(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """A stationary-noise filter is helpful but never proof of isolated speech."""
+    if not facts.phone_talking:
+        return _receipt(req, "not_possible", _loc(_NOISE_REDUCTION_UNSUPPORTED))
+    if not facts.rendered_variant:
+        if engine_noise_reduction_available():
+            return _receipt(req, "partial", _loc(_NOISE_REDUCTION_PLANNED))
+        return _receipt(req, "not_possible", _loc(_NOISE_REDUCTION_UNAVAILABLE))
+    receipt = facts.engine_noise_reduction
+    if receipt is None or req.id not in receipt.requirement_ids:
+        return _receipt(req, "not_possible", _loc(_NOISE_REDUCTION_MISSED))
+    if receipt.status == "applied" and receipt.reason == "reduced_not_isolated":
+        return _receipt(req, "partial", _loc(_NOISE_REDUCTION_APPLIED))
+    return _receipt(req, "not_possible", _loc(_NOISE_REDUCTION_MISSED))
+
+
 def _has_checker(req: BriefRequirement) -> bool:
     """True when ``check_requirement`` can actually verify this requirement."""
-    if _wants_speaker_framing(req) or wants_light_change(req) or asks_freeze_frame(req):
+    if (
+        wants_engine_noise_reduction(req)
+        or requirement_speech_cut(req) is not None
+        or _wants_speaker_framing(req)
+        or wants_light_change(req)
+        or asks_freeze_frame(req)
+    ):
         return True
     if asks_clip_speed(req):
         # KRI-689: judged wherever the plan knows it cannot retime (the phone montage); a plan
@@ -7254,6 +7553,16 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
 
 
 def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if wants_engine_noise_reduction(req):
+        # This owns only the explicit engine-noise request.  Bed/mix controls keep their
+        # existing checker and cannot be satisfied by a noise filter.
+        return _check_engine_noise_reduction(req, facts)
+    if (facts.phone_talking or facts.explicit_speech_cuts) and (
+        speech_cut := requirement_speech_cut(req)
+    ) is not None:
+        # This must own a timing/select row before generic timing sees its ordinal as ordinary
+        # timing.  A receipt is source-space evidence, not a claim based on captions.
+        return _check_explicit_speech_cut(req, speech_cut, facts)
     if _wants_opening_cut(req) and facts.edit_format in {"subtitled", "talking_head"}:
         # "Cut the intro, start the video at '...'": a quoted start line owns the sentence
         # (and any pauses it names); every other speech edit keeps its usual path.
@@ -7424,6 +7733,12 @@ def defers_to_narrated_render(
 
 def _settled_by_narrated_render(req: BriefRequirement, strategy: Mapping[str, Any]) -> bool:
     """The asks a rendered Voiceover record can judge and a draft cannot (see above)."""
+    if req.kind == "text" and _is_spoken_text_cue(req):
+        from app.services.phone_rollout import (
+            phone_voiceover_spoken_text_supported,  # noqa: PLC0415
+        )
+
+        return phone_voiceover_spoken_text_supported(require_client=False)
     if req.kind == "order":
         # A strategy that already names its ordering basis can judge a basis ask itself.
         return not strategy.get("ordering_basis")
@@ -7614,6 +7929,13 @@ def _talking_honest_receipt(
     from its words (KRI-667).
     """
     if not facts.phone_talking or (facts.editor and not facts.rendered_variant):
+        return receipt
+    if wants_engine_noise_reduction(req):
+        return receipt
+    if requirement_speech_cut(req) is not None:
+        # The explicit checker above is the only route that can promise this edit.  Preserve
+        # its pre-approval source-resolution notice instead of replacing it with the generic
+        # Talking-format refusal.
         return receipt
     if _wants_opening_cut(req):
         if facts.rendered_variant:
@@ -7929,6 +8251,8 @@ __all__ = [
     "UNIFIED_SETTLED_KINDS",
     "BeatFact",
     "ClosingSpeechFact",
+    "EngineNoiseReductionFact",
+    "ExplicitSpeechCutFact",
     "NO_TITLE_REASON",
     "NARRATED_ALIGNMENT_RECOVERY",
     "RenderBlockRecovery",
