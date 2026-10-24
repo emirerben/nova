@@ -1188,6 +1188,13 @@ class Settings(BaseSettings):
     # KRI-456 rollout default; request-binding writers are gated separately.
     narrated_clip_alignment_enabled: bool = True
 
+    # KRI-889: cut the lines a creator named ("cut the line 'with bread, no'") out of a
+    # narrated edit's recorded voiceover, phone and cloud, and promise it on the draft.
+    # False => byte-identical to before: the voiceover plays whole and the receipt says
+    # the line can't be cut yet. Read by the worker AND brief_checks, so promise and
+    # render agree. Apply: fly secret + restart api + worker.
+    narrated_named_cuts_enabled: bool = True
+
     # Kill switch for the terminal-job stuck-variant watchdog
     # (`reconcile_stuck_variants`). This sweep WRITES user-visible state — it
     # rewrites assembly_plan and can move a job to variants_ready_partial — and

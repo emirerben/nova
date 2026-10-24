@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.99.0] - 2026-10-24
+
+### Changed
+- feat(narrated): cut a named line or retake out of the voiceover, phone and cloud (KRI-889) (#1806) <!-- release-pr: 1806 -->
+
+## [0.81.98.0] - 2026-10-24
+
+### Changed
+- fix(kria): a song suggestion is honest about the genre asked for (KRI-848) (#1789) <!-- release-pr: 1789 -->
+
+## [0.81.97.0] - 2026-10-24
+
+### Changed
+- fix(kria): ask which line of the take to open / end on when a quoted line isn't said (KRI-844) (#1787) <!-- release-pr: 1787 -->
+
+## [0.81.96.0] - 2026-10-24
+
+### Changed
+- fix(kria): play one clip's own sound under, or after, a phone voiceover (KRI-842) (#1786) <!-- release-pr: 1786 -->
+
+## [0.81.95.0] - 2026-10-24
+
+### Changed
+- fix(freeze): plan a freeze hold only for an app build that plays it (KRI-898) (#1809) <!-- release-pr: 1809 -->
+
 ## [0.81.94.0] - 2026-10-24
 
 ### Changed
