@@ -8,8 +8,10 @@ phone recipe compiler and the phone rollout validator, and renders the cloud pat
 to an MP4, so the hold is proven on the media, not on command arguments.
 
 Ways this can fail (written before the fix), each pinned below:
-1. Wrong frame held: the hold lands on the window's start/end instead of the grounded bite
-   (the analysed "man takes first bite of dessert" moment, 57.04-59.84 s of the take).
+1. Wrong frame held: the hold lands on the window's start/end instead of the frame the
+   creator picked inside the bite (the analysed "man takes first bite of dessert" moment,
+   57.04-59.84 s of the take; KRI-900: the frame is the creator's answer to the gate's
+   "which frame should hold?" question, never a guessed midpoint).
 2. Fake slow motion: a playback rate below 1 instead of a true one-frame hold.
 3. Hold missing: the plan carries a freeze but the compiler / recipe validator / rollout
    gate drops or refuses it; or the receipt says "met" while the recipe has no hold.
@@ -33,24 +35,31 @@ import json
 import os
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.config import settings
+from app.kria import planner
 from app.kria.brief import BriefRequirement
 from app.pipeline import unified_montage
 from app.pipeline.guided_story import GuidedStoryExecutionPlan, compile_execution_plan
 from app.pipeline.phone_guided_plan import compile_phone_guided_plan
+from app.services.choice_questions import answered_brief
 from app.services.phone_rollout import validate_phone_pilot_recipe
 from tests.kria.test_kri775_merope_m2_replay import (
+    CREATOR_ID,
     RENDERS,
     TAKE,
+    THREAD_ID,
     gate_media,
     gate_strategy,
     m2_brief_with_moment_ask,
+    planned_turn,
     prod_flags,
-    run_gate,
     run_worker,
 )
 from tests.pipeline.user_song_helpers import bindings_for
@@ -72,7 +81,60 @@ def _keep(name: str, payload: object = None, *, source: Path | None = None) -> N
 
 # The take's analysed moment for "Atakan's bite" (clip record, best_moments).
 BITE_START_S, BITE_END_S = 57.04, 59.84
-BITE_FRAME_S = round((BITE_START_S + BITE_END_S) / 2, 3)
+# KRI-900: the frame the creator picks as "Middle" in the gate's freeze question (the moment's
+# middle on the 30 fps grid). The tests below answer with it; nothing guesses it.
+BITE_FRAME_S = round(round((BITE_START_S + BITE_END_S) / 2 * 30) / 30, 3)
+
+
+def pick_recommended(question: dict) -> str:
+    """The creator taps the recommended option ("Middle")."""
+    return next(o["key"] for o in question["options"] if o.get("recommended"))
+
+
+async def gate_answering(
+    monkeypatch: pytest.MonkeyPatch,
+    render: dict,
+    *,
+    brief,  # noqa: ANN001
+    pick: Callable[[dict], str | None] = pick_recommended,
+    max_turns: int = 6,
+):  # noqa: ANN202
+    """The real gate, turn after turn, with the creator answering each question it asks.
+
+    ``pick(question)`` returns the option key the creator taps, or None for a reply that
+    answers nothing. Returns the gate's final ``act`` turn and every question asked, as the
+    thread's own events replay them.
+    """
+    events: list[tuple[str, dict]] = []
+    asked: list[dict] = []
+    monkeypatch.setattr(planner, "load_latest_brief", AsyncMock(return_value=brief))
+    for _ in range(max_turns):
+        monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=list(events)))
+        result = await planner._gate_unresolved_choices(
+            SimpleNamespace(), planned_turn(render), thread_id=THREAD_ID, creator_id=CREATOR_ID
+        )
+        question = result.plan.choice_question
+        if result.plan.mode == "act":
+            return result, asked
+        assert question, result.plan.response
+        asked.append({"question": question, "text": result.plan.response})
+        events.append(("assistant", {"choice_question": question}))
+        key = pick(question)
+        if key is None:
+            events.append(("user", {"_event_type": "user_message", "_content": "hmm ok"}))
+        else:
+            events.append(
+                (
+                    "user",
+                    {
+                        "choice_selection": {
+                            "question_id": question["question_id"],
+                            "option_key": key,
+                        }
+                    },
+                )
+            )
+    raise AssertionError(f"the gate never let the draft through: {asked}")
 
 
 @pytest.fixture(autouse=True)
@@ -87,11 +149,19 @@ def _verify_freeze(monkeypatch: pytest.MonkeyPatch, on: bool = True) -> None:
     )
 
 
-async def _plan_m2(monkeypatch: pytest.MonkeyPatch, *, brief=None):  # noqa: ANN001, ANN202
-    """Gate + phone worker on the approved M2 draft; returns (plan, worker outcome)."""
+async def _plan_m2(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    brief=None,  # noqa: ANN001
+    pick: Callable[[dict], str | None] = pick_recommended,
+):  # noqa: ANN202
+    """Gate (answering its questions with ``pick``) + phone worker on the approved M2 draft;
+    returns (plan, worker outcome). The worker gets the brief approval pins: the creator's
+    answers applied (``answered_brief``)."""
     render = RENDERS[0]
     brief = brief if brief is not None else m2_brief_with_moment_ask(render)
-    result = await run_gate(monkeypatch, render, brief=brief)
+    result, _asked = await gate_answering(monkeypatch, render, brief=brief, pick=pick)
+    brief = answered_brief(brief, gate_strategy(result))
     captured: dict = {}
     real = unified_montage.plan_unified_montage
 
