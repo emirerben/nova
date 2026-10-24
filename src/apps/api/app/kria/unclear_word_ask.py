@@ -9,7 +9,8 @@ The Main Creator records that ask as a brief fact (never read off the words, KRI
 * ``facts["unclear_answer"]``: the creator's later answer in their own words, as the model
   records it: ``"omit"`` (leave the word out), or the exact words they typed.
 * ``facts["unclear_answers"]``: the server's structured answers to the gate's unclear-word
-  questions (``choice_questions.answered_brief``): ``[{start_s, end_s, action, text?}]``.
+  questions: ``[{start_s, end_s, action, text?, media_scope}]``. The opaque scope binds the
+  source identity/hash and the request; an unbound legacy window cannot locate a new target.
 
 This module only reads those facts and runs the pre-approval comparison on the approved-media
 snapshot row; the question lives in ``services/choice_questions`` and the render in
@@ -18,6 +19,8 @@ snapshot row; the question lives in ``services/choice_questions`` and the render
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from math import isfinite
@@ -58,10 +61,19 @@ def ask_text(requirements: Iterable[Any]) -> str:
     return next((_text(_facts(req).get(ASK_FACT)) for req in ask_requirements(requirements)), "")
 
 
-def model_answer(requirements: Iterable[Any]) -> cu.UnclearAnswer | None:
+def model_answer(
+    requirements: Iterable[Any], *, scope: str | None = None
+) -> cu.UnclearAnswer | None:
     """The answer the model recorded from the creator's own words, if any: ``omit``, or the
     typed words (the last live requirement carrying one wins). Applies to every span unless a
     structured answer names the span."""
+    requirements = list(requirements)
+    if (
+        scope is not None
+        and _pinned_answers(requirements)
+        and not _pinned_answers(requirements, scope=scope)
+    ):
+        return None
     found: cu.UnclearAnswer | None = None
     for req in ask_requirements(requirements):
         value = _text(_facts(req).get(ANSWER_FACT))
@@ -80,23 +92,29 @@ def _number(value: object) -> float | None:
     return float(value) if isfinite(value) else None
 
 
-def recorded_answers(requirements: Iterable[Any]) -> list[cu.UnclearAnswer]:
+def recorded_answers(
+    requirements: Iterable[Any], *, scope: str | None = None
+) -> list[cu.UnclearAnswer]:
     """The structured answers ``answered_brief`` pinned on the ask requirements."""
     requirements = list(requirements)
-    if model_answer(requirements) is not None:
+    if model_answer(requirements, scope=scope) is not None:
         # A typed correction ends the question, so no newer tap can exist. Older
         # pinned taps must not override the creator's replacement words or omit.
         return []
-    return _pinned_answers(requirements)
+    return _pinned_answers(requirements, scope=scope)
 
 
-def _pinned_answers(requirements: Iterable[Any]) -> list[cu.UnclearAnswer]:
+def _pinned_answers(
+    requirements: Iterable[Any], *, scope: str | None = None
+) -> list[cu.UnclearAnswer]:
     """The creator-confirmed windows, including a window whose wording was corrected later."""
     out: list[cu.UnclearAnswer] = []
     for req in ask_requirements(requirements):
         rows = _facts(req).get(ANSWERS_FACT)
         for row in rows if isinstance(rows, list) else ():
             if not isinstance(row, Mapping):
+                continue
+            if scope is not None and row.get("media_scope") != scope:
                 continue
             action = row.get("action")
             start, end = _number(row.get("start_s")), _number(row.get("end_s"))
@@ -146,7 +164,7 @@ def clarification_question(
     )
 
     live = brief.live() if brief is not None else []
-    if not ask_requirements(live) or _pinned_answers(live):
+    if not ask_requirements(live):
         return None
     if not defers_caption_words_to_phone_render(
         creator_id=creator_id,
@@ -158,6 +176,8 @@ def clarification_question(
     finding = detect(
         live, media_snapshot, strategy=strategy, spellings=brief_caption_spellings(brief)
     )
+    if _pinned_answers(live, scope=media_scope(row_identity(finding.row), finding.ask)):
+        return None
     return clarification_prompt() if finding.state == cu.STATE_NOT_COMPARABLE else None
 
 
@@ -187,8 +207,32 @@ def take_hearings(row: Mapping[str, Any] | None) -> tuple[list[dict[str, Any]], 
 
 def row_identity(row: Mapping[str, Any] | None) -> list[Any]:
     """What identifies the clip a question was asked about (not its analysis)."""
-    keys = ("media_id", "gcs_path", "storage_generation", "gcs_generation", "generation")
-    return [row.get(key) for key in keys] if isinstance(row, Mapping) else []
+    if not isinstance(row, Mapping):
+        return []
+    keys = (
+        "media_id",
+        "gcs_path",
+        "storage_generation",
+        "gcs_generation",
+        "generation",
+        "manifest_identity",
+        "sha256",
+        "original_sha256",
+        "content_hash",
+    )
+    contract = row.get("upload_contract")
+    proxy = contract.get("proxy") if isinstance(contract, Mapping) else None
+    original = proxy.get("original") if isinstance(proxy, Mapping) else None
+    original_hash = original.get("sha256") if isinstance(original, Mapping) else None
+    return [*(row.get(key) for key in keys), original_hash]
+
+
+def media_scope(identity: Sequence[Any], ask: str) -> str:
+    """Bind a confirmed window to its exact source and request, never transient analysis."""
+    raw = json.dumps(
+        [list(identity), ask], sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    )
+    return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
 @dataclass(frozen=True)
@@ -236,13 +280,13 @@ def detect(
 
 
 def unsettled(
-    spans: Sequence[cu.UnclearSpan], requirements: Sequence[Any]
+    spans: Sequence[cu.UnclearSpan], requirements: Sequence[Any], *, scope: str | None = None
 ) -> list[tuple[int, cu.UnclearSpan]]:
     """The spans no recorded answer (structured or typed) has settled yet, with their position
     among all spans."""
-    if model_answer(requirements) is not None:
+    if model_answer(requirements, scope=scope) is not None:
         return []
-    answers = recorded_answers(requirements)
+    answers = recorded_answers(requirements, scope=scope)
     open_spans: list[tuple[int, cu.UnclearSpan]] = []
     used: set[int] = set()
     for position, span in enumerate(spans):
@@ -279,9 +323,10 @@ def draft_state(
         return None
     if finding.state != cu.STATE_UNCLEAR:
         return {"state": finding.state, "spans": []}
-    default = model_answer(requirements)
+    scope = media_scope(row_identity(finding.row), finding.ask)
+    default = model_answer(requirements, scope=scope)
     decisions = cu.decide(
-        finding.spans, recorded_answers(requirements), ask_active=True, default=default
+        finding.spans, recorded_answers(requirements, scope=scope), ask_active=True, default=default
     )
     return {
         "state": "applied",
@@ -357,16 +402,18 @@ def apply_to_cues(
     if not ask_requirements(live):
         return list(cues), None
     words = [word for cue in cues for word in (cue.get("words") or []) if isinstance(word, Mapping)]
-    _segments, gemini = take_hearings(_single_take(binding.media_snapshot, None))
+    row = _single_take(binding.media_snapshot, None)
+    scope = media_scope(row_identity(row), ask_text(live))
+    _segments, gemini = take_hearings(row)
     render = cu.compare_words(words, gemini, spellings=spellings)
 
     answers: list[cu.UnclearAnswer] = []
     estimated: list[tuple[float, float]] = []
-    for answer in recorded_answers(live):
+    for answer in recorded_answers(live, scope=scope):
         window = _caption_window(map_window, answer.start_s or 0.0, answer.end_s or 0.0)
         if window is not None:
             answers.append(cu.UnclearAnswer(answer.action, window[0], window[1], answer.text))
-    for answer in _pinned_answers(live):
+    for answer in _pinned_answers(live, scope=scope):
         window = _caption_window(map_window, answer.start_s or 0.0, answer.end_s or 0.0)
         if window is not None:
             estimated.append(window)
@@ -388,13 +435,13 @@ def apply_to_cues(
     if not targets:
         if (
             render.state == cu.STATE_NOT_COMPARABLE
-            and not _pinned_answers(live)
+            and not _pinned_answers(live, scope=scope)
             and not approval.spans
         ):
             raise UnclearTargetRequired(clarification_prompt())
         return list(cues), {"state": render.state, "spans": []}
     out, report = cu.apply_unclear_answers(
-        cues, targets, answers, ask_active=True, default=model_answer(live)
+        cues, targets, answers, ask_active=True, default=model_answer(live, scope=scope)
     )
     return out, {"state": "applied", "spans": report.rows()}
 
@@ -423,9 +470,15 @@ def fallback_omit(
     if not asks:
         return list(cues), None
     windows: list[tuple[float, float]] = []
+    scope = media_scope(
+        row_identity(_single_take(data.get("media_snapshot"), None)),
+        _text((asks[0].get("facts") or {}).get(ASK_FACT)),
+    )
     try:
         for req in asks:
             for row in (req.get("facts") or {}).get(ANSWERS_FACT) or []:
+                if row.get("media_scope") != scope:
+                    continue
                 start, end = _number(row.get("start_s")), _number(row.get("end_s"))
                 if start is not None and end is not None:
                     windows.append((start, end))

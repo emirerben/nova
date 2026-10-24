@@ -268,13 +268,17 @@ async def gate(
     brief: CreativeBrief,
     row: dict,
     events: list[tuple] | None = None,
+    *,
+    strategy: dict | None = None,
 ) -> PlannedKriaTurn:
     """The server gate on the drafted strategy, with the chat so far (``events``)."""
     monkeypatch.setattr(planner, "load_latest_brief", AsyncMock(return_value=brief))
     monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=events or []))
     return await planner._gate_unresolved_choices(
         SimpleNamespace(),
-        planned(strategy_for(), snapshot_media(item_for(row))),
+        planned(
+            strategy if strategy is not None else strategy_for(), snapshot_media(item_for(row))
+        ),
         thread_id=THREAD_ID,
         creator_id=CREATOR_ID,
     )
@@ -839,6 +843,100 @@ async def test_a_grounded_omission_survives_a_missing_second_hearing(
     assert result.plan.mode == "act"
     variant = write_captions(monkeypatch, approved_binding(row, brief, strategy))
     assert_clean_and_untouched(variant, baseline, SPAN_S)
+
+
+@pytest.mark.parametrize("changed", ["clip", "generation", "hash", "request", "legacy-unbound"])
+@pytest.mark.parametrize("missing_hearing", [False, True])
+async def test_an_old_caption_answer_cannot_locate_a_word_in_replacement_footage(
+    monkeypatch: pytest.MonkeyPatch,
+    changed: str,
+    missing_hearing: bool,
+) -> None:
+    from app.services.creator_render_contract import CreatorRenderContractError
+
+    strategy, brief = await answered(monkeypatch, take_row(), LEAVE_OUT)
+    replacement = take_row(drop_gemini=missing_hearing)
+    if changed == "clip":
+        replacement["media_id"] = "replacement-take"
+        strategy["selected_media_ids"] = [replacement["media_id"]]
+    elif changed == "generation":
+        replacement["storage_generation"] = "replacement-generation"
+    elif changed == "hash":
+        replacement["upload_contract"]["proxy"]["original"]["sha256"] = "a" * 64
+    elif changed == "request":
+        brief = brief.model_copy(
+            update={
+                "requirements": [
+                    req.model_copy(
+                        update={"facts": {**req.facts, "ask_if_unclear": "the waiter's name"}}
+                    )
+                    if req.facts.get("ask_if_unclear")
+                    else req
+                    for req in brief.requirements
+                ]
+            }
+        )
+    else:
+        strategy = copy.deepcopy(strategy)
+        for answer in strategy.get("choice_answers") or []:
+            answer["input_digest"] = "legacy-unbound"
+            (answer.get("detail") or {}).pop("media_scope", None)
+        brief = brief.model_copy(
+            update={
+                "requirements": [
+                    req.model_copy(
+                        update={
+                            "facts": {
+                                **req.facts,
+                                "unclear_answers": [
+                                    {
+                                        key: value
+                                        for key, value in answer.items()
+                                        if key != "media_scope"
+                                    }
+                                    for answer in req.facts.get("unclear_answers", [])
+                                ],
+                            }
+                        }
+                    )
+                    if req.facts.get("ask_if_unclear")
+                    else req
+                    for req in brief.requirements
+                ]
+            }
+        )
+    result = await gate(monkeypatch, brief, replacement, strategy=strategy)
+    assert result.plan.mode == "respond" and not result.plan.intents
+    assert approval_blocker(strategy, brief, replacement, []) is not None
+    if missing_hearing:
+        with pytest.raises(CreatorRenderContractError) as refused:
+            write_captions(monkeypatch, approved_binding(replacement, brief, strategy))
+        assert refused.value.decline_reason == "needs_choice"
+        assert refused.value.field_path == "captions"
+
+
+async def test_a_new_media_answer_does_not_inherit_an_old_typed_correction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, brief = await answered(monkeypatch, take_row(), LEAVE_OUT)
+    brief = brief.model_copy(
+        update={
+            "requirements": [
+                req.model_copy(
+                    update={"facts": {**req.facts, "unclear_answer": "old creator wording"}}
+                )
+                if req.facts.get("ask_if_unclear")
+                else req
+                for req in brief.requirements
+            ]
+        }
+    )
+    replacement = take_row()
+    replacement["storage_generation"] = "replacement-generation"
+    strategy, pinned = await answered(monkeypatch, replacement, "use_2", brief=brief)
+    variant = write_captions(monkeypatch, approved_binding(replacement, pinned, strategy))
+    assert "sal marina" in caption_text(variant)
+    assert "old creator wording" not in caption_text(variant)
 
 
 @pytest.mark.parametrize("questions_enabled", [False, True])

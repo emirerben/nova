@@ -3183,6 +3183,7 @@ def _unclear_word(
     from app.kria.unclear_word_ask import (  # noqa: PLC0415
         ask_requirements,
         detect,
+        media_scope,
         model_answer,
         row_identity,
         unsettled,
@@ -3191,7 +3192,7 @@ def _unclear_word(
 
     live = _live(brief)
     asks = ask_requirements(live)
-    if not asks or model_answer(live) is not None:
+    if not asks:
         return None  # no ask, or the creator already told us in their own words
     if not defers_caption_words_to_phone_render(
         creator_id=cap.creator_id,
@@ -3204,10 +3205,13 @@ def _unclear_word(
     if finding.state != STATE_UNCLEAR:
         return None
     identity = row_identity(finding.row)
+    scope = media_scope(identity, finding.ask)
+    if model_answer(live, scope=scope) is not None:
+        return None
     ids = tuple(sorted(str(req.id) for req in asks))
     choices = [
         choice
-        for position, span in unsettled(finding.spans, live)
+        for position, span in unsettled(finding.spans, live, scope=scope)
         if (choice := unclear_word_choice(span, position, ids, identity, finding.ask)) is not None
     ]
     return choices or None
@@ -3229,6 +3233,7 @@ def unclear_word_choice(
     listens heard (the creator's own pick, never ours). ``None`` when no heard words fit a
     button; the render then leaves the span out by itself."""
 
+    from app.kria.unclear_word_ask import media_scope  # noqa: PLC0415
     from app.pipeline.caption_unclear import (  # noqa: PLC0415
         ACTION_OMIT,
         ACTION_USE,
@@ -3243,7 +3248,11 @@ def unclear_word_choice(
     if not heard:
         return None
     at = format_time(span.start_s)
-    window = {"start_s": round(span.start_s, 3), "end_s": round(span.end_s, 3)}
+    window = {
+        "start_s": round(span.start_s, 3),
+        "end_s": round(span.end_s, 3),
+        "media_scope": media_scope(identity, ask),
+    }
     options = [
         _option(
             OPT_LEAVE_OUT,
@@ -3358,10 +3367,20 @@ def open_conflicts(
     """
 
     answered = answered_conflict_ids(strategy)
+    recorded = _as_dict(strategy).get("choice_answers") or []
     return [
         c
         for c in collect_conflicts(strategy, brief, media_snapshot, capability)
         if c.conflict_id not in answered
+        or (
+            c.kind == CONFLICT_UNCLEAR_WORD
+            and not any(
+                isinstance(answer, Mapping)
+                and answer.get("conflict") == c.conflict_id
+                and answer.get("input_digest") == c.input_digest
+                for answer in recorded
+            )
+        )
     ]
 
 
@@ -4379,26 +4398,30 @@ def _apply_unclear_answers(brief: Any, answers: Sequence[Mapping[str, Any]], cha
         if answer.get("kind") != CONFLICT_UNCLEAR_WORD or not isinstance(detail, Mapping):
             continue
         entry = {
-            key: detail[key] for key in ("start_s", "end_s", "action", "text") if key in detail
+            key: detail[key]
+            for key in ("start_s", "end_s", "action", "text", "media_scope")
+            if key in detail
         }
         ids = {str(i) for i in answer.get("requirement_ids") or []}
         for req in _live(brief):
             if req.id not in ids or not (req.facts or {}).get("ask_if_unclear"):
                 continue
             current = changed.get(req.id, req)
-            known = [
+            previous = [
                 row
                 for row in (current.facts or {}).get("unclear_answers") or []
                 if isinstance(row, Mapping)
             ]
+            known = [row for row in previous if row.get("media_scope") == entry.get("media_scope")]
             if any(
                 (row.get("start_s"), row.get("end_s")) == (entry.get("start_s"), entry.get("end_s"))
                 for row in known
             ):
                 continue
-            changed[req.id] = current.model_copy(
-                update={"facts": {**current.facts, "unclear_answers": [*known, entry]}}
-            )
+            facts = {**current.facts, "unclear_answers": [*known, entry]}
+            if previous and not known:
+                facts.pop("unclear_answer", None)
+            changed[req.id] = current.model_copy(update={"facts": facts})
 
 
 def choice_notices(strategy: Any) -> list[str]:

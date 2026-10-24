@@ -126,3 +126,19 @@ repeated unanswered replies, Turkish clarification, and preservation of existing
 The no-guess requirement remains persisted after the question. Replacement wording or
 "omit" without a located target cannot create an approval card. The broader choice,
 narrated-cut, duration, audio-save and freeze/protocol integration run passed 836 cases.
+
+## Integration review: source-bound answers (2026-10-24)
+
+A further replay reproduced an old answered window clearing clarification after the footage
+changed. The expanded red controls also found unchanged original-byte hashes were not part
+of the identity, stale answer IDs could clear the approval backstop, and a new source pick
+could inherit old typed wording.
+
+Server-written answers now carry an opaque scope for clip/path, generation, original SHA-256,
+and the request. Gate, receipts, writer and fallback require that scope. Analysis-only changes
+retain confirmed windows; replacement clip/generation/hash, a changed request, or a legacy
+unbound answer requires a new decision. A new scoped pick clears wording tied to an old
+source. The backstop also checks the current question digest rather than accepting an old ID.
+The 851-case combined replay/Postgres integration passes, including the same-source positive
+controls and replacement/legacy negatives; legacy rendering without a valid target declines
+instead of removing unrelated words. No new client protocol or model prompt is needed.
