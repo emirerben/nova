@@ -28,6 +28,107 @@ class ThroughputTests(unittest.TestCase):
         self.assertIn("tests/kria/test_kri623_ruled_out_clips.py", portable)
         self.assertNotIn("tests/kria/test_kri623_ruled_out_clips.py", native)
 
+    def native_steps(self):
+        """[(name, if-expression)] for every step of ci.yml's journey-native job."""
+        import re
+
+        workflow = (
+            Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
+        ).read_text()
+        job = workflow.split("\n  journey-native:\n", 1)[1].split("\n  journey:\n", 1)[
+            0
+        ]
+        # The fallback literal keeps the matrix valid when selection is absent;
+        # the job's own `if` already requires a successful selector.
+        self.assertIn(
+            "leg: ${{ fromJSON(needs.changes.outputs.native_legs || '[\"unit\"]') }}",
+            job,
+        )
+        self.assertIn("fail-fast: false", job)
+        steps = []
+        for block in re.split(r"\n      - (?=name: |uses: )", job)[1:]:
+            name = re.match(r"(?:name|uses): (.*)", block).group(1)
+            condition = re.search(r"\n        if: (.*)", block)
+            steps.append((name, condition.group(1) if condition else ""))
+        return steps
+
+    def test_pr_native_legs_split_journeys_without_dropping_any(self):
+        # One serial Mac took 40-55 min per PR (2026-10-23: compile+unit 13-22,
+        # then ~27 min of journeys one after another). Each leg compiles from
+        # the shared cache and runs only its journeys; the selector starts
+        # only the legs whose journeys were selected.
+        import re
+
+        mapped = {
+            journey: leg
+            for leg, journeys in ci.LEG_JOURNEYS.items()
+            for journey in journeys
+        }
+        self.assertNotIn("unit", ci.LEG_JOURNEYS)
+        seen = set()
+        for name, condition in self.native_steps():
+            journeys = re.findall(
+                r"contains\(needs\.changes\.outputs\.journey_ids, '([^']+)'\)",
+                condition,
+            )
+            legs = re.findall(r"matrix\.leg == '([^']+)'", condition)
+            with self.subTest(step=name):
+                if journeys:
+                    self.assertEqual(len(legs), 1, "journey step must name one leg")
+                    for journey in journeys:
+                        self.assertEqual(mapped.get(journey), legs[0])
+                    seen.update(journeys)
+                else:
+                    self.assertLessEqual(len(legs), 1)
+        self.assertEqual(seen, set(mapped), "leg map and workflow steps disagree")
+        unit_only = {
+            "Run selected iPhone UI scenarios",
+            "Verify selected named native unit journeys",
+            "Save Xcode build data for the next run",
+            "Record compiled iPhone input timestamps",
+        }
+        every_leg = {
+            "Build iPhone app and run selected unit tests",
+            "Reuse the same simulator for selected native journeys",
+            "Restore Xcode build data",
+        }
+        conditions = dict(self.native_steps())
+        for name in unit_only:
+            with self.subTest(step=name):
+                self.assertIn("matrix.leg == 'unit'", conditions[name])
+        for name in every_leg:
+            with self.subTest(step=name):
+                self.assertNotIn("matrix.leg", conditions[name])
+        # Every artifact name carries the leg so legs never overwrite each other.
+        job = (
+            (Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml")
+            .read_text()
+            .split("\n  journey-native:\n", 1)[1]
+            .split("\n  journey:\n", 1)[0]
+        )
+        self.assertIn("name: ios-native-test-diagnostics-${{ matrix.leg }}", job)
+        self.assertIn("-${{ github.sha }}-${{ matrix.leg }}", job)
+        self.assertEqual(job.count("upload-artifact@v4"), 2)
+
+    def test_selector_starts_only_the_legs_with_selected_journeys(self):
+        self.assertEqual(ci.native_legs([]), ["unit"])
+        self.assertEqual(ci.native_legs(["kri-524-creation"]), ["unit", "creation"])
+        self.assertEqual(
+            ci.native_legs(["kri-648-phone-text", "kri-492-length-ownership"]),
+            ["unit", "creation", "screens"],
+        )
+        # Journeys proven by named unit tests alone stay on the unit leg.
+        self.assertEqual(ci.native_legs(["kri-557-thinking"]), ["unit"])
+        everything = [journey["id"] for journey in ci.JOURNEYS]
+        self.assertEqual(ci.native_legs(everything), ["unit", "creation", "screens"])
+        with self.assertRaises(ValueError):
+            ci.native_legs(["not-a-journey"])
+        changes = (
+            Path(__file__).resolve().parents[2] / ".github/workflows/ci-changes.yml"
+        ).read_text()
+        self.assertIn("value: ${{ jobs.select.outputs.native_legs }}", changes)
+        self.assertIn("native_legs: ${{ steps.select.outputs.native_legs }}", changes)
+
     def test_only_main_push_defers_native_regression(self):
         for event in ("pull_request", "schedule", "workflow_dispatch", "unknown"):
             self.assertTrue(ci.native_validation(event, {"ios"}, False))

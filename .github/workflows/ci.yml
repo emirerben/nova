@@ -357,8 +357,11 @@ jobs:
         # import fails with `libEGL.so.1: cannot open shared object file`.
         # apt-install.sh kills and retries a stalled mirror within minutes; the
         # step cap sits above the slowest green install (32 min, slow mirror).
+        # The composite action caches the .debs so that cost is paid once.
         timeout-minutes: 40
-        run: sudo bash scripts/ci/apt-install.sh ffmpeg libegl1 libgl1 tesseract-ocr tesseract-ocr-tur
+        uses: ./.github/actions/apt-install
+        with:
+          packages: ffmpeg libegl1 libgl1 tesseract-ocr tesseract-ocr-tur
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -466,8 +469,12 @@ jobs:
       - name: Disable unused Chrome apt source
         run: sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
       - name: Install deterministic media dependencies
+        # journey-native waits on this job; a crawling mirror here held the Mac
+        # back 34 min on 2026-10-23 (run 39956379905), hence the .deb cache.
         timeout-minutes: 40
-        run: sudo bash scripts/ci/apt-install.sh ffmpeg libegl1 libgl1 tesseract-ocr tesseract-ocr-tur
+        uses: ./.github/actions/apt-install
+        with:
+          packages: ffmpeg libegl1 libgl1 tesseract-ocr tesseract-ocr-tur
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -544,10 +551,12 @@ jobs:
           cache: pip
           cache-dependency-path: src/apps/api/pyproject.toml
       # Match API CI's native Python-library dependencies (Skia imports GL).
+      - name: Disable unused Chrome apt source
+        run: sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
       - name: Install portable journey runtime libraries
-        run: |
-          sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
-          sudo bash scripts/ci/apt-install.sh ffmpeg libegl1 libgl1 tesseract-ocr tesseract-ocr-tur
+        uses: ./.github/actions/apt-install
+        with:
+          packages: ffmpeg libegl1 libgl1 tesseract-ocr tesseract-ocr-tur
       - name: Install offline journey dependencies
         if: needs.changes.outputs.journey == 'true'
         working-directory: src/apps/api
@@ -1055,7 +1064,7 @@ jobs:
           if-no-files-found: ignore
 
   journey-native:
-    name: iPhone validation
+    name: iPhone validation (${{ matrix.leg }})
     needs: [changes, journey-mapping, journey-offline, journey-library]
     if: >-
       !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.native_validation == 'true' &&
@@ -1064,6 +1073,16 @@ jobs:
       ((needs.changes.outputs.journey == 'true' && needs.journey-mapping.result == 'success' && needs.journey-offline.result == 'success') ||
        (needs.changes.outputs.journey == 'false' && needs.journey-mapping.result == 'skipped' && needs.journey-offline.result == 'skipped'))
     runs-on: macos-15
+    # Up to three duration-balanced legs. `unit` compiles, runs unit tests, the
+    # UI smoke subset and the named-unit gate; `creation` and `screens` compile
+    # from the same cache and split the fixture-driven journeys. One serial Mac
+    # took 40-55 min per PR (2026-10-23); each leg targets ~20 min. The selector
+    # starts only the legs whose journeys were selected (LEG_JOURNEYS in
+    # scripts/ci/select-tests.py); the `journey` aggregate requires every leg.
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(needs.changes.outputs.native_legs || '["unit"]') }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -1116,14 +1135,16 @@ jobs:
         if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
         env:
           KRIA_IOS_TEST_MODE: ${{ github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true' && needs.changes.outputs.ios_ui == 'false' && needs.changes.outputs.journey_needs_native == 'false' && 'unit' || 'prepare-ui' }}
-          KRIA_IOS_UNIT_TESTS: ${{ github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true' && '1' || '0' }}
+          # Only the unit leg executes the unit suite; the other legs compile
+          # the same bundles and skip it (verify.sh prepare-ui contract).
+          KRIA_IOS_UNIT_TESTS: ${{ matrix.leg == 'unit' && github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true' && '1' || '0' }}
           KRIA_RESTORE_INPUT_TIMES: '1'
         run: bash scripts/ios/verify.sh
       - name: Record compiled iPhone input timestamps
-        if: github.event_name == 'pull_request' && (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true')
+        if: matrix.leg == 'unit' && github.event_name == 'pull_request' && (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true')
         run: python3 scripts/ios/cache-inputs.py save
       - name: Save Xcode build data for the next run
-        if: github.event_name == 'pull_request' && (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true') && steps.build-cache.outputs.cache-hit != 'true'
+        if: matrix.leg == 'unit' && github.event_name == 'pull_request' && (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true') && steps.build-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -1135,13 +1156,13 @@ jobs:
             src/apps/ios/.derived-data/CompilationCache.noindex
           key: ${{ steps.build-cache.outputs.cache-primary-key }}
       - name: Run selected iPhone UI scenarios
-        if: github.event_name == 'pull_request' && needs.changes.outputs.ios_ui == 'true'
+        if: github.event_name == 'pull_request' && needs.changes.outputs.ios_ui == 'true' && matrix.leg == 'unit'
         env:
           KRIA_IOS_TEST_MODE: ui
           KRIA_IOS_UI_GROUPS: ${{ needs.changes.outputs.ios_ui_groups == 'full' && 'smoke' || needs.changes.outputs.ios_ui_groups }}
         run: bash scripts/ios/verify.sh
       - name: Verify server suggestion chips stay visible and send the chosen action
-        if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-756-suggestion-chips')
+        if: matrix.leg == 'screens' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-756-suggestion-chips')
         working-directory: src/apps/ios
         run: |
           xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
@@ -1155,7 +1176,7 @@ jobs:
             --test-results ../../../test-results/kri-559/suggestion-chips-native-tests.json \
             --xctest CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips
       - name: Verify both answer orders use one creation turn
-        if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-802-question-batch')
+        if: matrix.leg == 'screens' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-802-question-batch')
         working-directory: src/apps/ios
         run: |
           xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
@@ -1174,7 +1195,7 @@ jobs:
         if: needs.changes.outputs.journey_needs_native == 'true'
         run: cp test-results/ios/simulator-id.txt test-results/kri-559/simulator-id.txt
       - name: Render captured creation journey on iPhone simulator
-        if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
+        if: matrix.leg == 'creation' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         working-directory: src/apps/ios
         env:
           TEST_RUNNER_KRIA_E2E_DIR: ${{ github.workspace }}/test-results/kri-559/fixture
@@ -1195,7 +1216,7 @@ jobs:
             /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_INFO"
           } > ../../../test-results/kri-559/app-build.txt
       - name: Verify typography preview/export and personal settings on the built iPhone simulator
-        if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-648-phone-text')
+        if: matrix.leg == 'screens' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-648-phone-text')
         working-directory: src/apps/ios
         env:
           TEST_RUNNER_KRIA_E2E_DIR: ${{ github.workspace }}/test-results/kri-559/kri-648
@@ -1223,7 +1244,7 @@ jobs:
             --xctest AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory \
             --xctest CreationUITests/testFinishedEditLearningChatAcceptAndDismiss
       - name: Render approved Unicode hook on the built iPhone simulator
-        if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
+        if: matrix.leg == 'creation' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         working-directory: src/apps/ios
         env:
           TEST_RUNNER_KRIA_E2E_DIR: ${{ github.workspace }}/test-results/kri-559/approved-hook
@@ -1239,7 +1260,7 @@ jobs:
             --test-results ../../../test-results/kri-559/approved-hook-tests.json \
             --xctest DeviceMontageRenderE2ETests/testApprovedUnicodeHookExportsWithoutContextCaptionOnTheIPhone
       - name: Render trim-save journey on the built iPhone simulator
-        if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
+        if: matrix.leg == 'creation' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         working-directory: src/apps/ios
         env:
           TEST_RUNNER_KRIA_E2E_DIR: ${{ github.workspace }}/test-results/kri-559/trim-save
@@ -1252,7 +1273,7 @@ jobs:
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/trim-save/native.xcresult \
             > ../../../test-results/kri-559/trim-save/native-test-results.json
       - name: Render approved 24-second length journey on the iPhone simulator
-        if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-492-length-ownership')
+        if: matrix.leg == 'creation' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-492-length-ownership')
         working-directory: src/apps/ios
         env:
           TEST_RUNNER_KRIA_E2E_DIR: ${{ github.workspace }}/test-results/kri-559/kri-492
@@ -1265,13 +1286,13 @@ jobs:
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/kri-492/native.xcresult \
             > ../../../test-results/kri-559/kri-492/native-test-results.json
       - name: Require approved-length native journey test to pass
-        if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-492-length-ownership')
+        if: matrix.leg == 'creation' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-492-length-ownership')
         run: |
           python3 scripts/ci/journey-gate.py verify-tests \
             --test-results test-results/kri-559/kri-492/native-test-results.json \
             --xctest DeviceMontageRenderE2ETests/testApprovedTwentyFourSecondLengthThenExportOnTheIPhone
       - name: Render delayed extension journey on the built iPhone simulator
-        if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
+        if: matrix.leg == 'creation' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         working-directory: src/apps/ios
         env:
           TEST_RUNNER_KRIA_E2E_DIR: ${{ github.workspace }}/test-results/kri-559/extend
@@ -1284,7 +1305,7 @@ jobs:
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/extend/native.xcresult \
             > ../../../test-results/kri-559/extend/native-test-results.json
       - name: Verify gameday edit, fifth clip, reopen and export on the built simulator
-        if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-669-gameday')
+        if: matrix.leg == 'creation' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-669-gameday')
         working-directory: src/apps/ios
         run: |
           xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
@@ -1299,14 +1320,14 @@ jobs:
             --test-results ../../../test-results/kri-559/kri-669/native-test-results.json \
             --xctest GamedayAddClipUITests/testEditedGamedayAddsFifthClipAndReopensCurrentPreview
       - name: Record and validate immutable journey evidence
-        if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
+        if: matrix.leg == 'creation' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-524-creation')
         env:
           KRIA_JOURNEY_HEAD_SHA: ${{ github.sha }}
         run: |
           python3 scripts/ci/journey-gate.py record-native --fixture test-results/kri-559/fixture --head "$KRIA_JOURNEY_HEAD_SHA" --xcresult test-results/kri-559/native.xcresult --test-results test-results/kri-559/native-test-results.json --render test-results/kri-559/fixture/frames/creation_words_retimed.mp4 --app-build test-results/kri-559/app-build.txt --output test-results/kri-559/journey-evidence.json
           python3 scripts/ci/journey-gate.py validate --evidence test-results/kri-559/journey-evidence.json --head "$KRIA_JOURNEY_HEAD_SHA"
       - name: Verify camera-roll partial consent and independent idea screens
-        if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-729-camera-roll-recommendations')
+        if: matrix.leg == 'creation' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-729-camera-roll-recommendations')
         working-directory: src/apps/ios
         run: |
           xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
@@ -1323,7 +1344,7 @@ jobs:
             --xctest CameraRollCollectionUITests/testPartiallyIndexedCollectionWaitsForExplicitPartialChoice \
             --xctest CameraRollStoriesUITests/testThreeIdeasRemainIndependentWhenOneIsRejected
       - name: Verify saved originals can finish adding to Visuals
-        if: needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-384-ios-library')
+        if: matrix.leg == 'screens' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-384-ios-library')
         working-directory: src/apps/ios
         run: |
           xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
@@ -1340,7 +1361,7 @@ jobs:
             --xctest SavedUploadsUITests/testDeviceOnlyVideoAddsToVisualsFromLocalOriginal \
             --xctest SavedUploadsUITests/testRelinkedOriginalFinishesTheVisualsAdd
       - name: Verify selected named native unit journeys
-        if: needs.changes.outputs.journey_needs_native == 'true'
+        if: matrix.leg == 'unit' && needs.changes.outputs.journey_needs_native == 'true'
         env:
           JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
           UNIT_EXECUTED: ${{ github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true' }}
@@ -1351,7 +1372,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ios-native-test-diagnostics
+          name: ios-native-test-diagnostics-${{ matrix.leg }}
           path: test-results/ios/
           retention-days: 7
           if-no-files-found: ignore
@@ -1359,7 +1380,7 @@ jobs:
         if: always() && needs.changes.outputs.journey_needs_native == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: kri-559-native-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+          name: kri-559-native-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}-${{ matrix.leg }}
           path: test-results/kri-559/
           retention-days: 14
           if-no-files-found: error
