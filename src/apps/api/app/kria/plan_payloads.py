@@ -212,9 +212,11 @@ def title_raw(text: Any, bar_id: Any = None, highlight_word: Any = None) -> dict
     }
 
 
-def post_caption_raw(text: Any, hashtags: Any) -> dict[str, Any] | None:
-    clean = " ".join(str(text or "").split())[:2200]
-    if not clean:
+def post_caption_raw(
+    text: Any, hashtags: Any, *, preserve_text: bool = False
+) -> dict[str, Any] | None:
+    clean = str(text or "")[:2200] if preserve_text else " ".join(str(text or "").split())[:2200]
+    if not clean and not preserve_text:
         return None
     tags: list[str] = []
     for tag in hashtags or []:

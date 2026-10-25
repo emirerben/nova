@@ -1,6 +1,24 @@
 import XCTest
 
 final class CameraRollCollectionUITests: XCTestCase {
+    func testCompletedTimingReviewStillOffersExplicitReadyVideoChoice() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-camera-roll-collection-ready", "-collection-ready-reset", "-collection-unusable-timing"]
+        app.launch()
+        XCTAssertTrue(app.buttons["collection-find-stories"].waitForExistence(timeout: 10))
+        app.buttons["collection-find-stories"].tap()
+        let ready = app.buttons["collection-use-ready-videos"]
+        XCTAssertTrue(ready.waitForExistence(timeout: 10), "One timing-review clip cannot block choosing the other ready video")
+        XCTAssertTrue(app.staticTexts["1 video needs a usable source window. You can use the ready videos."].exists)
+        XCTAssertFalse(app.staticTexts["Boat journey"].exists, "Partial inclusion still requires a separate creator choice")
+        ready.tap()
+        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["1 video needs source or analysis review before inclusion."].exists)
+        let evidence = XCTAttachment(screenshot: app.screenshot())
+        evidence.name = "Explicit partial choice retains ready footage while timing-review source stays visible"
+        evidence.lifetime = .keepAlways
+        add(evidence)
+    }
     func testReviewCorrectionRemovalAndResumeDoNotUpload() {
         let app = XCUIApplication()
         app.launchArguments = ["-camera-roll-collection", "-collection-fixture-reset"]
@@ -48,7 +66,7 @@ final class CameraRollCollectionUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Boat journey"].exists, "Full-collection ideas must wait for missing analysis")
         ready.tap()
         XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["1 video wasn’t included because analysis isn’t ready."].exists)
+        XCTAssertTrue(app.staticTexts["1 video needs source or analysis review before inclusion."].exists)
     }
 
     func testSavedIdeasSurviveRelaunchWithoutReselectingFootage() {
@@ -101,8 +119,60 @@ final class CameraRollCollectionUITests: XCTestCase {
         let saved = app.buttons["View saved ideas"]
         XCTAssertTrue(saved.waitForExistence(timeout: 10))
         saved.tap()
+        // Reading the frozen card grants no consent to generate new partial ideas.
+        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["collection-use-ready-videos"].exists)
+        app.navigationBars["Story ideas"].buttons["Done"].tap()
+        let more = app.buttons["Find more ideas"]
+        XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
+        let fresh = app.buttons["Find story ideas"]
+        XCTAssertTrue(fresh.waitForExistence(timeout: 10)); fresh.tap()
         XCTAssertTrue(app.buttons["collection-use-ready-videos"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts["Boat journey"].exists)
+    }
+
+    func testSavedIdeasOpenWithoutIndexGenerationOrExposureWrites() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-camera-roll-collection-ready", "-collection-ready-reset", "-collection-saved-read-only"]
+        app.launch()
+        let saved = app.buttons["View saved ideas"]
+        XCTAssertTrue(saved.waitForExistence(timeout: 10))
+        saved.tap()
+        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["Write attempted while reading saved idea"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Frozen saved card opened without index, generation or exposure writes"
+        shot.lifetime = .keepAlways; add(shot)
+    }
+
+    func testMissingSavedReadEndpointDoesNotFallbackToGeneration() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-camera-roll-collection-ready", "-collection-ready-reset", "-collection-saved-read-only", "-collection-saved-old-server"]
+        app.launch()
+        let saved = app.buttons["View saved ideas"]
+        XCTAssertTrue(saved.waitForExistence(timeout: 10)); saved.tap()
+        XCTAssertTrue(app.staticTexts["Saved ideas cannot be opened on this server. Your collection is saved."].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["Boat journey"].exists)
+    }
+
+    func testSavedCardReplaysHoldThenRequiresExplicitRecovery() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-camera-roll-collection-ready", "-collection-ready-reset", "-collection-saved-read-only", "-collection-saved-recovery"]
+        app.launch()
+        // Generate/link the real synthetic original before timing product screens.
+        XCTAssertTrue(app.staticTexts["saved-recovery-fixture-ready"].waitForExistence(timeout: 60))
+        let saved = app.buttons["View saved ideas"]
+        XCTAssertTrue(saved.waitForExistence(timeout: 10)); saved.tap()
+        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        let choose = app.buttons["story-choose-11111111-1111-1111-1111-111111111111"]
+        if !choose.isHittable { app.swipeUp() }
+        XCTAssertTrue(choose.waitForExistence(timeout: 10)); choose.tap()
+        let recover = app.buttons["story-recover-held-selection"]
+        XCTAssertTrue(recover.waitForExistence(timeout: 15))
+        XCTAssertFalse(app.staticTexts["Saved idea reopened"].exists)
+        if !recover.isHittable { app.swipeUp() }; recover.tap()
+        XCTAssertTrue(app.staticTexts["Saved idea reopened"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["Write attempted while reading saved idea"].exists)
     }
 
     func testUnavailableAnalysisIsNotAnEditConflict() {

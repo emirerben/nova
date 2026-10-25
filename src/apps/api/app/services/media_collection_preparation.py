@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from typing import Literal
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -26,6 +27,59 @@ def execution_digest(value):
     ).hexdigest()
 
 
+class PreparedSourceContext(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    moment_id: UUID
+    asset_id: UUID
+    source_id: UUID
+    generation: str
+    start_s: float = Field(ge=0, le=0, allow_inf_nan=False)
+    end_s: float = Field(ge=1, le=20, allow_inf_nan=False)
+    evidence_scope: Literal["whole_source_context"]
+    context_contract: Literal["whole-source-context-v1"]
+    semantic_localization: Literal["none"]
+    timing_basis: Literal["verified_source_bounds"]
+    uncertain: Literal[True]
+    fact_version: str = Field(pattern=r"^[a-f0-9]{64}$")
+    index_spec: str = Field(pattern=r"^[a-f0-9]{64}$")
+    quality: dict
+
+
+def _source_contexts(moments: list[dict]) -> list[PreparedSourceContext]:
+    result = []
+    for raw in moments:
+        evidence = raw.get("evidence") or {}
+        scope = raw.get("evidence_scope", evidence.get("evidence_scope", "timed_moment"))
+        if scope != "whole_source_context":
+            if evidence.get("evidence_scope") == "whole_source_context":
+                raise ValueError("Story source context scope changed")
+            continue
+        result.append(
+            PreparedSourceContext(
+                moment_id=raw["id"],
+                asset_id=raw["asset_id"],
+                source_id=raw["source_id"],
+                generation=raw["generation"],
+                start_s=raw["start_s"],
+                end_s=raw["end_s"],
+                uncertain=raw["uncertain"],
+                evidence_scope=scope,
+                **{
+                    key: evidence.get(key)
+                    for key in (
+                        "context_contract",
+                        "semantic_localization",
+                        "timing_basis",
+                        "fact_version",
+                        "index_spec",
+                        "quality",
+                    )
+                },
+            )
+        )
+    return result
+
+
 class PreparedCollectionStory(BaseModel):
     model_config = ConfigDict(extra="forbid")
     story_id: UUID
@@ -39,6 +93,59 @@ class PreparedCollectionStory(BaseModel):
         default=None, exclude_if=lambda value: value is None
     )
     research: StoryResearch | None = Field(default=None, exclude_if=lambda value: value is None)
+    source_contexts: list[PreparedSourceContext] = Field(
+        default_factory=list, max_length=8, exclude_if=lambda value: not value
+    )
+
+
+def selected_story_requirement(prepared: PreparedCollectionStory):
+    """The creator selected this complete reviewed story, not an empty delegation."""
+    from app.kria.brief import BriefUpdate
+
+    return BriefUpdate(
+        kind="select",
+        scope="global",
+        description=prepared.snapshot.title,
+        facts={
+            "collection_story": {
+                "story_id": str(prepared.story_id),
+                "story_revision": prepared.story_revision,
+                "collection_id": str(prepared.collection_id),
+                "collection_revision": prepared.collection_revision,
+                "prepared_digest": execution_digest(prepared.model_dump(mode="json")),
+            }
+        },
+    )
+
+
+def prepared_story_readiness(raw, *, strategy, media):
+    """Read execution evidence; ownership/current revisions remain separately fenced."""
+    from app.agents._schemas.creator_agent import CreativeStrategy
+    from app.pipeline.guided_story import GuidedStoryError, compile_proposal_execution_plan
+
+    prepared = PreparedCollectionStory.model_validate(raw)
+    if CreativeStrategy.model_validate(strategy) != CreativeStrategy.model_validate(
+        prepared.strategy
+    ):
+        raise ValueError("Selected story strategy changed")
+    try:
+        compiled_digest = execution_digest(compile_proposal_execution_plan(prepared.snapshot))
+    except GuidedStoryError as exc:
+        raise ValueError("Selected story execution is invalid") from exc
+    if compiled_digest != prepared.compiled_digest:
+        raise ValueError("Selected story execution changed")
+    assignments = {
+        str(row.get("media_id")): row
+        for row in media.get("clip_assignments") or []
+        if isinstance(row, dict)
+    }
+    for ref in prepared.snapshot.media:
+        attached = assignments.get(ref.media_id) or {}
+        if attached.get("gcs_path") != ref.gcs_path or str(
+            attached.get("storage_generation")
+        ) != str(ref.generation):
+            raise ValueError("Selected story source binding changed")
+    return selected_story_requirement(prepared), execution_digest(prepared.model_dump(mode="json"))
 
 
 async def prepare_story_snapshot(db, owner, story, item):
@@ -54,10 +161,16 @@ async def prepare_story_snapshot(db, owner, story, item):
         story.collection_id,
         story.collection_revision,
         moment_ids=[UUID(value["id"]) for value in story.moments_json],
+        retained_story=story,
     )
     current = {str(value.id): value for value in evidence.moments}
     if any(value["id"] not in current for value in story.moments_json):
         raise HTTPException(409, "Story source changed; refresh the collection")
+    contexts = _source_contexts(
+        [current[value["id"]].model_dump(mode="json") for value in story.moments_json]
+    )
+    if contexts != _source_contexts(story.moments_json):
+        raise HTTPException(409, "Story source context evidence changed; review it again")
     eligible = await media_collections.eligible_sources(
         db, owner, media_collections.members(collection)
     )
@@ -196,6 +309,7 @@ async def prepare_story_snapshot(db, owner, story, item):
         compiled_digest=execution_digest(compiled),
         content_plan=content_plan,
         research=story_out(story).research,
+        source_contexts=contexts,
     )
 
 
@@ -263,6 +377,29 @@ async def plan_selected_story(db, *, reference, thread_id, item_id, creator_id):
             + " / ".join(json.dumps(value, ensure_ascii=False) for value in wording)
             + ". No added music or narration."
         )
+    if prepared.source_contexts:
+        summary += (
+            " Whole clip; no timed highlight detected."
+            if len(prepared.source_contexts) == 1
+            else " Whole clips; no timed highlights detected."
+        )
+        if any(
+            value.quality.get("overlapping_unusable_spans") for value in prepared.source_contexts
+        ):
+            summary += " Cached quality notes flag a source span for review."
+    from app.config import settings
+    from app.kria.brief import load_latest_brief
+
+    brief_fields = {}
+    if settings.brief_binding_for(creator_id):
+        previous_brief = await load_latest_brief(db, thread_id)
+        brief_fields = {
+            "brief_updates": (selected_story_requirement(prepared),),
+            "brief_route": "replan",
+            "brief_expected_version": previous_brief.version if previous_brief else 0,
+            "brief_clip_ids": tuple(ref.media_id for ref in prepared.snapshot.media),
+            "brief_manifest": manifest,
+        }
     return PlannedKriaTurn(
         plan=KriaTurnPlan(
             mode="act",
@@ -287,6 +424,8 @@ async def plan_selected_story(db, *, reference, thread_id, item_id, creator_id):
         context_hash=manifest.context_hash,
         media_snapshot=snapshot_media(item),
         prepared_collection_story=prepared.model_dump(mode="json"),
+        readiness_manifest=manifest,
+        **brief_fields,
     )
 
 
@@ -334,6 +473,10 @@ def install_approved_story(db, *, item, owner, raw, strategy, dry_run=False):
         raise ValueError("Approved story strategy changed")
     if prepared.research != story_out(story).research:
         raise ValueError("Approved story research changed")
+    if prepared.content_plan != story_out(story).content_plan:
+        raise ValueError("Approved story content plan changed")
+    if prepared.source_contexts != _source_contexts(story.moments_json):
+        raise ValueError("Approved story context evidence changed")
     if (
         execution_digest(compile_proposal_execution_plan(prepared.snapshot))
         != prepared.compiled_digest
@@ -415,5 +558,10 @@ async def validate_prepared_story_for_approval(db, *, owner, item, raw):
     ):
         raise HTTPException(409, "This story was rejected")
     current = await prepare_story_snapshot(db, owner, story, item)
-    if current.compiled_digest != prepared.compiled_digest or current.research != prepared.research:
-        raise HTTPException(409, "Chosen story source or compiler changed")
+    if (
+        current.compiled_digest != prepared.compiled_digest
+        or current.research != prepared.research
+        or current.content_plan != prepared.content_plan
+        or current.source_contexts != prepared.source_contexts
+    ):
+        raise HTTPException(409, "Chosen story source, wording or compiler changed")

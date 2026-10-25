@@ -124,12 +124,14 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func changeCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, order: [UUID]?, audioPolicy: String?, eventID: String) async throws -> CameraRollStory
     func indexCameraRollCollection(id: UUID, revision: Int, offset: Int) async throws -> CameraRollIndexPass
     func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool) async throws -> CameraRollStories
+    func savedCameraRollStories(id: UUID, revision: Int, storyIDs: [UUID]) async throws -> CameraRollStories
     func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool, researchTopic: String?) async throws -> CameraRollStories
     func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool, researchTopic: String?, allowPartialAnalysis: Bool) async throws -> CameraRollStories
     func recordCameraRollStoryExposure(collectionID: UUID, story: CameraRollStory, collectionRevision: Int) async throws
     func correctCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, index: Int, momentID: UUID, eventID: String) async throws -> CameraRollStory
     func rejectCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, eventID: String) async throws -> CameraRollStory
     func selectCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, threadID: UUID, threadRevision: Int, eventID: String) async throws -> TurnAccepted
+    func recoverCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, threadID: UUID, threadRevision: Int, eventID: String, heldTurnID: UUID) async throws -> TurnAccepted
     func createCameraRollStoryThread(id: UUID, revision: Int) async throws -> CreationThread
     func inspectCameraRollMoment(collectionID: UUID, revision: Int, momentID: UUID, question: String, cacheOnly: Bool) async throws -> CameraRollInspection
     func importCollectionMedia(file: URL, kind: String) async throws -> SavedMediaAsset
@@ -496,12 +498,13 @@ struct SongAudioLink: Decodable, Equatable, Sendable {
 
 struct TurnAccepted: Codable, Sendable {
     let turnID: String; let threadRevision: Int; let status: String
+    var recoverableHeldTurnID: UUID? = nil
     /// KRI-374: a take-order question carried on the turn response, when the server sends it there. Decoded
     /// leniently: a malformed or newer shape is dropped (nil), never a decode failure for the turn.
     var songOrderQuestion: SongOrderQuestion? = nil
     /// KRI-588: a song-range question carried on the turn response, decoded the same lenient way.
     var songRangeQuestion: SongRangeQuestion? = nil
-    enum CodingKeys: String, CodingKey { case turnID = "turn_id"; case threadRevision = "thread_revision"; case status; case songOrderQuestion = "song_order_question"; case songRangeQuestion = "song_range_question" }
+    enum CodingKeys: String, CodingKey { case turnID = "turn_id"; case threadRevision = "thread_revision"; case status; case recoverableHeldTurnID = "recoverable_held_turn_id"; case songOrderQuestion = "song_order_question"; case songRangeQuestion = "song_range_question" }
     init(turnID: String, threadRevision: Int, status: String, songOrderQuestion: SongOrderQuestion? = nil, songRangeQuestion: SongRangeQuestion? = nil) {
         self.turnID = turnID; self.threadRevision = threadRevision; self.status = status
         self.songOrderQuestion = songOrderQuestion; self.songRangeQuestion = songRangeQuestion
@@ -511,12 +514,14 @@ struct TurnAccepted: Codable, Sendable {
         turnID = try c.decode(String.self, forKey: .turnID)
         threadRevision = try c.decode(Int.self, forKey: .threadRevision)
         status = try c.decode(String.self, forKey: .status)
+        recoverableHeldTurnID = try c.decodeIfPresent(UUID.self, forKey: .recoverableHeldTurnID)
         songOrderQuestion = (try? c.decodeIfPresent(JSONValue.self, forKey: .songOrderQuestion)).flatMap { $0 }.flatMap(SongOrderQuestion.init(json:))
         songRangeQuestion = (try? c.decodeIfPresent(JSONValue.self, forKey: .songRangeQuestion)).flatMap { $0 }.flatMap(SongRangeQuestion.init(json:))
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(turnID, forKey: .turnID); try c.encode(threadRevision, forKey: .threadRevision); try c.encode(status, forKey: .status)
+        try c.encodeIfPresent(recoverableHeldTurnID, forKey: .recoverableHeldTurnID)
     }
 }
 /// Mirrors the server's `MobileUserOut` (`GET /auth/mobile/me`) — the account screen's

@@ -3965,6 +3965,18 @@
     },
     "TurnAccepted": {
       "properties": {
+        "recoverable_held_turn_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Recoverable Held Turn Id"
+        },
         "replayed": {
           "default": false,
           "title": "Replayed",

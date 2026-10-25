@@ -2764,6 +2764,7 @@ async def decide_approval(
                                 item=copy_item,
                                 saved=saved_readiness,
                             ),
+                            prepared_collection_story=copy_document.prepared_collection_story,
                         )
                     ready = (
                         digest(media_identity(snapshot_media(copy_item)))
