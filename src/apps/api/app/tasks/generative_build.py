@@ -7392,7 +7392,6 @@ def _run_phone_subtitled_job(
         SOURCE_FALLBACK,
         coerce_caption_language_request,
         crosscheck_detected_language,
-        infer_language_from_text,
         resolve_spoken_caption_language,
     )
     from app.pipeline.caption_spelling import extract_spelling_asks  # noqa: PLC0415
@@ -7424,10 +7423,6 @@ def _run_phone_subtitled_job(
         is_filler_token,
         plan_summary,
         remap_words,
-    )
-    from app.pipeline.speech_cleanup_analysis import (  # noqa: PLC0415
-        merge_mixed_language_passes,
-        mixed_reference_languages,
     )
     from app.pipeline.transcribe import Word, transcribe_whisper_cached  # noqa: PLC0415
     from app.services.device_render import (  # noqa: PLC0415
@@ -8279,47 +8274,9 @@ def _run_phone_subtitled_job(
                 # again in the language Gemini actually heard. Only this spoken pass
                 # is checked, never the requested-language caption pass.
                 clip_meta = next((m for m in clip_metas if str(m.clip_id) == str(clip_id)), None)
-                gemini_reference = str(getattr(clip_meta, "transcript", None) or "")
-                # KRI-843: a take Gemini heard in two or more languages (an English
-                # question, a Spanish answer, Turkish chatter) has no one right whisper
-                # language, so it is transcribed once more per other language and merged
-                # stretch by stretch -- the SAME merge, flag and pass cap the preflight
-                # engine uses, so this live branch (cleanup declined, no quoted line,
-                # preflight off) captions each stretch in its own language too. The
-                # plan item's clip analysis listened to the whole clip (no coverage
-                # cap). Single-language reference, kill switch off or a wordless first
-                # pass: the EN/TR cross-check below runs exactly as before.
-                mixed_languages = (
-                    mixed_reference_languages(gemini_reference) if transcript.words else []
+                heard_lang = crosscheck_detected_language(
+                    transcript.language, reference_text=getattr(clip_meta, "transcript", None)
                 )
-                heard_lang = (
-                    None
-                    if mixed_languages
-                    else crosscheck_detected_language(
-                        transcript.language, reference_text=gemini_reference or None
-                    )
-                )
-                if mixed_languages:
-                    transcript, mixed_receipt = merge_mixed_language_passes(
-                        transcript,
-                        media_path=clip_path,
-                        reference_text=gemini_reference,
-                        languages=mixed_languages,
-                        duration_s=float(probe.duration_s),
-                        covers_s=None,
-                        transcribe=transcribe_whisper_cached,
-                        verbatim_prompt=vocabulary_prompt,
-                        receipt={
-                            "whisper_language": str(transcript.language or "")[:32],
-                            "reference_language": infer_language_from_text(gemini_reference),
-                            "applied": False,
-                        },
-                    )
-                    record_pipeline_event(
-                        "captions",
-                        "caption_language_crosscheck",
-                        {"variant_id": "subtitled", **mixed_receipt},
-                    )
                 if heard_lang is not None:
                     retranscribed = transcribe_whisper_cached(
                         clip_path, language=heard_lang, verbatim_prompt=vocabulary_prompt

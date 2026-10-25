@@ -209,3 +209,37 @@ a human training decision and an approved priced plan remain necessary. No numer
 sample threshold automatically sends data or starts training. Four real CLI
 journeys exercise this workflow with synthetic responses and synthetic judgments;
 they prove the mechanics and make no creative-quality claim.
+
+## Measuring feedback (read-only, zero model cost)
+
+`scripts/editorial-taste-measure.py` reads one account's `CreatorIdeaFeedback` rows
+and offered `MediaCollectionStory` rows through the app's DB session, in a
+`READ ONLY` transaction, and reports:
+
+- would_post rate by ISO week (UTC) with a 95% Wilson band, plus offered counts.
+- repeat-rejection rate: among rejections (not `would_post`) with a rejection reason
+  recorded after an earlier reasoned rejection, the share repeating an earlier reason.
+  Each repeat is split by the story's offered-time `editorial_taste.feedback_ids`
+  receipt: the earlier judgment was in the prompt, was not, or the story predates
+  receipts. The receipt is fixed when the story is offered, so an earlier judgment
+  made after that moment gets its own bucket (`earlier_judgment_after_offer`) and is
+  not counted as the prompt dropping it. Only the two newest judgments reach a
+  prompt, so "not in the prompt" is expected for older reasons.
+- wrong_facts rate: rows with `invented_experience` or `footage_mismatch`.
+- context diff for `--query`: `generation_context` with and without `reviewed_ideas`
+  (sizes, hashes, verdicts/reasons and note lengths; no text).
+
+```bash
+src/apps/api/.venv/bin/python scripts/editorial-taste-measure.py \
+  --owner <creator-uuid> --query 'food review' [--json] [--simulate-flag-on]
+```
+
+The whole report fails closed: if the taste flag is off for the owner, personalization
+is paused, or the profile is not enabled, it reads no judgments and prints `blocked_by`
+with the reason (`--simulate-flag-on` only overrides the flag). Output carries a hashed owner, run count, spread and a **Limiter** line (one account,
+small samples, no control arm). It never prints idea words, notes, the query or the
+raw owner id. A non-local `DATABASE_URL` is refused unless `--allow-prod` is passed;
+that flag only permits the read-only session. `--simulate-flag-on` builds the context
+as if `CREATOR_EDITORIAL_TASTE_ENABLED` covered the owner, in-process only. Observed
+rates are descriptive of one account and cannot show that the flag improved taste.
+Journey: `src/apps/api/tests/integration/test_editorial_taste_measure_cli.py`.
