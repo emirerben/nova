@@ -58,6 +58,9 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     /// The feedback route accepts the `wrong_facts` reason (an idea's researched facts were wrong). Nil/false (older
     /// server) = no such choice: the older route rejects the whole judgment for an unknown reason.
     var wrongFactFeedback: Bool? = nil
+    /// The server can turn a saved would-post idea or rewrite into a taste example on one confirming tap.
+    /// Nil/false (older server) = no prompt: the route would 404.
+    var ideaExampleFeedback: Bool? = nil
     /// KRI-815: a reply may carry `voiceover_script` (a script written from the attached clips, with Record/Import).
     /// Nil/false = the reply text only, which also holds the script.
     var voiceoverScriptCards: Bool? = nil
@@ -98,6 +101,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var choiceQuestionsEnabled: Bool { choiceQuestions == true }
     var voiceoverScriptCardsEnabled: Bool { voiceoverScriptCards == true }
     var wrongFactFeedbackEnabled: Bool { wrongFactFeedback == true }
+    var ideaExampleFeedbackEnabled: Bool { ideaExampleFeedback == true }
     /// The chat composer needs BOTH flags: the server only reports chat-edit as on with rich text, and
     /// a stale cached capability must not enable it when rich text is off.
     var slidePostChatComposerEnabled: Bool { slidePostRichTextEnabled && slidePostChatEditEnabled }
@@ -129,7 +133,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case momentOrderQuestions = "moment_order_questions"
         case choiceQuestions = "choice_questions"
         case voiceoverScriptCards = "voiceover_script_cards"
-        case wrongFactFeedback = "wrong_fact_feedback"
+        case wrongFactFeedback = "wrong_fact_feedback", ideaExampleFeedback = "idea_example_feedback"
         case creationMode = "creation_mode", minimumClientProtocol = "minimum_client_protocol"
         case livePlanReviewEnabled = "live_plan_review_enabled", livePlanReviewVersion = "live_plan_review_version"
     }
@@ -171,6 +175,7 @@ extension CreationCapabilities {
         choiceQuestions = try container.decodeIfPresent(Bool.self, forKey: .choiceQuestions)
         voiceoverScriptCards = try container.decodeIfPresent(Bool.self, forKey: .voiceoverScriptCards)
         wrongFactFeedback = try container.decodeIfPresent(Bool.self, forKey: .wrongFactFeedback)
+        ideaExampleFeedback = try container.decodeIfPresent(Bool.self, forKey: .ideaExampleFeedback)
         creationMode = try container.decodeIfPresent(CreationMode.self, forKey: .creationMode)
         minimumClientProtocol = try container.decodeIfPresent(Int.self, forKey: .minimumClientProtocol)
         livePlanReviewEnabled = try container.decodeIfPresent(Bool.self, forKey: .livePlanReviewEnabled)

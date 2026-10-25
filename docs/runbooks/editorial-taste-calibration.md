@@ -129,6 +129,19 @@ Clients show the choice only when `/creation-threads/capabilities` returns
 `wrong_fact_feedback: true`; an older server would 422 the whole judgment. Rollback is a
 normal deploy revert (capability disappears, old rows are inert).
 
+A saved `would_post` judgment, or any judgment carrying the creator's own rewrite, can
+become a taste example without a built project, but only on a second explicit tap:
+`IdeaFeedbackView` asks "Use as a taste example?" and calls
+`POST /me/editorial-taste/feedback/{id}/example`. Saving the judgment never does it, and
+declining adds nothing. No migration: the confirmation is a new profile revision whose
+payload lists `idea_example_ids` (newest ten kept); the words are read back from the
+feedback row's frozen proposal, so story deletion, Forget and Memory clear remove them,
+pause and the feature gate empty them, and a profile re-save carries them over. A rewrite
+is the example's words and the rejected angle rides as its contextual note. Examples show
+in `idea_examples` on GET and in the same top-three retrieval as project examples.
+Clients ask only when `/creation-threads/capabilities` returns `idea_example_feedback: true`.
+Rollback is a normal deploy revert (capability disappears, old payload ids are inert).
+
 PUT requires `expected_revision`, a stable `idempotency_key`, owned `project_ids`,
 `rules`, optional `project_notes` (at most 1,500 characters per project),
 `confirmed: true` and `enabled`. Project notes preserve full contextual feedback;

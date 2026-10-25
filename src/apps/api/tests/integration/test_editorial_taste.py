@@ -8,6 +8,8 @@ recorded provider response proves plumbing; it cannot prove editorial quality.
 import json
 import uuid
 
+import pytest
+from fastapi import HTTPException
 from sqlalchemy import delete, select, update
 
 from app.config import settings
@@ -917,3 +919,204 @@ async def test_rejected_idea_is_not_reoffered_and_relevant_judgments_outrank_rec
             await creator_editorial_taste.rejected_ideas(db, uuid.uuid4(), uuid.UUID(collection))
             == []
         )
+
+
+async def test_would_post_idea_or_rewrite_becomes_a_taste_example_only_when_confirmed(
+    collection_world, monkeypatch
+):
+    """An idea the creator would post teaches taste without a built project, but only on request.
+
+    Failure catalogue, written first: (1) saving would_post, or a rewrite, must not
+    infer an example on its own; (2) declining the prompt adds nothing; (3) a replayed
+    tap adds no second revision; (4) a judgment with neither would_post nor a rewrite
+    cannot be an example; (5) another creator's judgment is not found; (6) a paused
+    account cannot add one and its context is empty; (7) re-saving the project profile
+    must not drop confirmed ideas; (8) Forget removes the words everywhere, including old
+    revisions, and an old retry cannot revive them; (9) the next generation context shows
+    the example with its opaque id, and the stored receipt holds no words.
+    """
+    from app.agents.camera_roll_stories import (
+        CameraRollStoriesAgent,
+        CameraRollStoriesOutput,
+        StoryIdea,
+    )
+    from app.models import CreatorEditorialTasteRevision
+    from app.routes import editorial_taste
+    from app.services import creator_editorial_taste
+
+    client, assets, sources, owner, app = collection_world
+    app.include_router(editorial_taste.router)
+    monkeypatch.setattr(settings, "creator_editorial_taste_enabled", True)
+    monkeypatch.setattr(settings, "creator_editorial_taste_user_ids", [str(owner.id)])
+    ids = await projects(owner)
+    route = "/me/editorial-taste"
+    assert (await client.put(route, json=profile_body(ids))).status_code == 200
+
+    specs = [
+        (
+            "Harbor lighthouse",
+            "The harbor lighthouse beacon guides the boats home",
+            "Beacon at dusk",
+        ),
+        (
+            "Sourdough starter",
+            "Feeding a sourdough starter every morning",
+            "Day nine of my starter",
+        ),
+        ("Marathon pacing", "Why the first five kilometres decide a marathon", "Mile five matters"),
+    ]
+    ferry = ("Quiet ferry", "Why the morning ferry feels quiet before the crowd", "The early ferry")
+
+    def provider(self, input, *, ctx):
+        moments = [v.id for v in input.candidates[:2]]
+        return CameraRollStoriesOutput(
+            stories=[
+                StoryIdea(
+                    title=title,
+                    hook="Hook",
+                    payoff="Payoff",
+                    rationale="Grounded in the footage.",
+                    moment_ids=moments,
+                    content_plan={
+                        "audience": "Travelers",
+                        "angle": angle,
+                        "why_it_works": "A specific everyday moment.",
+                        "opening_text": opening,
+                        "beat_reasons": ["Shows the journey"] * 2,
+                    },
+                )
+                for title, angle, opening in specs
+            ]
+        )
+
+    monkeypatch.setattr(CameraRollStoriesAgent, "run", provider)
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    await client.put(path, json=selection(assets, sources))
+    await client.post(f"{path}/index", json={"expected_revision": 1})
+    offered = await client.post(f"{path}/stories", json={"expected_revision": 1, "query": "seed"})
+    stories = {v["title"]: v for v in offered.json()["stories"]}
+    specs[:] = [ferry]
+    offered = await client.post(f"{path}/stories", json={"expected_revision": 1, "query": "again"})
+    stories.update({v["title"]: v for v in offered.json()["stories"]})
+    assert len(stories) == 4
+    counter = iter(range(1000))
+
+    async def judge(title, verdict, rewrite=""):
+        story = stories[title]
+        response = await client.post(
+            f"{route}/feedback",
+            json={
+                "collection_id": path.rsplit("/", 1)[1],
+                "story_id": story["id"],
+                "expected_story_revision": story["revision"],
+                "client_event_id": f"event-{next(counter)}",
+                "verdict": verdict,
+                "reasons": [],
+                "note": "",
+                "rewrite": rewrite,
+            },
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["id"]
+
+    async def context(query):
+        async with AsyncSessionLocal() as db:
+            raw = await creator_editorial_taste.generation_context(db, owner.id, query)
+        return json.loads(raw.split("\n", 1)[1])
+
+    lighthouse = await judge("Harbor lighthouse", "would_post")
+    await judge("Sourdough starter", "would_post")
+    marathon = await judge("Marathon pacing", "not_for_me", "Mile five is where I decide my race")
+    ferry = await judge("Quiet ferry", "not_for_me")
+    assert (await client.get(route)).json()["idea_examples"] == []
+    assert not any(e["kind"] == "idea" for e in (await context("harbor lighthouse"))["examples"])
+
+    def confirm(feedback_id, event=None):
+        return client.post(
+            f"{route}/feedback/{feedback_id}/example",
+            json={"client_event_id": event or f"tap-{feedback_id}", "confirmed": True},
+        )
+
+    assert (await confirm(ferry)).status_code == 422
+    assert (await confirm(uuid.uuid4())).status_code == 404
+    other = uuid.uuid4()
+    async with AsyncSessionLocal() as db:
+        db.add(User(id=other, email=f"{other}@taste.test"))
+        await db.flush()
+        db.add(
+            CreatorEditorialTasteRevision(
+                user_id=other,
+                revision=1,
+                idempotency_key="profile:other",
+                request_sha256="0" * 64,
+                payload={"enabled": True},
+            )
+        )
+        await db.commit()
+        body = type("Body", (), {"client_event_id": "tap-other"})()
+        with pytest.raises(HTTPException) as refused:
+            await creator_editorial_taste.confirm_idea_example(
+                db, other, uuid.UUID(lighthouse), body
+            )
+        assert refused.value.status_code == 404
+        await db.rollback()
+    revision = (await client.get(route)).json()["revision"]
+
+    saved = await confirm(lighthouse)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["revision"] == revision + 1
+    example = saved.json()["idea_examples"][0]
+    assert example["id"] == lighthouse and example["kind"] == "idea"
+    assert "Beacon at dusk" in example["words"]
+    assert (await confirm(lighthouse)).json()["revision"] == revision + 1
+    assert (await confirm(lighthouse, "tap-2")).json()["revision"] == revision + 1
+
+    rewritten = await confirm(marathon)
+    assert rewritten.status_code == 200, rewritten.text
+    pair = next(v for v in rewritten.json()["idea_examples"] if v["id"] == marathon)
+    assert pair["words"] == ["Mile five is where I decide my race"]
+    assert "Why the first five kilometres decide a marathon" in pair["creator_editorial_note"]
+
+    shown = {e["id"]: e for e in (await context("harbor lighthouse beacon marathon"))["examples"]}
+    assert lighthouse in shown and marathon in shown
+    assert not any("Day nine" in json.dumps(e) for e in shown.values())
+
+    refreshed = await client.put(
+        route, json=profile_body(ids, revision=rewritten.json()["revision"], key="resave")
+    )
+    assert refreshed.status_code == 200
+    assert {v["id"] for v in refreshed.json()["idea_examples"]} == {lighthouse, marathon}
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(User).where(User.id == owner.id).values(creator_memory_enabled=False)
+        )
+        await db.commit()
+        assert await creator_editorial_taste.generation_context(db, owner.id, "lighthouse") == ""
+    assert (await confirm(lighthouse, "tap-paused")).status_code == 409
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(User).where(User.id == owner.id).values(creator_memory_enabled=True)
+        )
+        await db.commit()
+
+    forgotten = await client.request(
+        "DELETE",
+        route,
+        json={"expected_revision": refreshed.json()["revision"], "idempotency_key": "forget"},
+    )
+    assert forgotten.status_code == 200
+    assert forgotten.json()["idea_examples"] == []
+    assert (await confirm(lighthouse, "tap-after")).status_code in (404, 409)
+    assert (await confirm(lighthouse)).status_code == 409
+    async with AsyncSessionLocal() as db:
+        versions = (
+            await db.scalars(
+                select(CreatorEditorialTasteRevision).where(
+                    CreatorEditorialTasteRevision.user_id == owner.id
+                )
+            )
+        ).all()
+        assert "Beacon at dusk" not in json.dumps([v.payload for v in versions])
+        assert lighthouse not in json.dumps([v.payload for v in versions])
+        assert await creator_editorial_taste.generation_context(db, owner.id, "lighthouse") == ""
