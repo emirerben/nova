@@ -107,8 +107,8 @@ def test_render_prompt_en_branch_does_not_include_tr_marker():
 
 def test_render_prompt_tr_branch_includes_turkish_instruction():
     # The TR branch must instruct the model to (a) write in Turkish, (b) use
-    # informal 'sen' (creator voice), (c) preserve diacritic Unicode codepoints,
-    # and (d) supply Turkish exemplars. All four are the contract — silent loss
+    # warm plural audience address, (c) preserve diacritic Unicode codepoints,
+    # and retain the output shape. These are the contract — silent loss
     # of any one yields an EN/TR-mixed output that her audience reads as broken.
     inp = IntroWriterInput(
         hero_clip=ClipSummary(clip_id="c1", duration_s=4.0, subject="x", hook_score=5.0),
@@ -117,10 +117,9 @@ def test_render_prompt_tr_branch_includes_turkish_instruction():
     rendered = _agent().render_prompt(inp)
     assert "TURKISH" in rendered
     assert "Türkçe" in rendered
-    assert "'sen'" in rendered
+    assert "'siz'" in rendered and "'size'" in rendered
     assert "ç ş ğ ı İ ö ü" in rendered
-    # At least one TR exemplar must reach the prompt with diacritics intact.
-    assert "keşke" in rendered
+    assert "NEVER 'siz'" not in rendered
 
 
 def test_render_prompt_unknown_language_falls_back_to_english():
@@ -152,7 +151,7 @@ def test_render_prompt_omits_persona_when_empty():
     assert "- creator voice/tone:" not in rendered
 
 
-def test_render_prompt_includes_persona_context_when_present():
+def test_render_prompt_omits_account_topics_even_when_present():
     inp = IntroWriterInput(
         hero_clip=ClipSummary(clip_id="c1", duration_s=4.0, subject="x", hook_score=5.0),
         tone="no-excuses gym motivation",
@@ -161,16 +160,16 @@ def test_render_prompt_includes_persona_context_when_present():
         idea="film the dark early-morning start",
     )
     rendered = _agent().render_prompt(inp)
-    assert "no-excuses gym motivation" in rendered
-    assert "morning workout routines" in rendered
-    assert "discipline over motivation" in rendered
-    assert "first 5am workout of the challenge" in rendered
-    assert "film the dark early-morning start" in rendered
+    assert "no-excuses gym motivation" not in rendered
+    assert "morning workout routines" not in rendered
+    assert "discipline over motivation" not in rendered
+    assert "first 5am workout of the challenge" not in rendered
+    assert "film the dark early-morning start" not in rendered
     # Footage-grounding primacy must survive alongside the persona steer.
     assert "the footage still rules" in rendered
 
 
-def test_render_prompt_partial_persona_only_renders_present_fields():
+def test_render_prompt_theme_alone_is_not_writing_context():
     # theme alone (no tone/pillars/idea) — only the theme line should appear, and
     # it must NOT fall through to the one-off sentinel.
     inp = IntroWriterInput(
@@ -178,8 +177,8 @@ def test_render_prompt_partial_persona_only_renders_present_fields():
         theme="cheap rooftop nobody posts about",
     )
     rendered = _agent().render_prompt(inp)
-    assert "this video's theme: cheap rooftop nobody posts about" in rendered
-    assert "one-off edit" not in rendered
+    assert "cheap rooftop nobody posts about" not in rendered
+    assert "one-off edit" in rendered
     assert "creator voice/tone" not in rendered
 
 
@@ -197,14 +196,14 @@ def test_render_prompt_sanitizes_persona_injection():
     assert "@scammer" not in rendered
 
 
-def test_persona_pillars_capped_in_prompt():
+def test_persona_pillars_are_all_omitted_from_prompt():
     # A runaway persona row can't flood the prompt — only the first few pillars render.
     inp = IntroWriterInput(
         hero_clip=ClipSummary(clip_id="c1", duration_s=4.0, subject="x", hook_score=5.0),
         content_pillars=[f"pillar{i}" for i in range(20)],
     )
     rendered = _agent().render_prompt(inp)
-    assert "pillar0" in rendered
+    assert "pillar0" not in rendered
     assert "pillar19" not in rendered
 
 

@@ -733,9 +733,22 @@ def _generate_post_caption(
     from app.agents._model_client import default_client  # noqa: PLC0415
     from app.agents._runtime import RunContext  # noqa: PLC0415
     from app.agents.platform_copy import PlatformCopyAgent, PlatformCopyInput  # noqa: PLC0415
+    from app.models import Job  # noqa: PLC0415
 
+    # Read inside the pool thread, release the session before contacting the model.
+    # No source paths, signed URLs or whole job dumps cross this boundary.
+    with sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        transcript = job.transcript if job is not None and isinstance(job.transcript, dict) else {}
+        excerpt = transcript.get("full_text")
+        excerpt = excerpt[:500] if isinstance(excerpt, str) else ""
     out = PlatformCopyAgent(default_client()).run(
-        PlatformCopyInput(hook_text=hook_text[:300], has_transcript=False, reply_language=language),
+        PlatformCopyInput(
+            hook_text=hook_text[:300],
+            transcript_excerpt=excerpt,
+            has_transcript=bool(excerpt),
+            reply_language=language,
+        ),
         ctx=RunContext(job_id=job_id),
     )
     tiktok = out.value.tiktok

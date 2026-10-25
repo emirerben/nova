@@ -524,8 +524,15 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.commitCount, count + 1)
         XCTAssertNil(fake.lastRequest?.userSong, "a retry does not resend the removal")
 
-        session.saveState = .conflict
-        await session.rebaseAfterConflict()
+        // A newer version refuses the next Save: the automatic reload and resend keep the removal folded.
+        fake.commitErrorQueue = [.conflict]
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-3",
+            sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false),
+            revisionNumber: 3, revisionHash: "h", expectedDuration: nil)
+        session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.5)
+        await session.save()
+        XCTAssertEqual(fake.commitCount, count + 3, "the refused save is resent once, automatically")
+        XCTAssertNil(fake.lastRequest?.userSong, "the automatic resend does not resend the removal")
         XCTAssertNil(session.document.userSong)
         XCTAssertFalse(session.hasUnsavedChanges)
         await session.retryRender()
@@ -2407,11 +2414,17 @@ final class NativeEditorSessionTests: XCTestCase {
         await session.synchronizePromptRevision()
         XCTAssertEqual(session.document, local)
         XCTAssertTrue(session.hasUnsavedChanges)
+        // KRI-935: a newer render loads by itself and the unsaved trim rides on top of it.
         fake.authoritativeVariant = Self.variant(duration: 2, generation: "g2")
         await session.synchronizePromptRevision()
-        XCTAssertEqual(session.document, local)
-        XCTAssertEqual(session.saveState, .conflict)
+        XCTAssertEqual(session.document.clips, local.clips)
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertEqual(session.saveState, .idle)
         XCTAssertEqual(fake.draftCallCount, 0)
+        session.undo()
+        XCTAssertFalse(session.hasUnsavedChanges, "one Undo drops the replayed edit, leaving the newest version")
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
     }
 
     func testLegacyRefreshRejectsMissingOrUnknownSelectionWithoutLoadedTargetFallback() async throws {
@@ -2567,18 +2580,15 @@ final class NativeEditorSessionTests: XCTestCase {
         await session.synchronizePromptRevision()
         XCTAssertEqual(session.document, afterSave)
         XCTAssertTrue(session.hasUnsavedChanges)
-        XCTAssertNotEqual(session.saveState, .conflict)
 
         fake.authoritativeVariant = Self.variant(duration: 1.4, generation: "g3")
         await session.synchronizePromptRevision()
-        XCTAssertEqual(session.saveState, .conflict)
-        await session.rebaseAfterConflict()
         let rebased = session.document
         XCTAssertTrue(session.hasUnsavedChanges)
-        XCTAssertEqual(rebased.revision.baseGeneration, "g3")
+        XCTAssertEqual(rebased.revision.baseGeneration, "g3", "the newest render loaded without a prompt")
+        XCTAssertEqual(rebased.clips, afterSave.clips, "with the unsaved trim kept on top")
         await session.synchronizePromptRevision()
         XCTAssertEqual(session.document, rebased)
-        XCTAssertNotEqual(session.saveState, .conflict)
         XCTAssertEqual(fake.draftCallCount, 0)
     }
 
@@ -5235,7 +5245,9 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.saveState, .previewPending)
     }
 
-    func testSaveConflictPreservesLocalDocumentSelectionAndUndo() async {
+    /// KRI-935: a Save the server keeps refusing as stale is resent once after loading the newest version, then
+    /// stops on an ordinary Save failure. Never a loop, never a "reload" prompt, and the edit is never lost.
+    func testPersistentSaveConflictRetriesOnceAndKeepsLocalDocumentSelectionAndUndo() async {
         let threadID = UUID()
         let clipID = UUID()
         let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["timeline_slots": .array([.object(["slot_id": .string(clipID.uuidString), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2)])])])])]
@@ -5253,14 +5265,18 @@ final class NativeEditorSessionTests: XCTestCase {
 
         await session.save()
 
-        XCTAssertEqual(session.saveState, .conflict)
-        XCTAssertEqual(session.document, editedDocument)
+        XCTAssertEqual(fake.commitCount, 2, "one automatic resend after reloading the newest version, no loop")
+        guard case .failed(let message) = session.saveState else { return XCTFail("expected a Save failure, got \(session.saveState)") }
+        XCTAssertFalse(message.localizedCaseInsensitiveContains("reopen"))
+        XCTAssertEqual(session.document.clips, editedDocument.clips, "the local trim is replayed on the newest version")
         XCTAssertEqual(session.selectedClipID, selected)
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertTrue(session.canUndo)
     }
 
-    func testConflictRebaseKeepsLocalSectionsOnLatestServerBaseline() async {
+    /// KRI-935: Save meets a newer version saved elsewhere. Without asking, the editor loads it, keeps the local
+    /// text on top, and sends the Save again against the new baseline.
+    func testSaveConflictLoadsLatestKeepsLocalSectionsAndResendsAutomatically() async {
         let threadID = UUID()
         let textID = UUID().uuidString
         let snapshot: [String: JSONValue] = [
@@ -5286,32 +5302,65 @@ final class NativeEditorSessionTests: XCTestCase {
         ]
         let fake = EditorCommitSpy(
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
-            authoritativeVariant: latestVariant.merging(["render_generation_id": .string("g1")]) { _, new in new },
-            commitError: .conflict
+            authoritativeVariant: latestVariant.merging(["render_generation_id": .string("g1")]) { _, new in new }
         )
         let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
         await session.load(api: fake, threadID: threadID)
         session.updateTextContent(id: textID, content: "My local edit")
 
-        await session.save()
-        XCTAssertEqual(session.saveState, .conflict)
-
+        // Someone else saved g2; the server refuses this Save once as stale.
         fake.authoritativeVariant = latestVariant
-        let sourceRefresh = expectation(description: "Conflict rebase resolves new generation sources")
-        fake.sourcePoolExpectation = sourceRefresh
-        await session.rebaseAfterConflict()
-        await fulfillment(of: [sourceRefresh], timeout: 3)
-        XCTAssertEqual(fake.sourcePoolCallCount, 2)
+        fake.commitErrorQueue = [.conflict]
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "g3", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
+        await session.save()
 
-        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertEqual(fake.commitCount, 2, "the Save is resent once, without the creator asking")
+        XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2", "against the newest version")
+        XCTAssertEqual(fake.lastRequest?.textElements?.first?.objectValue?["text"]?.stringValue, "My local edit")
         XCTAssertEqual(session.document.textElements.first?.text, "My local edit")
-        XCTAssertTrue(session.hasUnsavedChanges)
-        XCTAssertTrue(session.canUndo)
-        XCTAssertEqual(session.saveState, .idle)
-
-        session.undo()
-        XCTAssertEqual(session.document.textElements.first?.text, "Changed elsewhere")
         XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertEqual(session.saveState, .previewPending)
+    }
+
+    /// KRI-935: a preview whose source pool answers 409 ("a newer version exists") loads the newest version on
+    /// its own, keeps the unsaved edit, and rebuilds. A server that keeps answering 409 gets one reload per
+    /// generation, then a Retry that reloads again: never "close and reopen", never an endless "Preparing preview".
+    func testPreviewConflictLoadsNewestVersionOncePerGenerationThenRetryReloads() async throws {
+        let threadID = UUID(), jobID = UUID()
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+                snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "g1",
+                snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
+        fake.sourcePoolError = .conflict
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: threadID)
+
+        func settledFailure() async -> String? {
+            _ = await waitUntil(timeout: .seconds(5)) { if case .failed = session.sourcePreviewState { true } else { false } }
+            if case .failed(let message) = session.sourcePreviewState { return message }
+            return nil
+        }
+        let firstFailure = await settledFailure()
+        let first = try XCTUnwrap(firstFailure, "a persistent 409 must not leave the preview preparing")
+        XCTAssertEqual(fake.sourcePoolCallCount, 2, "the open reloads once on its own, then stops")
+        XCTAssertFalse(first.localizedCaseInsensitiveContains("reopen"))
+        XCTAssertFalse(first.localizedCaseInsensitiveContains("close"))
+
+        // The creator keeps editing; meanwhile a newer version (g2) lands on the server.
+        session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.5)
+        let local = session.document.clips
+        fake.authoritativeVariant = Self.variant(duration: 2, generation: "g2")
+        await session.retryPreview()
+        let secondFailure = await settledFailure()
+        XCTAssertNotNil(secondFailure, "Retry ends on the Retry card again, not an endless Preparing preview")
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2", "Retry loaded the newest version")
+        XCTAssertEqual(session.document.clips, local, "with the unsaved trim on top")
+        XCTAssertTrue(session.hasUnsavedChanges)
+        let calls = fake.sourcePoolCallCount
+        XCTAssertEqual(calls, 4, "Retry's build, then one rebuild on g2")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(fake.sourcePoolCallCount, calls, "no reload loop")
     }
 
     func testSaveRequestFailurePreservesLocalEdits() async {
@@ -6183,6 +6232,10 @@ final class EditorCommitSpy: KriaAPIClient {
     let commitError: APIError?
     /// Any other error `editorCommit` should throw (e.g. a typed 422 `EditorSaveError`).
     var commitThrow: Error?
+    /// Thrown by the next commits, one per call, before `commitError` (a 409 once, then success).
+    var commitErrorQueue: [APIError] = []
+    /// What `editorSourcePool` throws instead of answering (e.g. a 409 for a newer version).
+    var sourcePoolError: APIError?
     var refreshedThread: CreationThread?
     private(set) var commitIsSuspended = false
     private var commitContinuation: CheckedContinuation<Void, Never>?
@@ -6323,6 +6376,7 @@ final class EditorCommitSpy: KriaAPIClient {
             }
             sourcePoolIsSuspended = false
         }
+        if let sourcePoolError { throw sourcePoolError }
         guard let sourcePoolResult else { throw APIError.unsupported }
         return sourcePoolResult
     }
@@ -6353,6 +6407,7 @@ final class EditorCommitSpy: KriaAPIClient {
             }
             commitIsSuspended = false
         }
+        if !commitErrorQueue.isEmpty { throw commitErrorQueue.removeFirst() }
         if let commitError { throw commitError }
         if let commitThrow { throw commitThrow }
         return commitResponse ?? EditorCommitResponse(ok: true, generation: "next", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: nil, revisionHash: nil, expectedDuration: nil)

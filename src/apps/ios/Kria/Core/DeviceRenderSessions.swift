@@ -54,7 +54,7 @@ enum DeviceRenderButtonTitle {
         case .localReady, .synced: "Rendered on iPhone"
         case .needsAttention: "Needs attention"
         case .cancelled: "Render stopped"
-        case .superseded: "Newer edit available"
+        case .superseded: "Edit updated"
         }
     }
 }
@@ -79,6 +79,11 @@ enum DeviceRenderButtonTitle {
     @ObservationIgnored private var requests: [DeviceRenderKey: DeviceRenderRequest] = [:]
     @ObservationIgnored private var observations: [DeviceRenderKey: Task<Void, Never>] = [:]
     @ObservationIgnored private var tickets: [DeviceRenderKey: UUID] = [:]
+    /// Capabilities of the last reconcile per key, so a superseded export can follow the newest request.
+    @ObservationIgnored private var lastCapabilities: [DeviceRenderKey: PhoneRenderingCapabilities] = [:]
+    /// KRI-935: the superseded request each key already followed once, so a server that keeps
+    /// pointing at the same request cannot loop the refresh.
+    @ObservationIgnored private var followedSuperseded: [DeviceRenderKey: DeviceRenderIdentity] = [:]
 
     convenience init(api: any KriaAPIClient) {
         self.init(fetch: { try await api.deviceRender(jobID: $0, variantID: $1) }, factory: { key, request in
@@ -114,6 +119,7 @@ enum DeviceRenderButtonTitle {
 
     func reconcile(_ key: DeviceRenderKey, capabilities: PhoneRenderingCapabilities, retry: Bool = false) async {
         guard tickets[key] == nil else { return }
+        lastCapabilities[key] = capabilities
         let ticket = UUID()
         tickets[key] = ticket
         defer { if tickets[key] == ticket { tickets[key] = nil } }
@@ -275,7 +281,7 @@ enum DeviceRenderButtonTitle {
         observations.removeAll()
         for coordinator in entries.values { try? await coordinator.cancel() }
         entries.removeAll(); requests.removeAll(); presentations.removeAll(); retryApprovalKeys.removeAll()
-        verificationKeys.removeAll()
+        verificationKeys.removeAll(); lastCapabilities.removeAll(); followedSuperseded.removeAll()
     }
 
     private func observe(_ key: DeviceRenderKey, coordinator: DeviceRenderCoordinator) async {
@@ -292,6 +298,10 @@ enum DeviceRenderButtonTitle {
                 let state = await coordinator.observationSnapshot()
                 guard let saved = state.receipt, !Task.isCancelled, let self,
                       self.requests[key] == saved.request else { return }
+                if saved.phase == .superseded, !state.isBusy, self.followNewestRequest(key, superseded: saved.request.identity) {
+                    self.observations[key] = nil
+                    return
+                }
                 var presentation = self.presentation(saved, for: key)
                 presentation.exportProgress = state.exportProgress
                 if self.presentations[key] != presentation { self.presentations[key] = presentation }
@@ -302,6 +312,16 @@ enum DeviceRenderButtonTitle {
                 try? await Task.sleep(for: .milliseconds(250))
             }
         }
+    }
+
+    /// KRI-935: the server moved on to a newer request while this export ran. Reconcile against
+    /// it right away (the same path a save takes) instead of showing "a newer edit is available".
+    private func followNewestRequest(_ key: DeviceRenderKey, superseded identity: DeviceRenderIdentity) -> Bool {
+        guard followedSuperseded[key] != identity, let capabilities = lastCapabilities[key] else { return false }
+        followedSuperseded[key] = identity
+        presentations[key] = DeviceRenderPresentation(phase: .preparing)
+        Task { [weak self] in await self?.reconcile(key, capabilities: capabilities) }
+        return true
     }
 
     private static func presentation(_ receipt: DeviceRenderReceipt) -> DeviceRenderPresentation {

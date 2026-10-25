@@ -1465,6 +1465,11 @@
             "title": "Minimum Client Protocol",
             "type": "integer"
           },
+          "moment_order_questions": {
+            "default": false,
+            "title": "Moment Order Questions",
+            "type": "boolean"
+          },
           "phone_rendering": {
             "$ref": "#/components/schemas/DeviceRenderCapabilities"
           },

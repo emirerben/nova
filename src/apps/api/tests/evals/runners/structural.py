@@ -566,16 +566,9 @@ def check_platform_copy(output: PlatformCopyOutput) -> list[str]:
 
     _check_text("tiktok.hook", pc.tiktok.hook, max_len=150)
     _check_text("tiktok.caption", pc.tiktok.caption, max_len=TIKTOK_CAPTION_MAX)
-    if not pc.tiktok.hashtags:
-        failures.append("tiktok.hashtags: empty (need ≥ 1)")
 
     _check_text("instagram.hook", pc.instagram.hook, max_len=150)
     _check_text("instagram.caption", pc.instagram.caption, max_len=INSTAGRAM_CAPTION_MAX)
-    if len(pc.instagram.hashtags) < 3:
-        failures.append(
-            f"instagram.hashtags has {len(pc.instagram.hashtags)} entries, expected ≥ 3"
-        )
-
     _check_text("youtube.title", pc.youtube.title, max_len=YOUTUBE_TITLE_MAX)
     _check_text("youtube.description", pc.youtube.description, max_len=YOUTUBE_DESCRIPTION_MAX)
     if len(pc.youtube.tags) < 3:

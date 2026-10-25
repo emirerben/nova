@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.112.0] - 2026-10-25
+
+### Changed
+- feat(ios): moment-order card answers the server's moment question, protocol 20 (KRI-723) (#1819) <!-- release-pr: 1819 -->
+
+## [0.81.111.0] - 2026-10-25
+
+### Changed
+- feat(agents): enable runtime copy skills with source-grounded context (#1818) <!-- release-pr: 1818 -->
+
+## [0.81.110.0] - 2026-10-25
+
+### Changed
+- fix(ios): load the newest edit automatically instead of asking (KRI-935) (#1817) <!-- release-pr: 1817 -->
+
 ## [0.81.109.0] - 2026-10-25
 
 ### Changed

@@ -328,7 +328,10 @@ final class NativeEditorSourcesTests: XCTestCase {
         let url = URL(string: "https://example.com/video.mp4?secret=token")!
         let error = NSError(domain: NSURLErrorDomain, code: -1, userInfo: [NSURLErrorFailingURLErrorKey: url])
         XCTAssertFalse(NativeEditorSession.sourcePreviewMessage(for: error).contains("token"))
-        XCTAssertTrue(NativeEditorSession.sourcePreviewMessage(for: APIError.conflict).contains("reopen"))
+        // KRI-935: a newer version is loaded for the creator; the copy never tells them to close and reopen.
+        let conflict = NativeEditorSession.sourcePreviewMessage(for: APIError.conflict)
+        XCTAssertFalse(conflict.localizedCaseInsensitiveContains("reopen"))
+        XCTAssertTrue(conflict.contains("Retry"))
     }
 
     func testUnusedUnavailableSourcesDoNotBlockPreparation() async throws {

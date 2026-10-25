@@ -18,7 +18,10 @@ This edit may be part of a creator's ongoing series. The context below is their 
 
 $persona_context
 
-Use it to shape the quote's VOICE and ANGLE — lean into the creator's tone, nod to one of their content pillars, and speak to this video's theme/idea so the quote feels like it belongs to THIS creator on THIS day. But the footage still rules: the quote must fit what the footage actually shows. If the persona/theme can't be honored truthfully for this footage, ignore it and write from the footage — NEVER invent a fact, place, or event just to fit the theme. When the context says "(none …)", write purely from the footage.
+Use delivery qualities for voice and the hero footage for subject matter. Account
+pillars and generated themes are not writing inputs. Do not invent a life lesson,
+personal history or scene to fit a niche. Explicit creator direction remains subject
+to footage grounding.
 $preferences
 $creator_direction
 $filming_guide

@@ -131,6 +131,9 @@ final class CreationChatFixture: @unchecked Sendable {
     private var batchAnswerTurns = 0
     /// KRIA_CHAT_MARK_OBJECT=reject: the first mark was refused.
     private var markRejected = false
+    /// KRIA_CHAT_MOMENT_ORDER (KRI-723): the open moments question, and whether the first answer was refused / staled.
+    private var momentQuestionID: String?
+    private var momentRefused = false
     /// Live plan & review (`KRIA_CHAT_PLAN_REVIEW=1`): the contract-v2 server model (`GET /plan`, scoped turns, undo).
     private let review = ReviewPlanFixture()
     private var reviewEnabled: Bool { ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_REVIEW"] == "1" }
@@ -296,6 +299,12 @@ final class CreationChatFixture: @unchecked Sendable {
             // "reject" = like "1", but the first mark is refused (422 protected_region_invalid).
             if let mode = ProcessInfo.processInfo.environment["KRIA_CHAT_MARK_OBJECT"], mode != "off" {
                 capabilities["protected_region_marks"] = true
+            }
+            // KRIA_CHAT_MOMENT_ORDER (KRI-723): the first turn is answered with "show me your moments". "1" = the server
+            // advertises moment_order_questions; "off" = an older server (text only, no card); "reject" = the first answer
+            // is refused (422 moment_order_overlap); "stale" = the first answer meets a replaced question (409).
+            if let mode = ProcessInfo.processInfo.environment["KRIA_CHAT_MOMENT_ORDER"], mode != "off" {
+                capabilities["moment_order_questions"] = true
             }
             // KRIA_CHAT_CHOICE_QUESTION: "1" = server advertises choice_questions; "legacy" = it still sends the
             // choice_question payload but does not advertise the capability (old-server text fallback).
@@ -604,6 +613,47 @@ final class CreationChatFixture: @unchecked Sendable {
                 }
                 userPayload["protected_region"] = region.merging(["generation": "1"]) { $1 }
             }
+            // KRI-723: checked like the server's `_validate_moment_order` before anything is stored.
+            if let answer = body["moment_order"] as? [String: Any] {
+                let mode = ProcessInfo.processInfo.environment["KRIA_CHAT_MOMENT_ORDER"] ?? ""
+                func problem(_ status: Int, _ code: String, _ message: String) -> (Int, Data) {
+                    response(["problem": ["code": code, "message": message, "phase": "accept", "retryable": false, "recovery": "refresh_replan"]], status: status)
+                }
+                guard let open = momentQuestionID, answer["question_id"] as? String == open else {
+                    return problem(409, "moment_order_stale", "That moments question is no longer open. Refresh and answer the latest.")
+                }
+                if mode == "stale", !momentRefused {
+                    // The take was looked at again: the server asked a new question this answer does not close.
+                    momentRefused = true
+                    append("assistant_response", text: "I found 1 of your 3 moments in the clip. Put them in order and show me where each one is, and I'll cut exactly those.",
+                           payload: ["turn_value": "question", "moment_order_question": MomentOrderFixture.question(id: "moments-q-\(events.count)")])
+                    momentQuestionID = "moments-q-\(events.count - 1)"
+                    thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+                    return problem(409, "moment_order_stale", "That moments question is no longer open. Refresh and answer the latest.")
+                }
+                let rows = answer["answers"] as? [[String: Any]] ?? []
+                let keys = rows.compactMap { $0["moment_key"] as? String }
+                if keys.count != rows.count || Set(keys).count != keys.count || Set(keys) != Set(MomentOrderFixture.keys) {
+                    return problem(422, "moment_order_invalid", "Answer every moment I asked about, once each.")
+                }
+                var spans: [(Double, Double)] = []
+                for row in rows where row["action"] as? String == "point" {
+                    guard row["media_id"] as? String == "fixture-clip" else {
+                        return problem(404, "moment_order_media_not_found", "That clip isn't part of this video anymore.")
+                    }
+                    guard let start = row["source_start_s"] as? Double, let end = row["source_end_s"] as? Double,
+                          start >= 0, end <= MomentOrderFixture.duration + 0.1, end - start >= 0.3 - 1e-9 else {
+                        return problem(422, "moment_order_invalid", "That moment is outside the clip or too short.")
+                    }
+                    if spans.contains(where: { start < $0.1 - 0.001 && end > $0.0 + 0.001 }) || (mode == "reject" && !momentRefused) {
+                        momentRefused = true
+                        return problem(422, "moment_order_overlap", "Two of your moments overlap. Move one of them.")
+                    }
+                    spans.append((start, end))
+                }
+                userPayload["moment_order"] = answer
+                momentQuestionID = nil
+            }
             if let order = body["song_order"] as? [String: Any] { userPayload["song_order"] = order }
             if let selection = body["choice_selection"] as? [String: Any] { userPayload["choice_selection"] = selection }
             if let scope = body["scope"] as? [String] {
@@ -668,6 +718,24 @@ final class CreationChatFixture: @unchecked Sendable {
                 editorTurnIDs[id] = turnID
                 editorTurnTicks[id] = 0
                 if thoughtsEnabled { thoughtRequestIDs[id] = turnID }
+            } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_MOMENT_ORDER"] != nil {
+                if let answer = body["moment_order"] as? [String: Any] {
+                    // Echo exactly what the server received, in the creator's order (the wire shape the UI test pins).
+                    let rows = (answer["answers"] as? [[String: Any]] ?? []).map { row -> String in
+                        let head = "\(row["moment_key"] ?? ""):\(row["action"] ?? "")"
+                        guard let start = row["source_start_s"] as? Double, let end = row["source_end_s"] as? Double else { return head }
+                        return head + ":\(row["media_id"] ?? ""):" + String(format: "%.2f-%.2f", start, end)
+                    }
+                    append("assistant_response", text: "Got it. moments[\(rows.joined(separator: "|"))]",
+                           payload: ["turn_id": turnID, "turn_value": "response"])
+                    append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
+                    append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
+                } else {
+                    let questionID = "moments-q-\(events.count)"
+                    momentQuestionID = questionID
+                    append("assistant_response", text: "I found 1 of your 3 moments in the clip. Put them in order and show me where each one is, and I'll cut exactly those.",
+                           payload: ["turn_id": turnID, "turn_value": "question", "moment_order_question": MomentOrderFixture.question(id: questionID)])
+                }
             } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_MARK_OBJECT"] != nil {
                 if let region = body["protected_region"] as? [String: Any] {
                     // Echo exactly what the server received (the wire shape the UI test pins), then offer approval.
@@ -1520,3 +1588,31 @@ enum VoiceoverScriptUITestFixture {
     static var text: String { lines.joined(separator: " ") }
 }
 #endif
+
+/// KRI-723: the moments question the fixture server asks, shaped like `named_moments._question`. One 8 s take
+/// (`fixture-clip`, which has a generated local original): the tray is not in the clip record, the wave matches two
+/// analysed moments equally, the bite is grounded at 5.0-6.5 s.
+enum MomentOrderFixture {
+    static let keys = ["m-tray", "m-wave", "m-bite"]
+    static let duration = 8.0
+
+    static func question(id: String) -> [String: Any] {
+        func window(_ start: Double, _ end: Double, _ text: String) -> [String: Any] {
+            ["source_start_s": start, "source_end_s": end, "description": text, "kind": "best_moment"]
+        }
+        return [
+            "question_id": id,
+            "moment_set": "fixture-set",
+            "take": ["media_id": "fixture-clip", "generation": "1", "duration_s": duration],
+            "default_window_s": 2.0,
+            "moments": [
+                ["moment_key": "m-tray", "words": "Caro arriving with the black tray", "status": "unlocated",
+                 "found": NSNull(), "suggestions": [] as [Any]],
+                ["moment_key": "m-wave", "words": "her hello wave", "status": "ambiguous", "found": NSNull(),
+                 "suggestions": [window(2.0, 3.0, "woman waves"), window(6.6, 7.6, "woman waves goodbye")]],
+                ["moment_key": "m-bite", "words": "Atakan's first bite", "status": "grounded",
+                 "found": window(5.0, 6.5, "man takes first bite of dessert"), "suggestions": [] as [Any]],
+            ] as [[String: Any]],
+        ]
+    }
+}

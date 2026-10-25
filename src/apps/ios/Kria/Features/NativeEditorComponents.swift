@@ -74,23 +74,6 @@ struct NativeEditorSaveBanner: View {
 
     @ViewBuilder var body: some View {
         switch session.saveState {
-        case .conflict:
-            VStack(spacing: 0) {
-                banner(
-                    title: "A newer edit exists",
-                    detail: "Your changes are still here. Reload the latest version, then review and save again.",
-                    systemImage: "arrow.triangle.2.circlepath",
-                    tint: .orange
-                )
-                Button("Reload latest and keep my edits") {
-                    Task { await session.rebaseAfterConflict() }
-                }
-                .font(KriaFont.body(12).weight(.semibold))
-                .foregroundStyle(KriaColor.ink)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .background(KriaColor.softZinc)
-                .accessibilityIdentifier("native-editor-resolve-conflict")
-            }
         case .failed(let message):
             banner(title: "Couldn’t save this edit", detail: message, systemImage: "exclamationmark.triangle", tint: .red)
         case .renderRetryNeeded(let message):
