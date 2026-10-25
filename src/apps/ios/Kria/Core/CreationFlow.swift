@@ -46,6 +46,9 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     /// Server asks "which part of the song did you film?" in the chat (`song_range_question` payloads) and accepts
     /// `song_range` on a turn (KRI-588). Nil/false (older server) = the plain text message only, no card.
     var songRangeQuestions: Bool? = nil
+    /// Server may ask "Mark the plate on one frame" (`protected_region_question` payloads) and accepts the mark as
+    /// `protected_region` on a turn (KRI-901). Nil/false (older server) = the plain text message only, no card.
+    var protectedRegionMarks: Bool? = nil
     /// Server sends `choice_question` payloads (tappable options for a conflict in the instructions) and accepts
     /// `choice_selection` on a turn (KRI-282). Nil/false = the plain text question only.
     var choiceQuestions: Bool? = nil
@@ -115,6 +118,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case songOrderPlacements = "song_order_placements"
         case songFilmingRange = "song_filming_range"
         case songRangeQuestions = "song_range_questions"
+        case protectedRegionMarks = "protected_region_marks"
         case choiceQuestions = "choice_questions"
         case voiceoverScriptCards = "voiceover_script_cards"
         case creationMode = "creation_mode", minimumClientProtocol = "minimum_client_protocol"
@@ -153,6 +157,7 @@ extension CreationCapabilities {
         songOrderPlacements = try container.decodeIfPresent(Bool.self, forKey: .songOrderPlacements)
         songFilmingRange = try container.decodeIfPresent(Bool.self, forKey: .songFilmingRange)
         songRangeQuestions = try container.decodeIfPresent(Bool.self, forKey: .songRangeQuestions)
+        protectedRegionMarks = try container.decodeIfPresent(Bool.self, forKey: .protectedRegionMarks)
         choiceQuestions = try container.decodeIfPresent(Bool.self, forKey: .choiceQuestions)
         voiceoverScriptCards = try container.decodeIfPresent(Bool.self, forKey: .voiceoverScriptCards)
         creationMode = try container.decodeIfPresent(CreationMode.self, forKey: .creationMode)

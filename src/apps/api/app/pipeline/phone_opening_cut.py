@@ -11,6 +11,13 @@ cut to captions, title, lanes and cutaways exactly like a cleanup cut.
 
 Never guessed: a line the take doesn't say, or a cut that would leave too little video,
 leaves that side of the plan untouched and its receipt says why.
+
+KRI-844: a quote in another language than the take ("Here we have traditional Argentinian
+sauces" over Spanish speech) is not in the words, so the creator is asked which line of the
+take to open / end on and the pick comes in as ``start_spoken`` / ``end_spoken``: the take's
+own words, grounded first. The creator's quote stays the receipt's ``quote`` (what the cards
+name); the pick is recorded beside it as ``spoken``. A pick the words don't hold either (a
+re-transcribed take) falls back to the quote, then to the honest ``not_found``.
 """
 
 from __future__ import annotations
@@ -108,13 +115,35 @@ def _kept(plan: CutPlan) -> float:
     return sum(e - s for s, e in plan.keep_segments)
 
 
-def _receipt(quote: str, requirement_ids: Sequence[str]) -> dict[str, Any]:
-    return {
+def _receipt(
+    quote: str, requirement_ids: Sequence[str], spoken: str | None = None
+) -> dict[str, Any]:
+    receipt: dict[str, Any] = {
         "version": 1,
         "quote": quote,
         "requirement_ids": list(requirement_ids),
         "status": "not_applied",
     }
+    if spoken:
+        receipt["spoken"] = spoken
+    return receipt
+
+
+def ground_take_line(
+    words: Sequence[Any],
+    spoken: str | None,
+    quote: str | None,
+    *,
+    duration_s: float,
+    min_after_s: float = 0.0,
+):
+    """Where a side's line is said: the picked spoken line first, else the creator's quote."""
+    for line in (spoken, quote):
+        if line:
+            grounded = ground_line(words, line, duration_s=duration_s, min_after_s=min_after_s)
+            if grounded is not None:
+                return grounded
+    return None
 
 
 def apply_take_window(
@@ -126,6 +155,8 @@ def apply_take_window(
     duration_s: float,
     start_ids: Sequence[str] = (),
     end_ids: Sequence[str] = (),
+    start_spoken: str | None = None,
+    end_spoken: str | None = None,
 ) -> tuple[CutPlan, dict[str, Any] | None, dict[str, Any] | None]:
     """The plan cut to ``[start_quote, end of end_quote]``, and a receipt per asked line.
 
@@ -134,6 +165,8 @@ def apply_take_window(
     said only before the start line); that side of the plan is then left untouched. A line
     not asked for has no receipt (``None``). The end line is looked for after the start
     line, so a phrase said twice ends the video the first time it follows the start.
+    ``start_spoken`` / ``end_spoken`` (KRI-844) are lines of the take the creator picked for a
+    quote it does not hold; they are grounded before the quote and added to the receipt.
     """
     words = list(words)
     cut = plan
@@ -141,8 +174,8 @@ def apply_take_window(
     end_receipt: dict[str, Any] | None = None
     line_start_s = 0.0
     if start_quote:
-        start_receipt = _receipt(start_quote, start_ids)
-        grounded = ground_line(words, start_quote, duration_s=duration_s)
+        start_receipt = _receipt(start_quote, start_ids, start_spoken)
+        grounded = ground_take_line(words, start_spoken, start_quote, duration_s=duration_s)
         if grounded is None:
             start_receipt["reason"] = "not_found"
         else:
@@ -165,10 +198,14 @@ def apply_take_window(
                     exact=bool(grounded.exact),
                 )
     if end_quote:
-        end_receipt = _receipt(end_quote, end_ids)
-        grounded = ground_line(words, end_quote, duration_s=duration_s, min_after_s=line_start_s)
+        end_receipt = _receipt(end_quote, end_ids, end_spoken)
+        grounded = ground_take_line(
+            words, end_spoken, end_quote, duration_s=duration_s, min_after_s=line_start_s
+        )
         if grounded is None:
-            said_before = line_start_s > 0 and ground_line(words, end_quote, duration_s=duration_s)
+            said_before = line_start_s > 0 and ground_take_line(
+                words, end_spoken, end_quote, duration_s=duration_s
+            )
             end_receipt["reason"] = "before_start" if said_before else "not_found"
         else:
             end_s = round(_end_after_word(words, grounded.word_end_s, duration_s), 3)
@@ -286,7 +323,7 @@ def apply_named_line_cuts(
 ) -> tuple[CutPlan, list[dict[str, Any]]]:
     """KRI-821: cut each line the creator named out of the take, and a receipt per line.
 
-    ``cuts`` is ``(quote, requirement_ids[, occurrence])`` per named line
+    ``cuts`` is ``(quote, requirement_ids[, occurrence[, pin]])`` per named line
     (`opening_cut_ask.brief_named_cuts`). Each line is grounded in the words still in the
     kept video and the span ``[first word - LEAD_S, last word + TAIL_S]`` is removed, never
     reaching into the neighbouring words. A line said more than once (a retake) is cut only
@@ -295,38 +332,66 @@ def apply_named_line_cuts(
     (``said_more_than_once``), names an occurrence the take doesn't have
     (``occurrence_not_found``) or a cut that would leave less than ``MIN_KEPT_S``
     (``too_short``) leaves the plan untouched and its receipt says why.
+
+    KRI-724: ``pin`` is the creator's answer to "which one?" (`opening_cut_ask.OccurrencePin`,
+    source seconds): that occurrence (`select_occurrence`), or every one for "every time";
+    a pick the words don't hold is ``pinned_occurrence_missing``, never a guess.
     """
+    from app.kria.opening_cut_ask import select_occurrence  # noqa: PLC0415
+
     words = list(words)
     receipts: list[dict[str, Any]] = []
     cut = plan
     for entry in cuts:
         quote, requirement_ids = entry[0], entry[1]
         occurrence = entry[2] if len(entry) > 2 else None
+        pin = entry[3] if len(entry) > 3 else None
         receipt = _receipt(quote, requirement_ids)
         if occurrence is not None:
             receipt["occurrence"] = occurrence
+        if pin is not None:
+            receipt["pin"] = {"ordinal": pin.ordinal, "of": pin.of, "approx_s": pin.approx_s}
         receipts.append(receipt)
         hits = line_occurrences(_kept_words(cut, words), quote, duration_s=duration_s)
         if not hits:
-            receipt["reason"] = "not_found"
+            receipt["reason"] = "pinned_occurrence_missing" if pin is not None else "not_found"
             continue
         receipt["occurrences_found"] = len(hits)
-        grounded = _pick(hits, occurrence)
-        if grounded is None:
-            receipt["reason"] = (
-                "said_more_than_once" if occurrence is None else "occurrence_not_found"
-            )
-            continue
-        start_s = round(_start_before_word(words, grounded.word_start_s), 3)
-        end_s = round(_end_after_word(words, grounded.word_end_s, duration_s), 3)
-        candidate = cut_span(cut, start_s, end_s, duration_s=duration_s)
-        receipt.update(start_s=start_s, end_s=end_s)
+        if pin is not None and occurrence is None:
+            if pin.ordinal is None:
+                chosen = list(hits)
+            else:
+                window = select_occurrence([(g.word_start_s, g.word_end_s) for g in hits], pin)
+                chosen = [g for g in hits if (g.word_start_s, g.word_end_s) == window]
+            if not chosen:
+                receipt["reason"] = "pinned_occurrence_missing"
+                continue
+        else:
+            grounded = _pick(hits, occurrence)
+            if grounded is None:
+                receipt["reason"] = (
+                    "said_more_than_once" if occurrence is None else "occurrence_not_found"
+                )
+                continue
+            chosen = [grounded]
+        candidate = cut
+        spans: list[tuple[float, float]] = []
+        for grounded in chosen:
+            start_s = round(_start_before_word(words, grounded.word_start_s), 3)
+            end_s = round(_end_after_word(words, grounded.word_end_s, duration_s), 3)
+            candidate = cut_span(candidate, start_s, end_s, duration_s=duration_s)
+            spans.append((start_s, end_s))
+        receipt.update(start_s=spans[0][0], end_s=spans[-1][1])
+        if len(spans) > 1:
+            receipt["spans"] = [list(span) for span in spans]
         if _kept(candidate) < MIN_KEPT_S:
             receipt["reason"] = "too_short"
             continue
         removed_s = round(_kept(cut) - _kept(candidate), 3)
         cut = candidate
-        receipt.update(status="applied", removed_s=removed_s, exact=bool(grounded.exact))
+        receipt.update(
+            status="applied", removed_s=removed_s, exact=all(bool(g.exact) for g in chosen)
+        )
     return cut, receipts
 
 
@@ -342,4 +407,5 @@ __all__ = [
     "cut_before",
     "cut_span",
     "line_occurrences",
+    "ground_take_line",
 ]

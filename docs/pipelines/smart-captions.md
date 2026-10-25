@@ -308,6 +308,57 @@ or spacing is a named miss, a word never said is "doesn't appear". Guards:
 `tests/tasks/test_kri793_talking_caption_spellings.py`,
 `tests/pipeline/test_caption_spelling.py`.
 
+### Unclear words (phone Talking; KRI-849)
+
+"If you can't tell what he says, ask me instead of guessing." The Main Creator (v76) and the
+brief extractor (v21) record the sentence as `facts.ask_if_unclear` (the creator's words for
+the slot, on the captions row or a row of its own) and a later typed answer as
+`facts.unclear_answer` (`"omit"`, or the exact words typed); the server never reads the
+creator's words for it (KRI-667). whisper-1 returns no per-word confidence (every word is
+1.0), so the signal is **two hearings of the same speech disagreeing**: Gemini's untimed
+`transcript` and whisper-1's timed `segments` in the approved-media snapshot row, compared by
+`app/pipeline/caption_unclear.py` (pure: words on the shared `app.text_fold` fold, a fuzzy
+alignment; fillers, contractions ("it's" / "it is", "gonna" / "going to"), repetitions, accents,
+digits, unmatched edges and the creator's own spelling list ignored; fewer than half the words in
+common, no second hearing, or more than two spans = *not comparable*: nothing is asked).
+Inside the part of the take the start / end lines keep, each disagreeing stretch is a span.
+
+- **Before approval** `choice_questions._unclear_word` (kind `unclear_word`, last in
+  `CONFLICT_PRIORITY`) asks one question per unsettled span: "Leave it out" plus the two heard
+  texts as the creator's own choices (never recommended; "you decide" never picks a word). The
+  answer is a `choice_answers` entry whose `detail` ({start_s, end_s, action, text?}) becomes
+  `facts.unclear_answers` on the pinned brief (`answered_brief`), so approval pins it and the
+  writer reads it. The approval backstop covers it like every other detector.
+- **At render** `_apply_unclear_words` (after the creator spellings) acts on the union of (a) the
+  tapped windows pinned on the binding, (b) the approval-time spans recomputed from the PINNED
+  snapshot row (deterministic: no render pass involved) and (c) the render pass's own spans when
+  that pass can be compared with Gemini's hearing. Each window takes the creator's answer (their
+  tap by window, else the typed `unclear_answer`); a window nobody answered is left out. An
+  answer is honoured whether or not the render pass is comparable: whisper-1 is re-run at
+  render once its 24 h cache expires and may differ from the pass the question was asked about.
+  *Omit* removes the words overlapping a precise span (or, for a window estimated from sentence
+  timings, the words whose middle falls inside it); *use* writes the creator's words in the
+  same window. Windows are mapped from source time into the cut video (`remap_words`). No word
+  or cue is retimed, `text` is rebuilt from the remaining words, an emptied cue is dropped.
+  `variant["caption_unclear"]` and the `captions/unclear_words` trace event carry the times and
+  the creator's own words, never the heard words.
+- **If the step raises** the render still goes on: `unclear_word_ask.fallback_omit` drops the
+  words in the windows the binding names (tapped windows, approval-time spans) by the simplest
+  means and the variant records `state: "error"`; the finished-video line then says "I couldn't
+  check the unclear word in this video" and is never "Done".
+- **Receipts** replace "I can't verify this one automatically yet." before approval ("I'll
+  leave out the word I couldn't make out around 0:09 in your clip": the source clip's time) and
+  after render ("I left out ... at 0:06 in the video": the edited video's time).
+
+Known gaps: when both hearings agree on a wrong word the guess still ships (the draft says
+"Both listens heard the same words"); whisper-1 has no confidence to fall back on; the cloud
+`_render_subtitled_variant` path applies neither spellings nor unclear-word answers; multi-take
+drafts are not compared; creators without a brief binding never reach the writer's step;
+`variant.overlay_transcript` (media lanes) still stores what whisper heard. Guards:
+`tests/kria/test_kri849_dj_t1_unclear_word_replay.py` (Don Julio T1 end to end),
+`tests/kria/test_kri849_unclear_word_postgres.py` (the real draft turn on Postgres), Main
+Creator cassettes `kri849_dj_t1_*`.
+
 ## Licensed music bed
 
 - **Selection:** `_resolve_smart_music_treatment` in `tasks/generative_build.py`

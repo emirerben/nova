@@ -171,6 +171,206 @@ def selection_for(
     return same[-1] if same else None
 
 
+PROTECTED_REGION_QUESTION_KEY = "protected_region_question"
+PROTECTED_REGION_ANSWER_KEY = "protected_region"
+
+
+def _mark_is_current(mark: ProtectedRegionSelection, generations: Mapping[str, str | None]) -> bool:
+    """A mark still points at the clip the creator drew it on: the clip is still in the edit
+    and its storage generation is the one stamped at submit (a re-upload / swap is a new
+    clip, so the mark is missing again, never reused on other bytes)."""
+    if mark.media_id not in generations:
+        return False
+    current = generations[mark.media_id]
+    return mark.generation is None or current is None or str(current) == mark.generation
+
+
+def clip_generations(clip_assignments: Iterable[Any]) -> dict[str, str | None]:
+    """``media_id -> storage generation`` of an item's clips, in plan order."""
+    out: dict[str, str | None] = {}
+    for row in clip_assignments or ():
+        if not isinstance(row, Mapping) or not row.get("media_id"):
+            continue
+        # The same fallback `_stamp_protected_region` stamps with, so a mark is current.
+        generation = row.get("storage_generation") or row.get("generation")
+        out[str(row["media_id"])] = str(generation) if generation is not None else None
+    return out
+
+
+def speaker_candidates(
+    clip_assignments: Iterable[Any], *, rendered_speaker: str | None = None
+) -> tuple[str, ...]:
+    """The clips the phone Talking writer may put the text on, in plan order: the only
+    clips where a mark keeps text off anything (`_phone_protected_plan` tracks a mark on
+    the speaker clip; a mark on another clip reads ``other_source``).
+
+    The speaker is chosen at render from each clip's audio (`classify_talking_clips`), so
+    before a render every clip not known to be silent may speak: a single clip; else each
+    clip whose analysis heard speech or has not said (a clip with no audio, or whose
+    understanding heard no speech, never speaks unless no clip does). ``rendered_speaker``
+    (the clip a past render of this item really spoke from, `rendered_speaker_media_id`)
+    is always one of them, so a mark on the wrong clip is asked for again."""
+    ids: list[str] = []
+    silent: set[str] = set()
+    for row in clip_assignments or ():
+        if not isinstance(row, Mapping) or not row.get("media_id"):
+            continue
+        media_id = str(row["media_id"])
+        if media_id in ids:
+            continue
+        ids.append(media_id)
+        analysis = row.get("analysis")
+        understanding = analysis.get("understanding") if isinstance(analysis, Mapping) else None
+        speech = understanding.get("speech") if isinstance(understanding, Mapping) else None
+        if row.get("has_audio") is False or (
+            isinstance(speech, Mapping)
+            and not (speech.get("has_speech") or speech.get("transcript"))
+        ):
+            silent.add(media_id)
+    candidates = [m for m in ids if m not in silent] if len(ids) > 1 else list(ids)
+    if not candidates:
+        candidates = list(ids)
+    if rendered_speaker is not None and str(rendered_speaker) in ids:
+        speaker = str(rendered_speaker)
+        candidates = [m for m in ids if m in candidates or m == speaker]
+    return tuple(candidates)
+
+
+def rendered_speaker_media_id(variants: Iterable[Any]) -> str | None:
+    """The clip the newest phone Talking render of an item spoke from (its receipts), or
+    ``None`` when no render recorded one."""
+    for variant in reversed(list(variants or ())):
+        if not isinstance(variant, Mapping):
+            continue
+        receipt = variant.get(PROTECTED_TEXT_FIELD)
+        if isinstance(receipt, Mapping) and receipt.get("speaker_media_id"):
+            return str(receipt["speaker_media_id"])
+        multi = variant.get("phone_talking_multi_clip")
+        speakers = multi.get("speaker_media_ids") if isinstance(multi, Mapping) else None
+        if isinstance(speakers, list) and speakers:
+            return str(speakers[0])
+        head = variant.get("phone_talking_head")
+        if isinstance(head, Mapping) and head.get("speaker_media_id"):
+            return str(head["speaker_media_id"])
+    return None
+
+
+def missing_object_marks(
+    brief: CreativeBrief | None,
+    marks: Iterable[ProtectedRegionSelection | Mapping[str, Any]],
+    generations: Mapping[str, str | None],
+    *,
+    render_clips: Iterable[str] | None = None,
+) -> tuple[tuple[ProtectedTarget, tuple[str, ...]], ...]:
+    """Each object the live brief asks to keep text off that still needs a mark, with the
+    clips it is missing on, in brief order. With ``render_clips`` (`speaker_candidates`)
+    the object needs a current mark on every one of them: a mark on a clip the writer does
+    not put the text on keeps nothing clear, so it never satisfies the ask. Without, any
+    current mark does. A face is sampled automatically and is never asked for; a mark no
+    fact names asks nothing either (drawing the box was the ask)."""
+    selections: list[ProtectedRegionSelection] = []
+    for raw in marks:
+        try:
+            mark = (
+                raw
+                if isinstance(raw, ProtectedRegionSelection)
+                else ProtectedRegionSelection.model_validate(dict(raw))
+            )
+        except ValueError:
+            continue
+        if _mark_is_current(mark, generations):
+            selections.append(mark)
+    clips = list(render_clips) if render_clips is not None else None
+    out: list[tuple[ProtectedTarget, tuple[str, ...]]] = []
+    for target in protected_targets(brief):
+        if target.kind != "object" or not target.requirement_ids:
+            continue
+        label = fold_text(target.label)
+        marked = {m.media_id for m in selections if fold_text(m.label) == label}
+        if clips is None:
+            if not marked:
+                out.append((target, tuple(generations)))
+            continue
+        missing = tuple(c for c in clips if c not in marked)
+        if missing:
+            out.append((target, missing))
+    return tuple(out)
+
+
+def unmarked_object_targets(
+    brief: CreativeBrief | None,
+    marks: Iterable[ProtectedRegionSelection | Mapping[str, Any]],
+    generations: Mapping[str, str | None],
+    *,
+    render_clips: Iterable[str] | None = None,
+) -> tuple[ProtectedTarget, ...]:
+    """The objects of `missing_object_marks`, in brief order."""
+    return tuple(
+        target
+        for target, _clips in missing_object_marks(
+            brief, marks, generations, render_clips=render_clips
+        )
+    )
+
+
+def mark_request_text(label: str) -> str:
+    """The one sentence that asks for a mark (the gate's reply and the readiness reason)."""
+    from app.kria.reply_language import say  # noqa: PLC0415
+
+    return say(
+        en=f"Mark the {label} on one frame so I can keep the text off it. "
+        "Or tell me the text can go anywhere.",
+        tr=f"Yazıyı uzak tutabilmem için {label} bir karede işaretle. "
+        "Ya da yazının her yere gelebileceğini söyle.",
+    )
+
+
+def marks_route(
+    *,
+    client_marks: bool,
+    creator_id: object,
+    strategy: Mapping[str, Any] | None,
+    edit_format: object,
+    clip_paths: Iterable[object] = (),
+    voiceover_path: object = None,
+) -> bool:
+    """KRI-901: whether a "keep text off the plate" ask is asked for and promised.
+
+    Both must hold: the creator's app shows the mark card (``client_marks``: stamped at
+    submit as ``marks_protected_regions``, saved on the draft's readiness), and this draft
+    really renders on the phone Talking writer, the only renderer that keeps text off a
+    marked object (`_run_phone_subtitled_job` -> `_phone_protected_plan`): phone clips, a
+    phone-rendering account, a Talking or self-narrated format, no recorded voiceover. Off
+    that route (web, older builds, the cloud render) a mark would be ignored, so nothing is
+    asked and approval readiness keeps its pre-KRI-901 verdicts."""
+    if not client_marks or voiceover_path:
+        # A recorded voiceover renders on the phone Voiceover writer, which ignores marks.
+        return False
+    from app.kria.brief_checks import defers_caption_words_to_phone_render  # noqa: PLC0415
+
+    strategy = strategy or {}
+    return defers_caption_words_to_phone_render(
+        creator_id=creator_id,
+        edit_format=strategy.get("edit_format") or edit_format,
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=clip_paths or (),
+    )
+
+
+def build_protected_region_question(
+    target: ProtectedTarget, *, question_id: str, media_ids: Iterable[str]
+) -> dict[str, Any]:
+    """``protected_region_question`` on an assistant reply: which object to mark and on which
+    clips (the clips it is still missing on among those the writer may put text on,
+    `speaker_candidates`, plan order)."""
+    return {
+        "question_id": question_id,
+        "label": target.label,
+        "requirement_ids": list(target.requirement_ids),
+        "media_ids": [str(m) for m in media_ids],
+    }
+
+
 # What a protected-text receipt measured: the text rows, the caption geometry and the crop.
 # An edit after the render (editor Save, a text PATCH) that changes any of these makes the
 # receipt describe a video the creator no longer has.
@@ -258,11 +458,21 @@ def protected_text_after_editor_save(
 
 __all__ = [
     "PROTECTED_REGIONS_FIELD",
+    "PROTECTED_REGION_ANSWER_KEY",
+    "PROTECTED_REGION_QUESTION_KEY",
     "PROTECTED_TEXT_FIELD",
     "ProtectedRegionSelection",
     "ProtectedTarget",
     "KEEP_TEXT_OFF_KEY",
     "binding_protected_regions",
+    "build_protected_region_question",
+    "clip_generations",
+    "mark_request_text",
+    "marks_route",
+    "missing_object_marks",
+    "rendered_speaker_media_id",
+    "speaker_candidates",
+    "unmarked_object_targets",
     "fold_protected_regions",
     "protected_targets",
     "selection_for",

@@ -54,10 +54,12 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v81 (KRI-881) types the research ask in the brief section (brief-on) and rewords the
 # shared "Researched explanations" section (research happens before approval): all four
 # hashes re-pinned after reviewing both edits.
+# v92 merges main's v91 (KRI-724/840/841/842/847/849 brief facts) with KRI-881: brief-on
+# hashes re-pinned (brief-off equal KRI-881's v81, main left those prompts unchanged).
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "db8b2e022364f96eee15009acba671caad8939c17bf253dc8e2495109de756a7",
+    (True, True): "b80d32863ac80c351ffb45d3044a2457de8644527e0348c1a837eeac81e073ff",
     (True, False): "cc7c6427ab34d031e6428fc804484ff65079c972be7c38a1e3a144d2b720ee23",
-    (False, True): "089dbfa1dd3a069d1c697ca372e042df21435f482669012f756c19d5b91243ab",
+    (False, True): "6cb97ffc9d133889113b38bc8159eb7547e2841ed63e0a8582e127ebe9618d92",
     (False, False): "038960cbc071317802dbc9a082906f258c7f59cb5e064c7069c52ef52f4d79be",
 }
 
@@ -128,7 +130,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-24-v81"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-24-v92"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

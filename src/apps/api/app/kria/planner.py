@@ -178,6 +178,12 @@ from app.services.kria_editor_ops import (
     editor_state_has_lanes,
     resolve_editor_base,
 )
+from app.services.music_genre import (
+    GENRE_FIT,
+    asked_genres,
+    genre_record,
+    music_genre_notice,
+)
 from app.services.song_order import (
     build_song_order_question,
     fold_song_orders,
@@ -256,8 +262,12 @@ def _enrich_best_parts_snapshot(
     named_lines: Sequence[Mapping[str, Any]] | None = None,
     camera_sound: bool = False,
     visual_photo_ids: Sequence[str] | None = None,
+    moment_pins: Any = None,
 ) -> dict | None:
     """Attach source-bounded footage capacity before the choice collector runs.
+
+    ``moment_pins`` (KRI-723, ``named_moments.MomentDecision``): the creator's named moments of
+    the one take with their pinned authority; the length plan plays exactly those windows.
 
     ``closing_quote`` is ``spoken_quotes.ground_closing_quote``'s record of the line the
     creator asked to end on (KRI-597); ``named_lines`` is ``_ground_spoken_lines``' record of
@@ -280,7 +290,7 @@ def _enrich_best_parts_snapshot(
     )
     from app.services.creator_render_contract import build_render_contract  # noqa: PLC0415
     from app.services.length_planning import build_length_plan  # noqa: PLC0415
-    from app.services.length_policy import creator_duration_s, natural_length_owner  # noqa: PLC0415
+    from app.services.length_policy import creator_duration, natural_length_owner  # noqa: PLC0415
 
     if natural_length_owner(strategy) not in {"footage", "voiceover", "song"}:
         return media_snapshot
@@ -292,7 +302,8 @@ def _enrich_best_parts_snapshot(
     )
     del rows
     creator_target = strategy.get("creator_duration_s")
-    creator_target_s = creator_duration_s(brief=brief) or (
+    proven = creator_duration(brief=brief)
+    creator_target_s = (proven.seconds if proven is not None else None) or (
         float(creator_target)
         if isinstance(creator_target, (int, float)) and creator_target > 0
         else None
@@ -378,6 +389,8 @@ def _enrich_best_parts_snapshot(
             {**strategy, "voiceover_duration_s": recording},
             media_snapshot,
             creator_target_s=creator_target_s,
+            # KRI-847: a brief ceiling ("at most 10 seconds") caps the plan instead of fixing it.
+            creator_target_bound=proven.bound if proven is not None else "exact",
             selected_ids=selected,
             order_ids=contract.order_ids if contract is not None else (),
             closing_quote=closing_quote,
@@ -390,6 +403,12 @@ def _enrich_best_parts_snapshot(
             spoken_order=seats.record() if seats is not None else None,
             named_lines=named,
             still_holds=still_holds,
+            pinned_moments=(
+                [pin.json() for pin in moment_pins.pins] if moment_pins is not None else None
+            ),
+            skipped_moments=(
+                [pin.json() for pin in moment_pins.skipped] if moment_pins is not None else None
+            ),
         )
 
     # KRI-585: the clips' words seat the welcome's line and a quiet ending. "Fast cuts" is
@@ -723,11 +742,14 @@ async def _freeze_licensed_music_section(
         for row in playable
         if row.get("media_id")
     ]
+    # KRI-848: a genre the creator named is recorded with whether the song's labels say it.
+    genres = asked_genres(music_ask)
     track = await asyncio.to_thread(
         _match_best_track, metas, job_id=None, music_ask=music_ask, run_context=run_context
     )
+    no_song = {"status": "fallback_footage", **genre_record(genres, None)}
     if track is None:
-        return {"status": "fallback_footage"}
+        return no_song
     cfg = track_config_with_rank_one(track)
     start = cfg.get("best_start_s")
     end = cfg.get("best_end_s")
@@ -739,7 +761,7 @@ async def _freeze_licensed_music_section(
         or not isinstance(end, (int, float))
         or not 0 <= start < end <= catalog_duration < float("inf")
     ):
-        return {"status": "fallback_footage"}
+        return no_song
     section = _fit_music_section_to_length(
         {
             "status": "selected",
@@ -750,6 +772,7 @@ async def _freeze_licensed_music_section(
             "end_s": float(end),
             "catalog_duration_s": catalog_duration,
             "beat_timestamps_s": list(getattr(track, "beat_timestamps_s", None) or []),
+            **genre_record(genres, track),
         },
         target_s,
     )
@@ -784,6 +807,10 @@ class PlannedKriaTurn:
     brief_coverage: dict | None = None
     brief_expected_version: int | None = None
     media_snapshot: dict | None = None
+    # KRI-898: the app build that sent this message (`client_protocol` stamped on the turn at
+    # submit); the choice gate asks about a freeze only when that build can play one.
+    # ``None`` = unknown (web, an older stored turn, a test), so no freeze is planned.
+    client_protocol: int | None = None
     # KRI-219 latency: the editor copilot served this in-place edit BEFORE the slow
     # Main Creator requirement extraction; the completed turn schedules that
     # extraction off the critical path (`extract_deferred_brief`).
@@ -2632,6 +2659,7 @@ def _with_wording_question(wording: PlannedKriaTurn, planned: PlannedKriaTurn) -
         or plan.choice_question
         or plan.song_order_question is not None
         or plan.song_range_question is not None
+        or plan.moment_order_question
         or plan.reply_options
         or planned.continuable
         or any(word and title and (word in title or title in word) for word in words)
@@ -4172,6 +4200,10 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
     """Fence planning against source replacement while providers are running."""
     from app.kria.brief_binding import media_identity, snapshot_media  # noqa: PLC0415
 
+    # KRI-723: the app answers a moment-order card (stamped at submit); the gate reads it.
+    answers_moment_questions = bool(kwargs.pop("moment_questions", False))
+    # KRI-898: the sending app build rides the planned turn to the choice gate only.
+    client_protocol = kwargs.pop("client_protocol", None)
     item = await db.get(PlanItem, kwargs["item_id"])
     before = snapshot_media(item) if item is not None else {}
     planned = await _plan_live_turn(db, **kwargs)
@@ -4197,7 +4229,7 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
                 ),
             ),
         )
-    planned = replace(planned, media_snapshot=after)
+    planned = replace(planned, media_snapshot=after, client_protocol=client_protocol)
     return await _gate_unresolved_choices(
         db,
         planned,
@@ -4205,6 +4237,7 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
         creator_id=kwargs["creator_id"],
         item_id=kwargs["item_id"],
         creator_text=kwargs.get("user_message"),
+        answers_moment_questions=answers_moment_questions,
     )
 
 
@@ -4216,8 +4249,13 @@ async def _gate_unresolved_choices(
     creator_id: uuid.UUID,
     item_id: uuid.UUID | None = None,
     creator_text: str | None = None,
+    answers_moment_questions: bool = False,
 ) -> PlannedKriaTurn:
     """KRI-476: an unresolved material choice never becomes an approvable draft.
+
+    ``answers_moment_questions`` (KRI-723): the app that sent this turn can answer a
+    ``moment_order_question`` (stamped at submit from its protocol). Only then is a creator
+    whose named moments the clip record cannot place asked to point at them.
 
     ``creator_text`` is this turn's creator message: the brief it previews stamps
     authority from it exactly as the persisted version will (KRI-824), so the length plan
@@ -4309,8 +4347,6 @@ async def _gate_unresolved_choices(
         plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
         arguments = apply_intent.arguments
     planned = replace(planned, plan=plan)
-    if not settings.kria_choice_questions_enabled and not strategy.get("editorial_plan"):
-        return planned
     brief: CreativeBrief | None = None
     # Only a creator with a brief BINDING has a dispatch contract that reads the brief, so
     # only they can be asked a brief-derived question that anything would later refuse
@@ -4322,6 +4358,18 @@ async def _gate_unresolved_choices(
                 brief = apply_updates(
                     brief, planned.brief_updates, source_turn_id=None, creator_text=creator_text
                 )
+    from app.kria.unclear_word_ask import clarification_question  # noqa: PLC0415
+
+    clarification = clarification_question(
+        brief, planned.media_snapshot, strategy=strategy, creator_id=creator_id
+    )
+    if clarification is not None:
+        return replace(
+            planned,
+            plan=KriaTurnPlan(mode="respond", turn_value="question", response=clarification),
+        )
+    if not settings.kria_choice_questions_enabled and not strategy.get("editorial_plan"):
+        return planned
     events = await _load_thread_events(db, thread_id)
     music_inputs = {
         "media": (planned.media_snapshot or {}).get("clip_assignments"),
@@ -4347,6 +4395,9 @@ async def _gate_unresolved_choices(
         else None
     )
     frozen_music = _prior_frozen_music(events, music_input_digest, music_pool_digest)
+    if isinstance(frozen_music, dict) and GENRE_FIT not in frozen_music and asked_genres(music_ask):
+        # KRI-848: frozen before the song's genre was checked, so nobody has looked at it.
+        frozen_music = None
     if frozen_music is None:
         frozen_music = await _freeze_licensed_music_section(
             db,
@@ -4389,6 +4440,27 @@ async def _gate_unresolved_choices(
     camera_sound = settings.spoken_order_enabled and keeps_camera_sound(
         planned.brief_manifest, strategy
     )
+    # KRI-723: the creator's named moments of one take. Grounded ones are pinned; for the
+    # rest an app that can answer is asked, before any approval card, to point at them.
+    moments = _moment_decision(
+        strategy,
+        planned.media_snapshot,
+        brief,
+        events,
+        can_ask=answers_moment_questions and settings.clip_intents_enabled,
+    )
+    if moments.question is not None:
+        from app.services.named_moments import question_text  # noqa: PLC0415
+
+        return replace(
+            planned,
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="question",
+                response=question_text(moments.question),
+                moment_order_question=moments.question,
+            ),
+        )
     enriched_snapshot = _enrich_best_parts_snapshot(
         strategy,
         planned.media_snapshot,
@@ -4397,6 +4469,7 @@ async def _gate_unresolved_choices(
         named_lines=named_lines,
         camera_sound=camera_sound,
         visual_photo_ids=_held_visual_pool(planned.brief_manifest, strategy),
+        moment_pins=moments,
     )
     if enriched_snapshot is not planned.media_snapshot:
         planned = replace(planned, media_snapshot=enriched_snapshot)
@@ -4435,21 +4508,26 @@ async def _gate_unresolved_choices(
         apply_intent = apply_intent.model_copy(update={"arguments": arguments})
         plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
         planned = replace(planned, plan=plan)
+    # KRI-848: say which song is suggested and whether its labels fit the genre asked for.
+    # The receipts reply replaces the summary whenever a judged ask is unmet and keeps only
+    # the policy notices, so the song notice rides both.
+    song_notice = music_genre_notice(frozen_music)
+    if song_notice and song_notice not in planned.policy_notices:
+        planned = replace(planned, policy_notices=(*planned.policy_notices, song_notice))
+    model_summary = str(arguments.get("summary") or "")
     plan_notices = [
         notice
         for notice in (
             closing_quote_notice(
                 length_plan.get("closing_quote") if isinstance(length_plan, dict) else closing_quote
             ),
-            _moment_count_notice(
-                strategy, brief, length_plan, summary=str(arguments.get("summary") or "")
-            ),
+            _moment_count_notice(strategy, brief, length_plan, summary=model_summary),
+            song_notice,
         )
         if notice
     ]
     if plan_notices:
-        summary = " ".join([str(arguments.get("summary") or ""), *plan_notices]).strip()
-        arguments = {**arguments, "summary": summary[:1000]}
+        arguments = {**arguments, "summary": _summary_with_notices(model_summary, plan_notices)}
         apply_intent = apply_intent.model_copy(update={"arguments": arguments})
         plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
         planned = replace(planned, plan=plan)
@@ -4464,6 +4542,8 @@ async def _gate_unresolved_choices(
             max_duration_s=float(MAX_PROPOSAL_DURATION_S),
             creator_id=creator_id,
             voice_route=settings.voice_behind_footage_enabled,
+            speech_occurrence=settings.speech_occurrence_question_enabled,
+            client_protocol=planned.client_protocol,
         ),
     )
     if resolution.question is not None:
@@ -4520,11 +4600,9 @@ async def _gate_unresolved_choices(
             camera_sound=camera_sound,
             closing_quote=closing_quote,
         )
-    summary = " ".join([str(arguments.get("summary") or ""), *resolution.notices]).strip()
+    summary = _summary_with_notices(model_summary, [*plan_notices, *resolution.notices])
     rewritten = apply_intent.model_copy(
-        update={
-            "arguments": {**arguments, "strategy": resolution.strategy, "summary": summary[:1000]}
-        }
+        update={"arguments": {**arguments, "strategy": resolution.strategy, "summary": summary}}
     )
     final_brief = answered_brief(brief, resolution.strategy)
     final_snapshot = _enrich_best_parts_snapshot(
@@ -4535,6 +4613,7 @@ async def _gate_unresolved_choices(
         named_lines=named_lines,
         camera_sound=camera_sound,
         visual_photo_ids=_held_visual_pool(planned.brief_manifest, resolution.strategy),
+        moment_pins=moments,
     )
     return _with_narration_note(
         replace(
@@ -4550,8 +4629,51 @@ async def _gate_unresolved_choices(
     )
 
 
+def _moment_decision(
+    strategy: Mapping[str, Any],
+    media_snapshot: Mapping[str, Any] | None,
+    brief: CreativeBrief | None,
+    events: Sequence[tuple[str, Any]],
+    *,
+    can_ask: bool,
+) -> Any:
+    """KRI-723: the named moments' pins, or the question that gets them (no model call)."""
+    from app.services.length_planning import DEFAULT_MOMENT_S  # noqa: PLC0415
+    from app.services.named_moments import decide, named_moments  # noqa: PLC0415
+
+    if not settings.clip_intents_enabled:
+        return decide(None, (), can_ask=False, default_window_s=DEFAULT_MOMENT_S)
+    ask = brief_moment_ask(brief)
+    moment_set = named_moments(
+        strategy, media_snapshot, moment_count=ask.count if ask is not None else None
+    )
+    return decide(
+        moment_set,
+        events,
+        can_ask=can_ask,
+        default_window_s=(ask.each_s if ask is not None and ask.each_s else DEFAULT_MOMENT_S),
+    )
+
+
 # The apply-strategy summary holds 1000 characters (``ApplyStrategyArguments``).
 _SUMMARY_BUDGET = 1000
+
+
+def _summary_with_notices(summary: str, notices: Sequence[str]) -> str:
+    """The draft summary followed by the server's own notices, inside the summary budget.
+
+    A notice tells the creator something the draft cannot keep quiet (KRI-848: which song,
+    and that it is not the genre asked for), so when the two do not fit it is the model's
+    own text that is cut, never a notice.
+    """
+    tail = " ".join(notice for notice in notices if notice)
+    if not tail:
+        return summary.strip()[:_SUMMARY_BUDGET]
+    room = max(0, _SUMMARY_BUDGET - len(tail) - 1)
+    head = summary.strip()
+    if len(head) > room:
+        head = head[:room].rstrip()
+    return " ".join(part for part in (head, tail) if part)[:_SUMMARY_BUDGET]
 
 
 def _with_narration_note(

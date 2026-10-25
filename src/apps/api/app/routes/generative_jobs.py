@@ -626,6 +626,12 @@ class GenerativeVariant(BaseModel):
     # render-time default. Editable post-gen via the BackgroundSoundControl reburn
     # (NOT `mix`, which is scoped to voiceover_only/voiceover_music variants).
     voiceover_bed_level: float | None = None
+    source_audio_media_ids: list[str] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    source_audio_bed_gain: float | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     # Per-variant render timing (D6 tile clock — instrumented by PR2).
     render_started_at: str | None = None
     render_finished_at: str | None = None
@@ -1072,6 +1078,9 @@ class TimelineSlotOut(BaseModel):
     source_duration_s: float | None = None
     in_s: float | None = None
     duration_s: float | None = None
+    # Unit per-occurrence marker for selected source audio under a recorded
+    # narration. The global bed gain remains on the recipe's audio mix.
+    source_audio_volume: float | None = Field(default=None, ge=0.0, le=1.0)
     duration_beats: int | None = None
     order: int | None = None
     moment_energy: float | None = None
@@ -5948,6 +5957,15 @@ async def dispatch_set_narrated_bed_level(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Background sound can't be re-mixed on a video rendered on your phone.",
         )
+    if not variant.get("narrated_voiceover_path") and any(
+        isinstance(row, dict) and row.get("status") == "applied"
+        for row in variant.get("named_cuts") or []
+    ):
+        # KRI-889: the cut voice was not kept; re-mixing the raw one would bring the line back.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Background sound can't be re-mixed on this video without undoing your cut.",
+        )
     render_gen_id = _mark_variant_rendering(job, variant_id)
     await db.commit()
     from app.tasks.generative_build import reburn_narrated_bed_level  # noqa: PLC0415
@@ -7326,8 +7344,12 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             PHONE_TEXT_STYLE_FIELD,
             require_phone_text_style_client,
         )
+        from app.services.phone_voiceover_timeline import (  # noqa: PLC0415
+            require_phone_voiceover_source_audio_client,
+        )
 
         require_phone_text_style_client(variant.get(PHONE_TEXT_STYLE_FIELD))
+        require_phone_voiceover_source_audio_client(variant)
     capabilities = {
         **_device_clamped_editor_capabilities(job, variant),
         "drawings": _drawing_capabilities(job, variant),
@@ -8426,6 +8448,11 @@ def _dispatch_rendered_timeline(
     )
     if variant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    from app.services.phone_voiceover_timeline import (  # noqa: PLC0415
+        require_phone_voiceover_source_audio_client,
+    )
+
+    require_phone_voiceover_source_audio_client(variant)
     if variant_id in projection.media_unavailable_variant_ids:
         # Projection deliberately removed every media locator for an unproved
         # private speech generation.  Do not rebuild a second public view from

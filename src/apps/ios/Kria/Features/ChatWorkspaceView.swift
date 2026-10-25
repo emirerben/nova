@@ -487,6 +487,8 @@ private struct CreationWorkspaceView: View {
     /// reason for refusing the last range, shown on that question's card.
     @State private var closedSongRangeQuestions: Set<String> = []
     @State private var songRangeProblem: SongRangeProblem?
+    /// KRI-901: the server's reason for refusing the last mark (404 / 422), shown on that question's card.
+    @State private var protectedRegionProblem: ProtectedRegionProblem?
     @State private var isActing = false
     @State private var isThinking = false
     /// The turn request id doubles as the thought-summary lookup key. It is
@@ -612,7 +614,7 @@ private struct CreationWorkspaceView: View {
         let suppressed = suppressedTimelineMessages
         let uploads = activeUploadIDs.compactMap { uploadAnchors[$0] }
         // A pending message that carries a song answer also changes how its card reads: always rebuild for those.
-        let cacheable = !pendingMessages.contains { $0.songOrder != nil || $0.songRange != nil }
+        let cacheable = !pendingMessages.contains { $0.songOrder != nil || $0.songRange != nil || $0.protectedRegion != nil }
         var hasher = Hasher()
         hasher.combine(ChatFingerprint.events(events))
         for message in pendingMessages {
@@ -961,6 +963,7 @@ private struct CreationWorkspaceView: View {
                            choiceQuestionMode: choiceQuestionMode(for: message),
                            questionBatch: asksTogether(message) ? questionBatches[message.id] ?? QuestionBatch() : nil,
                            songRangeMode: songRangeMode(for: message),
+                           objectMarkMode: objectMarkMode(for: message),
                            replyOptionsMode: replyOptionsMode(for: message),
                            voiceoverScriptMode: voiceoverScriptMode(for: message))
                 .id(entry.id)
@@ -1088,6 +1091,31 @@ private struct CreationWorkspaceView: View {
             }
         case .answered(let answer):
             return .answered(summary: answer.summary, spoken: answer.spokenSummary)
+        case .superseded, nil:
+            return nil
+        }
+    }
+
+    /// KRI-901: the "Mark the plate" card, only when the server advertises `protected_region_marks`. Interactive on
+    /// the newest question no mark of that object has answered; read-only once answered; hidden once replaced.
+    private func objectMarkMode(for message: ChatTranscriptMessage) -> ObjectMarkCardMode? {
+        guard transcriptIsFresh, capabilities?.protectedRegionMarks == true,
+              let question = message.protectedRegionQuestion else { return nil }
+        let entries = timeline.compactMap { entry -> ProtectedRegionFold.Entry? in
+            guard case .message(let message) = entry.content else { return nil }
+            return ProtectedRegionFold.Entry(messageID: message.id, question: message.protectedRegionQuestion,
+                                             isUser: message.role == .user, answer: message.protectedRegionAnswer)
+        }
+        switch ProtectedRegionFold.phases(entries)[message.id] {
+        case .active:
+            let problem = protectedRegionProblem?.questionID == question.questionID ? protectedRegionProblem?.message : nil
+            return .active(isSending: isSending || isActing || isThinking, problem: problem) { answer in
+                // A refused send removes the pending message, which reopens the card (the box is kept).
+                protectedRegionProblem = nil
+                Task { await send(message: answer.message, protectedRegion: answer, markQuestionID: question.questionID) }
+            }
+        case .answered(let answer):
+            return .answered(summary: answer.message)
         case .superseded, nil:
             return nil
         }
@@ -1945,7 +1973,7 @@ private struct CreationWorkspaceView: View {
         Task { await send(message: chip.message, suggestion: tap, keepsDraft: true) }
     }
 
-    private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil, songOrder: SongOrderSubmission? = nil, choiceSelection: ChoiceSelectionSubmission? = nil, songRange: SongRangeAnswer? = nil, suggestion: SuggestionTap? = nil, keepsDraft: Bool = false) async {
+    private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil, songOrder: SongOrderSubmission? = nil, choiceSelection: ChoiceSelectionSubmission? = nil, songRange: SongRangeAnswer? = nil, suggestion: SuggestionTap? = nil, protectedRegion: ProtectedRegionAnswer? = nil, markQuestionID: String? = nil, keepsDraft: Bool = false) async {
         // Slide direction is intentionally handled by SlidePostWorkspaceView.
         // Generic creator runtime has no slide proposal/create tools.
         guard selectedFormat != .slides else { return }
@@ -1997,7 +2025,8 @@ private struct CreationWorkspaceView: View {
         } else {
             nextLocalOrder += 1
             optimistic = ChatPendingMessage(content: message, clientEventID: submission.clientEventID,
-                                            afterSequence: afterSequence, localOrder: nextLocalOrder, songOrder: songOrder, songRange: songRange)
+                                            afterSequence: afterSequence, localOrder: nextLocalOrder, songOrder: songOrder, songRange: songRange,
+                                            protectedRegion: protectedRegion)
         }
         submissionAnchor = optimistic
         if !pendingMessages.contains(where: { $0.id == optimistic.id }) {
@@ -2044,7 +2073,7 @@ private struct CreationWorkspaceView: View {
                 threadID: project.id, message: message,
                 expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID,
                 editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection,
-                songRange: songRange, suggestion: suggestion
+                songRange: songRange, suggestion: suggestion, protectedRegion: protectedRegion
             )
         } catch let error as APIError where error == .conflict {
             thoughtRequestID = nil; liveThoughtSummaries = []
@@ -2070,6 +2099,14 @@ private struct CreationWorkspaceView: View {
             failure = submitTurnConflictMessage(
                 detail: error.conflictDetail, approvalExpired: approvalNotice != nil
             ).map { ChatFailure($0) }
+            return
+        } catch let error as APIError where protectedRegion != nil && ProtectedRegionProblem.isMarkProblem(error) {
+            // KRI-901: the server refused the mark (not this thread's clip, or too small). Say why on the card.
+            thoughtRequestID = nil; liveThoughtSummaries = []
+            pendingMessages.removeAll { $0.id == optimistic.id }
+            pendingTurnSubmission = nil
+            submissionAnchor = nil
+            if let markQuestionID { protectedRegionProblem = ProtectedRegionProblem(questionID: markQuestionID, error: error) }
             return
         } catch let error as APIError where songRange != nil && SongRangeProblem.isInvalid(error) {
             // KRI-588: the server refused the range. Say why on the card; the answer is not a draft to restore.
@@ -2831,6 +2868,10 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
     var songRangeQuestion: SongRangeQuestion? = nil
     /// KRI-588: the `song_range` a user message carried (from the stored event, or the in-flight send).
     var songRangeAnswer: SongRangeAnswer? = nil
+    /// KRI-901: the "Mark the plate" card the question carries, when the server sent one.
+    var protectedRegionQuestion: ProtectedRegionQuestion? = nil
+    /// KRI-901: the `protected_region` a user message carried (from the stored event, or the in-flight send).
+    var protectedRegionAnswer: ProtectedRegionAnswer? = nil
     var memoryOperationID: String? = nil
     /// Chip labels of a plain `assistant_response` question (`turn_value == "question"`). Distinct from
     /// `options`, which are the legacy exact-string choices rendered by `QuestionOptionsRow`.
@@ -2893,9 +2934,11 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
         let choiceQuestion = role == .assistant ? ChoiceQuestion.parse(payload: event.payload) : nil
         let songRangeQuestion = role == .assistant ? SongRangeQuestion.parse(payload: event.payload) : nil
         let songRangeAnswer = role == .user ? SongRangeAnswer.parse(payload: event.payload) : nil
+        let protectedRegionQuestion = role == .assistant ? ProtectedRegionQuestion.parse(payload: event.payload) : nil
+        let protectedRegionAnswer = role == .user ? ProtectedRegionAnswer.parse(payload: event.payload) : nil
         let memoryOperationID = event.payload?["kind"]?.stringValue == "creator_memory_receipt" ? event.payload?["operation_id"]?.stringValue : nil
         let voiceoverScript = role == .assistant ? VoiceoverScript.parse(payload: event.payload) : nil
-        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts, clipQuestion: clipQuestion, songOrderQuestion: songOrderQuestion, songOrderAnswer: songOrderAnswer, choiceQuestion: choiceQuestion, songRangeQuestion: songRangeQuestion, songRangeAnswer: songRangeAnswer, memoryOperationID: memoryOperationID, replyOptions: replyExtras?.options ?? [], replyLead: replyExtras?.lead, alsoChanged: replyExtras?.alsoChanged ?? [], voiceoverScript: voiceoverScript)
+        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts, clipQuestion: clipQuestion, songOrderQuestion: songOrderQuestion, songOrderAnswer: songOrderAnswer, choiceQuestion: choiceQuestion, songRangeQuestion: songRangeQuestion, songRangeAnswer: songRangeAnswer, protectedRegionQuestion: protectedRegionQuestion, protectedRegionAnswer: protectedRegionAnswer, memoryOperationID: memoryOperationID, replyOptions: replyExtras?.options ?? [], replyLead: replyExtras?.lead, alsoChanged: replyExtras?.alsoChanged ?? [], voiceoverScript: voiceoverScript)
     }
 }
 

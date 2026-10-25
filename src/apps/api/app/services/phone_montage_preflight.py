@@ -53,12 +53,14 @@ def phone_montage_blockers(
     brief: CreativeBrief | None,
     strategy: Mapping[str, Any] | None,
     media_snapshot: Mapping[str, Any] | None,
+    client_protocol: int | None = None,
 ) -> list[RequirementReceipt]:
     """The receipts the phone montage worker would refuse this draft on ([] = none known).
 
     ``media_snapshot`` is the one approval will pin (``planned.media_snapshot``, with its
     length plan). ``db`` is only read, for the item's ready Visuals, and only when the
-    draft renders through the unified phone montage.
+    draft renders through the unified phone montage. ``client_protocol`` is the app build
+    that sent the message (KRI-898): the plan holds a freeze only for a build that plays it.
     """
     if not settings.kria_phone_montage_preflight_enabled:
         return []
@@ -74,6 +76,7 @@ def phone_montage_blockers(
             strategy=strategy,
             media_snapshot=media_snapshot,
             visuals=lambda: _ready_visuals(db, item=item, user_id=creator_id, strategy=strategy),
+            client_protocol=client_protocol,
         )
     except UnsupportedPhonePlan as exc:
         # The planner itself declined; the worker would too. Recorded, not (yet) surfaced.
@@ -103,6 +106,7 @@ def montage_blockers(
     strategy: Mapping[str, Any] | None,
     media_snapshot: Mapping[str, Any] | None,
     visuals: Sequence[Any] | Callable[[], Sequence[Any]],
+    client_protocol: int | None = None,
 ) -> list[RequirementReceipt] | None:
     """``None`` when this draft does not render through the unified phone montage, or
     nothing here can be judged; otherwise the checked ``order`` / ``timing`` receipts the
@@ -130,6 +134,7 @@ def montage_blockers(
         strategy=strategy,
         media_snapshot=media_snapshot,
         visuals=visuals,
+        client_protocol=client_protocol,
     )
     if planned is None:
         return None
@@ -154,6 +159,7 @@ def preflight_montage_plan(
     strategy: Mapping[str, Any] | None,
     media_snapshot: Mapping[str, Any] | None,
     visuals: Sequence[Any] | Callable[[], Sequence[Any]],
+    client_protocol: int | None = None,
 ) -> tuple[Any, dict] | None:
     """The worker's own phone montage plan for a draft, before approval, or ``None`` when
     the draft does not render through the unified phone montage.
@@ -163,7 +169,9 @@ def preflight_montage_plan(
 
     Mirrors the dispatch + worker inputs: the clips dispatch hands the worker (an explicit
     selection, byte-identical uploads collapsed), their phone source receipts, the route the
-    job would be stamped with, and the approved length plan.
+    job would be stamped with, and the approved length plan. ``client_protocol`` is the app
+    build that sent the message (KRI-898): the plan holds a freeze only for a build that
+    plays it.
     """
     from app.kria.brief_checks import defers_to_unified_montage  # noqa: PLC0415
     from app.kria.duplicate_uploads import collapse_strategy  # noqa: PLC0415
@@ -172,7 +180,7 @@ def preflight_montage_plan(
         PLAN_AUTHORITY_FIELD,
         build_render_contract,
     )
-    from app.services.length_planning import LENGTH_PLAN_VERSION  # noqa: PLC0415
+    from app.services.length_planning import supported_length_plan_version  # noqa: PLC0415
     from app.services.length_policy import creator_duration_s  # noqa: PLC0415
     from app.services.phone_destination import phone_drawable_visual_kinds  # noqa: PLC0415
     from app.services.phone_sources import bind_phone_sources  # noqa: PLC0415
@@ -211,7 +219,7 @@ def preflight_montage_plan(
     envelope = media.get("length_plan")
     if envelope is not None and (
         not isinstance(envelope, Mapping)
-        or envelope.get("version") != LENGTH_PLAN_VERSION
+        or not supported_length_plan_version(envelope)
         or envelope.get("conflicts")
     ):
         # An open length choice is the gate's own question (KRI-476), never a second one.
@@ -244,6 +252,8 @@ def preflight_montage_plan(
         "edit_format": edit_format,
         "creator_strategy": strategy,
         PLAN_AUTHORITY_FIELD: 1,
+        # KRI-898: the stamp dispatch writes for the approving build; here, the drafting one.
+        **({"creator_client_protocol": client_protocol} if client_protocol is not None else {}),
     }
     inputs = route_inputs_from_job(
         {"creator_brief_binding": {"media_snapshot": media}},

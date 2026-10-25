@@ -8,7 +8,7 @@ public struct CapabilityDecision: Equatable, Sendable {
 public protocol RendererCapabilityProviding: Sendable { var capabilities: Set<MediaCapability> { get } }
 public struct DefaultRendererCapabilities: RendererCapabilityProviding {
     public let capabilities: Set<MediaCapability>
-    public init(capabilities: Set<MediaCapability> = Set([.basicComposition, .animatedText, .crossfade, .audioMix, .variableSpeed, .local1080Export])) { self.capabilities = capabilities }
+    public init(capabilities: Set<MediaCapability> = Set([.basicComposition, .animatedText, .crossfade, .audioMix, .variableSpeed, .local1080Export, .processedAudio])) { self.capabilities = capabilities }
 }
 public struct CapabilityNegotiator: Sendable {
     public let provider: any RendererCapabilityProviding

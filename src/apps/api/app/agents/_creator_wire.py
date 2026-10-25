@@ -45,6 +45,7 @@ MODEL_HIDDEN = {
     "clip_intents",
     "reaction_beats",
     "closing_media",
+    "ending_clip",
     "song_sync",
     "voice_mode",
     "pinned_texts",

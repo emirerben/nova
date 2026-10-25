@@ -176,6 +176,36 @@ def test_compiles_three_clips_with_crossfades_intro_and_voiceover_music_bed():
     recipe.model_validate(recipe.model_dump(mode="json"))  # validate() round trip
 
 
+def test_explicit_source_audio_selection_marks_montage_clips_by_media_identity():
+    decision, bindings = fixture()
+    recipe = _compile(
+        decision,
+        bindings,
+        narration=_narration(),
+        source_audio_media_ids=["c1"],
+    )
+
+    video = next(track for track in recipe.tracks if track.id == "montage")
+    assert [clip.volume for clip in video.clips] == [0.0, 1.0, 0.0]
+
+
+def test_montage_source_audio_selection_rejects_unused_or_silent_sources():
+    decision, bindings = fixture(bindings=(*(_binding(f"c{i}") for i in range(3)), _binding("c3")))
+    with pytest.raises(ValueError, match="not used"):
+        _compile(decision, bindings, narration=_narration(), source_audio_media_ids=["c3"])
+
+    silent = _binding("c1").model_copy(
+        update={"original": _binding("c1").original.model_copy(update={"has_audio": False})}
+    )
+    with pytest.raises(ValueError, match="silent"):
+        _compile(
+            decision,
+            (_binding("c0"), silent, _binding("c2")),
+            narration=_narration(),
+            source_audio_media_ids=["c1"],
+        )
+
+
 def test_refit_clamps_a_window_that_overruns_the_original_duration():
     decision, bindings = fixture(
         steps=[_step("c0", in_s=7.0, duration=4.0)],
