@@ -43,7 +43,7 @@ struct SavedUploadsUITestHost: View {
             Button("Second post") { projectID = Self.second }.accessibilityIdentifier("fixture-second-post")
         }
         .sheet(isPresented: $showing, onDismiss: { summary = SavedUploadsURLProtocol.summary }) {
-            SavedUploadsView(projectID: projectID, itemID: role == .visual ? projectID.uuidString : nil, role: role, destination: destination, capacity: 1, uploads: uploads, onAdded: {})
+            SavedUploadsView(projectID: projectID, itemID: role == .visual ? projectID.uuidString : nil, role: role, destination: destination, capacity: mode == .reuse && !photos ? 2 : 1, uploads: uploads, onAdded: {})
         }
         .task { await prepareHorse() }
     }
@@ -148,7 +148,7 @@ private final class SavedUploadsServer: @unchecked Sendable {
                 valid = incoming.first?["library_asset_id"] as? String == SavedUploadsFixtureMode.horseID && incoming.first?["library_source_id"] as? String == SavedUploadsFixtureMode.proxyID && (incoming.first?["media_id"] as? String)?.hasPrefix("analysis-proxy-") == true && incoming.first?["role"] == nil
                 if valid { attachedSource = SavedUploadsFixtureMode.proxyID }
             } else {
-                valid = incoming.first?["library_asset_id"] as? String == "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA" && incoming.first?["library_source_id"] as? String == "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB" && incoming.first?["role"] as? String == "song"
+                valid = ["AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"].contains(incoming.first?["library_asset_id"] as? String ?? "") && incoming.first?["library_source_id"] as? String == "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB" && incoming.first?["role"] as? String == "song"
             }
             guard valid, let item = incoming.first else { return (422, ["detail": "Invalid library attachment contract"]) }
             var existing = media[id] ?? []
