@@ -144,3 +144,16 @@ are selected by the editorial journey for future skill changes. All 3009 local
 reliability checks pass against the task's migrated Postgres, with zero environment
 skips or errors. The one skipped SFX case needs an optional production catalogue
 dump. Two expected failures remain declared by that suite.
+
+The full API shard then exposed 15 failures in KRI-845 and KRI-807 provider-replay
+fixtures. Their transport substitutes recognized only the bare resolver template
+at the start of the prompt. They now recognize the exact packaged skill prefix
+plus the same template header, retaining every evidence and picker assertion. A
+sweep updates the same matcher in the confirmed-title replay provider. Production
+code and model settings are unchanged. All 15 failures reproduce locally before
+the matcher change. The editorial journey selects these three replay modules.
+
+After the provider matcher repair, all 212 affected replay, language, title,
+ending-clip and skill checks pass against the task's isolated Postgres. All 121
+CI policy tests pass. The repaired matchers require the skill body and the same
+resolver header; the real agents and resolution services remain in these tests.
