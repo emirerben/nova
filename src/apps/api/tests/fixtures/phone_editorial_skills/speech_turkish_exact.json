@@ -1,0 +1,52 @@
+{
+  "agent": "nova.plan.speech_excerpt_planner",
+  "prompt_version": "synthetic-editorial-v1",
+  "input": {
+    "creator_request": "Sadece 'Köprü kapalı olduğu için geçmedim.' cümlesini benim görüntümde kullanın.",
+    "voice_clip_ref": "c1",
+    "speech_clips": [
+      {
+        "ref": "c1",
+        "duration_s": 15,
+        "to_camera": true,
+        "segments": [
+          {
+            "s": 0,
+            "e": 4,
+            "text": "Köprü kapalı olduğu için geçmedim."
+          },
+          {
+            "s": 5,
+            "e": 9,
+            "text": "Sonra sahilde bekledim."
+          }
+        ]
+      }
+    ],
+    "other_clips": [
+      {
+        "ref": "v1",
+        "duration_s": 10,
+        "summary": "A river under a closed bridge."
+      }
+    ]
+  },
+  "raw_text": "{\"wants_speech_excerpts\": true, \"sections\": [{\"kind\": \"speech\", \"clip_ref\": \"c1\", \"quote\": \"Köprü kapalı olduğu için geçmedim.\", \"visual\": \"speaker\"}], \"question\": null}",
+  "meta": {
+    "source": "hand_authored_synthetic_development",
+    "case": "Preserve the exact requested Turkish sentence and speaker view.",
+    "skills": [
+      "meaningful-moment",
+      "edit-story"
+    ],
+    "expected": {
+      "sections": [
+        {
+          "quote": "Köprü kapalı olduğu için geçmedim.",
+          "visual": "speaker"
+        }
+      ]
+    },
+    "wrong_raw_text": "{\"wants_speech_excerpts\": true, \"sections\": [{\"kind\": \"speech\", \"clip_ref\": \"c1\", \"quote\": \"Sonra sahilde bekledim.\", \"visual\": \"speaker\"}], \"question\": null}"
+  }
+}

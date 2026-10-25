@@ -1,0 +1,43 @@
+{
+  "agent": "nova.plan.clip_request_resolver",
+  "prompt_version": "synthetic-editorial-v1",
+  "input": {
+    "creator_request": "Include the quiet moment when the child finally spots the bird, not the running crowd.",
+    "intents": [
+      {
+        "intent_id": "spot",
+        "op": "include",
+        "attribute": "child spots the bird"
+      }
+    ],
+    "clips": [
+      {
+        "alias": "m002",
+        "record": {
+          "summary": "A child behind a tree, hands and gaze obscured."
+        }
+      }
+    ]
+  },
+  "raw_text": "{\"intents\": [{\"intent_id\": \"spot\", \"assignments\": [], \"needs_vision\": [{\"media\": \"m002\", \"question\": \"Does the child visibly spot and point at a bird?\"}]}]}",
+  "meta": {
+    "source": "hand_authored_synthetic_development",
+    "case": "An uncertain candidate requests available inspection rather than asserting a match.",
+    "skills": [
+      "meaningful-moment"
+    ],
+    "expected": {
+      "intents": [
+        {
+          "assignments": [],
+          "needs_vision": [
+            {
+              "media": "m002"
+            }
+          ]
+        }
+      ]
+    },
+    "wrong_raw_text": "{\"intents\": [{\"intent_id\": \"spot\", \"assignments\": [{\"media\": \"m002\", \"evidence\": \"Visible action in the record.\", \"confidence\": 0.95}], \"needs_vision\": []}]}"
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "agent": "nova.plan.speech_excerpt_planner",
+  "prompt_version": "synthetic-editorial-v1",
+  "input": {
+    "creator_request": "Keep my voice continuous in the original order over the other footage, with no silent montage gaps.",
+    "voice_clip_ref": "c1",
+    "speech_clips": [
+      {
+        "ref": "c1",
+        "duration_s": 15,
+        "to_camera": true,
+        "segments": [
+          {
+            "s": 0,
+            "e": 4,
+            "text": "I did not cross the bridge because it was closed."
+          },
+          {
+            "s": 5,
+            "e": 9,
+            "text": "The river was quiet that morning."
+          }
+        ]
+      }
+    ],
+    "other_clips": [
+      {
+        "ref": "v1",
+        "duration_s": 10,
+        "summary": "A river under a closed bridge."
+      }
+    ]
+  },
+  "raw_text": "{\"wants_speech_excerpts\": true, \"sections\": [{\"kind\": \"speech\", \"clip_ref\": \"c1\", \"quote\": \"I did not cross the bridge because it was closed.\", \"visual\": \"cutaways\"}, {\"kind\": \"speech\", \"clip_ref\": \"c1\", \"quote\": \"The river was quiet that morning.\", \"visual\": \"cutaways\"}], \"question\": null}",
+  "meta": {
+    "source": "hand_authored_synthetic_development",
+    "case": "Continuous source voice must not become alternating silent montage sections.",
+    "skills": [
+      "meaningful-moment",
+      "edit-story"
+    ],
+    "expected": {
+      "sections": [
+        {
+          "kind": "speech",
+          "quote": "I did not cross the bridge because it was closed."
+        },
+        {
+          "kind": "speech",
+          "quote": "The river was quiet that morning."
+        }
+      ]
+    },
+    "wrong_raw_text": "{\"wants_speech_excerpts\": true, \"sections\": [{\"kind\": \"speech\", \"clip_ref\": \"c1\", \"quote\": \"I did not cross the bridge because it was closed.\", \"visual\": \"cutaways\"}, {\"kind\": \"montage\", \"duration_s\": 4, \"cut_s\": 0.8}, {\"kind\": \"speech\", \"clip_ref\": \"c1\", \"quote\": \"The river was quiet that morning.\", \"visual\": \"cutaways\"}], \"question\": null}"
+  }
+}
