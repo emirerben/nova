@@ -886,6 +886,26 @@ async def test_rejected_idea_is_not_reoffered_and_relevant_judgments_outrank_rec
 
     only_repeat = await offer("third pass", reworded)
     assert [v["title"] for v in only_repeat] == ["Quiet ferry morning"]
+
+    wrong_footage = idea(
+        "Night market lanterns",
+        "Why the night market lanterns make every stall look like a small stage",
+        "Lanterns turn a market into a stage",
+    )
+    market = await offer("contextual seed", wrong_footage)
+    await judge(market[0], "not_for_me", ["footage_mismatch"])
+    reoffer = idea(
+        "Lantern stage market",
+        "Why the night market lanterns make every stall look like a small stage set",
+        "Lanterns turn a market into a stage",
+    )
+    other = idea(
+        "Rain delay",
+        "What a rain delay taught me about waiting without checking my phone",
+        "Rain stopped everything",
+    )
+    kept = await offer("contextual pass", reoffer, other)
+    assert [v["title"] for v in kept] == ["Lantern stage market", "Rain delay"]
     async with AsyncSessionLocal() as db:
         row = await db.get(MediaCollectionStory, uuid.UUID(only_repeat[0]["id"]))
         offered = row.events_json[0]

@@ -70,7 +70,8 @@ retrieval or model approach. Do not interpret structural checks as creative wins
 In the account API, camera-roll generation ranks the creator's saved idea judgments
 by word overlap with the outing and footage descriptions (same lexical baseline, no new
 retrieval system). It sends up to two `would_post` and two other judgments, newest first
-on ties. It never infers an aggregate preference from the pile (no "too_generic x3"
+on ties. Judgments with a `footage_mismatch`, `wrong_facts` or `invented_experience` reason
+are contextual: they never feed the repeat filter below. It never infers an aggregate preference from the pile (no "too_generic x3"
 line): each judgment stays contextual. After generation, `generate_stories` drops any idea
 whose angle or opening text is a near repeat of a `not_for_me` idea the creator refused
 **for the same collection (outing)**: identical text, or at least 0.8 word overlap

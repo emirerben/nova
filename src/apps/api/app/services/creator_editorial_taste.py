@@ -32,6 +32,9 @@ from app.services.private_text import normalize_private_text
 FEEDBACK_POOL = 200
 JUDGMENTS_PER_SIDE = 2
 REJECTED_POOL = 50
+# These reasons say the idea was wrong for that footage or those facts, not that the
+# angle is bad, so they never count toward a pattern or suppress a similar idea later.
+CONTEXTUAL_REASONS = frozenset({"footage_mismatch", "wrong_facts", "invented_experience"})
 # Jaccard over 3+ letter words. 0.8 means four of five words shared: a reword that
 # adds or swaps one word still matches; a new angle on the same footage does not.
 # Texts with fewer than four distinct words only match when they are identical.
@@ -665,6 +668,8 @@ async def rejected_ideas(db, owner, collection_id):
     ).all()
     found = []
     for row in rows:
+        if CONTEXTUAL_REASONS & set(row.reasons or []):
+            continue
         plan = ((row.proposal or {}).get("idea") or {}).get("content_plan") or {}
         found.append(
             {
