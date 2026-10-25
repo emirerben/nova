@@ -241,3 +241,10 @@ placeholder and duplicate-output controls remain. Existing prompt-byte guards st
 check the base template beneath the skill prefix. The new PLC0415 suppression is the
 existing lazy-import convention in plan_blocks, not an exception hiding test failure.
 No independent subagent review was run under the user's no-delegation instruction.
+
+The first hosted full-suite run caught one older public-copy wrapper assertion that
+required raw `template_tone` text in the prompt. It now checks that conversational,
+energetic delivery survives, a distinct account-topic marker does not, and the actual
+transcript remains. This follows the same input boundary as the provider-capture
+regressions; restoring raw tone would reintroduce the reported failure mode. Obsolete
+input-field comments were also corrected. No provider prompt changed in this follow-up.

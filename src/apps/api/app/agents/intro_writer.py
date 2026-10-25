@@ -141,11 +141,8 @@ class IntroWriterInput(BaseModel):
     # prompt — model still THINKS in English but writes the hook IN this language.
     # Closed allowlist enforced at the API edge (CreateGenerativeJobRequest).
     language: str = "en"
-    # Content-plan persona/series context (empty for public generative jobs). These
-    # steer the hook's VOICE + ANGLE toward the creator's pillars and this video's
-    # theme/idea — footage grounding still wins (the prompt forbids inventing facts).
-    # First-party (AI-authored persona + plan item) but re-sanitized in render_prompt
-    # as defense-in-depth at the threading point (see _schemas/persona.py docstring).
+    # Legacy account-topic fields remain accepted for callers and recorded inputs.
+    # They never enter the writer prompt; actual source evidence sets the topic.
     content_pillars: list[str] = Field(default_factory=list)
     theme: str = ""
     idea: str = ""
@@ -157,13 +154,7 @@ class IntroWriterInput(BaseModel):
     # Immutable account/project direction captured at dispatch. This is the
     # creator's standing guidance for this render, distinct from soft feedback.
     creator_direction: str = ""
-    # Deep TikTok analysis summary (analyze_tiktok_profile task). Pre-rendered
-    # summary_for_prompts — the creator's own proven hooks, voice, and winning themes.
-    # Empty for public jobs and for plan jobs where the analysis hasn't landed yet.
-    # Injected into _persona_context so it steers the hook voice without a separate
-    # prompt variable (keeps write_intro_text.txt unchanged). Re-sanitized in
-    # _persona_context as defense-in-depth (the summary was LLM-generated and will be
-    # used by yet another LLM — third layer).
+    # Legacy TikTok analysis is likewise accepted but excluded from writer prompts.
     tiktok_analysis: str = ""
     # Per-item filming guide (Creator Agent M3 / B2). Shot-list context for the hook
     # writer — DATA only, never instructions. The guide describes what the creator
