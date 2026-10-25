@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.120.0] - 2026-10-25
+
+### Fixed
+- fix(speech): merge mixed-language takes on the phone Talking live branch (KRI-843) (#1833) <!-- release-pr: 1833 -->
+
 ## [0.81.119.0] - 2026-10-25
 
 ### Changed
