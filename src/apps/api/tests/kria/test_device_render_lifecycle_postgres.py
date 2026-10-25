@@ -36,6 +36,7 @@ import pytest
 
 from app.auth import get_current_user
 from app.database import sync_session
+from app.kria.recipes_v2 import EditRecipeV2
 from app.main import app
 from app.models import CreatorAgentExecution, Job, PlanItem
 from app.routes import device_render as routes
@@ -340,7 +341,9 @@ def test_reopening_a_reaped_project_restarts_the_same_recipe(client):  # noqa: F
     body = reopened.json()
     assert body["phase"] == "awaiting_device"
     assert body["request"]["identity"]["recipe_revision"] == identity.recipe_revision + 1
-    assert body["request"]["recipe"] == case.recipe
+    assert EditRecipeV2.model_validate(body["request"]["recipe"]) == EditRecipeV2.model_validate(
+        case.recipe
+    )
     job = _job(case)
     assert job.failure_reason is None
     assert device_record(job, "first")["auto_resumed_at"]

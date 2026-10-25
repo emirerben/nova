@@ -163,3 +163,18 @@ merge conflict was two appended entries in journey-manifest.json. Merge resoluti
 keeps main's killer-phone-plan-repair entry and this PR's editorial entry, preserving
 all shared journey definitions byte-for-byte as JSON values. The merged registry
 has 84 journeys. No renderer or agent change is made to resolve this conflict.
+
+The integrated API shard passed 17,788 checks but failed the newly inherited
+KRI-934 reopen-recipe assertion. Its raw JSON comparison treated the order of
+required capabilities as meaningful even though the recipe contract defines a
+set. Compare validated EditRecipeV2 values instead; ordered tracks and all other
+recipe fields remain part of equality. Select this lifecycle module in the
+existing phone-repair journey. No production lifecycle behavior changes.
+
+The hosted failure shows the same two capability values in opposite orders.
+Local route runs under four hash seeds already pass before the fix, so they do
+not reproduce that failure. A forced comparison control rejects reordered
+capabilities under the old assertion and accepts them under the corrected one;
+both assertions reject a changed clip volume. The lifecycle, phone-repair and
+editorial replay suite passes all 82 checks against isolated Postgres. Scoped
+Ruff passes.
