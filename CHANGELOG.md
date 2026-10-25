@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.123.0] - 2026-10-25
+
+### Added
+- feat(speech): bundle the RNNoise model for phone engine-noise reduction (#1838) <!-- release-pr: 1838 -->
+
 ## [0.81.122.0] - 2026-10-25
 
 ### Added
