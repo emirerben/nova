@@ -120,7 +120,7 @@ final class MomentOrderUITests: XCTestCase {
         XCTAssertEqual(bounds.count, 2, "the tray row holds the picked window: \(pointed)")
         if bounds.count == 2 {
             XCTAssertGreaterThan(bounds[0], 0, "slid off the start")
-            XCTAssertEqual(bounds[1] - bounds[0], 2.0, accuracy: 0.01, "a slide keeps the default length")
+            XCTAssertEqual(bounds[1] - bounds[0], 2.0, accuracy: 0.02, "a slide keeps the default length (shown to the hundredth)")
             XCTAssertLessThanOrEqual(bounds[1], 5.0, "clear of the bite")
         }
 
