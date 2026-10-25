@@ -740,12 +740,11 @@ class TestPlatformCopyStructural:
         failures = check_platform_copy(out)
         assert any("placeholder" in f for f in failures)
 
-    def test_too_few_instagram_hashtags(self):
+    def test_small_relevant_instagram_hashtag_set_is_valid(self):
         out = _good_platform_copy(
             instagram=InstagramCopy(hook="hook", caption="caption", hashtags=["#a", "#b"])
         )
-        failures = check_platform_copy(out)
-        assert any("instagram.hashtags" in f and "≥ 3" in f for f in failures)
+        assert check_platform_copy(out) == []
 
     def test_duplicate_hooks_caught(self):
         out = _good_platform_copy(

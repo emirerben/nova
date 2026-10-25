@@ -31,6 +31,8 @@ from app.agents._schemas.creator_policy import (
     native_voiceover_only,
 )
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
+from app.agents._skills import load_skill
+from app.agents._writing_context import turkish_audience_instruction
 from app.config import settings
 from app.kria.brief import BriefUpdate, parse_brief_updates
 from app.kria.reply_language import prompt_language_line
@@ -137,7 +139,8 @@ log = structlog.get_logger()
 # words); the server compares two hearings of the speech and asks, it never reads the words.
 # v92 (KRI-881): main's v91 plus a research / sources ask as a typed `text` requirement with
 # `facts.research` ({topic, request_quote}); the server researches it before approval.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v92"
+# v93 combines main v92 research-before-approval with runtime creative skills.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-25-v93"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -861,6 +864,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 "\n" + _VOICEOVER_SCRIPT_PROMPT_SECTION if input.voiceover_script_available else ""
             ),
         )
+        prompt = load_skill("edit-story") + "\n\n" + load_skill("grounded-hook") + "\n\n" + prompt
+        if input.reply_language == "tr":
+            prompt += (
+                "\n\nFor newly authored audience-facing hook/title copy only "
+                "(not the chat reply): " + turkish_audience_instruction("tr")
+            )
         # KRI-520: the reply-language instruction goes last, where it wins over the
         # English examples above. "" for English/unknown: byte-identical prompt.
         language_line = prompt_language_line(input.reply_language)

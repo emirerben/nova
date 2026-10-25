@@ -28,6 +28,8 @@ from typing import ClassVar
 from pydantic import BaseModel, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
+from app.agents._skills import load_skill
+from app.agents._writing_context import turkish_audience_instruction, writing_voice
 from app.agents.music_matcher import ClipSummary, _sanitize_text
 from app.agents.overlay_examples import OverlayExample
 from app.agents.persona_examples import format_success_factors
@@ -139,11 +141,8 @@ class IntroWriterInput(BaseModel):
     # prompt — model still THINKS in English but writes the hook IN this language.
     # Closed allowlist enforced at the API edge (CreateGenerativeJobRequest).
     language: str = "en"
-    # Content-plan persona/series context (empty for public generative jobs). These
-    # steer the hook's VOICE + ANGLE toward the creator's pillars and this video's
-    # theme/idea — footage grounding still wins (the prompt forbids inventing facts).
-    # First-party (AI-authored persona + plan item) but re-sanitized in render_prompt
-    # as defense-in-depth at the threading point (see _schemas/persona.py docstring).
+    # Legacy account-topic fields remain accepted for callers and recorded inputs.
+    # They never enter the writer prompt; actual source evidence sets the topic.
     content_pillars: list[str] = Field(default_factory=list)
     theme: str = ""
     idea: str = ""
@@ -155,13 +154,7 @@ class IntroWriterInput(BaseModel):
     # Immutable account/project direction captured at dispatch. This is the
     # creator's standing guidance for this render, distinct from soft feedback.
     creator_direction: str = ""
-    # Deep TikTok analysis summary (analyze_tiktok_profile task). Pre-rendered
-    # summary_for_prompts — the creator's own proven hooks, voice, and winning themes.
-    # Empty for public jobs and for plan jobs where the analysis hasn't landed yet.
-    # Injected into _persona_context so it steers the hook voice without a separate
-    # prompt variable (keeps write_intro_text.txt unchanged). Re-sanitized in
-    # _persona_context as defense-in-depth (the summary was LLM-generated and will be
-    # used by yet another LLM — third layer).
+    # Legacy TikTok analysis is likewise accepted but excluded from writer prompts.
     tiktok_analysis: str = ""
     # Per-item filming guide (Creator Agent M3 / B2). Shot-list context for the hook
     # writer — DATA only, never instructions. The guide describes what the creator
@@ -215,16 +208,10 @@ def _is_refusal_text(s: str) -> bool:
 _LANGUAGE_INSTRUCTIONS: dict[str, str] = {
     "en": "Write the hook in English.",
     "tr": (
-        "Write the hook in TURKISH (Türkçe). Use casual creator voice — second-person "
-        "singular 'sen' (informal), NEVER 'siz' (formal). Match how a Turkish "
-        "lifestyle/beauty creator captions her own clip on TikTok or Instagram. "
-        "All other rules below (lowercase by default, no emojis, no #/@, word cap) "
-        "still apply. Turkish diacritics (ç ş ğ ı İ ö ü) MUST be written with the "
-        "correct Unicode codepoint, NOT ASCII-folded.\n\n"
-        "Examples of strong Turkish hooks (style + voice, not copying):\n"
-        '- "keşke daha önce bilseydim"\n'
-        '- "bu saçla iş bambaşka"\n'
-        '- "kendine bunu yapmamak lazım"\n\n'
+        "Write the hook in TURKISH (Türkçe). "
+        + turkish_audience_instruction("tr")
+        + " All other rules (lowercase by default, no emojis, no #/@, word cap) still apply. "
+        "Turkish diacritics (ç ş ğ ı İ ö ü) MUST keep their correct Unicode codepoints. "
         "Do NOT mix English and Turkish. Output Turkish only."
     ),
 }
@@ -238,11 +225,6 @@ def _language_instruction(language: str) -> str:
     an empty instruction block.
     """
     return _LANGUAGE_INSTRUCTIONS.get(language, _LANGUAGE_INSTRUCTIONS["en"])
-
-
-# Cap the persona context so a runaway persona row can't flood the prompt (the
-# job builder caps too — this is the agent-side guard).
-_MAX_PILLARS_IN_PROMPT = 6
 
 
 def _clean_persona_field(s: str) -> str:
@@ -400,40 +382,8 @@ def _word_roles_output(form: dict) -> str:
 
 
 def _persona_context(input: IntroWriterInput) -> str:  # noqa: A002
-    """Render the creator-persona / series-context block for the prompt.
-
-    Every field is re-sanitized here (defense-in-depth at the threading point —
-    see _schemas/persona.py). Returns a sentinel when no persona is supplied
-    (public generative jobs) so the prompt reads as footage-only and the model is
-    NOT nudged toward an invented series.
-
-    tiktok_analysis is appended as a single-line digest ONLY when present — it
-    gives the hook writer a taste of what voice/patterns already perform for this
-    creator without a separate prompt variable (keeps write_intro_text.txt stable).
-    """
-    tone = _clean_persona_field(input.tone)
-    theme = _clean_persona_field(input.theme)
-    idea = _clean_persona_field(input.idea)
-    pillars = [
-        s for p in input.content_pillars[:_MAX_PILLARS_IN_PROMPT] if (s := _clean_persona_field(p))
-    ]
-    # Re-sanitize tiktok_analysis as defense-in-depth (LLM output entering an LLM prompt).
-    tiktok = _clean_persona_field(input.tiktok_analysis)
-    if not (tone or theme or idea or pillars or tiktok):
-        return "(none — this is a one-off edit; write purely from the footage)"
-    lines: list[str] = []
-    if tone:
-        lines.append(f"- creator voice/tone: {tone}")
-    if pillars:
-        lines.append(f"- creator's content pillars: {', '.join(pillars)}")
-    if theme:
-        lines.append(f"- this video's theme: {theme}")
-    if idea:
-        lines.append(f"- this video's idea: {idea}")
-    if tiktok:
-        # Append a concise digest of what already performs well for this creator.
-        lines.append(f"- what works on this creator's TikTok: {tiktok}")
-    return "\n".join(lines)
+    """Legacy account-topic fields remain readable in old fixtures, never in prompts."""
+    return "(none — this is a one-off edit; write purely from the footage)"
 
 
 class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
@@ -469,7 +419,7 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
         #              pillars + plan item theme/idea) for persona-coherent hooks.
         # 2026-05-29 — overlay_examples.json grown with market-research hooks.
         # 2026-05-28 — added $language_instruction block (en|tr).
-        prompt_version="2026-10-22-research-18",
+        prompt_version="2026-10-25-grounded-hook-v3",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -501,9 +451,9 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
             )
             or "(none)"
         )
-        return load_prompt(
+        prompt = load_prompt(
             "write_intro_text",
-            tone=_sanitize_text(input.tone) or "neutral",
+            tone=writing_voice(input.tone),
             effect=str(input.form.get("effect", "static")),
             hero_subject=_sanitize_text(c.subject) or "(unknown)",
             hero_hook=_sanitize_text(c.hook_text),
@@ -533,6 +483,7 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
             # Codified hook-relevant TikTok success factors (reference, not data).
             success_factors=format_success_factors("hook"),
         )
+        return prompt + "\n\n" + load_skill("grounded-hook")
 
     def parse(self, raw_text: str, input: IntroWriterInput) -> IntroWriterOutput:  # noqa: A002
         try:

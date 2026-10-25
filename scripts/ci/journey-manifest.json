@@ -1702,6 +1702,24 @@
         "src/apps/api/tests/pipeline/test_kri842_clip_sound_plan.py",
         "src/apps/api/tests/routes/test_kri842_clip_sound_save.py"
       ]
+    },
+    {
+      "id": "kri-215-creative-copy-skills",
+      "needs_native": false,
+      "api_tests": "tests/evals/test_runtime_creative_skills.py tests/evals/test_platform_copy_evals.py tests/evals/test_intro_writer_evals.py tests/evals/test_sequence_quote_writer_evals.py tests/agents/test_intro_writer.py tests/agents/test_sequence_quote_writer.py tests/services/test_creator_sessions.py tests/kria/test_plan_snapshot_postgres.py",
+      "paths": [
+        "src/apps/api/app/agents/_skills.py",
+        "src/apps/api/app/agents/_writing_context.py",
+        "src/apps/api/app/agents/skills/",
+        "src/apps/api/app/agents/intro_writer.py",
+        "src/apps/api/app/agents/platform_copy.py",
+        "src/apps/api/app/agents/sequence_quote_writer.py",
+        "src/apps/api/app/pipeline/agents/copy_writer.py",
+        "src/apps/api/prompts/sequence_quote.txt",
+        "src/apps/api/prompts/write_intro_text.txt",
+        "src/apps/api/tests/evals/test_runtime_creative_skills.py",
+        "src/apps/api/tests/fixtures/creative_copy_review/"
+      ]
     }
   ]
 }
