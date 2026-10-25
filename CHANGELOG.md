@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.117.0] - 2026-10-25
+
+### Changed
+- fix(camera-roll): recover held ideas and include untimed short clips (KRI-733) (#1804) <!-- release-pr: 1804 -->
+
 ## [0.81.116.0] - 2026-10-25
 
 ### Changed
