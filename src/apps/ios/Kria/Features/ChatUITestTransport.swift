@@ -1563,6 +1563,7 @@ enum VoiceoverScriptUITestFixture {
 }
 #endif
 
+#if DEBUG
 /// KRI-723: the moments question the fixture server asks, shaped like `named_moments._question`. One 8 s take
 /// (`fixture-clip`, which has a generated local original): the tray is not in the clip record, the wave matches two
 /// analysed moments equally, the bite is grounded at 5.0-6.5 s.
@@ -1590,3 +1591,4 @@ enum MomentOrderFixture {
         ]
     }
 }
+#endif
