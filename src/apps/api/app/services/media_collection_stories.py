@@ -572,7 +572,7 @@ async def _recoverable_selection_hold(db, thread, item, turn, story):
     )
 
 
-async def select_story(db, owner, identifier, story_id, body):
+async def select_story(db, owner, identifier, story_id, body, gate_open_questions=True):
     from sqlalchemy import select
 
     from app.config import settings
@@ -670,7 +670,7 @@ async def select_story(db, owner, identifier, story_id, body):
         raise HTTPException(409, "Held selection was not found in this project")
     if story_out(row).rejected:
         raise HTTPException(409, "Choose another story; this version was rejected")
-    if unresolved_question_ids(row):
+    if gate_open_questions and unresolved_question_ids(row):
         raise HTTPException(
             409,
             {

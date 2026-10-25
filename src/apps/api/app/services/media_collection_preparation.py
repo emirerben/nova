@@ -112,6 +112,11 @@ class PreparedCollectionStory(BaseModel):
     )
 
 
+def _without_open_questions(plan):
+    """Creator answers have no consumer downstream, so they stay in the story row only."""
+    return plan.model_copy(update={"open_questions": []}) if plan else plan
+
+
 def selected_story_requirement(prepared: PreparedCollectionStory):
     """The creator selected this complete reviewed story, not an empty delegation."""
     from app.kria.brief import BriefUpdate
@@ -281,7 +286,7 @@ async def prepare_story_snapshot(db, owner, story, item):
     )
     if not 30 <= duration_frames <= 60 * 30:
         raise HTTPException(422, "This story cannot fit the supported export duration")
-    content_plan = (
+    content_plan = _without_open_questions(
         StoryContentPlan.model_validate(story.story_json["content_plan"])
         if story.story_json.get("content_plan")
         else None
@@ -549,7 +554,7 @@ def install_approved_story(db, *, item, owner, raw, strategy, dry_run=False):
         raise ValueError("Approved story strategy changed")
     if prepared.research != story_out(story).research:
         raise ValueError("Approved story research changed")
-    if prepared.content_plan != story_out(story).content_plan:
+    if prepared.content_plan != _without_open_questions(story_out(story).content_plan):
         raise ValueError("Approved story content plan changed")
     if prepared.source_contexts != _source_contexts(story.moments_json):
         raise ValueError("Approved story context evidence changed")

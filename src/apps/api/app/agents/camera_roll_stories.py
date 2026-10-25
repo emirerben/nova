@@ -78,18 +78,11 @@ def _meets_form_evidence(story, source_stops):
     return facts >= need.research_facts and source_stops >= need.source_stops
 
 
-def _variety_expected(input):  # noqa: A002
-    # Footage from one source clip, or a researched run (whose ideas naturally share
-    # factual_story), may genuinely support a single form; only multi-clip, unresearched
-    # footage is expected to vary.
-    return not input.public_research and len({c.source for c in input.candidates}) > 1
-
-
 class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.media.camera_roll_stories",
         prompt_id="camera_roll_stories",
-        prompt_version="2026-10-25.2",
+        prompt_version="2026-10-25.3",
         model="gemini-2.5-flash",
         max_attempts=1,
         timeout_s=20,
@@ -157,7 +150,7 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "claim a form whose footage or research requirement is unmet: that idea is "
             "discarded. These forms are equally valid; a mood post needs no "
             "question, twist or invented narrative. When you return three ideas, use at least "
-            "two different forms unless the footage genuinely supports only one; three "
+            "two different forms unless the creator asked narrowly for one form; three "
             "rewordings of one form are not three options. Explain the actual value: what "
             "viewers learn, recognize, find funny or enjoy seeing. Name the intended audience in "
             "ordinary words. "
@@ -322,14 +315,12 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
                 for story in result.stories
                 if _meets_form_evidence(story, len({sources[v] for v in story.moment_ids}))
             ]
-            # A mislabelled idea is dropped on its own; three ideas that collapse into one
-            # form fail the whole response because dropping any would hide the variety miss.
-            if (
-                len(result.stories) == 3
-                and _variety_expected(input)
-                and len({story.content_plan.form for story in result.stories}) < 2
-            ):
-                raise ValueError("Three ideas must not share one editorial form")
+            # A mislabelled idea is dropped on its own. Three ideas that collapse into one
+            # form keep the first two: the prompt already allows two, and failing the whole
+            # response would leave a narrow request (which may legitimately repeat a form)
+            # with no ideas at all.
+            if len(result.stories) == 3 and len({s.content_plan.form for s in result.stories}) < 2:
+                result.stories = result.stories[:2]
             return result
         except ValueError as exc:
             raise SchemaError("Invalid camera-roll story response") from exc

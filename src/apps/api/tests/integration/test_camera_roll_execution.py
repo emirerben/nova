@@ -663,6 +663,14 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
     }
     if question_mode:
         select_path = f"{path}/stories/{story_id}/select"
+        # A build that predates the question UI is never shown the list.
+        old = await client.get(
+            f"{path}/stories",
+            params={"expected_revision": 1, "story_ids": str(story_id)},
+            headers={"X-Kria-Client-Protocol": "21"},
+        )
+        assert "open_questions" not in old.json()["stories"][0]["content_plan"]
+        client.headers["X-Kria-Client-Protocol"] = "22"
 
         async def assert_nothing_built():
             async with AsyncSessionLocal() as db:
@@ -1060,11 +1068,8 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
             assert draft.snapshot_json.get("brief_binding") is None
         prepared_research = frozen.get("research")
         if question_mode:
-            asked = frozen["content_plan"]["open_questions"][0]
-            assert asked["question"] == "Which port is this crossing to?"
-            assert (asked["answer"], asked["dismissed"]) == (
-                ("Hamburg", False) if question_mode == "question-answered" else (None, True)
-            )
+            # Creator answers have no downstream consumer, so they never leave the story row.
+            assert "open_questions" not in frozen["content_plan"]
         if with_content_plan:
             assert frozen["research"]["evidence"]["facts"][0]["sources"][0]["url"] == (
                 "https://si.edu/recorded-fixture"

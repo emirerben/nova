@@ -16298,6 +16298,16 @@
               "title": "Story Ids",
               "type": "array"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -16342,6 +16352,16 @@
             "schema": {
               "format": "uuid",
               "title": "Identifier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
               "type": "string"
             }
           }
@@ -16412,6 +16432,16 @@
               "title": "Story Id",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -16478,6 +16508,16 @@
             "schema": {
               "format": "uuid",
               "title": "Story Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
               "type": "string"
             }
           }
@@ -16548,6 +16588,16 @@
               "title": "Story Id",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -16614,6 +16664,16 @@
             "schema": {
               "format": "uuid",
               "title": "Story Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
               "type": "string"
             }
           }

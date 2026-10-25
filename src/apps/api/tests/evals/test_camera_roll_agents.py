@@ -600,11 +600,10 @@ def test_guide_and_factual_story_are_dropped_when_their_evidence_is_missing():
     assert _forms(researched, _form_story("factual_story", facts=("fact-0",))) == ["factual_story"]
 
 
-def test_three_ideas_cannot_be_one_form_reworded():
+def test_three_ideas_of_one_form_keep_two_instead_of_failing():
     value = _form_input()
     same = [_form_story("atmosphere", n=i) for i in range(3)]
-    with pytest.raises(SchemaError):
-        CameraRollStoriesAgent(None).parse(json.dumps(dict(stories=same)), value)
+    assert _forms(value, *same) == ["atmosphere"] * 2
     assert _forms(value, *same[:2]) == ["atmosphere"] * 2
     mixed = [_form_story("atmosphere", n=0), _form_story("review", n=1), same[2]]
     assert _forms(value, *mixed) == ["atmosphere", "review", "atmosphere"]

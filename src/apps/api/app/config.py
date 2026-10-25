@@ -894,6 +894,12 @@ class Settings(BaseSettings):
     # `fly secrets set MOMENT_ORDER_MIN_CLIENT_PROTOCOL=999` (api + worker) + restart turns
     # off the question AND every v2 pin.
     moment_order_min_client_protocol: int = 20
+    # Camera-roll idea `open_questions`: an app build declaring `X-Kria-Client-Protocol` >=
+    # this renders the questions and is held by the 409 `story_open_questions` gate on
+    # select. Lower builds never see the list and are never gated (they could neither answer
+    # nor explain the 409). 22 = the first iOS build with the question UI. Kill switch:
+    # `OPEN_QUESTIONS_MIN_CLIENT_PROTOCOL=999` (api) + restart.
+    open_questions_min_client_protocol: int = 22
     # KRI-815: with footage and no voiceover, Kria chat writes a footage-grounded voiceover
     # script (`voiceover_script` on the reply) instead of a narrated draft that can only fail at
     # approval. Independent of TRANSCRIPT_HELPER_ENABLED. Kill switch: false + restart (api +
