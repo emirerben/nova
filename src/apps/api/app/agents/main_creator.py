@@ -32,6 +32,7 @@ from app.agents._schemas.creator_policy import (
 )
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.agents._skills import load_skill
+from app.agents._writing_context import turkish_audience_instruction
 from app.config import settings
 from app.kria.brief import BriefUpdate, parse_brief_updates
 from app.kria.reply_language import prompt_language_line
@@ -857,6 +858,11 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             ),
         )
         prompt = load_skill("edit-story") + "\n\n" + load_skill("grounded-hook") + "\n\n" + prompt
+        if input.reply_language == "tr":
+            prompt += (
+                "\n\nFor newly authored audience-facing hook/title copy only "
+                "(not the chat reply): " + turkish_audience_instruction("tr")
+            )
         # KRI-520: the reply-language instruction goes last, where it wins over the
         # English examples above. "" for English/unknown: byte-identical prompt.
         language_line = prompt_language_line(input.reply_language)

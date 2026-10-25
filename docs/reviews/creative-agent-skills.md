@@ -179,3 +179,65 @@ Revision 2 verification record:
   the task's `creative-copy-comparison-v2` artifact directory. The key remains
   hidden pending user votes. No comparative creative-quality pass, no full
   resolution of the theme-forcing problem, and no deployment are claimed yet.
+
+## Requested production delivery — acceptance before implementation
+
+User explicitly authorizes fixing, testing, merging and deploying the runtime
+skills. Latest review does not establish a creative-quality pass: 1/2/4/7 preferred
+the refinement, 3/5 supplied creator hook alternatives, 6/8/10 rejected both,
+9/11 rejected the premise. No further paid generation is required for deployment.
+
+Required boundary changes:
+- Public-facing Turkish copy addresses its audience with plural siz/size forms;
+  verbatim source speech and first-person creator statements remain unchanged.
+- Account pillars, generated themes/ideas, TikTok performance summaries and proposed
+  edit summaries must not be sent to hook/caption writers as topic evidence.
+- A free-text tone cannot smuggle an account niche into writing. Project only a
+  bounded vocabulary of delivery qualities; unknown tone defaults to conversational.
+- Explicit creator direction and real source descriptions/transcripts still reach
+  their owning writer. This fix does not authorize inventing facts or rewriting
+  approved text. The sequence writer shares the same projection and must keep parity.
+- Deploy the merged revision through Fly Deploy, verify both API and worker assets
+  and prompt versions without triggering paid calls, and label native-output / new
+  creative-quality verification pending. No claim of solving every writing weakness.
+
+Failure modes: residual raw tone/topic in the provider prompt; dropped valid voice;
+account metadata reintroduced through a shared sequence helper; dropped source or
+explicit creator instruction; incorrect formal/robotic Turkish; modified quotations;
+missing skill files in the Docker image; only API updated while workers stay old;
+CI journey mapping or prompt-version checks omitted. Provider-capture integration
+checks are the primary regression gate, with current prompt replay/DB feed tests,
+required mapped reliability/journey CI, exact-image deployment and in-container
+prompt-load probes. Output semantics and a fresh native export remain separate.
+
+Final delivery input projection (2026-10-25):
+- Intro and sequence copy retain legacy input fields for recorded fixtures but
+  omit account pillars/theme/idea and TikTok summary from provider prompts.
+- Free-text tone is projected through a fixed delivery vocabulary. Unknown or
+  niche-only tone becomes natural/conversational. Creator direction is separate.
+- The phone main creator receives delivery-only account context and visual knobs;
+  auto idea/theme, persona summary/audience/pillars and style rationale are omitted.
+  Project notes, filming instructions and capability/current-format state remain.
+- The post-caption caller passes the actual available transcript, not a proposed
+  strategy summary. Its raw tone uses the same delivery projection.
+- Public Turkish audience copy uses plural siz/size in intro, sequence, caption
+  and main-creator authored hook/title instructions. Chat address is not changed.
+- Regression probes failed before the projection and pass after it. The free
+  replay/agent/context batch passed 2329 checks (15 existing skips, 7 xfails);
+  168 additional creator checks and 10 real Postgres feed checks passed. Selected
+  reliability gates passed 505 checks without environment skips/errors.
+- CI gains an explicit copy-skill journey mapping; existing native and API gates
+  remain selected. No VERSION/CHANGELOG edits: repository post-merge automation
+  owns release metadata. Native render output and new creative preference remain
+  unverified; claim stays local_fix with KRI-215 owning that quality gap.
+
+Pre-landing review: current-agent two-pass review completed over source projection,
+privacy, trust boundaries, schema compatibility, job-session lifetime, packaging and
+changed tests. No SQL mutation, new endpoint or provider/model change. Topic-removal
+assertions intentionally replace former topic-presence assertions under the user's
+explicit request; plural-address assertions replace the former singular rule.
+Hashtag-count floors were replaced by the explicitly chosen 0–5 social tag budget;
+placeholder and duplicate-output controls remain. Existing prompt-byte guards still
+check the base template beneath the skill prefix. The new PLC0415 suppression is the
+existing lazy-import convention in plan_blocks, not an exception hiding test failure.
+No independent subagent review was run under the user's no-delegation instruction.

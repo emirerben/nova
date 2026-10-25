@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._skills import load_skill
+from app.agents._writing_context import turkish_audience_instruction, writing_voice
 from app.kria.reply_language import agent_reply_language, with_prompt_language
 from app.pipeline.agents.copy_writer import (
     InstagramCopy,
@@ -34,7 +35,7 @@ class PlatformCopyInput(BaseModel):
     transcript_excerpt: str = ""
     has_transcript: bool = True
     template_tone: str = ""
-    # Approved plan context is intent, not proof of rendered footage.
+    # Compatibility with recorded inputs; plan summaries are excluded from prompts.
     edit_summary: str = Field(default="", max_length=1200)
     # KRI-784: the creator's language ("tr"/"en"), from the chat or the caller. None:
     # read from the creator's own words below; English/unknown renders byte-identical.
@@ -53,7 +54,7 @@ class PlatformCopyAgent(Agent[PlatformCopyInput, PlatformCopyOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.platform_copy",
         prompt_id="_inline",  # prompt is built from input, no template file
-        prompt_version="2026-10-25-social-caption-v2",
+        prompt_version="2026-10-25-social-caption-v3",
         model="gemini-2.5-flash",
         # Legacy used 2 attempts; keep the runtime's 5-attempt default but a
         # tighter timeout — copy is short and shouldn't take long.
@@ -72,8 +73,7 @@ class PlatformCopyAgent(Agent[PlatformCopyInput, PlatformCopyOutput]):
                 "transcript_excerpt": input.transcript_excerpt[:500]
                 if input.has_transcript
                 else "",
-                "creator_voice": input.template_tone[:300],
-                "approved_edit_intent_not_observed_footage": input.edit_summary,
+                "creator_voice": writing_voice(input.template_tone),
             },
             ensure_ascii=False,
         )
@@ -93,12 +93,13 @@ class PlatformCopyAgent(Agent[PlatformCopyInput, PlatformCopyOutput]):
             "up to 15 relevant keyword tags.\n"
             "Return ONLY valid JSON, no markdown."
         )
-        return with_prompt_language(
-            prompt,
-            agent_reply_language(
-                input.reply_language, input.transcript_excerpt if input.has_transcript else ""
-            ),
+        language = agent_reply_language(
+            input.reply_language, input.transcript_excerpt if input.has_transcript else ""
         )
+        audience = turkish_audience_instruction(language)
+        if audience:
+            prompt += "\n\n" + audience
+        return with_prompt_language(prompt, language)
 
     def parse(self, raw_text: str, input: PlatformCopyInput) -> PlatformCopyOutput:  # noqa: A002, ARG002
         try:

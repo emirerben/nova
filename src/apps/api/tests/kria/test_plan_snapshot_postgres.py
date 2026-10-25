@@ -383,7 +383,7 @@ async def test_post_caption_is_generated_persisted_and_reported(
     plan_blocks.emit_post_caption(job)  # resolved once; the second call is a no-op
     assert len(prompts) == 1
     assert "We walked through Athens before sunrise." in prompts[0]
-    assert "A quiet Athens morning walk" in prompts[0]
+    assert "A quiet Athens morning walk" not in prompts[0]
     assert "# Social caption" in prompts[0]
     blk = await _post_caption_block(user_id, thread_id)
     assert blk.state == "decided" and not blk.skipped

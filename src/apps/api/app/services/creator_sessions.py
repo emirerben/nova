@@ -24,6 +24,7 @@ from app.agents._schemas.creator_agent import (
     canonical_context_hash,
     creator_strategies_equal,
 )
+from app.agents._writing_context import writing_voice
 from app.config import settings
 from app.kria.creator_cues import SFX_NOUN_PATTERN_TR
 from app.kria.media_sources import is_analysis_proxy_path
@@ -311,22 +312,20 @@ def _partial_variant_render_in_flight(job: Job) -> bool:
 
 def creator_context(persona: Persona, item: PlanItem) -> tuple[str, str]:
     data = persona.persona or {}
+    style = (
+        effective_persona_style(persona.style, profile=getattr(persona, "tiktok_profile", None))
+        or {}
+    )
     creator = {
-        "summary": _clean(data.get("summary"), 1200),
-        "tone": _clean(data.get("tone"), 300),
-        "audience": _clean(data.get("audience"), 500),
-        "content_pillars": [
-            _clean(value, 160) for value in (data.get("content_pillars") or [])[:8]
-        ],
-        "style": effective_persona_style(
-            persona.style,
-            profile=getattr(persona, "tiktok_profile", None),
-        )
-        or {},
+        "tone": writing_voice(str(data.get("tone") or "")),
+        # Appearance choices are useful; their generated rationale is not a topic.
+        "style": {
+            key: style[key]
+            for key in ("style_set_id", "knobs", "instruction_level")
+            if key in style
+        },
     }
     item_data = {
-        "idea": _clean(item.idea, 1200),
-        "theme": _clean(item.theme, 300),
         "creator_notes": _clean(item.notes, 1200),
         "filming_guide": item.filming_guide or [],
         "current_edit_format": item.edit_format,

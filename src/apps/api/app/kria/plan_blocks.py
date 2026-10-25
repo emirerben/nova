@@ -740,21 +740,13 @@ def _generate_post_caption(
     with sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
         transcript = job.transcript if job is not None and isinstance(job.transcript, dict) else {}
-        candidates = (
-            job.all_candidates if job is not None and isinstance(job.all_candidates, dict) else {}
-        )
-        strategy = candidates.get("creator_strategy")
-        strategy = strategy if isinstance(strategy, dict) else {}
         excerpt = transcript.get("full_text")
         excerpt = excerpt[:500] if isinstance(excerpt, str) else ""
-        summary = strategy.get("summary")
-        summary = summary[:1200] if isinstance(summary, str) else ""
     out = PlatformCopyAgent(default_client()).run(
         PlatformCopyInput(
             hook_text=hook_text[:300],
             transcript_excerpt=excerpt,
             has_transcript=bool(excerpt),
-            edit_summary=summary,
             reply_language=language,
         ),
         ctx=RunContext(job_id=job_id),
