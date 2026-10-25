@@ -567,3 +567,162 @@ async def test_named_unfinished_video_is_not_a_finished_positive(collection_worl
     assert response.status_code == 422
     profile = (await client.get("/me/editorial-taste")).json()
     assert profile["revision"] == 0 and profile["examples"] == []
+
+
+async def test_wrong_facts_feedback_excludes_those_facts_from_the_next_research_run(
+    collection_world, monkeypatch
+):
+    """A creator who says an idea's facts are wrong must not see them again.
+
+    Failure catalogue, written first: (1) fact ids restart at fact-0 on every
+    search, so excluding by id would drop innocent facts and keep the bad one;
+    (2) the proposal cache is keyed by the request, so an unchanged key would
+    replay the rejected ideas without a fresh search or review; (3) Forget,
+    pause or another topic must not leak the exclusion; (4) every fact rejected
+    must fail closed, never fall back to the rejected evidence; (5) an older
+    client's payload, and a server that predates the reason, must stay usable.
+    """
+    from app.agents.camera_roll_stories import CameraRollStoriesAgent
+    from app.routes import editorial_taste
+    from app.routes.creation_threads import router as creation_router
+    from app.schemas.editorial_taste import IdeaFeedbackWrite
+    from app.services import creator_editorial_taste
+    from app.services import story_idea_research as research
+    from app.services.researched_text import GroundedResearchAgent, ResearchEvidence
+
+    client, assets, sources, owner, app = collection_world
+    app.include_router(editorial_taste.router)
+    app.include_router(creation_router, prefix="/creation-threads")
+    monkeypatch.setattr(settings, "creator_editorial_taste_enabled", True)
+    monkeypatch.setattr(settings, "creator_editorial_taste_user_ids", [str(owner.id)])
+    assert (await client.get("/creation-threads/capabilities")).json()["wrong_fact_feedback"]
+    ids = await projects(owner)
+    assert (await client.put("/me/editorial-taste", json=profile_body(ids))).status_code == 200
+
+    wrong = "The terminal was rebuilt after a fire."
+    right = "The ferry line opened in 1923."
+    order = [wrong, right]
+    searches, agent_facts, reviews = [], [], []
+
+    def search(self, value, *, ctx):
+        searches.append(value.topic)
+        return ResearchEvidence(
+            facts=[
+                dict(
+                    id=f"fact-{i}",
+                    text=text,
+                    sources=[dict(title="Archive", url=f"https://si.edu/{abs(hash(text)) % 99}")],
+                )
+                for i, text in enumerate(order)
+            ],
+            retrieved_at="2026-10-21T00:00:00+00:00",
+            search_entry_html="<div>Recorded provider attribution</div>",
+        )
+
+    def ideas(self, value, *, ctx):
+        facts = value.public_research.facts
+        agent_facts.append([(fact.id, fact.text) for fact in facts])
+        return self.parse(
+            json.dumps(
+                {
+                    "stories": [
+                        {
+                            "title": "A terminal's story",
+                            "moment_ids": ["m1"],
+                            "research_fact_ids": [facts[0].id],
+                            "content_plan": {
+                                "audience": "Ferry passengers",
+                                "angle": "The terminal's history",
+                                "why_it_works": "History gives this crossing a point.",
+                                "opening_text": facts[0].text[:90],
+                                "caption": "A piece of terminal history.",
+                                "beat_reasons": ["Crossing footage supplies atmosphere"],
+                            },
+                        }
+                    ]
+                }
+            ),
+            value,
+        )
+
+    def review(self, value, *, ctx):
+        reviews.append(type(self).__name__)
+        return research.StoryResearchReviewOutput(approved=True, reason="Recorded review")
+
+    monkeypatch.setattr(GroundedResearchAgent, "run", search)
+    monkeypatch.setattr(CameraRollStoriesAgent, "run", ideas)
+    monkeypatch.setattr(research.StoryResearchReviewAgent, "run", review)
+    monkeypatch.setattr(research.StorySourceReviewAgent, "run", review)
+
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    await client.put(path, json=selection(assets, sources))
+    await client.post(f"{path}/index", json={"expected_revision": 1})
+    body = {
+        "expected_revision": 1,
+        "query": "A ferry outing",
+        "research_topic": "History of the public ferry terminal",
+    }
+    first = await client.post(f"{path}/stories", json=body)
+    assert first.status_code == 200, first.text
+    story = first.json()["stories"][0]
+    assert [f["text"] for f in story["research"]["evidence"]["facts"]] == [wrong]
+
+    def feedback(event, reasons, story=story):
+        return {
+            "collection_id": path.rsplit("/", 1)[1],
+            "story_id": story["id"],
+            "expected_story_revision": story["revision"],
+            "client_event_id": event,
+            "verdict": "needs_work",
+            "reasons": reasons,
+            "note": "",
+            "rewrite": "",
+        }
+
+    old_client = feedback("old-client", ["too_generic"])
+    assert IdeaFeedbackWrite.model_validate(old_client).reasons == ["too_generic"]
+    assert (await client.post("/me/editorial-taste/feedback", json=old_client)).status_code == 200
+    assert len(searches) == 1
+
+    rated = await client.post(
+        "/me/editorial-taste/feedback", json=feedback("wrong-facts", ["wrong_facts"])
+    )
+    assert rated.status_code == 200, rated.text
+
+    order[:] = [right, wrong]  # Same facts, new positions: ids cannot be the identity.
+    searches.clear(), reviews.clear()
+    again = await client.post(f"{path}/stories", json=body)
+    assert again.status_code == 200, again.text
+    assert searches == [body["research_topic"]]
+    assert agent_facts[-1] == [("fact-0", right)]
+    assert wrong not in json.dumps(again.json())
+    assert [f["text"] for f in again.json()["stories"][0]["research"]["evidence"]["facts"]] == [
+        right
+    ]
+    assert again.json()["stories"][0]["id"] != story["id"]
+    assert reviews == ["StorySourceReviewAgent", "StoryResearchReviewAgent"]
+
+    other_topic = await client.post(
+        f"{path}/stories", json={**body, "research_topic": "A different public topic"}
+    )
+    assert other_topic.status_code == 200, other_topic.text
+    assert agent_facts[-1] == [("fact-0", right), ("fact-1", wrong)]
+
+    order[:] = [wrong]
+    ideas_before = len(agent_facts)
+    exhausted = await client.post(f"{path}/stories", json={**body, "query": "Only that fact"})
+    assert exhausted.status_code == 503 and len(agent_facts) == ideas_before
+
+    async with AsyncSessionLocal() as db:
+        topic = body["research_topic"]
+        assert await creator_editorial_taste.rejected_research(db, owner.id, topic)
+        assert await creator_editorial_taste.rejected_research(db, owner.id, "Another") is None
+    revision = (await client.get("/me/editorial-taste")).json()["revision"]
+    erased = await client.request(
+        "DELETE",
+        "/me/editorial-taste",
+        json={"expected_revision": revision, "idempotency_key": "forget"},
+    )
+    assert erased.status_code == 200, erased.text
+    async with AsyncSessionLocal() as db:
+        assert await creator_editorial_taste.rejected_research(db, owner.id, topic) is None

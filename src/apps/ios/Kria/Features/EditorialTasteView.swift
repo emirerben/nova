@@ -127,8 +127,11 @@ struct IdeaFeedbackView: View {
     @State private var busy = false
     @State private var error: String?
     @State private var eventID = UUID().uuidString
+    @State private var serverAcceptsWrongFacts = false
     private var reasons: [(String, String)] {
-        verdict == "would_post" ? [("good_observation", "Good observation"), ("useful_detail", "Useful detail"), ("good_mood", "Good atmosphere")] : [("too_generic", "Too generic"), ("forced_question", "Forced question"), ("not_my_voice", "Not my voice"), ("invented_experience", "Invented experience"), ("footage_mismatch", "Doesn’t fit the footage"), ("missing_point", "Missing the point")]
+        if verdict == "would_post" { return [("good_observation", "Good observation"), ("useful_detail", "Useful detail"), ("good_mood", "Good atmosphere")] }
+        let general = [("too_generic", "Too generic"), ("forced_question", "Forced question"), ("not_my_voice", "Not my voice"), ("invented_experience", "Invented experience"), ("footage_mismatch", "Doesn’t fit the footage"), ("missing_point", "Missing the point")]
+        return story.research != nil && serverAcceptsWrongFacts ? general + [("wrong_facts", "The facts are wrong")] : general
     }
     var body: some View {
         NavigationStack {
@@ -157,6 +160,7 @@ struct IdeaFeedbackView: View {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(busy) }
                     ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(verdict.isEmpty || busy || note.count > 1000 || rewrite.count > 1000).accessibilityIdentifier("idea-feedback-save") }
                 }.disabled(busy).interactiveDismissDisabled(busy)
+                .task { serverAcceptsWrongFacts = (try? await api.creationCapabilities())?.wrongFactFeedbackEnabled == true }
                 .onChange(of: note) { _, _ in eventID = UUID().uuidString }
                 .onChange(of: rewrite) { _, _ in eventID = UUID().uuidString }
                 .onChange(of: reason) { _, _ in eventID = UUID().uuidString }

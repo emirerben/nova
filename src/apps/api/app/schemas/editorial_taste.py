@@ -61,6 +61,7 @@ class IdeaFeedbackWrite(BaseModel):
             "not_my_voice",
             "invented_experience",
             "footage_mismatch",
+            "wrong_facts",
             "missing_point",
             "good_observation",
             "useful_detail",

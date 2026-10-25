@@ -1,5 +1,6 @@
 """Shared provider-owned public research evidence; never model-authored links."""
 
+import hashlib
 import ipaddress
 from typing import Literal
 from urllib.parse import urlsplit
@@ -36,6 +37,11 @@ class ResearchSource(BaseModel):
             if not address.is_global:
                 raise ValueError("Private source address")
         return value
+
+
+def fact_fingerprint(text) -> str:
+    # Fact ids are positional (fact-N) and change between searches; wording does not.
+    return hashlib.sha256(" ".join(str(text).casefold().split()).encode()).hexdigest()
 
 
 class ResearchFact(BaseModel):

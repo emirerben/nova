@@ -24,6 +24,7 @@ from app.models import (
     PlanItemAsset,
     User,
 )
+from app.schemas.research import fact_fingerprint
 from app.services.editorial_taste import MAX_CONTEXT_CHARS, TasteStore, digest
 from app.services.library_variant_selection import selected_variant_id
 from app.services.private_text import normalize_private_text
@@ -399,13 +400,53 @@ async def record_feedback(db, owner, body):
     return {"id": str(row.id), "recorded": True, "requires_render_approval": True}
 
 
-async def generation_context(db, owner, query):
+async def active_version(db, owner):
     if not settings.creator_editorial_taste_for(owner):
-        return ""
+        return None
     # Fetch a fresh flag: an auth object or a previous identity-map value may be stale.
     paused = await db.scalar(select(User.creator_memory_enabled).where(User.id == owner))
     version = await latest(db, owner)
     if not paused or version is None or not version.payload.get("enabled"):
+        return None
+    return version
+
+
+async def rejected_research(db, owner, topic):
+    """Facts and sources the creator called wrong on an earlier idea about this topic.
+
+    Fact ids restart at fact-0 on every search, so identity is the stored wording
+    and source address. Forget, pause and the feature gate all empty the result.
+    """
+    if not topic or await active_version(db, owner) is None:
+        return None
+    wanted = " ".join(topic.casefold().split())
+    rows = (
+        await db.scalars(
+            select(CreatorIdeaFeedback)
+            .where(
+                CreatorIdeaFeedback.user_id == owner,
+                CreatorIdeaFeedback.reasons.contains(["wrong_facts"]),
+            )
+            .order_by(CreatorIdeaFeedback.created_at.desc(), CreatorIdeaFeedback.id)
+            .limit(50)
+        )
+    ).all()
+    texts, urls = set(), set()
+    for row in rows:
+        research = ((row.proposal or {}).get("idea") or {}).get("research") or {}
+        if " ".join(str(research.get("topic", "")).casefold().split()) != wanted:
+            continue
+        for fact in (research.get("evidence") or {}).get("facts", []):
+            texts.add(fact_fingerprint(fact.get("text", "")))
+            urls.update(s["url"] for s in fact.get("sources", []) if s.get("url"))
+    if not texts:
+        return None
+    return {"fact_sha256": sorted(texts), "source_urls": sorted(urls)}
+
+
+async def generation_context(db, owner, query):
+    version = await active_version(db, owner)
+    if version is None:
         return ""
     rows = await sources(db, owner, version)
     corpus = {

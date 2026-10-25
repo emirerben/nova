@@ -363,6 +363,9 @@ class CreationCapabilitiesOut(BaseModel):
     media_library: bool = False
     media_collections: bool = False
     media_collection_cache_only: bool = True
+    # The feedback route accepts the `wrong_facts` reason. A build that does not see this
+    # (an older server) must not offer the chip: the old route 422s the whole judgment.
+    wrong_fact_feedback: bool = False
     formats: list[CreationFormatCapabilityOut]
     media: CreationMediaCapabilitiesOut
     runtime_versions: list[Literal[1, 2]] = Field(default_factory=lambda: [1])
@@ -3842,6 +3845,7 @@ async def capabilities(
             and settings.media_collection_proposals_for(user.id)
         ),
         "media_collection_cache_only": settings.media_collection_cache_only,
+        "wrong_fact_feedback": bool(settings.creator_editorial_taste_for(user.id)),
         "phone_rendering": DeviceRenderCapabilities(
             enabled=phone_enabled,
             recipe_versions=[2] if phone_enabled else [],
