@@ -102,7 +102,9 @@ class StoryResearchReviewAgent(Agent[StoryResearchReviewInput, StoryResearchRevi
             "stories": [
                 {
                     "title": story.title,
-                    "copy_and_reasoning": story.content_plan.model_dump(exclude={"beat_reasons"}),
+                    "copy_and_reasoning": story.content_plan.model_dump(
+                        exclude={"beat_reasons", "form"}
+                    ),
                     "selected_facts": (
                         [fact.model_dump() for fact in story.research.evidence.facts]
                         if story.research

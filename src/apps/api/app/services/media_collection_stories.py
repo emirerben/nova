@@ -349,10 +349,12 @@ async def correct_story(db, owner, identifier, story_id, body):
     elif body.content_plan is not None:
         if len(body.content_plan.beat_reasons) != len(moments):
             raise HTTPException(422, "Keep one reason for each story moment")
-        row.story_json = {
-            **row.story_json,
-            "content_plan": body.content_plan.model_dump(mode="json"),
-        }
+        # The form decides which evidence the idea was admitted on; wording edits
+        # (including from builds that predate the field) cannot add, drop or change it.
+        revised = body.content_plan.model_dump(mode="json", exclude={"form"})
+        if form := (row.story_json.get("content_plan") or {}).get("form"):
+            revised["form"] = form
+        row.story_json = {**row.story_json, "content_plan": revised}
     elif body.moment_order is not None:
         known = {value["id"]: value for value in moments}
         if any(str(value) not in known for value in body.moment_order):

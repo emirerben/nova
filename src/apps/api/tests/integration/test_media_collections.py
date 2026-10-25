@@ -1194,6 +1194,7 @@ async def test_research_ideas_keep_public_search_private_and_reuse_reviewed_evid
                             "moment_ids": ["m1"],
                             "research_fact_ids": ["fact-0"],
                             "content_plan": {
+                                "form": "factual_story",
                                 "audience": "Ferry passengers",
                                 "angle": "The terminal's rebuilding",
                                 "why_it_works": "History gives this crossing a point.",
@@ -1461,6 +1462,7 @@ async def test_distinct_ideas_can_share_footage_without_sharing_review_state(
             title=title,
             moment_ids=["m1"],
             content_plan=dict(
+                form=form,
                 audience="Evening travellers",
                 angle=angle,
                 opening_text=opening,
@@ -1469,7 +1471,9 @@ async def test_distinct_ideas_can_share_footage_without_sharing_review_state(
                 beat_reasons=["The house and ferry supply the setting"],
             ),
         )
-        for title, angle, opening, caption in plans
+        for (title, angle, opening, caption), form in zip(
+            plans, ["review", "atmosphere", "atmosphere"], strict=True
+        )
     ]
     if copy_clone:
         proposals[1] = copy.deepcopy(proposals[0])
@@ -1528,3 +1532,90 @@ async def test_distinct_ideas_can_share_footage_without_sharing_review_state(
             )
             == 0
         )
+
+
+async def test_idea_forms_gate_evidence_and_survive_wording_edits_and_legacy_rows(
+    collection_world, monkeypatch
+):
+    """Failure catalogue: a guide claimed over one clip, a form lost or forged by an
+    older build's wording edit, and a pre-form saved story that stops loading."""
+    from app.models import MediaCollectionStory
+    from app.services import media_collection_stories
+    from tests.evals.runners.eval_runner import CassetteModelClient
+
+    client, assets, sources, _owner, _ = collection_world
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    assert (await client.put(path, json=selection(assets, sources))).status_code == 200
+    assert (await client.post(f"{path}/index", json={"expected_revision": 1})).status_code == 200
+
+    def proposal(title, form, opening):
+        return dict(
+            title=title,
+            moment_ids=["m1"],
+            content_plan=dict(
+                form=form,
+                audience="Evening travellers",
+                angle=f"{title} from the recorded crossing",
+                opening_text=opening,
+                caption=opening,
+                why_it_works="The recorded view supports this particular point.",
+                beat_reasons=["The house and ferry supply the setting"],
+            ),
+        )
+
+    proposals = [
+        proposal("A guide to one clip", "guide", "Three stops on one clip"),
+        proposal("Evening on the water", "atmosphere", "On the ferry after dark"),
+        proposal("My take on the crossing", "review", "The crossing was worth it"),
+    ]
+    transport = CassetteModelClient(json.dumps({"stories": proposals}))
+    monkeypatch.setattr(media_collection_stories, "default_client", lambda: transport)
+    body = {"expected_revision": 1, "query": "Suggest different content ideas for this crossing"}
+    response = await client.post(f"{path}/stories", json=body)
+    assert response.status_code == 200, response.text
+    offered = response.json()["stories"]
+    assert [(s["title"], s["content_plan"]["form"]) for s in offered] == [
+        ("Evening on the water", "atmosphere"),
+        ("My take on the crossing", "review"),
+    ]
+
+    atmosphere, review = offered
+    for story, tampered in ((atmosphere, "guide"), (review, None)):
+        plan = {k: v for k, v in story["content_plan"].items() if k != "form"}
+        plan["opening_text"] = f"Edited {story['id'][:4]}"
+        if tampered:
+            plan["form"] = tampered
+        changed = await client.patch(
+            f"{path}/stories/{story['id']}",
+            json=dict(
+                expected_revision=1,
+                expected_story_revision=1,
+                client_event_id=f"wording-{story['id']}",
+                content_plan=plan,
+            ),
+        )
+        assert changed.status_code == 200, changed.text
+        assert changed.json()["content_plan"]["form"] == story["content_plan"]["form"]
+
+    async with AsyncSessionLocal() as db:
+        row = await db.get(MediaCollectionStory, uuid.UUID(review["id"]))
+        legacy = json.loads(json.dumps(row.story_json))
+        legacy["content_plan"].pop("form")
+        row.story_json = legacy
+        await db.commit()
+    saved = await client.get(f"{path}/stories", params={"expected_revision": 1})
+    assert saved.status_code == 200, saved.text
+    by_id = {s["id"]: s for s in saved.json()["stories"]}
+    assert "form" not in by_id[review["id"]]["content_plan"]
+    assert by_id[atmosphere["id"]]["content_plan"]["form"] == "atmosphere"
+    edited = await client.patch(
+        f"{path}/stories/{review['id']}",
+        json=dict(
+            expected_revision=1,
+            expected_story_revision=2,
+            client_event_id="legacy-wording",
+            content_plan={**by_id[review["id"]]["content_plan"], "form": "guide"},
+        ),
+    )
+    assert edited.status_code == 200, edited.text
+    assert "form" not in edited.json()["content_plan"]

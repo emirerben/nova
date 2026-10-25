@@ -10678,6 +10678,18 @@
             "title": "Closing Text",
             "type": "string"
           },
+          "form": {
+            "enum": [
+              "guide",
+              "factual_story",
+              "atmosphere",
+              "review",
+              "performance"
+            ],
+            "nullable": true,
+            "title": "Form",
+            "type": "string"
+          },
           "format": {
             "default": "text_story",
             "enum": [
