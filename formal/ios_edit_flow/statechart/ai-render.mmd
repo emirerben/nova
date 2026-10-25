@@ -1,0 +1,144 @@
+---
+title: "Making the video: AI steps that can fail or weaken it"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+    direction TB
+
+    classDef working fill:#e8f0fe,stroke:#4a6fa5,color:#1b2631
+    classDef yourturn fill:#e6f4ea,stroke:#3d7a4f,color:#1b2631
+    classDef done fill:#d5f5e3,stroke:#1e8449,color:#145a32
+    classDef stuck fill:#fde7e9,stroke:#c0392b,stroke-width:3px,color:#641e16
+    classDef degraded fill:#fef5e7,stroke:#b9770e,stroke-width:2px,color:#6e2c00
+    classDef failed fill:#f4f6f7,stroke:#566573,color:#1b2631
+
+    %% src/apps/api/app/tasks/generative_build.py:1989-2007 (orchestrate_generative_job)
+    state "Preparing your clips" as Start
+    %% src/apps/api/app/tasks/generative_build.py:1992-1996,2045-2046 (autoretry OperationalError x7)
+    state "Database hiccup: whole job<br/>restarts (up to 7x, AI re-paid)" as DbRestart
+    %% src/apps/api/app/tasks/generative_build.py:2502-2712 (PHONE_SOURCES_FIELD => phone branch, else cloud)
+    state Route <<choice>>
+    %% src/apps/api/app/tasks/generative_build.py:6394-6412 (enrich_clip_facts, landmark_guess)
+    state "Naming places in clips" as Landmarks
+    %% src/apps/api/app/services/clip_facts.py:596 (best effort, 45s cap)
+    state "Some clips left unlabelled" as Unlabelled
+    %% src/apps/api/app/tasks/generative_build.py:5041-5050 -> 21539 (_run_text_agents)
+    state "Writing the intro hook<br/>(voiceover montage)" as PhoneHook
+    %% src/apps/api/app/tasks/generative_build.py:6461-6467; creation_text_composition.py:720-760
+    state "Kria writes on-screen text<br/>(pro 180s, then flash 90s)" as ComposeText
+    %% src/apps/api/app/tasks/generative_build.py:2745-2747
+    state "Text AI timed out twice<br/>(creation_text_timeout)" as TextTimeout
+    %% src/apps/api/app/tasks/generative_build.py:2748-2749; creation_text_composition.py:750-760
+    state "Text AI changed your wording<br/>(creation_text_failed)" as TextFailed
+    %% src/apps/api/app/tasks/generative_build.py:2750-2751
+    state "AI took too long to plan<br/>(plan_ai_timeout)" as PlanTimeout
+    %% src/apps/api/app/tasks/generative_build.py:2763-2764 (any other exception, incl. ProviderQuotaExceededError)
+    state "Quota or AI error: 'Something<br/>broke' (phone_plan_failed)" as PlanFailed
+    %% src/apps/api/app/tasks/generative_build.py:2761-2762, 6337-6340, 6551-6552; kria_runtime.py:4294-4298
+    state "Any ValueError (even kill switch):<br/>'iPhone can't render', no Retry" as Unsupported
+    %% src/apps/api/app/pipeline/phone_voiceover_montage_plan.py:309-322
+    state "Bad AI intro text: 'iPhone<br/>can't render', no Retry" as BadIntro
+    %% src/apps/api/app/tasks/generative_build.py:6538 (requirement recovery)
+    state "Kria asks before simplifying<br/>your request" as AskSimplify
+    %% src/apps/api/app/tasks/generative_build.py:6552-6570 (plan pinned, awaiting_device)
+    state "Plan sent to your iPhone<br/>(device renders it)" as PhoneReady
+    %% src/apps/api/app/tasks/template_orchestrate.py:2658-2760 (analyze_clip)
+    state "Analyzing clips<br/>(clip_metadata)" as Analyze
+    %% src/apps/api/app/tasks/template_orchestrate.py:2726-2760 (catches quota too)
+    state "Gemini failed: guess clips<br/>from Whisper words" as AnalyzeDegraded
+    %% src/apps/api/app/tasks/template_orchestrate.py:2706-2712 (_fallback_moments)
+    state "No best moments: cut<br/>evenly instead" as SpreadMoments
+    %% src/apps/api/app/pipeline/agents/gemini_analyzer.py:1024-1052
+    state "Transcribing speech" as Transcribe
+    %% src/apps/api/app/pipeline/agents/gemini_analyzer.py:1040-1052 (Whisper, then empty)
+    state "Whisper fallback, or empty<br/>transcript (no captions)" as TranscriptDegraded
+    %% src/apps/api/app/tasks/generative_build.py:21751-21800 (_match_best_track; callers 5062, 10701 auto-pick only)
+    state "Auto-picking a song<br/>(you chose none)" as Music
+    %% src/apps/api/app/tasks/generative_build.py:21792-21800 (returns None)
+    state "No auto song added" as NoSong
+    %% src/apps/api/app/tasks/generative_build.py:21539-21647 (intro_writer)
+    state "Writing the intro hook" as Hook
+    %% src/apps/api/app/tasks/generative_build.py:21630-21647 (_fallback_intro_text / None)
+    state "Generic hook, or no<br/>intro text at all" as HookDegraded
+    %% src/apps/api/app/tasks/generative_build.py:2093-2109; pipeline/talking_head_assembler.py:270-347 (SpeechCleanupFailure)
+    state "Speech cleanup failed<br/>(speech_cleanup_failed)" as CleanupFailed
+    %% src/apps/api/app/tasks/generative_build.py:2130-2160
+    state "29 min limit: 'clips are<br/>heavy (4K/HDR)'" as Timeout
+    %% src/apps/api/app/tasks/generative_build.py:2201-2207 (failure_reason unknown)
+    state "Unexpected error:<br/>generic 'try again'" as Unknown
+    %% src/apps/api/app/worker.py:152-153,185 (acks_late, reject_on_worker_lost); services/job_phases.py:381-396 (retrying flag, unused by iOS)
+    state "Worker killed: video still<br/>looks in progress" as Frozen
+    %% src/apps/api/app/tasks/generative_build.py:2889-2891 (processing not in _NO_RERUN_STATUSES; no redelivery cap)
+    state "Redelivered: whole job reruns<br/>(no cap, AI paid again)" as Redelivered
+    %% src/apps/api/app/tasks/reaper.py:50-53,329-360 (only if the task is not live in Celery)
+    state "Task lost: row frozen<br/>until the 60 min reaper" as Lost
+    %% src/apps/api/app/tasks/maintenance.py:500-504; reaper.py:557-587
+    state "Sweep skipped: broker<br/>inspect failed, still frozen" as SweepSkipped
+    %% src/apps/api/app/tasks/reaper.py:53,437 (failure_reason unknown after 60 min)
+    state "Marked failed after 60 min" as Reaped
+    %% src/apps/api/app/tasks/generative_build.py:674-678 (variants_ready)
+    state "Video ready" as Ready
+
+    [*] --> Start: approved draft queued
+    Start --> DbRestart: DB connection error
+    DbRestart --> Start: retry (backoff max 60s)
+    Start --> Route
+    Route --> Landmarks: phone montage
+    Route --> PhoneHook: phone voiceover montage
+    Route --> Analyze: cloud render
+    Landmarks --> Unlabelled: guess failed
+    Landmarks --> ComposeText: facts ready
+    Unlabelled --> ComposeText
+    ComposeText --> TextTimeout: both models time out
+    ComposeText --> TextFailed: answer unusable
+    ComposeText --> PlanFailed: quota / AI error
+    ComposeText --> AskSimplify: request can't be met
+    ComposeText --> PhoneReady: text composed
+    PhoneHook --> HookDegraded: hook AI failed
+    PhoneHook --> BadIntro: AI text won't compile
+    PhoneHook --> PlanTimeout: provider outcome unknown
+    PhoneHook --> PhoneReady: plan compiled
+    HookDegraded --> PhoneReady
+    Route --> Unsupported: any ValueError on phone
+    Route --> CleanupFailed: required cleanup fails
+    Analyze --> AnalyzeDegraded: Gemini failed / quota
+    Analyze --> SpreadMoments: empty best moments
+    Analyze --> Transcribe: clips understood
+    AnalyzeDegraded --> Transcribe
+    SpreadMoments --> Transcribe
+    Transcribe --> TranscriptDegraded: Gemini failed
+    Transcribe --> Music: words ready
+    TranscriptDegraded --> Music
+    Music --> NoSong: no tracks / matcher failed
+    Music --> Hook: song picked or not asked
+    NoSong --> Hook
+    Hook --> HookDegraded: writer refused / failed
+    Hook --> Ready: hook written
+    HookDegraded --> Ready
+    Start --> Timeout: soft limit 1740s
+    Start --> Unknown: any other exception
+    Start --> Frozen: OOM / deploy kill
+    Frozen --> Redelivered: requeued (now, or ~32 min)
+    Redelivered --> Start: job starts over
+    Frozen --> Lost: message lost
+    Lost --> SweepSkipped: 5 min sweep, inspect fails
+    SweepSkipped --> Lost: next sweep
+    Lost --> Reaped: 60 min, sweep works
+    TextTimeout --> [*]: you can retry
+    TextFailed --> [*]: you can retry
+    PlanTimeout --> [*]: you can retry
+    PlanFailed --> [*]: you can retry
+    Ready --> [*]
+    PhoneReady --> [*]
+
+    class AskSimplify yourturn
+    class Start,Landmarks,PhoneHook,ComposeText,Analyze,Transcribe,Music,Hook working
+    class Ready,PhoneReady done
+    class DbRestart,Unsupported,BadIntro,Redelivered,Lost,SweepSkipped stuck
+    class Frozen working
+    class Unlabelled,AnalyzeDegraded,SpreadMoments,TranscriptDegraded,NoSong,HookDegraded degraded
+    class Timeout failed
+    class TextTimeout,TextFailed,PlanTimeout,PlanFailed,CleanupFailed,Unknown,Reaped failed

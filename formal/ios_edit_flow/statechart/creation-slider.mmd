@@ -1,0 +1,77 @@
+---
+title: "Making a Slider post (photo carousel)"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+    direction TB
+
+    %% src/apps/ios/Kria/Features/SlidePostRouting.swift:69
+    state "Slider workspace opens" as open
+    %% src/apps/ios/Kria/Features/SlidePostWorkspaceView.swift:395
+    state "Setting up your post…" as settingUp
+    %% src/apps/ios/Kria/Features/SlidePostWorkspaceView.swift:88
+    state "Degraded: no post id yet,<br/>spinner with no retry" as noItem
+    %% src/apps/ios/Kria/Features/SlidePostWorkspaceView.swift:395
+    state "Add photos and videos" as addPhotos
+    %% src/apps/ios/Kria/Features/SlidePostWorkspaceView.swift:395
+    state "Preparing your photos and videos" as preparingPhotos
+    %% src/apps/ios/Kria/Features/SlidePostWorkspaceView.swift:549
+    state "Editing slides" as editing
+    %% src/apps/ios/Kria/Features/SlidePostAISheet.swift:27
+    state "Asking Kria in the AI sheet" as askKria
+    %% src/apps/ios/Kria/Features/SlidePostWorkspaceView.swift:752
+    state "Saving changes" as saving
+    %% src/apps/ios/Kria/Features/SlidePostExport.swift:136
+    state "Photos access refused" as photosDenied
+    %% src/apps/ios/Kria/Features/SlidePostExport.swift:179
+    state "Exporting on your iPhone" as exporting
+    %% src/apps/ios/Kria/Core/SlidePost.swift:1047
+    state "Creating your post…<br/>(server render)" as serverRender
+    %% src/apps/ios/Kria/Features/SlidePostExport.swift:158
+    state "Still rendering after ~5 min,<br/>try again" as renderSlow
+    %% src/apps/ios/Kria/Features/SlidePostExport.swift:165
+    state "Rendering failed. Try again." as renderFailed
+    %% src/apps/ios/Kria/Features/SlidePostExport.swift:169
+    state "Post saved to Photos / shared" as done
+
+    [*] --> open : Pick Slider or open a post
+    open --> settingUp
+    settingUp --> addPhotos : Post found, empty
+    settingUp --> editing : Post has slides
+    settingUp --> noItem : No plan item id
+    noItem --> [*] : Back to projects
+    addPhotos --> preparingPhotos : Choose photos
+    preparingPhotos --> editing : Photos ready
+    editing --> askKria : Tap the AI button
+    askKria --> editing : Kria edits or proposes
+    editing --> saving : Tap Save
+    saving --> editing : Saved
+    editing --> photosDenied : Save to Photos, access denied
+    photosDenied --> editing : Back to editing
+    editing --> exporting : Export, iPhone can render it
+    editing --> serverRender : Export, needs the server
+    serverRender --> serverRender : Polling every 1.5s
+    serverRender --> done : Render ready
+    serverRender --> renderSlow : 200 polls, still rendering
+    serverRender --> renderFailed : Server render failed
+    renderSlow --> editing : Try again later
+    renderFailed --> editing : Try again
+    exporting --> done : File ready
+    exporting --> renderFailed : A slide fails to render
+    done --> [*]
+
+    classDef working fill:#e8f0fe,stroke:#4a6fa5,color:#1b2631
+    classDef yourturn fill:#e6f4ea,stroke:#3d7a4f,color:#1b2631
+    classDef done fill:#d5f5e3,stroke:#1e8449,color:#145a32
+    classDef stuck fill:#fde7e9,stroke:#c0392b,stroke-width:3px,color:#641e16
+    classDef degraded fill:#fef5e7,stroke:#b9770e,stroke-width:2px,color:#6e2c00
+    classDef failed fill:#f4f6f7,stroke:#566573,color:#1b2631
+
+    class open,settingUp,preparingPhotos,askKria,saving,exporting,serverRender working
+    class addPhotos,editing yourturn
+    class done done
+    class noItem degraded
+    class photosDenied,renderSlow,renderFailed failed

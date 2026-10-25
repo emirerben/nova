@@ -1,0 +1,120 @@
+---
+title: "iOS editor: re-rendering a saved edit on the iPhone"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+    direction TB
+
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:810 (refreshDeviceRender)
+    state "Checking what this iPhone can do" as Capabilities
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:812 (fetch error becomes .disabled)
+    state "Capability check failed,<br/>shown as cannot render here" as CapsMasked
+    %% src/apps/ios/Kria/Core/DeviceRenderSessions.swift:115 (reconcile, one ticket per key)
+    state "Asking Kria what to render" as AskServer
+    %% src/apps/ios/Kria/Core/DeviceRenderSessions.swift:116 (tickets guard; chat poll ChatWorkspaceView.swift:2234 also reconciles)
+    state "Second check skipped<br/>while one is running" as TicketBusy
+    %% src/apps/ios/Kria/Core/DeviceRenderSessions.swift:170
+    state "Could not prepare on iPhone<br/>(project is saved)" as PrepFailed
+    %% src/apps/ios/Kria/Core/DeviceRenderSessions.swift:140
+    state "Already rendered and synced" as AlreadyPublished
+    %% src/apps/ios/Kria/Core/DeviceRenderSessions.swift:146 (decision.route != .local)
+    state "iPhone cannot render this edit" as CloudOnly
+    %% src/apps/ios/Kria/Core/DeviceRenderSessions.swift:146 (status needs_attention, requiresServerRetry)
+    state "Kria says: needs attention" as ServerNeedsAttention
+    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:348 (isCurrent check, phase preparing)
+    state "Getting your clips ready" as Preparing
+    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:362
+    state "Rendering on iPhone" as Rendering
+    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:372
+    state "Video ready on this iPhone" as LocalReady
+    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:378
+    state "Uploading to Kria" as Syncing
+    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:381
+    state "Rendered on iPhone and synced" as Synced
+    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:350 and :377
+    state "Newer edit available<br/>(this render thrown away)" as Superseded
+    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:393 (outputURL nil)
+    state "This edit could not finish<br/>on your iPhone" as NeedsAttention
+    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:348 (isCurrent throws, reported as failure)
+    state "Brief offline blip marks<br/>render failed and tells Kria" as BlipFailed
+    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:365 (no background task around export)
+    state "App left the screen,<br/>export interrupted" as Backgrounded
+    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:383 and :280
+    state "Render stopped" as Cancelled
+    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:290 (receipt persisted) and :253 (recover on reopen)
+    state "App killed mid-render,<br/>receipt saved on disk" as Killed
+    %% src/apps/api/app/tasks/device_render_reaper.py:96 (24h)
+    state "Stuck: shows rendering for<br/>up to 24h, then fails" as Reaped
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:7303 (published generation + identity fence)
+    state "Editor shows the new video" as EditorReady
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:7454 (surfaceDeviceRenderFailure)
+    state "Saved, iPhone render needs a retry" as EditorRetry
+    %% src/apps/ios/Kria/Core/DeviceRenderSessions.swift:199 (retryNeedsAttention mints new identity)
+    state "Asking Kria for a fresh attempt" as ServerRetry
+
+    [*] --> Capabilities : save OK, generation G1
+    Capabilities --> AskServer : capabilities loaded
+    Capabilities --> CapsMasked : capabilities fetch failed
+    CapsMasked --> EditorRetry : looks like a hard no
+    AskServer --> TicketBusy : another check in flight
+    TicketBusy --> EditorRetry : old identity kept, poll may stall
+    AskServer --> PrepFailed : status fetch failed or offline
+    AskServer --> AlreadyPublished : server phase published
+    AskServer --> CloudOnly : recipe or thermal or storage
+    AskServer --> ServerNeedsAttention : server phase needs_attention
+    AskServer --> Preparing : awaiting_device, new identity
+    AskServer --> LocalReady : same identity, file kept
+
+    Preparing --> Superseded : server no longer current
+    Preparing --> BlipFailed : isCurrent check offline
+    Preparing --> Rendering : clips resolved
+    Preparing --> NeedsAttention : clip missing or too long
+    Rendering --> LocalReady : export finished and checked
+    Rendering --> Backgrounded : app suspended
+    Rendering --> NeedsAttention : export failed
+    Rendering --> Cancelled : you tap Stop rendering
+    Rendering --> Killed : app killed
+    Backgrounded --> NeedsAttention : export error, reported
+    BlipFailed --> NeedsAttention : reported as failure
+    Killed --> Preparing : you reopen the project, recover
+    Killed --> Reaped : never reopened for 24h
+
+    LocalReady --> Superseded : server moved on
+    LocalReady --> Syncing : still current
+    Syncing --> Synced : publish accepted
+    Syncing --> Superseded : publish says superseded
+    Syncing --> LocalReady : upload failed, retry without render
+    LocalReady --> EditorRetry : sync error shown (7457)
+
+    Synced --> EditorReady : variant ready and identity matches
+    AlreadyPublished --> EditorReady : variant ready
+    Superseded --> [*] : newer save owns the phone
+
+    NeedsAttention --> EditorRetry : editor poll sees it
+    ServerNeedsAttention --> EditorRetry : editor poll sees it
+    CloudOnly --> EditorRetry : editor poll sees it
+    Cancelled --> EditorRetry : editor poll sees it
+    PrepFailed --> EditorRetry : editor poll sees it
+    Reaped --> EditorRetry : open project
+    EditorRetry --> ServerRetry : Retry, server said needs attention
+    EditorRetry --> Capabilities : Retry, phone-side problem (7435)
+    ServerRetry --> AskServer : new identity, recipe revision +1
+    ServerRetry --> EditorRetry : retry call failed
+    EditorReady --> [*]
+
+    classDef working fill:#e8f0fe,stroke:#4a6fa5,color:#1b2631
+    classDef yourturn fill:#e6f4ea,stroke:#3d7a4f,color:#1b2631
+    classDef done fill:#d5f5e3,stroke:#1e8449,color:#145a32
+    classDef stuck fill:#fde7e9,stroke:#c0392b,stroke-width:3px,color:#641e16
+    classDef degraded fill:#fef5e7,stroke:#b9770e,stroke-width:2px,color:#6e2c00
+    classDef failed fill:#f4f6f7,stroke:#566573,color:#1b2631
+
+    class Capabilities,AskServer,Preparing,Rendering,LocalReady,Syncing,ServerRetry working
+    class PrepFailed,ServerNeedsAttention,NeedsAttention,Cancelled,EditorRetry,Killed yourturn
+    class AlreadyPublished,Synced,EditorReady done
+    class Reaped stuck
+    class CapsMasked,TicketBusy,BlipFailed,Backgrounded degraded
+    class CloudOnly,Superseded failed

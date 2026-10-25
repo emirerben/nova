@@ -1,0 +1,145 @@
+---
+title: "iOS video editor: saving an edit (all edit types)"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+    direction TB
+
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:2049 (load editorJobID) and :1622 (load threadID)
+    state "Opening your edit" as Opening
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:2162
+    state "Could not load this edit" as LoadFailed
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:2125 (saveState idle, hasUnsavedChanges false)
+    state "Your video, nothing unsaved" as Clean
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:5855 (transactDocument) and :1442 (appendUndo, cap 100)
+    state "You have unsaved edits<br/>(text, captions, pins, trim, music,<br/>song range, drawing, bend, stickers)" as Dirty
+    %% src/apps/ios/Kria/Features/NativeEditorView.swift:977 (requestBack) and :232 (dialog)
+    state "Save before leaving?" as ExitDialog
+    %% src/apps/ios/Kria/Features/NativeEditorView.swift:241 (copy says stored on device; nothing is persisted)
+    state "Stuck: unsaved edits gone<br/>after the app is killed" as LostOnKill
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:5584 (saveOnce, sends base_generation)
+    state "Saving your edits" as Saving
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:5655 (editor_state empty)
+    state "Saved (empty edit, nothing to render)" as SavedEmpty
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:5732 and :7218 (300 polls x 1s)
+    state "Saved, Kria is rendering<br/>(checks every second, 5 min)" as PreviewPending
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:5729 (refreshDeviceRender), see editor-device.mmd
+    state "Rendering on this iPhone<br/>(see phone render chart)" as OnDevice
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:7337
+    state "New video ready" as Ready
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:5739
+    state "Saved, render did not start" as RenderNotStarted
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:7342
+    state "Saved, render failed" as RenderFailed
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:7321 and :7454
+    state "Saved, iPhone render needs a retry" as DeviceRetry
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:7266
+    state "Preview needs another check" as PreviewTimeout
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:7303 (poll only accepts its own G1; :7286 retry re-polls same G1)
+    state "Stuck: preview never matches<br/>(another device saved G2)" as PreviewNeverMatches
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:5743 (every 409 maps to conflict)
+    state "A newer edit exists" as Conflict
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:5785 (rebaseAfterConflict)
+    state "Reloading latest,<br/>keeping your edits" as Rebasing
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:5818 (copy whole lane from local)
+    state "Other device's edits in the<br/>same lane silently replaced" as LaneOverwritten
+    %% src/apps/api/app/routes/plan_items.py:7648 (cancelled), :252 (initial render) + NativeEditorSession.swift:5743
+    state "Stuck: every save says<br/>a newer edit exists" as ConflictLoop
+    %% src/apps/api/app/routes/plan_items.py:7635 (commit targets item.current_job_id) + NativeEditorSession.swift:5795 (rebase reads OLD jobID)
+    state "Stuck: kept the old version,<br/>every save conflicts" as OldJobLoop
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:5759 and :5835
+    state "Could not save this edit<br/>(your edits stay)" as SaveFailed
+    %% src/apps/ios/Kria/Features/NativeEditorView.swift:210 and NativeEditorSession.swift:1984
+    state "A new version is ready:<br/>Switch or Keep editing" as NewerJobPrompt
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:1985 (adoptLatestJob guard !isSaving)
+    state "New version ignored,<br/>editor stays on the old video" as NewJobIgnored
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:1994 (no isSaving guard) + :5603 (result dropped)
+    state "Edits dropped, save result<br/>silently ignored" as SaveOrphaned
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:1870
+    state "Could not refresh this edit" as RefreshFailed
+
+    [*] --> Opening
+    Opening --> Clean : loaded, base_generation = G0
+    Opening --> LoadFailed : network or server error
+    LoadFailed --> Opening : reopen
+
+    Clean --> Dirty : you change something
+    Dirty --> Dirty : more edits, undo, redo
+    Dirty --> Clean : undo back to saved
+    Dirty --> ExitDialog : tap back
+    ExitDialog --> Saving : Save and exit
+    ExitDialog --> [*] : Discard changes
+    ExitDialog --> Dirty : Stay
+    Dirty --> LostOnKill : app killed or evicted
+
+    Dirty --> Saving : tap Save, sends base_generation G
+    Saving --> Saving : 2nd Save or Save and exit ignored
+    Saving --> SavedEmpty : empty edit saved
+    Saving --> PreviewPending : commit OK, new generation G1
+    Saving --> OnDevice : commit OK, phone renders G1
+    Saving --> RenderNotStarted : commit OK, render not queued
+    Saving --> Conflict : 409 baseline_conflict, G is stale
+    Saving --> ConflictLoop : 409 cancelled or 1st render running
+    Saving --> SaveFailed : 422 timeline/device, 503, offline
+    Saving --> Clean : song was already removed (5744)
+    Saving --> NewJobIgnored : re-plan job arrives mid-save
+    Saving --> SaveOrphaned : Switch tapped (prompt was up)
+    SavedEmpty --> Clean : done
+
+    PreviewPending --> Ready : variant ready for G1
+    PreviewPending --> RenderFailed : variant failed for G1
+    PreviewPending --> PreviewTimeout : 5 min, no answer
+    PreviewPending --> PreviewNeverMatches : server moved to G2
+    PreviewPending --> Dirty : you edit while it renders
+    PreviewNeverMatches --> PreviewNeverMatches : Check preview again
+    PreviewNeverMatches --> Dirty : you edit again (Save gets 409)
+    PreviewTimeout --> PreviewPending : Check preview again
+    OnDevice --> PreviewPending : phone published G1
+    OnDevice --> DeviceRetry : phone needs attention or stopped
+    DeviceRetry --> OnDevice : Retry, new render identity
+
+    Ready --> Clean : player swaps to new video
+    RenderNotStarted --> Saving : Retry render, same lanes
+    RenderFailed --> Saving : Retry render, same lanes
+
+    Conflict --> Rebasing : Reload latest and keep my edits
+    Rebasing --> Dirty : latest is G2, your lanes on top
+    Rebasing --> LaneOverwritten : same lane changed elsewhere
+    LaneOverwritten --> Dirty : looks normal to you
+    Rebasing --> SaveFailed : could not load latest
+    ConflictLoop --> Rebasing : Reload, then Save again
+
+    SaveFailed --> Saving : tap Save again
+
+    Clean --> Opening : re-plan made a new job
+    Dirty --> NewerJobPrompt : re-plan made a new job
+    NewerJobPrompt --> Opening : Switch, unsaved edits dropped
+    NewerJobPrompt --> Dirty : Keep editing
+    Dirty --> OldJobLoop : Save after Keep editing
+    OldJobLoop --> Rebasing : Reload reads the old job again
+    OldJobLoop --> NewerJobPrompt : next sync asks again
+    NewJobIgnored --> Dirty : no retry until next sync
+    NewJobIgnored --> OldJobLoop : save hit the new job, 409
+    SaveOrphaned --> Opening : new job loads
+
+    Clean --> RefreshFailed : chat sync failed
+    Dirty --> RefreshFailed : chat sync failed
+    Dirty --> Conflict : chat edit hits your lane (1835)
+    RefreshFailed --> Dirty : next sync works
+
+    classDef working fill:#e8f0fe,stroke:#4a6fa5,color:#1b2631
+    classDef yourturn fill:#e6f4ea,stroke:#3d7a4f,color:#1b2631
+    classDef done fill:#d5f5e3,stroke:#1e8449,color:#145a32
+    classDef stuck fill:#fde7e9,stroke:#c0392b,stroke-width:3px,color:#641e16
+    classDef degraded fill:#fef5e7,stroke:#b9770e,stroke-width:2px,color:#6e2c00
+    classDef failed fill:#f4f6f7,stroke:#566573,color:#1b2631
+
+    class Opening,Saving,PreviewPending,OnDevice,Rebasing working
+    class Clean,Dirty,ExitDialog,RenderNotStarted,RenderFailed,DeviceRetry,Conflict,SaveFailed,NewerJobPrompt,PreviewTimeout,RefreshFailed yourturn
+    class SavedEmpty,Ready done
+    class LostOnKill,PreviewNeverMatches,ConflictLoop,OldJobLoop stuck
+    class LaneOverwritten,NewJobIgnored,SaveOrphaned degraded
+    class LoadFailed failed
