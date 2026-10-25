@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.119.0] - 2026-10-25
+
+### Changed
+- feat(taste): allow ["*"] in editorial taste allowlist to admit every account (#1825) <!-- release-pr: 1825 -->
+
 ## [0.81.118.0] - 2026-10-25
 
 ### Changed
