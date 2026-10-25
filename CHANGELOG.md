@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.109.0] - 2026-10-25
+
+### Changed
+- formal: TLA+ model of the iPhone render lifecycle behind the killer screens (KRI-934) (#1813) <!-- release-pr: 1813 -->
+
 ## [0.81.108.0] - 2026-10-25
 
 ### Changed
