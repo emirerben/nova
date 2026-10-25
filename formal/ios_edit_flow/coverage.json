@@ -125,7 +125,7 @@
       "reviewRetryInChat"
     ]
   },
-  "sync_commit": "e5608c3504e0e2b56d6887f6f8c34a0b3c7a9306",
+  "sync_commit": "6b420bc2582c67050fa17b2144a46d53ff4267ac",
   "hashes": {
     "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:reconcile": "014424b8e8da03a5",
     "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:apply": "be3e05a3d61f3ee1",
@@ -202,7 +202,7 @@
     "src/apps/api/app/routes/device_render.py:_complete_device_export": "a54978b5a883c006",
     "src/apps/api/app/routes/device_render.py:_auto_resume_updated": "73376cc8b747e7d2",
     "src/apps/api/app/routes/device_render.py:_caller_is_newer_than_decliner": "e2f7bec546a7cd42",
-    "src/apps/api/app/routes/device_render.py:_client_update_detail": "f6dbfdfde2f4dac5",
+    "src/apps/api/app/routes/device_render.py:_client_update_detail": "83bdac69f0fd7632",
     "src/apps/api/app/routes/device_render.py:_client_update_required": "e31de68c27332ce7",
     "src/apps/api/app/routes/device_render.py:_note_reader_protocol": "3131e3b4b4941fdd",
     "src/apps/api/app/routes/device_render.py:_carry_reader_protocol": "9cb5674183234029",
