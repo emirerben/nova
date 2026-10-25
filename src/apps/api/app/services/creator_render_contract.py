@@ -1074,6 +1074,30 @@ def _edit_rows(
     return list(rows)
 
 
+def _one_unkeyed_clip(
+    media_snapshot: Mapping[str, Any] | None,
+    typed: CreativeStrategy | None,
+    hidden_ids: frozenset[str],
+) -> bool:
+    """One selected clip whose snapshot row carries no ``media_id`` is still one clip.
+
+    Prod 0701fcc9 / f88555bc (2026-10-21): a one-take Talking edit ("in the order the clips
+    were added") whose only clip row had no ``media_id``. The selected-media filter in
+    ``_edit_rows`` then left NO rows, so ``one_clip_edit`` said "not one clip" and the
+    contract pinned "I can't verify this ordering rule" for a single take, refusing the
+    approved render. A single clip is in every order (KRI-661 / KRI-789).
+    """
+    if typed is None:
+        return False
+    selected = set(typed.selected_media_ids or ()) - hidden_ids
+    rows = [
+        row
+        for row in (media_snapshot or {}).get("clip_assignments") or []
+        if isinstance(row, Mapping) and row.get("kind", "video") == "video"
+    ]
+    return len(selected) == 1 and len(rows) == 1 and not rows[0].get("media_id")
+
+
 def build_render_contract(
     strategy: Mapping[str, Any] | None,
     *,
@@ -1221,7 +1245,7 @@ def build_render_contract(
 
         voiceover_spoken_text = phone_voiceover_spoken_text_supported(require_client=False)
     edit_rows = _edit_rows(media_snapshot, typed, hidden_ids)
-    one_clip = one_clip_edit(edit_rows)
+    one_clip = one_clip_edit(edit_rows) or _one_unkeyed_clip(media_snapshot, typed, hidden_ids)
     if brief:
         for requirement in brief.live():
             if (
@@ -1423,7 +1447,11 @@ def build_render_contract(
         ]
         # KRI-661: a single clip is trivially in order, dated or not.
         single_clip = one_clip
-        if (
+        if single_clip and not ids:
+            # The one clip has no snapshot id to pin (``_one_unkeyed_clip``): a single
+            # take is already in filming order, so there is nothing left to verify.
+            order_required = False
+        elif (
             not ids
             or len(ids) != len(rows)
             or len(set(ids)) != len(ids)
@@ -2047,6 +2075,39 @@ def check_recipe_duration(
         if drift > allowed + 1e-9:
             raise _phone_decline("duration_s", "This edit couldn't keep the confirmed length.")
     return None
+
+
+def creator_length_note(
+    contract: CreatorRenderContract | None,
+    actual_duration_s: float,
+    *,
+    length_policy: Any = None,
+) -> str | None:
+    """The creator-visible line for a confirmed length the edit could not keep, or ``None``.
+
+    Since the length policy (every job stamped from 2026-10-08) a confirmed length is a
+    ``log_only`` check by default: an edit the footage cannot stretch renders at the
+    footage's length, which until now happened without a word to the creator. ``None``
+    when there is no confirmed length, it is kept (the ten-percent rule of
+    ``creator_duration_matches``), or the pin-time verifier still decides (no policy, or
+    an ``enforce`` one: that refusal speaks for itself).
+    """
+    from app.services.length_policy import creator_duration_matches  # noqa: PLC0415
+
+    if contract is None or contract.duration_s is None:
+        return None
+    if getattr(length_policy, "check_mode", None) != "log_only":
+        return None
+    requested = contract.duration_s
+    if creator_duration_matches(actual_duration_s, requested):
+        return None
+    actual = f"{actual_duration_s:.0f}" if actual_duration_s >= 10 else f"{actual_duration_s:.1f}"
+    if actual_duration_s < requested:
+        return (
+            f"Your clips fill about {actual} seconds, so the video is that long instead of "
+            f"the {requested:g} seconds you asked for"
+        )
+    return f"The video runs about {actual} seconds; you asked for {requested:g}"
 
 
 def verify_phone_recipe(

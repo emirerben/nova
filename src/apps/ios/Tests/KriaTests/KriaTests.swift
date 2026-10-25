@@ -934,6 +934,39 @@ final class KriaTests: XCTestCase {
         }
     }
 
+    /// S2-c(i): a commit or device publish lands between the status read and the timeline read.
+    /// The pair is re-read instead of surfacing a conflict the creator can do nothing about.
+    func testGuidedStoryTimelineGenerationRaceRereadsInsteadOfConflicting() async throws {
+        var statusReads = 0
+        URLProtocolStub.handler = { request in
+            if request.url?.path.hasSuffix("/status") == true {
+                statusReads += 1
+                let generation = statusReads == 1 ? "g1" : "g2"
+                return (200, Data(#"{"variants":[{"variant_id":"initial","resolved_archetype":"guided_story","render_generation_id":"\#(generation)","editor_capabilities":{"timeline":true}}]}"#.utf8))
+            }
+            return (200, Data(#"{"base_generation":"g2","revision_number":3,"slots":[]}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+        let variant = try await api.editorVariant(jobID: PreviewFixtures.projectID, variantID: "initial")
+        XCTAssertEqual(variant["render_generation_id"], .string("g2"))
+        XCTAssertEqual(variant["editor_revision_number"], .number(3))
+        XCTAssertEqual(statusReads, 2)
+    }
+
+    /// S2-c(ii): a timeline-capable guided variant that never finished a render has no generation.
+    /// The server's baseline is "" then, and the editor must agree instead of conflicting forever.
+    func testGuidedStoryWithoutAnyGenerationMatchesTheServersEmptyBaseline() async throws {
+        URLProtocolStub.handler = { request in
+            if request.url?.path.hasSuffix("/status") == true {
+                return (200, Data(#"{"variants":[{"variant_id":"initial","resolved_archetype":"guided_story","render_generation_id":null,"render_finished_at":null,"editor_capabilities":{"timeline":true}}]}"#.utf8))
+            }
+            return (200, Data(#"{"base_generation":"","revision_number":1,"slots":[]}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+        let variant = try await api.editorVariant(jobID: PreviewFixtures.projectID, variantID: "initial")
+        XCTAssertEqual(variant["editor_revision_number"], .number(1))
+    }
+
     func testOpenLibraryJobUsesIdempotentEditorPromotionRoute() async throws {
         URLProtocolStub.handler = { request in
             XCTAssertEqual(request.httpMethod, "POST")

@@ -8,101 +8,118 @@ config:
 stateDiagram-v2
     direction TB
 
-    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:810 (refreshDeviceRender)
+    %% Code on codex/killer-integration (model: formal/ios_edit_flow/PhoneRender.tla).
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift (refreshDeviceRender)
     state "Checking what this iPhone can do" as Capabilities
-    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:812 (fetch error becomes .disabled)
-    state "Capability check failed,<br/>shown as cannot render here" as CapsMasked
-    %% src/apps/ios/Kria/Core/DeviceRenderSessions.swift:115 (reconcile, one ticket per key)
+    %% NativeEditorSession.swift (refreshDeviceRender: keep the last answer; none yet, deviceReconcilePending)
+    state "Capability check failed:<br/>keep the last answer, or let<br/>the preview poll try again" as CapsKept
+    %% src/apps/ios/Kria/Core/DeviceRenderSessions.swift (reconcile, one ticket per key)
     state "Asking Kria what to render" as AskServer
-    %% src/apps/ios/Kria/Core/DeviceRenderSessions.swift:116 (tickets guard; chat poll ChatWorkspaceView.swift:2234 also reconciles)
-    state "Second check skipped<br/>while one is running" as TicketBusy
-    %% src/apps/ios/Kria/Core/DeviceRenderSessions.swift:170
-    state "Could not prepare on iPhone<br/>(project is saved)" as PrepFailed
-    %% src/apps/ios/Kria/Core/DeviceRenderSessions.swift:140
+    %% DeviceRenderSessions.swift (reconcile: rereads[key], run when the ticket is released)
+    state "Another check is running:<br/>check again right after it" as Reread
+    %% DeviceRenderSessions.swift (readFailed .transient, wait, scheduleRetry)
+    state "Waiting for the connection<br/>(re-reads on its own)" as QuietWait
+    %% DeviceRenderSessions.swift (gate .wait(.cooling), resumeWaiting)
+    state "Waiting for this iPhone to cool<br/>(starts on its own)" as Cooling
+    %% DeviceRenderSessions.swift (apply: published)
     state "Already rendered and synced" as AlreadyPublished
-    %% src/apps/ios/Kria/Core/DeviceRenderSessions.swift:146 (decision.route != .local)
-    state "iPhone cannot render this edit" as CloudOnly
-    %% src/apps/ios/Kria/Core/DeviceRenderSessions.swift:146 (status needs_attention, requiresServerRetry)
-    state "Kria says: needs attention" as ServerNeedsAttention
-    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:348 (isCurrent check, phase preparing)
+    %% DeviceRenderSessions.swift (gate .decline unsupported_recipe, sendDecline) + DeviceRenderPanel.swift (changeReasons)
+    state "This edit needs a change<br/>(Review in chat)" as NeedsChange
+    %% DeviceRenderSessions.swift (readFailed .updateRequired(target), gate .decline renderer_outdated, requires_update)
+    %% KriaUpdateLink.swift (TestFlight itms-beta://, else its App Store page)
+    state "Update Kria to render this edit<br/>(Update Kria, Review in chat)" as NeedsUpdate
+    %% DeviceRenderSessions.swift (apply: renderer_outdated it renders now -> renderable_now)
+    state "Ready to render on this iPhone<br/>(Render on this iPhone)" as RenderNow
+    %% src/apps/ios/Kria/Core/AppState.swift (openCreationThread) + ChatWorkspaceView.swift (chatRouteRequest)
+    state "Gallery editor: open this edit's<br/>own conversation" as OpenThread
+    %% DeviceRenderSessions.swift (apply: needs_attention, requiresServerRetry)
+    state "Kria says: needs attention<br/>(Retry device render)" as ServerNeedsAttention
+    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift (performOnce: isCurrent, sources)
     state "Getting your clips ready" as Preparing
-    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:362
+    %% DeviceRenderCoordinator.swift (performOnce: export)
     state "Rendering on iPhone" as Rendering
-    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:372
+    %% DeviceRenderCoordinator.swift (park: offline, 5xx, background window)
+    state "Paused by a blip or the background<br/>(resumes on its own)" as Parked
+    %% DeviceRenderCoordinator.swift (performOnce: export done)
     state "Video ready on this iPhone" as LocalReady
-    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:378
+    %% DeviceRenderCoordinator.swift (performOnce: reserve + upload)
     state "Uploading to Kria" as Syncing
-    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:381
+    %% DeviceRenderCoordinator.swift (performOnce: complete)
     state "Rendered on iPhone and synced" as Synced
-    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:350 and :377
-    state "Newer edit available<br/>(this render thrown away)" as Superseded
-    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:393 (outputURL nil)
-    state "This edit could not finish<br/>on your iPhone" as NeedsAttention
-    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:348 (isCurrent throws, reported as failure)
-    state "Brief offline blip marks<br/>render failed and tells Kria" as BlipFailed
-    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:365 (no background task around export)
-    state "App left the screen,<br/>export interrupted" as Backgrounded
-    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:383 and :280
-    state "Render stopped" as Cancelled
-    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift:290 (receipt persisted) and :253 (recover on reopen)
+    %% DeviceRenderCoordinator.swift (performOnce: not current any more)
+    state "Newer edit available<br/>(this render set aside)" as Superseded
+    %% DeviceRenderCoordinator.swift (perform: genuine failure, reportFailure until accepted)
+    state "This edit needs its original clips<br/>(Find original files)" as OriginalMissing
+    %% DeviceRenderCoordinator.swift (cancelByUser) + routes/device_render.py (mark_device_paused)
+    state "Saved, rendering paused<br/>(Resume rendering)" as Paused
+    %% DeviceRenderCoordinator.swift (receipt on disk; recover on reopen)
     state "App killed mid-render,<br/>receipt saved on disk" as Killed
-    %% src/apps/api/app/tasks/device_render_reaper.py:96 (24h)
-    state "Stuck: shows rendering for<br/>up to 24h, then fails" as Reaped
-    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:7303 (published generation + identity fence)
+    %% src/apps/api/app/routes/device_render.py (_client_update_detail first, then _auto_resume_reaped / _auto_resume_updated)
+    state "Kria re-sends the same edit<br/>on its own (build passes every floor)" as AutoResume
+    %% NativeEditorSession.swift (applyPreviewVariant: generation, identity fence, newer generation read twice)
     state "Editor shows the new video" as EditorReady
-    %% src/apps/ios/Kria/Features/NativeEditorSession.swift:7454 (surfaceDeviceRenderFailure)
-    state "Saved, iPhone render needs a retry" as EditorRetry
-    %% src/apps/ios/Kria/Core/DeviceRenderSessions.swift:199 (retryNeedsAttention mints new identity)
+    %% DeviceRenderSessions.swift (retryNeedsAttention) + routes/device_render.py (retry_device_export)
     state "Asking Kria for a fresh attempt" as ServerRetry
+    %% ChatWorkspaceView.swift (reviewInChat) / NativeEditorView.swift (reviewRetryInChat)
+    state "You ask Kria for a change<br/>in chat" as Chat
 
-    [*] --> Capabilities : save OK, generation G1
+    [*] --> Capabilities : save OK, generation G2
     Capabilities --> AskServer : capabilities loaded
-    Capabilities --> CapsMasked : capabilities fetch failed
-    CapsMasked --> EditorRetry : looks like a hard no
-    AskServer --> TicketBusy : another check in flight
-    TicketBusy --> EditorRetry : old identity kept, poll may stall
-    AskServer --> PrepFailed : status fetch failed or offline
+    Capabilities --> CapsKept : capabilities fetch failed
+    CapsKept --> AskServer : last answer, or next preview poll
+    AskServer --> Reread : another check holds the ticket
+    Reread --> AskServer : that check finished
+    AskServer --> QuietWait : status read failed (offline, 5xx)
+    QuietWait --> AskServer : backoff, reconnect or foreground
     AskServer --> AlreadyPublished : server phase published
-    AskServer --> CloudOnly : recipe or thermal or storage
+    AskServer --> Cooling : too hot to start
+    Cooling --> AskServer : cooled down
+    AskServer --> NeedsChange : recipe this iPhone can't render, server told
+    AskServer --> NeedsUpdate : 426 for this request (or a newer one), or recipe newer than this build, server told
+    AskServer --> RenderNow : declined as outdated, this build renders it now
     AskServer --> ServerNeedsAttention : server phase needs_attention
+    AskServer --> AutoResume : reaped, or a floor decline and this build is newer and passes the floors
+    AutoResume --> AskServer : new identity, same recipe
     AskServer --> Preparing : awaiting_device, new identity
-    AskServer --> LocalReady : same identity, file kept
+    AskServer --> Syncing : video for this request exists, upload it
+    AskServer --> Rendering : capability lost mid-render, the export finishes
 
     Preparing --> Superseded : server no longer current
-    Preparing --> BlipFailed : isCurrent check offline
+    Preparing --> Parked : offline or 5xx
     Preparing --> Rendering : clips resolved
-    Preparing --> NeedsAttention : clip missing or too long
-    Rendering --> LocalReady : export finished and checked
-    Rendering --> Backgrounded : app suspended
-    Rendering --> NeedsAttention : export failed
-    Rendering --> Cancelled : you tap Stop rendering
+    Preparing --> OriginalMissing : original not on this iPhone
+    Rendering --> LocalReady : export finished
+    Rendering --> Parked : app left Kria
+    Rendering --> Paused : you tap Stop rendering
     Rendering --> Killed : app killed
-    Backgrounded --> NeedsAttention : export error, reported
-    BlipFailed --> NeedsAttention : reported as failure
-    Killed --> Preparing : you reopen the project, recover
-    Killed --> Reaped : never reopened for 24h
+    Parked --> Preparing : next check resumes it
+    Killed --> AskServer : you reopen the project
 
     LocalReady --> Superseded : server moved on
     LocalReady --> Syncing : still current
     Syncing --> Synced : publish accepted
     Syncing --> Superseded : publish says superseded
-    Syncing --> LocalReady : upload failed, retry without render
-    LocalReady --> EditorRetry : sync error shown (7457)
+    Syncing --> Parked : upload blip, retry without rendering
+    Superseded --> AskServer : the save's own check, run again
 
-    Synced --> EditorReady : variant ready and identity matches
+    Synced --> EditorReady : variant ready (or a newer one, read twice)
     AlreadyPublished --> EditorReady : variant ready
-    Superseded --> [*] : newer save owns the phone
 
-    NeedsAttention --> EditorRetry : editor poll sees it
-    ServerNeedsAttention --> EditorRetry : editor poll sees it
-    CloudOnly --> EditorRetry : editor poll sees it
-    Cancelled --> EditorRetry : editor poll sees it
-    PrepFailed --> EditorRetry : editor poll sees it
-    Reaped --> EditorRetry : open project
-    EditorRetry --> ServerRetry : Retry, server said needs attention
-    EditorRetry --> Capabilities : Retry, phone-side problem (7435)
-    ServerRetry --> AskServer : new identity, recipe revision +1
-    ServerRetry --> EditorRetry : retry call failed
+    NeedsChange --> Chat : Review in chat
+    NeedsChange --> OpenThread : Review in chat (from the gallery)
+    NeedsUpdate --> OpenThread : Review in chat (from the gallery)
+    OpenThread --> Chat : the conversation opens
+    NeedsUpdate --> Chat : Review in chat
+    Chat --> AskServer : the new version is pinned (it may still need a change)
+    NeedsUpdate --> AutoResume : Update Kria, reopen
+    NeedsUpdate --> NeedsUpdate : update still too old (426)
+    RenderNow --> ServerRetry : Render on this iPhone (renders_locally)
+    ServerNeedsAttention --> ServerRetry : Retry device render
+    OriginalMissing --> ServerRetry : Find original files, all back
+    Paused --> ServerRetry : Resume rendering
+    ServerRetry --> AskServer : new identity (same one after a pause)
+    ServerRetry --> NeedsChange : requires_change
+    ServerRetry --> NeedsUpdate : requires_update
     EditorReady --> [*]
 
     classDef working fill:#e8f0fe,stroke:#4a6fa5,color:#1b2631
@@ -112,9 +129,6 @@ stateDiagram-v2
     classDef degraded fill:#fef5e7,stroke:#b9770e,stroke-width:2px,color:#6e2c00
     classDef failed fill:#f4f6f7,stroke:#566573,color:#1b2631
 
-    class Capabilities,AskServer,Preparing,Rendering,LocalReady,Syncing,ServerRetry working
-    class PrepFailed,ServerNeedsAttention,NeedsAttention,Cancelled,EditorRetry,Killed yourturn
+    class Capabilities,CapsKept,AskServer,Reread,QuietWait,Cooling,Preparing,Rendering,Parked,LocalReady,Syncing,ServerRetry,AutoResume,Killed,Superseded working
+    class NeedsChange,NeedsUpdate,RenderNow,OpenThread,ServerNeedsAttention,OriginalMissing,Paused,Chat yourturn
     class AlreadyPublished,Synced,EditorReady done
-    class Reaped stuck
-    class CapsMasked,TicketBusy,BlipFailed,Backgrounded degraded
-    class CloudOnly,Superseded failed

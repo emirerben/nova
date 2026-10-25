@@ -738,6 +738,10 @@ struct DirectionStage: View {
     /// when it sends the approval, so `decide` needs no extra argument.
     var renderShape: (offer: RenderShapeOffer, choice: Binding<RenderShapeChoice>)? = nil
     var automaticRepairs: Binding<Bool>? = nil
+    /// KRI-881: the draft's sourced wording and sources (`draft_applied.research_preview`). Nil (no research, an
+    /// older server, or an unreadable payload) leaves the card exactly as it was.
+    var researchPreview: ResearchPreview? = nil
+    var replyLanguage: ClipAnswerLanguage = .english
     let isBusy: Bool
     var responseStartedAt: Date? = nil
     /// `decision` is "approve" or "deny". `cleanupChoice` is only meaningful on
@@ -790,6 +794,10 @@ struct DirectionStage: View {
                     .stroke(KriaColor.border, lineWidth: 1)
             }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            if let researchPreview {
+                ResearchPreviewCard(preview: researchPreview, strings: ResearchPreviewStrings(language: replyLanguage))
+            }
 
             if let renderShape {
                 VideoShapeCard(offer: renderShape.offer, choice: renderShape.choice, isEnabled: !isBusy)
@@ -1276,9 +1284,29 @@ struct FailedStage: View {
     /// it would fail identically. "Refresh project" is misleading there, so
     /// this offers a fresh project instead.
     var nonRetryableReasonCode: String? = nil
+    /// The typed creator decline behind a non-retryable failure (`decline_reason`).
+    var declineReason: String? = nil
+    /// Hands the creator the composer. Used where the next step is a reply in this
+    /// chat rather than a fresh project (`replyInChatDeclineReasons`).
+    var replyInChat: (() -> Void)? = nil
 
-    private var isNonRetryable: Bool {
-        isNonRetryableFailureCode(nonRetryableReasonCode)
+    /// The one way forward the failed card offers.
+    enum Affordance: Equatable {
+        /// Nothing to tap: the copy says to wait, and the composer stays.
+        case none
+        /// Focus the composer: the next step is a reply in this chat.
+        case reply
+        case newChat
+        case retry
+    }
+
+    static func affordance(code: String?, declineReason: String?, canReply: Bool, canRetry: Bool) -> Affordance {
+        // A Retry or Refresh would answer the same, and New chat would drop the conversation.
+        if isNotRetryableNowFailureCode(code) { return .none }
+        if isNonRetryableFailureCode(code) {
+            return canReply && declineReason.map(replyInChatDeclineReasons.contains) == true ? .reply : .newChat
+        }
+        return canRetry ? .retry : .none
     }
 
     var body: some View {
@@ -1287,12 +1315,24 @@ struct FailedStage: View {
                 title: title,
                 bodyText: bodyText
             )
-            if isNonRetryable {
+            switch Self.affordance(code: nonRetryableReasonCode, declineReason: declineReason,
+                                   canReply: replyInChat != nil, canRetry: retry != nil) {
+            case .none:
+                EmptyView()
+            case .reply:
+                if let replyInChat {
+                    Button("Reply to Kria", action: replyInChat)
+                        .buttonStyle(CanonicalPrimaryButtonStyle())
+                        .accessibilityIdentifier("failed-stage-reply")
+                }
+            case .newChat:
                 NewChatButton()
                     .accessibilityIdentifier("failed-stage-start-new-edit")
-            } else if let retry {
-                Button(retryLabel, action: retry)
-                    .buttonStyle(CanonicalPrimaryButtonStyle())
+            case .retry:
+                if let retry {
+                    Button(retryLabel, action: retry)
+                        .buttonStyle(CanonicalPrimaryButtonStyle())
+                }
             }
         }
     }

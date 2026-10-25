@@ -2270,6 +2270,12 @@
               "unsupported_recipe",
               "cancelled_by_user",
               "timed_out",
+              "renderer_outdated",
+              "device_unavailable",
+              "original_missing",
+              "output_check_failed",
+              "verification_unavailable",
+              "contract_changed",
               "unknown"
             ],
             "title": "Reason Code",
@@ -2291,7 +2297,8 @@
           },
           "phase": {
             "enum": [
-              "needs_attention"
+              "needs_attention",
+              "paused"
             ],
             "title": "Phase",
             "type": "string"
@@ -2304,6 +2311,12 @@
               "unsupported_recipe",
               "cancelled_by_user",
               "timed_out",
+              "renderer_outdated",
+              "device_unavailable",
+              "original_missing",
+              "output_check_failed",
+              "verification_unavailable",
+              "contract_changed",
               "unknown"
             ],
             "title": "Reason Code",
@@ -2496,6 +2509,11 @@
             "title": "Output Verification Required",
             "type": "boolean"
           },
+          "paused_by_user": {
+            "default": false,
+            "title": "Paused By User",
+            "type": "boolean"
+          },
           "phase": {
             "enum": [
               "awaiting_device",
@@ -2505,6 +2523,11 @@
             ],
             "title": "Phase",
             "type": "string"
+          },
+          "phone_rendering_paused": {
+            "default": false,
+            "title": "Phone Rendering Paused",
+            "type": "boolean"
           },
           "published_generation": {
             "default": null,
@@ -2580,6 +2603,11 @@
         "properties": {
           "identity": {
             "$ref": "#/components/schemas/DeviceRenderIdentity"
+          },
+          "renders_locally": {
+            "default": false,
+            "title": "Renders Locally",
+            "type": "boolean"
           }
         },
         "required": [

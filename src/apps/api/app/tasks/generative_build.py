@@ -700,6 +700,203 @@ _PREPARED_ATTEMPT: contextvars.ContextVar[dict[str, Any] | None] = contextvars.C
 _GUIDED_TASK_ATTEMPT_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "guided_story_task_attempt_id", default=None
 )
+# The Celery delivery's retry count while `orchestrate_generative_job` runs a real
+# delivery; None for a direct call (tests, maintenance), which never auto-retries.
+_TASK_RETRIES: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "generative_task_retries", default=None
+)
+
+# Phone-planning failure taxonomy (killer screens S4-e/S4-j). Each kind decides the
+# persisted code, whether the worker retries on its own first, and whether the raw
+# exception text may stay on `error_detail` (only authored, typed messages may).
+_PlanFailureKind = Literal["plan_defect", "ai_timeout", "ai_quota", "transient", "bug", "typed"]
+# An AI call that timed out may still bill, so it is retried once, never more.
+_PLANNING_RETRY_BUDGET: dict[str, int] = {"ai_timeout": 1, "transient": 3}
+_PLANNING_RETRY_BASE_S = 20
+_PLANNING_RETRY_MAX_S = 120
+# Cloud guided-story I/O blips (`GuidedStoryError.transient`: a 5xx / 429 / connection /
+# timeout under a GCS download, ffprobe, PIL decode or audio mix) are retried before the
+# job fails. Identity / generation / kind / archived-track failures are never retried.
+_GUIDED_TRANSIENT_RETRIES = 2
+# Typed plan defects raised by modules that may not be importable everywhere (skia):
+# matched by (module, class) only once that module is loaded, which raising one implies.
+_LAZY_PLAN_DEFECT_CLASSES = (
+    ("app.pipeline.phone_editor_visuals", "UnsupportedEditorMedia"),
+    ("app.pipeline.portable_text_layout", "UnsupportedPortableText"),
+)
+
+
+class _PlanningRetry(Exception):  # noqa: N818 - control flow, not a failure
+    """Phone planning hit a transient failure with retry budget left.
+
+    Raised past every failure handler to the task body, which re-queues the same
+    delivery with a countdown. Nothing is persisted as failed in between: the Job
+    keeps its pre-planning state and the chat keeps showing that the video is coming.
+    """
+
+    def __init__(self, failure_reason: str, *, countdown: int, max_retries: int) -> None:
+        super().__init__(failure_reason)
+        self.failure_reason = failure_reason
+        self.countdown = countdown
+        self.max_retries = max_retries
+
+
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    """``exc`` and every cause/context behind it (explicit ``from`` first)."""
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and all(current is not seen for seen in chain):
+        chain.append(current)
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    return chain
+
+
+def _is_transient_io(exc: BaseException) -> bool:
+    """Storage / probe / network failures a later attempt can get past."""
+    from google.api_core import exceptions as google_errors  # noqa: PLC0415
+
+    from app.pipeline.probe import ProbeError  # noqa: PLC0415
+
+    return isinstance(
+        exc,
+        (
+            FileNotFoundError,
+            ConnectionError,
+            TimeoutError,
+            ProbeError,
+            google_errors.NotFound,
+            google_errors.ServerError,
+            google_errors.TooManyRequests,
+            google_errors.RetryError,
+        ),
+    )
+
+
+def _is_typed_plan_defect(exc: BaseException) -> bool:
+    """An authored refusal that the same approved plan raises again on every run."""
+    import sys  # noqa: PLC0415
+
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+    from app.services.cloud_render_contract import CloudRenderContractError  # noqa: PLC0415
+    from app.services.phone_rollout import PhoneFontUnqualified  # noqa: PLC0415
+
+    if isinstance(exc, UnsupportedPhonePlan | PhoneFontUnqualified):
+        return True
+    if isinstance(exc, CloudRenderContractError):
+        # The resolver's typed refusal (`_plan_decline` / `_flag_decline`).
+        return bool(_creator_decline_payload(exc))
+    for module_name, class_name in _LAZY_PLAN_DEFECT_CLASSES:
+        cls = getattr(sys.modules.get(module_name), class_name, None)
+        if isinstance(cls, type) and isinstance(exc, cls):
+            return True
+    return False
+
+
+def _classify_phone_plan_failure(exc: BaseException) -> tuple[str, _PlanFailureKind]:
+    """Map a phone-planning exception to ``(failure_reason, kind)``.
+
+    An explicit allow-list: only TYPED plan defects (an authored refusal the same plan
+    would raise again) are ``phone_plan_unsupported``. A bare ``ValueError``, a pydantic
+    ``ValidationError`` or a ``JSONDecodeError`` is our bug, not the creator's plan, so it
+    is the retryable ``phone_plan_failed``; so is storage/probe I/O, after the worker's
+    own retries. Rollout gates raise ``PhoneCapabilityUnavailable`` (retryable).
+    """
+    from app.agents._runtime import (  # noqa: PLC0415
+        AiBudgetExceededError,
+        ProviderOutcomeUnknownError,
+        ProviderQuotaExceededError,
+    )
+    from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
+    from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
+        SilentAudioPlanDeclined,
+        UserSongPlanDeclined,
+    )
+    from app.services.creation_text_composition import (  # noqa: PLC0415
+        CreationTextCompositionError,
+        CreationTextTimeoutError,
+    )
+    from app.services.phone_rollout import PhoneCapabilityUnavailable  # noqa: PLC0415
+
+    chain = _exception_chain(exc)
+    if isinstance(exc, CreationTextTimeoutError):
+        # KRI-673: the AI text pass timed out on both models. Distinct from
+        # `creation_text_failed` (it answered, but unusably) so chat can say so.
+        return "creation_text_timeout", "ai_timeout"
+    if any(isinstance(link, ProviderQuotaExceededError | AiBudgetExceededError) for link in chain):
+        # A spend cap or an exhausted budget answers the same on every retry until someone
+        # raises it: never an automatic retry, never a Retry button.
+        return "ai_quota_exhausted", "ai_quota"
+    if isinstance(exc, CreationTextCompositionError):
+        return "creation_text_failed", "typed"
+    if any(isinstance(link, ProviderOutcomeUnknownError) for link in chain):
+        # Also when wrapped (prod 1e79ff4f: the text composer's timeout surfaced as an
+        # unclassified `phone_plan_failed`).
+        return "plan_ai_timeout", "ai_timeout"
+    if isinstance(exc, PhoneCapabilityUnavailable):
+        # KRI-286: a capability or rollout gate is not a plan defect; the same plan renders
+        # once it is switched on, so it stays retryable.
+        return "phone_capability_unavailable", "typed"
+    if isinstance(exc, SilentAudioPlanDeclined):
+        # KRI-653: error_detail is creator-facing copy, shown verbatim in chat.
+        return "silent_audio_declined", "typed"
+    if isinstance(exc, UserSongPlanDeclined):
+        # KRI-466: error_detail is creator-facing copy; its own code so chat shows it
+        # instead of "your iPhone can't render".
+        return "user_song_plan_declined", "typed"
+    if _is_typed_plan_defect(exc):
+        return "phone_plan_unsupported", "plan_defect"
+    if isinstance(exc, GuidedStoryError) and not exc.transient:
+        # An identity / generation / kind failure: the same plan fails the same way, so
+        # no worker retry (a NotFound under it is a deleted object, not a blip).
+        return "phone_plan_failed", "typed"
+    if any(_is_transient_io(link) for link in chain) or (
+        isinstance(exc, GuidedStoryError) and exc.transient
+    ):
+        return "phone_plan_failed", "transient"
+    return "phone_plan_failed", "bug"
+
+
+def _planning_retry(kind: str) -> tuple[int, int] | None:
+    """``(countdown_s, max_retries)`` when this delivery may retry ``kind`` once more."""
+    retries = _TASK_RETRIES.get()
+    budget = _PLANNING_RETRY_BUDGET.get(kind, 0)
+    if retries is None or retries >= budget:
+        return None
+    return min(_PLANNING_RETRY_MAX_S, _PLANNING_RETRY_BASE_S * 3**retries), retries + 1
+
+
+def _record_phone_plan_failure(
+    exc: BaseException, *, failure_reason: str, kind: str, retry_in_s: int | None
+) -> None:
+    """The admin-visible cause of a planning failure (the creator only sees copy)."""
+    import traceback  # noqa: PLC0415
+
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    try:
+        record_pipeline_event(
+            "assembly",
+            "phone_plan_retry_scheduled" if retry_in_s is not None else "phone_plan_failed",
+            {
+                "failure_reason": failure_reason,
+                "kind": kind,
+                "error_class": type(exc).__name__,
+                "error_tail": str(exc)[-500:],
+                "cause_classes": [type(link).__name__ for link in _exception_chain(exc)[1:]],
+                **({"retry_in_s": retry_in_s} if retry_in_s is not None else {}),
+                **(
+                    {"traceback_tail": "".join(traceback.format_exception(exc))[-2000:]}
+                    if kind == "bug"
+                    else {}
+                ),
+            },
+        )
+    except Exception:  # noqa: BLE001 - diagnostics never mask the failure
+        pass
+
+
 # Required-speech/source-copy uploads are protected by a durable writing lease.
 # Cap the lease at the task's absolute soft deadline, not its hard deadline.  The
 # soft-timeout handler must be able to close the exact receipt and terminalize the
@@ -1236,6 +1433,18 @@ def _phone_rendering_globally_available() -> bool:
         or settings.ios_native_device_only_enabled
         or settings.phone_rendering_enabled
     )
+
+
+def _phone_rollout_gate(message: str, *, capability: str) -> BaseException:
+    """A rollout flag, cohort or ops kill switch refused this phone edit.
+
+    Not a property of the plan: the same edit renders once the switch is back on, so it is
+    the retryable ``phone_capability_unavailable``, never ``phone_plan_unsupported``
+    ("your iPhone can't render this, start a new edit"). The message is unchanged.
+    """
+    from app.services.phone_rollout import PhoneCapabilityUnavailable  # noqa: PLC0415
+
+    return PhoneCapabilityUnavailable(message, capability=capability)
 
 
 def _with_owned_job_fence(fn):  # noqa: ANN001, ANN202
@@ -2035,9 +2244,23 @@ def orchestrate_generative_job(self, job_id: str) -> None:
         guided_attempt_token = _GUIDED_TASK_ATTEMPT_ID.set(
             f"{self.request.id or 'direct'}:{uuid.uuid4().hex}"
         )
+        retries_token = _TASK_RETRIES.set(
+            None if self.request.called_directly else int(self.request.retries or 0)
+        )
         try:
             _run_generative_job(job_id)
             mark_finished(job_id)
+        except _PlanningRetry as exc:
+            # Phone planning hit a transient fault with budget left (an AI timeout once,
+            # storage/probe I/O up to three times): same delivery, later, no failure shown.
+            log.info(
+                "phone_planning_retry_scheduled",
+                job_id=job_id,
+                failure_reason=exc.failure_reason,
+                countdown=exc.countdown,
+                attempt=exc.max_retries,
+            )
+            raise self.retry(countdown=exc.countdown, exc=exc, max_retries=exc.max_retries)
         except _RequiredSpeechAttemptBusy as exc:
             countdown = max(
                 1,
@@ -2205,6 +2428,19 @@ def orchestrate_generative_job(self, job_id: str) -> None:
                             "cause_tail": str(cause)[-300:],
                         },
                     )
+                retries = _TASK_RETRIES.get()
+                if exc.transient and retries is not None and retries < _GUIDED_TRANSIENT_RETRIES:
+                    # A storage / probe / decode blip, not a plan the creator must revise:
+                    # retry with backoff instead of counting it toward the render block.
+                    countdown = min(_PLANNING_RETRY_MAX_S, _PLANNING_RETRY_BASE_S * 3**retries)
+                    _expire_guided_story_lease(job_id, _GUIDED_TASK_ATTEMPT_ID.get())
+                    log.info(
+                        "guided_story_transient_retry_scheduled",
+                        job_id=job_id,
+                        failure_reason=exc.code,
+                        countdown=countdown,
+                    )
+                    raise self.retry(countdown=countdown, exc=exc, max_retries=retries + 1)
                 mark_failed_phase(job_id)
                 _persist_guided_render_failure(job_id, exc.code)
                 terminalized = _fail_job(job_id, str(exc), failure_reason=exc.code)
@@ -2223,6 +2459,7 @@ def orchestrate_generative_job(self, job_id: str) -> None:
             if not terminalized:
                 raise
         finally:
+            _TASK_RETRIES.reset(retries_token)
             _GUIDED_TASK_ATTEMPT_ID.reset(guided_attempt_token)
 
 
@@ -2441,17 +2678,10 @@ def _voice_behind_footage_route(snapshot: dict, candidates: dict) -> bool:
             and strategy.get("voice_mode") == "continuous"
         ):
             # A stamped continuous-voice plan must never fall back to the excerpt lane (the lane
-            # that re-decides the approved plan): a retryable typed decline instead.
-            from app.services.creator_render_contract import (  # noqa: PLC0415
-                CreatorRenderContractError,
-            )
-
-            raise CreatorRenderContractError(
-                "I couldn't set up your voice edit just now.",
-                decline_reason="evidence_missing",
-                field_path="voice_mode",
-                alternative="Try again in a moment, or ask me to make the edit again.",
-            ) from exc
+            # that re-decides the approved plan). A resolver fault is ours, not a property of
+            # the plan, so it fails as the retryable `phone_plan_failed` (an untyped error),
+            # never as the deterministic `phone_plan_unsupported` a typed decline would be.
+            raise RuntimeError("voice route resolver failed for a continuous-voice plan") from exc
         return False  # anything else keeps its legacy lane
 
 
@@ -2596,7 +2826,11 @@ def _run_generative_job_impl(
                         raise _flag_decline(
                             "phone_format", "This kind of edit isn't available on your iPhone yet."
                         )
-                    raise ValueError("No phone renderer is registered for this edit")
+                    # The settings-aware format list: a flag flipped after dispatch.
+                    raise _phone_rollout_gate(
+                        "No phone renderer is registered for this edit",
+                        capability="phoneFormat",
+                    )
                 elif (
                     declared_format in GUIDED_EDIT_FORMATS
                     and not has_voiceover_candidate
@@ -2742,66 +2976,60 @@ def _run_generative_job_impl(
             except Exception as exc:  # noqa: BLE001 — mapped to a stable failure taxonomy below
                 from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
 
-                from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
-                    SilentAudioPlanDeclined,
-                    UnsupportedPhonePlan,
-                    UserSongPlanDeclined,
-                )
-
                 if isinstance(exc, SoftTimeLimitExceeded | SpeechCleanupFailure):
                     # Let the outer handlers own messaging/failure_reason. A
                     # required cleanup the pinned narration cannot prove fails as
                     # `speech_cleanup_failed`, exactly like the cloud renderer.
                     raise
                 # A phone-plan compile/validation failure (no on-device renderer to
-                # fall back to) must persist a failure_reason — without this, the
-                # generic `except Exception` fallback below only set error_detail,
-                # leaving the client with no reason code to render.
-                # KRI-286: a capability the device has not verified yet is a rollout
-                # decision, not a plan defect -- it must stay retryable, so it gets its
-                # own code BEFORE the deterministic `phone_plan_unsupported` branch.
-                from app.agents._runtime import ProviderOutcomeUnknownError  # noqa: PLC0415
-                from app.services.creation_text_composition import (
-                    CreationTextCompositionError,  # noqa: PLC0415
-                    CreationTextTimeoutError,  # noqa: PLC0415
-                )
-                from app.services.phone_rollout import (  # noqa: PLC0415
-                    PhoneCapabilityUnavailable,
-                )
-
-                if isinstance(exc, CreationTextTimeoutError):
-                    # KRI-673: the AI text pass timed out on both models. Distinct from
-                    # `creation_text_failed` (it answered, but unusably) so chat can say so.
-                    failure_reason = "creation_text_timeout"
-                elif isinstance(exc, CreationTextCompositionError):
-                    failure_reason = "creation_text_failed"
-                elif isinstance(exc, ProviderOutcomeUnknownError):
-                    failure_reason = "plan_ai_timeout"
-                elif isinstance(exc, PhoneCapabilityUnavailable):
-                    failure_reason = "phone_capability_unavailable"
-                elif isinstance(exc, SilentAudioPlanDeclined):
-                    # KRI-653: error_detail is creator-facing copy, shown verbatim in chat.
-                    failure_reason = "silent_audio_declined"
-                elif isinstance(exc, UserSongPlanDeclined):
-                    # KRI-466: error_detail is creator-facing copy; its own code so
-                    # chat shows it instead of "your iPhone can't render".
-                    failure_reason = "user_song_plan_declined"
-                elif isinstance(exc, (UnsupportedPhonePlan, ValueError)):
-                    failure_reason = "phone_plan_unsupported"
-                else:
-                    failure_reason = "phone_plan_failed"
+                # fall back to) must persist a failure_reason -- without this the
+                # client has no reason code to render. The classifier is an explicit
+                # allow-list: only a typed plan defect is the deterministic
+                # `phone_plan_unsupported`; our bugs and transient I/O stay retryable.
+                failure_reason, kind = _classify_phone_plan_failure(exc)
+                retry = _planning_retry(kind)
                 log.error(
                     "phone_guided_job_failed",
                     job_id=job_id,
                     failure_reason=failure_reason,
+                    failure_kind=kind,
+                    retry_in_s=retry[0] if retry else None,
                     error=str(exc),
                     exc_info=True,
                 )
+                _record_phone_plan_failure(
+                    exc,
+                    failure_reason=failure_reason,
+                    kind=kind,
+                    retry_in_s=retry[0] if retry else None,
+                )
+                if retry is not None:
+                    # A transient fault (AI timeout, storage, probe): the worker tries
+                    # again on its own before the creator ever sees a failure.
+                    raise _PlanningRetry(
+                        failure_reason, countdown=retry[0], max_retries=retry[1]
+                    ) from exc
                 mark_failed_phase(job_id)
                 decline = _creator_decline_payload(exc)
+                # Only an authored, typed message may reach `error_detail` (status routes
+                # return it). A raw exception -- "1 validation error for EditRecipeV2 ..."
+                # in prod 5df2e3ec -- stays in the log and the admin pipeline trace.
+                # A typed decline's message is its authored refusal (chat reads it back).
+                from app.tasks.content_plan_build import (  # noqa: PLC0415
+                    CREATOR_FACING_DETAIL_CODES,
+                    humanize_job_failure_reason,
+                )
+
+                detail = (
+                    str(exc)
+                    if decline
+                    or kind == "plan_defect"
+                    or failure_reason in CREATOR_FACING_DETAIL_CODES
+                    else humanize_job_failure_reason(failure_reason) or str(exc)
+                )
                 terminalized = _fail_job(
                     job_id,
-                    str(exc),
+                    detail,
                     failure_reason=failure_reason,
                     **({"decline": decline} if decline else {}),
                 )
@@ -2819,10 +3047,15 @@ def _run_generative_job_impl(
                 + ([job.raw_storage_path] if getattr(job, "raw_storage_path", None) else [])
             )
         except ValueError:
-            job.status = "processing_failed"
-            job.error_detail = (
-                "Analysis proxies require on-device rendering; originals were not uploaded."
+            from app.tasks.content_plan_build import (  # noqa: PLC0415
+                humanize_job_failure_reason,
             )
+
+            job.status = "processing_failed"
+            # Only analysis proxies were uploaded (the originals stay on the iPhone), so
+            # this cloud render cannot run. The detail is the creator copy: status routes
+            # return it verbatim.
+            job.error_detail = humanize_job_failure_reason("originals_not_uploaded")
             # Named rather than left NULL (KRI-163) — a NULL failure_reason
             # leaves the client's failure card with nothing to show.
             job.failure_reason = "originals_not_uploaded"
@@ -4419,6 +4652,57 @@ def _creator_landscape_fit(all_candidates: dict | None) -> str:
     return fit if fit in ("fill", "fit") else "fill"
 
 
+def _phone_pin_contract(snapshot: dict) -> Any:
+    """The contract ``pin_device_request`` will verify this variant against, or ``None``.
+
+    Read here only so the compile can repair toward it; an unreadable contract is left to
+    the pin-time check, which refuses it with its own typed reason.
+    """
+    from app.services.creator_render_contract import (  # noqa: PLC0415
+        CreatorRenderContractError,
+    )
+    from app.services.device_render import _contract_for_variant  # noqa: PLC0415
+
+    try:
+        return _contract_for_variant(snapshot, "guided_story")
+    except CreatorRenderContractError:
+        return None
+
+
+def _phone_repair_notes(
+    snapshot: dict, contract: Any, duration_s: float, notes: list[str]
+) -> list[str]:
+    """Every "What Kria changed" line for a phone plan, recorded in the job's trace.
+
+    ``notes`` are the compile repairs; the planner's own (``unified_montage.repair_notes``:
+    asks the approved draft could not meet, KRI-129) and a confirmed length the footage
+    could not fill join them. One channel: the variant's ``phone_repair_notes`` ->
+    ``render_notes`` on the thread, shown with the finished video.
+    """
+    from app.services.creator_render_contract import creator_length_note  # noqa: PLC0415
+    from app.services.length_policy_state import read_length_policy  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    planned = (snapshot.get("unified_montage") or {}).get("repair_notes") or []
+    merged = [note for note in planned if isinstance(note, str) and note]
+    merged.extend(note for note in notes if note not in merged)
+    if contract is not None:
+        try:
+            policy = read_length_policy(snapshot, contract)
+        except ValueError:
+            policy = None  # unreadable: the pin-time check refuses it on its own terms
+        length_note = creator_length_note(contract, duration_s, length_policy=policy)
+        if length_note is not None and length_note not in merged:
+            merged.append(length_note)
+    if merged:
+        record_pipeline_event(
+            "phone_plan",
+            "phone_plan_repaired",
+            {"generation_id": snapshot.get("creator_generation_id"), "notes": merged},
+        )
+    return merged
+
+
 @phone_text_generation
 def _run_phone_guided_job(
     job_id: str,
@@ -4470,8 +4754,9 @@ def _run_phone_guided_job(
     if existing is not None and existing.get("base_generation") == generation:
         return  # A delivery cannot rewrite an already issued device revision.
     if not _phone_rendering_globally_available():
-        raise ValueError(
-            "Phone rendering is currently unavailable; originals remain on the device."
+        raise _phone_rollout_gate(
+            "Phone rendering is currently unavailable; originals remain on the device.",
+            capability="phoneRendering",
         )
     raw_plan, _track = _guided_execution_plan(job_id, guided)
     plan = GuidedStoryExecutionPlan.model_validate(raw_plan)
@@ -4573,17 +4858,22 @@ def _run_phone_guided_job(
         )
     # KRI-286: deterministic repairs (sequence effect, unqualified font) are applied
     # and noted instead of failing the job after approval. Kwargs are forwarded as-is.
+    # The pinned contract lets the repair put back confirmed text the plan lost, which
+    # the pin-time check below would otherwise refuse (KRI-129: the creator's words win).
+    contract = _phone_pin_contract(snapshot)
     compiled = compile_phone_guided_repaired(
         plan,
         bindings,
+        contract=contract,
         visuals=visuals,
         narration=narration_bed,
         song=song_bed,
         sound_effects=sound_effects,
         landscape_fit="fit" if landscape_fit == "fit" else "fill",
     )
-    recipe, repair_notes = compiled.recipe, compiled.notes
+    recipe, repair_notes = compiled.recipe, list(compiled.notes)
     validate_phone_pilot_recipe(recipe)
+    repair_notes = _phone_repair_notes(snapshot, contract, recipe.duration, repair_notes)
     repaired_plan_payload = copy.deepcopy(raw_plan) if current_phone_text_policy() else None
     if compiled.plan is not plan:
         repaired_plan_payload = compiled.plan.model_dump(mode="json", exclude_none=False)
@@ -4605,7 +4895,9 @@ def _run_phone_guided_job(
         from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
 
         if not phone_rendering_allowed_for_job(job):
-            raise ValueError("Phone rendering is unavailable for this account")
+            raise _phone_rollout_gate(
+                "Phone rendering is unavailable for this account", capability="phoneRendering"
+            )
         current = copy.deepcopy(job.assembly_plan or {})
         if any(
             current.get(field) != snapshot.get(field)
@@ -4999,8 +5291,9 @@ def _run_phone_voiceover_montage_job(
     ):
         return
     if not _phone_rendering_globally_available():
-        raise ValueError(
-            "Phone rendering is currently unavailable; originals remain on the device."
+        raise _phone_rollout_gate(
+            "Phone rendering is currently unavailable; originals remain on the device.",
+            capability="phoneRendering",
         )
 
     clip_paths_gcs: list[str] = list(all_candidates.get("clip_paths") or [])
@@ -5015,7 +5308,9 @@ def _run_phone_voiceover_montage_job(
     # job queued before the flag flipped, or a redelivered/stale message.
     # Flag off: byte-identical to pre-KRI-132 (unconditional reject).
     if not settings.phone_narration_rendering_enabled:
-        raise ValueError("Phone rendering does not yet support voiceover edits")
+        raise _phone_rollout_gate(
+            "Phone rendering does not yet support voiceover edits", capability="narrationAudio"
+        )
     edit_format = coerce_edit_format(all_candidates.get("edit_format"))
     if edit_format not in GUIDED_EDIT_FORMATS:
         raise ValueError(f"No phone renderer is registered for edit_format={edit_format!r}")
@@ -5318,7 +5613,9 @@ def _run_phone_voiceover_montage_job(
         from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
 
         if not phone_rendering_allowed_for_job(job):
-            raise ValueError("Phone rendering is unavailable for this account")
+            raise _phone_rollout_gate(
+                "Phone rendering is unavailable for this account", capability="phoneRendering"
+            )
         current = copy.deepcopy(job.assembly_plan or {})
         if current.get("creator_generation_id") != generation or current.get(
             PHONE_SOURCES_FIELD
@@ -6229,6 +6526,39 @@ def _save_request_recovery(
     return True
 
 
+def _repaired_downstream_requirement_ids(brief: Any, contract: Any) -> set[str]:
+    """Brief asks a later stage repairs and reports itself, so the planner's note skips them.
+
+    A confirmed literal the contract pins is put back on screen at compile time
+    (``phone_plan_repair.repair_plan_for_contract``), and the video's own length is reported
+    from the compiled recipe (``creator_length_note``). Their planning receipts would say
+    the opposite of what the creator then sees.
+    """
+    import unicodedata  # noqa: PLC0415
+
+    from app.kria.freeze_ask import times_one_moment  # noqa: PLC0415
+
+    pinned = {
+        " ".join(unicodedata.normalize("NFC", row.text).split())
+        for row in (contract.exact_texts if contract is not None else ())
+    }
+    skipped: set[str] = set()
+    for requirement in brief.live() if brief is not None else ():
+        literal = " ".join(unicodedata.normalize("NFC", requirement.literal or "").split())
+        if requirement.kind == "text" and literal and literal in pinned:
+            skipped.add(str(requirement.id))
+        elif (
+            requirement.kind == "timing"
+            and requirement.scope == "global"
+            and requirement.facts.get("duration_s") is not None
+            and not times_one_moment(requirement)
+            and contract is not None
+            and contract.duration_s is not None
+        ):
+            skipped.add(str(requirement.id))
+    return skipped
+
+
 def _unified_montage_clips(
     clip_paths: Sequence[str],
     entries: Sequence[Mapping[str, Any]],
@@ -6396,8 +6726,9 @@ def _run_phone_unified_montage_job(
     ):
         return None
     if not _phone_rendering_globally_available():
-        raise ValueError(
-            "Phone rendering is currently unavailable; originals remain on the device."
+        raise _phone_rollout_gate(
+            "Phone rendering is currently unavailable; originals remain on the device.",
+            capability="phoneRendering",
         )
     clip_paths = list(all_candidates.get("clip_paths") or [])
     binding_by_path = {binding.proxy_path: binding for binding in bindings}
@@ -6556,47 +6887,33 @@ def _run_phone_unified_montage_job(
         if snapshot.get("creator_brief_binding") and any(
             needs_creator_choice(row) for row in record["requirement_receipts"]
         ):
-            from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+            from app.kria.brief_checks import render_repair_notes  # noqa: PLC0415
             from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
+            # KRI-129 (founder rule): the creator approved this draft, so it renders and
+            # says what it could not do. Refusing here after approval ("should I try again
+            # or simplify?") was 10 of 30 pre-render failures in prod (2026-10); the
+            # question belongs before approval (`phone_montage_preflight`). The receipts
+            # keep their honest status for the chat's receipt summary.
             failures = [row for row in record["requirement_receipts"] if needs_creator_choice(row)]
+            with _worker_reply_language(snapshot):
+                notes = render_repair_notes(
+                    failures,
+                    skip_requirement_ids=_repaired_downstream_requirement_ids(brief, contract),
+                )
             record_pipeline_event(
                 "montage",
                 "requirement_recovery",
                 {
                     "stage": "compile",
-                    "decision": "ask_before_simplifying",
+                    "decision": "render_with_notes",
                     "generation_id": generation,
                     "requirement_receipts": failures,
+                    "notes": notes,
                 },
             )
-            from app.kria.brief_checks import render_block_recovery  # noqa: PLC0415
-
-            with _worker_reply_language(snapshot):
-                block = render_block_recovery(failures)
-            recovery_message = block.message
-            if not _save_request_recovery(
-                job_id,
-                snapshot,
-                ownership_epoch=ownership_epoch,
-                message=recovery_message,
-                receipts=record["requirement_receipts"],
-            ):
-                return None
-            if block.decline_reason:
-                # A blocker the creator answers directly (a title with no words): typed,
-                # so the thread gets `needs_choice` + the way forward, not a bare failure.
-                from app.services.creator_render_contract import (  # noqa: PLC0415
-                    CreatorRenderContractError,
-                )
-
-                raise CreatorRenderContractError(
-                    recovery_message,
-                    decline_reason=block.decline_reason,  # type: ignore[arg-type]
-                    field_path=block.field_path,
-                    alternative=block.alternative,
-                )
-            raise UnsupportedPhonePlan(recovery_message)
+            if notes:
+                record["repair_notes"] = notes
 
     with _sync_session() as db:
         entry_row = _lock_owned_entry_job(db, job_id)
@@ -6610,7 +6927,9 @@ def _run_phone_unified_montage_job(
         from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
 
         if not phone_rendering_allowed_for_job(job):
-            raise ValueError("Phone rendering is unavailable for this account")
+            raise _phone_rollout_gate(
+                "Phone rendering is unavailable for this account", capability="phoneRendering"
+            )
         current = copy.deepcopy(job.assembly_plan or {})
         if current.get("creator_generation_id") != generation or current.get(
             PHONE_SOURCES_FIELD
@@ -7183,8 +7502,9 @@ def _run_phone_subtitled_job(
     ):
         return
     if not _phone_rendering_globally_available():
-        raise ValueError(
-            "Phone rendering is currently unavailable; originals remain on the device."
+        raise _phone_rollout_gate(
+            "Phone rendering is currently unavailable; originals remain on the device.",
+            capability="phoneRendering",
         )
 
     edit_format = coerce_edit_format(all_candidates.get("edit_format"))
@@ -7216,14 +7536,18 @@ def _run_phone_subtitled_job(
             raise _flag_decline(
                 "different_format", "Talking-to-camera edits aren't available on your iPhone yet."
             )
-        raise ValueError("Phone rendering does not yet support talking-to-camera edits")
+        raise _phone_rollout_gate(
+            "Phone rendering does not yet support talking-to-camera edits",
+            capability="subtitled",
+        )
     if self_narrated and not settings.narrated_self_narration_enabled:
         if plan_contract is not None:
             raise _flag_decline(
                 "self_narration", "Edits narrated by your own footage aren't available yet."
             )
-        raise ValueError(
-            f"Phone rendering does not yet support self-narrated '{edit_format}' edits"
+        raise _phone_rollout_gate(
+            f"Phone rendering does not yet support self-narrated '{edit_format}' edits",
+            capability="selfNarration",
         )
     # KRI-136: a self-narrated item with 2+ clips renders as a multi-clip
     # Talking head (speaker clip + muted full-frame cutaways) when
@@ -9081,7 +9405,9 @@ def _run_phone_subtitled_job(
         from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
 
         if not phone_rendering_allowed_for_job(job):
-            raise ValueError("Phone rendering is unavailable for this account")
+            raise _phone_rollout_gate(
+                "Phone rendering is unavailable for this account", capability="phoneRendering"
+            )
         current = copy.deepcopy(job.assembly_plan or {})
         if current.get("creator_generation_id") != generation or current.get(
             PHONE_SOURCES_FIELD
@@ -10738,6 +11064,8 @@ def _run_phone_narrated_job(
     from app.tasks.template_orchestrate import _probe_duration  # noqa: PLC0415
 
     generation = snapshot.get("creator_generation_id")
+    # "What Kria changed" lines for asks the approved edit could not meet (KRI-129).
+    narrated_repair_notes: list[str] = []
     if not isinstance(generation, str) or not generation:
         raise ValueError("Phone rendering requires an immutable approved generation")
     bindings = tuple(
@@ -10751,8 +11079,9 @@ def _run_phone_narrated_job(
     ):
         return
     if not _phone_rendering_globally_available():
-        raise ValueError(
-            "Phone rendering is currently unavailable; originals remain on the device."
+        raise _phone_rollout_gate(
+            "Phone rendering is currently unavailable; originals remain on the device.",
+            capability="phoneRendering",
         )
 
     edit_format = coerce_edit_format(all_candidates.get("edit_format"))
@@ -10769,7 +11098,9 @@ def _run_phone_narrated_job(
     ):
         # Defense in depth: `content_plan_build.py`'s dispatch gate already
         # checked this exact combination via `phone_render_supported_formats()`.
-        raise ValueError("Phone rendering does not yet support voiceover edits")
+        raise _phone_rollout_gate(
+            "Phone rendering does not yet support voiceover edits", capability="narrationAudio"
+        )
 
     speech_cleanup_contract = str(snapshot.get("speech_cleanup_contract") or "legacy_auto")
     cleanup_required = speech_cleanup_contract == "required_v1"
@@ -11029,31 +11360,26 @@ def _run_phone_narrated_job(
                     step_clip_ids = list(ordered_ids)
                 else:
                     if snapshot.get("creator_brief_binding") and len(ordered_ids) > 1:
+                        # KRI-129: the approved edit renders with the in-order split below
+                        # and says so, instead of refusing after approval (prod 38caaebd /
+                        # ef8e35b8, "I couldn't match the narration to the actions").
+                        from app.kria.brief_checks import (  # noqa: PLC0415
+                            narrated_alignment_repair_note,
+                        )
+
+                        with _worker_reply_language(snapshot):
+                            narrated_repair_notes.append(narrated_alignment_repair_note())
                         record_pipeline_event(
                             "narrated",
                             "requirement_recovery",
                             {
                                 "stage": "alignment",
-                                "decision": "ask_before_simplifying",
+                                "decision": "render_with_notes",
                                 "reason": "spoken_word_alignment_unavailable",
                                 "generation_id": generation,
+                                "notes": narrated_repair_notes,
                             },
                         )
-                        from app.kria.brief_checks import (  # noqa: PLC0415
-                            narrated_alignment_recovery,
-                        )
-
-                        # KRI-592: no chat language is bound here, so this stores the
-                        # English copy; the chat observer re-words it for a Turkish chat.
-                        recovery_message = narrated_alignment_recovery()
-                        if not _save_request_recovery(
-                            job_id,
-                            snapshot,
-                            ownership_epoch=ownership_epoch,
-                            message=recovery_message,
-                        ):
-                            return None
-                        raise UnsupportedPhonePlan(recovery_message)
                     n_clips = len(ordered_ids)
                     target_count = max(1, min(n_clips, len(phrases)))
                     if len(phrases) > target_count:
@@ -11207,29 +11533,27 @@ def _run_phone_narrated_job(
                     bound=bool(snapshot.get("creator_brief_binding")),
                 )
             if narrated_failures:
-                from app.kria.brief_checks import render_block_recovery  # noqa: PLC0415
+                from app.kria.brief_checks import render_repair_notes  # noqa: PLC0415
 
+                # KRI-129: the approved edit renders and says what it could not do; the
+                # receipts keep their honest status for the chat's receipt summary.
+                with _worker_reply_language(snapshot):
+                    narrated_repair_notes.extend(
+                        note
+                        for note in render_repair_notes(narrated_failures)
+                        if note not in narrated_repair_notes
+                    )
                 record_pipeline_event(
                     "narrated",
                     "requirement_recovery",
                     {
                         "stage": "compile",
-                        "decision": "ask_before_simplifying",
+                        "decision": "render_with_notes",
                         "generation_id": generation,
                         "requirement_receipts": narrated_failures,
+                        "notes": narrated_repair_notes,
                     },
                 )
-                with _worker_reply_language(snapshot):
-                    recovery_message = render_block_recovery(narrated_failures).message
-                if not _save_request_recovery(
-                    job_id,
-                    snapshot,
-                    ownership_epoch=ownership_epoch,
-                    message=recovery_message,
-                    receipts=narrated_record["requirement_receipts"],
-                ):
-                    return None
-                raise UnsupportedPhonePlan(recovery_message)
 
             # Cloud's `_mix_user_voiceover` knob is `voiceover_bed_level`
             # (direct bed gain, ~0.25 default); this compiler's `mix`
@@ -11478,7 +11802,9 @@ def _run_phone_narrated_job(
         from app.services.phone_destination import phone_rendering_allowed_for_job  # noqa: PLC0415
 
         if not phone_rendering_allowed_for_job(job):
-            raise ValueError("Phone rendering is unavailable for this account")
+            raise _phone_rollout_gate(
+                "Phone rendering is unavailable for this account", capability="phoneRendering"
+            )
         current = copy.deepcopy(job.assembly_plan or {})
         if current.get("creator_generation_id") != generation or current.get(
             PHONE_SOURCES_FIELD
@@ -11565,6 +11891,10 @@ def _run_phone_narrated_job(
             # KRI-842: what the pinned recipe plays for each clip-sound ask, read back from
             # the recipe itself (the receipts judge this, never the global bed level).
             new_entry["clip_sound"] = reconcile_clip_sound(recipe, clip_sound_plan.receipt)
+        if narrated_repair_notes:
+            # Creator-visible (job projection -> render_notes): what the approved edit
+            # could not do (KRI-129: never a silent override).
+            new_entry["phone_repair_notes"] = list(narrated_repair_notes)
         if existing_index is not None:
             variants[existing_index] = new_entry
         else:
@@ -12054,11 +12384,16 @@ def _guided_execution_plan(
                 try:
                     audio_metadata = object_metadata(matched.audio_gcs_path)
                 except Exception as exc:  # noqa: BLE001
-                    from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
+                    from app.pipeline.guided_story import (  # noqa: PLC0415
+                        GUIDED_MUSIC_UNAVAILABLE,
+                        guided_io_error,
+                    )
 
-                    raise GuidedStoryError(
+                    raise guided_io_error(
                         "guided_story_music_missing",
+                        GUIDED_MUSIC_UNAVAILABLE,
                         "The music selected for this edit could not be pinned safely.",
+                        exc,
                     ) from exc
                 track_payload.update(
                     audio_gcs_path=str(matched.audio_gcs_path),
@@ -12240,6 +12575,47 @@ def _heartbeat_guided_story_attempt(job_id: str, attempt_id: str) -> bool:
         job.assembly_plan = assembly
         db.commit()
         return True
+
+
+def _expire_guided_story_lease(job_id: str, attempt_id: str | None) -> None:
+    """Let this delivery's retry reclaim the strict render it just failed.
+
+    A failed render leaves its claim ``pending``/``rendering`` with a fresh heartbeat; a
+    retry inside the lease window would read it as a live second worker and no-op.
+    Only the lease this attempt still owns is backdated. Best-effort: a missed write
+    means the retry waits out the 45 s lease, never a double render.
+    """
+    if not attempt_id:
+        return
+    try:
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+            if job is None:
+                return
+            assembly = dict(job.assembly_plan or {})
+            variants = list(assembly.get("variants") or [])
+            index = next(
+                (i for i, row in enumerate(variants) if row.get("variant_id") == "guided_story"),
+                None,
+            )
+            if index is None:
+                return
+            current = dict(variants[index])
+            if current.get("render_generation_id") != attempt_id or current.get(
+                "render_status"
+            ) not in {"pending", "rendering"}:
+                return
+            expired = (
+                datetime.utcnow() - timedelta(seconds=_GUIDED_RENDER_LEASE_S + 1)
+            ).isoformat() + "Z"
+            current["render_heartbeat_at"] = expired
+            current["render_claimed_at"] = expired
+            variants[index] = current
+            assembly["variants"] = variants
+            job.assembly_plan = assembly
+            db.commit()
+    except Exception as exc:  # noqa: BLE001 - the retry still runs after the lease lapses
+        log.warning("guided_story_lease_expire_failed", job_id=job_id, error=str(exc))
 
 
 @contextmanager

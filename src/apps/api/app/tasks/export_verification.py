@@ -39,6 +39,11 @@ log = structlog.get_logger()
 LEASE_SECONDS = 360  # strictly longer than the task's hard limit
 MAX_CHECK_RUNS = 3  # infrastructure retries of the SAME bytes, not repair renders
 MAX_QUEUE_SECONDS = 20 * 60
+# A check that could not run (worker/queue/storage trouble) is requeued for the SAME
+# uploaded bytes, and the phone keeps showing "Checking your video". Only after this
+# long without one finished check does the creator see a failure, with honest copy.
+RECHECK_WINDOW_SECONDS = 24 * 60 * 60
+_UNAVAILABLE_DETAIL = "Kria couldn't check this video. Your approved edit is saved; try again."
 PENDING_PATH = (
     '$._device_render_v1.* ? (@.status.phase == "syncing")'
     '.attempts.*.verification_task ? (@.state == "queued" || @.state == "running")'
@@ -68,6 +73,58 @@ def claim_valid(record: dict, attempt_id: str, token: str) -> bool:
     )
 
 
+def _close_if_superseded(job, variant_id: str, record: dict, task: dict) -> bool:
+    """Close the check of a record the variant has moved past (the reaper's fence).
+
+    Requeueing it forever crowds genuine checks out of the reconciler, and giving up
+    on it would label the NEWER attempt's variant and Job as failed.
+    """
+    from app.tasks.device_render_reaper import _superseded  # noqa: PLC0415
+
+    if not _superseded(job, variant_id, record):
+        return False
+    task.pop("token", None)
+    task.pop("lease_until", None)
+    task.update(state="done", outcome="superseded")
+    save_device_record(job, variant_id, record)
+    return True
+
+
+def _requeue_or_give_up(job, variant_id: str, record: dict, task: dict, now: datetime) -> bool:
+    """Requeue a check that could not run; give up only after the recheck window.
+
+    Never re-renders and never asks the phone for anything: the reserved upload is
+    the outbox, so the next delivery checks exactly the same bytes. Returns True
+    when it requeued, False when it recorded the (honest) failure instead.
+    """
+    if _close_if_superseded(job, variant_id, record, task):
+        # A newer approved attempt owns the variant: never fail it for a stale check.
+        return False
+    first = task.get("first_queued_at") or task.get("queued_at") or now.isoformat()
+    if (now - datetime.fromisoformat(first)).total_seconds() < RECHECK_WINDOW_SECONDS:
+        task.pop("token", None)
+        task.pop("lease_until", None)
+        task.update(
+            state="queued",
+            runs=0,
+            queued_at=now.isoformat(),
+            first_queued_at=first,
+            requeues=int(task.get("requeues") or 0) + 1,
+        )
+        save_device_record(job, variant_id, record)
+        return True
+    task.update(state="done", outcome="infrastructure_failure")
+    save_device_record(job, variant_id, record)
+    mark_device_failed(
+        job, variant_id, reason_code="verification_unavailable", detail=_UNAVAILABLE_DETAIL
+    )
+    if not has_accepted_artifact(job, variant_id):
+        apply_device_failure_variant_update(
+            job, variant_id, reason_code="verification_unavailable", detail=_UNAVAILABLE_DETAIL
+        )
+    return False
+
+
 def _expire_queued(job_id: uuid.UUID, now: datetime) -> None:
     """A queue outage cannot leave the phone checking indefinitely."""
     with sync_session() as db:
@@ -78,12 +135,14 @@ def _expire_queued(job_id: uuid.UUID, now: datetime) -> None:
         job = db.execute(select(Job).where(Job.id == job_id).with_for_update()).scalar_one_or_none()
         if job is None or job.user_id != owner or job.status == "cancelled":
             return
+        requeued: list[tuple[str, dict]] = []
         for variant_id in (job.assembly_plan or {}).get(DEVICE_RENDER_FIELD, {}):
             record = device_record(job, variant_id)
             if record.get("status", {}).get("phase") != "syncing":
                 continue
-            for task in [
-                a.get("verification_task", {}) for a in record.get("attempts", {}).values()
+            for attempt_id, task in [
+                (attempt_id, a.get("verification_task", {}))
+                for attempt_id, a in record.get("attempts", {}).items()
             ]:
                 queued = task.get("queued_at")
                 if task.get("state") not in {"queued", "running"} or not queued:
@@ -96,22 +155,29 @@ def _expire_queued(job_id: uuid.UUID, now: datetime) -> None:
                     continue
                 if (now - datetime.fromisoformat(queued)).total_seconds() <= MAX_QUEUE_SECONDS:
                     continue
-                task.update(state="done", outcome="queue_timeout")
-                save_device_record(job, variant_id, record)
-                detail = "The video check could not finish. Your approved edit is saved. Try again."
-                mark_device_failed(job, variant_id, reason_code="timed_out", detail=detail)
-                if not has_accepted_artifact(job, variant_id):
-                    apply_device_failure_variant_update(
-                        job, variant_id, reason_code="timed_out", detail=detail
+                # A queue outage is not the phone's silence (never `timed_out`):
+                # recheck the same bytes, and keep the phone on "Checking".
+                if _requeue_or_give_up(job, variant_id, record, task, now):
+                    requeued.append(
+                        (
+                            str(job.user_id),
+                            {
+                                "identity": record["status"]["request"]["identity"],
+                                "attempt_id": attempt_id,
+                            },
+                        )
                     )
                 break
         db.commit()
+    for user_id, body in requeued:
+        enqueue(str(job_id), user_id, body)
 
 
 async def _run(job_id: str, user_id: str, payload: dict) -> str:
     from app.routes.device_render import (
         _complete_device_export,
         _ContractRefusal,
+        _DeviceConflict,
         _owned_job,
         _record,
         _refuse_publication,
@@ -129,9 +195,25 @@ async def _run(job_id: str, user_id: str, payload: dict) -> str:
                 job = await _owned_job(db, uuid.UUID(user_id), uuid.UUID(job_id))
                 try:
                     record, status = _record(job, body.identity)
-                except _ContractRefusal as refusal:
-                    await _refuse_publication(db, job, refusal)
-                    return "authority_refused"
+                except _DeviceConflict as conflict:
+                    if conflict.code == "superseded":
+                        # The fence moved past this record: close its check instead
+                        # of leaving it queued for the reconciler to redeliver.
+                        stale = device_record(job, body.identity.variant_id)
+                        stale_task = (
+                            stale.get("attempts", {}).get(attempt_id, {}).get("verification_task")
+                        )
+                        if stale_task and stale_task.get("state") != "done":
+                            stale_task.pop("token", None)
+                            stale_task.pop("lease_until", None)
+                            stale_task.update(state="done", outcome="superseded")
+                            save_device_record(job, body.identity.variant_id, stale)
+                            await db.commit()
+                        return "superseded"
+                    if isinstance(conflict, _ContractRefusal):
+                        await _refuse_publication(db, job, conflict)
+                        return "authority_refused"
+                    raise
                 task = record.get("attempts", {}).get(attempt_id, {}).get("verification_task")
                 if not task or status.phase != "syncing" or task["state"] == "done":
                     return "obsolete"
@@ -139,26 +221,11 @@ async def _run(job_id: str, user_id: str, payload: dict) -> str:
                 if task["state"] == "running" and datetime.fromisoformat(task["lease_until"]) > now:
                     return "claimed"
                 if task["runs"] >= MAX_CHECK_RUNS:
-                    task.update(state="done", outcome="infrastructure_failure")
-                    save_device_record(job, body.identity.variant_id, record)
-                    mark_device_failed(
-                        job,
-                        body.identity.variant_id,
-                        reason_code="export_failed",
-                        detail=(
-                            "The video check could not finish. "
-                            "Your approved edit is saved. Try again."
-                        ),
-                    )
-                    if not has_accepted_artifact(job, body.identity.variant_id):
-                        apply_device_failure_variant_update(
-                            job,
-                            body.identity.variant_id,
-                            reason_code="export_failed",
-                            detail="The video check could not finish. Your approved edit is saved.",
-                        )
+                    requeued = _requeue_or_give_up(job, body.identity.variant_id, record, task, now)
                     await db.commit()
-                    return "exhausted"
+                    # The maintenance reconciler redelivers a requeued check (its
+                    # `queued_at` is due now), so a broker hiccup cannot strand it.
+                    return "requeued" if requeued else "exhausted"
                 task.update(
                     state="running",
                     token=token,

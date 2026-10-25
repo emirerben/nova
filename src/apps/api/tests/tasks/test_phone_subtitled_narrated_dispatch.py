@@ -2817,12 +2817,10 @@ def test_narrated_alignment_is_not_used_for_scripted_filming_guides(monkeypatch)
 
 @pytest.mark.parametrize("failure_mode", ["agent", "flag_off", "missing_metadata"])
 def test_bound_narrated_alignment_never_silently_uses_bucket_fallback(monkeypatch, failure_mode):
-    """KRI-459: a bound multi-clip request must recover when alignment is unavailable.
-
-    The old path silently emitted equal buckets after an alignment failure. A
-    bound request must ask for a retry/simpler sequence and leave no device
-    recipe behind, including when the alignment flag is disabled or metadata is
-    missing before the agent call.
+    """KRI-459 / KRI-129: a bound multi-clip request whose alignment is unavailable renders
+    the in-order split and SAYS so (never silently, never a refusal after approval: prod
+    38caaebd / ef8e35b8 were refused with "I couldn't match the narration..."). Holds when
+    the agent fails, the alignment flag is disabled or metadata is missing.
     """
     from app.kria.brief_binding import BriefBinding
 
@@ -2848,19 +2846,21 @@ def test_bound_narrated_alignment_never_silently_uses_bucket_fallback(monkeypatc
             "_ingest_clips",
             lambda *a, **k: {
                 "clip_metas": [],
-                "clip_id_to_gcs": {f"c{i}": f"analysis/c{i}.mp4" for i in range(7)},
+                "clip_id_to_gcs": {f"c{i}": f"user/analysis-proxy-c{i}.mp4" for i in range(7)},
                 "clip_id_to_local": {f"c{i}": f"/tmp/c{i}.mp4" for i in range(7)},
                 "probe_map": {},
                 "hero": None,
             },
         )
 
-    with pytest.raises(UnsupportedPhonePlan, match="try again or use a simpler clip sequence"):
-        gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
-    assert "_device_render_v1" not in job.assembly_plan
-    recovery = job.assembly_plan["request_recovery"]
-    assert "try again or use a simpler clip sequence" in recovery["message"]
-    assert recovery["binding_digest"] == snapshot["creator_brief_binding"]["digest"]
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+    assert job.status == "awaiting_device"
+    assert "request_recovery" not in job.assembly_plan
+    [variant] = [v for v in job.assembly_plan["variants"] if v["variant_id"] == "narrated"]
+    assert variant["phone_repair_notes"] == [
+        "I couldn't line each clip up with the words you say, so the clips play in order "
+        "and share your voiceover evenly"
+    ]
 
 
 # --- KRI-590: spoken-word cues vs a described sequence (prod job ef8e35b8) ---------

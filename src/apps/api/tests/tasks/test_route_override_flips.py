@@ -889,10 +889,14 @@ def test_a_phone_format_without_a_renderer_is_typed_only_for_a_stamped_job(
     monkeypatch.setattr(gb, "mark_failed_phase", lambda _id: None)
     h.run()
     [(args, kwargs)] = failed
-    assert kwargs["failure_reason"] == "phone_plan_unsupported"
+    # Stamped: the resolver's typed refusal. Unstamped: a rollout flag flipped after
+    # dispatch, which is the retryable capability gate, not "your iPhone can't render".
+    assert kwargs["failure_reason"] == (
+        "phone_plan_unsupported" if stamped else "phone_capability_unavailable"
+    )
     if stamped:
         assert kwargs["decline"]["decline_reason"] == "capability_unavailable"
         assert "subtitled clip" in kwargs["decline"]["alternative"]
     else:
         assert "decline" not in kwargs
-        assert "No phone renderer is registered" in args[1]
+        assert "switched off right now" in args[1]

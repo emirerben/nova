@@ -7439,6 +7439,21 @@ def narrated_alignment_recovery() -> str:
     )
 
 
+def narrated_alignment_repair_note() -> str:
+    """The "What Kria changed" line when the approved narrated edit renders without
+    word-level alignment (KRI-129: it renders and says so, never refuses after approval)."""
+    return say(
+        en=(
+            "I couldn't line each clip up with the words you say, so the clips play in order "
+            "and share your voiceover evenly"
+        ),
+        tr=(
+            "Her klibi söylediğin kelimelerle eşleştiremedim, bu yüzden klipler sırayla "
+            "oynuyor ve seslendirmeni eşit paylaşıyor"
+        ),
+    )
+
+
 # KRI-778: `_check_timing`'s sentence for a total length the draft missed. Every global
 # length ask is judged against the same draft, so a brief with two of them (café M2: a freeze
 # the brief scoped as a length, and "about 14 seconds") states the draft's length twice.
@@ -7536,6 +7551,41 @@ def render_block_recovery(failures: Sequence[Mapping[str, Any]]) -> RenderBlockR
             tr='Başlık için kelimeleri söyle ya da "başlık olmasın" yaz.',
         )
     return RenderBlockRecovery(message=message)
+
+
+def render_repair_notes(
+    failures: Sequence[Mapping[str, Any]], *, skip_requirement_ids: Iterable[str] = ()
+) -> list[str]:
+    """ "What Kria changed" lines for the checked receipts an approved draft fell short on.
+
+    KRI-129 (founder rule): once the creator approved the draft, Kria renders it and says
+    exactly what it could not do, instead of refusing after approval with "should I try
+    again or simplify?" (prod, 2026-10: 10 of 30 pre-render refusals). The questions belong
+    before approval (``phone_montage_preflight``). Each line is the receipt's own reason,
+    localized; a title with no words says the way forward. ``skip_requirement_ids`` are
+    asks a later stage repairs and reports itself (confirmed text, the video's length).
+    """
+
+    skipped = set(skip_requirement_ids)
+    reasons: list[str] = []
+    for row in failures:
+        if str(row.get("requirement_id")) in skipped:
+            continue
+        reason = str(row.get("reason") or "")
+        if not reason:
+            continue
+        if is_no_title_reason(reason):
+            reasons.append(
+                say(
+                    en="I left the title off because you didn't give me its words. "
+                    "Tell me what it should say and I'll add it",
+                    tr="Başlığı koymadım çünkü kelimelerini vermedin. "
+                    "Ne yazmasını istediğini söyle, ekleyeyim",
+                )
+            )
+        else:
+            reasons.append(_loc(reason))
+    return _block_sentences(reasons)
 
 
 def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:

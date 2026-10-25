@@ -9,7 +9,8 @@ private struct AssetWireKey: CodingKey {
 
 func rejectUnknownAssetFields(_ decoder: Decoder, allowed: Set<String>) throws {
     let container = try decoder.container(keyedBy: AssetWireKey.self)
-    guard Set(container.allKeys.map(\.stringValue)).isSubset(of: allowed) else { throw RenderAssetError.invalidManifest }
+    // An unknown key is a newer manifest shape (this build is older than the server), not a bad value.
+    guard Set(container.allKeys.map(\.stringValue)).isSubset(of: allowed) else { throw RenderAssetError.newerManifest }
 }
 
 /// Recipe identities are independent of local paths and expiring download grants.
@@ -103,7 +104,7 @@ public struct RenderAssetReference: Codable, Equatable, Sendable {
         case "processed_audio":
             guard !c.contains(.mediaId), !c.contains(.catalog), !c.contains(.catalogId), !c.contains(.visualId), !c.contains(.mediaKind), !c.contains(.planItemId) else { throw RenderAssetError.invalidManifest }
             source = .processedAudio(jobID: try c.decode(String.self, forKey: .jobId), variantID: try c.decode(String.self, forKey: .variantId), renderGeneration: try c.decode(String.self, forKey: .renderGeneration), sourceMediaID: try c.decode(String.self, forKey: .sourceMediaId), sourceGeneration: try c.decode(String.self, forKey: .sourceGeneration), generation: try c.decode(String.self, forKey: .generation))
-        default: throw RenderAssetError.invalidManifest
+        default: throw RenderAssetError.newerManifest
         }
         try validate()
     }
@@ -166,6 +167,7 @@ public struct RenderAssetManifest: Codable, Equatable, Sendable {
         try validate()
     }
     public func validate(references: Set<String>? = nil) throws {
+        guard version <= 1 else { throw RenderAssetError.newerManifest }
         guard version == 1, assets.count <= 500, Set(assets.map(\.id)).count == assets.count else { throw RenderAssetError.invalidManifest }
         for (index, asset) in assets.enumerated() {
             try asset.validate()
@@ -179,6 +181,8 @@ public struct RenderAssetManifest: Codable, Equatable, Sendable {
 
 public enum RenderAssetError: Error, Equatable, Sendable {
     case invalidManifest, originalIdentityMismatch(String), missingLibraryAsset(String), changedLibraryAsset(String)
+    /// A manifest key, asset kind or version this build does not know: the server is newer.
+    case newerManifest
 }
 
 /// Content-addressed cache. Only explicitly authorized library and Visuals-pool

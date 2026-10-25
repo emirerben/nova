@@ -569,8 +569,11 @@ def test_worker_fails_closed_when_there_is_nothing_at_all_to_render_from(monkeyp
         monkeypatch, moments=[photos.photo_moment()], rows=[photos.photo_row()], features=[]
     )
     args, kwargs = guided.run_until_failure(monkeypatch, job)
-    assert kwargs.get("failure_reason") == "phone_plan_unsupported"
-    assert "source bindings or pinned visuals" in args[1]
+    # An untyped invariant, not an authored plan refusal: retryable, never "start a new edit".
+    assert kwargs.get("failure_reason") == "phone_plan_failed"
+    # The raw invariant text stays in the log/trace; the persisted detail is creator copy.
+    assert "source bindings or pinned visuals" not in args[1]
+    assert args[1].startswith("Something broke while planning this edit")
     assert "_device_render_v1" not in job.assembly_plan
     cloud.assert_not_called()
 

@@ -48,18 +48,52 @@ def approved_runtime_generation(job: Any, execution_generation: str | None) -> s
     return generation if isinstance(generation, str) and generation else None
 
 
-# Human-readable fallback when the reporter (phone client or reaper) sends an
-# empty detail string. Keyed by reason_code; "timed_out" is the reaper's own
-# stale-timeout report (app/tasks/device_render_reaper.py).
+# Human-readable fallback when the reporter (phone client, reaper or the server's
+# own checks) sends an empty detail string. Keyed by reason_code; each line says
+# what is true and what happens next, never a generic "something went wrong".
 _DEFAULT_FAILURE_DETAIL: dict[str, str] = {
-    "export_failed": "The export failed on your device. Open the project to retry.",
-    "insufficient_storage": "Not enough storage on your device to finish the export.",
-    "thermal": "Your device paused rendering to cool down. Open the project to retry.",
-    "unsupported_recipe": "This edit isn't supported by on-device rendering yet.",
-    "cancelled_by_user": "The export was cancelled on your device.",
-    "timed_out": "No delivery from your device in the last 24 hours. Open the project to retry.",
-    "unknown": "Something went wrong rendering on your device. Open the project to retry.",
+    "export_failed": "The video couldn't finish on your iPhone. Your edit is saved; try again.",
+    "insufficient_storage": (
+        "Your iPhone is low on storage. Free up some space and Kria will finish the video."
+    ),
+    "thermal": "Your iPhone paused rendering to cool down. Kria will continue when it's cooler.",
+    "unsupported_recipe": "This edit uses something this iPhone can't render yet.",
+    "cancelled_by_user": "You stopped this render. Your edit is saved; resume it any time.",
+    "timed_out": (
+        "No delivery from your iPhone in the last 24 hours. Open the project to finish it."
+    ),
+    "renderer_outdated": "This edit needs a newer version of Kria. Update the app to finish it.",
+    "device_unavailable": (
+        "This iPhone can't render the video right now. Your edit is saved; try again soon."
+    ),
+    "original_missing": (
+        "An original video for this edit isn't on this iPhone anymore. "
+        "Find the original file and Kria will finish the video."
+    ),
+    "output_check_failed": (
+        "Kria's quality check didn't pass for this video. Your approved edit is saved; try again."
+    ),
+    "verification_unavailable": (
+        "Kria couldn't check this video. Your approved edit is saved; try again."
+    ),
+    "contract_changed": (
+        "This edit's approved details changed after it was prepared. "
+        "Review the updated edit in chat."
+    ),
+    "unknown": "The video couldn't finish on your iPhone. Your edit is saved; try again.",
 }
+
+# A user Stop pauses the record; it never moves the phase or the project label.
+PAUSED_FIELD = "paused_by_user"
+
+
+class DeviceRecipeSuperseded(CreatorRenderContractError):
+    """A newer approved attempt owns this variant (KRI-722 fence).
+
+    Not a refusal of the creator's edit: the client should follow the newer attempt,
+    so callers answer ``superseded`` instead of recording a contract decline.
+    """
+
 
 # Phases from which a device render may transition to needs_attention — a
 # published record is done, and a record already needs_attention has no
@@ -503,7 +537,7 @@ def verify_device_record_contract(job: Any, record: dict, status: DeviceRenderSt
     if (fence is not None or record.get("prepared_execution") is not None) and record.get(
         "prepared_execution"
     ) != fence:
-        raise CreatorRenderContractError(
+        raise DeviceRecipeSuperseded(
             "A newer approved attempt replaced this render; please use the latest version."
         )
     contract = _contract_for_variant(job.assembly_plan or {}, status.request.identity.variant_id)
@@ -689,6 +723,40 @@ def mark_device_failed(
     }
     save_device_record(job, variant_id, record)
     return status
+
+
+def mark_device_paused(job: Any, variant_id: str, now: datetime) -> DeviceRenderStatus:
+    """Record a user Stop as a resumable pause.
+
+    The phase stays where it was (``awaiting_device``/``syncing``) and the variant and
+    Job are untouched: nothing failed, the same phone will resume the same pinned
+    recipe. Only a live record can pause; published / needs_attention raise.
+    """
+    record = device_record(job, variant_id)
+    status = DeviceRenderStatus.model_validate(record["status"])
+    if status.phase not in _FAILABLE_PHASES:
+        raise ValueError(f"device render cannot pause from phase '{status.phase}'")
+    record[PAUSED_FIELD] = {
+        "paused_at": now.isoformat(),
+        "identity": status.request.identity.model_dump(mode="json"),
+    }
+    save_device_record(job, variant_id, record)
+    return status
+
+
+def device_paused(record: dict) -> bool:
+    """True while a user Stop holds a live (not yet delivered) record."""
+    phase = (record.get("status") or {}).get("phase")
+    return bool(record.get(PAUSED_FIELD)) and phase in _FAILABLE_PHASES
+
+
+def clear_device_pause(job: Any, variant_id: str) -> bool:
+    """Resume: drop the pause marker. Returns whether there was one."""
+    record = device_record(job, variant_id)
+    if record.pop(PAUSED_FIELD, None) is None:
+        return False
+    save_device_record(job, variant_id, record)
+    return True
 
 
 def touch_device_poll(job: Any, variant_id: str, now: datetime) -> None:

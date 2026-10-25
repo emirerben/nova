@@ -290,12 +290,15 @@ def test_dispatcher_rejects_phone_snapshot_without_a_registered_renderer(monkeyp
     fail_job = Mock(return_value=True)
     monkeypatch.setattr(gb, "_fail_job", fail_job)
     # The P0-1 failure-reason wrapper terminalizes the job instead of letting
-    # the ValueError escape the task.
+    # the error escape the task. The format list is settings-aware, so a flag that
+    # turned the format off is the retryable rollout gate, not a plan defect.
     gb.orchestrate_generative_job.run(str(job.id))
     fail_job.assert_called_once()
     args, kwargs = fail_job.call_args
-    assert "No phone renderer is registered" in args[1]
-    assert kwargs.get("failure_reason") == "phone_plan_unsupported"
+    # The raw gate text stays in the log/trace; the persisted detail is creator copy.
+    assert "No phone renderer is registered" not in args[1]
+    assert "switched off right now" in args[1]
+    assert kwargs.get("failure_reason") == "phone_capability_unavailable"
     montage_runner.assert_not_called()
     phone_runner.assert_not_called()
     montage_runner.assert_not_called()
@@ -310,9 +313,11 @@ def test_dispatcher_rejects_phone_snapshot_without_a_registered_renderer(monkeyp
             "phone_plan_unsupported",
             id="unsupported_phone_plan",
         ),
+        # An untyped ValueError is an internal invariant (our bug), not the plan: the
+        # retryable `phone_plan_failed`, never the dead-end "start a new edit".
         pytest.param(
             lambda: ValueError("Phone rendering requires original source bindings"),
-            "phone_plan_unsupported",
+            "phone_plan_failed",
             id="pilot_validation_value_error",
         ),
         pytest.param(lambda: RuntimeError("boom"), "phone_plan_failed", id="unexpected_error"),
@@ -468,7 +473,9 @@ def test_stale_pool_photo_fails_closed_as_unsupported(monkeypatch, change):
         monkeypatch, still_images=True, row=photos.photo_row(**change)
     )
     _, kwargs = run_until_failure(monkeypatch, job)
-    assert kwargs.get("failure_reason") == "phone_plan_unsupported"
+    # Still fails closed (nothing downloaded or pinned), but as an untyped check it is the
+    # retryable `phone_plan_failed`, not the dead-end "your iPhone can't render this".
+    assert kwargs.get("failure_reason") == "phone_plan_failed"
     assert downloads == []
     assert PHONE_VISUALS_FIELD not in job.assembly_plan
     cloud.assert_not_called()
@@ -586,7 +593,9 @@ def test_stale_pool_video_fails_closed_as_unsupported(monkeypatch, change):
         features=["visualVideos"],
     )
     _, kwargs = run_until_failure(monkeypatch, job)
-    assert kwargs.get("failure_reason") == "phone_plan_unsupported"
+    # Still fails closed (nothing downloaded or pinned), but as an untyped check it is the
+    # retryable `phone_plan_failed`, not the dead-end "your iPhone can't render this".
+    assert kwargs.get("failure_reason") == "phone_plan_failed"
     assert downloads == []
     assert PHONE_VISUALS_FIELD not in job.assembly_plan
     cloud.assert_not_called()

@@ -157,3 +157,9 @@ After the provider matcher repair, all 212 affected replay, language, title,
 ending-clip and skill checks pass against the task's isolated Postgres. All 121
 CI policy tests pass. The repaired matchers require the skill body and the same
 resolver header; the real agents and resolution services remain in these tests.
+
+Main advanced with the KRI-934 phone-render repair while CI was running. The only
+merge conflict was two appended entries in journey-manifest.json. Merge resolution
+keeps main's killer-phone-plan-repair entry and this PR's editorial entry, preserving
+all shared journey definitions byte-for-byte as JSON values. The merged registry
+has 84 journeys. No renderer or agent change is made to resolve this conflict.

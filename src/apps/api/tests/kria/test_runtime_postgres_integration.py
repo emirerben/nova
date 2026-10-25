@@ -504,7 +504,8 @@ def test_turn_abandoned_three_times_fails_and_promotes_its_successor(
         event = db.get(CreationThreadEvent, stuck.observed_event_id)
         assert event is not None
         assert event.event_type == "assistant_error"
-        assert event.content.startswith("I couldn't finish that step")
+        # A3: say the request already stopped (and was re-run) several times.
+        assert event.content.startswith("This request stopped partway through several times")
         assert event.payload["code"] == "runtime_turn_claims_exhausted"
         queued = db.get(CreatorAgentTurn, queued_id)
         assert queued is not None

@@ -28,7 +28,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents._model_client import default_client
-from app.agents._runtime import ProviderOutcomeUnknownError, RunContext, TerminalError
+from app.agents._runtime import (
+    AiBudgetExceededError,
+    ProviderOutcomeUnknownError,
+    ProviderQuotaExceededError,
+    RunContext,
+    TerminalError,
+)
 from app.agents._schemas.brief_extractor import BriefExtractionOutput
 from app.agents._schemas.creator_agent import (
     AskUser,
@@ -2278,9 +2284,10 @@ async def _call_main_creator(
 
     try:
         return await asyncio.to_thread(_run_agent)
-    except ProviderOutcomeUnknownError:
-        # Provider work may still be billable. Never disguise this as a
-        # recoverable planning/schema failure that can re-enter inference.
+    except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
+        # Provider work may still be billable, or a spend cap answers the same on every
+        # retry. Never disguise either as a recoverable planning failure ("try again"):
+        # the turn fails with its own code and copy.
         raise
     except TerminalError as exc:
         raise RuntimeError("Kria could not produce a reliable editorial plan") from exc
@@ -2325,7 +2332,8 @@ async def _call_brief_extractor(
 
     try:
         return await asyncio.to_thread(_run_agent)
-    except ProviderOutcomeUnknownError:
+    except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
+        # A spend cap is not a reading failure: the turn fails with its own code (A1).
         raise
     except TerminalError as exc:
         raise RuntimeError("Kria could not extract the creative brief reliably") from exc
