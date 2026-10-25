@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.106.0] - 2026-10-25
+
+### Changed
+- fix(kria): read KRI-881's pinned research before it deploys (KRI-881 reader) (#1814) <!-- release-pr: 1814 -->
+
 ## [0.81.105.0] - 2026-10-24
 
 ### Changed
