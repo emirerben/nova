@@ -263,17 +263,23 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
     /// straight). Resolved at paint time (`TextBend`), so it only exists on effects that keep a
     /// straight baseline (`bendSupported`).
     public let bend: Double?
-    private enum CodingKeys: String, CodingKey { case id, start, end, anchorX, anchorY, rotationDegrees, runs, effect, motion, revealBounds, handwriting, discreteReveal, smoothReveal, staggered, dissolveSeed, karaoke, fade, giantTitle, animationPhases, background, bend }
+    /// Text behind people: the compositor multiplies this layer's alpha by (1 - person mask) per frame
+    /// (`NativeSubjectMatte`, `SubjectOcclusion`). Omitted from the wire when nil/false. Needs
+    /// `MediaCapability.behindSubject`; refused with a giant title (its own compositing lane).
+    public var behindSubject: Bool?
+    private enum CodingKeys: String, CodingKey { case id, start, end, anchorX, anchorY, rotationDegrees, runs, effect, motion, revealBounds, handwriting, discreteReveal, smoothReveal, staggered, dissolveSeed, karaoke, fade, giantTitle, animationPhases, background, bend, behindSubject }
     public init(id: String, start: Double, end: Double, anchorX: Double, anchorY: Double,
-                rotationDegrees: Double, runs: [PositionedTextRun], effect: Effect = .static, motion: TextMotionParameters? = nil, revealBounds: TextRevealBounds? = nil, handwriting: HandwritingContent? = nil, discreteReveal: DiscreteRevealContent? = nil, smoothReveal: SmoothRevealContent? = nil, staggered: StaggeredContent? = nil, dissolveSeed: UInt32? = nil, karaoke: KaraokeContent? = nil, fade: TextFadeEnvelope? = nil, giantTitle: GiantTitleTransition? = nil, animationPhases: TextAnimationPhases? = nil, background: TextBackground? = nil, bend: Double? = nil) {
+                rotationDegrees: Double, runs: [PositionedTextRun], effect: Effect = .static, motion: TextMotionParameters? = nil, revealBounds: TextRevealBounds? = nil, handwriting: HandwritingContent? = nil, discreteReveal: DiscreteRevealContent? = nil, smoothReveal: SmoothRevealContent? = nil, staggered: StaggeredContent? = nil, dissolveSeed: UInt32? = nil, karaoke: KaraokeContent? = nil, fade: TextFadeEnvelope? = nil, giantTitle: GiantTitleTransition? = nil, animationPhases: TextAnimationPhases? = nil, background: TextBackground? = nil, bend: Double? = nil, behindSubject: Bool? = nil) {
         self.bend = bend
+        self.behindSubject = behindSubject
         self.id = id; self.start = start; self.end = end; self.anchorX = anchorX; self.anchorY = anchorY
         self.rotationDegrees = rotationDegrees; self.runs = runs; self.effect = effect; self.motion = motion; self.revealBounds = revealBounds; self.handwriting = handwriting; self.discreteReveal = discreteReveal; self.smoothReveal = smoothReveal; self.staggered = staggered; self.dissolveSeed = dissolveSeed; self.karaoke = karaoke; self.fade = fade; self.giantTitle = giantTitle; self.animationPhases = animationPhases; self.background = background
     }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["id", "start", "end", "anchorX", "anchorY", "rotationDegrees", "runs", "effect", "motion", "revealBounds", "handwriting", "discreteReveal", "smoothReveal", "staggered", "dissolveSeed", "karaoke", "fade", "giantTitle", "animationPhases", "background", "bend"])
+        try rejectUnknownAssetFields(decoder, allowed: ["id", "start", "end", "anchorX", "anchorY", "rotationDegrees", "runs", "effect", "motion", "revealBounds", "handwriting", "discreteReveal", "smoothReveal", "staggered", "dissolveSeed", "karaoke", "fade", "giantTitle", "animationPhases", "background", "bend", "behindSubject"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         bend = try c.decodeIfPresent(Double.self, forKey: .bend)
+        behindSubject = try c.decodeIfPresent(Bool.self, forKey: .behindSubject)
         id = try c.decode(String.self, forKey: .id); start = try c.decode(Double.self, forKey: .start)
         end = try c.decode(Double.self, forKey: .end); anchorX = try c.decode(Double.self, forKey: .anchorX)
         anchorY = try c.decode(Double.self, forKey: .anchorY); rotationDegrees = try c.decode(Double.self, forKey: .rotationDegrees)
@@ -338,6 +344,9 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
             guard bend.isFinite, abs(bend) <= 100, handwriting == nil, discreteReveal == nil, smoothReveal == nil,
                   staggered == nil, giantTitle == nil, karaoke == nil, revealBounds == nil else { throw RecipeError.invalidTimeline }
         }
+        // Occlusion multiplies the final placed bitmap, so every painter composes with it except the
+        // giant-title transition, which paints its own scene (the cloud keeps `theme_transition` apart too).
+        if behindSubject == true { guard giantTitle == nil else { throw RecipeError.invalidTimeline } }
         for run in runs + (discreteReveal?.lines.map(\.cursorRun) ?? []) + (staggered?.glyphs.map(\.run) ?? []) {
             try run.validate()
             guard let font = manifest?.assets.first(where: { $0.id == run.fontAssetID }),

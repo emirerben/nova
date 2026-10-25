@@ -359,6 +359,15 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
             "Bent text awaits native parity and device qualification",
             capability="textBend",
         )
+    # Text behind people: same explicit gate (`compile_text_overlay` strips the flag before
+    # it gets here unless verified; this catches a caller that stamped it afterwards).
+    if any(layer.behind_subject for layer in recipe.text_layers) and "behindSubject" not in set(
+        settings.phone_render_verified_features
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Text behind people awaits native parity and device qualification",
+            capability="behindSubject",
+        )
     if _has_unqualified_font_instance(recipe):
         font_files, font_effects = unqualified_font_causes(recipe)
         raise PhoneFontUnqualified(
@@ -587,6 +596,44 @@ def text_bend_supported(*, require_client: bool | None = None) -> bool:
         settings.text_bend_enabled
         and "textBend" in set(settings.phone_render_verified_features)
         and text_bend_client_supported(require_client=require_client)
+    )
+
+
+def text_behind_subject_phone_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode a text layer's ``behind_subject``?
+
+    At least ``text_behind_subject_phone_min_client_protocol`` (21) knows the key; an older
+    build refuses the whole recipe (`rejectUnknownAssetFields`). ``require_client`` ``None``
+    applies the gate only inside an HTTP request (workers have no app build to qualify);
+    pass ``True``/``False`` to force it. Mirrors `text_bend_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return (
+        protocol is not None and protocol >= settings.text_behind_subject_phone_min_client_protocol
+    )
+
+
+def text_behind_subject_phone_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "may a phone recipe carry ``behind_subject`` right now".
+
+    True iff the kill switch (``text_behind_subject_phone_enabled``, default off) is on,
+    ``behindSubject`` is in ``phone_render_verified_features`` (the device-parity gate) and
+    the app-build gate holds (`text_behind_subject_phone_client_supported`). When False,
+    `compile_text_overlay` strips the flag and the layer renders as plain text.
+    """
+    return bool(
+        settings.text_behind_subject_phone_enabled
+        and "behindSubject" in set(settings.phone_render_verified_features)
+        and text_behind_subject_phone_client_supported(require_client=require_client)
     )
 
 

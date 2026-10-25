@@ -71,6 +71,8 @@ class EditRecipeV2(EditRecipeV1):
             self.required_capabilities |= {"freehandDrawing"}
         if any(layer.bend for layer in self.text_layers):
             self.required_capabilities |= {"textBend"}
+        if any(layer.behind_subject for layer in self.text_layers):
+            self.required_capabilities |= {"behindSubject"}
         if any(
             layer.karaoke is not None and layer.karaoke.single_word for layer in self.text_layers
         ):
