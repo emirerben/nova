@@ -156,6 +156,24 @@ final class CreationChatFixture: @unchecked Sendable {
     Checking which moment of the clip the title should land on.
     """
     private let approvalID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    static var researchPreviewFixture: [String: Any] { [
+        "version": 1,
+        "retrieved_at": "2026-10-25T09:00:00Z",
+        "future_key": ["ignored": true],
+        "explanations": [
+            [
+                "text": "Galata Tower was built in 1348 by the Genoese.",
+                "start_s": 3.0, "end_s": 7.5,
+                "unknown_row_key": 1,
+                "sources": [
+                    ["title": "Galata Tower | History", "url": "https://www.britannica.com/topic/Galata-Tower"],
+                    ["title": "en.wikipedia.org", "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/fixture"],
+                ],
+            ],
+            // No public source: never shown as if it were sourced.
+            ["text": "Unsourced claim", "start_s": 8.0, "end_s": 9.0, "sources": [["title": "Local", "url": "http://intranet.local/x"]]],
+        ],
+    ] }
     private var runtime: Int { ProcessInfo.processInfo.environment["KRIA_CHAT_CREATION_FLOW"] == "v2" ? 2 : 1 }
     /// KRI-588: why the fixture server refuses a `song_range` answer, or nil when it takes it. A whole-song answer
     /// (both ends null) is always fine; "invalid" / "stale" modes refuse every range.
@@ -858,7 +876,15 @@ final class CreationChatFixture: @unchecked Sendable {
                 }
             } else if runtime == 2 {
                 append("assistant_response", text: "Your draft is ready for review.")
-                append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
+                var draftPayload: [String: Any] = ["turn_id": turnID, "draft_id": id]
+                // KRI-881: `KRIA_CHAT_RESEARCH_PREVIEW=1` sends the server's `research_preview` (shape of
+                // `research_preview.preview_payload`, plus a key this client does not know and an unusable row);
+                // `KRIA_CHAT_REPLY_LANGUAGE=tr` makes the chat Turkish.
+                if ProcessInfo.processInfo.environment["KRIA_CHAT_RESEARCH_PREVIEW"] == "1" {
+                    draftPayload["research_preview"] = Self.researchPreviewFixture
+                }
+                if let language = ProcessInfo.processInfo.environment["KRIA_CHAT_REPLY_LANGUAGE"] { state["reply_language"] = language }
+                append("draft_applied", payload: draftPayload)
                 append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
             }
             else {
