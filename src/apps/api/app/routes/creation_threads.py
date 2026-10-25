@@ -417,6 +417,11 @@ class CreationCapabilitiesOut(BaseModel):
     # a turn plan) and accepts the answer as `protected_region` on a turn. The question goes
     # only to app builds at `protected_region_mark_min_client_protocol`.
     protected_region_marks: bool = False
+    # KRI-723: the server may ask "put your moments in order and show me where each one is"
+    # (`moment_order_question` on a turn plan) and accepts the answer as `moment_order` on a
+    # turn. Only app builds at `moment_order_min_client_protocol` are asked; false = the kill
+    # switch (999) is on, so no build is asked.
+    moment_order_questions: bool = False
     # KRI-443: plan_block events follow Create and cancel-render is available.
     live_plan_review_enabled: bool = False
     # KRI-439: 2 = structured payloads, GET /plan, scoped turns and undo; 1 = the feed only.
@@ -3929,6 +3934,7 @@ async def capabilities(
         "song_filming_range": bool(song_available and settings.song_filming_range_enabled),
         "song_range_questions": bool(song_available and settings.song_filming_range_enabled),
         "protected_region_marks": True,
+        "moment_order_questions": settings.moment_order_min_client_protocol < 999,
         "live_plan_review_enabled": bool(settings.live_plan_review_enabled),
         "live_plan_review_version": CONTRACT_VERSION if settings.live_plan_review_enabled else 1,
         "suggestion_chips": bool(settings.suggestion_chips_for(user.id)),

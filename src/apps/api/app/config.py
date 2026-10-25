@@ -864,12 +864,13 @@ class Settings(BaseSettings):
     # `moment_order_question` ("put your moments in order and show me where each one is"),
     # asked before approval when the clip record cannot place a moment the creator named.
     # Lower builds are never asked and get no pins: today's v1 windows, byte-identical, with
-    # an honest "couldn't find it" receipt. No model call either way. DARK (999) until the iOS
-    # moment card ships: set it to the protocol that build declares (never a number another
-    # feature already took). 999 turns off the question AND every v2 pin. Deploy order: the
-    # worker must read v2 envelopes before any api writes them (a worker machine left on an
-    # older image refuses a v2 envelope: `approved_length_plan_invalid`).
-    moment_order_min_client_protocol: int = 999
+    # an honest "couldn't find it" receipt. No model call either way. 20 = the first iOS build
+    # with the moment card (`MomentOrderCard`, `KriaClientProtocolContract.version` 20); never
+    # reuse a number another feature already took. Deploy order (worker reads v2 envelopes
+    # before any api writes them) is met: workers have read v2 since #1808. Kill switch:
+    # `fly secrets set MOMENT_ORDER_MIN_CLIENT_PROTOCOL=999` (api + worker) + restart turns
+    # off the question AND every v2 pin.
+    moment_order_min_client_protocol: int = 20
     # KRI-815: with footage and no voiceover, Kria chat writes a footage-grounded voiceover
     # script (`voiceover_script` on the reply) instead of a narrated draft that can only fail at
     # approval. Independent of TRANSCRIPT_HELPER_ENABLED. Kill switch: false + restart (api +

@@ -226,3 +226,36 @@ async def test_bad_answers_are_refused_and_nothing_is_stored(
         assert all("moment_order" not in p for p in _user_payloads(thread_id))
     finally:
         await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("protocol", "asked"), [(20, True), (19, False)])
+async def test_protocol_20_is_asked_and_protocol_19_is_not(
+    monkeypatch: pytest.MonkeyPatch, protocol: int, asked: bool
+) -> None:
+    """KRI-723 iOS card: the CODE default (no secret) asks the first build with the card.
+
+    Ways this could fail: the default stays 999 (the shipped card is never shown), drops
+    below 20 (a build without the card is asked a question it cannot answer and is held
+    before approval), or the submit stamp and the gate disagree. The real submit stamps the
+    turn from ``X-Kria-Client-Protocol``; that stamp is what the real gate is handed (the
+    worker forwards it as ``moment_questions``), on prod's recorded Merope M2 brief.
+    """
+    from app.config import Settings  # noqa: PLC0415
+    from tests.kria.test_kri723_moment_authority_m2 import gate  # noqa: PLC0415
+    from tests.kria.test_kri775_merope_m2_replay import RENDERS, prod_flags  # noqa: PLC0415
+
+    assert Settings.model_fields["moment_order_min_client_protocol"].default == 20
+    monkeypatch.setattr(settings, "moment_order_min_client_protocol", 20)
+    question = _question()
+    user_id, thread_id = _seed(question)
+    try:
+        set_client_protocol(protocol)
+        await _submit(user_id, thread_id, _answer(question))
+        stamped = bool(_user_payloads(thread_id)[-1].get("answers_moment_questions"))
+    finally:
+        await async_engine.dispose()
+    assert stamped is asked
+    prod_flags(monkeypatch)
+    result = await gate(monkeypatch, RENDERS[0], answers=stamped)
+    assert (result.plan.moment_order_question is not None) is asked, result.plan
