@@ -1829,12 +1829,22 @@ class FastMontageCut(BaseModel):
         le=10.0,
         exclude_if=lambda value: value is None,
     )
+    # KRI-689: the creator asked this cut to play faster or slower (source seconds per output
+    # second, the native 0.25-4x range). The output is the source window divided by the rate.
+    # Omitted when unset so every stored snapshot keeps its exact dump.
+    playback_rate: float | None = Field(
+        default=None, ge=0.25, le=4.0, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def validate_source_window(self) -> FastMontageCut:
         if self.source_end_s <= self.source_start_s:
             raise ValueError("fast montage cut source_end_s must exceed source_start_s")
-        source_duration_s = self.source_end_s - self.source_start_s
+        if self.playback_rate is not None and self.freeze_hold_s:
+            # The phone compiler holds a moving clip's last frame at 1x only.
+            raise ValueError("a fast montage cut with a freeze frame plays at normal speed")
+        rate = self.playback_rate if self.playback_rate is not None else 1.0
+        source_duration_s = (self.source_end_s - self.source_start_s) / rate
         if abs(self.output_duration_s - source_duration_s - (self.freeze_hold_s or 0.0)) > 0.001:
             raise ValueError("fast montage output duration must match its source window")
         return self

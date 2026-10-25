@@ -676,9 +676,10 @@
     {
       "id": "kri-689-clip-speed",
       "needs_native": true,
-      "api_tests": "tests/kria/test_kri689_clip_speed_ask.py tests/tasks/test_kri689_speed_review.py tests/tasks/test_unified_montage_dispatch.py tests/pipeline/test_phone_guided_speed.py tests/routes/test_authored_playback_speed.py tests/routes/test_phone_speed_safety.py tests/services/test_guided_speed_projection.py tests/agents/test_timeline_capability_context.py",
+      "api_tests": "tests/kria/test_kri689_clip_speed_ask.py tests/kria/test_kri689_chat_speed_spec.py tests/tasks/test_kri689_speed_review.py tests/tasks/test_unified_montage_dispatch.py tests/pipeline/test_phone_guided_speed.py tests/routes/test_authored_playback_speed.py tests/routes/test_phone_speed_safety.py tests/services/test_guided_speed_projection.py tests/agents/test_timeline_capability_context.py",
       "paths": [
         "src/apps/api/app/kria/speed_ask.py",
+        "src/apps/api/tests/kria/test_kri689_chat_speed_spec.py",
         "src/apps/api/app/pipeline/reframe.py",
         "src/apps/api/app/pipeline/phone_guided_plan.py",
         "src/apps/api/app/pipeline/phone_authored_timeline.py",

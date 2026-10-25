@@ -270,3 +270,95 @@ def test_a_pacing_ask_is_not_reported_as_a_dropped_speed_ask():
 
     assert "clip speed" not in text
     assert receipts["r4"]["verification"] == "unchecked"
+
+
+# --- A record written by the speed-aware planner (docs/reviews/kri-689-chat-speed-failure-modes
+# .md, D4/D7): the review says which clips play at which rate, read off the finished timeline. ---
+
+
+def _speed_record(brief: CreativeBrief) -> dict:
+    record = _record()
+    record["clip_speeds"] = [
+        {
+            "requirement_id": "r4",
+            "status": "applied",
+            "rate": 2.0,
+            "rate_requested": 2.0,
+            "rate_stated": True,
+            "cut_ids": [f"unified-cut-{index}" for index in (1, 2, 3)],
+            "cut_positions": [1, 2, 3],
+            "media_ids": list(RIVER),
+            "grounding": "analysed_moment",
+        }
+    ]
+    record["requirement_receipts"] = _stamped(
+        build_receipts(
+            brief.live(), plan_facts_from_unified_montage(record), include_unchecked=True
+        )
+    )
+    return record
+
+
+def _speed_variant(*, rate_on_river: float | None) -> dict:
+    variant = _variant()
+    for index, row in enumerate(variant["story_timeline"]):
+        row["moment_id"] = f"unified-cut-{index + 1}"
+        if row["media_id"] in RIVER and rate_on_river is not None:
+            row["playback_rate"] = rate_on_river
+            row["source_end_s"] = row["source_start_s"] + 5.0 * rate_on_river
+    return variant
+
+
+def _speed_review(record: dict, brief: CreativeBrief, variant: dict, *, lang: str = "en"):
+    plan = {
+        "creator_generation_id": GENERATION,
+        "unified_montage": record,
+        DEVICE_RENDER_FIELD: {
+            "guided_story": {
+                "published_attempt": ATTEMPT,
+                "base_generation": ATTEMPT,
+                "requirement_generation": GENERATION,
+            }
+        },
+    }
+    binding = BriefBinding.create(THREAD, brief).model_dump(mode="json")
+    thread = SimpleNamespace(id=THREAD, creator_id=uuid.uuid4())
+    job = SimpleNamespace(id=uuid.uuid4(), assembly_plan=plan, all_candidates={})
+    execution = SimpleNamespace(result={"brief_binding": binding})
+    with reply_language_for(lang):
+        text, payload = kria_runtime._approved_generation_review(
+            None, thread, job, variant, execution, DEFAULT
+        )
+    return text, {row["requirement_id"]: row for row in payload}
+
+
+def test_the_finished_video_review_says_which_clips_play_faster():
+    brief = _brief()
+    text, receipts = _speed_review(_speed_record(brief), brief, _speed_variant(rate_on_river=2.0))
+
+    assert f"- Done: {SPEED} (Clips 1, 2 and 3 play at 2x)" in text
+    assert receipts["r4"]["status"] == "met"
+    assert receipts["r4"]["verification"] == "checked"
+    assert EN_REASON not in text
+    assert "Not everything you asked for made it in" not in text
+
+
+def test_the_turkish_review_names_the_clips_in_turkish():
+    brief = _brief("Nehir çekimlerini 2 kat hızlandır")
+    text, receipts = _speed_review(
+        _speed_record(brief), brief, _speed_variant(rate_on_river=2.0), lang="tr"
+    )
+
+    assert (
+        "- Yapıldı: Nehir çekimlerini 2 kat hızlandır (1., 2. ve 3. klipler 2x hızda oynuyor)"
+        in text
+    )
+    assert receipts["r4"]["status"] == "met"
+
+
+def test_a_finished_timeline_that_lost_the_rate_is_a_couldnt_not_a_done():
+    brief = _brief()
+    text, receipts = _speed_review(_speed_record(brief), brief, _speed_variant(rate_on_river=None))
+
+    assert f"- Couldn't: {SPEED} (The finished video plays this clip at normal speed)" in text
+    assert receipts["r4"]["status"] == "not_possible"

@@ -13,6 +13,9 @@ version?" before any approval card.
 What it judges, and why only that:
 
 - ``order`` and ``timing`` requirements: the deterministic plan alone decides them.
+- a clip-speed ask (KRI-689, `speed_ask.asks_clip_speed`): the plan grounds it to its cuts
+  (or says why it cannot), so its receipt is returned whatever its status and the draft reads
+  "Done: ... (clips 1 and 3 play at 2x)" or an honest "Couldn't" before the card.
 - never ``text``: the worker's two model steps (landmark names for per-clip labels, the
   creation-text lane) only write text and are skipped here, so a text verdict would be a
   guess. The render's own receipts still judge text.
@@ -122,10 +125,16 @@ def montage_blockers(
     # The worker only refuses a draft whose brief was bound at approval.
     if brief is None or not settings.brief_binding_for(creator_id):
         return None
+    from app.kria.speed_ask import asks_clip_speed  # noqa: PLC0415
+
     judged: dict[str, BriefRequirement] = {
         req.id: req for req in brief.live() if req.kind in PREFLIGHT_KINDS
     }
-    if not judged:
+    # KRI-689: a clip-speed ask is settled by the same plan (which cuts, which rate, or why
+    # not). Its receipt is returned whatever its status, so the draft says "Done: ... (clips 1
+    # and 3 play at 2x)" or the honest "Couldn't" before the approval card.
+    speed_asks = {req.id for req in brief.live() if asks_clip_speed(req)}
+    if not judged and not speed_asks:
         return None
     planned = preflight_montage_plan(
         creator_id=creator_id,
@@ -147,7 +156,8 @@ def montage_blockers(
     return [
         receipt
         for receipt in receipts
-        if receipt.requirement_id in judged and needs_creator_choice(receipt)
+        if (receipt.requirement_id in judged and needs_creator_choice(receipt))
+        or (receipt.requirement_id in speed_asks and receipt.verification == "checked")
     ]
 
 

@@ -507,6 +507,17 @@ def freeze_frame_planned_for(client_protocol: int | None) -> bool:
     )
 
 
+def clip_speed_planned_for() -> bool:
+    """May a phone montage plan retime a cut for the creator's speed ask (KRI-689)?
+
+    True iff ``variableSpeed`` is in ``phone_render_verified_features`` (device parity: the
+    same gate the editor's clip speed control reads, `_phone_clip_speed_reason`). Off, the
+    plan writes no rate and the receipt keeps KRI-689's honest "can't change clip speed on
+    your iPhone yet", so an approved recipe never asks the phone for a capability it lacks.
+    """
+    return "variableSpeed" in set(settings.phone_render_verified_features)
+
+
 def stamped_client_protocol(value: object) -> int | None:
     """A stored app-protocol stamp read back, or ``None`` when absent or malformed."""
     if isinstance(value, bool) or not isinstance(value, int):

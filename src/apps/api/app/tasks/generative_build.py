@@ -6625,6 +6625,7 @@ def _plan_phone_unified_montage(
         skia_font_covers,
     )
     from app.services.phone_rollout import (  # noqa: PLC0415
+        clip_speed_planned_for,
         freeze_frame_planned_for,
         stamped_client_protocol,
     )
@@ -6654,6 +6655,9 @@ def _plan_phone_unified_montage(
         freeze_frames=freeze_frame_planned_for(
             stamped_client_protocol(all_candidates.get("creator_client_protocol"))
         ),
+        # KRI-689: a chat speed ask is planned only where the phone retimes (`variableSpeed`
+        # verified); otherwise the plan records it as locked and the receipt says so.
+        clip_speed=clip_speed_planned_for(),
     )
 
 
