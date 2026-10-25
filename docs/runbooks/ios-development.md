@@ -1029,6 +1029,34 @@ Validation: `pytest tests/routes/test_native_timeline_sources.py
  tests/routes/test_generative_timeline.py tests/routes/test_generative_jobs.py
  tests/routes/test_editor_commit.py` from `src/apps/api`.
 
+### Newer versions load automatically (KRI-935)
+
+The editor never asks the creator to reload, tap "newer version" or close and
+reopen. When the server says a newer version of the edit exists, the editor
+loads it and replays the creator's unsaved lanes on top; one Undo drops them.
+
+- **Save 409:** load the newest version, keep local lanes, resend the Save once.
+  A second 409 ends on the ordinary "Couldn't save" banner (Save again).
+- **Chat draft on a lane the creator also edited:** the chat edit is the newest
+  and the creator asked for it, so it wins that lane. One Undo restores the
+  creator's pre-chat state. Text, captions, SFX, overlays or cards the creator
+  deleted are not brought back.
+- **Newer render under unsaved edits (chat sync):** the render becomes the clean
+  baseline, local lanes replay on top, and a staged chat edit lands last.
+- **Preview 409:** load the newest version and rebuild the preview, at most once
+  per server generation. A server that keeps answering 409 ends on the preview
+  Retry card; Retry reloads once more.
+- **Phone render superseded:** `DeviceRenderSessions` reconciles against the
+  newest request by itself, once per superseded request. A relink that races a
+  newer request re-reads the targets and links the chosen file to the newest one.
+
+Not covered: a re-plan that renders a different job still uses the
+`newerJobPrompt` "Switch / Keep editing" choice. Its lanes belong to another
+job, so local edits cannot be replayed onto it.
+
+Guards: the conflict cases in `NativeEditorSessionTests`,
+`ChatDraftStagingTests`, `TextDeletionTests` and `DeviceRenderSessionTests`.
+
 ### Signup screen (KRI-161)
 
 Paper source of truth: https://app.paper.design/file/01M34NT2NRNCP6R49KGW19EY4M
