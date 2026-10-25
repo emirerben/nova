@@ -528,14 +528,22 @@ Apply(r, own) ==
                   /\ pres' = [NoPres EXCEPT !.ph = "synced", !.pub = r.resp.pub]
                   /\ UNCHANGED <<rep, decl, sPaused, faults>>
              ELSE IF r.resp.ph = "attention"              \* S:392-411
-             THEN \* S apply: a decline this build no longer holds (it renders the recipe now)
-                  \* reads renderable_now; its Try again says renders_locally.
-                  LET reason == IF r.resp.reason = "outdated" /\ gate = "local"
-                                THEN "renderable" ELSE r.resp.reason
-                  IN /\ coord' = c1 /\ obs' = FALSE /\ sched' = FALSE
-                     /\ pres' = [ph |-> IF c1.file THEN "localReady" ELSE "attention", rsr |-> TRUE,
-                                 cause |-> reason, pub |-> 0, wait |-> "none"]
-                     /\ UNCHANGED <<rep, decl, sPaused, faults>>
+             THEN \* S apply: an outdated decline this build's gate no longer holds (no version
+                  \* gap now) is replaced by what the gate says: renderable_now (its Try again
+                  \* says renders_locally), a missing capability's change, or a wait.
+                  LET reason == IF r.resp.reason = "outdated" /\ gate # "outdated"
+                                THEN IF gate = "unsupported" THEN "unsupported" ELSE "renderable"
+                                ELSE r.resp.reason
+                  IN IF r.resp.reason = "outdated" /\ gate = "wait"
+                     THEN \* too hot right now: the cooling wait, re-checked on a timer
+                          /\ coord' = c1 /\ obs' = FALSE /\ sched' = TRUE
+                          /\ pres' = [NoPres EXCEPT !.ph = "preparing", !.wait = "cooling"]
+                          /\ UNCHANGED <<rep, decl, sPaused, faults>>
+                     ELSE /\ coord' = c1 /\ obs' = FALSE /\ sched' = FALSE
+                          \* "Ready on this iPhone" only for a kept video of this request.
+                          /\ pres' = [ph |-> IF c1.file /\ c1.id = id THEN "localReady" ELSE "attention",
+                                      rsr |-> TRUE, cause |-> reason, pub |-> 0, wait |-> "none"]
+                          /\ UNCHANGED <<rep, decl, sPaused, faults>>
              ELSE IF r.resp.paused /\ (c1.id # id \/ c1.ph = "cancelled") /\ ~r.retry
              THEN \* S:430-436 the creator's Stop holds until they resume it
                   /\ coord' = c1 /\ obs' = FALSE /\ sched' = FALSE
@@ -760,7 +768,9 @@ RetryNeedsAttention(after) ==
                            THEN [pres EXCEPT !.cause = "requiresChange"]
                            ELSE IF sPhase = "attention" /\ req = sId /\ sReason = "outdated"
                                    /\ lvl <= sDecl /\ ~Asserts
-                           THEN [pres EXCEPT !.cause = "outdated"]
+                           \* S requires_update: unless this build's own gate has no version
+                           \* gap and declines for a missing capability (a change, not an update).
+                           THEN [pres EXCEPT !.cause = IF Gate = "unsupported" THEN "unsupported" ELSE "outdated"]
                            ELSE pres
                 /\ UNCHANGED <<srv, coord, req, obs, rec, oldRec, sched, ed>>
 
@@ -1085,6 +1095,14 @@ UpdateTold == (app = "open" /\ upd426 = sId /\ upd426 # 0 /\ ServerWaiting) => T
 \* build newer than the decliner, and an older build's decline never fails a record a newer
 \* one holds (two devices on different builds never loop).
 NoRepinLoop == autoRepins <= 1
+
+\* A "Ready on this iPhone" card with a change or update reason is about a video this
+\* iPhone rendered for the request on the card (never an earlier request's cancelled file).
+KeptIsThisRequest == (app = "open" /\ pres.ph = "localReady" /\ pres.cause \in Structural) => coord.id = req
+
+\* "Update Kria" shows only to a build older than the recipe it is about (the card's request,
+\* while it is the server's; a 426 names its own request and is checked by UpdateTold).
+UpdateMeansOutdated == (app = "open" /\ NeedsUpdate(pres) /\ req = sId /\ upd426 = 0) => Outdated
 
 \* With the chat open on a phone that can render the pinned request, and its card not
 \* showing a finished video, the server stops waiting on its own (a published video, or the

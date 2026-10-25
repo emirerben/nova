@@ -53,6 +53,8 @@ BEFORE = HERE / "PhoneRenderBefore.tla"
 TLC_URL = "https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar"
 TLC_SHA256 = "dae639a1f51a9e13ce60c369b15f32124cf1a78017aca366b6de0ae2b5169439"
 LOCAL_TOOLS = Path("/private/tmp/nova-formal-tools")
+# Per TLC run. A run past it is a FAIL line; split a slow run's events instead of raising it.
+TLC_TIMEOUT = int(os.environ.get("TLC_TIMEOUT", "900"))
 
 ALL_EVENTS = '{"save", "other", "stop", "kill", "background", "reaper", "sync"}'
 ALL_CONDS = '{"none", "hot", "unsupported", "outdated", "schema", "missing"}'
@@ -63,6 +65,7 @@ DECLINES = '{"unsupported", "outdated", "schema"}'
 # Another device on an older build, another device's save adding a feature this build can't
 # decode, and an operator lowering a recipe's protocol floor.
 BUILD_EVENTS = '{"old", "feature", "rollback"}'
+BUILD_CONDS = '{"none", "unsupported", "outdated", "schema"}'
 # Approval no longer routes anything in the fixed code (the server always sends
 # retry_requires_approval = false, R:535; nothing in PhoneRender.tla reads `approval`), so
 # the fixed runs pin it to FALSE. Chat: the chat workspace (and its poll) is under the
@@ -84,6 +87,8 @@ SAFETY = [
     "NoFutileRepin",
     "UpdateTold",
     "NoRepinLoop",
+    "KeptIsThisRequest",
+    "UpdateMeansOutdated",
 ]
 INVARIANTS = [("INVARIANT", r) for r in SAFETY]
 WAY_OUT = [("PROPERTY", "AttentionHasWayOut"), ("PROPERTY", "PreviewConverges")]
@@ -117,6 +122,19 @@ MODEL_RUNS = {
             **ONE_SAVE,
             "Conds": '{"none", "unsupported", "outdated", "schema", "newschema"}',
             "Events": BUILD_EVENTS,
+        },
+        INVARIANTS,
+    ),
+    # Round 4: an operator rollback or an update clears the version gap while the phone
+    # lost a capability or is hot ("Update Kria" only for an outdated build), and a newer
+    # request declined after this phone rendered an older one (no "Ready on this iPhone"
+    # for an earlier request's file).
+    "builds-caps": (
+        "Spec",
+        {
+            **ONE_SAVE,
+            "Conds": '{"none", "hot", "outdated", "schema", "newschema"}',
+            "Events": '{"rollback", "caps", "save", "feature"}',
         },
         INVARIANTS,
     ),
@@ -248,13 +266,31 @@ FULL_RUNS = {
         {**LIVE, "Conds": '{"outdated", "schema"}', "Events": '{"save"}'},
         WAY_OUT,
     ),
-    "builds-stop": (
+    # builds-stop (every build event with Save and Stop) ran past 30 minutes, so it is split
+    # by event; each finishes in a few minutes. An older device together with Save AND Stop
+    # (about 120M states and growing at 20 minutes) is not run: old+save and old+stop are.
+    "builds-stop-feature-save": (
+        "Spec",
+        {**ONE_SAVE, "Conds": BUILD_CONDS, "Events": '{"feature", "save", "stop"}'},
+        INVARIANTS,
+    ),
+    "builds-stop-rollback-save": (
+        "Spec",
+        {**ONE_SAVE, "Conds": BUILD_CONDS, "Events": '{"rollback", "save", "stop"}'},
+        INVARIANTS,
+    ),
+    "builds-stop-no-save": (
         "Spec",
         {
             **ONE_SAVE,
-            "Conds": '{"none", "unsupported", "outdated", "schema"}',
-            "Events": '{"old", "feature", "rollback", "save", "stop"}',
+            "Conds": BUILD_CONDS,
+            "Events": '{"old", "feature", "rollback", "stop"}',
         },
+        INVARIANTS,
+    ),
+    "builds-old-save": (
+        "Spec",
+        {**ONE_SAVE, "Conds": BUILD_CONDS, "Events": '{"old", "save"}'},
         INVARIANTS,
     ),
     # Save with Stop (about 6 minutes). One answered preview poll: PreviewConverges needs
@@ -698,19 +734,70 @@ TEETH = {
         ],
         ("PROPERTY", "SpecUser", {**LIVE, "Conds": '{"none"}', "Events": '{"caps"}'}),
     ),
-    # D yourTurnPhases: a kept video (localReady) whose build is too old gets no Update link.
-    "kept-video-no-update": (
-        "AttentionHasWayOut",
+    # (Round 3's kept-video-no-update is gone: after round 4 a kept video with an outdated
+    # reason is unreachable, see findings.md Round 4.)
+    # S apply (needs_attention): "Ready on this iPhone" whenever a receipt on disk has a file,
+    # also an earlier request's export cancelled when the newer request arrived.
+    "kept-video-other-request": (
+        "KeptIsThisRequest",
         [
             (
-                "NeedsUpdate(p) == p.ph \\in YourTurnPh /\\",
-                'NeedsUpdate(p) == p.ph = "attention" /\\',
+                'ph |-> IF c1.file /\\ c1.id = id THEN "localReady"',
+                'ph |-> IF c1.file THEN "localReady"',
             )
         ],
         (
-            "PROPERTY",
-            "SpecUser",
-            {**LIVE, "Conds": '{"newschema"}', "Events": '{"feature"}'},
+            "INVARIANT",
+            "Spec",
+            {**ONE_SAVE, "Conds": '{"newschema"}', "Events": '{"feature"}'},
+        ),
+    ),
+    # S apply: renderable_now never replaces renderer_outdated (round-3 M19): a build the
+    # rollback made current keeps "Update Kria".
+    "no-renderable-now": (
+        "UpdateMeansOutdated",
+        [
+            (
+                'reason == IF r.resp.reason = "outdated" /\\ gate # "outdated"',
+                "reason == IF FALSE",
+            )
+        ],
+        (
+            "INVARIANT",
+            "Spec",
+            {**ONE_SAVE, "Conds": '{"outdated"}', "Events": '{"rollback"}'},
+        ),
+    ),
+    # S apply: only a local gate replaces renderer_outdated (round 3); with a missing
+    # capability the card keeps "Update Kria" instead of asking for a change.
+    "outdated-kept-for-unsupported": (
+        "UpdateMeansOutdated",
+        [
+            (
+                'THEN IF gate = "unsupported" THEN "unsupported" ELSE "renderable"',
+                'THEN IF gate = "unsupported" THEN "outdated" ELSE "renderable"',
+            )
+        ],
+        (
+            "INVARIANT",
+            "Spec",
+            {**ONE_SAVE, "Conds": '{"outdated"}', "Events": '{"rollback", "caps"}'},
+        ),
+    ),
+    # S retryNeedsAttention: requires_update always reads "Update Kria", also on a build
+    # whose gate has no version gap and lacks a capability.
+    "requires-update-ignores-gate": (
+        "UpdateMeansOutdated",
+        [
+            (
+                '!.cause = IF Gate = "unsupported" THEN "unsupported" ELSE "outdated"]',
+                '!.cause = "outdated"]',
+            )
+        ],
+        (
+            "INVARIANT",
+            "Spec",
+            {**ONE_SAVE, "Conds": '{"outdated"}', "Events": '{"rollback", "caps"}'},
         ),
     ),
 }
@@ -752,11 +839,15 @@ def tlc(
     specification: str,
     tag: str,
     expect_pass: bool = False,
+    exit_on_timeout: bool = True,
 ) -> dict:
     """Run TLC once. Returns {"broken": [rules], "trace": n, "states": n, "seconds": s}.
 
     A run expected to pass checks liveness once, on the complete graph; one expected to
-    break keeps TLC's periodic checks so a violation surfaces early."""
+    break keeps TLC's periodic checks so a violation surfaces early. A run past
+    TLC_TIMEOUT is a FAIL: it exits with a FAIL line, or (exit_on_timeout=False) returns
+    {"timeout": True} so the caller reports it and goes on."""
+    log = OUT / f"{tag}.log"
     with tempfile.TemporaryDirectory() as tmp:
         cfg = Path(tmp) / "run.cfg"
         lines = [f"SPECIFICATION {specification}", "CONSTANTS"]
@@ -765,30 +856,45 @@ def tlc(
         cfg.write_text("\n".join(lines) + "\n")
         shutil.copy(spec, Path(tmp) / spec.name)
         start = time.time()
-        run = subprocess.run(
-            [
-                JAVA,
-                "-XX:+UseParallelGC",
-                "-cp",
-                str(JAR),
-                "tlc2.TLC",
-                "-workers",
-                "auto",
-                *(["-lncheck", "final"] if expect_pass else []),
-                "-deadlock",
-                "-metadir",
-                str(Path(tmp) / "states"),
-                "-config",
-                str(cfg),
-                spec.name,
-            ],
-            cwd=tmp,
-            capture_output=True,
-            text=True,
-            timeout=900,
-        )
+        try:
+            run = subprocess.run(
+                [
+                    JAVA,
+                    "-XX:+UseParallelGC",
+                    "-cp",
+                    str(JAR),
+                    "tlc2.TLC",
+                    "-workers",
+                    "auto",
+                    *(["-lncheck", "final"] if expect_pass else []),
+                    "-deadlock",
+                    "-metadir",
+                    str(Path(tmp) / "states"),
+                    "-config",
+                    str(cfg),
+                    spec.name,
+                ],
+                cwd=tmp,
+                capture_output=True,
+                text=True,
+                timeout=TLC_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired as exc:
+            partial = exc.stdout or ""
+            if isinstance(partial, bytes):
+                partial = partial.decode(errors="replace")
+            log.write_text(partial)
+            if exit_on_timeout:
+                sys.exit(f"FAIL: TLC timed out after {TLC_TIMEOUT}s ({tag}); see {log}")
+            return {
+                "broken": [],
+                "timeout": True,
+                "trace": 0,
+                "states": 0,
+                "seconds": round(time.time() - start, 1),
+                "log": str(log.relative_to(REPO)),
+            }
         seconds = round(time.time() - start, 1)
-    log = OUT / f"{tag}.log"
     log.write_text(run.stdout + run.stderr)
     broken: list[str] = []
     m = re.search(r"Invariant (\w+) is violated", run.stdout)
@@ -913,20 +1019,42 @@ def explore() -> dict:
 
 
 def run_model(runs: dict, report: dict) -> None:
+    timed_out = []
     for name, (specification, consts, checks) in runs.items():
-        r = tlc(SPEC, consts, checks, specification, f"model-{name}", expect_pass=True)
+        r = tlc(
+            SPEC,
+            consts,
+            checks,
+            specification,
+            f"model-{name}",
+            expect_pass=True,
+            exit_on_timeout=False,
+        )
         report[name] = r
         rules = ", ".join(rule for _, rule in checks)
+        if r.get("timeout"):
+            timed_out.append(name)
+            print(
+                f"FAIL model, {name}: TLC TIMED OUT after {TLC_TIMEOUT}s [{rules}]",
+                flush=True,
+            )
+            continue
         print(
             f"model, {name}: "
             + ("holds" if not r["broken"] else f"BROKEN {r['broken']}")
-            + f" [{rules}] ({r['states']:,} states, {r['seconds']}s)"
+            + f" [{rules}] ({r['states']:,} states, {r['seconds']}s)",
+            flush=True,
         )
         if r["broken"]:
             sys.exit(f"FAIL: the code model breaks {r['broken']}; see {r['log']}")
+    if timed_out:
+        sys.exit(
+            f"FAIL: TLC timed out in {timed_out}; split their events or conditions"
+        )
 
 
 def main() -> None:
+    sys.stdout.reconfigure(line_buffering=True)  # progress shows in a redirected log
     OUT.mkdir(parents=True, exist_ok=True)
     report: dict[str, object] = {}
 
@@ -975,8 +1103,7 @@ def main() -> None:
     r = tlc(SPEC, happy, [("PROPERTY", "ClientServerAgree")], "Spec", "happy-agree")
     if r["broken"]:
         sys.exit(
-            f"FAIL: ClientServerAgree breaks on the happy path; the model is wrong "
-            f"({r['log']})"
+            f"FAIL: ClientServerAgree breaks on the happy path; the model is wrong ({r['log']})"
         )
     report["happy_path"] = "publishes; every rule holds"
     print("happy path (no faults, no events): publishes, every rule holds")

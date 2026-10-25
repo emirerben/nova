@@ -164,6 +164,34 @@ Open risks after round 3:
 - `openCreationThread` falls back to the projects drawer when the edit has no creation thread
   (open-in-editor returns none); phone renders always come from a thread, so the model assumes one.
 
+### Round 4 (an adversarial check of round 3; the last round)
+
+| # | What was wrong | What changed in the code | Model | Tooth (rule) |
+|---|---|---|---|---|
+| 1 | Common. After a newer request was declined, the needs_attention read showed "Ready on this iPhone" (with "Update Kria to sync it" / "review the edit in chat") because the receipt on disk held an earlier request's export, cancelled when the newer one arrived: nothing to watch for this request, nothing synced. | `DeviceRenderSessions.apply` (needs_attention): `localReady` (and the old-server pause check) only when `saved?.request == request && saved?.outputURL != nil`. KriaTests `testNeedsAttentionForANewerRequestNeverShowsAnEarlierRequestsVideo`. | `ph \|-> IF c1.file /\ c1.id = id`; new rule KeptIsThisRequest (a kept-video card with a change/update reason is about `coord.id = req`). | `kept-video-other-request` (KeptIsThisRequest) |
+| 2 | Deploy order: `DeviceRenderRetryBody` always encoded `renders_locally`; the API on main (`DeviceRetryBody`, extra='forbid') answers 422, so every Try again and Resume of a new build failed against it. | Custom `encode(to:)`: the key only when true (the API defaults it to false). Contract test: an ordinary retry sends only `identity`; `rendersLocally: true` sends `renders_locally: true`. Runbook: deploy the API (Fly) before the TestFlight build. | Below the model (wire format). | none: contract test `testFailureAndRetryBodiesUseServerExpectedKeys` |
+| 3 | "Update Kria" on a build that is not outdated: `renderable_now` replaced `renderer_outdated` only for a `.local` gate, so a missing capability or a hot phone kept "Update Kria". Also `/retry` answering `requires_update` on a build whose gate has no version gap but lacks a capability (lost since) landed on "Update Kria". | needs_attention branch: whenever the gate reports no version gap, `.local` -> `renderable_now`, `.decline(unsupported_recipe)` -> "This edit needs a change", `.wait(cooling/storage)` -> the wait with a re-check (`.wait(.checking)`, capabilities unknown, keeps the server reason). `retryNeedsAttention`: `requires_update` maps to the gate's non-version decline when there is one (`nonVersionDecline`). KriaTests 27-29. | needs_attention: `reason` by gate (unsupported / renderable), a `wait` branch; the requires_update refusal uses `Gate`. New rule UpdateMeansOutdated (`NeedsUpdate` on the card of the server's request => `Outdated`). | `no-renderable-now` (round-3 M19), `outdated-kept-for-unsupported`, `requires-update-ignores-gate` (UpdateMeansOutdated). The wait branch is unreachable in the model (`hot` excludes a version gap at the start); unit test only. |
+| 4 | Server: a GET that renewed a repair grant saved a stale record copy over the one `_note_reader_protocol` had just written, dropping `max_reader_client_protocol`; an older build's decline was then accepted instead of held. | `_device_render_status` re-reads the record after a note. Postgres test `test_a_repair_renewal_keeps_the_newest_reader_it_just_noted` (fails before the fix). | The model has no repair grants. | none: Postgres test |
+| 5 | Gallery "Review in chat" with unsaved changes still went back to the video detail; and a conversation whose current job is not this video's never polled this video's record. | `NativeEditorView`: "Review in chat" shows the same "Save your changes before leaving?" prompt; Save and exit / Discard then open the thread (`exitsToChat`, `leave()`). `openCreationThread(_:deviceRender:)` passes the editor's `DeviceRenderKey`; `AppModel.chatDeviceRenderFocus`. The conversation shows and polls that key's own `DeviceRenderPanel` above the composer when it is not the thread's current job, until it settles or the creator sends a message (a change makes a new job, whose card the stage shows). | Matches `OpenChat` (`chat' = TRUE`: the chat polls this key) more closely than before. | n/a (round-3 `gallery-review-goes-back` still holds) |
+| 6 | `verify.py --full` could not pass: `builds-stop` ran past 30 minutes; a TLC timeout crashed the script. | `builds-stop` split into `builds-stop-feature-save`, `builds-stop-rollback-save`, `builds-stop-no-save` (old, feature, rollback, Stop) and `builds-old-save` (each 17 s to about 9 minutes under load); an older device with Save and Stop together (past 120M states at 20 minutes) is not run; a timeout is a reported `FAIL model, <run>: TLC TIMED OUT` line (the other runs still run), exit 1. `TLC_TIMEOUT` (default 900 s). Output is line-buffered. | n/a | n/a |
+
+Unnecessary after round 4: round 3's tooth `kept-video-no-update` (`NeedsUpdate` only on
+`attention`) is no longer caught in any scenario, and was removed. Its trace was this round's
+#1: a kept video of an earlier request on a newer, declined request. With #1 a "Ready on this
+iPhone" card is always this request's own finished video, which uploads (`resumesSync`) and is
+never declined, so no kept video carries `renderer_outdated`. The invariant
+`~(pres.ph = "localReady" /\ pres.cause = "outdated")` holds in `builds`, `builds-caps` and
+{none, outdated, schema, newschema} x {save, kill, reaper, feature, old}. The code keeps
+`yourTurnPhases` (harmless; a server from before `held_by_newer_build` could still send one).
+
+Known open (rare):
+- An older device's own-gate decline (renderer/schema gap) records `declined_gap=renderer`, so nothing re-pins it automatically; the capable phone shows "Ready to render on this iPhone" and needs one tap (the model's `OldDecline` always reports through a 426).
+- Another device's `unsupported_recipe` (a capability it lacks) fails a record a capable phone could render; `held_by_newer_build` covers only `renderer_outdated`. That phone reads "This edit needs a change".
+- Teeth missing (mutation not caught in any run): M9 (held without the syncing clause) and M11 (no reader carry across re-pins) need a second uploader or three builds; M12 (noting a reader on a 426); M4 (a 426 about a published request) is unreachable (no other device publishes); M6 (the editor's retry filter) is unnecessary (Round 3).
+- `DeclDeliver` reconciles after every answer; `sendDecline` reconciles only when the decline is accepted. Checked harmless in live-declines, live-capable-renders, live-lost-capability and live-new-schema (scratch e1.tla).
+- After "Update Kria" the relaunched app selects `projects.first`; the auto re-pin runs when something GETs that job, so "no further tap" holds only once the creator opens that project (or its gallery video).
+- `openCreationThread` falls back to the projects drawer when open-in-editor returns no creation thread.
+
 ## Scope and bounds
 
 - Bounds: MaxFaults 1, Stop at most once, MaxId 3 or 4, one or two Saves, and 2 answered preview polls (the real budget is 300).
@@ -175,7 +203,7 @@ Open risks after round 3:
   gap, CapableRenders, and ClientServerAgree with Stop, kills and a lost capability. Save with
   a decline and Stop with the declines moved to `--full` (the round-3 state made them 60 s and
   100 s); the default run takes about 3 minutes.
-- `--full` adds the heavier combinations (`FULL_RUNS`, including `builds-stop`, `live-save-unsupported`, `live-stop-declines`). Not run for liveness (past TLC's
+- `--full` adds the heavier combinations (`FULL_RUNS`, including the four `builds-*` splits of the old `builds-stop`, `live-save-unsupported`, `live-stop-declines`). A run past `TLC_TIMEOUT` (900 s) prints a FAIL line and the script exits 1. Round 4 adds the default run `builds-caps` (rollback, lost capability, Save, a newer feature with every outdated condition and heat). Not run for liveness (past TLC's
   15-minute limit with the round-2 state): Save with a missing original (round 1 ran it), and two
   saves (this editor and another device). `live-save-stop` checks PreviewConverges no more
   (one answered poll keeps it under 7 minutes). The safety runs cover both.
@@ -234,7 +262,7 @@ Now also passing on the fixed code, each with teeth:
 - ClientServerAgree
 - PreviewConverges
 
-None of them excludes a condition any more. New in round 2, with teeth: NoFutileRepin. New in round 3, with teeth: UpdateTold, NoRepinLoop, CapableRenders.
+None of them excludes a condition any more. New in round 2, with teeth: NoFutileRepin. New in round 3, with teeth: UpdateTold, NoRepinLoop, CapableRenders. New in round 4, with teeth: KeptIsThisRequest, UpdateMeansOutdated.
 
 ## Fix order (ranked by user impact; written against ff27b0a65)
 
