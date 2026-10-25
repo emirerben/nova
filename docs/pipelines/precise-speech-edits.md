@@ -60,7 +60,10 @@ Prompt for the planner:
 `PHONE_ENGINE_NOISE_REDUCTION_ENABLED` defaults to false. Enabling requires a local
 ARNNDN model path and its SHA-256 via `PHONE_ENGINE_NOISE_MODEL_PATH` and
 `PHONE_ENGINE_NOISE_MODEL_SHA256`, plus verified `processedAudio` and `audioMix`
-capabilities. No model is downloaded at runtime. Basic `afftdn` is reference-only,
+capabilities. No model is downloaded at runtime: the repository bundles
+`assets/models/rnnoise-lq-2018-08-31.rnnn` (pinned in `app/pipeline/engine_noise_model.py`;
+rollout, exact Fly commands and the listening review in
+`docs/reviews/engine-noise-model-rollout.md`). Basic `afftdn` is reference-only,
 not a fallback for creator engine-noise requests.
 
 The worker processes source analysis audio. It measures filter latency with
@@ -77,7 +80,7 @@ boat sample demonstrated negligible benefit from afftdn. ARNNDN reduced backgrou
 energy but also changed speech energy; that is not evidence of intelligibility.
 The aligned derivative retains the original 28-second duration. Keep the flag off
 until listening review confirms the quiet reply, speech naturalness, and lip sync.
-The downloaded experimental model and private media are not repository artifacts.
+Private media are not repository artifacts; the bundled RNNoise model is (see above).
 
 ## Verification
 

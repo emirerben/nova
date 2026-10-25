@@ -1677,7 +1677,8 @@
         "src/apps/api/app/pipeline/speech_denoise.py",
         "src/apps/api/app/services/phone_noise_reduction.py",
         "src/apps/api/tests/tasks/test_phone_explicit_speech_cut.py",
-        "src/apps/api/tests/services/test_processed_audio_asset.py"
+        "src/apps/api/tests/services/test_processed_audio_asset.py",
+        "src/apps/api/app/pipeline/engine_noise_model.py"
       ]
     },
     {
