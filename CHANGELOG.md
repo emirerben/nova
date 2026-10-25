@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.113.0] - 2026-10-25
+
+### Changed
+- feat(ios): show research sources on the approval card before approval (KRI-881) (#1820) <!-- release-pr: 1820 -->
+
 ## [0.81.112.0] - 2026-10-25
 
 ### Changed
