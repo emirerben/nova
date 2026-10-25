@@ -159,3 +159,23 @@ Ruff and both revised skill validators passed. Transfer inputs are retained in
 `tests/fixtures/creative_copy_review/v2_cases.json` as input-only hand-authored
 synthetic data, with no expected generated wording. No live-quality acceptance is
 claimed before the new blind review.
+
+Revision 2 verification record:
+- Tested code revision: `dc1a0a204`; skill-v1 comparator: `04cc8ced2`.
+- Full free replay suite: **2173 passed, 15 skipped, 7 xfailed**; focused checks
+  **222 passed**; selected reliability gates **505 passed**. No new environment
+  skips/errors in the reliability run. Both revised skills validate; Ruff is clean.
+- Live refinement run `creative-skills-refinement-20261025-v2`: **44 completed calls**
+  to the unchanged `gemini-2.5-flash` model configuration, **$0.156015** settled,
+  no open/unknown reservations, one atomic **$2** development cap including retries.
+- Six reviewed regressions plus five new synthetic transfer inputs were run. The
+  overlapping kite scenario was deferred before any provider call: 12 cases had
+  a conservative single-attempt bound of $2.001786; 11 cases bound to $1.835073.
+  No model/output budget settings were changed to fit the cap.
+- V1 skill/template loading was independently checked against all six prior v1
+  hook prompt hashes. Inputs and caption context are equal between versions;
+  captions receive their own generated hook. No stylistic rerolls or wording edits.
+- Blind review artifacts and a separate answer key are retained locally under
+  the task's `creative-copy-comparison-v2` artifact directory. The key remains
+  hidden pending user votes. No comparative creative-quality pass, no full
+  resolution of the theme-forcing problem, and no deployment are claimed yet.
