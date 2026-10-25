@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.112.0] - 2026-10-25
+
+### Changed
+- feat(ios): moment-order card answers the server's moment question, protocol 20 (KRI-723) (#1819) <!-- release-pr: 1819 -->
+
 ## [0.81.111.0] - 2026-10-25
 
 ### Changed
