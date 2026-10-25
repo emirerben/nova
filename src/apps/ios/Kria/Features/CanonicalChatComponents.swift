@@ -732,6 +732,10 @@ struct DirectionStage: View {
     /// when it sends the approval, so `decide` needs no extra argument.
     var renderShape: (offer: RenderShapeOffer, choice: Binding<RenderShapeChoice>)? = nil
     var automaticRepairs: Binding<Bool>? = nil
+    /// KRI-881: the draft's sourced wording and sources (`draft_applied.research_preview`). Nil (no research, an
+    /// older server, or an unreadable payload) leaves the card exactly as it was.
+    var researchPreview: ResearchPreview? = nil
+    var replyLanguage: ClipAnswerLanguage = .english
     let isBusy: Bool
     var responseStartedAt: Date? = nil
     /// `decision` is "approve" or "deny". `cleanupChoice` is only meaningful on
@@ -784,6 +788,10 @@ struct DirectionStage: View {
                     .stroke(KriaColor.border, lineWidth: 1)
             }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            if let researchPreview {
+                ResearchPreviewCard(preview: researchPreview, strings: ResearchPreviewStrings(language: replyLanguage))
+            }
 
             if let renderShape {
                 VideoShapeCard(offer: renderShape.offer, choice: renderShape.choice, isEnabled: !isBusy)

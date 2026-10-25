@@ -1702,6 +1702,8 @@ private struct CreationWorkspaceView: View {
                     speechCleanup: approval.retryOfExecutionID == nil ? fullThread?.speechCleanup : nil,
                     renderShape: approval.retryOfExecutionID == nil ? renderShapePicker : nil,
                     automaticRepairs: approval.automaticRepairLimit == 2 ? $allowAutomaticRepairs : nil,
+                    researchPreview: ResearchPreview.parse(activeProposalEvent?.payload?["research_preview"]),
+                    replyLanguage: ClipAnswerLanguage(threadState: threadState),
                     isBusy: isActing || pendingUploadCount > 0,
                     responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
                     decide: decide,
