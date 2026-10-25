@@ -101,6 +101,7 @@ from app.services.phone_rollout import (
     recipe_has_freeze_frame,
     recipe_has_single_word_text,
     single_word_text_client_supported,
+    text_behind_subject_phone_client_supported,
     text_bend_client_supported,
 )
 from app.services.render_library import catalog_path, inspect_library_asset
@@ -498,6 +499,17 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "code": "client_update_required",
             "feature": "text_bend",
             "minimum_client_protocol": settings.text_bend_min_client_protocol,
+        }
+    if not text_behind_subject_phone_client_supported() and any(
+        layer.behind_subject for layer in getattr(recipe, "text_layers", None) or []
+    ):
+        # Text behind people: an older build rejects `behind_subject` as an unknown recipe key
+        # and would FAIL the job. Compile already strips the flag for such a build's own saves;
+        # this covers a recipe a newer build or the worker pinned before this build read it.
+        return {
+            "code": "client_update_required",
+            "feature": "text_behind_subject",
+            "minimum_client_protocol": settings.text_behind_subject_phone_min_client_protocol,
         }
     if not freeze_frame_client_supported() and recipe_has_freeze_frame(recipe):
         # KRI-828: the worker planned a creator's freeze (a main-track hold, capability

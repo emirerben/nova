@@ -614,9 +614,13 @@ enum NativeEditorRenderError: Error, Equatable {
             let font = try resolveFont(family)
             let fontID = try registerFont(font)
             let legacy = raw["effect"]?.stringValue ?? "none"
-            if raw["behind_subject"] == .bool(true) || raw["theme_transition"]?.objectValue != nil {
-                throw NativeEditorRenderError.unsupportedLane("text subject or scene compositing")
+            if raw["theme_transition"]?.objectValue != nil {
+                throw NativeEditorRenderError.unsupportedLane("text scene compositing")
             }
+            // Text behind people: compiled as the layer's `behindSubject`; the engine occludes it with a
+            // per-frame person mask (`NativeSubjectMatte`) and paints plain text whenever the mask is unsane.
+            // Whether this phone may RENDER it is the server's call (capability `behindSubject`, protocol 21).
+            let behindSubject: Bool? = raw["behind_subject"] == .bool(true) ? true : nil
             guard raw["animation_phases"] != nil || ["none", "static", "fade-in", "pop-in", "slide-in", "typewriter", "scale-up", "slide-up", "slide-down", "bounce", "dissolve-out", "stream-in", "smooth-type", "handwriting", "ink-reveal"].contains(legacy) else {
                 throw NativeEditorRenderError.unsupportedLane("text effect")
             }
@@ -652,16 +656,19 @@ enum NativeEditorRenderError: Error, Equatable {
                 bend: raw["bend"]?.numberValue ?? 0)
             let explicitPhases = raw["animation_phases"]?.objectValue != nil
             if legacy == "handwriting" && !explicitPhases {
-                text.append(try handwritingLayout.compile(id: element.id, text: displayText, start: item.start, end: item.end,
+                var handwriting = try handwritingLayout.compile(id: element.id, text: displayText, start: item.start, end: item.end,
                     style: style, canvas: canvas, motion: Self.normalizedMotion(effect: legacy, raw: raw["motion"]),
-                    lineSpacing: raw["line_spacing"]?.numberValue ?? 1.15))
+                    lineSpacing: raw["line_spacing"]?.numberValue ?? 1.15)
+                handwriting.behindSubject = behindSubject
+                text.append(handwriting)
                 continue
             }
-            let layout = try AuthoredTextLayout.compile(id: element.id, text: displayText,
+            var layout = try AuthoredTextLayout.compile(id: element.id, text: displayText,
                 start: item.start, end: item.end, style: style, fontURL: font, canvas: canvas,
                 phases: explicitPhases ? phases : nil,
                 legacyEffect: [.typewriter, .streamIn, .smoothType, .inkReveal].contains(PortableTextLayer.Effect(rawValue: legacy) ?? .none) ? PortableTextLayer.Effect(rawValue: legacy)! : .none,
                 motion: explicitPhases ? nil : try Self.normalizedMotion(effect: legacy, raw: raw["motion"]))
+            layout.behindSubject = behindSubject
             if explicitPhases || ["typewriter", "stream-in", "smooth-type", "ink-reveal"].contains(legacy) {
                 text.append(layout)
             } else {
@@ -673,7 +680,8 @@ enum NativeEditorRenderError: Error, Equatable {
                     dissolveSeed: legacy == "dissolve-out" ? UInt32(101 + (document.textElements.firstIndex(where: { $0.id == element.id }) ?? 0) * 37) : nil,
                     background: layout.background,
                     // `layout` was compiled as a plain effect; the real effect decides whether the arc survives.
-                    bend: PortableTextLayer.bendSupported(effect: legacyEffect) ? layout.bend : nil))
+                    bend: PortableTextLayer.bendSupported(effect: legacyEffect) ? layout.bend : nil,
+                    behindSubject: behindSubject))
             }
         }
         if !document.captionCues.isEmpty && document.captionMeta["enabled"] != .bool(false) {

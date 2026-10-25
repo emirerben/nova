@@ -1148,7 +1148,12 @@ enum KriaClientProtocolContract {
     /// 20 (KRI-723): shows the "show me your moments" card (`moment_order_question`) and answers it with
     /// `moment_order` on the next turn. The server asks for the moments before approval only from this protocol;
     /// older builds keep today's windows with an honest "couldn't find it" receipt.
-    static let version = 20
+    /// 21: decodes a recipe text layer's `behind_subject` and the `behindSubject` capability, and draws text
+    /// behind people (a per-frame Vision person mask occludes the layer; `KriaMediaEngine.NativeSubjectMatte`).
+    /// The server stamps the key only for this protocol (and only with `TEXT_BEHIND_SUBJECT_PHONE_ENABLED` +
+    /// `behindSubject` verified); an older build asked for it gets plain text, and 426 `client_update_required`
+    /// for a pinned recipe that already carries the key, since it cannot decode it.
+    static let version = 21
     static let header = "X-Kria-Client-Protocol"
 }
 
