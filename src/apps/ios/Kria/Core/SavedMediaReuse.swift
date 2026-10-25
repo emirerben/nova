@@ -18,6 +18,21 @@ import KriaMediaEngine
         return nil
     }
 
+    /// Whether `adoptOriginal` would find bytes, without hashing or copying anything: a post authorized for this
+    /// owner still holds a binding with this fingerprint and its file is on disk. Lets a grid show "Original on
+    /// this iPhone" for hundreds of tiles without reading a single video.
+    nonisolated static func hasMigratableOriginal(asset: SavedMediaAsset, owner: String) -> Bool {
+        guard let fingerprint = asset.fingerprint else { return false }
+        if MediaLibraryOriginals(owner: owner).localURL(assetID: asset.id, fingerprint: fingerprint) != nil { return true }
+        for threadID in Set(asset.usage.compactMap(\.creationThreadID)) {
+            let store = SourceAssetStore(project: BackgroundUploadCoordinator.projectDirectory(threadID))
+            for binding in (try? store.bindings()) ?? [] where binding.original.fingerprint == fingerprint {
+                if store.localFileIfPresent(mediaID: binding.mediaID) != nil { return true }
+            }
+        }
+        return false
+    }
+
     /// `pinned` binds an exact source (camera-roll stories); otherwise the role picks one.
     static func attach(asset: SavedMediaAsset, source pinned: SavedMediaSource? = nil, threadID: UUID, itemID: String?, role: CreationMediaRole, destination: ProjectUploadDestination = .phone, mediaID: String, owner: String, api: any KriaAPIClient) async throws -> CreationThread {
         if role == .visual {

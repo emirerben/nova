@@ -658,7 +658,7 @@ struct CameraRollCollectionThumbnail: View {
         ZStack {
             KriaColor.softZinc
             if !metadataOnly, let saved = entry.savedAsset {
-                SavedUploadThumbnail(asset: saved, owner: api.mediaLibraryOwner, api: api, size: size) { }
+                SavedUploadThumbnail(asset: saved, owner: api.mediaLibraryOwner, api: api, size: size)
             } else if !metadataOnly, let asset {
                 GalleryThumbnail(asset: asset, loader: loader)
             } else {
