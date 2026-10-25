@@ -36,7 +36,9 @@ def _kri881_writer(monkeypatch: pytest.MonkeyPatch) -> None:
     original = BriefBinding.create.__func__
 
     def create(cls, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
-        kwargs.setdefault("prepared_research", FIXTURE["prepared_research"])
+        # KRI-881's draft turn passes `prepared_research=None` when nothing was researched.
+        if kwargs.get("prepared_research") is None:
+            kwargs["prepared_research"] = FIXTURE["prepared_research"]
         return original(cls, *args, **kwargs)
 
     monkeypatch.setattr(BriefBinding, "create", classmethod(create))
