@@ -115,3 +115,47 @@ or executed in this change.
   **120 passed**. Exact-version guards updated for the intentional prompt bumps;
   optional reaction-beat omission still checks the same base template under the
   skill prefix. Research-bank versions themselves remain unchanged.
+
+## Revision 2 acceptance — 25 October 2026 (before editing)
+
+User blind preferences for v1: skills 8 / pre-skill 2 / indifferent 1 / neither 1.
+These were option-level votes, not separate hook/caption quality measurements.
+The creator explicitly rejected the captions on cases 8 and 9, rejected both
+midnight-pasta options, and was indifferent on the monkey/marketing example.
+
+Root causes visible in the submitted prompts/outputs:
+- The hook template explicitly says to nod to a content pillar and tease the
+  theme; this competes with its own footage-first rule and the packaged skill.
+- Persona style and domain are conflated: a trainer's direct delivery becomes
+  a compulsory discipline message, even over cooking footage.
+- Caption guidance asks for an added layer/question, which can reward invented
+  personal stakes, a motivational conclusion or an unnecessary engagement ask.
+- Copy is given a generated hook; that is a draft, not independent factual evidence.
+
+Bounded edit set: two focused body revisions (grounded-hook and social-caption),
+remove the contradictory persona-steering sentence in the hook template, put the
+hook skill's final check after the template, and bump all affected prompt versions.
+Keep routing, JSON contracts, creator authorization, renderer limits, language
+handling and generation settings unchanged. Do not add lexical output filters.
+
+Observable acceptance: source topic stays intact despite an unrelated account
+niche; natural creator voice without invented first-time/confession/recipe/result
+claims; a brief situational caption is acceptable when no added information is
+available. Explicit creator-requested analogies and confirmed personal claims
+remain allowed within existing approval rules.
+
+Verification: existing hook/creator/copy replay and wiring checks plus a new blind
+live comparison of current skill v1 against revised v2. Include six reviewed failure
+or neighboring cases and six newly authored synthetic transfer cases. Freeze the
+revised guidance before running them; keep models/settings/input context equal.
+One shared development-ledger run, maximum $2 including retries, no paid judge,
+no stylistic rerolls. Preserve all outputs and randomize labels before provider calls.
+Human preference is the creative gate; prompt/keyword assertions cannot prove
+these semantic properties. Do not claim v2 improves writing until that review.
+
+Revision 2 local checks before live review: 222 focused replay/wiring/agent checks
+passed; 505 selected reliability checks passed without environment skips/errors;
+Ruff and both revised skill validators passed. Transfer inputs are retained in
+`tests/fixtures/creative_copy_review/v2_cases.json` as input-only hand-authored
+synthetic data, with no expected generated wording. No live-quality acceptance is
+claimed before the new blind review.

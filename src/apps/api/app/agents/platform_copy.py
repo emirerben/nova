@@ -53,7 +53,7 @@ class PlatformCopyAgent(Agent[PlatformCopyInput, PlatformCopyOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.platform_copy",
         prompt_id="_inline",  # prompt is built from input, no template file
-        prompt_version="2026-10-24-social-caption-skill",
+        prompt_version="2026-10-25-social-caption-v2",
         model="gemini-2.5-flash",
         # Legacy used 2 attempts; keep the runtime's 5-attempt default but a
         # tighter timeout — copy is short and shouldn't take long.

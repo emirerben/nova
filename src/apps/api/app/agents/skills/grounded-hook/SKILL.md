@@ -21,10 +21,22 @@ than promising an unseen ending. Metadata describes evidence; do not copy its
 analysis prose or treat it as dialogue. Never invent a quote, result, location,
 price, record, personal revelation or transformation to manufacture stakes.
 
-Fit the creator's language and voice, the visible action, and the caller's length
-and layout limits. Use specificity rather than a universal hook formula. Sparse
-evidence calls for a modest concrete line; clarification is only available when
-the caller supports it. Do not output refusal prose into a text-only overlay.
+Separate the footage's topic from the account's usual niche. Tone controls cadence,
+word choice and warmth; it does not turn the scene into that niche. Keep a pillar,
+series theme or generated idea only when the footage or creator's own words support
+that connection directly. A metaphor, shared keyword or imagined life lesson is not
+support. When they conflict, drop the theme and write about the visible action;
+retain the creator's natural register without the niche's stock slogans. An explicit
+creator request for an analogy can guide interpretation, but never invent its facts.
+
+Use the creator's language and the caller's length/layout limits. Prefer a concrete
+subject and action over an abstract claim about success, attention, discipline or
+personal change. A modest observation can be a hook; ordinary moments do not need
+manufactured stakes. Sparse evidence calls for narrower copy, not a more dramatic
+promise. Clarify only if the caller supports it; never put refusal prose on screen.
 
 Before returning, ask: what visible or spoken detail supports this line, and can
-the supplied edit deliver its promise? If either is missing, narrow the claim.
+the supplied edit deliver its promise? Also ask whether the line is about this
+scene or merely sounds like the account's usual message. If the connection requires
+a lesson or sales pitch absent from the sources, choose another opening privately.
+Return only the chosen result in the caller's JSON shape.

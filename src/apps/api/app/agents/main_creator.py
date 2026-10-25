@@ -123,7 +123,8 @@ log = structlog.get_logger()
 # v79 combines main's v77 (KRI-815 + KRI-816) with KRI-821's v78.
 # v80 combines main's v79 (KRI-815/816/821) with KRI-827's keep_text_off (branch v78).
 # v81: packaged edit-story and grounded-hook guidance, preserving the base contract.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-24-v81"
+# v82: shared hook skill distinguishes voice from unrelated persona topics.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-25-v82"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input

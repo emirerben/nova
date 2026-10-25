@@ -470,7 +470,7 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
         #              pillars + plan item theme/idea) for persona-coherent hooks.
         # 2026-05-29 — overlay_examples.json grown with market-research hooks.
         # 2026-05-28 — added $language_instruction block (en|tr).
-        prompt_version="2026-10-24-grounded-hook-skill",
+        prompt_version="2026-10-25-grounded-hook-v2",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -534,7 +534,7 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
             # Codified hook-relevant TikTok success factors (reference, not data).
             success_factors=format_success_factors("hook"),
         )
-        return load_skill("grounded-hook") + "\n\n" + prompt
+        return prompt + "\n\n" + load_skill("grounded-hook")
 
     def parse(self, raw_text: str, input: IntroWriterInput) -> IntroWriterOutput:  # noqa: A002
         try:
