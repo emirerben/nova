@@ -611,7 +611,7 @@ async def test_wrong_facts_feedback_excludes_those_facts_from_the_next_research_
                 dict(
                     id=f"fact-{i}",
                     text=text,
-                    sources=[dict(title="Archive", url=f"https://si.edu/{abs(hash(text)) % 99}")],
+                    sources=[dict(title="Archive", url="https://si.edu/shared-page")],
                 )
                 for i, text in enumerate(order)
             ],
@@ -708,7 +708,7 @@ async def test_wrong_facts_feedback_excludes_those_facts_from_the_next_research_
     assert other_topic.status_code == 200, other_topic.text
     assert agent_facts[-1] == [("fact-0", right), ("fact-1", wrong)]
 
-    order[:] = [wrong]
+    order[:] = ["The terminal was rebuilt following a fire."]  # reworded
     ideas_before = len(agent_facts)
     exhausted = await client.post(f"{path}/stories", json={**body, "query": "Only that fact"})
     assert exhausted.status_code == 503 and len(agent_facts) == ideas_before

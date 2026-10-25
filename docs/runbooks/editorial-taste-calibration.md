@@ -96,10 +96,12 @@ A judgment does not build a project or authorize rendering. Project notes remain
 contextual; they never silently become standing rules.
 
 The `wrong_facts` reason (researched ideas only) is actionable, not just context: the
-next research run for the same topic drops every fact whose wording the creator saw on
-that idea, and every source address it cited, before `CameraRollStoriesAgent` sees the
-evidence. Fact ids restart at `fact-0` on each search, so identity is the stored wording
-and URL, read from the feedback row's `proposal` (no column). The exclusion joins the
+next research run for the same topic drops every fact that repeats the wording the creator
+saw on that idea (best-effort word-overlap match, so light rewording is caught; a
+claim reworded beyond recognition can still return), before `CameraRollStoriesAgent`
+sees the evidence. Source URLs are deliberately not excluded: correct facts share them
+and grounding redirect URLs are unstable. Fact ids restart at `fact-0` on each search,
+so identity is the stored wording, read from the feedback row's `proposal` (no column). The exclusion joins the
 proposal cache key, so the same request re-searches and re-reviews. Forget, pause and the
 feature gate empty it; if every fact found was rejected the request fails closed (503).
 Clients show the choice only when `/creation-threads/capabilities` returns

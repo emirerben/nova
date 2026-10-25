@@ -1,6 +1,5 @@
 """Shared provider-owned public research evidence; never model-authored links."""
 
-import hashlib
 import ipaddress
 from typing import Literal
 from urllib.parse import urlsplit
@@ -39,9 +38,27 @@ class ResearchSource(BaseModel):
         return value
 
 
-def fact_fingerprint(text) -> str:
-    # Fact ids are positional (fact-N) and change between searches; wording does not.
-    return hashlib.sha256(" ".join(str(text).casefold().split()).encode()).hexdigest()
+_CLAIM_STOPWORDS = frozenset(
+    "the and for was were are with from that this its has had have been into over after "
+    "before about which their they them than then also not but who whom what when where".split()
+)
+
+
+def claim_tokens(text) -> frozenset[str]:
+    # Fact ids are positional and a fresh grounded search rewords the same claim, so
+    # identity is the distinctive words (names, numbers), not an exact hash.
+    words = "".join(c if c.isalnum() else " " for c in str(text).casefold()).split()
+    return frozenset(w for w in words if (len(w) > 2 or w.isdigit()) and w not in _CLAIM_STOPWORDS)
+
+
+def is_same_claim(text, rejected_texts, threshold=0.75) -> bool:
+    """True when `text` repeats a rejected claim, allowing light rewording."""
+    tokens = claim_tokens(text)
+    for other in map(claim_tokens, rejected_texts):
+        shared = len(tokens & other)
+        if shared >= 3 and shared / min(len(tokens), len(other)) >= threshold:
+            return True
+    return False
 
 
 class ResearchFact(BaseModel):

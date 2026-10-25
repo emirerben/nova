@@ -24,7 +24,6 @@ from app.models import (
     PlanItemAsset,
     User,
 )
-from app.schemas.research import fact_fingerprint
 from app.services.editorial_taste import MAX_CONTEXT_CHARS, TasteStore, digest
 from app.services.library_variant_selection import selected_variant_id
 from app.services.private_text import normalize_private_text
@@ -412,10 +411,11 @@ async def active_version(db, owner):
 
 
 async def rejected_research(db, owner, topic):
-    """Facts and sources the creator called wrong on an earlier idea about this topic.
+    """Fact wording the creator called wrong on an earlier idea about this topic.
 
-    Fact ids restart at fact-0 on every search, so identity is the stored wording
-    and source address. Forget, pause and the feature gate all empty the result.
+    Fact ids restart at fact-0 on every search, so identity is the stored wording,
+    matched loosely (`is_same_claim`). Source URLs are not used: correct facts share
+    them. Forget, pause and the feature gate all empty the result.
     """
     if not topic or await active_version(db, owner) is None:
         return None
@@ -431,17 +431,15 @@ async def rejected_research(db, owner, topic):
             .limit(50)
         )
     ).all()
-    texts, urls = set(), set()
+    texts = set()
     for row in rows:
         research = ((row.proposal or {}).get("idea") or {}).get("research") or {}
         if " ".join(str(research.get("topic", "")).casefold().split()) != wanted:
             continue
         for fact in (research.get("evidence") or {}).get("facts", []):
-            texts.add(fact_fingerprint(fact.get("text", "")))
-            urls.update(s["url"] for s in fact.get("sources", []) if s.get("url"))
-    if not texts:
-        return None
-    return {"fact_sha256": sorted(texts), "source_urls": sorted(urls)}
+            if fact.get("text"):
+                texts.add(fact["text"])
+    return {"fact_texts": sorted(texts)} if texts else None
 
 
 async def generation_context(db, owner, query):
