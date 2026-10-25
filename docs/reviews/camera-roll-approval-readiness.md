@@ -367,3 +367,36 @@ Those stages are recorded separately; this local result does not establish new
 physical acceptance. Preserve the production/TestFlight install and use the existing
 separate camera-roll QA bundle for device work. No merge or production deployment
 is authorized by this continuation.
+
+## Physical source-refit closing-text failure — 25 October
+
+The real iPhone flow selected 33 saved uploads, generated three ideas (21.9,
+17.24 and 23.058 seconds), saved corrected copy, and matched all five required
+Photos originals using the unchanged SHA256/byte-count gate. A fresh reviewed
+revision reached ordinary explicit approval. Preparation initially failed because
+the isolated QA server omitted the existing guided capability; its worker also
+omitted the current render queue. Both were corrected only in local QA setup.
+A failed selection is still replayed rather than retried; this is outside the
+existing narrowly permitted untouched-hold recovery. A normal wording revision
+was used for the subsequent fresh approval, so this is not failed-turn recovery
+proof. Production, TestFlight and original account data remain unchanged.
+
+The approved native compiler then refused before publishing a device recipe:
+the last original required a safe source refit, reducing the picture from 21.9
+to 21.836667 seconds. The compiler subtracted the same 0.05-second source-reading
+margin again from text, ending the confirmed closing at 21.786667 seconds.
+The unchanged contract requires closing text through the last picture frame.
+
+Text now clamps to the actual, already-safe picture end. Source refit margins,
+source fingerprints, exact copy, opening duration and contract checks are
+unchanged. Existing native compiler parity cases were extended before the fix:
+they failed on the double subtraction, then the compiler/contract suite passed
+224 cases. An otherwise identical closing shortened by 0.05 seconds remains
+rejected. Ordinary unrefitted endings and the original source-boundary margin
+remain covered. This is compiler/contract evidence; a new physical export and
+editable reopen on the corrected revision remain required.
+
+The ideas' generic writing and unsupported morning description are not accepted
+creative-quality proof. Only the approved one-collection QA copy was used;
+the 20 taste examples were not copied into this test. Approved model use remains
+26 calls / $0.093817, with no full-quality originals sent to a model.

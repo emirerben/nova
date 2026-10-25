@@ -377,7 +377,23 @@ def test_shrunk_refit_timeline_clamps_text_layers_instead_of_failing_validation(
     recipe = compile_phone_guided_plan(plan, bindings)  # must not raise
     assert recipe.duration == pytest.approx(2.45)
     assert recipe.text_layers[0].end <= recipe.duration
-    assert recipe.text_layers[0].end == pytest.approx(2.4)  # 2.45 - the 0.05s safety margin
+    assert recipe.text_layers[0].end == pytest.approx(recipe.duration)
+    from app.services.creator_render_contract import (
+        CreatorRenderContract,
+        TextPlacementError,
+        TextRequirement,
+        verify_phone_recipe,
+    )
+
+    contract = CreatorRenderContract(
+        generation_id="refit-closing",
+        exact_texts=(TextRequirement(role="closing", text="Title"),),
+    )
+    assert verify_phone_recipe(contract, recipe)
+    early = recipe.model_copy(deep=True)
+    early.text_layers[0].end -= 0.05
+    with pytest.raises(TextPlacementError, match="wrong place"):
+        verify_phone_recipe(contract, early)
     assert recipe.text_layers[0].start == 0
 
 
@@ -399,7 +415,7 @@ def test_shrunk_refit_timeline_shrinks_a_layer_start_too_when_it_would_go_negati
     ]
     recipe = compile_phone_guided_plan(plan, bindings)  # must not raise
     layer = recipe.text_layers[0]
-    assert layer.end == pytest.approx(2.4)
+    assert layer.end == pytest.approx(recipe.duration)
     assert layer.end - layer.start == pytest.approx(1.0 / 30.0)
     assert layer.start < layer.end
 

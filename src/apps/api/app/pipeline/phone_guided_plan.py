@@ -719,8 +719,10 @@ def compile_phone_guided_plan(
     # otherwise every ordinary plan (no clip ever needed a refit) stays
     # byte-identical, including a title that legitimately holds to exactly
     # `plan.resolved_duration_s`.
+    # Source refits already reserve the file-reading safety margin. Text must
+    # reach the resulting picture end so a confirmed closing stays visible.
     text_bound_s = (
-        max(0.0, compiled_duration - _EXPORT_SAFETY_MARGIN_S)
+        compiled_duration
         if compiled_duration < plan.resolved_duration_s - _TIMING_ROUNDING_TOLERANCE_S
         else None
     )
