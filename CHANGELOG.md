@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.114.0] - 2026-10-25
+
+### Changed
+- fix(ios): keep the moment-order UI fixture out of Release builds (KRI-723) (#1822) <!-- release-pr: 1822 -->
+
 ## [0.81.113.0] - 2026-10-25
 
 ### Changed
