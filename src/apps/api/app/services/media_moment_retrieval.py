@@ -37,6 +37,7 @@ async def semantic_search(db, owner, identifier, *, revision: int, query: str, c
                 id=str(value.id),
                 source=str(value.source_id),
                 kind=value.kind,
+                evidence_scope=value.evidence_scope,
                 text=value.text[:800],
                 quality_notes=json.dumps(value.evidence.get("quality") or {}, ensure_ascii=False)[
                     :600

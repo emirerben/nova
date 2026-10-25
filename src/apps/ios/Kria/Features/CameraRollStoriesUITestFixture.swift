@@ -1,6 +1,8 @@
 #if DEBUG
 import SwiftUI
 import Foundation
+import AVFoundation
+import KriaMediaEngine
 
 /// Offline fixture of the production review screen and API encoders. No media/provider/network access.
 struct CameraRollStoriesUITestHost: View {
@@ -26,6 +28,8 @@ struct CameraRollStoriesUITestHost: View {
 struct CameraRollCollectionReadyUITestHost: View {
     private let api: KriaAPI
     @State private var prepared = false
+    @State private var savedReadWriteAttempted = false
+    @State private var recovered = false
     init() {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [CameraRollStoriesURLProtocol.self]
@@ -35,6 +39,10 @@ struct CameraRollCollectionReadyUITestHost: View {
         var value = try! CameraRollCollection(id: UUID(uuidString: "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")!, name: CameraRollStoryFixture.input?["name"] as? String ?? "Weekend outing", identifiers: decoded.map { "saved:\($0.id)" })
         value.serverRevision = 1
         for asset in decoded { value.bind(asset, to: "saved:\(asset.id)") }
+        if ProcessInfo.processInfo.arguments.contains("-collection-saved-read-only"), let selection = value.remoteSelection {
+            let result = try! JSONDecoder().decode(CameraRollStories.self, from: JSONSerialization.data(withJSONObject: CameraRollStoryFixture.result))
+            value.savedIdeas = SavedCameraRollIdeas(revision: 1, selection: selection, query: "A previously saved query", researchTopic: nil, result: result)
+        }
         if let owner = api.mediaLibraryOwner {
             let originals = MediaLibraryOriginals(owner: owner)
             if ProcessInfo.processInfo.arguments.contains("-collection-ready-reset") || (try? CameraRollCollection.load(id: value.id, in: originals, sharesCaptureContext: false)) == nil {
@@ -44,8 +52,27 @@ struct CameraRollCollectionReadyUITestHost: View {
     }
     var body: some View {
         Group {
-            if prepared { CameraRollCollectionView(api: api) }
+            if recovered { Text("Saved idea reopened") }
+            else if prepared { CameraRollCollectionView(api: api, onSelected: { thread in recovered = thread.revision == 10 }) }
             else { ProgressView().task {
+                if ProcessInfo.processInfo.arguments.contains("-collection-saved-recovery"), let owner = api.mediaLibraryOwner {
+                    do {
+                        CameraRollStoryFixture.recoveryProgress("preparing video")
+                        let file = try await CameraRollStoryFixture.prepareRecoveryOriginal()
+                        CameraRollStoryFixture.recoveryProgress("video ready")
+                        let fingerprint = try SHA256Fingerprinter().fingerprint(file: file)
+                        let originals = MediaLibraryOriginals(owner: owner)
+                        let id = UUID(uuidString: CameraRollStoryFixture.assetID)!
+                        try await originals.relink(assetID: id, fingerprint: fingerprint, file: file)
+                        CameraRollStoryFixture.recoveryProgress("original linked")
+                        var collection = try CameraRollCollection.load(id: UUID(uuidString: "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")!, in: originals, sharesCaptureContext: false)
+                        let asset = try JSONDecoder().decode(SavedMediaAsset.self, from: JSONSerialization.data(withJSONObject: CameraRollStoryFixture.asset(CameraRollStoryFixture.assetID, source: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")))
+                        collection.bind(asset, to: "saved:\(asset.id)")
+                        CameraRollStoryFixture.recoveryProgress("bound; saved card matches: \(collection.matchingSavedIdeas != nil)")
+                        try collection.save(in: originals)
+                        CameraRollStoryFixture.recoveryProgress("collection saved")
+                    } catch { CameraRollStoryFixture.recoveryProgress("setup failed: \(error)"); savedReadWriteAttempted = true }
+                }
                 let files = CameraRollStoryFixture.input?["preview_files"] as? [String: String] ?? [:]
                 for (id, name) in files.prefix(50) where name == URL(fileURLWithPath: name).lastPathComponent {
                     guard let assetID = UUID(uuidString: id) else { continue }
@@ -55,6 +82,13 @@ struct CameraRollCollectionReadyUITestHost: View {
                 }
                 prepared = true
             } }
+        }.safeAreaInset(edge: .bottom) {
+            if savedReadWriteAttempted { Text("Write attempted while reading saved idea") }
+            if prepared && ProcessInfo.processInfo.arguments.contains("-collection-saved-recovery") {
+                Text("Recovery fixture ready").font(.caption).accessibilityIdentifier("saved-recovery-fixture-ready")
+            }
+        }.onReceive(NotificationCenter.default.publisher(for: Notification.Name("CameraRollSavedReadWrite"))) { _ in
+            savedReadWriteAttempted = true
         }
     }
 }
@@ -77,12 +111,61 @@ private enum CameraRollStoryFixture {
         return (try? JSONSerialization.jsonObject(with: encodedInput)) as? [String: Any]
     }
     static func asset(_ id: String, source: String) -> [String: Any] {
-        ["id": id, "kind": "video", "status": "ready", "original_availability": "cloud_backed", "metadata_json": ["filename": "Outing.mp4"], "sources": [["id": source, "role": "analysis_proxy", "status": "available", "byte_count": 1000, "content_type": "video/mp4", "generation": "42"]], "usage": [], "storage_warnings": []]
+        var value: [String: Any] = ["id": id, "kind": "video", "status": "ready", "original_availability": "cloud_backed", "metadata_json": ["filename": "Outing.mp4"], "sources": [["id": source, "role": "analysis_proxy", "status": "available", "byte_count": 1000, "content_type": "video/mp4", "generation": "42"]], "usage": [], "storage_warnings": []]
+        if ProcessInfo.processInfo.arguments.contains("-collection-saved-recovery"), let fingerprint = try? SHA256Fingerprinter().fingerprint(file: recoveryOriginal) {
+            value["original_declared_sha256"] = fingerprint.hex; value["original_byte_count"] = fingerprint.byteCount
+        }
+        return value
+    }
+    static func recoveryProgress(_ value: String) {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? Data(value.utf8).write(to: directory.appendingPathComponent("saved-recovery-progress.txt"), options: .atomic)
+    }
+    static var recoveryOriginal: URL { directory.appendingPathComponent("saved-recovery-original-v3.mp4") }
+    static var recoveryThreadID: String {
+        // A newly encoded synthetic source must not reuse an immutable project's
+        // earlier original binding. Replays of the same bytes retain one thread.
+        let hash = (try? SHA256Fingerprinter().fingerprint(file: recoveryOriginal).hex) ?? String(repeating: "a", count: 64)
+        return "\(hash.prefix(8))-\(hash.dropFirst(8).prefix(4))-\(hash.dropFirst(12).prefix(4))-\(hash.dropFirst(16).prefix(4))-\(hash.dropFirst(20).prefix(12))"
+    }
+    static func prepareRecoveryOriginal() async throws -> URL {
+        let url = recoveryOriginal
+        if FileManager.default.fileExists(atPath: url.path) { return url }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 96, AVVideoHeightKey: 160])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB, kCVPixelBufferWidthKey as String: 96, kCVPixelBufferHeightKey as String: 160])
+        writer.add(input)
+        guard writer.startWriting() else { throw APIError.invalidResponse }
+        writer.startSession(atSourceTime: .zero)
+        for second in [0, 179] {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(2)) }
+            var buffer: CVPixelBuffer?
+            guard let pool = adaptor.pixelBufferPool, CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer) == kCVReturnSuccess, let pixel = buffer else { throw APIError.invalidResponse }
+            CVPixelBufferLockBaseAddress(pixel, [])
+            guard let context = CGContext(data: CVPixelBufferGetBaseAddress(pixel), width: 96, height: 160, bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(pixel), space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue) else { throw APIError.invalidResponse }
+            context.setFillColor(CGColor(red: 0.8, green: 0.1, blue: 0.1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 96, height: 160))
+            CVPixelBufferUnlockBaseAddress(pixel, [])
+            guard adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(second), timescale: 1)) else { throw APIError.invalidResponse }
+        }
+        writer.endSession(atSourceTime: CMTime(value: 180, timescale: 1))
+        input.markAsFinished(); await writer.finishWriting()
+        guard writer.status == .completed else { throw APIError.invalidResponse }
+        return url
     }
     static var result: [String: Any] {
         input?["result"] as? [String: Any] ?? ["stories": [story], "coverage": ["moments": moments, "incomplete_speech_asset_ids": [], "unindexed_asset_ids": ["CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"]]]
     }
     static var reviewStories: [[String: Any]] {
+        if ProcessInfo.processInfo.arguments.contains("-camera-roll-whole-source-context") {
+            var value = story
+            var context = moments[0]
+            context["start_s"] = 0.0; context["end_s"] = 8.166667
+            context["text"] = "Whole analysed clip; no localized highlight. Cached overall description: Synthetic red test source."
+            context["evidence_scope"] = "whole_source_context"
+            value["moments"] = [context]; value["duration_s"] = 8.166667
+            return [value]
+        }
         guard ProcessInfo.processInfo.arguments.contains("-camera-roll-multiple-ideas") else { return [story] }
         let options = [
             ("11111111-1111-1111-1111-111111111111", "Boat journey"),
@@ -129,11 +212,28 @@ private final class CameraRollStoriesURLProtocol: URLProtocol, @unchecked Sendab
     override func stopLoading() {}
 }
 private final class CameraRollStoriesFixtureServer: @unchecked Sendable {
+    private var recovered = false
+    private var recoveryThread: [String: Any] { ["id": CameraRollStoryFixture.recoveryThreadID, "title": "Saved harbor", "status": "active", "revision": recovered ? 10 : 9, "runtime_version": 2, "active_plan_item_id": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", "updated_at": "2026-10-19T10:00:00Z"] }
     private let lock = NSLock()
     private var story = CameraRollStoryFixture.story
     private var taste: [String: Any] = ["revision": 0, "enabled": false, "memory_paused": false, "rules": [], "examples": []]
     func respond(_ request: URLRequest) -> (Int, Any) {
         lock.lock(); defer { lock.unlock() }
+        if request.httpMethod == "GET", request.url?.path.hasSuffix("/stories") == true {
+            if ProcessInfo.processInfo.arguments.contains("-collection-saved-old-server") { return (404, ["detail": "Not Found"]) }
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            guard query.first(where: { $0.name == "expected_revision" })?.value == "1",
+                  query.filter({ $0.name == "story_ids" }).compactMap(\.value).map({ $0.lowercased() }) == ["11111111-1111-1111-1111-111111111111"] else { return (409, ["detail": "Saved-card identity changed"]) }
+            return (200, ["revision": 1, "stories": [story]])
+        }
+        let recovery = ProcessInfo.processInfo.arguments.contains("-collection-saved-recovery")
+        if recovery, request.httpMethod == "GET", request.url?.path.hasSuffix("/capabilities") == true { return (200, ["formats": [], "runtime_versions": [2], "media_collections": true]) }
+        if recovery, request.httpMethod == "GET", request.url?.path.contains("/creation-threads/") == true { return (200, recoveryThread) }
+        let recoveryWrite = recovery && (request.url?.path.contains("/creation-threads") == true || request.url?.path.hasSuffix("/select") == true)
+        if ProcessInfo.processInfo.arguments.contains("-collection-saved-read-only"), request.httpMethod != "GET", !recoveryWrite {
+            NotificationCenter.default.post(name: Notification.Name("CameraRollSavedReadWrite"), object: nil)
+            return (500, ["detail": "Write attempted while reading saved idea"])
+        }
         if request.httpMethod == "GET", request.url?.path.hasSuffix("/editorial-taste") == true { return (200, taste) }
         if request.httpMethod == "GET", request.url?.path.hasSuffix("/creation-threads") == true {
             return (200, [["id": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", "title": "A saved outing", "status": "active", "revision": 1, "runtime_version": 2, "active_plan_item_id": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", "updated_at": "2026-10-19T10:00:00Z"]])
@@ -164,6 +264,19 @@ private final class CameraRollStoriesFixtureServer: @unchecked Sendable {
             }
         }
         guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return (400, story) }
+        if recoveryWrite {
+            if request.url?.path.hasSuffix("/select") == true {
+                guard body["client_event_id"] as? String == "choose-11111111-1111-1111-1111-111111111111-1" else { return (409, ["detail": "Selection identity changed"]) }
+                let held = "44444444-4444-4444-4444-444444444444"
+                if let original = body["recover_held_turn_id"] as? String {
+                    guard original == held, body["expected_thread_revision"] as? Int == 9 else { return (409, ["detail": "Hold changed"]) }
+                    recovered = true
+                    return (200, ["turn_id": "55555555-5555-5555-5555-555555555555", "thread_revision": 10, "status": "pending", "replayed": false])
+                }
+                return (200, ["turn_id": held, "thread_revision": 9, "status": "completed", "replayed": true, "recoverable_held_turn_id": held])
+            }
+            return (200, recoveryThread)
+        }
         if request.url?.path.hasSuffix("/editorial-taste") == true {
             guard body["expected_revision"] as? Int == taste["revision"] as? Int else { return (409, ["detail": "Taste changed"]) }
             let revision = (taste["revision"] as? Int ?? 0) + 1
@@ -187,6 +300,9 @@ private final class CameraRollStoriesFixtureServer: @unchecked Sendable {
             return (200, ["id": request.url!.lastPathComponent, "revision": body["name"] as? String == "Updated outing" ? 2 : 1])
         }
         if request.url?.path.hasSuffix("/index") == true {
+            if ProcessInfo.processInfo.arguments.contains("-collection-unusable-timing") {
+                return (200, ["next_offset": NSNull(), "missing_analysis_asset_ids": [], "unusable_timing_asset_ids": ["CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"], "unavailable_asset_ids": [], "untimed_asset_ids": []])
+            }
             if ProcessInfo.processInfo.arguments.contains("-collection-coverage-changed") {
                 return (200, ["next_offset": NSNull(), "missing_analysis_asset_ids": [CameraRollStoryFixture.assetID], "unavailable_asset_ids": [], "untimed_asset_ids": []])
             }

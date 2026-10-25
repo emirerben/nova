@@ -18,6 +18,7 @@ from app.schemas.media_collections import (
     MomentInspectionBody,
     MomentInspectionOut,
     MomentSearchOut,
+    SavedCollectionStoriesOut,
     SemanticSearchBody,
     StoryCorrectionBody,
     StoryGenerationBody,
@@ -137,6 +138,19 @@ async def inspect(
     from app.services.media_moment_inspection import inspect_moment
 
     return await inspect_moment(db, user.id, identifier, body)
+
+
+@router.get("/{identifier}/stories", response_model=SavedCollectionStoriesOut)
+async def saved_stories(
+    identifier: uuid.UUID,
+    user: CurrentUser,
+    expected_revision: int = Query(ge=1),
+    story_ids: list[uuid.UUID] | None = Query(default=None, max_length=20),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.media_collection_stories import read_saved_stories
+
+    return await read_saved_stories(db, user.id, identifier, expected_revision, story_ids)
 
 
 @router.post("/{identifier}/stories", response_model=CollectionStoriesOut)

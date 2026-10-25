@@ -1083,6 +1083,14 @@
       },
       "CollectionIndexOut": {
         "properties": {
+          "context_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Context Asset Ids",
+            "type": "array"
+          },
           "indexed_sources": {
             "title": "Indexed Sources",
             "type": "integer"
@@ -1126,6 +1134,14 @@
               "type": "string"
             },
             "title": "Untimed Asset Ids",
+            "type": "array"
+          },
+          "unusable_timing_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Unusable Timing Asset Ids",
             "type": "array"
           }
         },
@@ -6366,6 +6382,15 @@
             "title": "Evidence",
             "type": "object"
           },
+          "evidence_scope": {
+            "default": "timed_moment",
+            "enum": [
+              "timed_moment",
+              "whole_source_context"
+            ],
+            "title": "Evidence Scope",
+            "type": "string"
+          },
           "generation": {
             "title": "Generation",
             "type": "string"
@@ -9197,6 +9222,28 @@
         "title": "ResolvedTextMotion",
         "type": "object"
       },
+      "SavedCollectionStoriesOut": {
+        "properties": {
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "stories": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionStoryOut"
+            },
+            "maxItems": 20,
+            "title": "Stories",
+            "type": "array"
+          }
+        },
+        "required": [
+          "revision",
+          "stories"
+        ],
+        "title": "SavedCollectionStoriesOut",
+        "type": "object"
+      },
       "SemanticSearchBody": {
         "additionalProperties": false,
         "properties": {
@@ -10846,6 +10893,12 @@
             "title": "Expected Thread Revision",
             "type": "integer"
           },
+          "recover_held_turn_id": {
+            "format": "uuid",
+            "nullable": true,
+            "title": "Recover Held Turn Id",
+            "type": "string"
+          },
           "thread_id": {
             "format": "uuid",
             "title": "Thread Id",
@@ -12199,6 +12252,12 @@
       },
       "TurnAccepted": {
         "properties": {
+          "recoverable_held_turn_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Recoverable Held Turn Id",
+            "type": "string"
+          },
           "replayed": {
             "default": false,
             "title": "Replayed",
@@ -16129,6 +16188,77 @@
       }
     },
     "/me/media-collections/{identifier}/stories": {
+      "get": {
+        "operationId": "saved_stories_me_media_collections__identifier__stories_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Revision",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "story_ids",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 20,
+              "nullable": true,
+              "title": "Story Ids",
+              "type": "array"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedCollectionStoriesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Saved Stories",
+        "tags": [
+          "media-library"
+        ]
+      },
       "post": {
         "operationId": "stories_me_media_collections__identifier__stories_post",
         "parameters": [

@@ -36,7 +36,7 @@ if not os.environ.get("DATABASE_URL", "").rsplit("/", 1)[-1].endswith("_test"):
 
 
 @pytest.fixture
-async def collection_world(monkeypatch):
+async def collection_world(monkeypatch, request):
     from app import storage
     from app.config import settings
     from app.pipeline import clip_cache
@@ -87,7 +87,11 @@ async def collection_world(monkeypatch):
                 user_id=asset.user_id,
                 asset_id=asset.id,
                 role="analysis_proxy",
-                object_path=f"users/{asset.user_id}/media-library/{asset.id}.mp4",
+                object_path=(
+                    f"users/{asset.user_id}/media-library/"
+                    + ("analysis-proxy-" if getattr(request, "param", None) == "native" else "")
+                    + f"{asset.id}.mp4"
+                ),
                 object_generation="42",
                 uploaded_sha256=hashlib.sha256(str(asset.id).encode()).hexdigest(),
                 byte_count=1234,
@@ -834,12 +838,36 @@ async def test_story_candidates_corrections_and_rejection_are_separate_from_rend
         )
 
 
-async def test_recommended_story_compiles_exact_source_windows_without_copy(collection_world):
+@pytest.mark.parametrize("collection_world", ["native"], indirect=True)
+async def test_recommended_story_compiles_exact_source_windows_without_copy(
+    collection_world, monkeypatch
+):
+    from app.config import settings
     from app.models import MediaCollectionStory, PlanItem
     from app.pipeline.guided_story import compile_proposal_execution_plan
     from app.services.media_collection_preparation import prepare_story_snapshot
+    from tests.services.test_phone_sources import receipt
 
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        ["basicComposition", "local1080Export", "audioMix"],
+    )
     client, assets, sources, owner, _app = collection_world
+
+    def attached_original(index):
+        value = receipt(f"clip-{index}")
+        value.update(
+            gcs_path=f"users/{owner.id}/media-library/analysis-proxy-{assets[index]}.mp4",
+            storage_generation="42",
+            duration_s=180,
+            library_asset_id=assets[index],
+            library_source_id=sources[index],
+        )
+        value["upload_contract"]["proxy"]["duration_s"] = 180
+        value["upload_contract"]["proxy"]["original"]["duration_s"] = 180
+        return value
+
     path = f"/me/media-collections/{uuid.uuid4()}"
     collection_id = uuid.UUID(path.rsplit("/", 1)[1])
     await client.put(path, json=selection(assets, sources))
@@ -863,18 +891,7 @@ async def test_recommended_story_compiles_exact_source_windows_without_copy(coll
             moments_json=moments,
             events_json=[],
         )
-        item = PlanItem(
-            clip_assignments=[
-                {
-                    "media_id": f"clip-{index}",
-                    "gcs_path": f"users/{owner.id}/media-library/{assets[index]}.mp4",
-                    "gcs_generation": "42",
-                    "library_asset_id": assets[index],
-                    "library_source_id": sources[index],
-                }
-                for index in range(2)
-            ]
-        )
+        item = PlanItem(clip_assignments=[attached_original(index) for index in range(2)])
         prepared = await prepare_story_snapshot(db, owner.id, row, item)
         plan = compile_proposal_execution_plan(prepared.snapshot)
         assert plan["text_elements"] == [], "AI summaries must never silently become captions"

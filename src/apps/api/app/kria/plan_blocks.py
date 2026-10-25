@@ -436,8 +436,10 @@ def _emit(job_id: str | uuid.UUID, blocks: list[dict[str, Any]]) -> dict[str, An
             ),
         )
         mode = getattr(job, "mode", None)
+        selected_caption = _selected_story_post_caption(job) is not None
         db.commit()
     return {
+        "has_selected_story_caption": selected_caption,
         "blocks": annotated,
         "mode": mode,
         "thread_id": str(thread_id),
@@ -781,6 +783,8 @@ def _start_post_caption(job_id: str, hook_text: str) -> None:
 def _maybe_start_post_caption(job_id: str | uuid.UUID, written: dict[str, Any]) -> None:
     """Start the copy agent in the background as soon as the title is decided, so it runs
     alongside the render. Only generative jobs; never holds a DB lock."""
+    if written.get("has_selected_story_caption"):
+        return
     if written.get("mode") != "generative" or written.get("scoped"):
         return  # a scoped update copies the previous caption; nothing to generate alongside
     for entry in written["blocks"]:
@@ -793,7 +797,21 @@ def _maybe_start_post_caption(job_id: str | uuid.UUID, written: dict[str, Any]) 
             return
 
 
+def _selected_story_post_caption(job: Any) -> dict[str, Any] | None:
+    stored = getattr(job, "assembly_plan", None)
+    plan = stored if isinstance(stored, dict) else {}
+    prepared = plan.get("prepared_collection_story")
+    content = prepared.get("content_plan") if isinstance(prepared, dict) else None
+    if isinstance(content, dict) and isinstance(content.get("caption"), str):
+        # Empty is an accepted choice, not permission to generate replacement copy.
+        return plan_payloads.post_caption_raw(content["caption"], [], preserve_text=True)
+    return None
+
+
 def _variant_post_caption(job: Any) -> dict[str, Any] | None:
+    selected = _selected_story_post_caption(job)
+    if selected is not None:
+        return selected
     plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
     candidates: list[Any] = [
         v.get("post_caption") for v in plan.get("variants") or [] if isinstance(v, dict)
