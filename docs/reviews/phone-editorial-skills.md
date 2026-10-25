@@ -78,7 +78,9 @@ The final corpus passes 43 checks. Full free replay plus affected-agent and phon
 backend checks pass 2486 tests, with 16 skips and 7 expected failures. Selected
 reliability gates pass 844 checks with no environment skips or errors. The iPhone
 build succeeds; its unit suite executes 1937 tests with 26 skips and no failures.
-The local UI suite remains pending. These native checks exercise the existing app,
+The broad local UI run is intentionally stopped after the build and unit phase.
+The full make ios-verify command is therefore incomplete, not passed. Required
+iPhone UI coverage remains selected in CI and pending. These native checks exercise the existing app,
 not fresh model-generated edits under the new backend prompts.
 
 Existing base-prompt hashes
