@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.118.0] - 2026-10-25
+
+### Changed
+- feat(ios): saved uploads use the Photos grid and load fast (KRI-937) (#1824) <!-- release-pr: 1824 -->
+
 ## [0.81.117.0] - 2026-10-25
 
 ### Changed
