@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.115.0] - 2026-10-25
+
+### Changed
+- fix(phone-render): remove the killer failure screens on iPhone renders (KRI-934) (#1816) <!-- release-pr: 1816 -->
+
 ## [0.81.114.0] - 2026-10-25
 
 ### Changed
