@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.116.0] - 2026-10-25
+
+### Changed
+- feat(agents): teach phone planners meaningful moments and format-specific stories (#1821) <!-- release-pr: 1821 -->
+
 ## [0.81.115.0] - 2026-10-25
 
 ### Changed
