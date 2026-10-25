@@ -21,9 +21,9 @@ media, invented overlays, and slide media dropped for a cleaner story.
 ## Evaluation design
 
 Freeze hand-authored synthetic inputs, expected decisions, and plausible wrong
-responses before changing their production consumers. Use existing real Agent.run and
-parse boundaries with replayed provider transport. The corpus checks request
-selection, available late-action source membership, complete quotations, and format constraints.
+responses before changing their production consumers. Use existing real Agent.run
+and parse boundaries with replayed provider transport. The corpus checks request
+selection, late-action source membership, complete quotations, and format constraints.
 Each wrong response must parse and pass the ordinary structural floor, yet fail
 the independent expected decision. This checks the evaluator's ability to reject
 wrong content rather than merely rejecting malformed JSON.
@@ -46,8 +46,8 @@ The existing agents already know their format or role, so local loading is enoug
 Main Creator chooses strategy within the phone capability manifest. The resolver
 chooses clip membership from shared records, not source timestamps. Speech excerpt
 planning chooses verbatim passages; workers ground their timing. Phone narrated alignment
-places each clip at a supplied word ID while retaining locked order and pins. Slide composition keeps
-every input asset. The deterministic phone montage compiler has no model prompt
+places each clip at a supplied word ID while retaining locked order and pins.
+Slide composition keeps every input asset. The deterministic phone montage compiler has no model prompt
 and is unchanged. No web editor implementation or browser repair is in scope.
 
 ## Verification and remaining gaps
@@ -83,9 +83,12 @@ The full make ios-verify command is therefore incomplete, not passed. Required
 iPhone UI coverage remains selected in CI and pending. These native checks exercise the existing app,
 not fresh model-generated edits under the new backend prompts.
 
-Existing base-prompt hashes
-remain unchanged beneath the explicit skill prefix. Both skills validate. The
-selector policy suite passes 41 tests and all changed paths have a CI journey.
+Existing base-prompt hashes remain unchanged beneath the explicit skill prefix.
+Both skills validate. All changed paths have a CI journey. The original selector
+run preceded the final phone-aligner mapping. Hosted CI caught its stale exact
+journey-list expectation. The repaired expectation includes the editorial journey
+and retains the native-runner checks. The full CI policy command passes 121 tests
+after this repair, including the actual Git-diff selection cases.
 The new mapping tests actual phone alignment and the existing requested-voiceover
 recipe path. Other mandatory CI selections remain intact.
 
@@ -116,3 +119,12 @@ Verifiable Units puts evaluation cases before each new runtime consumer. Test
 Behavior, Not Implementation requires wrong decisions to fail even when their
 response shapes are valid. Prove It Works separates replay, native compatibility,
 and unverified creative quality.
+
+## Delivery acceptance
+
+The creator authorizes fixing CI, merging PR 1821, and deployment. All required
+checks must pass for the final head. Deploy only through Fly Deploy. Verify the
+managed fleet revision and digest, health, and actual prompt construction on the
+API and worker images without a paid model call. A reachable API alone does not
+prove skill loading. No client protocol, binary, capability flag, or output schema
+changes are required for this backend update. Creative quality remains separate.
