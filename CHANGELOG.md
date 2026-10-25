@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.111.0] - 2026-10-25
+
+### Changed
+- feat(agents): enable runtime copy skills with source-grounded context (#1818) <!-- release-pr: 1818 -->
+
 ## [0.81.110.0] - 2026-10-25
 
 ### Changed
