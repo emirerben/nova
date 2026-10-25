@@ -72,7 +72,7 @@
       "_reap_job"
     ]
   },
-  "sync_commit": "ff27b0a65108c646581f3bbd0a3e41540a6798c0",
+  "sync_commit": "e296e0a17e274020154d9878ec194d8d0ba1f39e",
   "hashes": {
     "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:reconcile": "649fb0789c584516",
     "src/apps/ios/Kria/Core/DeviceRenderSessions.swift:retryNeedsAttention": "36b7136e880c291e",
@@ -112,7 +112,7 @@
     "src/apps/ios/Kria/Features/DeviceRenderPanel.swift:showsRetryButton": "264ddb341ec701e2",
     "src/apps/api/app/routes/device_render.py:_record": "7be27648b7a04466",
     "src/apps/api/app/routes/device_render.py:_runtime_retry_execution": "4005ab01fd70aa76",
-    "src/apps/api/app/routes/device_render.py:get_device_render": "180d9e3c5f477ba9",
+    "src/apps/api/app/routes/device_render.py:get_device_render": "b2df7a4787a98129",
     "src/apps/api/app/routes/device_render.py:reserve_device_export": "bb2a1de7f83a474b",
     "src/apps/api/app/routes/device_render.py:report_device_failure": "9441ac9faac47659",
     "src/apps/api/app/routes/device_render.py:retry_device_export": "c9632a7dcbf06431",
