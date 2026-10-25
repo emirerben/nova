@@ -503,6 +503,16 @@ async def read_or_bootstrap_draft(
     return _out(head, can_undo=head.parent_draft_id is not None)
 
 
+def _published_from(target: DraftTarget, generation: str | None) -> bool:
+    """The target's current video is the phone's published export of ``generation``."""
+    from app.services.device_render import published_source_generation  # noqa: PLC0415
+
+    if target.job is None or not generation:
+        return False
+    variant = _variant(target.job, target.variant_key)
+    return variant is not None and generation == published_source_generation(target.job, variant)
+
+
 async def write_draft(
     db: AsyncSession,
     *,
@@ -533,6 +543,7 @@ async def write_draft(
         )
     if head.base_job_id != (target.job.id if target.job is not None else None) or (
         head.base_generation_id != target.generation_id
+        and not _published_from(target, head.base_generation_id)
     ):
         raise RuntimeFailure(
             409,
