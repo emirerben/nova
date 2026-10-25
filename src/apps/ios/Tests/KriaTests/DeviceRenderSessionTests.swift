@@ -91,6 +91,26 @@ private actor LocalReadySessionPublisher: DeviceRenderPublishing {
     }
 }
 
+/// Current only while the server still points at the identity being published.
+private actor ServerCurrentPublisher: DeviceRenderPublishing {
+    let remote: SessionRequest
+    init(remote: SessionRequest) { self.remote = remote }
+    func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { await remote.request.identity == identity }
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
+        await remote.request.identity == identity ? .published : .superseded
+    }
+}
+
+private actor NeverCurrentPublisher: DeviceRenderPublishing {
+    func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { false }
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication { .superseded }
+}
+
+private actor FetchCounter {
+    private(set) var count = 0
+    func hit() { count += 1 }
+}
+
 private actor SessionRequest {
     var request: DeviceRenderRequest
     init(_ request: DeviceRenderRequest) { self.request = request }
@@ -436,6 +456,70 @@ private actor RetryGate {
         await sessions.stopAll()
     }
 
+    /// KRI-935: a newer edit reached the server while this iPhone was exporting the previous one. The panel
+    /// follows the newest request by itself (no "Newer edit available" for the creator to act on) and that
+    /// request renders and syncs.
+    func testSupersededExportFollowsTheNewestRequestAutomatically() async throws {
+        let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let initial = request(job), exporter = PausedSessionExport()
+        let remote = SessionRequest(initial)
+        let sessions = DeviceRenderSessions(fetch: { _, _ in
+            DeviceRenderStatusResponse(phase: "awaiting_device", request: await remote.request)
+        }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: ServerCurrentPublisher(remote: remote))
+        })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        for _ in 0..<100 {
+            if await exporter.calls == 1 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        // A newer edit lands mid-export; nobody calls reconcile again.
+        await remote.set(DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: job, variantID: "first", recipeRevision: 2,
+            recipeDigest: String(repeating: "b", count: 64)), recipe: initial.recipe))
+        await exporter.release()
+        for _ in 0..<200 {
+            if await exporter.calls == 2 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let calls = await exporter.calls
+        XCTAssertEqual(calls, 2, "the newest request renders without the creator reopening anything")
+        await exporter.release()
+        for _ in 0..<100 {
+            if sessions.presentations[key]?.phase == .synced { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(sessions.presentations[key]?.phase, .synced)
+        XCTAssertEqual(sessions.request(for: key)?.identity.recipeRevision, 2)
+        await sessions.stopAll()
+    }
+
+    /// A server that keeps pointing at the request this iPhone was told is superseded gets one follow-up
+    /// reconcile, not a loop.
+    func testSupersededExportFollowsAtMostOncePerRequest() async throws {
+        let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let initial = request(job), fetches = FetchCounter()
+        let sessions = DeviceRenderSessions(fetch: { _, _ in
+            await fetches.hit()
+            return DeviceRenderStatusResponse(phase: "awaiting_device", request: initial)
+        }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: SessionExport(), sources: SessionSources(), publisher: NeverCurrentPublisher())
+        })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        for _ in 0..<100 {
+            if await fetches.count >= 2, sessions.presentations[key]?.phase == .superseded { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        let count = await fetches.count
+        XCTAssertEqual(count, 2, "one automatic follow-up, then it stops")
+        XCTAssertEqual(sessions.presentations[key]?.phase, .superseded)
+        await sessions.stopAll()
+    }
+
     func testCapabilityManifestDecodesWithoutEnablingOlderServers() throws {
         let legacy = try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[]}"#.utf8))
         XCTAssertNil(legacy.phoneRendering)
@@ -650,7 +734,7 @@ private actor RetryGate {
         XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .synced), "Rendered on iPhone")
         XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .needsAttention), "Needs attention")
         XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .cancelled), "Render stopped")
-        XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .superseded), "Newer edit available")
+        XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .superseded), "Edit updated")
     }
 
     /// KRI-211: retrying can't conjure originals that are on another device, so the attention state hides

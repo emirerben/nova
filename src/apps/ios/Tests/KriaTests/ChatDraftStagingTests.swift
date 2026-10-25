@@ -275,15 +275,22 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertFalse(session.hasUnsavedChanges, "same draft revision is not re-applied after the creator undid it")
     }
 
-    func testOverlappingLocalEditKeepsTheConflictAndBothSides() async throws {
+    /// KRI-935: the same lane edited locally and by chat. The chat edit is the newest and the creator asked for
+    /// it, so it applies without a prompt; one Undo restores the creator's own version of the lane.
+    func testOverlappingLocalEditTakesTheChatEditWithOneUndoBack() async throws {
         let (session, fake) = await loaded(Self.bootstrapSnapshot())
         session.setTextStyle(id: "t1", style: "Inter")
         XCTAssertEqual(session.dirtySections, [.text])
         let localText = session.document.textElements
         fake.draftSnapshot = Self.chatSnapshot()
         await session.synchronizePromptRevision()
-        XCTAssertEqual(session.saveState, .conflict)
-        XCTAssertEqual(session.document.textElements, localText, "local edit not overwritten")
+        XCTAssertEqual(session.saveState, .idle)
+        XCTAssertEqual(session.document.textElements.first?.text, "changed", "the chat edit is shown")
+        XCTAssertTrue(session.hasUnsavedChanges)
+        session.undo()
+        XCTAssertEqual(session.document.textElements, localText, "one Undo brings back the local edit")
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.textElements, localText, "the undone chat draft is not re-applied")
     }
 
     func testDisjointLocalEditKeepsBothSides() async throws {
@@ -292,7 +299,6 @@ final class ChatDraftStagingTests: XCTestCase {
         let local = session.document.clips.first { $0.id == "s1" }?.durationS
         fake.draftSnapshot = Self.chatSnapshot(revision: 5, textOnly: true)
         await session.synchronizePromptRevision()
-        XCTAssertNotEqual(session.saveState, .conflict)
         XCTAssertEqual(session.dirtySections, [.timeline, .text])
         XCTAssertEqual(session.document.clips.first { $0.id == "s1" }?.durationS, local)
         XCTAssertEqual(session.document.textElements.first?.text, "changed")
@@ -577,7 +583,6 @@ final class ChatDraftStagingTests: XCTestCase {
         let (session, fake) = await loaded(Self.chatSnapshot(shape: .flatOnly))
         fake.draftSnapshot = Self.chatSnapshot(revision: 4, textOnly: true, shape: .flatOnly)
         await session.synchronizePromptRevision()
-        XCTAssertNotEqual(session.saveState, .conflict)
         XCTAssertEqual(session.document.textElements.first?.text, "changed")
         // Same revision again is a no-op that keeps the staged edit.
         await session.synchronizePromptRevision()
@@ -810,7 +815,6 @@ final class ChatDraftStagingTests: XCTestCase {
                                      "text_elements": .array(oldWords)])])], canUndo: true, createdAt: .now)
         fake.draftSnapshot = Self.echoing(submitted.clientStateID, snapshot)
         await session.synchronizePromptRevision()
-        XCTAssertNotEqual(session.saveState, .conflict)
         XCTAssertEqual(session.document.clips.map(\.durationS), [2, 2, 2])
         XCTAssertEqual(session.document.textElements.count, 12)
         XCTAssertEqual(session.dirtySections, [.timeline, .text])
@@ -934,7 +938,6 @@ final class ChatDraftStagingTests: XCTestCase {
         fake.draftSnapshot = Self.echoing(second.clientStateID, Self.textDraft(revision: 3, texts: [("t1", "Final")]))
         await session.synchronizePromptRevision()
         XCTAssertEqual(session.document.textElements.first?.text, "Final")
-        XCTAssertNotEqual(session.saveState, .conflict)
 
         session.undo()
         XCTAssertEqual(session.document.textElements.first?.text, "hello A", "one Undo = the state sent with the turn")
@@ -951,7 +954,6 @@ final class ChatDraftStagingTests: XCTestCase {
         let local = session.document.clips.first { $0.id == "s1" }?.durationS
         fake.draftSnapshot = Self.echoing(sent.clientStateID, Self.textDraft(revision: 2, texts: [("t1", "from chat")]))
         await session.synchronizePromptRevision()
-        XCTAssertNotEqual(session.saveState, .conflict)
         XCTAssertEqual(session.document.textElements.first?.text, "from chat")
         XCTAssertEqual(session.document.clips.first { $0.id == "s1" }?.durationS, local)
         XCTAssertEqual(session.dirtySections, [.timeline, .text])
@@ -960,15 +962,19 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertEqual(session.document.clips.first { $0.id == "s1" }?.durationS, local, "undo restores the state at apply time")
     }
 
-    func testEditDuringTurnOnTheSameLaneIsAConflictThatKeepsLocalEdits() async throws {
+    /// KRI-935: an edit made while the turn ran, on the lane the chat also changed. The chat's reply applies
+    /// without a prompt, and one Undo returns to exactly what the creator had before it arrived.
+    func testEditDuringTurnOnTheSameLaneTakesTheChatEditWithOneUndoBack() async throws {
         let (session, fake) = await loaded(Self.bootstrapSnapshot())
         let sent = try XCTUnwrap(session.exportEditorState())
         session.setTextStyle(id: "t1", style: "Inter")
         let local = session.document.textElements
         fake.draftSnapshot = Self.echoing(sent.clientStateID, Self.textDraft(revision: 2, texts: [("t1", "from chat")]))
         await session.synchronizePromptRevision()
-        XCTAssertEqual(session.saveState, .conflict)
-        XCTAssertEqual(session.document.textElements, local, "never overwritten silently")
+        XCTAssertEqual(session.saveState, .idle)
+        XCTAssertEqual(session.document.textElements.first?.text, "from chat")
+        session.undo()
+        XCTAssertEqual(session.document.textElements, local, "one Undo restores the creator's pre-chat state")
     }
 
     func testDraftWithAnUnknownStateIDFallsBackToTheLegacyHeadLogic() async throws {
@@ -1013,7 +1019,6 @@ final class ChatDraftStagingTests: XCTestCase {
         fake.draftSnapshot = draft
         await session.synchronizePromptRevision()
 
-        XCTAssertNotEqual(session.saveState, .conflict)
         let text = try XCTUnwrap(session.document.textElements.first)
         XCTAssertEqual(text.text, "Label edited")
         XCTAssertEqual(text.startS, 0.5)

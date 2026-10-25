@@ -74,7 +74,16 @@ private struct DeviceSourceRecoveryView: View {
                 if loading { ProgressView().accessibilityLabel("Checking original files") }
                 ForEach(targets) { target in
                     DeviceOriginalRelinkRow(title: target.title) { file in
-                        try await sessions.relink(target, for: key, from: file)
+                        do {
+                            try await sessions.relink(target, for: key, from: file)
+                        } catch APIError.conflict {
+                            // KRI-935: the edit moved to a newer version while this sheet was open.
+                            // Re-read what the newest version needs and link the chosen file to it.
+                            await refresh()
+                            if let current = targets.first(where: { $0.asset.id == target.asset.id }) {
+                                try await sessions.relink(current, for: key, from: file)
+                            }
+                        }
                         await refresh()
                         if targets.isEmpty && message == nil { await retry(); dismiss() }
                     }
@@ -123,7 +132,7 @@ struct DeviceOriginalRelinkRow: View {
             Task {
                 defer { checking = false }
                 do { try await relink(file) }
-                catch APIError.conflict { message = "A newer edit is available. Close this sheet and open it again." }
+                catch APIError.conflict { message = "This edit changed while Kria checked the file. Choose it again." }
                 catch { message = "That file couldn’t be verified. Choose the unmodified original used for this project." }
             }
         }
@@ -296,7 +305,7 @@ struct DeviceRenderStatusCard: View {
         case .synced: "Your video is synced"
         case .cancelled: "Rendering stopped"
         case .needsAttention: originalsMissing ? "This edit needs its original clips" : "This edit needs your attention"
-        case .superseded: "A newer edit is available"
+        case .superseded: "Your edit changed"
         }
     }
     private var detail: String {

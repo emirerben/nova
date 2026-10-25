@@ -54,7 +54,6 @@ enum NativeEditorSaveState: Equatable, Sendable {
     case previewPending
     case renderRetryNeeded(String)
     case deviceRenderRetryNeeded(String)
-    case conflict
     case loadFailed(String)
     case refreshFailed(String)
     case previewFailed(String)
@@ -983,22 +982,36 @@ struct NativeEditorTemporaryVideo {
         return probe == a
     }
 
-    /// Three-way per-lane merge of a chat draft built on `submitted`. Returns nil
-    /// when some lane changed on BOTH sides (caller raises `.conflict`).
-    private func mergeChatDraft(_ staged: (document: EditorDocument, sections: Set<EditorSection>), over submitted: EditorDocument) -> (document: EditorDocument, taken: Set<EditorSection>)? {
+    /// Three-way per-lane merge of a chat draft built on `submitted`. A lane only
+    /// one side changed keeps that side. KRI-935: a lane changed on BOTH sides
+    /// takes the chat's version, because it is the newest edit and the creator
+    /// asked for it; the caller's single Undo step restores their own version.
+    private func mergeChatDraft(_ staged: (document: EditorDocument, sections: Set<EditorSection>), over submitted: EditorDocument) -> (document: EditorDocument, taken: Set<EditorSection>) {
         var merged = document
         var taken: Set<EditorSection> = []
-        for section in staged.sections {
-            let localUntouched = lanesEqual(section, document, submitted)
-            let serverUntouched = lanesEqual(section, staged.document, submitted)
-            if localUntouched {
-                if !serverUntouched { copy(section, from: staged.document, into: &merged); taken.insert(section) }
-            } else if !serverUntouched, !lanesEqual(section, document, staged.document) {
-                return nil
-            }
+        for section in staged.sections where !lanesEqual(section, staged.document, submitted) {
+            copy(section, from: staged.document, into: &merged); taken.insert(section)
         }
         merged.revision.number = staged.document.revision.number ?? merged.revision.number
-        return (merged, taken)
+        // Deletes made after the chat saw this state stay deleted.
+        let unseen = Set(document.deletions).subtracting(submitted.deletions)
+        return (Self.honoringDeletions(unseen, in: merged), taken)
+    }
+
+    /// A chat lane copied over the creator's own edit never brings back what they
+    /// deleted and the chat never saw deleted (KRI-935).
+    private static func honoringDeletions(_ deletions: Set<EditorDeletion>, in value: EditorDocument) -> EditorDocument {
+        guard !deletions.isEmpty else { return value }
+        func ids(_ kind: String) -> Set<String> { Set(deletions.filter { $0.kind == kind }.map(\.id)) }
+        let text = ids("text"), cues = ids("caption_cue"), sounds = ids("sound_effect")
+        let overlays = ids("media_overlay"), blocks = ids("visual_block")
+        var kept = value
+        kept.textElements.removeAll { text.contains($0.id) || ($0.isCaption && cues.contains($0.id)) }
+        kept.captionCues.removeAll { cues.contains($0.id) }
+        kept.soundEffects.removeAll { sounds.contains($0.id) }
+        kept.mediaOverlays.removeAll { overlays.contains($0.id) }
+        kept.visualBlocks.removeAll { blocks.contains($0.id) }
+        return kept
     }
 
     var hasOnlyChatStagedChanges: Bool {
@@ -1702,7 +1715,8 @@ struct NativeEditorTemporaryVideo {
     }
 
     /// Reconcile the same project after an agent turn. A response that arrives
-    /// after a manual edit cannot replace it; conflict resolution remains explicit.
+    /// after a manual edit never replaces it: the newer version becomes the base
+    /// and the creator's unsaved lanes are replayed on top (KRI-935).
     private static let stagingLog = Logger(subsystem: "com.kria.app", category: "chat-staging")
     private var syncNeedsRetry = false
 
@@ -1797,11 +1811,7 @@ struct NativeEditorTemporaryVideo {
             if let staged, sameTarget, variantUnchanged(variant), pendingText == nil, !isSaving,
                let stateID = snapshot.snapshot["client_state_id"]?.stringValue,
                let submitted = submittedEditorStates[stateID] {
-                guard let result = mergeChatDraft(staged, over: submitted.document) else {
-                    Self.stagingLog.debug("sync conflict: same lane edited locally and by chat rev=\(snapshot.draftRevision, privacy: .public)")
-                    saveState = .conflict
-                    return
-                }
+                let result = mergeChatDraft(staged, over: submitted.document)
                 // One Undo restores the creator's own pre-chat UNSAVED state. The clean
                 // baseline (the rendered variant) is deliberately left untouched.
                 appendUndo(document); redoStack.removeAll()
@@ -1816,23 +1826,48 @@ struct NativeEditorTemporaryVideo {
             let onlyChatStaged = hasOnlyChatStagedChanges
             if onlyChatStaged, staged == nil, sameTarget, variantUnchanged(variant) { return }
             guard !hasUnsavedChanges || onlyChatStaged, pendingText == nil, !isSaving else {
-                // Unsaved local edits. When the rendered variant is unchanged
-                // and the chat touched only lanes the creator has not, both
-                // sides can be kept lane-by-lane; otherwise stay explicit.
-                if let staged, variantUnchanged(variant), pendingText == nil, !isSaving,
-                   staged.sections.isDisjoint(with: changedSections.union(explicitlyDirtySections)) {
+                // Text still being typed or a save in flight owns the document; the
+                // next sync (every chat send runs one first) stages this draft then.
+                guard pendingText == nil, !isSaving else {
+                    Self.stagingLog.debug("sync deferred: text entry or save in flight rev=\(snapshot.draftRevision, privacy: .public)")
+                    return
+                }
+                // Unsaved local edits on the same rendered variant: keep both sides
+                // lane-by-lane. A lane the chat also changed takes the chat's version
+                // (the newest edit, which the creator asked for); one Undo restores
+                // the creator's own version (KRI-935).
+                if let staged, variantUnchanged(variant) {
                     appendUndo(document); redoStack.removeAll()
                     var merged = document
                     for section in staged.sections { copy(section, from: staged.document, into: &merged) }
-                    document = merged
+                    document = Self.honoringDeletions(Set(merged.deletions), in: merged)
                     changedSections.formUnion(staged.sections)
                     appliedChatDraftRevision = snapshot.draftRevision
                     chatStagedDocument = nil
                     refreshDirtyState(); refreshDuration()
                     return
                 }
-                Self.stagingLog.debug("sync conflict: local edits overlap chat draft rev=\(snapshot.draftRevision, privacy: .public)")
-                saveState = .conflict
+                // Same rendered generation and no new chat draft: nothing newer exists,
+                // so the creator's edits and their Undo history stay exactly as they are.
+                if staged == nil, sameTarget, variantUnchanged(variant) { return }
+                // A newer version was rendered (or the chat moved the edit to another
+                // variant) while the creator has unsaved edits. Load it without asking:
+                // it becomes the clean base, the creator's lanes are replayed on top
+                // (one Undo drops them), and a staged chat edit lands last.
+                Self.stagingLog.debug("sync rebase: newer version under local edits rev=\(snapshot.draftRevision, privacy: .public)")
+                if !sameTarget { appliedChatDraftRevision = nil }
+                if conversationRuntimeVersion == 1 { legacyPromptSnapshot = nextDraft.serverSnapshot }
+                jobID = nextJobID; variantKey = nextVariantKey; itemID = snapshot.itemID
+                rebaseLocalEdits(onto: nextDocument, variant: variant, forcePreviewRebuild: !sameTarget)
+                if let staged {
+                    appendUndo(document); redoStack.removeAll()
+                    var merged = document
+                    for section in staged.sections { copy(section, from: staged.document, into: &merged) }
+                    document = Self.honoringDeletions(Set(merged.deletions), in: merged)
+                    changedSections.formUnion(staged.sections)
+                    appliedChatDraftRevision = snapshot.draftRevision
+                    refreshDirtyState(); refreshDuration()
+                }
                 return
             }
             let selected = selection
@@ -2393,7 +2428,7 @@ struct NativeEditorTemporaryVideo {
     static func sourcePreviewMessage(for error: Error) -> String {
         switch error {
         case APIError.conflict:
-            return "A newer version of this video exists. Close and reopen the editor to see it."
+            return "This video changed while it was loading. Retry to load the newest version."
         case APIError.sessionExpired:
             return "Sign in again to load the source videos."
         case NativeEditorRenderError.unsupportedLane:
@@ -2576,9 +2611,9 @@ struct NativeEditorTemporaryVideo {
 
     /// A save acknowledgement advances the document before its render is ready.
     /// Only an authoritative rebase replaces generation-owned preview inputs.
-    private func refreshRebasedSourcePreview() {
+    private func refreshRebasedSourcePreview(force: Bool = false) {
         let generation = document.revision.baseGeneration
-        guard sourcePreviewGeneration != generation else { return }
+        guard force || sourcePreviewGeneration != generation else { return }
         sourcePreviewTask?.cancel()
         sourcePreviewSequence += 1
         resolvedSources = nil
@@ -5575,6 +5610,30 @@ struct NativeEditorTemporaryVideo {
 
     func save() async {
         await saveOnce()
+        if saveHitNewerVersion {
+            // KRI-935: a newer version was saved elsewhere. Load it with the creator's
+            // edits on top and send them once more, without asking them to reload.
+            saveHitNewerVersion = false
+            let reload = await reloadLatestKeepingLocalEdits()
+            switch reload {
+            case .reloaded:
+                // The newest version may already contain everything the creator changed.
+                guard hasUnsavedChanges else { saveState = .saved; return }
+                await saveOnce()
+                if saveHitNewerVersion {
+                    saveHitNewerVersion = false
+                    saveState = .failed("This edit changed again while saving. Your edits are still here on the newest version. Save again to send them.")
+                    return
+                }
+            case .failed(let error) where error is CancellationError:
+                // The editor moved to another job or variant meanwhile; that load owns the state.
+                return
+            case .alreadyTried, .failed:
+                let detail = if case .failed(let error) = reload { " \(error.localizedDescription)" } else { "" }
+                saveState = .failed("Your edits are still here, but the newest version couldn’t be loaded.\(detail)")
+                return
+            }
+        }
         // A removal the server already had: the local state was folded, so send what else is pending.
         guard songRemovalAlreadyApplied else { return }
         songRemovalAlreadyApplied = false
@@ -5740,7 +5799,8 @@ struct NativeEditorTemporaryVideo {
             }
         } catch APIError.conflict {
             guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
-            saveState = .conflict
+            // `save()` loads the newer version and sends this edit again.
+            saveHitNewerVersion = true
         } catch EditorSaveError.userSongUnavailable where submittedDocument.userSong?.removed == true {
             // The song is already gone on the server (an earlier removal reached it): that is what the
             // creator asked for. Fold the removal in locally and carry on with whatever else is pending.
@@ -5779,25 +5839,42 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
-    /// Refresh a conflicted baseline without discarding the creator's local
-    /// work. The latest renderer-owned document becomes clean, then only the
-    /// locally dirty sections are replayed on top as one undoable change.
-    func rebaseAfterConflict() async {
-        guard saveState == .conflict, !isSaving,
-              let api, let jobID, let variantKey, let itemID else { return }
+    /// Whether the last `saveOnce` was refused because a newer version exists.
+    private var saveHitNewerVersion = false
+    /// KRI-935: the server generation a preview conflict already reloaded for. A server
+    /// that keeps answering 409 for the same generation ends on the Retry card instead of
+    /// reloading forever; Retry clears it.
+    private var previewConflictReloadGeneration: String?
+
+    private enum LatestReload { case reloaded, alreadyTried, failed(Error) }
+
+    /// KRI-935: load the newest renderer-owned version of this edit without asking the
+    /// creator. It becomes the clean base and their unsaved lanes are replayed on top
+    /// (`rebaseLocalEdits`). `fencingPreviewConflict` allows one reload per server
+    /// generation and always rebuilds the preview, even when the generation is unchanged.
+    private func reloadLatestKeepingLocalEdits(fencingPreviewConflict: Bool = false) async -> LatestReload {
+        guard !isSaving, let api, let jobID, let variantKey, let itemID else {
+            return .failed(APIError.invalidResponse)
+        }
         isSaving = true
         defer { isSaving = false }
-        let localDocument = document
-        let localSections = changedSections
-        let localExplicitSections = explicitlyDirtySections
-        let selected = selection
         do {
             let variant = try await api.editorVariant(jobID: jobID, variantID: variantKey)
+            guard self.jobID == jobID, self.variantKey == variantKey else { return .failed(CancellationError()) }
             let generation = variant["render_generation_id"]?.stringValue
                 ?? variant["render_finished_at"]?.stringValue
                 ?? document.revision.baseGeneration
+            if fencingPreviewConflict {
+                guard previewConflictReloadGeneration != generation else { return .alreadyTried }
+                previewConflictReloadGeneration = generation
+                // Already on this version: rebuild the preview and keep the Undo history.
+                if generation == cleanDocument.revision.baseGeneration, generation == document.revision.baseGeneration {
+                    refreshRebasedSourcePreview(force: true)
+                    return .reloaded
+                }
+            }
             let snapshot = DraftSnapshot(
-                draftID: "conflict-\(projectID.uuidString)",
+                draftID: "latest-\(projectID.uuidString)",
                 itemID: itemID,
                 variantKey: variantKey,
                 draftRevision: document.revision.number ?? 0,
@@ -5813,27 +5890,41 @@ struct NativeEditorTemporaryVideo {
             if conversationRuntimeVersion == 1 { legacyPromptSnapshot = latestDraft.serverSnapshot }
             var latestClean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(latestDraft))
             latestClean.revision.baseGeneration = generation
-            var rebased = latestClean
-            for section in localSections {
-                copy(section, from: localDocument, into: &rebased)
-            }
-            document = rebased
-            cleanDocument = latestClean
-            changedSections = localSections
-            explicitlyDirtySections = localExplicitSections.intersection(localSections)
-            redoStack.removeAll()
-            configureCapabilities(from: variant)
-            refreshRebasedSourcePreview()
-            refreshDirtyState()
-            undoStack = hasUnsavedChanges ? [latestClean] : []
-            if let selected, selectionExists(selected) { selection = selected } else { selection = nil }
-            durationSourcesInvalidated = hasUnsavedChanges && (changedSections.contains(.timeline) || changedSections.contains(.carouselMoment))
-            setAuthoritativeDuration(Self.number(variant["duration_s"]))
-            refreshDuration()
-            saveState = .idle
+            rebaseLocalEdits(onto: latestClean, variant: variant, forcePreviewRebuild: fencingPreviewConflict)
+            return .reloaded
         } catch {
-            saveState = .failed("Your edits are still here, but the latest version couldn’t be loaded. \(error.localizedDescription)")
+            return .failed(error)
         }
+    }
+
+    /// Make `latestClean` the clean baseline and replay only the locally dirty
+    /// sections on top, as one undoable change. Nothing the creator changed is lost.
+    private func rebaseLocalEdits(onto latestClean: EditorDocument, variant: [String: JSONValue]?, forcePreviewRebuild: Bool) {
+        let localDocument = document
+        let localSections = changedSections
+        let localExplicitSections = explicitlyDirtySections
+        let selected = selection
+        var rebased = latestClean
+        for section in localSections {
+            copy(section, from: localDocument, into: &rebased)
+        }
+        // Deletion intents travel with the replayed lanes, so Save still sends them.
+        for deletion in localDocument.deletions where !rebased.deletions.contains(deletion) {
+            rebased.deletions.append(deletion)
+        }
+        document = rebased
+        cleanDocument = latestClean
+        changedSections = localSections
+        explicitlyDirtySections = localExplicitSections.intersection(localSections)
+        redoStack.removeAll()
+        configureCapabilities(from: variant)
+        refreshRebasedSourcePreview(force: forcePreviewRebuild)
+        refreshDirtyState()
+        undoStack = hasUnsavedChanges ? [latestClean] : []
+        if let selected, selectionExists(selected) { selection = selected } else { selection = nil }
+        durationSourcesInvalidated = hasUnsavedChanges && (changedSections.contains(.timeline) || changedSections.contains(.carouselMoment))
+        setAuthoritativeDuration(Self.number(variant?["duration_s"]))
+        refreshDuration()
     }
 
     private func transact(section: EditorSection, _ body: (inout EditorDraft) -> Void) {
@@ -6727,12 +6818,12 @@ struct NativeEditorTemporaryVideo {
         Task { try? await api.reportPlaybackFailure(jobID: jobID, report: report) }
     }
 
-    private func failSourcePreview(_ error: Error) {
+    private func failSourcePreview(_ error: Error, reloadsLatestOnConflict: Bool = true) {
         reportPreviewFailure(error)
         sourcePreviewFailureIsPermanent = Self.isPermanentSourcePreviewFailure(error)
         let finishedWasCurrent = finishedRenderIsCurrent
         restoreFinishedRenderFallback()
-        if retrySourcePreviewQuietly(after: error) {
+        if (reloadsLatestOnConflict && reloadLatestAfterPreviewConflict(error)) || retrySourcePreviewQuietly(after: error) {
             // KRI-535: while the quiet rebuild runs, a render older than a staged edit stays hidden.
             finishedRenderIsCurrent = finishedWasCurrent
             if canDisplayCurrentPlayer { startPendingPlaybackIfPossible() }
@@ -6758,6 +6849,39 @@ struct NativeEditorTemporaryVideo {
         case .failed: "failed"
         case .originalsUnavailable: "originals_unavailable"
         }
+    }
+
+    /// KRI-935: the preview's inputs belong to a newer version than the loaded edit. Load that
+    /// version (keeping unsaved lanes) and rebuild the preview, instead of asking the creator to
+    /// close and reopen the editor. Fenced to one reload per server generation.
+    private func reloadLatestAfterPreviewConflict(_ error: Error) -> Bool {
+        // A save whose render is still pending owns the next generation; its preview refresh follows it.
+        guard (error as? APIError) == .conflict, api != nil, let jobID, variantKey != nil,
+              pendingPreviewGeneration == nil else { return false }
+        sourcePreviewState = .preparing
+        NativePreviewDiagnostics.record("source-preview-conflict-reload")
+        let sequence = sourcePreviewSequence
+        Task { @MainActor [weak self] in
+            // The editor's own load (or a Save) is still finishing; reload once it settles.
+            for _ in 0..<200 {
+                guard let self, self.isSaving else { break }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            // Another job, or a newer preview build, owns the state now.
+            guard let self, !Task.isCancelled, self.jobID == jobID, self.sourcePreviewSequence == sequence else { return }
+            guard !self.isSaving else { return self.failSourcePreview(error, reloadsLatestOnConflict: false) }
+            switch await self.reloadLatestKeepingLocalEdits(fencingPreviewConflict: true) {
+            case .reloaded:
+                return
+            case .failed(let failure) where failure is CancellationError:
+                return
+            case .alreadyTried:
+                self.failSourcePreview(error, reloadsLatestOnConflict: false)
+            case .failed(let failure):
+                self.failSourcePreview(failure, reloadsLatestOnConflict: false)
+            }
+        }
+        return true
     }
 
     /// KRI-587: right after the phone's own export, AVFoundation can briefly refuse to build or play the
@@ -6851,6 +6975,8 @@ struct NativeEditorTemporaryVideo {
     /// reloaded, then the editable preview is rebuilt.
     func retryPreview() async {
         startPlaybackRecoveryEpisode()
+        // A Retry after a conflict may reload the newest version once more.
+        previewConflictReloadGeneration = nil
         if finishedRenderIsDead, let url = playableDeviceOutputURL ?? finishedRenderURL {
             finishedRenderRecoveryTask?.cancel(); finishedRenderRecoveryInFlight = false
             reinstallFinishedRender(url: url, preferredDuration: finishedRenderDuration)
