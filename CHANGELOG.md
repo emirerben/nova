@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.122.0] - 2026-10-25
+
+### Added
+- feat(kria): plan chat-requested clip speed on phone montages at creation (KRI-689) (#1836) <!-- release-pr: 1836 -->
+
 ## [0.81.121.0] - 2026-10-25
 
 ### Added
