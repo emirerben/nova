@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import threading
 import time
 import uuid
-from collections.abc import Mapping, Sequence
-from contextlib import ExitStack
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -1468,6 +1469,7 @@ def _complete_draft_turn(
         brief = None
         speed_notice: str | None = None  # KRI-689
         phone_blockers: list = []  # KRI-775
+        draft_research = None  # KRI-881
         if planned.brief_route is not None:
             # KRI-188: persist this turn's requirements (idempotent per turn),
             # then check each one deterministically against what was drafted.
@@ -1595,6 +1597,41 @@ def _complete_draft_turn(
                             else snapshot_media(item),
                             client_protocol=client_protocol,
                         )
+                        # KRI-881: research that failed before approval is a precise limit
+                        # the creator rules on here, never a ready card.
+                        from app.kria import research_preview  # noqa: PLC0415
+                        from app.services.phone_montage_preflight import (  # noqa: PLC0415
+                            _ready_visuals,
+                        )
+
+                        draft_strategy = document.strategy or {}
+                        draft_research = research_preview.for_draft(
+                            planned.prepared_research,
+                            brief=brief,
+                            strategy=document.strategy,
+                            media_snapshot=planned.media_snapshot
+                            if planned.media_snapshot is not None
+                            else snapshot_media(item),
+                            terms=planned.prepared_research_terms,
+                            # The basis inputs research read beyond the draft: this item's
+                            # ready Visuals now and the slot windows they plan with.
+                            creator_id=thread.creator_id,
+                            edit_format=draft_strategy.get("edit_format") or item.edit_format,
+                            visuals=lambda: _ready_visuals(
+                                db,
+                                item=item,
+                                user_id=thread.creator_id,
+                                strategy=document.strategy,
+                            ),
+                            client_protocol=client_protocol,
+                        )
+                        if draft_research is not None and not draft_research.ready:
+                            phone_blockers = [
+                                *phone_blockers,
+                                research_preview.blocker_receipt(
+                                    draft_research.prepared, draft_research.requirement
+                                ),
+                            ]
                         checked = with_blocked_requirements(checked, brief, phone_blockers)
                 else:
                     # Editor operations verify only the requirements stated in
@@ -1676,6 +1713,10 @@ def _complete_draft_turn(
                         )
         if speed_notice:
             reply_text = f"{reply_text}\n{speed_notice}"
+        if draft_research is not None and draft_research.ready:
+            from app.kria import research_preview  # noqa: PLC0415
+
+            reply_text = f"{reply_text}\n{research_preview.preview_lines(draft_research.prepared)}"
         if brief is not None:
             # A repeated offer can have no new updates to persist in the response
             # transaction. Its receipts still name the revision it checked.
@@ -2245,6 +2286,12 @@ def _complete_draft_turn(
                             if source_event is not None
                             else None
                         ),
+                        # KRI-881: the sourced wording the reply showed, replayed at render.
+                        prepared_research=(
+                            draft_research.prepared.model_dump(mode="json")
+                            if draft_research is not None and draft_research.ready
+                            else None
+                        ),
                     ),
                     "brief_coverage": coverage,
                 }
@@ -2484,6 +2531,11 @@ def _complete_draft_turn(
                 **_state_event_fields(state_id, state_trace),
                 **({"requirement_receipts": requirement_receipts} if requirement_receipts else {}),
                 **_receipt_lead_fields(reply_lead, also_changed, requirement_receipts),
+                **(
+                    {"research_preview": _research_preview_payload(draft_research)}
+                    if draft_research is not None and draft_research.ready
+                    else {}
+                ),
             },
         )
         _append_sync_event(
@@ -2510,6 +2562,42 @@ def _complete_draft_turn(
         turn.lease_expires_at = None
         db.commit()
         return _Completion(committed=True)
+
+
+def _research_preview_payload(draft_research: Any) -> dict[str, Any]:
+    from app.kria import research_preview  # noqa: PLC0415
+
+    return research_preview.preview_payload(draft_research.prepared)
+
+
+@contextmanager
+def _lease_heartbeat_thread(
+    turn_id: uuid.UUID, *, lease_owner: str, lease_epoch: int
+) -> Iterator[None]:
+    """Renew the turn lease from a thread while blocking work runs outside planning.
+
+    Same contract as `_plan_with_live_agent`'s heartbeat: a failed renewal is retried on
+    the next beat, and a lost lease ends the beat (the commit then writes nothing).
+    """
+    stop = threading.Event()
+
+    def _beat() -> None:
+        while not stop.wait(_LEASE_HEARTBEAT_SECONDS):
+            try:
+                alive = _renew_turn_lease(turn_id, lease_owner=lease_owner, lease_epoch=lease_epoch)
+            except Exception:  # noqa: BLE001 - the lease outlasts a missed renewal
+                log.warning("kria_turn_lease_renewal_failed", turn_id=str(turn_id), exc_info=True)
+                continue
+            if not alive:
+                return
+
+    beat = threading.Thread(target=_beat, name=f"kria-lease-{turn_id}", daemon=True)
+    beat.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        beat.join(timeout=_LEASE_HEARTBEAT_SECONDS + 5)
 
 
 def _renew_turn_lease(turn_id: uuid.UUID, *, lease_owner: str, lease_epoch: int) -> bool:
@@ -3324,6 +3412,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
     """Plan and execute one durable turn without holding locks across inference."""
 
     identifier = uuid.UUID(turn_id)
+    turn_started = time.monotonic()
     lease_owner = str(self.request.id or identifier)
     claimed = _claim(identifier, lease_owner)
     if claimed is None:
@@ -3370,6 +3459,21 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                 )
             )
             planned = _useful_plan(planned, user_message=user_message)
+            # KRI-881: research a typed research ask before the approval card, outside
+            # every lock; "checking sources" continues the turn when it needs more time.
+            from app.kria import research_preview  # noqa: PLC0415
+
+            # Planning's own heartbeat stopped with it; research takes 20-90 s and the
+            # lease is 15 s, so keep renewing it or the draft commit finds the turn lost.
+            with _lease_heartbeat_thread(
+                identifier, lease_owner=lease_owner, lease_epoch=lease_epoch
+            ):
+                planned = research_preview.with_research(
+                    planned,
+                    snapshot,
+                    turn_id=identifier,
+                    deadline=turn_started + float(run_kria_turn.soft_time_limit or 200),
+                )
             if planned.plan.mode == "respond" and planned.continuable:
                 # KRI-709: the planner stopped on a time budget with its answers saved.
                 # Run the same turn again instead of asking the creator to say "go
@@ -3672,24 +3776,20 @@ def _deferred_replan_note() -> str:
 
 
 @celery_app.task(
-    bind=True,
     name="tasks.prepare_kria_research",
     soft_time_limit=170,
     time_limit=200,
-    # ~3 min of hand-backs: about the life of the in-flight marker KRI-881 sets for it.
-    max_retries=12,
+    max_retries=0,
 )
-def prepare_kria_research(self, payload: dict[str, Any]) -> dict[str, str]:  # noqa: ANN001
-    """KRI-881 rolling-deploy reader: hand the research task back to a newer worker.
+def prepare_kria_research(payload: dict[str, Any]) -> dict[str, str]:
+    """KRI-881: research one strategy draft before approval with a full budget.
 
-    KRI-881 workers enqueue `tasks.prepare_kria_research` on `agent-control`. During its
-    rolling deploy this worker can still take one off the queue; an unregistered name would
-    be dropped and the waiting turn would stall until its in-flight marker expired. This
-    version cannot research, so it re-publishes the same message (same id and payload) for
-    a KRI-881 worker. KRI-881 replaces this body with the real task.
+    Enqueued when a turn had too little time left; caches the result by the basis it was
+    researched for, so the continued turn finds it. Writes no thread, draft or approval.
     """
-    del payload
-    raise self.retry(countdown=15, queue="agent-control")
+    from app.kria import research_preview  # noqa: PLC0415
+
+    return {"status": research_preview.run_task_body(payload)}
 
 
 @celery_app.task(

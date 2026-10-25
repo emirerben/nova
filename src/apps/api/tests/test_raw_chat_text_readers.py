@@ -88,6 +88,13 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
     "kria/brief.py": ("plan_time", "brief extraction and rendering of live requirements", None),
     "kria/brief_binding.py": ("plan_time", "binds the approved request digest to the brief", None),
     "kria/planner.py": ("plan_time", "the planner turns the request into the strategy", None),
+    "kria/research_preview.py": (
+        "plan_time",
+        "KRI-881: before approval, forwards the full request to the research copy writer "
+        "(model context) and keys the prepared research by it; the render replays the "
+        "pinned result and never reads the request for it",
+        None,
+    ),
     "kria/runtime.py": (
         "carry",
         "approval decision forwards the request to the claim",

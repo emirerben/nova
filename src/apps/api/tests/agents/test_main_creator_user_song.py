@@ -52,11 +52,16 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v77 (KRI-821) teaches the typed `source_muted` audio intent: brief-on hashes only.
 # v78 (KRI-821) teaches `cut_line_occurrences` for a repeated named cut: brief-on hashes only.
 # v80 combines KRI-827 keep_text_off with KRI-821: brief-on hashes re-pinned.
+# v81 (KRI-881) types the research ask in the brief section (brief-on) and rewords the
+# shared "Researched explanations" section (research happens before approval): all four
+# hashes re-pinned after reviewing both edits.
+# v92 merges main's v91 (KRI-724/840/841/842/847/849 brief facts) with KRI-881: brief-on
+# hashes re-pinned (brief-off equal KRI-881's v81, main left those prompts unchanged).
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "adcd881a440f37ee82a9890b8e645d21229c62a8e0e10662cfe0506671f03760",
-    (True, False): "e33c7b44e601b95b61036b2806cc2111d8aa20204994881bf8fe128534b5cf3c",
-    (False, True): "ba0069d75ec5989072c9c90399ee72068a015d9157c3b2be5e70594db77f3b44",
-    (False, False): "6e32911313c9667767209df7d6d929db36873990e5dceb2d27549ba179569c1d",
+    (True, True): "b80d32863ac80c351ffb45d3044a2457de8644527e0348c1a837eeac81e073ff",
+    (True, False): "cc7c6427ab34d031e6428fc804484ff65079c972be7c38a1e3a144d2b720ee23",
+    (False, True): "6cb97ffc9d133889113b38bc8159eb7547e2841ed63e0a8582e127ebe9618d92",
+    (False, False): "038960cbc071317802dbc9a082906f258c7f59cb5e064c7069c52ef52f4d79be",
 }
 
 
@@ -130,7 +135,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-25-v92"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-25-v93"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

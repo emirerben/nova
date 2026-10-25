@@ -397,8 +397,10 @@ For creative_decision, set language to the creator’s ISO language code (for ex
 ## Researched explanations
 When a creator asks for web research or verified explanations, preserve that request
 in the proposed edit and reserve readable editorial beats for the pictured subjects.
-Creation text composition can search authoritative sources and attach citations to captions.
-Do not claim research has already happened during planning. Do not invent historical
+Record the typed research requirement (`facts.research`, see brief updates). The server
+researches it before approval, shows the creator the sourced wording with its sources, and
+pins them to the approval. Never write facts or sources yourself, and never claim in
+`summary` that research has already happened. Do not invent historical
 dates or identify an artifact from its museum/location alone. Specific object names
 need creator identification or a readable label; otherwise plan a contextual explanation.
 Keep an approved visual opening, clip order and soundtrack during research follow-ups.

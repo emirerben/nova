@@ -6327,6 +6327,23 @@ def _plan_phone_unified_montage(
     )
 
 
+def _approved_research(snapshot: Mapping[str, Any]) -> Any:
+    """The research the creator approved with this job (KRI-881), or ``None``.
+
+    Read only from the approved brief binding, whose digest covers it. A job without one
+    (legacy jobs, follow-up research, the kill switch off) keeps the render-time path.
+    """
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.schemas.research import PreparedResearch  # noqa: PLC0415
+
+    raw = snapshot.get("creator_brief_binding")
+    if not isinstance(raw, Mapping) or raw.get("prepared_research") is None:
+        return None
+    binding = BriefBinding.model_validate(raw)
+    research = PreparedResearch.model_validate(binding.prepared_research)
+    return research if research.status == "ready" else None
+
+
 @phone_text_generation
 def _run_phone_unified_montage_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
@@ -6506,6 +6523,8 @@ def _run_phone_unified_montage_job(
         ctx=RunContext(job_id=job_id, request_id=f"creation-text:{generation}"),
         copy_constraints=snapshot_copy_constraints(plan.snapshot),
         text_requirements=brief.live() if brief is not None else None,
+        # KRI-881: sourced wording the creator approved, replayed without a new search.
+        prepared_research=_approved_research(snapshot),
     )
     record = plan.record()
     # KRI-544: which copies left the edit, readable by a requirement checker. Absent

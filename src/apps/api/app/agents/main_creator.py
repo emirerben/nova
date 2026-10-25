@@ -123,8 +123,6 @@ log = structlog.get_logger()
 # v78 (KRI-821): a named cut of a repeated line records which take (`cut_line_occurrences`).
 # v79 combines main's v77 (KRI-815 + KRI-816) with KRI-821's v78.
 # v80 combines main's v79 (KRI-815/816/821) with KRI-827's keep_text_off (branch v78).
-# v92 combines main v91 with the shared runtime creative skills.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-25-v92"
 # KRI-724: the Nth time a quoted phrase is said carries `speech_remove` {quote, occurrence}
 # beside its cut_lines, and an engine/motor noise ask carries `noise_reduction: "engine"`, so
 # the phone Talking worker cuts / filters from facts, never from the words (KRI-667) (v76,
@@ -139,6 +137,10 @@ MAIN_CREATOR_PROMPT_VERSION = "2026-10-25-v92"
 # v76 (KRI-849): "if you can't tell what he says, ask me instead of guessing" is a captions fact
 # (`ask_if_unclear`), and the creator's later answer is `unclear_answer` ("omit" or their own
 # words); the server compares two hearings of the speech and asks, it never reads the words.
+# v92 (KRI-881): main's v91 plus a research / sources ask as a typed `text` requirement with
+# `facts.research` ({topic, request_quote}); the server researches it before approval.
+# v93 combines main v92 research-before-approval with runtime creative skills.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-25-v93"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -589,6 +591,11 @@ Mute or remove the footage's own sound (camera, crowd, ambient, original audio) 
 voice is heard ("mute the crowd noise under my voice", "kamera sesini kapat") => an `audio`
 requirement with {"audio_intent": "source_muted"}; "keep it low / quieter under my voice" is
 not a mute and records no audio_intent.
+Research, fact checking or sources for the on-screen explanations ("include sources for the
+historical facts", "research it online", "kaynakları ekle") => ONE `text` requirement, scope
+"global", the ask in `description`, with {"research": {"topic": "<a public topic, never a link or
+file name>", "request_quote": "<the creator's exact words asking for research or sources, copied
+verbatim>"}}. Never write the facts or sources yourself: the server researches before approval.
 Record any requested processing, noise/wind removal, volume change, music or speech selection
 as a SEPARATE requirement with its complete description; never certify those changes with
 `source_unchanged`. Lowering or removing the engine/motor noise in the footage's own sound

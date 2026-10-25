@@ -945,6 +945,10 @@ class Settings(BaseSettings):
     # Default TRUE; kill switch = false + restart (api + worker): approval is offered
     # exactly as before and the worker's own check is the only one.
     kria_phone_montage_preflight_enabled: bool = True
+    # KRI-881: research a phone montage's typed research ask before approval, show the
+    # sourced wording + citations, and pin them to the approval (`app.kria.research_preview`).
+    # false => the render researches after approval exactly as before. Restart api + worker.
+    kria_research_preview_enabled: bool = True
     # KRI-721: enroll new approval writers only after API/worker readers deploy.
     # Existing stamped assessments remain mandatory when enrollment is disabled.
     kria_approval_readiness_enabled: bool = False

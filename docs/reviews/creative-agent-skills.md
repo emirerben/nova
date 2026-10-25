@@ -248,3 +248,9 @@ energetic delivery survives, a distinct account-topic marker does not, and the a
 transcript remains. This follows the same input boundary as the provider-capture
 regressions; restoring raw tone would reintroduce the reported failure mode. Obsolete
 input-field comments were also corrected. No provider prompt changed in this follow-up.
+
+Main later advanced with KRI-881 research before approval. The integration retains
+its typed research requirement, sourced-wording approval flow and updated base-prompt
+hashes, alongside the skill prefix and public Turkish rule. The combined main creator
+prompt is `2026-10-25-v93`. Existing green CI on the earlier head is historical;
+delivery requires fresh checks for the combined head.

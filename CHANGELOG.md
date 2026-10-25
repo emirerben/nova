@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.108.0] - 2026-10-25
+
+### Changed
+- feat(kria): show sourced wording and citations before approval and pin them to the render (KRI-881) (#1807) <!-- release-pr: 1807 -->
+
 ## [0.81.107.0] - 2026-10-25
 
 ### Changed
