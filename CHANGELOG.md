@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.121.0] - 2026-10-25
+
+### Added
+- feat(ios): text behind people on the phone (Vision person matte, protocol 21) (#1834) <!-- release-pr: 1834 -->
+
 ## [0.81.120.0] - 2026-10-25
 
 ### Fixed
