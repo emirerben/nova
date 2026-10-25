@@ -234,7 +234,7 @@ extension ChatTranscriptMessage {
     /// a choice card, a clip / song-order / song-range question, reply chips, or exact-string options.
     var asksAQuestion: Bool {
         role == .assistant && (clipQuestion != nil || songOrderQuestion != nil || songRangeQuestion != nil
-                               || protectedRegionQuestion != nil
+                               || protectedRegionQuestion != nil || momentOrderQuestion != nil
                                || choiceQuestion != nil || !replyOptions.isEmpty || !options.isEmpty)
     }
 }

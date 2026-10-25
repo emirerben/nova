@@ -692,7 +692,7 @@ read `met`.
   interval) = `ambiguous`; none = `unlocated`. Model prose, even with timestamps, never counts.
 - **Ask before approval.** In `_gate_unresolved_choices`, an unlocated/ambiguous moment on a
   turn stamped `answers_moment_questions` (app protocol >= `moment_order_min_client_protocol`,
-  **999 = dark until the iOS card ships**) returns `moment_order_question` instead of a draft,
+  **20** = the first iOS build with `MomentOrderCard`; `999` is the kill switch) returns `moment_order_question` instead of a draft,
   and keeps returning it until every moment is pointed at, skipped or left to Kria (a
   free-text reply never turns into guessed windows). Pins are dark with the question: an app
   that cannot answer keeps today's v1 windows byte-identical with an honest `not_located`
@@ -719,8 +719,17 @@ read `met`.
   `not_located` (a format limit: it never blocks the render, never claims the action).
 
 Not in this slice: several takes interleaved, the user-song / lip-sync variants, text and
-music frozen once, and the iOS card itself. Proof: `tests/kria/test_kri723_moment_authority_m2.py`
+music frozen once. Proof: `tests/kria/test_kri723_moment_authority_m2.py`
 (`KRI723_ARTIFACT=<dir>` writes `report.json`) and `tests/kria/test_kri723_moment_order_turns_postgres.py`.
+
+**iOS card (protocol 20).** `MomentOrderCard` (`Kria/Features/MomentOrderCard.swift`, model in
+`Kria/Core/MomentOrderQuestion.swift`) shows the moments in the creator's order (drag or arrows), and
+per row: "Show where" (the KRI-717 source-window picker on this iPhone's original), "Not in my clips"
+(`skip`) or "You pick" (`delegate`). A grounded row starts pointed at its evidence. The answer is
+sent as `moment_order` with the server's neutral echo as the message. 404/422 keep the card and its
+windows and show the server's reason on it; 409 `moment_order_stale` refreshes the thread, closes the
+old card and says the newest one is the one to answer. Capability `moment_order_questions` (false at
+999). Proof: `MomentOrderUITests` (XCUITest).
 
 ## Which spoken occurrence (KRI-724, phone Talking slice)
 

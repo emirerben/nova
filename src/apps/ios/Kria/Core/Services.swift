@@ -225,6 +225,11 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     /// one frame of one of the creator's clips. nil = omitted. A 404 `protected_region_media_not_found` / 422
     /// `protected_region_invalid` carries the server's copy for the card.
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?, protectedRegion: ProtectedRegionAnswer?) async throws -> TurnAccepted
+    /// `momentOrder` answers a "show me your moments" card (KRI-723, server capability `moment_order_questions`): the
+    /// creator's order and, per moment, a window on the take, "not in my clips" or "you pick". nil = omitted. A 409
+    /// `moment_order_stale`, 404 `moment_order_media_not_found` or 422 `moment_order_invalid` / `moment_order_overlap`
+    /// carries the server's copy for the card.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?, protectedRegion: ProtectedRegionAnswer?, momentOrder: MomentOrderAnswer?) async throws -> TurnAccepted
     /// A short-lived signed URL for the thread's attached song, so the song timeline can draw and play it
     /// (KRI-561). `generation` pins the song the question was built against; a 409 `song_changed` means it was
     /// replaced. A 404 means the server does not offer it.
@@ -437,6 +442,11 @@ extension KriaAPIClient {
     /// Substitutes that predate the mark card send the message without the mark.
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?, protectedRegion: ProtectedRegionAnswer?) async throws -> TurnAccepted {
         try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: suggestion)
+    }
+
+    /// Substitutes that predate the moment card send the message without the moments.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?, protectedRegion: ProtectedRegionAnswer?, momentOrder: MomentOrderAnswer?) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: suggestion, protectedRegion: protectedRegion)
     }
 
     func creationCapabilities() async throws -> CreationCapabilities { throw APIError.unsupported }
@@ -1125,7 +1135,10 @@ enum KriaClientProtocolContract {
     /// 19 (KRI-901): shows the "Mark the plate" card (`protected_region_question`) and answers it with
     /// `protected_region` on the next turn. The server asks for a mark before approval only from this protocol;
     /// older builds keep approving as before.
-    static let version = 19
+    /// 20 (KRI-723): shows the "show me your moments" card (`moment_order_question`) and answers it with
+    /// `moment_order` on the next turn. The server asks for the moments before approval only from this protocol;
+    /// older builds keep today's windows with an honest "couldn't find it" receipt.
+    static let version = 20
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1443,7 +1456,10 @@ struct KriaAPI: KriaAPIClient {
         try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: suggestion, protectedRegion: nil)
     }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?, protectedRegion: ProtectedRegionAnswer?) async throws -> TurnAccepted {
-        let body = SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: suggestion, protectedRegion: protectedRegion)
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: suggestion, protectedRegion: protectedRegion, momentOrder: nil)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?, protectedRegion: ProtectedRegionAnswer?, momentOrder: MomentOrderAnswer?) async throws -> TurnAccepted {
+        let body = SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: suggestion, protectedRegion: protectedRegion, momentOrder: momentOrder)
         return try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(body), decode: TurnAccepted.self)
     }
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread {
@@ -2141,8 +2157,8 @@ private enum ServerDateCoding {
     }
 }
 struct SubmitTurnRequest: Encodable {
-    let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil; var clipSelection: ClipSelectionSubmission? = nil; var songOrder: SongOrderSubmission? = nil; var choiceSelection: ChoiceSelectionSubmission? = nil; var songRange: SongRangeAnswer? = nil; var suggestion: SuggestionTap? = nil; var protectedRegion: ProtectedRegionAnswer? = nil
-    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order"; case choiceSelection = "choice_selection"; case songRange = "song_range"; case suggestion; case protectedRegion = "protected_region" }
+    let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil; var clipSelection: ClipSelectionSubmission? = nil; var songOrder: SongOrderSubmission? = nil; var choiceSelection: ChoiceSelectionSubmission? = nil; var songRange: SongRangeAnswer? = nil; var suggestion: SuggestionTap? = nil; var protectedRegion: ProtectedRegionAnswer? = nil; var momentOrder: MomentOrderAnswer? = nil
+    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order"; case choiceSelection = "choice_selection"; case songRange = "song_range"; case suggestion; case protectedRegion = "protected_region"; case momentOrder = "moment_order" }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(message, forKey: .message); try c.encode(clientEventID, forKey: .clientEventID)
@@ -2154,6 +2170,7 @@ struct SubmitTurnRequest: Encodable {
         try c.encodeIfPresent(songRange, forKey: .songRange)
         try c.encodeIfPresent(suggestion, forKey: .suggestion)
         try c.encodeIfPresent(protectedRegion, forKey: .protectedRegion)
+        try c.encodeIfPresent(momentOrder, forKey: .momentOrder)
     }
 }
 
