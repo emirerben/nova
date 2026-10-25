@@ -3673,6 +3673,27 @@ def _deferred_replan_note() -> str:
 
 @celery_app.task(
     bind=True,
+    name="tasks.prepare_kria_research",
+    soft_time_limit=170,
+    time_limit=200,
+    # ~3 min of hand-backs: about the life of the in-flight marker KRI-881 sets for it.
+    max_retries=12,
+)
+def prepare_kria_research(self, payload: dict[str, Any]) -> dict[str, str]:  # noqa: ANN001
+    """KRI-881 rolling-deploy reader: hand the research task back to a newer worker.
+
+    KRI-881 workers enqueue `tasks.prepare_kria_research` on `agent-control`. During its
+    rolling deploy this worker can still take one off the queue; an unregistered name would
+    be dropped and the waiting turn would stall until its in-flight marker expired. This
+    version cannot research, so it re-publishes the same message (same id and payload) for
+    a KRI-881 worker. KRI-881 replaces this body with the real task.
+    """
+    del payload
+    raise self.retry(countdown=15, queue="agent-control")
+
+
+@celery_app.task(
+    bind=True,
     name="tasks.extract_kria_brief",
     soft_time_limit=90,
     time_limit=120,
