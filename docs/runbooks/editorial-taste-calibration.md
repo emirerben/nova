@@ -3,8 +3,9 @@
 The private CLI performs no provider calls or account mutations. The account API
 and native preference/feedback screens connect confirmed examples to camera-roll
 idea generation behind `CREATOR_EDITORIAL_TASTE_ENABLED=false` and the explicit
-`CREATOR_EDITORIAL_TASTE_USER_IDS=[]` allowlist. An empty list admits nobody. Production rollout
-and independent creative-quality evaluation remain pending. See [the implementation sequence](../reviews/editorial-taste/implementation.md).
+`CREATOR_EDITORIAL_TASTE_USER_IDS=[]` allowlist. An empty list admits nobody; a list
+containing `"*"` admits every account (see [Rollout](#rollout-to-every-account)).
+Independent creative-quality evaluation remains pending. See [the implementation sequence](../reviews/editorial-taste/implementation.md).
 
 Use a private directory **outside every Git checkout**, with permission 700:
 
@@ -122,6 +123,31 @@ Local checks use synthetic HTTP/PostgreSQL journeys and the native simulator.
 A private replay of the ten approved account captures checks the real API/context
 builder at zero model cost. That replay is development evidence, not production
 activation or a claim that new ideas match the creator's taste.
+
+## Rollout to every account
+
+`CREATOR_EDITORIAL_TASTE_USER_IDS='["*"]'` admits every account to the
+`/me/editorial-taste` routes. `CREATOR_EDITORIAL_TASTE_ENABLED` stays the kill
+switch: `"*"` with it `false` admits nobody, and `[]` still admits nobody.
+
+Admission is not personalization. `generation_context` returns an empty string
+until the creator has confirmed a profile (`confirmed: true`, `enabled: true` in
+the latest revision), so no example or rule reaches a prompt for an account that
+has not opted in. Camera-roll idea generation keeps its own gate,
+`media_collection_proposals_for`; this flag does not widen it. Account Memory
+pause still suppresses context.
+
+```bash
+# apply (api + worker must share the value)
+fly secrets set -a nova-video CREATOR_EDITORIAL_TASTE_ENABLED=true CREATOR_EDITORIAL_TASTE_USER_IDS='["*"]'
+fly apps restart nova-video
+# rollback (kill switch; leaves the list untouched, saved profiles are kept)
+fly secrets set -a nova-video CREATOR_EDITORIAL_TASTE_ENABLED=false
+fly apps restart nova-video
+```
+
+Verify: `GET /me/editorial-taste` returns 200 for an arbitrary account, and 404
+after the rollback. Journey: `tests/integration/test_editorial_taste.py::test_wildcard_admits_everyone_but_personalizes_only_after_confirmation`.
 
 ## Frozen comparison workflow
 

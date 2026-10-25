@@ -592,14 +592,16 @@ class Settings(BaseSettings):
     media_collection_proposals_enabled: bool = False
     media_collection_proposal_user_ids: list[UUID] = Field(default_factory=list)
     media_collection_cache_only: bool = True
-    # Explicit, per-account calibrated examples; no automatic public rollout.
+    # Per-account allowlist; ["*"] admits everyone (the ENABLED kill switch still applies).
+    # Admission alone personalizes nothing: a creator must confirm a profile first.
     creator_editorial_taste_enabled: bool = False
     creator_editorial_taste_user_ids: list[str] = []
 
     def creator_editorial_taste_for(self, user_id: object) -> bool:
-        return self.creator_editorial_taste_enabled and str(user_id) in {
-            value.strip() for value in self.creator_editorial_taste_user_ids
-        }
+        if not self.creator_editorial_taste_enabled:
+            return False
+        allowed = {value.strip() for value in self.creator_editorial_taste_user_ids}
+        return "*" in allowed or str(user_id) in allowed
 
     def media_collection_proposals_for(self, user_id: object) -> bool:
         return self.media_collection_proposals_enabled and str(user_id) in {
