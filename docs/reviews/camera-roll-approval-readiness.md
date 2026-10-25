@@ -400,3 +400,34 @@ The ideas' generic writing and unsupported morning description are not accepted
 creative-quality proof. Only the approved one-collection QA copy was used;
 the 20 taste examples were not copied into this test. Approved model use remains
 26 calls / $0.093817, with no full-quality originals sent to a model.
+
+## Pre-approval original bounds and complete native preflight
+
+The next physical attempt passed the closing-text contract but correctly stopped
+at actual-output coverage: a proxy-rounded source end exceeded the original by
+less than a frame. A safe runtime refit shortened the picture after approval and
+left a 56.7 ms gap before the next cut. The earlier text-only preflight did not
+exercise this separate publication gate. No device recipe or export was published.
+
+Preparation now uses the owned original upload receipt before freezing a draft.
+A required end-only correction is limited to three output frames (the existing
+source safety margin plus frame measurement/rounding). Starts, order, wording,
+audio policy, source identities and full context/quality provenance remain intact.
+The adjustment is recorded in prepared evidence, disclosed on the approval card,
+and used to derive its actual frame schedule and duration. Material discrepancies
+refuse before a turn or approval exists. Unaffected windows and omitted adjustment
+metadata retain their prior representation. Already approved snapshots are not
+rewritten, and selection still grants no rendering consent.
+
+Before offering approval, the actual native compiler, capability checks, exact
+text/audio contract and unchanged actual-output coverage declaration now all run
+on that prepared snapshot. The physical case's five sources pass this complete
+preflight at 21.766667 seconds, with two small disclosed end corrections and no
+extra provider calls. This remains preflight evidence, not a finished phone video.
+
+Two new real HTTP → preparation → approval → native-publication cases failed
+before implementation, then passed. The positive case pins the real device request
+through the existing publication gate; a new gap remains unsupported. A materially
+shorter original refuses before approval. The focused execution, saved-card,
+real decoded-MP4 verification/completion, compiler and contract suite passes
+371 cases. Actual phone export and editable reopen on this update remain pending.

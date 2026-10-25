@@ -182,6 +182,7 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
     caption,
     readiness_enabled,
     recovery_case,
+    source_timing=None,
 ):
     client, assets, sources, owner, _app = collection_world
     source_context = with_content_plan == "whole-source-context"
@@ -215,7 +216,7 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
     monkeypatch.setattr(
         settings,
         "phone_render_verified_features",
-        ["basicComposition", "local1080Export", "audioMix"],
+        ["basicComposition", "local1080Export", "audioMix", "positionedText"],
     )
     proof_input = os.environ.get("KRIA_CAMERA_ROLL_PROOF_INPUT")
     assignments = []
@@ -339,6 +340,10 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
                 width=640,
                 height=360,
             )
+            if source_timing and index == 0:
+                proxy["original"]["duration_s"] = duration - (
+                    0.006667 if source_timing == "rounding" else 1.0
+                )
             assignments.append(record)
             metadata_by_path[source.object_path] = SimpleNamespace(
                 generation="42", size=source.byte_count
@@ -632,6 +637,18 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         f"{path}/stories/{story_id}/select",
         json=selection_body,
     )
+    if source_timing == "material":
+        assert selected.status_code == 422, selected.text
+        assert "original" in selected.text.lower()
+        async with AsyncSessionLocal() as db:
+            assert (
+                await db.scalar(
+                    select(CreatorAgentTurn.id).where(CreatorAgentTurn.thread_id == thread_id)
+                )
+                is None
+            )
+            assert (await db.get(PlanItem, item_id)).current_job_id is None
+        return
     if retained_condition not in {None, "valid", "held"}:
         assert selected.status_code == 409, selected.text
         async with AsyncSessionLocal() as db:
@@ -891,6 +908,11 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         draft = db.get(CreatorEditDraft, approval.draft_id)
         assert draft.snapshot_json["prepared_collection_story"]["story_id"] == str(story_id)
         frozen = draft.snapshot_json["prepared_collection_story"]
+        if source_timing == "rounding":
+            adjustments = frozen["source_window_adjustments"]
+            assert len(adjustments) == 1
+            assert adjustments[0]["prepared_end_s"] == pytest.approx(8.1)
+            assert "clip ends" in approval.consequence_summary.lower()
         if source_context:
             assert "whole clip" in approval.consequence_summary.lower()
             assert "no timed highlight" in approval.consequence_summary.lower()
@@ -1174,12 +1196,18 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         job = db.get(Job, uuid.UUID(dispatched.job_id))
         frozen = job.assembly_plan["guided_story_execution_plan"]
         assert loaded == frozen, "The worker must consume the frozen choices verbatim"
-        assert [
-            (value["source_start_s"], value["source_end_s"]) for value in frozen["story_timeline"]
-        ] == [
-            (round(value["start_s"] * 30) / 30, round(value["end_s"] * 30) / 30)
+        expected_windows = [
+            (
+                round(value["start_s"] * 30) / 30,
+                8.1
+                if source_timing == "rounding" and value["asset_id"] == assets[0]
+                else round(value["end_s"] * 30) / 30,
+            )
             for value in moments
         ]
+        assert [
+            (value["source_start_s"], value["source_end_s"]) for value in frozen["story_timeline"]
+        ] == expected_windows
         assert [row["text"] for row in frozen["text_elements"]] == (
             ["Where does this crossing lead?", "Worth the trip?"] if with_content_plan else []
         )
@@ -1193,10 +1221,7 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         assert snapshot.get("text_policy", "legacy") == ("legacy" if with_content_plan else "none")
         assert [
             (value["source_start_s"], value["source_end_s"]) for value in snapshot["fast_cuts"]
-        ] == [
-            (round(value["start_s"] * 30) / 30, round(value["end_s"] * 30) / 30)
-            for value in moments
-        ]
+        ] == expected_windows
         assert (
             item.edit_proposal["planning_diagnostics"]["prepared_collection_story"][
                 "compiled_digest"
@@ -1257,6 +1282,42 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
                     },
                     indent=2,
                 )
+            )
+
+    if source_timing == "rounding":
+        from app.kria.device_render import make_device_request
+        from app.pipeline.guided_story import GuidedStoryExecutionPlan
+        from app.pipeline.phone_guided_plan import compile_phone_guided_plan
+        from app.services.actual_export_verification import unsupported_reasons
+        from app.services.creator_render_contract import read_render_contract, verify_phone_recipe
+        from app.services.device_render import pin_device_request
+        from app.services.phone_sources import PhoneSourceBinding
+
+        with sync_session() as db:
+            job = db.get(Job, uuid.UUID(dispatched.job_id))
+            assembly = job.assembly_plan
+            bindings = tuple(
+                PhoneSourceBinding.model_validate(row) for row in assembly["_phone_sources_v1"]
+            )
+            recipe = compile_phone_guided_plan(
+                GuidedStoryExecutionPlan.model_validate(loaded), bindings
+            )
+            assert unsupported_reasons(recipe) == []
+            assert verify_phone_recipe(
+                read_render_contract(assembly),
+                recipe,
+                source_audio={b.media_id: b.original.has_audio for b in bindings},
+            )
+            request = make_device_request(
+                job_id=job.id, variant_id="guided_story", revision=1, recipe=recipe
+            )
+            assert pin_device_request(
+                job, request, base_generation=assembly["creator_generation_id"]
+            )
+            bad = recipe.model_copy(deep=True)
+            bad.tracks[0].clips[1].timeline_start += 0.05
+            assert "clip_treatment" in unsupported_reasons(bad), (
+                "Wrong-gap control must remain unsupported"
             )
 
     if with_content_plan:
@@ -1486,3 +1547,22 @@ async def test_completed_untimed_source_gets_truthful_bounded_context_only(
             assert indexed.json()["missing_analysis_asset_ids"] == []
     # Every storage download/provider analysis attempt is rejected by the fixture.
     # Original data never enters this synthetic database.
+
+
+@pytest.mark.parametrize("source_timing", ["rounding", "material"])
+async def test_original_source_bounds_are_reviewed_before_native_export(
+    collection_world,  # noqa: F811
+    monkeypatch,
+    source_timing,
+):
+    await test_selection_prepares_common_draft_then_explicit_approval_freezes_execution(
+        collection_world=collection_world,
+        monkeypatch=monkeypatch,
+        change_before_approval=False,
+        fractional_end=False,
+        with_content_plan="whole-source-context",
+        caption=_ACCEPTED_CAPTION,
+        readiness_enabled=True,
+        recovery_case=None,
+        source_timing=source_timing,
+    )
