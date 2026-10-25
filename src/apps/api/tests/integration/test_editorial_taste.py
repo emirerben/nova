@@ -340,6 +340,47 @@ async def test_owner_source_deletion_account_pause_and_feature_gate(collection_w
     assert (await client.get(route)).status_code == 404
 
 
+async def test_wildcard_admits_everyone_but_personalizes_only_after_confirmation(
+    collection_world, monkeypatch
+):  # noqa: F811
+    """Failure catalogue (written before the wildcard): "*" must not outrank the kill
+    switch, [] must still admit nobody, a literal "*" must not match as a user id
+    substring, and admission must not feed an unconfirmed account's footage prompt.
+    """
+    from app.routes import editorial_taste
+    from app.services.creator_editorial_taste import generation_context
+
+    client, _assets, _sources, owner, app = collection_world
+    app.include_router(editorial_taste.router)
+    route = "/me/editorial-taste"
+    monkeypatch.setattr(settings, "creator_editorial_taste_enabled", True)
+    monkeypatch.setattr(settings, "creator_editorial_taste_user_ids", [])
+    assert (await client.get(route)).status_code == 404
+
+    monkeypatch.setattr(settings, "creator_editorial_taste_user_ids", ["*"])
+    monkeypatch.setattr(settings, "creator_editorial_taste_enabled", False)
+    assert (await client.get(route)).status_code == 404
+
+    monkeypatch.setattr(settings, "creator_editorial_taste_enabled", True)
+    fresh = await client.get(route)
+    assert fresh.status_code == 200
+    assert fresh.json()["examples"] == []
+    async with AsyncSessionLocal() as db:
+        assert await generation_context(db, owner.id, "race") == ""
+        assert await generation_context(db, uuid.uuid4(), "race") == ""
+
+    ids = await projects(owner)
+    unconfirmed = {**profile_body(ids), "enabled": False}
+    assert (await client.put(route, json=unconfirmed)).status_code == 200
+    async with AsyncSessionLocal() as db:
+        assert await generation_context(db, owner.id, "race") == ""
+    assert (
+        await client.put(route, json=profile_body(ids, revision=1, key="calibrate-2"))
+    ).status_code == 200
+    async with AsyncSessionLocal() as db:
+        assert "38 km" in await generation_context(db, owner.id, "race")
+
+
 async def test_pausing_while_provider_runs_does_not_publish_stale_taste(
     collection_world, monkeypatch
 ):  # noqa: F811
