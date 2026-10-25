@@ -140,7 +140,7 @@ log = structlog.get_logger()
 # v92 (KRI-881): main's v91 plus a research / sources ask as a typed `text` requirement with
 # `facts.research` ({topic, request_quote}); the server researches it before approval.
 # v93 combines main v92 research-before-approval with runtime creative skills.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-25-v93"
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-25-v94"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -864,7 +864,15 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 "\n" + _VOICEOVER_SCRIPT_PROMPT_SECTION if input.voiceover_script_available else ""
             ),
         )
-        prompt = load_skill("edit-story") + "\n\n" + load_skill("grounded-hook") + "\n\n" + prompt
+        prompt = (
+            load_skill("edit-story")
+            + "\n\n"
+            + load_skill("grounded-hook")
+            + "\n\n"
+            + load_skill("meaningful-moment")
+            + "\n\n"
+            + prompt
+        )
         if input.reply_language == "tr":
             prompt += (
                 "\n\nFor newly authored audience-facing hook/title copy only "

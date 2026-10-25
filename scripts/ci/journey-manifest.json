@@ -1720,6 +1720,23 @@
         "src/apps/api/tests/evals/test_runtime_creative_skills.py",
         "src/apps/api/tests/fixtures/creative_copy_review/"
       ]
+    },
+    {
+      "id": "kri-215-phone-editorial-skills",
+      "needs_native": false,
+      "api_tests": "tests/evals/test_phone_editorial_skills.py tests/evals/test_runtime_creative_skills.py tests/evals/test_main_creator_evals.py tests/evals/test_clip_request_resolver_evals.py tests/evals/test_speech_excerpt_planner_evals.py tests/evals/test_narrated_storyboard_evals.py tests/evals/test_slide_post_composer_evals.py tests/agents/test_main_creator_agent.py tests/agents/test_main_creator_user_song.py tests/agents/test_clip_request_resolver.py tests/services/test_phone_speech_montage_job.py tests/pipeline/test_phone_narrated_plan.py",
+      "paths": [
+        "src/apps/api/app/agents/_skills.py",
+        "src/apps/api/app/agents/skills/edit-story/",
+        "src/apps/api/app/agents/skills/meaningful-moment/",
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/agents/clip_request_resolver.py",
+        "src/apps/api/app/agents/speech_excerpt_planner.py",
+        "src/apps/api/app/agents/narrated_storyboard.py",
+        "src/apps/api/app/agents/slide_post_composer.py",
+        "src/apps/api/tests/evals/test_phone_editorial_skills.py",
+        "src/apps/api/tests/fixtures/phone_editorial_skills/"
+      ]
     }
   ]
 }

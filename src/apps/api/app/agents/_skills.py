@@ -3,7 +3,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-_SKILLS = frozenset({"grounded-hook", "edit-story", "social-caption"})
+_SKILLS = frozenset({"grounded-hook", "edit-story", "social-caption", "meaningful-moment"})
 _ROOT = Path(__file__).with_name("skills")
 
 

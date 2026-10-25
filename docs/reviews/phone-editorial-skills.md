@@ -52,7 +52,41 @@ and is unchanged. No web editor implementation or browser repair is in scope.
 
 ## Verification and remaining gaps
 
-Pending. KRI-215 owns live creative comparison; KRI-730 owns retrieval and source
+The evaluation-only commit precedes the runtime integration. Its baseline has
+27 passing checks and 13 expected skill-wiring failures. All 13 positive decision
+examples and all 13 wrong-content controls pass their respective evaluator checks.
+With the skills integrated, all 40 corpus checks pass.
+
+The full free replay suite plus the changed-agent checks and existing phone speech
+and narrated-plan checks pass 2445 tests, with 16 existing skips and 7 expected
+failures. The selected reliability gates pass 619 checks with no environment
+skips or errors. Both skill files validate. Existing base-prompt hashes remain
+unchanged beneath the explicitly versioned skill prefix.
+
+Run from the task worktree:
+
+```bash
+bash scripts/check-api.sh test tests/evals/test_phone_editorial_skills.py -q
+bash scripts/check-api.sh test tests/evals/ tests/agents/test_main_creator_agent.py tests/agents/test_main_creator_user_song.py tests/agents/test_clip_request_resolver.py tests/agents/test_narrated_storyboard.py tests/agents/test_slide_post_composer.py tests/services/test_phone_speech_montage_job.py tests/pipeline/test_phone_narrated_plan.py -q
+python3 scripts/reliability-gates.py run --changed --log .dev/editorial-reliability.log
+```
+
+The synthetic corpus runs through the existing live-eval interface when explicitly
+approved under its development ledger. Its exact expected choices are development
+constraints, not a general measure of subjective editing quality. No paid run was
+performed. Default CI uses replay only. Prompt versions are bumped on every changed
+agent. CI selects the new corpus when any of its runtime consumers or skills change.
+
+The local iPhone verification is pending. The first sandboxed attempt could not
+access simulator services and the Swift package cache. A retry with those services
+available is running. This is not evidence of an application regression.
+
+Current-agent review covers skill scope, source identity, prompt-version ownership,
+quote preservation, capability and approval boundaries, and the wrong-content
+controls. The user prohibits delegation, so no independent agent review is claimed.
+No application comments or suppressions are added.
+
+ KRI-215 owns live creative comparison; KRI-730 owns retrieval and source
 inspection gaps. Native output verification and production rollout are separate
 from this bounded prompt integration. No flags, models, spend limits, endpoints,
 renderer behavior, approval rules, or output schemas change.

@@ -57,6 +57,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
+from app.agents._skills import load_skill
 from app.kria.reply_language import prompt_language_line
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.clip_intents import (
@@ -199,7 +200,7 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
         # KRI-766: a spoken mention of the label's own words never outweighs the described action.
         # KRI-845: clip records carry props / actions / visual_quality; the prompt says how to
         # use them (a blurry/shaky ask matches reported blur, never "stays sharp").
-        prompt_version="2026-10-23.1",
+        prompt_version="2026-10-25-editorial-skills-v2",
         # Text-only match against pre-computed clip records; flash + a small
         # thinking budget mirrors clip_plan_matcher's measured setting.
         model="gemini-2.5-flash",
@@ -238,6 +239,7 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
             valid_aliases=valid_aliases,
             valid_intent_ids=valid_intent_ids,
         )
+        prompt = load_skill("meaningful-moment") + "\n\n" + prompt
         # KRI-520: the reply-language instruction goes last. "" for English/unknown:
         # byte-identical prompt.
         language_line = prompt_language_line(input.reply_language)

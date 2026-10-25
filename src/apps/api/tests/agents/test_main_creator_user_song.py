@@ -93,7 +93,14 @@ def test_prompt_without_a_song_preserves_base_under_editorial_skills(
 
     prompt = _render(_input().model_copy(update={"brief_enabled": brief}))
 
-    skills = load_skill("edit-story") + "\n\n" + load_skill("grounded-hook") + "\n\n"
+    skills = (
+        load_skill("edit-story")
+        + "\n\n"
+        + load_skill("grounded-hook")
+        + "\n\n"
+        + load_skill("meaningful-moment")
+        + "\n\n"
+    )
     assert prompt.startswith(skills)
     base_prompt = prompt.removeprefix(skills)
     assert (
@@ -135,7 +142,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-25-v93"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-25-v94"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 
