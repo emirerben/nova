@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.123.0] - 2026-10-25
+
+### Added
+- feat(speech): bundle the RNNoise model for phone engine-noise reduction (#1838) <!-- release-pr: 1838 -->
+
+## [0.81.122.0] - 2026-10-25
+
+### Added
+- feat(kria): plan chat-requested clip speed on phone montages at creation (KRI-689) (#1836) <!-- release-pr: 1836 -->
+
+## [0.81.121.0] - 2026-10-25
+
+### Added
+- feat(ios): text behind people on the phone (Vision person matte, protocol 21) (#1834) <!-- release-pr: 1834 -->
+
+## [0.81.120.0] - 2026-10-25
+
+### Fixed
+- fix(speech): merge mixed-language takes on the phone Talking live branch (KRI-843) (#1833) <!-- release-pr: 1833 -->
+
 ## [0.81.119.0] - 2026-10-25
 
 ### Changed

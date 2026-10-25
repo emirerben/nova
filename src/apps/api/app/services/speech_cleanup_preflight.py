@@ -399,9 +399,15 @@ def _redo_for_misheard_language(
     under the same identity (the worker then reads the reference). A creator's
     decision is never revoked, and a run that already had a reference is never
     repeated, so this cannot loop.
+
+    KRI-843: a reference that speaks two or more languages contradicts any
+    one-language run just as much (the per-stretch merge never ran), so it
+    redoes the run too (``reference_language="mixed"`` in the log). The redone
+    run has the reference and writes a ``language_crosscheck`` receipt, mixed
+    or EN/TR, which is what stops a second redo: once per snapshot.
     """
 
-    from app.pipeline.caption_language import crosscheck_detected_language  # noqa: PLC0415
+    from app.pipeline.speech_cleanup_analysis import language_redo_reason  # noqa: PLC0415
 
     if row.status not in {"ready", "no_findings"} or row.decision is not None:
         return False
@@ -416,16 +422,14 @@ def _redo_for_misheard_language(
         storage_path=source.storage_path,
         generation=source.generation,
     )
-    heard_language = crosscheck_detected_language(
-        str(payload.get("language") or ""), reference_text=reference
-    )
-    if heard_language is None:
+    reason = language_redo_reason(str(payload.get("language") or ""), reference)
+    if reason is None:
         return False
     log.info(
         "speech_cleanup_analysis.language_redo",
         analysis_id=str(row.id),
         whisper_language=str(payload.get("language") or ""),
-        reference_language=heard_language,
+        reference_language=reason,
         previous_status=row.status,
     )
     _reset_analysis_for_dispatch(row, source, now=now)

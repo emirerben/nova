@@ -1567,15 +1567,6 @@ def _complete_draft_turn(
                             client_protocol=client_protocol,
                         )
                     )
-                    # KRI-689: a phone montage plays every clip at natural speed. Say so
-                    # before approval; the render-ready review reports it as "Couldn't".
-                    speed_notice = clip_speed_notice(
-                        brief.live(),
-                        creator_id=thread.creator_id,
-                        strategy=document.strategy,
-                        item_edit_format=item.edit_format,
-                        clip_paths=item.clip_gcs_paths or (),
-                    )
                     if not readiness_required:
                         # KRI-775: the phone montage worker refuses a draft whose order or
                         # length falls short. Plan it now (deterministic, fail-open) so its
@@ -1633,6 +1624,19 @@ def _complete_draft_turn(
                                 ),
                             ]
                         checked = with_blocked_requirements(checked, brief, phone_blockers)
+                    # KRI-689: where the phone montage plan cannot change clip speed (no
+                    # verified renderer, a song montage), say so before approval; the
+                    # render-ready review reports it as "Couldn't". Where it can, the plan's
+                    # own receipts (the preflight's, then the render's) say which clips play
+                    # at which rate, so no blanket sentence is added.
+                    speed_notice = clip_speed_notice(
+                        brief.live(),
+                        creator_id=thread.creator_id,
+                        strategy=document.strategy,
+                        item_edit_format=item.edit_format,
+                        clip_paths=item.clip_gcs_paths or (),
+                        judged_ids={receipt.requirement_id for receipt in phone_blockers},
+                    )
                 else:
                     # Editor operations verify only the requirements stated in
                     # this very turn, against what the ops changed (KRI-558).

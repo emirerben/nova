@@ -608,6 +608,13 @@ def guided_editor_revision_from_approval(
                 source_end_s=float(moment.get("source_end_s") or duration),
                 duration_s=max(MIN_GUIDED_EDITOR_SEGMENT_S, duration),
                 freeze_hold_s=moment.get("freeze_hold_s") or None,
+                # KRI-689: a rate the montage plan authored survives into the editor, so the
+                # first Save does not reset the clip to 1x.
+                playback_rate=(
+                    float(moment["playback_rate"])
+                    if moment.get("playback_rate") is not None
+                    else None
+                ),
                 layout=(
                     moment.get("layout")
                     if isinstance(moment.get("layout"), str)

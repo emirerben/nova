@@ -746,6 +746,23 @@ class Settings(BaseSettings):
     # `fly secrets set TEXT_BEND_ENABLED=false` (api + worker) + restart.
     text_bend_enabled: bool = True
     text_bend_min_client_protocol: int = 9
+    # Text behind people ON THE PHONE (the device twin of `text_behind_subject_enabled`
+    # below, which is the cloud Skia lane). When True, `compile_text_overlay` stamps
+    # `behind_subject` on a phone recipe text layer whose text element asks for it, and
+    # `KriaMediaEngine` occludes that layer with a per-frame Vision person mask
+    # (`NativeSubjectMatte`). Also needs `behindSubject` in PHONE_RENDER_VERIFIED_FEATURES
+    # (fly secret, set after a physical-device preview + export check) and, inside an app
+    # request, a build declaring `X-Kria-Client-Protocol` >= the min protocol (21: the first
+    # build that decodes the key). When any of the three is missing the compile STRIPS the
+    # flag and the layer renders as plain text (trace `text_behind_subject_phone_fallback`,
+    # the cloud's "falls back to plain text" wording) -- the recipe is byte-identical to
+    # today's. A pinned recipe that already carries the flag answers 426
+    # `client_update_required` (`text_behind_subject`) to an older build, which cannot
+    # decode the key (mirrors `text_bend`). Default FALSE (dark ship). Apply:
+    # `fly secrets set TEXT_BEHIND_SUBJECT_PHONE_ENABLED=true --app nova-video` +
+    # `fly machine restart <id>` (api + worker); rollback = `...=false` + restart.
+    text_behind_subject_phone_enabled: bool = False
+    text_behind_subject_phone_min_client_protocol: int = 21
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,

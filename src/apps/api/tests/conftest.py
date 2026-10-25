@@ -70,6 +70,24 @@ def _fresh_async_engine_pool() -> None:
 
 
 @pytest.fixture(autouse=True)
+def _fresh_client_request_context() -> None:
+    """Start every test outside an HTTP request with no declared client protocol.
+
+    `app.services.client_protocol` keeps the `X-Kria-Client-Protocol` gate in two
+    ContextVars. Several route tests set it (`set_client_protocol(...)`) and never clear
+    it, and the leaked "inside a request, protocol N" state then closes `require_client`
+    gates such as `phone_voiceover_editor_lanes_supported` for whichever test the xdist
+    worker runs next. Which test that is moves whenever a test file is added (#1834's
+    `api (0)` shard hit `test_phone_voiceover_advertises_reaction_beats_and_keeps_them`).
+    Clearing costs two ContextVar writes and needs no I/O.
+    """
+
+    from app.services.client_protocol import clear_request_context  # noqa: PLC0415
+
+    clear_request_context()
+
+
+@pytest.fixture(autouse=True)
 def _caption_translation_never_reaches_a_provider(monkeypatch) -> None:
     """KRI-838: the caption translator is a paid OpenAI call that fails open.
 

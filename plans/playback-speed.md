@@ -93,13 +93,32 @@ do not promise newly generated smooth motion. Lip-sync tied to a song remains lo
 - Run focused native/backend tests, `make verify-editor-timeline`, relevant lint/typechecks,
   and preship. Report unavailable simulator, provider, production-image or deployment evidence.
 
-## Explicit remaining boundary
+## Initial-creation speed (KRI-689 follow-up, 2026-10-25)
 
-Initial natural-language creation has a separate planner that does not author requested rates.
-Its unsupported-speed notice must stay until that full request-to-plan path is implemented and
-verified. Existing post-creation chat operations already author rates; opening their compiler
-does not by itself prove initial-creation speed support. No new wording heuristics or paid
-prompt evaluation is authorized by this plan. No merge or deployment is part of this task.
+The boundary above ("initial creation does not author requested rates") has moved for phone
+Montage edits. The chat ask is read into a `SpeedSpec` (`app/kria/speed_ask.py`: recorded
+`facts.playback_rate` first, else the creator's words incl. the number; "slow motion" = 0.5,
+"speed up" / "time-lapse" = 2; held to 0.25-4x), the unified montage planner grounds it to its
+cuts (`unified_montage._ground_speeds`: a `clip:<id>` scope, the creator-pointed moment, one
+clip's analysed moment, "the last clip", or every video cut) and writes `playback_rate` on the
+`FastMontageCut`; `compile_execution_plan` carries it onto the moment and the phone compiler
+emits `rate` + `variableSpeed` as before.
+
+Timeline rule: a planned cut keeps its OUTPUT length (no drift of labels, later cuts or the
+total): its source window becomes `length x rate` seconds on the same start; when the footage
+cannot cover it the rate is lowered to what it covers and the receipt says "2.5x, not the 4x you
+asked for". A creator-approved window keeps its exact `source_start_s` / `source_end_s` and its
+output length follows the rate (this plan's anchor). Locked, with an honest "Couldn't": no
+verified `variableSpeed`, a song montage (beat-snapped cuts, lyric captions), a lip-synced take,
+a frozen frame, a photo, a speed ramp. A clip nobody could name is the creator's call before
+approval (the pre-approval plan returns the receipt). Pins: `tests/kria/test_kri689_chat_speed_spec.py`,
+the KRI-689 groups in `tests/tasks/test_unified_montage_dispatch.py` and
+`tests/pipeline/test_phone_guided_speed.py`, `docs/reviews/kri-689-chat-speed-failure-modes.md`.
+Still open: narrated / Talking formats, the web editor, a device acceptance pass (ffprobe the
+sped-up segment: output length unchanged, footage span = rate x length).
+
+Existing post-creation chat operations author rates independently of this path. No paid
+prompt evaluation was run for the prompt change (replay evals only).
 
 ## Implementation and verification record
 

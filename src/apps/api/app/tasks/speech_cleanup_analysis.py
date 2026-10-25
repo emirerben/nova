@@ -33,13 +33,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.config import settings
 from app.database import sync_session
 from app.models import ContentPlan, PlanItem, SpeechCleanupAnalysis
-from app.pipeline.caption_language import crosscheck_detected_language
 from app.pipeline.silence_cut import NO_SPEECH_BAILOUTS
 from app.pipeline.speech_cleanup_analysis import (
     PROGRAMMING_ERRORS,
     TRANSCRIPTION_PROVIDER_MODULES,
     SpeechCleanupAnalysisInput,
     SpeechCleanupAnalysisResult,
+    language_redo_reason,
 )
 from app.pipeline.speech_cleanup_analysis import (
     analyze_speech_cleanup as run_speech_cleanup_engine,
@@ -549,7 +549,9 @@ def _run_engine(work: _ClaimedWork, local_audio_path: Path) -> SpeechCleanupAnal
     if reference is not None or work.source_kind != "embedded_spine":
         return result
     late_reference = _late_reference_transcript(work)
-    if crosscheck_detected_language(result.language, reference_text=late_reference) is None:
+    # A clear EN/TR contradiction, or a reference that speaks several languages (KRI-843: the
+    # one-language first run never merged per stretch), re-runs the engine with it.
+    if language_redo_reason(result.language, late_reference) is None:
         return result
     return _run_engine_once(
         work,

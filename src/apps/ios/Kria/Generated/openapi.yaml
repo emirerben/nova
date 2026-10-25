@@ -2994,6 +2994,7 @@
                 "textBend",
                 "singleWordText",
                 "freezeFrame",
+                "behindSubject",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -3118,6 +3119,7 @@
                 "textBend",
                 "singleWordText",
                 "freezeFrame",
+                "behindSubject",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -8184,6 +8186,12 @@
             "$ref": "#/components/schemas/TextBackground",
             "default": null,
             "nullable": true
+          },
+          "behind_subject": {
+            "default": null,
+            "nullable": true,
+            "title": "Behind Subject",
+            "type": "boolean"
           },
           "bend": {
             "default": null,

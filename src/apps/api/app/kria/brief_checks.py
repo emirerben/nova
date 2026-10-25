@@ -589,10 +589,16 @@ class PlanFacts:
     # ({requirement_id, media_id, hold_s, rendered_s}); a finished timeline's own still
     # lengths replace ``rendered_s``. None = no montage record to read (nothing is claimed).
     asset_holds: tuple[Mapping[str, Any], ...] | None = None
-    # KRI-689: True when the plan was laid out by the phone unified montage, which plays every
-    # clip at its natural speed (the phone recipe has no retime for story footage). A
+    # KRI-689: True when the plan was laid out by a phone unified montage that could not retime
+    # a clip (a record written before speed asks were planned: no ``clip_speeds`` key). A
     # clip-speed ask is then a known miss; any other plan claims nothing about speed.
     speed_unsupported: bool = False
+    # KRI-689: the plan record's clip-speed rows (``clip_speeds``), keyed by requirement id:
+    # {status ("applied" / "locked" / "not_grounded" / "photo" / "ramp" / "replaced" /
+    # "dropped"), rate, rate_requested, rate_stated, cut_ids, cut_positions, media_ids,
+    # grounding, reason, footage_limited, replaced_by}. None = no record to read (nothing is
+    # claimed); a finished video's timeline confirms each applied row (``_rendered_speeds``).
+    clip_speeds: Mapping[str, Mapping[str, Any]] | None = None
     # KRI-840: the plan shows the creator's Visuals full screen at evenly spaced slots across the
     # talk (`overlay_display` "fullscreen*", or a render's overlay receipt of that layout), not
     # at a spoken word. A word-timed full-screen ask that only this covers is a "partial".
@@ -1134,7 +1140,10 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         cut_clip_ids=_window_media_ids(record.get("best_parts")),
         source_durations_s=_source_durations(record.get("clip_durations_s")),
         song_bed=bool(record.get("user_song")),
-        speed_unsupported=True,
+        # A record without the key was written by a planner that could not retime (KRI-689's
+        # original "Couldn't"); a speed-aware planner always writes a row per speed ask.
+        speed_unsupported="clip_speeds" not in record,
+        clip_speeds=_speed_facts(record.get("clip_speeds")),
         freeze_frames=_freeze_facts(record.get("freeze_frames"), record.get("freeze_frame")),
         asset_holds=tuple(
             row for row in record.get("asset_holds") or [] if isinstance(row, Mapping)
@@ -1177,6 +1186,57 @@ def _rendered_freezes(
         key: (value if value.get("status") != "held" or held else {**value, "status": "dropped"})
         for key, value in planned.items()
     }
+
+
+def _speed_facts(rows: object) -> dict[str, Mapping[str, Any]] | None:
+    """KRI-689: the plan record's clip-speed rows keyed by requirement id; None without the
+    key (a record from before speed asks were planned)."""
+    if not isinstance(rows, list):
+        return None
+    return {
+        str(row["requirement_id"]): dict(row)
+        for row in rows
+        if isinstance(row, Mapping) and isinstance(row.get("requirement_id"), str)
+    }
+
+
+def _rendered_speeds(
+    planned: Mapping[str, Mapping[str, Any]] | None, variant: Mapping[str, Any]
+) -> dict[str, Mapping[str, Any]] | None:
+    """An applied rate counts on a finished video only when its timeline still carries it.
+
+    The variant's ``story_timeline`` rows are the plan's moments (``moment_id`` = cut id,
+    ``playback_rate``). A row for an applied cut without the rate marks the ask "dropped";
+    a timeline without ``moment_id`` (older variants) cannot contradict the plan.
+    """
+    if planned is None:
+        return None
+    rows = variant.get("story_timeline")
+    if not isinstance(rows, list):
+        return dict(planned)
+    by_moment = {
+        str(row["moment_id"]): row
+        for row in rows
+        if isinstance(row, Mapping) and isinstance(row.get("moment_id"), str)
+    }
+    if not by_moment:
+        return dict(planned)
+    out: dict[str, Mapping[str, Any]] = {}
+    for key, value in planned.items():
+        if value.get("status") != "applied":
+            out[key] = value
+            continue
+        rate = _finite_number(value.get("rate"))
+        kept = True
+        for cut_id in value.get("cut_ids") or []:
+            row = by_moment.get(str(cut_id))
+            if row is None:
+                continue
+            played = _finite_number(row.get("playback_rate"))
+            if played is None or rate is None or abs(played - rate) > 0.01:
+                kept = False
+        out[key] = value if kept else {**value, "status": "dropped"}
+    return out
 
 
 def _named_line_facts(raw: object) -> tuple[NamedLineFact, ...] | None:
@@ -2250,6 +2310,7 @@ def plan_facts_from_rendered_montage(
         asset_holds=_rendered_holds(plan.asset_holds, variant),
         song_bed=plan.song_bed,
         speed_unsupported=plan.speed_unsupported,
+        clip_speeds=_rendered_speeds(plan.clip_speeds, variant),
         freeze_frames=_rendered_freezes(plan.freeze_frames, variant),
         source_audio_kept=kept if isinstance(kept, bool) else None,
         source_clip_ids=tuple(prints),
@@ -3880,6 +3941,26 @@ _CANT_CHECK_MIX = "I can't check the sound mix on this draft yet."
 # KRI-689: the phone montage plays every clip at its natural speed. Said before approval
 # (`clip_speed_notice`) and again, as the reason, on the finished video's receipt.
 _NO_CLIP_SPEED = "I can't change clip speed on your iPhone yet, so the clips play at normal speed"
+# KRI-689 (chat speed at creation): the cases no plan can retime, each a limit of the edit, and
+# the two the creator must settle (which clip, how fast) -- those are not format limits.
+_NO_CLIP_SPEED_SONG = (
+    "I can't change clip speed on this edit because the clips follow your song, "
+    "so they play at normal speed"
+)
+_NO_SPEED_ON_FREEZE = (
+    "I can't change the speed of a clip that holds a freeze frame, so it plays at normal speed"
+)
+_NO_SPEED_RAMP = "I can't ramp speed inside a clip yet, so it plays at normal speed"
+_NO_PHOTO_SPEED = "A photo has no speed to change, so it stays as it is"
+_SPEED_DROPPED = "The finished video plays this clip at normal speed"
+_SPEED_NOT_GROUNDED = (
+    "I couldn't tell which clip you meant for the speed change, so the clips play at "
+    "normal speed. Tell me which clip"
+)
+_SPEED_NO_FOOTAGE = (
+    "I can't speed these clips up: the video already shows each one whole, so there's no "
+    "footage left to speed through"
+)
 # Start of the reason on a "mute the footage sound" ask the voiceover mix cannot fully meet
 # (the footage sound is a quiet bed under the voice, never off): a limit of the format.
 _BED_STILL_PLAYS = "The footage sound still plays"
@@ -4119,6 +4200,26 @@ _REASON_TR: dict[str, str] = {
     _NO_CLIP_SPEED: (
         "iPhone'unda klip hızını henüz değiştiremiyorum, o yüzden klipler normal hızda oynuyor"
     ),
+    _NO_CLIP_SPEED_SONG: (
+        "Bu düzenlemede klip hızını değiştiremiyorum çünkü klipler şarkını takip ediyor, "
+        "o yüzden normal hızda oynuyorlar"
+    ),
+    _NO_SPEED_ON_FREEZE: (
+        "Donmuş kare tutan bir klibin hızını değiştiremiyorum, o yüzden normal hızda oynuyor"
+    ),
+    _NO_SPEED_RAMP: (
+        "Bir klibin içinde hızı henüz kademeli değiştiremiyorum, o yüzden normal hızda oynuyor"
+    ),
+    _NO_PHOTO_SPEED: "Bir fotoğrafın değişecek hızı yok, o yüzden olduğu gibi kalıyor",
+    _SPEED_DROPPED: "Bitmiş video bu klibi normal hızda oynatıyor",
+    _SPEED_NOT_GROUNDED: (
+        "Hız değişikliği için hangi klibi kastettiğini anlayamadım, o yüzden klipler normal "
+        "hızda oynuyor. Hangi klip olduğunu yaz"
+    ),
+    _SPEED_NO_FOOTAGE: (
+        "Bu klipleri hızlandıramıyorum: video her birini zaten baştan sona gösteriyor, "
+        "hızlanacak görüntü kalmadı"
+    ),
     _NO_FREEZE_FRAME: (
         "Bu düzenlemede henüz bir kareyi donduramıyorum, o yüzden o an normal akıyor"
     ),
@@ -4308,6 +4409,12 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _NAMED_CUT_AT_RENDER,
     _BED_STILL_PLAYS,
     _NO_CLIP_SPEED,
+    _NO_CLIP_SPEED_SONG,
+    _NO_SPEED_ON_FREEZE,
+    _NO_SPEED_RAMP,
+    _NO_PHOTO_SPEED,
+    _SPEED_DROPPED,
+    _SPEED_NO_FOOTAGE,
     _NO_FREEZE_FRAME,
     _FREEZE_NOT_GROUNDED,
     _MOMENTS_NOT_LOCATED,
@@ -8171,6 +8278,9 @@ def judged_at_render(req: BriefRequirement) -> bool:
         # are read off the finished text lane and timeline, which a plan record never has.
         or bool(text_look_facts(req))
         or clip_length_ask(req) is not None
+        # KRI-689: a planned rate counts only when the finished timeline still plays it
+        # (`_rendered_speeds`), and the review re-words it in the chat's language.
+        or asks_clip_speed(req)
     )
 
 
@@ -8679,6 +8789,100 @@ def _freeze_where(freeze: Mapping[str, Any], at: str) -> tuple[str, str]:
     return f"on that moment ({at}s into the clip)", f"o anda (klibin {at}. saniyesi)"
 
 
+def _clip_list(positions: Sequence[int], *, every: bool) -> tuple[str, str]:
+    """("Clips 1, 2 and 3", "1., 2. ve 3. klipler") for the receipt's subject."""
+    numbers = [str(int(position)) for position in positions]
+    if every or not numbers:
+        return "Every video clip", "Her video klibi"
+    if len(numbers) == 1:
+        return f"Clip {numbers[0]}", f"{numbers[0]}. klip"
+    en = ", ".join(numbers[:-1]) + f" and {numbers[-1]}"
+    tr = ", ".join(f"{number}." for number in numbers[:-1]) + f" ve {numbers[-1]}."
+    return f"Clips {en}", f"{tr} klipler"
+
+
+def _check_clip_speed(req: BriefRequirement, row: Mapping[str, Any]) -> RequirementReceipt:
+    """KRI-689: what the phone montage plan did with "speed the river shots up 2x".
+
+    "met" only for an applied row (read off the plan record and, on a finished video, its
+    timeline); the reason names the clips and the rate. A rate held at the native bound, or
+    lowered because the footage ran out, is "partial" with both numbers: never "met" for a
+    different speed. The locked cases are plain limits; a clip nobody could name is the
+    creator's call.
+    """
+    status = str(row.get("status") or "")
+    rate = _finite_number(row.get("rate"))
+    if status in {"applied", "replaced"} and rate is not None:
+        positions = [
+            int(position)
+            for position in row.get("cut_positions") or []
+            if isinstance(position, (int, float)) and not isinstance(position, bool)
+        ]
+        subject, subject_tr = _clip_list(positions, every=row.get("grounding") == "all_clips")
+        speed = f"{rate:g}x"
+        plural = len(positions) != 1 and row.get("grounding") != "all_clips"
+        plays = "play" if plural else "plays"
+        if status == "replaced":
+            return _receipt(
+                req,
+                "met",
+                say(
+                    en=f"{subject} {plays} at {speed}, as you asked later",
+                    tr=f"{subject_tr} sonra istediğin gibi {speed} hızda oynuyor",
+                ),
+                verification="checked",
+            )
+        requested = _finite_number(row.get("rate_requested"))
+        if requested is not None and abs(requested - rate) > 0.001:
+            if row.get("footage_limited"):
+                reason = say(
+                    en=(
+                        f"{subject} {plays} at {speed}, not the {requested:g}x you asked for: "
+                        "the clip ran out of footage"
+                    ),
+                    tr=(
+                        f"{subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: "
+                        "klibin görüntüsü yetmedi"
+                    ),
+                )
+            else:
+                faster = requested > rate
+                reason = say(
+                    en=(
+                        f"{subject} {plays} at {speed}, not the {requested:g}x you asked for: "
+                        f"a clip plays {'at most' if faster else 'at least'} {speed}"
+                    ),
+                    tr=(
+                        f"{subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: "
+                        f"bir klip en {'fazla' if faster else 'az'} {speed} hızda oynayabiliyor"
+                    ),
+                )
+            return _receipt(req, "partial", reason, verification="checked")
+        reason = say(en=f"{subject} {plays} at {speed}", tr=f"{subject_tr} {speed} hızda oynuyor")
+        if not row.get("rate_stated"):
+            reason = say(
+                en=f"{reason}; you didn't say how fast, so I used {speed}",
+                tr=f"{reason}; ne kadar hızlı söylemediğin için {speed} kullandım",
+            )
+        return _receipt(req, "met", reason, verification="checked")
+    if status == "locked":
+        reason = str(row.get("reason") or "")
+        if reason == "user_song":
+            return _receipt(req, "not_possible", _NO_CLIP_SPEED_SONG)
+        if reason == "frozen":
+            return _receipt(req, "not_possible", _NO_SPEED_ON_FREEZE)
+        return _receipt(req, "not_possible", _NO_CLIP_SPEED)
+    if status == "ramp":
+        return _receipt(req, "not_possible", _NO_SPEED_RAMP)
+    if status == "photo":
+        return _receipt(req, "not_possible", _NO_PHOTO_SPEED)
+    if status == "dropped":
+        return _receipt(req, "not_possible", _SPEED_DROPPED)
+    if status == "no_footage":
+        return _receipt(req, "not_possible", _SPEED_NO_FOOTAGE)
+    return _receipt(req, "not_possible", _SPEED_NOT_GROUNDED)
+
+
 def _check_freeze(req: BriefRequirement, freeze: Mapping[str, Any]) -> RequirementReceipt:
     """KRI-828: "met" only when the plan holds a frame for this ask (``status == "held"``,
     read off the compiled plan record and, on a finished video, its timeline). KRI-900: the
@@ -8953,10 +9157,21 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # rule), and its seconds are never judged as the video's length. An editor turn keeps
         # its own receipts (the before/after diff names what its ops changed).
         return _receipt(req, "not_possible", _NO_FREEZE_FRAME)
+    if (
+        asks_clip_speed(req)
+        and facts.clip_speeds is not None
+        and req.id in facts.clip_speeds
+        and (facts.rendered_variant or facts.rendered_montage or not facts.editor)
+    ):
+        # KRI-689: the phone montage plan carried this speed ask (or says why it could not).
+        return _check_clip_speed(req, facts.clip_speeds[req.id])
     if facts.speed_unsupported and asks_clip_speed(req):
-        # KRI-689: the creator is told before approving (`clip_speed_notice`); the finished
-        # video's receipt then says "Couldn't", never "have a look" at a speed that is not there.
-        return _receipt(req, "not_possible", _NO_CLIP_SPEED)
+        # KRI-689: a plan that could not retime (a record from before speed asks were planned,
+        # or a song montage's). The finished video's receipt says "Couldn't", never "have a
+        # look" at a speed that is not there.
+        return _receipt(
+            req, "not_possible", _NO_CLIP_SPEED_SONG if facts.song_bed else _NO_CLIP_SPEED
+        )
     if wants_light_change(req) and (facts.rendered_variant or not facts.editor):
         # KRI-700: a draft or a finished render never brightens the footage. An editor turn
         # keeps its own receipts (the before/after diff names what its ops changed).
@@ -9230,6 +9445,21 @@ def freeze_plannable(
     )
 
 
+def clip_speed_plannable(strategy: Mapping[str, Any] | None) -> bool:
+    """KRI-689: will the phone montage plan carry a clip-speed ask for this draft?
+
+    Only where the renderer retimes (``variableSpeed`` verified, `clip_speed_planned_for`)
+    and the cuts do not follow a creator's song (a song montage sits on the song's beats and
+    lyric captions, so every speed ask is locked there). Everywhere else the plan records the
+    ask as locked and the draft keeps the honest heads-up (`clip_speed_notice`).
+    """
+    from app.services.phone_rollout import clip_speed_planned_for  # noqa: PLC0415
+
+    return clip_speed_planned_for() and str((strategy or {}).get("audio_strategy") or "") != (
+        "user_song"
+    )
+
+
 def clip_speed_notice(
     requirements: Iterable[BriefRequirement],
     *,
@@ -9237,17 +9467,23 @@ def clip_speed_notice(
     strategy: Mapping[str, Any] | None,
     item_edit_format: object,
     clip_paths: Iterable[object] = (),
+    judged_ids: Iterable[str] = (),
 ) -> str | None:
     """The plain heads-up, before approval, that this draft cannot change clip speed (KRI-689).
 
-    "Speed the river shots up 2x" on a phone montage: the unified planner plays every clip at
-    its natural speed, so the draft would otherwise be approved with the ask silently dropped
-    and only the finished video's review would admit it. Returned only for a draft that
-    will render through that planner (the same gate `requirements_to_check_at_draft` uses); a
-    cloud render, a voiceover lane and the other phone formats get ``None``.
+    "Speed the river shots up 2x" on a phone montage whose plan cannot retime (no verified
+    ``variableSpeed``, or the clips follow the creator's song): without this line the draft
+    would be approved with the ask silently dropped and only the finished video's review would
+    admit it. Returned only for a draft that will render through the unified planner (the
+    same gate `requirements_to_check_at_draft` uses); a cloud render, a voiceover lane and the
+    other phone formats get ``None``. Where the plan CAN carry the speed (`clip_speed_plannable`)
+    the plan's own receipts speak (the pre-approval plan, then the render), so this is
+    ``None``; likewise when every live speed ask is already in ``judged_ids`` (the receipts
+    the pre-approval plan returned).
     """
     strategy = strategy or {}
-    if not any(req.live and asks_clip_speed(req) for req in requirements):
+    asked = [req.id for req in requirements if req.live and asks_clip_speed(req)]
+    if not asked:
         return None
     if not defers_to_unified_montage(
         creator_id=creator_id,
@@ -9256,6 +9492,13 @@ def clip_speed_notice(
         clip_paths=list(clip_paths or ()),
     ):
         return None
+    judged = {str(rid) for rid in judged_ids}
+    if all(rid in judged for rid in asked):
+        return None
+    if clip_speed_plannable(strategy):
+        return None
+    if str(strategy.get("audio_strategy") or "") == "user_song":
+        return _loc(_NO_CLIP_SPEED_SONG) + "."
     return _loc(_NO_CLIP_SPEED) + "."
 
 
@@ -9664,6 +9907,7 @@ __all__ = [
     "build_receipts",
     "check_requirement",
     "clip_speed_notice",
+    "clip_speed_plannable",
     "is_format_limit",
     "is_judged",
     "is_no_title_reason",
