@@ -128,3 +128,19 @@ managed fleet revision and digest, health, and actual prompt construction on the
 API and worker images without a paid model call. A reachable API alone does not
 prove skill loading. No client protocol, binary, capability flag, or output schema
 changes are required for this backend update. Creative quality remains separate.
+
+The full hosted reliability union also found two KRI-520 resolver guards that
+expected the pre-skill prompt and version. Their repair explicitly includes the
+meaningful-moment prefix while retaining exact base-template comparison, unchanged
+English behavior, and the Turkish-only language tail. The new phone editorial
+journey now selects this language guard alongside the provider-boundary corpus.
+The local reproduction fails both guards before this test update. No production
+prompt or language instruction changes in the CI repair.
+
+A sweep of exact prompt-version guards found the same stale Main Creator version
+in the KRI-841 ending-clip tests. Its version expectation is updated to v94; the
+ending-clip and kept-audio assertions remain intact. Both newly found guard files
+are selected by the editorial journey for future skill changes. All 3009 local
+reliability checks pass against the task's migrated Postgres, with zero environment
+skips or errors. The one skipped SFX case needs an optional production catalogue
+dump. Two expected failures remain declared by that suite.

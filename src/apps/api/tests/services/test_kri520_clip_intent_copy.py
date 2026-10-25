@@ -15,6 +15,7 @@ import pytest
 
 from app.agents._runtime import RunContext
 from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
+from app.agents._skills import load_skill
 from app.agents.clip_intent_planner import (
     ClipIntentPlannerAgent,
     ClipIntentPlannerInput,
@@ -326,7 +327,7 @@ def test_resolver_prompt_gets_the_language_line_only_for_turkish() -> None:
 
     assert agent.render_prompt(_resolver_input(reply_language="en")) == english
     assert TR not in english
-    assert english == load_prompt(
+    assert english == load_skill("meaningful-moment") + "\n\n" + load_prompt(
         "clip_request_resolver",
         creator_request="Her sporu etiketle.",
         intent_count="1",
@@ -349,7 +350,7 @@ def test_resolver_prompt_gets_the_language_line_only_for_turkish() -> None:
 
 def test_prompt_versions_moved_with_the_new_prompt_tail() -> None:
     assert ClipIntentPlannerAgent.spec.prompt_version == "2026-10-21.1"  # KRI-552
-    assert ClipRequestResolverAgent.spec.prompt_version == "2026-10-23.1"  # KRI-612/613/766/845
+    assert ClipRequestResolverAgent.spec.prompt_version == "2026-10-25-editorial-skills-v2"
 
 
 # ── grounding folds Turkish case ────────────────────────────────────────────────────

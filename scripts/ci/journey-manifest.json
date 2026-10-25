@@ -1724,7 +1724,7 @@
     {
       "id": "kri-215-phone-editorial-skills",
       "needs_native": false,
-      "api_tests": "tests/evals/test_phone_editorial_skills.py tests/evals/test_runtime_creative_skills.py tests/evals/test_main_creator_evals.py tests/evals/test_clip_request_resolver_evals.py tests/evals/test_speech_excerpt_planner_evals.py tests/evals/test_narrated_clip_alignment_evals.py tests/evals/test_slide_post_composer_evals.py tests/agents/test_main_creator_agent.py tests/agents/test_main_creator_user_song.py tests/agents/test_clip_request_resolver.py tests/services/test_phone_speech_montage_job.py tests/agents/test_narrated_clip_alignment.py tests/tasks/test_phone_voiceover_requested_edits.py tests/pipeline/test_phone_narrated_plan.py",
+      "api_tests": "tests/evals/test_phone_editorial_skills.py tests/evals/test_runtime_creative_skills.py tests/evals/test_main_creator_evals.py tests/evals/test_clip_request_resolver_evals.py tests/evals/test_speech_excerpt_planner_evals.py tests/evals/test_narrated_clip_alignment_evals.py tests/evals/test_slide_post_composer_evals.py tests/agents/test_main_creator_agent.py tests/agents/test_main_creator_user_song.py tests/agents/test_clip_request_resolver.py tests/services/test_phone_speech_montage_job.py tests/agents/test_narrated_clip_alignment.py tests/tasks/test_phone_voiceover_requested_edits.py tests/pipeline/test_phone_narrated_plan.py tests/services/test_kri520_clip_intent_copy.py tests/kria/test_kri841_ending_clip_ask.py",
       "paths": [
         "src/apps/api/app/agents/_skills.py",
         "src/apps/api/app/agents/skills/edit-story/",
@@ -1735,7 +1735,9 @@
         "src/apps/api/app/agents/narrated_clip_alignment.py",
         "src/apps/api/app/agents/slide_post_composer.py",
         "src/apps/api/tests/evals/test_phone_editorial_skills.py",
-        "src/apps/api/tests/fixtures/phone_editorial_skills/"
+        "src/apps/api/tests/fixtures/phone_editorial_skills/",
+        "src/apps/api/tests/services/test_kri520_clip_intent_copy.py",
+        "src/apps/api/tests/kria/test_kri841_ending_clip_ask.py"
       ]
     }
   ]
