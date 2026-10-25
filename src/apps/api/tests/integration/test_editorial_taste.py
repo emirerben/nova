@@ -600,6 +600,7 @@ async def test_wrong_facts_feedback_excludes_those_facts_from_the_next_research_
     assert (await client.put("/me/editorial-taste", json=profile_body(ids))).status_code == 200
 
     wrong = "The terminal was rebuilt after a fire."
+    wrong_reworded = "The terminal was rebuilt following a fire."
     right = "The ferry line opened in 1923."
     order = [wrong, right]
     searches, agent_facts, reviews = [], [], []
@@ -611,7 +612,16 @@ async def test_wrong_facts_feedback_excludes_those_facts_from_the_next_research_
                 dict(
                     id=f"fact-{i}",
                     text=text,
-                    sources=[dict(title="Archive", url="https://si.edu/shared-page")],
+                    # Real grounding returns a fresh redirect token on every search.
+                    sources=[
+                        dict(
+                            title="si.edu",
+                            url=(
+                                "https://vertexaisearch.cloud.google.com/"
+                                f"grounding-api-redirect/{uuid.uuid4().hex}"
+                            ),
+                        )
+                    ],
                 )
                 for i, text in enumerate(order)
             ],
@@ -689,7 +699,9 @@ async def test_wrong_facts_feedback_excludes_those_facts_from_the_next_research_
     )
     assert rated.status_code == 200, rated.text
 
-    order[:] = [right, wrong]  # Same facts, new positions: ids cannot be the identity.
+    # New positions, new wording, new redirect tokens: neither id, exact text nor URL
+    # can be the identity.
+    order[:] = [right, wrong_reworded]
     searches.clear(), reviews.clear()
     again = await client.post(f"{path}/stories", json=body)
     assert again.status_code == 200, again.text
@@ -706,7 +718,7 @@ async def test_wrong_facts_feedback_excludes_those_facts_from_the_next_research_
         f"{path}/stories", json={**body, "research_topic": "A different public topic"}
     )
     assert other_topic.status_code == 200, other_topic.text
-    assert agent_facts[-1] == [("fact-0", right), ("fact-1", wrong)]
+    assert agent_facts[-1] == [("fact-0", right), ("fact-1", wrong_reworded)]
 
     order[:] = ["The terminal was rebuilt following a fire."]  # reworded
     ideas_before = len(agent_facts)
@@ -738,7 +750,9 @@ async def test_rejected_idea_is_not_reoffered_and_relevant_judgments_outrank_rec
     prompt is only advisory; (3) the filter empties the result when every idea repeats,
     so the best one must stay and say why; (4) a pause or Forget must silence both
     retrieval and the filter; (5) a different creator's rejections never apply;
-    (6) the pattern line and judgments must fit the 8,000 character budget; (7) the
+    (6) judgments must fit the 8,000 character budget and no aggregate preference line
+    is inferred; (7) a refusal never filters another outing, and the kill switch restores
+    the two-newest behavior; (8) the
     stored receipt stays opaque ids and hashes. Lexical overlap cannot see paraphrase
     with new vocabulary: that miss is accepted and documented, not hidden.
     """
@@ -845,7 +859,7 @@ async def test_rejected_idea_is_not_reoffered_and_relevant_judgments_outrank_rec
     reviewed = [value["idea"] for value in payload["reviewed_ideas"]]
     assert "Harbor lighthouse at dusk" in reviewed and len(reviewed) == 2
     assert reviewed[0] == "Harbor lighthouse at dusk"
-    assert payload["feedback_pattern"] == "good_observation x3"
+    assert "feedback_pattern" not in payload  # never an unconfirmed standing preference
     assert len(context) <= 8000
 
     refused = idea(
@@ -876,13 +890,30 @@ async def test_rejected_idea_is_not_reoffered_and_relevant_judgments_outrank_rec
         assert offered["repeat_of_rejected"] == rejected_feedback
         receipt = json.dumps(offered["editorial_taste"])
         assert "ferry" not in receipt and "harbor" not in receipt.casefold()
+        assert await creator_editorial_taste.rejected_ideas(db, owner.id, uuid.uuid4()) == []
+        assert await creator_editorial_taste.rejected_ideas(db, owner.id, uuid.UUID(collection))
+        monkeypatch.setattr(settings, "creator_editorial_taste_feedback_signals_enabled", False)
+        assert (
+            await creator_editorial_taste.rejected_ideas(db, owner.id, uuid.UUID(collection)) == []
+        )
+        monkeypatch.setattr(settings, "creator_editorial_taste_feedback_signals_enabled", True)
+        monkeypatch.setattr(settings, "creator_editorial_taste_user_ids", ["*"])
+        assert settings.creator_editorial_taste_for(uuid.uuid4())
+        monkeypatch.setattr(settings, "creator_editorial_taste_enabled", False)
+        assert not settings.creator_editorial_taste_for(owner.id)
+        monkeypatch.setattr(settings, "creator_editorial_taste_enabled", True)
         await db.execute(
             update(User).where(User.id == owner.id).values(creator_memory_enabled=False)
         )
         await db.commit()
         assert await creator_editorial_taste.generation_context(db, owner.id, "ferry") == ""
-        assert await creator_editorial_taste.rejected_ideas(db, owner.id) == []
+        assert (
+            await creator_editorial_taste.rejected_ideas(db, owner.id, uuid.UUID(collection)) == []
+        )
     paused = await offer("paused pass", reworded, fresh)
     assert [v["title"] for v in paused] == ["Quiet ferry morning", "Customs queue"]
     async with AsyncSessionLocal() as db:
-        assert await creator_editorial_taste.rejected_ideas(db, uuid.uuid4()) == []
+        assert (
+            await creator_editorial_taste.rejected_ideas(db, uuid.uuid4(), uuid.UUID(collection))
+            == []
+        )

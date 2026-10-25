@@ -3845,7 +3845,10 @@ async def capabilities(
             and settings.media_collection_proposals_for(user.id)
         ),
         "media_collection_cache_only": settings.media_collection_cache_only,
-        "wrong_fact_feedback": bool(settings.creator_editorial_taste_for(user.id)),
+        "wrong_fact_feedback": bool(
+            settings.creator_editorial_taste_for(user.id)
+            and settings.creator_editorial_taste_feedback_signals_enabled
+        ),
         "phone_rendering": DeviceRenderCapabilities(
             enabled=phone_enabled,
             recipe_versions=[2] if phone_enabled else [],

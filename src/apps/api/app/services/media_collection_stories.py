@@ -255,7 +255,7 @@ async def generate_stories(db, owner, identifier, body):
     fresh = await candidate_evidence(db, owner, identifier, body.expected_revision, body.query)
     require_requested_coverage(fresh, body)
     by_id = {str(value.id): value for value in fresh.moments}
-    refused = await creator_editorial_taste.rejected_ideas(db, owner)
+    refused = await creator_editorial_taste.rejected_ideas(db, owner, identifier)
     valid = []
     seen = set()
     for index, idea in enumerate(ideas.stories):

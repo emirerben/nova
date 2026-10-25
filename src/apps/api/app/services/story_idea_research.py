@@ -13,7 +13,7 @@ from app.agents.camera_roll_stories import (
     CameraRollStoriesInput,
     CameraRollStoriesOutput,
 )
-from app.schemas.research import is_same_claim
+from app.schemas.research import same_claim
 from app.services.researched_text import (
     GroundedGeminiClient,
     GroundedResearchAgent,
@@ -24,9 +24,13 @@ from app.services.researched_text import (
 
 
 def without_rejected(evidence, rejected):
-    # Wording only: source URLs are shared across correct facts and often unstable
-    # redirect tokens, so banning them would drop good facts and brick the topic.
-    facts = [f for f in evidence.facts if not is_same_claim(f.text, rejected["fact_texts"])]
+    facts = []
+    for fact in evidence.facts:
+        if any(same_claim(fact.text, text) for text in rejected["fact_texts"]):
+            continue
+        sources = [s for s in fact.sources if s.url not in rejected["source_urls"]]
+        if sources:
+            facts.append(fact.model_copy(update={"sources": sources}))
     if not facts:
         raise ResearchUnavailable(
             "Every fact found was one you marked wrong. Try a more specific topic."

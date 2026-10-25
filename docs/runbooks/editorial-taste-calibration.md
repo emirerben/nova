@@ -70,12 +70,22 @@ retrieval or model approach. Do not interpret structural checks as creative wins
 In the account API, camera-roll generation ranks the creator's saved idea judgments
 by word overlap with the outing and footage descriptions (same lexical baseline, no new
 retrieval system). It sends up to two `would_post` and two other judgments, newest first
-on ties, plus a `feedback_pattern` line such as `too_generic x3` (reasons seen twice or
-more). After generation, `generate_stories` drops any idea whose angle or opening text
-is a near repeat of a `not_for_me` idea: identical text, or at least 0.8 word overlap
-(Jaccard over 3+ letter words, four or more distinct words). It never drops every idea:
-the best one stays and its `offered` event records `repeat_of_rejected` (a feedback id).
-Paraphrases with new vocabulary escape this check. Pause and Forget empty both paths.
+on ties. It never infers an aggregate preference from the pile (no "too_generic x3"
+line): each judgment stays contextual. After generation, `generate_stories` drops any idea
+whose angle or opening text is a near repeat of a `not_for_me` idea the creator refused
+**for the same collection (outing)**: identical text, or at least 0.8 word overlap
+(Jaccard over 3+ letter words, four or more distinct words). Refusals never filter another
+outing. It never drops every idea: the best one stays and its `offered` event records
+`repeat_of_rejected` (a feedback id). Paraphrases with new vocabulary escape this check.
+Pause and Forget empty both paths.
+
+Kill switch: `CREATOR_EDITORIAL_TASTE_FEEDBACK_SIGNALS_ENABLED` (default `true`). `false`
+turns off similarity ranking (back to the two newest judgments), the repeat filter and
+the wrong-facts exclusion, and hides the `wrong_fact_feedback` capability, while profile,
+rules and examples keep working. Apply with `fly secrets set ...=false` on api + worker
+and restart. Account rollout: `CREATOR_EDITORIAL_TASTE_ENABLED=true` plus
+`CREATOR_EDITORIAL_TASTE_USER_IDS` as a JSON array of account ids, or `["*"]` for every
+account.
 
 External TikTok research is a separate reference pool. Preserve post ids, original
 capture dates, raw metric provenance, missing captions, promotion markers and the
@@ -106,12 +116,13 @@ A judgment does not build a project or authorize rendering. Project notes remain
 contextual; they never silently become standing rules.
 
 The `wrong_facts` reason (researched ideas only) is actionable, not just context: the
-next research run for the same topic drops every fact that repeats the wording the creator
-saw on that idea (best-effort word-overlap match, so light rewording is caught; a
-claim reworded beyond recognition can still return), before `CameraRollStoriesAgent`
-sees the evidence. Source URLs are deliberately not excluded: correct facts share them
-and grounding redirect URLs are unstable. Fact ids restart at `fact-0` on each search,
-so identity is the stored wording, read from the feedback row's `proposal` (no column). The exclusion joins the
+next research run for the same topic drops every fact that says what a fact the creator
+saw on that idea said, and every stable source address it cited, before
+`CameraRollStoriesAgent` sees the evidence. Fact ids restart at `fact-0` on each search
+and Gemini rewords facts and issues fresh grounding-redirect URLs every time, so identity
+is word overlap (Jaccard >= 0.5 over 3+ letter words) with the stored wording, read from
+the feedback row's `proposal` (no column); redirect URLs are never stored as identity.
+A paraphrase with new vocabulary can still come back. The exclusion joins the
 proposal cache key, so the same request re-searches and re-reviews. Forget, pause and the
 feature gate empty it; if every fact found was rejected the request fails closed (503).
 Clients show the choice only when `/creation-threads/capabilities` returns
