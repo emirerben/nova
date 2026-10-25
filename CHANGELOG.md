@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.107.0] - 2026-10-25
+
+### Changed
+- fix(editor): reopen saved edits after their phone export publishes (KRI-935) (#1815) <!-- release-pr: 1815 -->
+
 ## [0.81.106.0] - 2026-10-25
 
 ### Changed
