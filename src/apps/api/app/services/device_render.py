@@ -75,6 +75,33 @@ def device_record(job: Any, variant_id: str) -> dict:
     return copy.deepcopy(record)
 
 
+def published_source_generation(job: Any, variant: dict) -> str | None:
+    """The saved generation the variant's current phone-published video was rendered from.
+
+    Publishing a device export replaces ``render_generation_id`` with the upload
+    attempt id, while a Save pinned its draft to the generation the phone was
+    asked to render. The published status keeps that pre-publish
+    ``base_generation`` (``_complete_device_export``), so the two name the same
+    saved document. None unless the variant's CURRENT generation is that
+    published attempt, so a later Save or cloud render never inherits it.
+    """
+    record = ((job.assembly_plan or {}).get(DEVICE_RENDER_FIELD) or {}).get(
+        str(variant.get("variant_id"))
+    )
+    if not isinstance(record, dict):
+        return None
+    status = record.get("status")
+    current = str(variant.get("render_generation_id") or "")
+    if (
+        not isinstance(status, dict)
+        or status.get("phase") != "published"
+        or not current
+        or str(record.get("published_attempt") or "") != current
+    ):
+        return None
+    return str(status.get("base_generation") or "") or None
+
+
 _DELIVERY_PHASES = frozenset({"awaiting_device", "syncing", "published", "needs_attention"})
 
 
