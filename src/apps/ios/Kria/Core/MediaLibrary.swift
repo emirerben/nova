@@ -32,6 +32,13 @@ struct SavedMediaAsset: Codable, Identifiable, Sendable {
         case .voiceover, .song: availableSource(role: "original") ?? source
         }
     }
+    /// A video's length, from the upload contract recorded when it was first uploaded; nil when unknown.
+    var durationSeconds: TimeInterval? {
+        guard kind == "video", case .object(let contract) = metadata["upload_contract"],
+              case .object(let proxy) = contract["proxy"], case .object(let original) = proxy["original"],
+              case .number(let seconds) = original["duration_s"], seconds > 0 else { return nil }
+        return seconds
+    }
     var fingerprint: AssetFingerprint? {
         if let hash = originalDeclaredSHA256, let bytes = originalByteCount { return AssetFingerprint(hex: hash, byteCount: bytes) }
         guard let original = sources.first(where: { $0.role == "original" }), let hash = original.uploadedSHA256 else { return nil }
@@ -86,7 +93,7 @@ extension KriaAPIClient {
 extension KriaAPI {
     var mediaLibraryOwner: String? { MediaLibraryOriginals.owner(accessToken: (try? tokenStore.read())?.accessToken) }
     func savedMedia(query: String, kind: String?, cursor: String?) async throws -> SavedMediaPage {
-        var items = [URLQueryItem(name: "limit", value: "30")]
+        var items = [URLQueryItem(name: "limit", value: "60")]
         if !query.isEmpty { items.append(URLQueryItem(name: "query", value: String(query.prefix(200)))) }
         if let kind { items.append(URLQueryItem(name: "kind", value: kind)) }
         if let cursor { items.append(URLQueryItem(name: "cursor", value: cursor)) }
