@@ -122,7 +122,7 @@ def test_brief_prompt_requires_explicit_versioned_target_for_changes() -> None:
         _input().model_copy(update={"brief_enabled": True})
     )
 
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-25-v93"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-25-v94"
     assert '`operation`: "change"' in prompt
     assert "target_requirement_id" in prompt
     assert "expected_version" in prompt
@@ -588,6 +588,8 @@ def test_reaction_beats_prompt_section_omitted_when_capability_unavailable() -> 
         main_creator_module.load_skill("edit-story")
         + "\n\n"
         + main_creator_module.load_skill("grounded-hook")
+        + "\n\n"
+        + main_creator_module.load_skill("meaningful-moment")
         + "\n\n"
     )
     assert actual == skills + expected

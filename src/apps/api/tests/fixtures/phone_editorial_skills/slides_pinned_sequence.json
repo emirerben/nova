@@ -1,0 +1,42 @@
+{
+  "agent": "nova.plan.slide_post_composer",
+  "prompt_version": "synthetic-editorial-v1",
+  "input": {
+    "notes": "Keep this exact order: arrival, cafe, sunset. Use arrival as the cover. Include every photo and video. Leave the caption empty.",
+    "media": [
+      {
+        "id": "arrival",
+        "kind": "image",
+        "description": "Train arrival."
+      },
+      {
+        "id": "cafe",
+        "kind": "video",
+        "description": "Coffee pouring."
+      },
+      {
+        "id": "sunset",
+        "kind": "image",
+        "description": "Sunset by the sea."
+      }
+    ]
+  },
+  "raw_text": "{\"order\": [\"arrival\", \"cafe\", \"sunset\"], \"cover_id\": \"arrival\", \"caption\": \"\", \"alt_text\": {}}",
+  "meta": {
+    "source": "hand_authored_synthetic_development",
+    "case": "A stronger cover or ending never overrides explicit order and cover.",
+    "skills": [
+      "edit-story"
+    ],
+    "expected": {
+      "order": [
+        "arrival",
+        "cafe",
+        "sunset"
+      ],
+      "cover_id": "arrival",
+      "caption": ""
+    },
+    "wrong_raw_text": "{\"order\": [\"sunset\", \"cafe\", \"arrival\"], \"cover_id\": \"sunset\", \"caption\": \"\", \"alt_text\": {}}"
+  }
+}

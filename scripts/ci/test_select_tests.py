@@ -956,7 +956,7 @@ class GitDiffTests(unittest.TestCase):
         head = self.commit()
         self.assertEqual(
             ci.journey_details("pull_request", self.base, head)[2],
-            "kri-577-reliability-gates,kri-590-voiceover-cues",
+            "kri-577-reliability-gates,kri-590-voiceover-cues,kri-215-phone-editorial-skills",
         )
         self.assertFalse(ci.journey_needs_native("pull_request", self.base, head))
         self.base = head

@@ -83,6 +83,7 @@ import pytest
 
 from app.agents._runtime import ModelInvocation
 from app.agents._schemas.creator_agent import CreativeStrategy
+from app.agents._skills import load_skill
 from app.agents.clip_metadata import ClipMetadataAgent, ClipMetadataInput
 from app.agents.clip_question import ClipQuestionAgent
 from app.agents.clip_request_resolver import ClipRequestResolverAgent
@@ -430,7 +431,9 @@ def test_a_resolved_pin_survives_an_exclude_that_matches_it() -> None:
 # -- the stand-in resolver, and one real planning turn through the real code -------------------
 
 _PLANNER_PROMPT = load_prompt("clip_intent_planner")[:60]
-_RESOLVER_PROMPT = load_prompt("clip_request_resolver")[:60]
+_RESOLVER_PROMPT = (
+    load_skill("meaningful-moment") + "\n\n" + load_prompt("clip_request_resolver")[:60]
+)
 
 Record = dict[str, Any]
 

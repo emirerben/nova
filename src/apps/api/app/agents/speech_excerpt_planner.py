@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
+from app.agents._skills import load_skill
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.speech_montage import (
     MAX_SECTIONS,
@@ -62,7 +63,7 @@ class SpeechExcerptPlannerAgent(Agent[SpeechExcerptPlannerInput, SpeechMontagePl
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.speech_excerpt_planner",
         prompt_id="speech_excerpt_planner",
-        prompt_version="2026-10-06.1",
+        prompt_version="2026-10-25-editorial-skills-v2",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -97,7 +98,7 @@ class SpeechExcerptPlannerAgent(Agent[SpeechExcerptPlannerInput, SpeechMontagePl
         }
 
     def render_prompt(self, input: SpeechExcerptPlannerInput) -> str:  # noqa: A002
-        return load_prompt(
+        prompt = load_prompt(
             "speech_excerpt_planner",
             creator_request=_defang(input.creator_request),
             target_duration_s=(
@@ -112,6 +113,8 @@ class SpeechExcerptPlannerAgent(Agent[SpeechExcerptPlannerInput, SpeechMontagePl
             ),
             max_sections=str(MAX_SECTIONS),
         )
+
+        return load_skill("meaningful-moment") + "\n\n" + load_skill("edit-story") + "\n\n" + prompt
 
     def parse(self, raw_text: str, input: SpeechExcerptPlannerInput) -> SpeechMontagePlan:  # noqa: A002
         try:

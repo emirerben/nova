@@ -1,0 +1,73 @@
+{
+  "agent": "nova.compose.narrated_clip_alignment",
+  "prompt_version": "synthetic-editorial-v1",
+  "input": {
+    "words": [
+      {
+        "word_id": "w000000",
+        "text": "First",
+        "start_s": 0,
+        "end_s": 0.4
+      },
+      {
+        "word_id": "w000001",
+        "text": "mix",
+        "start_s": 0.4,
+        "end_s": 1
+      },
+      {
+        "word_id": "w000002",
+        "text": "then",
+        "start_s": 4,
+        "end_s": 4.4
+      },
+      {
+        "word_id": "w000003",
+        "text": "bake",
+        "start_s": 4.4,
+        "end_s": 5
+      },
+      {
+        "word_id": "w000004",
+        "text": "serve",
+        "start_s": 8,
+        "end_s": 9
+      }
+    ],
+    "clips": [
+      {
+        "clip_id": "oven",
+        "description": "Bread enters oven."
+      },
+      {
+        "clip_id": "bowl",
+        "description": "Hands mix bread dough."
+      }
+    ],
+    "creator_request": "Keep the listed clip order. Start the oven at the first word and the bowl at bake.",
+    "order_locked": true,
+    "language": "en"
+  },
+  "raw_text": "{\"placements\": [{\"clip_id\": \"oven\", \"start_word_id\": \"w000000\"}, {\"clip_id\": \"bowl\", \"start_word_id\": \"w000003\"}]}",
+  "meta": {
+    "source": "hand_authored_synthetic_development",
+    "case": "Keep locked source order and the explicit word cue, even when another story order seems natural.",
+    "skills": [
+      "meaningful-moment",
+      "edit-story"
+    ],
+    "expected": {
+      "placements": [
+        {
+          "clip_id": "oven",
+          "start_word_id": "w000000"
+        },
+        {
+          "clip_id": "bowl",
+          "start_word_id": "w000003"
+        }
+      ]
+    },
+    "wrong_raw_text": "{\"placements\": [{\"clip_id\": \"oven\", \"start_word_id\": \"w000000\"}, {\"clip_id\": \"bowl\", \"start_word_id\": \"w000002\"}]}"
+  }
+}
