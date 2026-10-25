@@ -1318,7 +1318,9 @@ def _summary(op: dict[str, Any]) -> str:
     return name[:1].upper() + name[1:]
 
 
-def fresh_editor_head_payload(head: Any, variant: dict[str, Any]) -> dict[str, Any]:
+def fresh_editor_head_payload(
+    head: Any, variant: dict[str, Any], job: Any = None
+) -> dict[str, Any]:
     """The head draft's editor payload iff it was built on the variant's CURRENT render.
 
     The session pointer and ``CreatorEditDraft.base_generation_id`` go stale after an
@@ -1326,6 +1328,7 @@ def fresh_editor_head_payload(head: Any, variant: dict[str, Any]) -> dict[str, A
     payload's own ``base_generation`` (stamped from ``variant_render_baseline``) can:
     a mismatch means the draft predates a saved render and must not be overlaid on it.
     Returns ``{}`` (build on the saved variant) when absent, non-editor, or stale.
+    With ``job``, a phone-published export of the payload's generation is current too.
     """
     snapshot = getattr(head, "snapshot_json", None) if head is not None else None
     if not isinstance(snapshot, dict) or snapshot.get("kind") != "editor":
@@ -1333,8 +1336,12 @@ def fresh_editor_head_payload(head: Any, variant: dict[str, Any]) -> dict[str, A
     payload = snapshot.get("editor_payload")
     if not isinstance(payload, dict) or not payload:
         return {}
-    if str(payload.get("base_generation") or "") != variant_render_baseline(variant):
-        return {}
+    base = str(payload.get("base_generation") or "")
+    if base != variant_render_baseline(variant):
+        from app.services.device_render import published_source_generation  # noqa: PLC0415
+
+        if job is None or not base or base != published_source_generation(job, variant):
+            return {}
     return payload
 
 
@@ -1524,7 +1531,7 @@ def resolve_editor_base(
             return EditorBase(project_editor_draft(variant, prior, job), prior, "client_state")
         except Exception as exc:  # noqa: BLE001 - client state is untrusted input
             reason = f"client_state_unusable:{type(exc).__name__}"
-    fresh = fresh_editor_head_payload(head, variant)
+    fresh = fresh_editor_head_payload(head, variant, job)
     if fresh:
         return EditorBase(project_editor_draft(variant, fresh, job), fresh, "head", reason)
     return EditorBase(project_editor_draft(variant, {}, job), {}, "variant", reason)

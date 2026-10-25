@@ -38,6 +38,10 @@ from app.schemas.edit_proposal import (
     turkish_narrowing_cue,
     turkish_stated_media_counts,
 )
+from app.services.named_moments import (
+    MOMENT_ORDER_ANSWER_MESSAGE,
+    MOMENT_ORDER_ANSWER_MESSAGE_TR,
+)
 from app.services.song_order import (
     CLIP_ANSWER_MESSAGE,
     CLIP_ANSWER_MESSAGE_TR,
@@ -62,14 +66,16 @@ _ANSWERED = {"clip_selection": {"question_id": "q", "answers": []}}
 _SKIPPED = {"clip_selection": {"question_id": "q", "skipped": True}}
 _SONG_ORDER = {"song_order": {"question_id": "q", "ordered_media_ids": ["a"]}}
 _SONG_RANGE = {"song_range": {"question_id": "q"}}
+_MOMENT_ORDER = {"moment_order": {"question_id": "q", "answers": []}}  # KRI-723
 
 _STAND_INS = [
     (_ANSWERED, CLIP_ANSWER_MESSAGE, CLIP_ANSWER_MESSAGE_TR),
     (_SKIPPED, CLIP_SKIP_MESSAGE, CLIP_SKIP_MESSAGE_TR),
     (_SONG_ORDER, SONG_ORDER_ANSWER_MESSAGE, SONG_ORDER_ANSWER_MESSAGE_TR),
     (_SONG_RANGE, SONG_RANGE_ANSWER_MESSAGE, SONG_RANGE_ANSWER_MESSAGE_TR),
+    (_MOMENT_ORDER, MOMENT_ORDER_ANSWER_MESSAGE, MOMENT_ORDER_ANSWER_MESSAGE_TR),
 ]
-_IDS = ["clip-answer", "clip-skip", "song-order", "song-range"]
+_IDS = ["clip-answer", "clip-skip", "song-order", "song-range", "moment-order"]
 
 
 @pytest.mark.parametrize(("payload", "english", "turkish"), _STAND_INS, ids=_IDS)

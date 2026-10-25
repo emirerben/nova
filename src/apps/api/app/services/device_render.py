@@ -75,6 +75,33 @@ def device_record(job: Any, variant_id: str) -> dict:
     return copy.deepcopy(record)
 
 
+def published_source_generation(job: Any, variant: dict) -> str | None:
+    """The saved generation the variant's current phone-published video was rendered from.
+
+    Publishing a device export replaces ``render_generation_id`` with the upload
+    attempt id, while a Save pinned its draft to the generation the phone was
+    asked to render. The published status keeps that pre-publish
+    ``base_generation`` (``_complete_device_export``), so the two name the same
+    saved document. None unless the variant's CURRENT generation is that
+    published attempt, so a later Save or cloud render never inherits it.
+    """
+    record = ((job.assembly_plan or {}).get(DEVICE_RENDER_FIELD) or {}).get(
+        str(variant.get("variant_id"))
+    )
+    if not isinstance(record, dict):
+        return None
+    status = record.get("status")
+    current = str(variant.get("render_generation_id") or "")
+    if (
+        not isinstance(status, dict)
+        or status.get("phase") != "published"
+        or not current
+        or str(record.get("published_attempt") or "") != current
+    ):
+        return None
+    return str(status.get("base_generation") or "") or None
+
+
 _DELIVERY_PHASES = frozenset({"awaiting_device", "syncing", "published", "needs_attention"})
 
 
@@ -386,6 +413,43 @@ def _verify_recipe_source_identity(
     return {media_id: binding.original.has_audio for media_id, binding in bindings.items()}
 
 
+def _verify_processed_audio_identity(
+    job: Any, request: DeviceRenderRequest, base_generation: str
+) -> None:
+    """Refuse a forged/stale derivative before it becomes a device receipt."""
+    from app.kria.render_assets import ProcessedAudioRenderAsset  # noqa: PLC0415
+    from app.pipeline.phone_processed_audio import (  # noqa: PLC0415
+        processed_audio_asset,
+        processed_audio_receipt_for,
+    )
+
+    manifest = request.recipe.asset_manifest
+    if not any(isinstance(asset, ProcessedAudioRenderAsset) for asset in manifest.assets):
+        return
+    bindings = _approved_source_bindings(job.assembly_plan or {}, request.identity.variant_id)
+    for asset in manifest.assets:
+        if not isinstance(asset, ProcessedAudioRenderAsset):
+            continue
+        receipt = processed_audio_receipt_for(
+            job.assembly_plan or {},
+            variant_id=request.identity.variant_id,
+            source_media_id=asset.source_media_id,
+        )
+        source = bindings.get(asset.source_media_id)
+        if (
+            receipt is None
+            or asset != processed_audio_asset(receipt, asset_id=asset.id)
+            or asset.job_id != str(job.id)
+            or asset.variant_id != request.identity.variant_id
+            or asset.render_generation != base_generation
+            or source is None
+            or source.generation != asset.source_generation
+        ):
+            raise CreatorRenderContractError(
+                "This edit's processed audio no longer matches its approved source files."
+            )
+
+
 def _verify_contract_pin(
     job: Any,
     request: DeviceRenderRequest,
@@ -396,6 +460,11 @@ def _verify_contract_pin(
     """Validate a new v2 request against its immutable creator requirements."""
     assembly = job.assembly_plan or {}
     _require_marked_root_authority(job)
+    # Asset authorization is independent of creator-contract rollout. A legacy
+    # job must not be able to pin a client-forged processed-audio identity and
+    # merely discover the refusal later while downloading it.
+    if isinstance(request.recipe, EditRecipeV2):
+        _verify_processed_audio_identity(job, request, base_generation)
     contract = _contract_for_variant(assembly, request.identity.variant_id)
     if contract is None:
         return None

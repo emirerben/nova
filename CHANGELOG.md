@@ -2,6 +2,116 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.107.0] - 2026-10-25
+
+### Changed
+- fix(editor): reopen saved edits after their phone export publishes (KRI-935) (#1815) <!-- release-pr: 1815 -->
+
+## [0.81.106.0] - 2026-10-25
+
+### Changed
+- fix(kria): read KRI-881's pinned research before it deploys (KRI-881 reader) (#1814) <!-- release-pr: 1814 -->
+
+## [0.81.105.0] - 2026-10-24
+
+### Changed
+- feat(kria): ask the creator to mark the plate before approval, iOS mark card (KRI-901) (#1811) <!-- release-pr: 1811 -->
+
+## [0.81.104.0] - 2026-10-24
+
+### Changed
+- fix(kria): ask about a word Kria couldn't make out instead of guessing it in the captions (KRI-849) (#1796) <!-- release-pr: 1796 -->
+
+## [0.81.103.0] - 2026-10-24
+
+### Changed
+- feat(kria): cloud adapters honour the prepared execution snapshot (KRI-725) (#1812) <!-- release-pr: 1812 -->
+
+## [0.81.102.0] - 2026-10-24
+
+### Changed
+- feat(talking): ask which spoken occurrence a Talking ask means and render exactly that one (KRI-724) (#1810) <!-- release-pr: 1810 -->
+
+## [0.81.101.0] - 2026-10-24
+
+### Changed
+- feat(montage): ask the creator to point at named moments before approval (KRI-723) (#1808) <!-- release-pr: 1808 -->
+
+## [0.81.100.0] - 2026-10-24
+
+### Changed
+- fix(kria): a creator's length ceiling is met by a shorter draft (KRI-847) (#1795) <!-- release-pr: 1795 -->
+
+## [0.81.99.0] - 2026-10-24
+
+### Changed
+- feat(narrated): cut a named line or retake out of the voiceover, phone and cloud (KRI-889) (#1806) <!-- release-pr: 1806 -->
+
+## [0.81.98.0] - 2026-10-24
+
+### Changed
+- fix(kria): a song suggestion is honest about the genre asked for (KRI-848) (#1789) <!-- release-pr: 1789 -->
+
+## [0.81.97.0] - 2026-10-24
+
+### Changed
+- fix(kria): ask which line of the take to open / end on when a quoted line isn't said (KRI-844) (#1787) <!-- release-pr: 1787 -->
+
+## [0.81.96.0] - 2026-10-24
+
+### Changed
+- fix(kria): play one clip's own sound under, or after, a phone voiceover (KRI-842) (#1786) <!-- release-pr: 1786 -->
+
+## [0.81.95.0] - 2026-10-24
+
+### Changed
+- fix(freeze): plan a freeze hold only for an app build that plays it (KRI-898) (#1809) <!-- release-pr: 1809 -->
+
+## [0.81.94.0] - 2026-10-24
+
+### Changed
+- fix(freeze): position words are positions and the frozen frame is never guessed (KRI-900) (#1805) <!-- release-pr: 1805 -->
+
+## [0.81.93.0] - 2026-10-24
+
+### Changed
+- fix(kria): end a Talking edit on the requested video with its own sound, never muted mid-talk (KRI-841) (#1784) <!-- release-pr: 1784 -->
+
+## [0.81.92.0] - 2026-10-24
+
+### Fixed
+- fix(captions): a requested caption language is translated or honestly refused, never just stamped (KRI-838) (#1783) <!-- release-pr: 1783 -->
+
+## [0.81.91.0] - 2026-10-24
+
+### Changed
+- fix(speech-cleanup): transcribe a mixed-language Talking take per stretch, not in one language (KRI-843) (#1782) <!-- release-pr: 1782 -->
+
+## [0.81.90.0] - 2026-10-24
+
+### Fixed
+- fix(kria): clip records name props, actions and blur so look-alike skips find the right clip (KRI-845) (#1781) <!-- release-pr: 1781 -->
+
+## [0.81.89.0] - 2026-10-24
+
+### Changed
+- fix(kria): a photo asked full screen at a spoken word fills the screen on phone Talking, never a corner card called "Done" (KRI-840) (#1780) <!-- release-pr: 1780 -->
+
+## [0.81.88.0] - 2026-10-24
+
+### Changed
+- docs(voiceover): record verified text and selected-audio integration (#1759) <!-- release-pr: 1759 -->
+
+## [0.81.87.0] - 2026-10-24
+
+### Changed
+- fix(speech): remove exact spoken occurrences and gate engine-noise reduction (#1760) <!-- release-pr: 1760 -->
+
+## [0.81.86.0] - 2026-10-24
+
+### Fixed
+- fix(research): place researched facts on beat-cut montages (#1803) <!-- release-pr: 1803 -->
+
 ## [0.81.85.0] - 2026-10-24
 
 ### Changed

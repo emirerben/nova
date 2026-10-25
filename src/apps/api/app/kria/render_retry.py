@@ -343,7 +343,7 @@ async def prepare_render_retry(
             # Historical snapshots without the requirement binding stay legacy.
             if requires_readiness(readiness_document, creator_id):
                 readiness_report = await assess_saved_document(
-                    db, rows[PlanItem], readiness_document
+                    db, rows[PlanItem], readiness_document, creator_id=creator_id
                 )
         except ApprovalReadinessError as exc:
             raise _failure(NOT_READY, str(exc)) from exc
@@ -587,7 +587,13 @@ def _next_prepared_attempt(db, approval, draft, item, job, variant_id):  # noqa:
         draft=draft,
         document=KriaDraftDocument.model_validate(draft.snapshot_json or {}),
         thread_id=approval.thread_id,
-        sources=prepared.load_source_identities_sync(db, item, approval.creator_id),
+        sources=prepared.load_source_identities_sync(
+            db,
+            item,
+            approval.creator_id,
+            slides=prepared.SLIDE_POST_REF in snapshot.compiled_refs,
+        ),
+        item=item,
     )
     record = {
         **stamp,

@@ -115,6 +115,10 @@ class Settings(BaseSettings):
     # `fly secrets set PHONE_SUBTITLED_RENDERING_ENABLED=false --app nova-video`
     # + `fly machine restart <id>` (api + worker).
     phone_subtitled_rendering_enabled: bool = True
+    # Requires processedAudio on a verified protocol-18 client cohort.
+    phone_engine_noise_reduction_enabled: bool = False
+    phone_engine_noise_model_path: str = ""
+    phone_engine_noise_model_sha256: str = ""
     # KRI-174 Phase 1: a server-owned `_phone_subtitled_lanes_v1` request on
     # the job's assembly_plan (overlay sticker/photo cards pinned from the
     # Visuals pool, catalog sound effects on an `sfx` track, a muted ending
@@ -397,6 +401,10 @@ class Settings(BaseSettings):
     # Saves. Rollback: `fly secrets set PHONE_SUBTITLED_SPOKEN_TEXT_ENABLED=false
     # --app nova-video` + `fly machine restart <id>` (api + worker).
     phone_subtitled_spoken_text_enabled: bool = True
+    # New Voiceover authoring; existing saved recipes remain playable when off.
+    phone_voiceover_spoken_text_enabled: bool = False
+    phone_voiceover_source_audio_enabled: bool = False
+    phone_voiceover_source_audio_min_client_protocol: int = 17
     # KRI-465 (editable title on phone Voiceover edits): the opening title the
     # status route shows (`narrated_title_text_elements`) opens as an ordinary
     # editable text element: the capability map opens `text_elements` and a
@@ -724,11 +732,13 @@ class Settings(BaseSettings):
     # KRI-828: a creator's freeze frame on a phone montage moment (a main-track
     # `hold_duration` longer than one frame, capability `freezeFrame`). Planned only when
     # `freezeFrame` is in PHONE_RENDER_VERIFIED_FEATURES (device parity, set after a
-    # physical-device preview + export check) and, inside an HTTP request, the app build
-    # declares `X-Kria-Client-Protocol` >= this. Without it the plan carries no hold and the
-    # receipt keeps KRI-777's honest "Couldn't". The worker plans with no app build in hand,
-    # so an older build that fetches or edits a held recipe gets 426 client_update_required
-    # (`freeze_frame`) from device_render / phone_editor instead of an undecodable recipe.
+    # physical-device preview + export check) and the app build the creator acted from
+    # declared `X-Kria-Client-Protocol` >= this (KRI-898: stamped on the message at submit
+    # for the draft, and on the Job as `creator_client_protocol` at approval for the render;
+    # no stamp = no hold). Without it the plan carries no hold, the receipt keeps KRI-777's
+    # honest "Couldn't" and the rest of the video renders. A held recipe later opened on an
+    # older build still gets 426 client_update_required (`freeze_frame`) from device_render
+    # / phone_editor instead of an undecodable recipe.
     freeze_frame_min_client_protocol: int = 16
     # KRI-742: voice dictation in the chat composers. `POST /dictation/transcribe` (Whisper) and
     # the `voice_dictation` capability the iOS mic button reads. Default TRUE; this is the kill
@@ -831,12 +841,35 @@ class Settings(BaseSettings):
     # Default TRUE; kill switch = false + restart (the field is dropped, no question is
     # asked, the montage behaves exactly as before).
     kria_choice_questions_enabled: bool = True
+    # KRI-724: on a one-take phone Talking draft, ask the creator which time a spoken word /
+    # line is meant ("the first time SHE says Merope"; a line to cut said twice) before
+    # approval, and render exactly that occurrence. Default false; on = Fly secret
+    # SPEECH_OCCURRENCE_QUESTION_ENABLED=true (api + worker) + restart. Off: the question is
+    # never asked and renders read the first match exactly as before (answers only exist
+    # where it was asked). Rollout + order: docs/pipelines/creator-render-contract.md.
+    speech_occurrence_question_enabled: bool = False
     # KRI-802: an app build declaring `X-Kria-Client-Protocol` >= this answers a reply's
     # choice card and clip picker on one turn, so the planner asks a title-wording question
     # and a clip picker in the same reply. Lower builds and the web keep one question per
     # turn. Kill switch: `fly secrets set KRIA_QUESTION_BATCH_MIN_CLIENT_PROTOCOL=999`
     # (api + worker) + restart; messages sent after it get one question per turn again.
     kria_question_batch_min_client_protocol: int = 14
+    # KRI-901: an app build declaring `X-Kria-Client-Protocol` >= this shows the "Mark the
+    # plate" card, so a phone Talking edit whose brief keeps text off an unmarked object asks
+    # for the mark before approval. Lower builds and the web are never asked (approval as
+    # before; the receipt says `no_selection`). Kill switch: `fly secrets set
+    # PROTECTED_REGION_MARK_MIN_CLIENT_PROTOCOL=999` (api + worker) + restart.
+    protected_region_mark_min_client_protocol: int = 19
+    # KRI-723: an app build declaring `X-Kria-Client-Protocol` >= this answers a
+    # `moment_order_question` ("put your moments in order and show me where each one is"),
+    # asked before approval when the clip record cannot place a moment the creator named.
+    # Lower builds are never asked and get no pins: today's v1 windows, byte-identical, with
+    # an honest "couldn't find it" receipt. No model call either way. DARK (999) until the iOS
+    # moment card ships: set it to the protocol that build declares (never a number another
+    # feature already took). 999 turns off the question AND every v2 pin. Deploy order: the
+    # worker must read v2 envelopes before any api writes them (a worker machine left on an
+    # older image refuses a v2 envelope: `approved_length_plan_invalid`).
+    moment_order_min_client_protocol: int = 999
     # KRI-815: with footage and no voiceover, Kria chat writes a footage-grounded voiceover
     # script (`voiceover_script` on the reply) instead of a narrated draft that can only fail at
     # approval. Independent of TRANSCRIPT_HELPER_ENABLED. Kill switch: false + restart (api +
@@ -1018,6 +1051,14 @@ class Settings(BaseSettings):
     # 30 s so whisper's detected language is still cross-checked before the cut
     # plan is built. Best-effort; False skips the call (item transcript only).
     speech_cleanup_gemini_reference_enabled: bool = True
+    # KRI-843: a take whose Gemini reference speaks two or more languages (Don Julio T1:
+    # an English question, a Spanish answer, Turkish chatter) has no single right whisper
+    # language. The preflight worker transcribes it once more per extra language (at most 3
+    # extra whisper-1 passes, mixed takes only, ~$0.006/min each) and takes, stretch by stretch,
+    # the pass the reference confirms; the first pass stands everywhere else. false = the EN/TR
+    # cross-check alone (re-run the whole take in one language), byte-identical.
+    # Apply: fly secret + worker restart.
+    speech_cleanup_mixed_language_enabled: bool = True
 
     # yt-dlp cookies for admin URL imports. Use YTDLP_COOKIES_B64 in hosted
     # environments (secret-safe, decoded into a short-lived 0600 temp file) or
@@ -1170,6 +1211,13 @@ class Settings(BaseSettings):
     # KRI-456 rollout default; request-binding writers are gated separately.
     narrated_clip_alignment_enabled: bool = True
 
+    # KRI-889: cut the lines a creator named ("cut the line 'with bread, no'") out of a
+    # narrated edit's recorded voiceover, phone and cloud, and promise it on the draft.
+    # False => byte-identical to before: the voiceover plays whole and the receipt says
+    # the line can't be cut yet. Read by the worker AND brief_checks, so promise and
+    # render agree. Apply: fly secret + restart api + worker.
+    narrated_named_cuts_enabled: bool = True
+
     # Kill switch for the terminal-job stuck-variant watchdog
     # (`reconcile_stuck_variants`). This sweep WRITES user-visible state — it
     # rewrites assembly_plan and can move a job to variants_ready_partial — and
@@ -1292,6 +1340,17 @@ class Settings(BaseSettings):
     # fixed it 2/2). ~$0.005/render. Set to gpt-4o-mini to trade accuracy for cost.
     subtitled_caption_correction_enabled: bool = True
     caption_correction_model: str = "gpt-4o"
+
+    # Caption translation (KRI-838): a whisper language hint does not reliably translate (a
+    # Turkish hint on English speech wrote the English again in local tests), so when the
+    # creator asks for captions in another language and the hinted text is not in it, one
+    # structured model call translates the caption lines (app/pipeline/caption_translate.py).
+    # Fail-open: any failure keeps the spoken-language words and the variant is stamped
+    # with the language the text really is. Kill switch: set False and restart api +
+    # worker (the pre-approval promise reads the same flag). Empty model = the caption
+    # correction model above. ~$0.005/render, only on renders that ask for a language.
+    caption_translation_enabled: bool = True
+    caption_translation_model: str = ""
 
     # Caption punctuation restoration: whisper-1's word-level timestamps strip
     # punctuation/capitalization (it lives only in the full-text transcript).

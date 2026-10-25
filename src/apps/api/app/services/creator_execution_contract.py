@@ -12,6 +12,9 @@ from typing import Any
 from app.agents._schemas.creator_agent import canonical_context_hash, creator_strategies_equal
 from app.services.guided_speech_cleanup import (
     derivative_path_ok,
+    named_cut_path_ok,
+    named_cut_provenance_ok,
+    narration_named_cuts,
     narration_speech_cleanup,
     source_identity,
 )
@@ -41,15 +44,27 @@ def narration_matches_item(narration: object, item: Any, *, owner_id: object = N
         return False
     try:
         provenance = narration_speech_cleanup(narration)
+        named = narration_named_cuts(narration)
     except ValueError:
         return False
-    if provenance is not None:
-        if owner_id is None or not derivative_path_ok(
-            narration.get("gcs_path"),
-            owner_id=owner_id,
-            item_id=getattr(item, "id", None),
-            analysis_id=provenance.analysis_id,
-        ):
+    if provenance is not None or named is not None:
+        if owner_id is None:
+            return False
+        # KRI-889: a voiceover cut only around named lines lives under the item's
+        # named-cuts prefix; one also cleaned is an ordinary cleanup derivative.
+        path_ok = (
+            derivative_path_ok(
+                narration.get("gcs_path"),
+                owner_id=owner_id,
+                item_id=getattr(item, "id", None),
+                analysis_id=provenance.analysis_id,
+            )
+            if provenance is not None
+            else named_cut_path_ok(
+                narration.get("gcs_path"), owner_id=owner_id, item_id=getattr(item, "id", None)
+            )
+        )
+        if not path_ok or not named_cut_provenance_ok(narration):
             return False
         try:
             duration = float(narration.get("duration_s", 0))

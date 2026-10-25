@@ -112,6 +112,7 @@ def _draft_checked(brief: CreativeBrief) -> set[str]:
             strategy={"edit_format": "montage", "audio_strategy": "original_audio"},
             item_edit_format="montage",
             clip_paths=["users/u/creation-threads/t/analysis-proxy-ios-11CF148F.mp4"],
+            client_protocol=16,  # KRI-898: sent from a build that plays a freeze
         )
     }
 

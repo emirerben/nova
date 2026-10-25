@@ -942,6 +942,15 @@ JOB_FAILURE_MESSAGES: dict[str, str] = {
         "Something broke while planning this edit, so your video wasn't made. "
         "Your edit and footage are saved. Try again, or ask for a change."
     ),
+    # KRI-725: the cloud worker refused a prepared edit before rendering it.
+    "prepared_execution_stale": (
+        "Something you approved changed before this edit could render, so I didn't "
+        "make it. Ask Kria to prepare the edit again."
+    ),
+    "prepared_execution_unsupported": (
+        "This edit was prepared by a newer version of Kria than the one rendering it. "
+        "Ask Kria to prepare it again."
+    ),
     "originals_not_uploaded": (
         "Your original footage wasn't uploaded, so this can't render on your "
         "iPhone. Reattach your clips and try again."
@@ -1725,6 +1734,31 @@ def _v2_visuals_refusal(
     return None
 
 
+def _story_matches_prepared_execution(session, job, story) -> bool:  # noqa: ANN001
+    """KRI-725: a stamped guided Job renders only the story its approval compiled.
+
+    ``item.edit_proposal`` can be replaced between approve and dispatch; checking the
+    recompiled plan against that proposal's own digest would then check it against
+    itself. An unstamped Job, or a snapshot without a compiled story, is legacy.
+    """
+    from app.kria import prepared_execution as prepared_execution_module  # noqa: PLC0415
+    from app.kria.approval_readiness import digest  # noqa: PLC0415
+    from app.models import CreatorPreparedExecution  # noqa: PLC0415
+
+    stamp = prepared_execution_module.read_stamp(job.assembly_plan)
+    if stamp is None:
+        return True
+    row = session.get(CreatorPreparedExecution, uuid.UUID(str(stamp["id"])))
+    try:
+        snapshot = prepared_execution_module.parse(row) if row is not None else None
+    except prepared_execution_module.PreparedExecutionError:
+        return False
+    if snapshot is None:
+        return False
+    approved = snapshot.compiled_refs.get("prepared_collection_story")
+    return approved is None or approved == digest(story)
+
+
 def _dispatch_item_render(
     session,  # noqa: ANN001
     item: PlanItem,
@@ -1741,6 +1775,7 @@ def _dispatch_item_render(
     creator_brief_binding: dict | None = None,
     creator_guided_attempt_id: str | None = None,
     creator_render_shape: dict | None = None,
+    creator_client_protocol: int | None = None,
     speech_cleanup_contract: str | None = None,
     speech_cleanup_analysis_id: str | None = None,
     speech_cleanup_choice: str | None = None,
@@ -2629,6 +2664,14 @@ def _dispatch_item_render(
                     else "background",
                 },
             }
+        if creator_client_protocol is not None:
+            # KRI-898: the app build that approved. The phone montage plans a freeze hold
+            # only for a build that plays it (`freeze_frame_planned_for`); repairs and
+            # re-dispatches reuse these candidates, so they keep it. Absent = unstamped.
+            job.all_candidates = {
+                **(job.all_candidates or {}),
+                "creator_client_protocol": int(creator_client_protocol),
+            }
         # Pin one immutable identity for this Creator-confirmed render before
         # the worker is queued.  Native variants historically received no
         # generation token until a later editor rerender, which made a ready
@@ -2654,6 +2697,18 @@ def _dispatch_item_render(
                     "generation_id": job.assembly_plan["creator_generation_id"],
                 },
             )
+            if str(item.edit_format or "") == "slides":
+                # KRI-725: the worker renders this exact approved draft, not the
+                # live one a later edit may have changed.
+                from app.kria.prepared_execution import (  # noqa: PLC0415
+                    PreparedExecutionError,
+                    pin_approved_slide_post,
+                )
+
+                try:
+                    pin_approved_slide_post(session, job, item)
+                except PreparedExecutionError:
+                    return DispatchResult("proposal_stale")
         if creator_brief_binding is not None:
             from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
 
@@ -2713,6 +2768,7 @@ def _dispatch_item_render(
                     CONTRACT_FIELD,
                     REQUIREMENT_VERSION_FIELD,
                     build_render_contract,
+                    contract_duration_bound,
                     stamp_plan_authority,
                 )
 
@@ -2777,6 +2833,8 @@ def _dispatch_item_render(
                         mode=existing_length.get(
                             "check_mode", settings.creator_duration_check_mode
                         ),
+                        # KRI-847: "under 10 seconds" is a ceiling, not 10 s +/- 10 %.
+                        duration_bound=contract_duration_bound(contract, strategy_payload, brief),
                     )
         from app.services.creator_direction_snapshot import ensure_job_snapshot  # noqa: PLC0415
 
@@ -2839,6 +2897,8 @@ def _dispatch_item_render(
             )
 
             pinned_story = PreparedCollectionStory.model_validate(prepared)
+            if not _story_matches_prepared_execution(session, job, prepared):
+                return DispatchResult("proposal_stale")
             from app.services.media_collection_preparation import install_approved_story
 
             try:
@@ -3086,6 +3146,7 @@ def dispatch_item_render_for(
     creator_brief_binding: dict | None = None,
     creator_guided_attempt_id: str | None = None,
     creator_render_shape: dict | None = None,
+    creator_client_protocol: int | None = None,
     speech_cleanup_contract: str | None = None,
     speech_cleanup_action: str | None = None,
     speech_cleanup_analysis_id: str | None = None,
@@ -3417,6 +3478,11 @@ def dispatch_item_render_for(
             creator_brief_binding=creator_brief_binding,
             creator_guided_attempt_id=creator_guided_attempt_id,
             creator_render_shape=creator_render_shape,
+            **(
+                {"creator_client_protocol": creator_client_protocol}
+                if creator_client_protocol is not None
+                else {}
+            ),
             speech_cleanup_contract=speech_cleanup_contract,
             speech_cleanup_analysis_id=speech_cleanup_analysis_id,
             speech_cleanup_choice=speech_cleanup_choice,

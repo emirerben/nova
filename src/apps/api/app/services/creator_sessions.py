@@ -203,6 +203,10 @@ def _chat_evidence(analysis: object, *, kind: str, include_facts: bool = False) 
         segment_chars=CHAT_EVIDENCE_SEGMENT_CHARS,
     )
     view.pop("brands", None)
+    # KRI-845: the clip resolver reads props / actions / visual_quality; the chat agent's input
+    # stays as it was (it must not start dropping "blurry" clips nobody asked it to).
+    for key in ("props", "actions", "visual_quality"):
+        view.pop(key, None)
     for key, limit in CHAT_EVIDENCE_FIELD_CHARS.items():
         if key in view:
             view[key] = view[key][:limit]

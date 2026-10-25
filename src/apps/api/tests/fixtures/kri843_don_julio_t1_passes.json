@@ -1,0 +1,587 @@
+{
+ "about": "KRI-843: Don Julio T1 take (25.733 s), a Talking take that holds three languages: Yasin's English ('What's your name?' ~1.2-2.1 s, 'Lucas, yeah' to ~3.7 s, 'Cheers!' ~14.5-15.0 s), Lucas the waiter's Spanish (~3.9-9.5 s, 'Gracias' ~10.7 s) and quiet Turkish table chatter (~16.5-25.7 s). passes = whisper.cpp ggml-medium word passes over the real audio (`-ml 1 -sow -ojf`, the engine's SILENCE_CUT_VERBATIM_PROMPT as --prompt), a stand-in for whisper-1 (no paid call was made). Auto-detect on the whole take reported 'tr' (p=0.93) and its words are word-for-word the forced-tr pass, so `tr` is both 'the first pass the engine sees' and the forced-tr pass; `en` and `es` are the forced passes. Only normalization: leading '-' dialogue dashes and bracketed non-speech tags such as '(speaking in foreign language)' dropped (whisper-1 never emits them); text stays in whatever language whisper wrote, translations included. Times rounded to ms. silence_spans = the repo's own detect_silences_with_status(min_silence_s=0.1, ambient_adaptive=True) (local ffmpeg) on that audio, status ok. references: R1/R2 = the recorded prod Gemini clip transcripts (tests/fixtures/kri808_don_julio_clip_speech.json prod_record.transcript) of the M1 sub-clips cut from this take, joined in SOURCE-time order (clip start offsets from the kit's build_clips.sh): a stand-in for the transcript Gemini returns for the 30 s sample (the take is shorter than 30 s, so one call would cover all of it). R1 = whole take incl. the table chatter and Gemini's own hallucinated tail; R2 = up to and including the 'Cheers!' clip. speech_truth = hand-built ground truth (three listeners per sub-clip in the KRI-808 fixture, the kit transcript timings +-0.3 s, the silence islands above); `certain: false` rows are guesses. The Cheers! core (14.55-14.95 s) is where whisper.cpp (14.5-15.0 s) and prod whisper-1 on the Cheers sub-clip (KRI-808 fixture, 14.6-14.8 s) agree; the kit README's 13.8-14.8 s is looser. No media, no URLs.",
+ "duration_s": 25.733,
+ "quotes": {
+  "start": "What's your name?",
+  "end": "Cheers!"
+ },
+ "passes": {
+  "tr": {
+   "language": "tr",
+   "words": [
+    {
+     "text": "Tepara,",
+     "start_s": 0.01,
+     "end_s": 0.84
+    },
+    {
+     "text": "İspanyol.",
+     "start_s": 0.84,
+     "end_s": 2.0
+    },
+    {
+     "text": "Evet,",
+     "start_s": 2.0,
+     "end_s": 2.0
+    },
+    {
+     "text": "adın",
+     "start_s": 2.0,
+     "end_s": 2.0
+    },
+    {
+     "text": "ne?",
+     "start_s": 2.0,
+     "end_s": 2.0
+    },
+    {
+     "text": "Lukas.",
+     "start_s": 2.0,
+     "end_s": 2.8
+    },
+    {
+     "text": "Lukas,",
+     "start_s": 2.8,
+     "end_s": 3.48
+    },
+    {
+     "text": "evet.",
+     "start_s": 3.48,
+     "end_s": 4.14
+    },
+    {
+     "text": "Katenimo",
+     "start_s": 4.14,
+     "end_s": 4.74
+    },
+    {
+     "text": "salsa",
+     "start_s": 4.74,
+     "end_s": 5.08
+    },
+    {
+     "text": "tradicionales",
+     "start_s": 5.08,
+     "end_s": 5.97
+    },
+    {
+     "text": "afgentinas,",
+     "start_s": 5.97,
+     "end_s": 6.89
+    },
+    {
+     "text": "salsa",
+     "start_s": 6.89,
+     "end_s": 7.31
+    },
+    {
+     "text": "criosa,",
+     "start_s": 7.31,
+     "end_s": 8.0
+    },
+    {
+     "text": "chivichurri",
+     "start_s": 8.0,
+     "end_s": 8.94
+    },
+    {
+     "text": "gosalayla.",
+     "start_s": 8.94,
+     "end_s": 10.66
+    },
+    {
+     "text": "Gracias.",
+     "start_s": 10.66,
+     "end_s": 11.84
+    },
+    {
+     "text": "Videoya",
+     "start_s": 11.84,
+     "end_s": 13.33
+    },
+    {
+     "text": "bak.",
+     "start_s": 13.33,
+     "end_s": 14.5
+    },
+    {
+     "text": "Cheers.",
+     "start_s": 14.5,
+     "end_s": 15.0
+    },
+    {
+     "text": "Videoya",
+     "start_s": 15.0,
+     "end_s": 15.53
+    },
+    {
+     "text": "bak.",
+     "start_s": 15.53,
+     "end_s": 15.94
+    },
+    {
+     "text": "Videoya",
+     "start_s": 15.94,
+     "end_s": 17.16
+    },
+    {
+     "text": "mı?",
+     "start_s": 17.16,
+     "end_s": 18.1
+    },
+    {
+     "text": "Yandık",
+     "start_s": 18.1,
+     "end_s": 18.68
+    },
+    {
+     "text": "ya.",
+     "start_s": 18.68,
+     "end_s": 19.06
+    },
+    {
+     "text": "Ne?",
+     "start_s": 19.06,
+     "end_s": 19.27
+    },
+    {
+     "text": "Hiçbir",
+     "start_s": 19.27,
+     "end_s": 19.59
+    },
+    {
+     "text": "şey",
+     "start_s": 19.59,
+     "end_s": 19.68
+    },
+    {
+     "text": "bilmiyordum.",
+     "start_s": 19.68,
+     "end_s": 20.26
+    },
+    {
+     "text": "Bok",
+     "start_s": 20.26,
+     "end_s": 20.63
+    },
+    {
+     "text": "canım,",
+     "start_s": 20.63,
+     "end_s": 21.4
+    },
+    {
+     "text": "bir",
+     "start_s": 21.4,
+     "end_s": 21.69
+    },
+    {
+     "text": "şey",
+     "start_s": 21.69,
+     "end_s": 22.08
+    },
+    {
+     "text": "yok",
+     "start_s": 22.08,
+     "end_s": 22.36
+    },
+    {
+     "text": "ya.",
+     "start_s": 22.36,
+     "end_s": 22.87
+    },
+    {
+     "text": "Kim",
+     "start_s": 22.87,
+     "end_s": 23.06
+    },
+    {
+     "text": "bilir",
+     "start_s": 23.06,
+     "end_s": 23.37
+    },
+    {
+     "text": "mi?",
+     "start_s": 23.37,
+     "end_s": 23.7
+    },
+    {
+     "text": "Evet,",
+     "start_s": 23.7,
+     "end_s": 24.23
+    },
+    {
+     "text": "güzel.",
+     "start_s": 24.23,
+     "end_s": 24.8
+    }
+   ]
+  },
+  "es": {
+   "language": "es",
+   "words": [
+    {
+     "text": "Espanol,",
+     "start_s": 0.01,
+     "end_s": 0.63
+    },
+    {
+     "text": "¿qué",
+     "start_s": 0.63,
+     "end_s": 1.05
+    },
+    {
+     "text": "es",
+     "start_s": 1.05,
+     "end_s": 1.19
+    },
+    {
+     "text": "tu",
+     "start_s": 1.19,
+     "end_s": 1.33
+    },
+    {
+     "text": "nombre?",
+     "start_s": 1.33,
+     "end_s": 2.0
+    },
+    {
+     "text": "Lucas,",
+     "start_s": 2.0,
+     "end_s": 3.27
+    },
+    {
+     "text": "sí.",
+     "start_s": 3.27,
+     "end_s": 4.0
+    },
+    {
+     "text": "Tenemos",
+     "start_s": 4.0,
+     "end_s": 4.41
+    },
+    {
+     "text": "salsa",
+     "start_s": 4.41,
+     "end_s": 4.7
+    },
+    {
+     "text": "tradicional",
+     "start_s": 4.7,
+     "end_s": 5.34
+    },
+    {
+     "text": "en",
+     "start_s": 5.34,
+     "end_s": 5.45
+    },
+    {
+     "text": "Argentina,",
+     "start_s": 5.45,
+     "end_s": 6.3
+    },
+    {
+     "text": "salsa",
+     "start_s": 6.3,
+     "end_s": 7.06
+    },
+    {
+     "text": "criosa,",
+     "start_s": 7.06,
+     "end_s": 8.19
+    },
+    {
+     "text": "chivichurri",
+     "start_s": 8.19,
+     "end_s": 9.25
+    },
+    {
+     "text": "y",
+     "start_s": 9.25,
+     "end_s": 9.35
+    },
+    {
+     "text": "wasabi.",
+     "start_s": 9.35,
+     "end_s": 10.0
+    },
+    {
+     "text": "Gracias.",
+     "start_s": 10.0,
+     "end_s": 12.0
+    },
+    {
+     "text": "¡Cheers!",
+     "start_s": 12.0,
+     "end_s": 16.0
+    }
+   ]
+  },
+  "en": {
+   "language": "en",
+   "words": [
+    {
+     "text": "Tupana,",
+     "start_s": 0.01,
+     "end_s": 0.35
+    },
+    {
+     "text": "Espanol,",
+     "start_s": 0.35,
+     "end_s": 0.75
+    },
+    {
+     "text": "yeah.",
+     "start_s": 0.75,
+     "end_s": 1.13
+    },
+    {
+     "text": "What's",
+     "start_s": 1.13,
+     "end_s": 1.42
+    },
+    {
+     "text": "your",
+     "start_s": 1.42,
+     "end_s": 1.62
+    },
+    {
+     "text": "name?",
+     "start_s": 1.62,
+     "end_s": 2.0
+    },
+    {
+     "text": "Lucas,",
+     "start_s": 2.0,
+     "end_s": 3.19
+    },
+    {
+     "text": "yeah.",
+     "start_s": 3.19,
+     "end_s": 4.0
+    },
+    {
+     "text": "Gracias.",
+     "start_s": 4.0,
+     "end_s": 11.7
+    },
+    {
+     "text": "Cheers.",
+     "start_s": 11.7,
+     "end_s": 15.5
+    },
+    {
+     "text": "Yeah,",
+     "start_s": 15.5,
+     "end_s": 18.65
+    },
+    {
+     "text": "it's",
+     "start_s": 18.65,
+     "end_s": 20.77
+    },
+    {
+     "text": "good.",
+     "start_s": 20.77,
+     "end_s": 24.5
+    }
+   ]
+  }
+ },
+ "silence_spans": [
+  [
+   3.78,
+   3.92
+  ],
+  [
+   6.28,
+   6.77
+  ],
+  [
+   9.48,
+   9.72
+  ],
+  [
+   10.03,
+   10.67
+  ],
+  [
+   11.53,
+   12.32
+  ],
+  [
+   12.53,
+   13.72
+  ],
+  [
+   14.33,
+   14.52
+  ],
+  [
+   16.48,
+   17.07
+  ],
+  [
+   18.03,
+   18.17
+  ],
+  [
+   19.68,
+   20.07
+  ],
+  [
+   20.43,
+   21.47
+  ],
+  [
+   21.73,
+   21.87
+  ],
+  [
+   22.68,
+   22.97
+  ],
+  [
+   23.38,
+   23.62
+  ],
+  [
+   24.48,
+   25.728
+  ]
+ ],
+ "references": {
+  "R1": {
+   "clips": [
+    "M1_05",
+    "M1_08",
+    "M1_03",
+    "M1_09",
+    "M1_01",
+    "M1_06",
+    "M1_04",
+    "M1_07",
+    "M1_02"
+   ],
+   "source_start_s": {
+    "M1_05": 0.0,
+    "M1_08": 4.2,
+    "M1_03": 6.9,
+    "M1_09": 10.4,
+    "M1_01": 12.9,
+    "M1_06": 16.8,
+    "M1_04": 19.0,
+    "M1_07": 22.8,
+    "M1_02": 24.6
+   },
+   "text": "Español, yeah. What's your name? Hey Lucas. Lucas. Yeah. Acá tenemos salsas tradicionales argentinas. Salsa criolla, chimichurri con sal marina. Gracias. Cheers. Cheers. Video, yeah. Video. Video. Video. Video video. Video video. Video. Video. Video. Ne, hiçbir şey bilmedi. Bütün şeyler, var mı? Kim diyebilirim, evet. Right. Mhm. So I'm gonna ask you right now, you can leave. I'm going to start asking questions. You can leave. Okay. Mhm. Mhm. Yes."
+  },
+  "R2": {
+   "clips": [
+    "M1_05",
+    "M1_08",
+    "M1_03",
+    "M1_09",
+    "M1_01"
+   ],
+   "source_start_s": {
+    "M1_05": 0.0,
+    "M1_08": 4.2,
+    "M1_03": 6.9,
+    "M1_09": 10.4,
+    "M1_01": 12.9
+   },
+   "text": "Español, yeah. What's your name? Hey Lucas. Lucas. Yeah. Acá tenemos salsas tradicionales argentinas. Salsa criolla, chimichurri con sal marina. Gracias. Cheers. Cheers."
+  }
+ },
+ "speech_truth": [
+  {
+   "start_s": 0.0,
+   "end_s": 1.2,
+   "who": "Yasin (off camera)",
+   "language": "en",
+   "text": "(unclear) para espanol, yeah",
+   "certain": false
+  },
+  {
+   "start_s": 1.2,
+   "end_s": 2.1,
+   "who": "Yasin",
+   "language": "en",
+   "text": "What's your name?",
+   "certain": true
+  },
+  {
+   "start_s": 2.0,
+   "end_s": 2.8,
+   "who": "Lucas",
+   "language": "en",
+   "text": "Lucas.",
+   "certain": true
+  },
+  {
+   "start_s": 2.8,
+   "end_s": 3.7,
+   "who": "Yasin",
+   "language": "en",
+   "text": "Lucas, yeah.",
+   "certain": true
+  },
+  {
+   "start_s": 3.9,
+   "end_s": 6.3,
+   "who": "Lucas",
+   "language": "es",
+   "text": "Aca tenemos salsas tradicionales argentinas",
+   "certain": true
+  },
+  {
+   "start_s": 6.8,
+   "end_s": 7.9,
+   "who": "Lucas",
+   "language": "es",
+   "text": "salsa criolla,",
+   "certain": true
+  },
+  {
+   "start_s": 7.9,
+   "end_s": 9.5,
+   "who": "Lucas",
+   "language": "es",
+   "text": "chimichurri con (third sauce unclear)",
+   "certain": true
+  },
+  {
+   "start_s": 10.7,
+   "end_s": 11.5,
+   "who": "unknown (maybe Yasin)",
+   "language": "es",
+   "text": "Gracias.",
+   "certain": true
+  },
+  {
+   "start_s": 11.5,
+   "end_s": 14.5,
+   "who": "table",
+   "language": "tr",
+   "text": "(unclear; whisper.cpp guesses 'Videoya bak'; prod whisper-1 on the 12.9 s sub-clip heard 'Biliyor mu?' at about 13.8-14.5 s)",
+   "certain": false
+  },
+  {
+   "start_s": 14.55,
+   "end_s": 14.95,
+   "who": "man in pastel shirt",
+   "language": "en",
+   "text": "Cheers!",
+   "certain": true,
+   "note": "core of the word: whisper.cpp medium (14.5-15.0) and prod whisper-1 on the Cheers sub-clip (14.6-14.8) agree; the kit transcript says 13.8-14.8"
+  },
+  {
+   "start_s": 16.5,
+   "end_s": 25.7,
+   "who": "table friends",
+   "language": "tr",
+   "text": "(quiet chatter; the words are guesses)",
+   "certain": false
+  }
+ ]
+}

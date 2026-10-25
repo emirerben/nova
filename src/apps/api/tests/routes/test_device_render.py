@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.auth import get_current_user
@@ -1647,3 +1648,88 @@ def test_device_render_without_drawings_is_open_to_every_build(fixture, monkeypa
         headers={"X-Kria-Client-Protocol": "2"},
     )
     assert response.status_code == 200
+
+
+def publish_phone_export(fixture, monkeypatch) -> tuple[str, str]:
+    """Publish a reserved phone export through the real route; returns (saved, attempt)."""
+    from tests.routes.test_phone_editor_commit import phone_job
+
+    fixture.job = phone_job(monkeypatch)
+    fixture.user.id = fixture.job.user_id
+    fixture.request = device_status(fixture.job, "guided_story").request
+    saved = fixture.job.assembly_plan["variants"][0]["render_generation_id"]
+    attempt = str(uuid.uuid4())
+    record = device_record(fixture.job, "guided_story")
+    record["status"]["phase"] = "syncing"
+    record["attempts"][attempt] = {
+        "path": f"{fixture.user.id}/{fixture.job.id}/device/{attempt}.mp4",
+        "size": 12,
+        "sha256": "a" * 64,
+    }
+    save_device_record(fixture.job, "guided_story", record)
+    mock_storage(fixture, monkeypatch)
+    monkeypatch.setattr(routes, "_verify_export", MagicMock(return_value=None))
+    fixture.db.execute.return_value = scalar(
+        SimpleNamespace(
+            user_id=fixture.user.id,
+            status="reserved",
+            retention_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    response = fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/complete", json=body(fixture, attempt)
+    )
+    assert response.status_code == 200, response.text
+    return saved, attempt
+
+
+async def reopen_saved_draft(job, base_generation_id):
+    """Attach a Save's pinned draft the way every editor read does."""
+    from app.services.editor_empty_drafts import attach_saved_editor_drafts, saved_editor_draft
+
+    draft_id = uuid.uuid4()
+    job.content_plan_item_id = getattr(job, "content_plan_item_id", None)
+    variant = job.assembly_plan["variants"][0]
+    variant["editor_state_version"] = 2
+    variant["editor_draft"] = {"draft_id": str(draft_id)}
+    row = SimpleNamespace(
+        id=draft_id,
+        variant_key="guided_story",
+        base_generation_id=base_generation_id,
+        snapshot_json={"kind": "editor", "editor_payload": {"sections": {}}},
+        parent_draft_id=None,
+    )
+    db = AsyncMock()
+    db.execute.return_value = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [row]))
+    out = SimpleNamespace(draft_id=str(draft_id))
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("app.services.editor_empty_drafts._out", lambda r, can_undo: out)
+        await attach_saved_editor_drafts(db, job)
+    try:
+        return saved_editor_draft(job, "guided_story")
+    except HTTPException as exc:
+        return exc.detail
+
+
+@pytest.mark.asyncio
+async def test_saved_edit_reopens_after_its_phone_export_publishes(fixture, monkeypatch):
+    # Prod 2026-10-25 (job f5ba7582): Save pinned the draft to the generation the phone
+    # rendered; publish replaced render_generation_id with the upload attempt and every
+    # timeline read returned 409 editor_draft_unavailable ("Preparing preview" forever).
+    saved, attempt = publish_phone_export(fixture, monkeypatch)
+    assert fixture.job.assembly_plan["variants"][0]["render_generation_id"] == attempt
+    assert getattr(await reopen_saved_draft(fixture.job, saved), "draft_id", None)
+
+
+@pytest.mark.asyncio
+async def test_published_export_does_not_revive_an_older_saved_edit(fixture, monkeypatch):
+    publish_phone_export(fixture, monkeypatch)
+    assert await reopen_saved_draft(fixture.job, "older-generation") == "editor_draft_unavailable"
+    assert await reopen_saved_draft(fixture.job, None) == "editor_draft_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_a_later_save_retires_the_published_alias(fixture, monkeypatch):
+    saved, _ = publish_phone_export(fixture, monkeypatch)
+    fixture.job.assembly_plan["variants"][0]["render_generation_id"] = "next-save"
+    assert await reopen_saved_draft(fixture.job, saved) == "editor_draft_unavailable"
