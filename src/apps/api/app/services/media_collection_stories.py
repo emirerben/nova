@@ -255,7 +255,8 @@ async def generate_stories(db, owner, identifier, body):
     fresh = await candidate_evidence(db, owner, identifier, body.expected_revision, body.query)
     require_requested_coverage(fresh, body)
     by_id = {str(value.id): value for value in fresh.moments}
-    accepted = []
+    refused = await creator_editorial_taste.rejected_ideas(db, owner)
+    valid = []
     seen = set()
     for index, idea in enumerate(ideas.stories):
         ids = idea.moment_ids
@@ -273,6 +274,13 @@ async def generate_stories(db, owner, identifier, body):
         if not 1 <= duration <= 60 or identity in seen:
             continue
         seen.add(identity)
+        repeat = creator_editorial_taste.repeated_rejection(plan.angle, plan.opening_text, refused)
+        valid.append((index, idea, moments, repeat))
+    # Never answer with nothing: when every idea repeats a refusal, the first
+    # (best-ranked) stays and records which judgment it resembles.
+    kept = [value for value in valid if value[3] is None] or valid[:1]
+    accepted = []
+    for index, idea, moments, repeat in kept:
         story_id = uuid.uuid5(identifier, f"{digest}:{index}")
         row = await db.get(MediaCollectionStory, story_id)
         if row is None:
@@ -286,7 +294,10 @@ async def generate_stories(db, owner, identifier, body):
                 moments_json=[value.model_dump(mode="json") for value in moments],
                 events_json=[
                     event(
-                        "offered", 1, editorial_taste=creator_editorial_taste.context_receipt(taste)
+                        "offered",
+                        1,
+                        editorial_taste=creator_editorial_taste.context_receipt(taste),
+                        **({"repeat_of_rejected": repeat} if repeat else {}),
                     )
                 ],
             )

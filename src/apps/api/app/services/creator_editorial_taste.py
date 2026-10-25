@@ -7,6 +7,7 @@ confirmed rules and opaque references. Erasure keeps minimal retry fences.
 
 import json
 import uuid
+from collections import Counter
 
 from fastapi import HTTPException
 from sqlalchemy import delete, select, update
@@ -24,9 +25,20 @@ from app.models import (
     PlanItemAsset,
     User,
 )
-from app.services.editorial_taste import MAX_CONTEXT_CHARS, TasteStore, digest
+from app.services.editorial_taste import MAX_CONTEXT_CHARS, TasteStore, digest, word_tokens
 from app.services.library_variant_selection import selected_variant_id
 from app.services.private_text import normalize_private_text
+
+FEEDBACK_POOL = 200
+JUDGMENTS_PER_SIDE = 2
+REJECTED_POOL = 50
+# Jaccard over 3+ letter words. 0.8 means four of five words shared: a reword that
+# adds or swaps one word still matches; a new angle on the same footage does not.
+# Texts with fewer than four distinct words only match when they are identical.
+# Failure modes: paraphrase with new vocabulary escapes; a short generic opening
+# shared by two different ideas can wrongly match (the best idea is always kept).
+NEAR_REPEAT = 0.8
+NEAR_REPEAT_MIN_WORDS = 4
 
 
 def enabled(owner):
@@ -462,17 +474,43 @@ async def generation_context(db, owner, query):
     intro, raw = context.split("\n", 1)
     payload = json.loads(raw)
     payload["reviewed_ideas"] = []
-    recent = list(
+    pool = list(
         (
             await db.scalars(
                 select(CreatorIdeaFeedback)
                 .where(CreatorIdeaFeedback.user_id == owner)
                 .order_by(CreatorIdeaFeedback.created_at.desc(), CreatorIdeaFeedback.id)
-                .limit(2)
+                .limit(FEEDBACK_POOL)
             )
         ).all()
     )
-    for row in recent:
+    wanted = word_tokens(query)
+
+    def overlap(row):
+        idea = (row.proposal or {}).get("idea") or {}
+        plan = idea.get("content_plan") or {}
+        words = " ".join(
+            str(v or "") for v in (idea.get("title"), plan.get("angle"), plan.get("opening_text"))
+        )
+        return len(wanted & word_tokens(f"{words} {row.note} {row.rewrite}"))
+
+    # sorted() is stable: equal overlap keeps the newest-first order of the pool.
+    ranked = sorted(pool, key=lambda row: -overlap(row))
+    chosen = [
+        *[row for row in ranked if row.verdict == "would_post"][:JUDGMENTS_PER_SIDE],
+        *[row for row in ranked if row.verdict != "would_post"][:JUDGMENTS_PER_SIDE],
+    ]
+    counts = Counter(reason for row in pool for reason in row.reasons)
+    repeated = sorted(
+        ((reason, n) for reason, n in counts.items() if n >= 2),
+        key=lambda pair: (-pair[1], pair[0]),
+    )[:3]
+    if repeated:
+        pattern = ", ".join(f"{reason} x{n}" for reason, n in repeated)
+        trial = {**payload, "feedback_pattern": pattern}
+        if len(intro + "\n" + json.dumps(trial, ensure_ascii=False)) <= MAX_CONTEXT_CHARS:
+            payload = trial
+    for row in chosen:
         idea = (row.proposal or {}).get("idea") or {}
         item = {
             "id": str(row.id),
@@ -488,3 +526,48 @@ async def generation_context(db, owner, query):
         if len(intro + "\n" + json.dumps(trial, ensure_ascii=False)) <= MAX_CONTEXT_CHARS:
             payload = trial
     return intro + "\n" + json.dumps(payload, ensure_ascii=False)
+
+
+async def rejected_ideas(db, owner):
+    """Angles and opening lines of ideas the creator said were not for them."""
+    if await active_version(db, owner) is None:
+        return []
+    rows = (
+        await db.scalars(
+            select(CreatorIdeaFeedback)
+            .where(
+                CreatorIdeaFeedback.user_id == owner, CreatorIdeaFeedback.verdict == "not_for_me"
+            )
+            .order_by(CreatorIdeaFeedback.created_at.desc(), CreatorIdeaFeedback.id)
+            .limit(REJECTED_POOL)
+        )
+    ).all()
+    found = []
+    for row in rows:
+        plan = ((row.proposal or {}).get("idea") or {}).get("content_plan") or {}
+        found.append(
+            {
+                "id": str(row.id),
+                "texts": [str(plan.get(k) or "") for k in ("angle", "opening_text")],
+            }
+        )
+    return found
+
+
+def _near_identical(a, b):
+    left, right = word_tokens(a), word_tokens(b)
+    if not left or not right:
+        return False
+    if " ".join(a.casefold().split()) == " ".join(b.casefold().split()):
+        return True
+    union = left | right
+    return len(union) >= NEAR_REPEAT_MIN_WORDS and len(left & right) / len(union) >= NEAR_REPEAT
+
+
+def repeated_rejection(angle, opening, rejected):
+    """Feedback id of the first rejected idea this angle or opening nearly repeats."""
+    for value in rejected:
+        old_angle, old_opening = value["texts"]
+        if _near_identical(angle, old_angle) or _near_identical(opening, old_opening):
+            return value["id"]
+    return None

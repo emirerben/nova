@@ -67,6 +67,16 @@ It labels examples as evidence of taste, never as facts about the current footag
 Inspect retrieval choices and measure them before choosing a more expensive
 retrieval or model approach. Do not interpret structural checks as creative wins.
 
+In the account API, camera-roll generation ranks the creator's saved idea judgments
+by word overlap with the outing and footage descriptions (same lexical baseline, no new
+retrieval system). It sends up to two `would_post` and two other judgments, newest first
+on ties, plus a `feedback_pattern` line such as `too_generic x3` (reasons seen twice or
+more). After generation, `generate_stories` drops any idea whose angle or opening text
+is a near repeat of a `not_for_me` idea: identical text, or at least 0.8 word overlap
+(Jaccard over 3+ letter words, four or more distinct words). It never drops every idea:
+the best one stays and its `offered` event records `repeat_of_rejected` (a feedback id).
+Paraphrases with new vocabulary escape this check. Pause and Forget empty both paths.
+
 External TikTok research is a separate reference pool. Preserve post ids, original
 capture dates, raw metric provenance, missing captions, promotion markers and the
 extent of visual inspection. Archived view counts do not establish causality,

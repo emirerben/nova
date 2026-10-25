@@ -726,3 +726,163 @@ async def test_wrong_facts_feedback_excludes_those_facts_from_the_next_research_
     assert erased.status_code == 200, erased.text
     async with AsyncSessionLocal() as db:
         assert await creator_editorial_taste.rejected_research(db, owner.id, topic) is None
+
+
+async def test_rejected_idea_is_not_reoffered_and_relevant_judgments_outrank_recent_ones(
+    collection_world, monkeypatch
+):
+    """Similarity-ranked memory: reuse what the creator liked, never repeat what they refused.
+
+    Failure catalogue, written first: (1) the two newest judgments crowd out an older,
+    relevant one; (2) a reworded copy of a rejected idea slips through because the
+    prompt is only advisory; (3) the filter empties the result when every idea repeats,
+    so the best one must stay and say why; (4) a pause or Forget must silence both
+    retrieval and the filter; (5) a different creator's rejections never apply;
+    (6) the pattern line and judgments must fit the 8,000 character budget; (7) the
+    stored receipt stays opaque ids and hashes. Lexical overlap cannot see paraphrase
+    with new vocabulary: that miss is accepted and documented, not hidden.
+    """
+    from app.agents.camera_roll_stories import (
+        CameraRollStoriesAgent,
+        CameraRollStoriesOutput,
+        StoryIdea,
+    )
+    from app.models import MediaCollectionStory
+    from app.routes import editorial_taste
+    from app.services import creator_editorial_taste
+
+    client, assets, sources, owner, app = collection_world
+    app.include_router(editorial_taste.router)
+    monkeypatch.setattr(settings, "creator_editorial_taste_enabled", True)
+    monkeypatch.setattr(settings, "creator_editorial_taste_user_ids", [str(owner.id)])
+    ids = await projects(owner)
+    assert (await client.put("/me/editorial-taste", json=profile_body(ids))).status_code == 200
+
+    def idea(title, angle, opening):
+        return {"title": title, "angle": angle, "opening": opening}
+
+    script = []
+
+    def provider(self, input, *, ctx):
+        moments = [v.id for v in input.candidates[:2]]
+        return CameraRollStoriesOutput(
+            stories=[
+                StoryIdea(
+                    title=spec["title"],
+                    hook="Hook",
+                    payoff="Payoff",
+                    rationale="Grounded in the footage.",
+                    moment_ids=moments,
+                    content_plan={
+                        "audience": "Travelers",
+                        "angle": spec["angle"],
+                        "why_it_works": "A specific everyday moment.",
+                        "opening_text": spec["opening"],
+                        "beat_reasons": ["Shows the journey"] * 2,
+                    },
+                )
+                for spec in script
+            ]
+        )
+
+    monkeypatch.setattr(CameraRollStoriesAgent, "run", provider)
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    await client.put(path, json=selection(assets, sources))
+    await client.post(f"{path}/index", json={"expected_revision": 1})
+    collection = path.rsplit("/", 1)[1]
+    counter = iter(range(1000))
+
+    async def offer(query, *specs):
+        script[:] = list(specs)
+        response = await client.post(
+            f"{path}/stories", json={"expected_revision": 1, "query": query}
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["stories"]
+
+    async def judge(story, verdict, reasons):
+        response = await client.post(
+            "/me/editorial-taste/feedback",
+            json={
+                "collection_id": collection,
+                "story_id": story["id"],
+                "expected_story_revision": story["revision"],
+                "client_event_id": f"event-{next(counter)}",
+                "verdict": verdict,
+                "reasons": reasons,
+                "note": "",
+                "rewrite": "",
+            },
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["id"]
+
+    lighthouse = idea(
+        "Harbor lighthouse at dusk",
+        "The harbor lighthouse beacon turns on as the fishing boats come home",
+        "Lighthouse beacon at dusk",
+    )
+    sourdough = idea(
+        "Sourdough starter",
+        "Feeding a sourdough starter every morning before work",
+        "Day nine of my sourdough starter",
+    )
+    marathon = idea(
+        "Marathon pacing",
+        "Why the first five kilometres of a marathon decide the whole race",
+        "Mile five is where marathons are won",
+    )
+    stories = await offer("memory seed", lighthouse, sourdough, marathon)
+    assert len(stories) == 3
+    for story in stories:
+        await judge(story, "would_post", ["good_observation"])
+
+    async with AsyncSessionLocal() as db:
+        context = await creator_editorial_taste.generation_context(
+            db, owner.id, "harbor lighthouse beacon boats"
+        )
+    payload = json.loads(context.split("\n", 1)[1])
+    reviewed = [value["idea"] for value in payload["reviewed_ideas"]]
+    assert "Harbor lighthouse at dusk" in reviewed and len(reviewed) == 2
+    assert reviewed[0] == "Harbor lighthouse at dusk"
+    assert payload["feedback_pattern"] == "good_observation x3"
+    assert len(context) <= 8000
+
+    refused = idea(
+        "A quiet crossing",
+        "Why the morning ferry crossing feels quiet before the crowd arrives",
+        "The morning ferry before the crowd",
+    )
+    first = await offer("rejection seed", refused)
+    rejected_feedback = await judge(first[0], "not_for_me", ["too_generic"])
+    reworded = idea(
+        "Quiet ferry morning",
+        "Why the morning ferry crossing feels so quiet before the crowd arrives",
+        "The morning ferry before the crowd comes",
+    )
+    fresh = idea(
+        "Customs queue",
+        "What the customs queue taught me about packing light for a weekend",
+        "Pack light or pay for it",
+    )
+    again = await offer("second pass", reworded, fresh)
+    assert [v["title"] for v in again] == ["Customs queue"]
+
+    only_repeat = await offer("third pass", reworded)
+    assert [v["title"] for v in only_repeat] == ["Quiet ferry morning"]
+    async with AsyncSessionLocal() as db:
+        row = await db.get(MediaCollectionStory, uuid.UUID(only_repeat[0]["id"]))
+        offered = row.events_json[0]
+        assert offered["repeat_of_rejected"] == rejected_feedback
+        receipt = json.dumps(offered["editorial_taste"])
+        assert "ferry" not in receipt and "harbor" not in receipt.casefold()
+        await db.execute(
+            update(User).where(User.id == owner.id).values(creator_memory_enabled=False)
+        )
+        await db.commit()
+        assert await creator_editorial_taste.generation_context(db, owner.id, "ferry") == ""
+        assert await creator_editorial_taste.rejected_ideas(db, owner.id) == []
+    paused = await offer("paused pass", reworded, fresh)
+    assert [v["title"] for v in paused] == ["Quiet ferry morning", "Customs queue"]
+    async with AsyncSessionLocal() as db:
+        assert await creator_editorial_taste.rejected_ideas(db, uuid.uuid4()) == []
