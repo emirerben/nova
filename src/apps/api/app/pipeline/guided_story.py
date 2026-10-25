@@ -656,9 +656,11 @@ def _quantize_quick_mixed_timeline(
                 # Proposal source/output windows allow 1ms numeric tolerance.
                 # The near-minimum source still contains the 45th frame.
                 frames = int(math.ceil(bounds.minimum_s * fps - 1e-6))
+            # KRI-689: a retimed moment's source span covers ``rate`` times its output.
+            rate = float(moment.get("playback_rate") or 1.0)
             source_span_s = max(
                 0.0,
-                float(moment["source_end_s"]) - float(moment["source_start_s"]),
+                (float(moment["source_end_s"]) - float(moment["source_start_s"])) / rate,
             )
             source_max_frames = int(math.floor((source_span_s + 0.001) * fps + 1e-6))
             maximum_frames = min(
@@ -725,7 +727,9 @@ def _quantize_quick_mixed_timeline(
         elif moment["kind"] == "video" and frames > floor_video_frames[index]:
             moment["source_end_s"] = original_video_end_s[index]
         else:
-            moment["source_end_s"] = round(float(moment["source_start_s"]) + duration_s, 6)
+            # KRI-689: a retimed video moment consumes ``rate`` source seconds per output second.
+            rate = float(moment.get("playback_rate") or 1.0) if moment["kind"] == "video" else 1.0
+            moment["source_end_s"] = round(float(moment["source_start_s"]) + duration_s * rate, 6)
 
     windows_by_id = {window["beat_id"]: window for window in beat_windows}
     moments_by_beat: dict[str, list[dict[str, Any]]] = {}
@@ -2659,12 +2663,17 @@ def _compile_base_execution_plan_version(
                     )
                 resolved_source_start_s = resolved_source_end_s - moving_s
             elif ref.kind == "video":
-                resolved_source_end_s = float(cut.source_start_s) + resolved_duration_s
-                if resolved_source_end_s > float(cut.source_end_s) + 0.001:
+                # KRI-689: a retimed cut consumes ``rate`` source seconds per output second.
+                # Millisecond rounding of the output scales with the rate, so the tolerance
+                # does too; the window is clamped to the cut's own edge, never past it.
+                rate = float(cut.playback_rate) if cut.playback_rate is not None else 1.0
+                resolved_source_end_s = float(cut.source_start_s) + resolved_duration_s * rate
+                if resolved_source_end_s > float(cut.source_end_s) + 0.001 * max(1.0, rate):
                     raise GuidedStoryError(
                         "guided_story_duration_impossible",
                         "Beat alignment cannot lengthen an approved video source window.",
                     )
+                resolved_source_end_s = min(resolved_source_end_s, float(cut.source_end_s))
             moments.append(
                 {
                     "moment_id": cut.cut_id,
@@ -2685,6 +2694,11 @@ def _compile_base_execution_plan_version(
                     **(
                         {"freeze_hold_s": round(hold_s, 3)}
                         if ref.kind == "video" and hold_s
+                        else {}
+                    ),
+                    **(
+                        {"playback_rate": float(cut.playback_rate)}
+                        if ref.kind == "video" and cut.playback_rate is not None
                         else {}
                     ),
                     "output_start_s": start_s,

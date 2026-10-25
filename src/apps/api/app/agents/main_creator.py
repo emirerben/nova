@@ -140,7 +140,10 @@ log = structlog.get_logger()
 # v92 (KRI-881): main's v91 plus a research / sources ask as a typed `text` requirement with
 # `facts.research` ({topic, request_quote}); the server researches it before approval.
 # v93 combines main v92 research-before-approval with runtime creative skills.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-25-v94"
+# v95 (KRI-689): the shared brief section records a clip-speed ask as `facts.playback_rate`
+# (0.25-4; "slow motion" = 0.5, "speed up" = 2) on a `style` requirement, never for pacing /
+# text / music or a speed ramp; the phone montage plans the rate onto the named clips.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-25-v95"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -583,7 +586,15 @@ light yet, so never say in `summary` that it is brightened or darkened; keep tex
 in the frame ("no text on her face or on the plate", "yüzüme ve tabağa yazı gelmesin") => a
 `style` requirement with {"keep_text_off": [{"kind": "face"}, {"kind": "object", "label":
 "plate"}]}, each object in the creator's own words, never translated (the app asks the creator to
-mark the object on a frame; never describe where it is yourself).
+mark the object on a frame; never describe where it is yourself). Play footage faster or
+slower ("speed the river shots up 2x", "slow motion on the pour", "klipleri 2 kat hızlandır",
+"time-lapse") => a `style` requirement with {"playback_rate": 2}: source seconds per output
+second, 2 = twice as fast, 0.5 = half speed, between 0.25 and 4; "slow motion" / "ağır çekim"
+with no number = 0.5, "speed up" / "time-lapse" with no number = 2. Scope it `clip:<media_id>`
+when the creator names one attached clip, else "global" with the creator's words for the footage
+kept in `description` ("the river shots"); the server picks the clips from those words. Never
+`playback_rate` for pacing, cuts, text, music or a speed ramp (a change of speed inside one
+clip): those keep their words in `description` only.
 Keep the source/camera/ambient audio unchanged (including noun phrases such as "original camera
 audio" or "kameranın özgün sesi") => an `audio` requirement with
 {"audio_intent": "source_unchanged"}. This fact describes ONLY unprocessed source sound.

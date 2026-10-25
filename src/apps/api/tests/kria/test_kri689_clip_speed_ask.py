@@ -162,6 +162,10 @@ def test_a_malformed_rate_falls_back_to_the_words(bad):
 def phone_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "phone_rendering_enabled", True)
     monkeypatch.setattr(settings, "phone_render_user_ids", [])
+    # No verified `variableSpeed`: the montage plan cannot carry the speed, so the heads-up
+    # stays exactly as KRI-689 wrote it. The planned case is pinned in
+    # tests/kria/test_kri689_chat_speed_spec.py.
+    monkeypatch.setattr(settings, "phone_render_verified_features", [])
 
 
 def _notice(reqs, *, strategy=None, clips=(PROXY,), item_format="montage", user=USER):

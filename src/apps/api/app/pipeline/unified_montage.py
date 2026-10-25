@@ -71,6 +71,7 @@ from app.kria.freeze_ask import (
     parse_freeze_option,
     times_one_moment,
 )
+from app.kria.speed_ask import SpeedSpec, live_speeds
 from app.pipeline.best_parts import BestPart, BestPartsResult, select_best_parts
 from app.pipeline.pinned_text import drawable_pins, pins_from_strategy
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
@@ -235,6 +236,9 @@ class BriefView:
     # words), a later correction already folded into the freeze it changes
     # (`freeze_ask.live_freezes`).
     freezes: tuple[FreezeSpec, ...] = ()
+    # KRI-689: every live clip-speed ask (`speed_ask.live_speeds`): the rate and the creator's
+    # words for the footage it changes.
+    speeds: tuple[SpeedSpec, ...] = ()
     # KRI-824: live ``timing`` / ``clip:<id>`` requirements, resolved against the plan's
     # own photos by ``holds_from_requirements``; only server-stamped ones apply.
     hold_requirements: tuple[Any, ...] = ()
@@ -260,6 +264,7 @@ def brief_view(brief: Any) -> BriefView:
     placeholder_labels = False
     live = brief.live()
     freezes = live_freezes(live)
+    speeds = live_speeds(live)
     for req in live:
         for key, value in (req.facts or {}).items():
             if value not in (None, "") and key not in facts:
@@ -325,6 +330,7 @@ def brief_view(brief: Any) -> BriefView:
         label_position=label_position,
         placeholder_labels=placeholder_labels,
         freezes=freezes,
+        speeds=speeds,
         hold_requirements=hold_requirements(brief),
     )
 
@@ -520,6 +526,13 @@ class UnifiedMontagePlan:
     # requirement_id, authority, rendered_s}. Empty without such an ask, so every earlier
     # record is unchanged.
     asset_holds: list[dict[str, Any]] = field(default_factory=list)
+    # KRI-689: the creator's clip-speed asks as planned, one row per ask: {requirement_id,
+    # status ("applied" / "locked" / "not_grounded" / "photo" / "ramp" / "replaced"), rate,
+    # rate_requested, rate_stated, cut_ids, cut_positions (1-based, screen order), media_ids,
+    # grounding, reason, shortened, replaced_by}. Empty without a speed ask, so every earlier
+    # record is unchanged; `brief_checks` reads a record WITHOUT the key as a plan that could
+    # not retime (KRI-689's original "Couldn't").
+    clip_speeds: list[dict[str, Any]] = field(default_factory=list)
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
@@ -553,6 +566,9 @@ class UnifiedMontagePlan:
             else {}
         )
         held = {"asset_holds": [dict(row) for row in self.asset_holds]} if self.asset_holds else {}
+        speeds = (
+            {"clip_speeds": [dict(row) for row in self.clip_speeds]} if self.clip_speeds else {}
+        )
         best_parts = (
             {"best_parts": list(self.best_parts_receipt)} if self.best_parts_receipt else {}
         )
@@ -618,6 +634,7 @@ class UnifiedMontagePlan:
             **named,
             **freeze,
             **held,
+            **speeds,
             **song,
             **speech,
             **quote,
@@ -1501,6 +1518,7 @@ def plan_unified_montage(
     approved_length_plan: Mapping[str, Any] | None = None,
     speech_order: bool = False,
     freeze_frames: bool = False,
+    clip_speed: bool = False,
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan for ``clips`` (attachment order).
 
@@ -1545,6 +1563,14 @@ def plan_unified_montage(
     (``freezeFrame`` verified). Then each of the creator's freeze asks (``view.freezes``,
     KRI-899) is grounded to its own cut (see ``_ground_freezes``): that cut's window ends on
     the frozen frame and holds it. Off, or with no freeze ask, the plan is byte-identical.
+
+    ``clip_speed`` (KRI-689) says the renderer can play a cut faster or slower
+    (``variableSpeed`` verified). Then each of the creator's speed asks (``view.speeds``) is
+    grounded to its cuts (see ``_ground_speeds``) and those cuts carry ``playback_rate``: a
+    planned cut keeps its OUTPUT length and shows ``rate`` times as much footage, an approved
+    window keeps its exact source edges and its output length follows the rate. Off, the asks
+    are recorded as locked so the receipt says why. With no speed ask, the plan is
+    byte-identical.
     """
     view = view or BriefView()
     strategy = strategy or {}
@@ -2236,6 +2262,26 @@ def plan_unified_montage(
                     else row
                     for row in freeze_records
                 ]
+    # KRI-689: the creator's speed asks, each grounded to its cuts. Under a song the cuts
+    # sit on the song's beats and its lyric captions, so nothing is retimed there (locked).
+    rates: dict[int, float] = {}
+    speed_records: list[dict[str, Any]] = []
+    if view.speeds:
+        if song_duration_s is not None:
+            speed_records = [_locked_speed(spec, "user_song") for spec in view.speeds]
+        elif not clip_speed:
+            speed_records = [_locked_speed(spec, "renderer") for spec in view.speeds]
+        else:
+            spans, rates, speed_records = _ground_speeds(
+                view.speeds,
+                spans,
+                ordered,
+                pinned=_pinned_cuts(spans, moment_record),
+                freeze_holds=freeze_holds,
+                # Only a creator-approved window keeps its edges; a selector's pick is a
+                # planned cut whose output length matters more than its exact footage.
+                creator_windows=approved_windows,
+            )
     cuts = [
         FastMontageCut(
             cut_id=f"unified-cut-{index + 1}",
@@ -2243,19 +2289,28 @@ def plan_unified_montage(
             source_start_s=start,
             source_end_s=end,
             output_duration_s=(
-                ((end - start) if approved else round(end - start, 3))
+                (
+                    ((end - start) if approved else round(end - start, 3))
+                    if index not in rates
+                    else round((end - start) / rates[index], 3)
+                )
                 + freeze_holds.get(index, 0.0)
             ),
             role="hook" if index == 0 else "payoff" if index == len(spans) - 1 else "build",
             transition="none",
             beat_align=False,
             **({"freeze_hold_s": freeze_holds[index]} if index in freeze_holds else {}),
+            **({"playback_rate": rates[index]} if index in rates else {}),
         )
         for index, (media_id, start, end, approved) in enumerate(spans)
     ]
     for row in freeze_records:
         if row.get("status") == "held":
             row["cut_id"] = cuts[row.pop("cut_index")].cut_id
+    for row in speed_records:
+        indexes = row.pop("cut_indexes", [])
+        row["cut_ids"] = [cuts[k].cut_id for k in indexes]
+        row["cut_positions"] = [k + 1 for k in indexes]
     repeats = any(len(windows) > 1 for windows in windows_by_id.values())
     spoken_roles, opening_speech, closing_quiet = _spoken_records(ordered, cuts, seats)
     closing_speech, closing_quote = _closing_records(
@@ -2395,6 +2450,7 @@ def plan_unified_montage(
         closing_quiet=closing_quiet,
         named_lines=named_lines,
         freeze_frames=freeze_records,
+        clip_speeds=speed_records,
         asset_holds=hold_outcomes(
             holds,
             {
@@ -2484,6 +2540,203 @@ def freeze_frame_answers(strategy: Mapping[str, Any] | None) -> list[Mapping[str
         for row in (rows if isinstance(rows, list) else ())
         if isinstance(row, Mapping) and row.get("kind") == CONFLICT_FREEZE_FRAME
     ]
+
+
+def _speed_row(spec: SpeedSpec) -> dict[str, Any]:
+    return {
+        "requirement_id": spec.requirement_id,
+        "rate": spec.rate,
+        "rate_requested": spec.rate_requested,
+        "rate_stated": spec.rate_stated,
+    }
+
+
+def _locked_speed(spec: SpeedSpec, reason: str) -> dict[str, Any]:
+    """KRI-689: a speed ask no cut of this plan may carry (``reason``: "user_song" when the
+    cuts sit on a song's beats and captions, "renderer" when ``variableSpeed`` is not verified,
+    "frozen" when every named cut holds a freeze frame)."""
+    return {**_speed_row(spec), "status": "locked", "reason": reason, "cut_indexes": []}
+
+
+def _speed_targets(
+    spec: SpeedSpec,
+    spans: Sequence[tuple[str, float, float, bool]],
+    by_id: Mapping[str, UnifiedClip],
+    pinned: Sequence[tuple[int, str]],
+) -> tuple[list[int] | None, str]:
+    """(cut indexes the ask names, how they were found), or ``(None, "")`` when the creator's
+    words name no clip of this edit (or more than one): nothing is guessed (KRI-900's rule).
+
+    In order: a ``clip:<id>`` scope; the creator's words against the moments they pointed at
+    before approval (KRI-723, same matcher as a freeze); those words against the clips'
+    analysed moments (exactly one clip); a cut position ("the last clip"); nothing named =
+    every cut (a whole-edit ask).
+    """
+    if spec.media_id is not None:
+        ref_to_media = {clip.ref_id: clip.media_id for clip in by_id.values()}
+        media_id = ref_to_media.get(spec.media_id, spec.media_id)
+        hits = [k for k, (media, *_rest) in enumerate(spans) if media == media_id]
+        return (hits or None), "scope"
+    if spec.target_words:
+        from app.services.named_moments import pointed_match  # noqa: PLC0415
+
+        hit = (
+            pointed_match(spec.target_words, [words for _index, words in pinned])
+            if pinned
+            else None
+        )
+        if hit is not None and 0 <= pinned[hit][0] < len(spans):
+            return [pinned[hit][0]], "named_moment"
+        in_edit = [
+            media_id
+            for media_id in dict.fromkeys(media for media, *_rest in spans)
+            if media_id in by_id and by_id[media_id].kind == "video"
+        ]
+        matches = match_moments(
+            spec.target_words, [(media_id, by_id[media_id].analysis) for media_id in in_edit]
+        )
+        clips = list(dict.fromkeys(moment.media_id for moment in matches))
+        if len(clips) != 1:
+            return None, ""
+        return [
+            k for k, (media, *_rest) in enumerate(spans) if media == clips[0]
+        ], "analysed_moment"
+    if spec.position is not None:
+        if not spans:
+            return None, ""
+        return [len(spans) - 1 if spec.position == POSITION_LAST else 0], "cut_position"
+    return list(range(len(spans))), "all_clips"
+
+
+def _ground_speeds(
+    specs: Sequence[SpeedSpec],
+    spans: list[tuple[str, float, float, bool]],
+    clips: Sequence[UnifiedClip],
+    *,
+    pinned: Sequence[tuple[int, str]] = (),
+    freeze_holds: Mapping[int, float] | None = None,
+    creator_windows: bool = True,
+) -> tuple[list[tuple[str, float, float, bool]], dict[int, float], list[dict[str, Any]]]:
+    """KRI-689: every speed ask the creator made, each on the cuts it names.
+
+    A planned cut keeps its OUTPUT length, so the timeline the labels, the other cuts and
+    the total length hang on does not move: its source window becomes ``length x rate``
+    seconds anchored on the same start (slid back when it would run past the clip, never
+    into another cut of the same take). When the footage cannot cover that much, the rate is
+    lowered to what it covers (``footage_limited``; the receipt says "2.5x, not the 4x you
+    asked for") rather than the cut shortened. A creator-approved window (``creator_windows``
+    and the span's approved flag: a picked moment) keeps its exact edges and its output
+    length follows the rate (#1761's anchor). Photos have no speed; a cut holding a freeze
+    frame plays at 1x (the compiler's rule). A later ask on the same cut wins and the earlier
+    row says so.
+    """
+    freeze_holds = freeze_holds or {}
+    by_id = {clip.media_id: clip for clip in clips}
+    spans = [*spans]
+    rates: dict[int, float] = {}
+    owner: dict[int, int] = {}
+    rows: list[dict[str, Any]] = []
+    for spec in specs:
+        row = _speed_row(spec)
+        if spec.ramp:
+            rows.append({**row, "status": "ramp", "cut_indexes": []})
+            continue
+        targets, grounding = _speed_targets(spec, spans, by_id, pinned)
+        if targets is None:
+            rows.append({**row, "status": "not_grounded", "cut_indexes": []})
+            continue
+        videos = [
+            k for k in targets if by_id.get(spans[k][0]) and by_id[spans[k][0]].kind == "video"
+        ]
+        if not videos:
+            rows.append({**row, "status": "photo", "grounding": grounding, "cut_indexes": []})
+            continue
+        movable = [k for k in videos if k not in freeze_holds]
+        if not movable:
+            rows.append({**_locked_speed(spec, "frozen"), "grounding": grounding})
+            continue
+        limited = False
+        applied: list[int] = []
+        no_footage: list[int] = []
+        for k in movable:
+            media_id, start, end, approved = spans[k]
+            rate = spec.rate
+            if not (approved and creator_windows):
+                # The footage this cut may use: the clip minus the export margin, and never
+                # another cut of the same take (overlapping windows are refused downstream).
+                clip = by_id[media_id]
+                lower = max(
+                    [
+                        0.0,
+                        *(
+                            e
+                            for j, (m, _s, e, _a) in enumerate(spans)
+                            if j != k and m == media_id and e <= start + 1e-6
+                        ),
+                    ]
+                )
+                upper = min(
+                    [
+                        math.floor((clip.duration_s - _FREEZE_END_MARGIN_S) * 1000) / 1000,
+                        *(
+                            s
+                            for j, (m, s, _e, _a) in enumerate(spans)
+                            if j != k and m == media_id and s >= end - 1e-6
+                        ),
+                    ]
+                )
+                out_s = end - start
+                room = round(upper - lower, 3)
+                if out_s <= 0 or room < out_s - 1e-6:
+                    no_footage.append(k)
+                    continue  # not even the planned cut fits: nothing to retime
+                if rate > 1 and round(out_s * rate, 3) > room:
+                    rate = round(room / out_s, 3)
+                    if rate < 1.05:
+                        # The cut already shows the take whole: no footage to speed through.
+                        no_footage.append(k)
+                        continue
+                    limited = True
+                span = min(round(out_s * rate, 3), room)
+                new_start = start if start + span <= upper + 1e-6 else max(lower, upper - span)
+                new_start = round(new_start, 3)
+                spans[k] = (media_id, new_start, round(new_start + span, 3), approved)
+            if k in owner:
+                earlier = rows[owner[k]]
+                earlier["status"] = "replaced"
+                earlier["replaced_by"] = spec.requirement_id
+                earlier["rate"] = rate
+            rates[k] = rate
+            owner[k] = len(rows)
+            applied.append(k)
+        if not applied:
+            rows.append(
+                {
+                    **row,
+                    # Every named cut already shows its take whole: nothing to speed through.
+                    "status": "no_footage" if no_footage else "not_grounded",
+                    "grounding": grounding,
+                    "cut_indexes": [],
+                }
+            )
+            continue
+        rows.append(
+            {
+                **row,
+                # The slowest rate the footage allowed, when it allowed less than asked.
+                "rate": min(rates[k] for k in applied),
+                "status": "applied",
+                # "Every video clip" only when every one of them changed; otherwise the
+                # receipt names the cuts that did.
+                "grounding": (
+                    "clips_with_footage" if grounding == "all_clips" and no_footage else grounding
+                ),
+                "cut_indexes": applied,
+                "media_ids": list(dict.fromkeys(spans[k][0] for k in applied)),
+                "footage_limited": limited,
+            }
+        )
+    return spans, rates, rows
 
 
 def _ground_freezes(

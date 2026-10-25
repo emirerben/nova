@@ -253,25 +253,33 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   v64-shaped reply (key-less `order` with quoted `start` / `end`) on a one-video edit, and
   `choice_questions.one_clip_edit` keeps both the order_basis question and the render
   contract quiet about any free-form order rule on one clip.
-- **Clip speed (KRI-689).** Initial creation still does not author requested clip speed.
-  Post-creation phone editing supports 0.25–4x in the clip control and editor chat when
-  `variableSpeed` is verified: it preserves the exact source selection, changes output
-  duration, and carries the rate through preview, Save and export. Captions, narration,
-  lip-sync and unprojected timed effects remain explicitly locked; website speed controls
-  are separate work. See `plans/playback-speed.md` for the contract and measured evidence.
-  The initial-creation notice below remains necessary. A speed ask ("speed the
-  river shots up 2x", slow motion, time-lapse, "2 kat hızlandır") used to be dropped
-  silently and only listed under "Have a look at these in the video" after the render.
-  `brief_checks.clip_speed_notice` now adds one plain sentence to the draft reply and the
-  approval card for a draft the unified montage will render, and the render-ready review
-  reports the ask as "Couldn't" with the same reason (a format limit: it never asks
-  "simpler version?" and never blocks the approved render). `kria/speed_ask.py` reads
-  `facts.playback_rate` (or `speed`) first; the Main Creator is not asked for it yet, so
-  today the narrow EN/TR wording fallback decides. Next step: ask for the fact in the
-  Main Creator / extractor prompt, then delete the wording fallback. Pins:
-  `tests/kria/test_kri689_clip_speed_ask.py`, `tests/kria/test_kri689_speed_notice_postgres.py`,
-  `tests/tasks/test_kri689_speed_review.py`, the KRI-689 cases in
-  `tests/tasks/test_unified_montage_dispatch.py`.
+- **Clip speed (KRI-689).** A chat speed ask at creation ("speed the river shots up 2x",
+  "slow motion on the pour", "klipleri 2 kat hızlandır", time-lapse) is planned on a phone
+  Montage. `kria/speed_ask.py` reads it into a `SpeedSpec` (`facts.playback_rate` first --
+  Main Creator v95 / extractor v35 record it -- else the words incl. the number; "slow motion"
+  = 0.5, "speed up" = 2; held to the native 0.25-4x). `unified_montage.brief_view` carries the
+  specs and `plan_unified_montage(clip_speed=...)` grounds each to its cuts
+  (`_ground_speeds`: a `clip:<id>` scope, the creator-pointed moment, one clip's analysed
+  moment, "the last clip", else every video cut) and writes `FastMontageCut.playback_rate`;
+  `compile_execution_plan` carries it onto the moment and `phone_guided_plan` emits `rate` +
+  `variableSpeed`. A planned cut keeps its OUTPUT length (no drift): its source window becomes
+  `length x rate` on the same start, lowered to what the footage covers when it runs out; a
+  creator-approved window keeps its edges and its slot follows the rate. The plan record's
+  `clip_speeds` rows drive the receipt (`brief_checks._check_clip_speed`: "Clips 1, 2 and 3
+  play at 2x" / "Her video klibi 2x hızda oynuyor"; partial for a held or lowered rate; honest
+  "Couldn't" for the locked cases: no verified `variableSpeed` (`phone_rollout.clip_speed_planned_for`),
+  a song montage, a frozen frame, a photo, a speed ramp; "which clip?" is the creator's call).
+  The pre-approval plan (`phone_montage_preflight`) returns speed receipts whatever their
+  status so the draft says it before the card; `clip_speed_notice` keeps the one-line heads-up
+  only where no plan can carry the speed. A record without `clip_speeds` (written before this)
+  keeps the original "Couldn't". The finished-video review re-judges the ask against the
+  variant's `story_timeline` (`playback_rate` on the moment rows). Still open: narrated /
+  Talking formats, the web editor, a device acceptance pass. Pins:
+  `tests/kria/test_kri689_chat_speed_spec.py`, `tests/kria/test_kri689_clip_speed_ask.py`,
+  `tests/kria/test_kri689_speed_notice_postgres.py`, `tests/tasks/test_kri689_speed_review.py`,
+  the KRI-689 groups in `tests/tasks/test_unified_montage_dispatch.py` and
+  `tests/pipeline/test_phone_guided_speed.py`; failure modes:
+  `docs/reviews/kri-689-chat-speed-failure-modes.md`; contract: `plans/playback-speed.md`.
 - **Freeze frame (KRI-777).** No edit can hold a frame (no strategy field; neither the
   phone recipe nor the cloud renderer freezes a creator-chosen frame). Café M2 filed
   "freeze the frame for one second on Atakan's bite" as `timing/global {"duration_s": 1,
