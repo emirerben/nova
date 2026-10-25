@@ -20,6 +20,9 @@ Ways this can fail, written before the change:
 - A reaped render stays failed after the creator reopens the project.
 - An automatic-repair grant lapsing mid-delivery fails the exact approved recipe.
 - A verification worker outage fails a render whose bytes were fine.
+- A read that renews a repair grant saves a stale copy of the record over the one that
+  noted the newest reader (max_reader_client_protocol), so an older build's decline is
+  accepted instead of held.
 """
 
 from __future__ import annotations
@@ -382,6 +385,46 @@ def test_a_lapsed_repair_grant_renews_for_the_exact_recipe_only(client):  # noqa
     response = _get(http, case)
     assert response.json()["phase"] == "needs_attention"
     assert response.json()["reason_code"] == "contract_changed"
+
+
+def test_a_repair_renewal_keeps_the_newest_reader_it_just_noted(client):  # noqa: F811
+    http, _ = client
+    case = seed_failed()
+    _as(case)
+    identity = _live(case)
+    with sync_session() as db:
+        job = db.get(Job, case.job_id)
+        record = device_record(job, "first")
+        record["status"]["request"]["recovery"] = {
+            "action": "normalize_sources",
+            "attempt": 1,
+            "asset_ids": ["a"],
+        }
+        record["repair_authority"] = {
+            "identity": identity.model_dump(mode="json"),
+            "expires_at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
+        }
+        save_device_record(job, "first", record)
+        db.commit()
+
+    read = _get(http, case, headers={"X-Kria-Client-Protocol": "15"})
+
+    assert read.status_code == 200, read.text
+    record = device_record(_job(case), "first")
+    assert record["repair_authority"]["renewals"] == 1
+    assert record[routes.READER_PROTOCOL_FIELD] == 15
+    held = http.post(
+        f"/me/jobs/{case.job_id}/device-render/failures",
+        json={
+            "identity": identity.model_dump(mode="json"),
+            "reason_code": "renderer_outdated",
+            "detail": "too new",
+        },
+        headers={"X-Kria-Client-Protocol": "12"},
+    )
+    assert held.status_code == 409, held.text
+    assert held.json()["problem"]["code"] == "held_by_newer_build"
+    assert device_status(_job(case), "first").phase == "awaiting_device"
 
 
 async def test_a_verification_infrastructure_outage_rechecks_the_same_bytes(

@@ -110,8 +110,16 @@ struct DeviceRenderFailureAck: Decodable, Sendable {
 }
 struct DeviceRenderRetryBody: Encodable, Sendable {
     let identity: DeviceRenderIdentity
-    /// Encoded as `renders_locally` (RecipeJSON's snake_case strategy).
+    /// Encoded as `renders_locally` (RecipeJSON's snake_case strategy), and only when true:
+    /// an API from before the key (`DeviceRetryBody`, extra='forbid') answers 422 to it, so a
+    /// new build's ordinary Try again and Resume keep working against the older API.
     var rendersLocally: Bool = false
+    private enum CodingKeys: String, CodingKey { case identity, rendersLocally }
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(identity, forKey: .identity)
+        if rendersLocally { try container.encode(true, forKey: .rendersLocally) }
+    }
 }
 struct DeviceRenderRetryAck: Decodable, Sendable {
     let identity: DeviceRenderIdentity

@@ -63,6 +63,15 @@ Phone render lifecycle (killer-screens train):
   gets the 426); a `renderer` decline waits for the phone's own "Try again".
 - The device-render 426 names its request (`identity`, `phase`,
   `minimum_client_protocol`) so the phone reports the right one.
+- **Release order: deploy the API (Fly) before the TestFlight build.** The phone sends
+  `renders_locally` only when true (an older API's `DeviceRetryBody` forbids extra keys
+  and answers 422), but `renders_locally`, the named 426, `held_by_newer_build` and
+  `declined_gap` only work once the API has them.
+- A `renderer_outdated` (or `device_unavailable`) record shows what this build's gate
+  says once it reports no version gap: "Ready to render on this iPhone"
+  (`renderable_now`), "This edit needs a change" for a missing capability, or the
+  cooling/storage wait; "Update Kria" only for a real version gap. "Ready on this
+  iPhone" only for a finished video of the record's own request.
 - Two devices: the GET records `max_reader_client_protocol` (kept across re-pins of
   the same recipe); a `renderer_outdated` from an older build, or while the record
   is syncing, answers 409 `held_by_newer_build` and fails nothing.

@@ -661,6 +661,10 @@ async def _device_render_status(
         record, status = _record(job, device_status(job, variant_id).request.identity)
         update = _client_update_detail(job, record, status)
     noted = update is None and _note_reader_protocol(job, variant_id, record)
+    if noted:
+        # The note saved a fresh copy; the repair check below may save `record` again,
+        # which must carry the reader (or an older build's decline would not be held).
+        record, status = _record(job, status.request.identity)
     repair_before = copy.deepcopy(record.get("repair_authority"))
     if await _expire_repair_permission(db, job, record, status):
         record, status = _record(job, status.request.identity)

@@ -25,6 +25,9 @@ struct NativeEditorView: View {
     @ScaledMetric(relativeTo: .body) private var captionLineHeight: CGFloat = 22
     @State private var inspector: NativeEditorInspector?
     @State private var showsUnsavedExit = false
+    /// "Review in chat" from the gallery editor: leaving (after the unsaved-changes prompt)
+    /// opens the edit's conversation instead of going back to the video detail.
+    @State private var exitsToChat = false
     @State private var showsDeviceRender = false
     @State private var showsResearchSources = false
     @State private var opensRetryConversation = false
@@ -239,7 +242,7 @@ struct NativeEditorView: View {
                 titleVisibility: .visible
             ) {
                 Button("Save and exit") { Task { await saveAndExit() } }
-                Button("Discard changes", role: .destructive, action: onBack)
+                Button("Discard changes", role: .destructive, action: leave)
                 Button("Stay", role: .cancel) {}
             } message: {
                 Text("Unsaved editor changes are stored only on this device until you save.")
@@ -977,18 +980,30 @@ struct NativeEditorView: View {
         if conversation != nil { showsConversation = true; return }
         // Opened from the gallery: no conversation underneath. Open this edit's own
         // creation thread (open-in-editor names it); going back would only reach the
-        // video detail, which has no chat and no render card.
-        if session.hasUnsavedChanges { requestBack(); return }
-        let threadID = session.creationThreadID
-        Task { await model.openCreationThread(threadID) }
+        // video detail, which has no chat and no render card. Unsaved changes get the same
+        // "Save your changes before leaving?" prompt, and leaving goes to that thread.
+        exitsToChat = true
+        finishPanelEditing()
+        if session.hasUnsavedChanges { showsUnsavedExit = true }
+        else { leave() }
     }
 
     private func requestBack() {
+        exitsToChat = false
         if session.pendingText != nil { session.cancelTextCreation(); resignKeyboard(); return }
         if panel != nil { changePanel(to: nil); return }
         finishPanelEditing()
         if session.hasUnsavedChanges { showsUnsavedExit = true }
-        else { onBack() }
+        else { leave() }
+    }
+
+    /// Back to where the editor came from, or ("Review in chat" from the gallery) to the
+    /// edit's own conversation, which also keeps this video's phone render card in view.
+    private func leave() {
+        guard exitsToChat else { onBack(); return }
+        exitsToChat = false
+        let threadID = session.creationThreadID, key = session.deviceRenderKey
+        Task { await model.openCreationThread(threadID, deviceRender: key) }
     }
 
     private func saveAndExit() async {
@@ -998,7 +1013,7 @@ struct NativeEditorView: View {
         case .loadFailed, .failed, .renderRetryNeeded, .deviceRenderRetryNeeded:
             return
         default:
-            onBack()
+            leave()
         }
     }
 }

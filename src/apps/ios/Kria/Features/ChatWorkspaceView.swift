@@ -1654,6 +1654,12 @@ private struct CreationWorkspaceView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
+                if let routedKey = routedDeviceRenderKey {
+                    routedDeviceRenderPanel(routedKey)
+                        .padding(.horizontal, 16).padding(.top, 8)
+                        .background(KriaColor.paper)
+                        .accessibilityIdentifier("routed-device-render")
+                }
                 // KRI-756: the first-prompt chips sit just above the composer, not inside the scrolling transcript.
                 let firstPromptChips = suggestionChips(for: .firstPrompt)
                 if !firstPromptChips.isEmpty {
@@ -1904,6 +1910,17 @@ private struct CreationWorkspaceView: View {
         }
     }
 
+    /// The card of the video "Review in chat" came from, when it is not this thread's
+    /// current job (`AppModel.chatDeviceRenderFocus`): its own way forward (Update Kria,
+    /// Render on this iPhone, Try again, a change in the composer) against its own record.
+    private func routedDeviceRenderPanel(_ key: DeviceRenderKey) -> some View {
+        DeviceRenderPanel(key: key, sessions: model.deviceRenders,
+            reviewInChat: { composerFocused = true }) {
+            await refreshCapabilities()
+            await refreshDeviceRender(key, retry: true)
+        }
+    }
+
     private var failedWorkspacePresentation: FailedWorkspacePresentation {
         FailedWorkspacePresentation.resolve(
             runtimeVersion: fullThread?.runtimeVersion,
@@ -2031,6 +2048,7 @@ private struct CreationWorkspaceView: View {
         // A chip tap sends the chip's message and leaves the composer alone: whatever the creator typed stays,
         // and a failed tap never drops the chip's own text (often not in their language) into the composer.
         let draftToRestore = keepsDraft ? "" : (submittedMessage == nil ? prompt : message)
+        model.clearChatDeviceRenderFocus()
         isSending = true
         failure = nil
         confirmationConflict = nil
@@ -2324,6 +2342,7 @@ private struct CreationWorkspaceView: View {
     private func pollUntilDismissed() async {
         await refreshNow()
         await refreshDeviceRender()
+        if let routedKey = routedDeviceRenderKey { await refreshDeviceRender(routedKey) }
         var delay: UInt64 = 1_000_000_000
         while !Task.isCancelled {
             do {
@@ -2332,6 +2351,7 @@ private struct CreationWorkspaceView: View {
                 // polling it only while it is unsettled or the thread moved.
                 let deviceSettled = serverDeviceRenderKey.map { model.deviceRenders.isSettled($0) } ?? false
                 if changed || !deviceSettled || currentProject.status == .rendering { await refreshDeviceRender() }
+                if let routedKey = routedDeviceRenderKey { await refreshDeviceRender(routedKey) }
                 delay = changed || isSending || isActing || isThinking || currentProject.status == .rendering
                     || fullThread?.preparationIsActive == true || speechCleanupIsChecking
                     ? 1_000_000_000 : min(delay * 2, 8_000_000_000)
@@ -2363,6 +2383,15 @@ private struct CreationWorkspaceView: View {
         serverDeviceRenderKey.flatMap { model.deviceRenders.isInactive($0) ? nil : $0 }
     }
 
+    /// Polled and shown beside the conversation until it settles or the creator sends a
+    /// message (a change there makes a new job, whose card the stage shows).
+    private var routedDeviceRenderKey: DeviceRenderKey? {
+        guard let key = model.chatDeviceRenderFocus, key.projectID == project.id,
+              key != serverDeviceRenderKey, !model.deviceRenders.isSettled(key),
+              !model.deviceRenders.isInactive(key) else { return nil }
+        return key
+    }
+
     private var serverDeviceRenderKey: DeviceRenderKey? {
         guard let job = fullThread?.job, let jobID = UUID(uuidString: job.id),
               let variant = job.variants.first(where: {
@@ -2371,10 +2400,10 @@ private struct CreationWorkspaceView: View {
         return DeviceRenderKey(projectID: project.id, jobID: jobID, variantID: variantID)
     }
 
-    private func refreshDeviceRender(retry: Bool = false) async {
+    private func refreshDeviceRender(_ key: DeviceRenderKey? = nil, retry: Bool = false) async {
         // A failed capability read keeps the last set the server enabled; it
         // never substitutes `.disabled`, which reads as "not available" (S4-d).
-        guard let deviceRenderKey = serverDeviceRenderKey,
+        guard let deviceRenderKey = key ?? serverDeviceRenderKey,
               let phoneRendering = capabilitiesAreAuthoritative
                 ? capabilities?.phoneRendering : model.deviceRenders.lastEnabledCapabilities else { return }
         await model.deviceRenders.reconcile(deviceRenderKey, capabilities: phoneRendering, retry: retry)

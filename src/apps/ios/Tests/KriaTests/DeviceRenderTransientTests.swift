@@ -57,6 +57,17 @@ import KriaMediaEngine
 //     no update fixes; only an unknown key, kind or version is a version gap.
 // 25. A kept video (`localReady`) with a change reason shows "Retry sync" next to the change
 //     button; with renderer_outdated it has no "Update Kria" at all.
+// Round 4 (adversarial model check), written down before the fix:
+// 26. A needs_attention answer for a request this iPhone never rendered reads "Ready on
+//     this iPhone" because the receipt on disk holds an earlier request's export (cancelled
+//     when the newer request arrived): nothing to watch for this request, nothing synced.
+// 27. A renderer_outdated record on a build with no version gap any more (a rollback, an
+//     update) whose recipe needs a capability this iPhone lacks keeps "Update Kria", which
+//     no update fixes; it must ask for a change.
+// 28. The same record on a hot phone keeps "Update Kria" instead of waiting to cool down
+//     and then offering to render it here.
+// 29. A retry refused with requires_update on a build whose own gate has no version gap
+//     but lacks a capability (lost since the card was drawn) lands on "Update Kria".
 // Each test below drives `DeviceRenderSessions` with the real coordinator,
 // receipt store and status decoder; only the network and the encoder are fakes.
 
@@ -961,6 +972,91 @@ private final class Phone: @unchecked Sendable {
         XCTAssertTrue(retried)
         let sent = await flags.values
         XCTAssertEqual(sent, [true], "the server re-pins instead of answering requires_update")
+        await sessions.stopAll()
+    }
+
+    // MARK: 26-28: a needs_attention card says what this build and this request really have
+
+    func testNeedsAttentionForANewerRequestNeverShowsAnEarlierRequestsVideo() async throws {
+        let job = UUID(), output = directory()
+        let first = request(job)
+        let earlier = sessions(Server([awaiting(first)]), output: output)
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await earlier.reconcile(key, capabilities: enabled)
+        let synced = await eventually { earlier.presentations[key]?.phase == .synced }
+        XCTAssertTrue(synced)
+        await earlier.stopAll()
+
+        // Another device saved a newer schema; this build declined it and the server recorded it.
+        let tooNew = KriaMediaEngine.EditRecipe(rendererVersion: "kria-ios-9", assets: [MediaAsset(id: "source", relativePath: "source")],
+            tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "source", sourceDuration: 1)])])
+        let next = request(job, revision: 2, recipe: tooNew)
+        let later = sessions(Server([.success(DeviceRenderStatusResponse(phase: "needs_attention", request: next, reasonCode: "renderer_outdated"))]), output: output)
+        await later.reconcile(key, capabilities: enabled)
+        let presentation = try XCTUnwrap(later.presentations[key])
+        XCTAssertEqual(presentation.phase, .needsAttention, "the receipt on disk is request 1's, not this request's video")
+        XCTAssertNil(presentation.localFile)
+        XCTAssertEqual(DeviceRenderAttentionCopy.nextStep(presentation), .updateApp)
+        await later.stopAll()
+    }
+
+    func testOutdatedRecordOnABuildWithoutAVersionGapAsksForTheChangeItReallyNeeds() async throws {
+        let job = UUID()
+        let recipe = KriaMediaEngine.EditRecipe(assets: [MediaAsset(id: "source", relativePath: "source")],
+            tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "source", sourceDuration: 1)])],
+            requiredCapabilities: [.freehandDrawing])
+        let request = request(job, recipe: recipe)
+        let unverified = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2],
+            verifiedFeatures: MediaCapability.allCases.filter { $0 != .freehandDrawing }.map(\.rawValue))
+        let sessions = sessions(Server([.success(DeviceRenderStatusResponse(phase: "needs_attention", request: request, reasonCode: "renderer_outdated"))]))
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: unverified)
+        let presentation = try XCTUnwrap(sessions.presentations[key])
+        XCTAssertEqual(presentation.reasonCode, "unsupported_recipe")
+        XCTAssertEqual(DeviceRenderAttentionCopy.nextStep(presentation), .reviewInChat, "no update helps; a change in chat does")
+        XCTAssertFalse(DeviceRenderAttentionCopy.needsUpdate(presentation))
+        await sessions.stopAll()
+    }
+
+    func testOutdatedRecordOnAHotPhoneWaitsToCoolThenOffersToRenderHere() async throws {
+        let job = UUID(), request = request(job), phone = Phone(), clock = Clock()
+        phone.thermal = .serious
+        let server = Server([.success(DeviceRenderStatusResponse(phase: "needs_attention", request: request, reasonCode: "renderer_outdated"))])
+        let sessions = sessions(server, clock: clock, phone: phone)
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        let waiting = try XCTUnwrap(sessions.presentations[key])
+        XCTAssertEqual(waiting.waiting, .cooling)
+        XCTAssertFalse(DeviceRenderAttentionCopy.needsUpdate(waiting), "a hot phone is not an outdated one")
+
+        phone.thermal = .fair
+        sessions.resumeWaiting(thermalOnly: true)
+        let renderable = await eventually { sessions.presentations[key]?.reasonCode == DeviceRenderAttentionCopy.renderableReason }
+        XCTAssertTrue(renderable)
+        XCTAssertEqual(DeviceRenderAttentionCopy.nextStep(try XCTUnwrap(sessions.presentations[key])), .renderNow)
+        await sessions.stopAll()
+        await clock.fire()
+    }
+
+    func testRequiresUpdateOnABuildWithoutAVersionGapAsksForAChange() async throws {
+        let job = UUID()
+        let recipe = KriaMediaEngine.EditRecipe(assets: [MediaAsset(id: "source", relativePath: "source")],
+            tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "source", sourceDuration: 1)])],
+            requiredCapabilities: [.freehandDrawing])
+        let request = request(job, recipe: recipe)
+        let unverified = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2],
+            verifiedFeatures: MediaCapability.allCases.filter { $0 != .freehandDrawing }.map(\.rawValue))
+        let server = Server([.success(DeviceRenderStatusResponse(phase: "needs_attention", request: request, reasonCode: "export_failed"))])
+        let sessions = sessions(server, retry: { _, _, _ in
+            throw APIError.conflict(detail: ConflictDetail("This edit needs a newer version of Kria.", code: "requires_update"))
+        })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: unverified)
+        let retried = await sessions.retryNeedsAttention(key)
+        XCTAssertFalse(retried)
+        let refused = try XCTUnwrap(sessions.presentations[key])
+        XCTAssertEqual(refused.reasonCode, "unsupported_recipe")
+        XCTAssertEqual(DeviceRenderAttentionCopy.nextStep(refused), .reviewInChat)
         await sessions.stopAll()
     }
 

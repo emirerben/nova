@@ -441,19 +441,38 @@ enum DeviceRenderGate: Equatable {
             observations.removeValue(forKey: key)?.cancel()
             var reasonCode = status.reasonCode, message = status.reason
             // A decline this build reported earlier (outdated renderer, rollout
-            // paused) no longer holds once the phone can render the recipe:
-            // offer the retry instead of repeating "Update Kria". The retry tells the
-            // server this phone renders it (`renders_locally`), so the server re-pins it
-            // instead of answering requires_update: Try again works, it never flips back.
-            if case .local = gate, ["renderer_outdated", "device_unavailable"].contains(reasonCode) {
-                reasonCode = DeviceRenderAttentionCopy.renderableReason
-                message = nil
+            // paused) is replaced by what this build's gate says once it reports no
+            // version gap: renderable now (the retry tells the server this phone renders it,
+            // `renders_locally`, so the server re-pins instead of answering requires_update),
+            // a missing capability (needs a change), or a wait (too hot, too full). Never
+            // "Update Kria" on a build no update helps.
+            if ["renderer_outdated", "device_unavailable"].contains(reasonCode) {
+                switch gate {
+                case .local:
+                    reasonCode = DeviceRenderAttentionCopy.renderableReason
+                    message = nil
+                case .wait(let reason) where reason != .checking:
+                    presentations[key] = DeviceRenderPresentation(phase: .preparing, waiting: reason)
+                    scheduleRetry(key, after: Self.waitRecheck)
+                    return
+                case .decline(let code, _) where code != DeviceRenderAttentionCopy.updateReason
+                        && capabilities.recipeVersions.contains(request.recipe.schemaVersion):
+                    // A recipe schema this build doesn't list is still a version gap.
+                    reasonCode = code
+                    message = nil
+                case .wait, .decline:
+                    // Capabilities not known yet, or still a version gap: the server's answer stands.
+                    break
+                }
             }
+            // "Ready on this iPhone" only for a finished video of this request: the receipt
+            // on disk may be an earlier request's (cancelled, never synced) export.
+            let keptHere = saved?.request == request && saved?.outputURL != nil
             // A server from before Stop became a pause records it as a failure.
             // It is still the creator's own pause: Resume, never "needs attention".
-            let paused = reasonCode == Self.pausedReason && saved?.outputURL == nil
+            let paused = reasonCode == Self.pausedReason && !keptHere
             presentations[key] = DeviceRenderPresentation(
-                phase: paused ? .cancelled : (saved?.outputURL == nil || unchecked) ? .needsAttention : .localReady,
+                phase: paused ? .cancelled : (!keptHere || unchecked) ? .needsAttention : .localReady,
                 localFile: !unchecked && saved?.request == request ? saved?.outputURL : nil,
                 message: message, reasonCode: reasonCode, requiresServerRetry: true
             )
@@ -768,8 +787,10 @@ enum DeviceRenderGate: Equatable {
             }
             if case let APIError.conflict(detail) = error, detail.code == "requires_update" {
                 // This build declined the recipe as too new; a re-pin would be declined
-                // again. Updating Kria is the way forward, never another retry.
-                presentation.reasonCode = DeviceRenderAttentionCopy.updateReason
+                // again. Updating Kria is the way forward, never another retry -- unless this
+                // build's gate reports no version gap now and declines for another reason
+                // (a capability lost since): that one needs a change, which no update brings.
+                presentation.reasonCode = nonVersionDecline(request, for: key) ?? DeviceRenderAttentionCopy.updateReason
                 presentation.message = detail.message
                 presentations[key] = presentation
                 return false
@@ -780,6 +801,16 @@ enum DeviceRenderGate: Equatable {
             presentations[key] = presentation
             return false
         }
+    }
+
+    /// The reason this build's gate declines the pinned recipe, when it is not a version gap
+    /// (a recipe schema this build doesn't list counts as one).
+    private func nonVersionDecline(_ request: DeviceRenderRequest, for key: DeviceRenderKey) -> String? {
+        guard let capabilities = capabilities[key],
+              case .decline(let code, _) = Self.gate(request.recipe, capabilities: capabilities, environment: environment),
+              code != DeviceRenderAttentionCopy.updateReason,
+              capabilities.recipeVersions.contains(request.recipe.schemaVersion) else { return nil }
+        return code
     }
 
     /// This phone's renderer can produce the pinned recipe (now, or once it cools or frees
