@@ -207,6 +207,12 @@ _KNOWN_TR: dict[str, str] = {
     "Couldn't find the clip the small card should follow; left that card out.": (
         "Küçük kartın takip edeceği klibi bulamadım; o kartı koymadım."
     ),
+    "Couldn't find the photo or video you named for a small card; left it out.": (
+        "Küçük kart için söylediğin fotoğrafı ya da videoyu bulamadım; koymadım."
+    ),
+    "Videos can't show as small cards in this edit yet; left that card out.": (
+        "Bu düzenlemede videolar henüz küçük kart olarak çıkamıyor; o kartı koymadım."
+    ),
     "Couldn't find the closing photo you named; kept the normal ending.": (
         "Söylediğin kapanış fotoğrafını bulamadım; normal bitişi bıraktım."
     ),
@@ -271,24 +277,6 @@ _KNOWN_TR_PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], str]]
         lambda m: (
             f'Bu düzenlemede tam ekran henüz yok; "{m.group(1)}" köşede küçük bir kart olarak '
             "çıkacak."
-        ),
-    ),
-    (
-        re.compile(
-            r"Couldn't find \"(.+)\" in your Visuals for the small card at (.+); left it out\."
-        ),
-        lambda m: (
-            f'Küçük kart için "{m.group(1)}" görsellerinde bulamadım ({m.group(2)}); koymadım.'
-        ),
-    ),
-    (
-        re.compile(
-            r"Videos can't show as small cards in this edit yet, so the (.+) card at (.+) is "
-            r"left out\."
-        ),
-        lambda m: (
-            f"Bu düzenlemede videolar henüz küçük kart olarak çıkamıyor; {m.group(1)} kartını "
-            f"({m.group(2)}) koymadım."
         ),
     ),
     (

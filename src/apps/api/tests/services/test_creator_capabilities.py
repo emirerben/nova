@@ -3097,7 +3097,7 @@ def test_timed_card_repair_resolves_labels_and_drops_unknown_visuals(monkeypatch
     assert repaired.timed_cards[0].label == "menu photo"
     assert repaired.timed_cards[1].clip_id == "phone-a"
     assert notices == [
-        'Couldn\'t find "the receipt" in your Visuals for the small card at 5.0 s; left it out.',
+        "Couldn't find the photo or video you named for a small card; left it out.",
         "Couldn't find the clip the small card should follow; left that card out.",
     ]
     # The repaired strategy is what approval dispatches.
@@ -3112,10 +3112,7 @@ def test_timed_video_card_repair_requires_verified_visual_videos(monkeypatch) ->
     strategy = _timed_strategy(card_id="brew", visual_id="brewing video", label="brewing video")
     repaired, notices = capabilities.repair_creator_timed_cards(manifest, strategy)
     assert repaired.timed_cards is None
-    assert notices == [
-        "Videos can't show as small cards in this edit yet, so the brewing video card at "
-        "3.0 s is left out."
-    ]
+    assert notices == ["Videos can't show as small cards in this edit yet; left that card out."]
     _enable_timed_cards(monkeypatch, features=(*PHONE_SUBTITLED_OVERLAY_FEATURES, "visualVideos"))
     manifest = _timed_manifest(monkeypatch)
     repaired, notices = capabilities.repair_creator_timed_cards(manifest, strategy)

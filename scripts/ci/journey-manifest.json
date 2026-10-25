@@ -197,7 +197,8 @@
         "src/apps/api/tests/evals/request_following/test_approved_hook_journey.py",
         "src/apps/api/tests/kria/test_approved_hook_observer_postgres.py",
         "src/apps/api/tests/fixtures/incidents/kri661-talking-clip-photos-order-asks-nothing.json",
-        "src/apps/api/tests/fixtures/guided_timeline_equivalence.json"
+        "src/apps/api/tests/fixtures/guided_timeline_equivalence.json",
+        "src/apps/api/app/pipeline/phone_timed_cards.py"
       ]
     },
     {
@@ -427,7 +428,6 @@
         "src/apps/api/app/pipeline/phone_narrated_plan.py",
         "src/apps/api/app/pipeline/phone_subtitled_plan.py",
         "src/apps/api/app/pipeline/phone_subtitled_title.py",
-        "src/apps/api/app/pipeline/phone_timed_cards.py",
         "src/apps/api/app/pipeline/unified_montage.py",
         "src/apps/api/app/routes/creator_agent.py",
         "src/apps/api/app/schemas/clip_intents.py",

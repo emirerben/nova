@@ -115,6 +115,15 @@ TALKING_CLIP_INTENTS_DROPPED_NOTICE = (
     "Talking edits caption what you say, so I didn't add separate labels or captions "
     "to individual clips."
 )
+# Fixed wording on purpose (KRI-667): the time and the photo's name live in the receipt
+# (`brief_checks._check_timed_cards`), so the notice needs no variable parts and the Turkish
+# twin is an exact `_KNOWN_TR` lookup rather than a regex.
+TIMED_CARD_VISUAL_NOT_FOUND_NOTICE = (
+    "Couldn't find the photo or video you named for a small card; left it out."
+)
+TIMED_VIDEO_CARD_UNAVAILABLE_NOTICE = (
+    "Videos can't show as small cards in this edit yet; left that card out."
+)
 
 
 class CreatorSfxUnavailableError(CreatorStrategyError):
@@ -1357,8 +1366,6 @@ def _repair_creator_timed_cards(
     notices: list[str] = []
     kept = []
     for card in cards:
-        when = f"{card.at_s:.1f} s" if card.at_s is not None else "the clip you named"
-        name = card.label or card.visual_id
         image = resolve_creator_image_media_ref(manifest, card.visual_id)
         video = (
             resolve_creator_visual_video_media_ref(manifest, card.visual_id)
@@ -1366,16 +1373,10 @@ def _repair_creator_timed_cards(
             else None
         )
         if image is None and video is None:
-            notices.append(
-                f'Couldn\'t find "{name}" in your Visuals for the small card at {when}; '
-                "left it out."
-            )
+            notices.append(TIMED_CARD_VISUAL_NOT_FOUND_NOTICE)
             continue
         if image is None and not videos_allowed:
-            notices.append(
-                f"Videos can't show as small cards in this edit yet, so the {name} card at "
-                f"{when} is left out."
-            )
+            notices.append(TIMED_VIDEO_CARD_UNAVAILABLE_NOTICE)
             continue
         resolved = image if image is not None else video
         updates: dict[str, object] = {"visual_id": resolved.media_id}

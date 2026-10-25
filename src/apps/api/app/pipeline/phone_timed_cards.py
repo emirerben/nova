@@ -34,14 +34,16 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
 from app.agents._schemas.reaction_beats import TimedCard
 from app.pipeline.phone_subtitled_lanes import CAPTION_BAND_TOP_FRAC, SubtitledOverlayCard
-from app.pipeline.render_geometry import NormalizedBox
 from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
+
+if TYPE_CHECKING:
+    from app.pipeline.render_geometry import NormalizedBox
 
 # Variant row keys the workers persist and the editor / brief check read.
 TIMED_CARD_RECEIPT_FIELD = "phone_timed_card_receipt"
@@ -131,6 +133,10 @@ def _visual_for(visual_id: str, visuals: Sequence[PhoneVisualBinding]) -> PhoneV
 
 
 def _card_box(x_frac: float, y_frac: float) -> NormalizedBox:
+    # render_geometry imports skia at module import; keep that off the API/CLI import
+    # path (ios-contracts runs without GL libraries) by importing it where it is used.
+    from app.pipeline.render_geometry import NormalizedBox  # noqa: PLC0415
+
     half_w = CARD_SCALE / 2
     half_h = CARD_SCALE * CARD_ASPECT / 2
     return NormalizedBox(x_frac - half_w, y_frac - half_h, x_frac + half_w, y_frac + half_h)
