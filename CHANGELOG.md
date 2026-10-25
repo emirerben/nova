@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.110.0] - 2026-10-25
+
+### Changed
+- fix(ios): load the newest edit automatically instead of asking (KRI-935) (#1817) <!-- release-pr: 1817 -->
+
 ## [0.81.109.0] - 2026-10-25
 
 ### Changed

@@ -110,7 +110,7 @@ final class TextDeletionTests: XCTestCase {
         XCTAssertEqual(ids(session).count, 5)
     }
 
-    func testManualDeleteOverChatStagedEditsIsALocalEditAndAChatResurrectionConflicts() async throws {
+    func testManualDeleteOverChatStagedEditsIsALocalEditAndAChatNeverResurrectsIt() async throws {
         let chatText: JSONValue = .array([Self.text("guided-title", "chat title"), Self.text("clip-label-unified-cut-1", "11")])
         let chat = snapshot(["base_generation": .string("g1"), "text_elements": chatText], revision: 2)
         let (session, fake) = await loaded(chat)
@@ -121,7 +121,8 @@ final class TextDeletionTests: XCTestCase {
         fake.draftSnapshot = snapshot(["base_generation": .string("g1"),
             "text_elements": .array([Self.text("guided-title", "newer"), Self.text("clip-label-unified-cut-1", "11")])], revision: 3)
         await session.synchronizePromptRevision()
-        XCTAssertEqual(session.saveState, .conflict)
+        // KRI-935: the newer chat edit applies by itself, but what the creator deleted stays deleted.
+        XCTAssertEqual(session.document.textElements.first { $0.id == "guided-title" }?.text, "newer")
         XCTAssertFalse(ids(session).contains("clip-label-unified-cut-1"))
     }
 }
