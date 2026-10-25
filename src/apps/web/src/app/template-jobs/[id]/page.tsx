@@ -506,9 +506,9 @@ function RerollButton({ jobId }: { jobId: string }) {
           </p>
           <button
             onClick={handleReroll}
-            disabled={loading || rerollCount >= MAX_REROLLS}
+            disabled={loading || rerollCount >= MAX_REROLLS || error?.action === "wait"}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              loading || rerollCount >= MAX_REROLLS
+              loading || rerollCount >= MAX_REROLLS || error?.action === "wait"
                 ? "bg-zinc-800 text-zinc-500 cursor-not-allowed"
                 : "bg-zinc-700 text-white hover:bg-zinc-600"
             }`}

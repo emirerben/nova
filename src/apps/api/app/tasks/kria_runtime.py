@@ -3143,6 +3143,66 @@ def _promote_queued_successor_sync(thread_id: uuid.UUID) -> str | None:
         return str(successor.id) if successor is not None else None
 
 
+_NOT_RETRYABLE_NOW_TURN_CODES = frozenset({"ai_quota_exhausted"})
+_TURN_FAILURE_COPY: dict[str, tuple[str, str]] = {
+    "runtime_provider_outcome_unknown": (
+        "I couldn't get a completed response from the AI service. Your request and "
+        "footage are saved. Please try again in a moment.",
+        "Yapay zekâ hizmetinden tamamlanmış bir yanıt alamadım. İsteğin ve çekimlerin "
+        "kayıtlı. Lütfen biraz sonra tekrar dene.",
+    ),
+    # A1: the provider's spend cap or the AI budget. Not "try again": it won't work yet.
+    "ai_quota_exhausted": (
+        "Kria's AI service has reached its usage limit for now, so I couldn't work on this "
+        "request. Your request, project and saved draft are safe. Trying again right away "
+        "won't help; send it again later.",
+        "Kria'nın yapay zekâ hizmeti şimdilik kullanım sınırına ulaştı, bu yüzden bu istek "
+        "üzerinde çalışamadım. İsteğin, projen ve kayıtlı taslağın güvende. Hemen tekrar "
+        "denemek işe yaramaz; daha sonra yeniden gönder.",
+    ),
+    # A3: the worker running this request died (out of memory, a deploy) on every claim
+    # and was already re-run in the background; say that instead of a bare "try again".
+    "runtime_turn_claims_exhausted": (
+        "This request stopped partway through several times in a row, so I stopped "
+        "retrying it on my own. Your project and saved draft are safe. Send it again, or "
+        "ask for one change at a time if it keeps happening.",
+        "Bu istek arka arkaya birkaç kez yarıda kaldı, bu yüzden kendi kendime yeniden "
+        "denemeyi bıraktım. Projen ve kayıtlı taslağın güvende. Yeniden gönder; tekrar "
+        "olursa her seferinde tek bir değişiklik iste.",
+    ),
+}
+_TURN_FAILURE_DEFAULT_COPY = (
+    "I couldn't finish that step, but your project and saved draft are safe. "
+    "Try the request again.",
+    "Bu adımı tamamlayamadım ama projen ve kayıtlı taslağın güvende. İsteği tekrar dene.",
+)
+
+
+def _turn_failure_code(exc: BaseException) -> str:
+    """The turn failure code for ``exc``, looking through wrappers to the provider error.
+
+    The Main Creator and the copilot wrap a provider ``TerminalError`` (``RuntimeError``
+    / HTTP 502 ``from exc``), so the spend cap is found on the cause chain.
+    """
+    from app.agents._runtime import (  # noqa: PLC0415
+        AiBudgetExceededError,
+        ProviderQuotaExceededError,
+    )
+
+    seen: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and all(current is not link for link in seen):
+        if isinstance(current, ProviderQuotaExceededError | AiBudgetExceededError):
+            return "ai_quota_exhausted"
+        seen.append(current)
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    if isinstance(exc, ProviderOutcomeUnknownError):
+        return "runtime_provider_outcome_unknown"
+    return "runtime_turn_failed"
+
+
 def _project_retryable_failure(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     turn: CreatorAgentTurn,
@@ -3151,7 +3211,7 @@ def _project_retryable_failure(
     code: str,
     detail: dict[str, str] | None = None,
 ) -> None:
-    """Fail a locked turn and tell the creator to retry; the caller commits.
+    """Fail a locked turn and tell the creator what to do next; the caller commits.
 
     ``detail`` (``error_class`` + a truncated ``error_message``) makes an
     otherwise opaque ``runtime_turn_failed`` diagnosable (KRI-203: the
@@ -3161,37 +3221,20 @@ def _project_retryable_failure(
     name only (see ``_event_failure_detail``). Creator-facing copy is unchanged.
     """
 
+    # A spend cap answers the same on every retry until someone raises it: say so and
+    # offer no retry (A1). Everything else here is worth retrying.
+    retryable = code not in _NOT_RETRYABLE_NOW_TURN_CODES
+    recovery = "retry" if retryable else "ask_user"
     turn.status = "failed"
-    turn.error = {"code": code, "retryable": True, "recovery": "retry", **(detail or {})}
+    turn.error = {"code": code, "retryable": retryable, "recovery": recovery, **(detail or {})}
     turn.completed_at = datetime.now(UTC)
     turn.lease_owner = None
     turn.lease_expires_at = None
     # KRI-520: also reached from `_claim` (claims exhausted) before any turn binding, so
     # the copy follows the chat's language from the thread row itself.
     with reply_language_for(thread_reply_language(thread)):
-        failure_copy = (
-            say(
-                en=(
-                    "I couldn't get a completed response from the AI service. Your request and "
-                    "footage are saved. Please try again in a moment."
-                ),
-                tr=(
-                    "Yapay zekâ hizmetinden tamamlanmış bir yanıt alamadım. İsteğin ve çekimlerin "
-                    "kayıtlı. Lütfen biraz sonra tekrar dene."
-                ),
-            )
-            if code == "runtime_provider_outcome_unknown"
-            else say(
-                en=(
-                    "I couldn't finish that step, but your project and saved draft are safe. "
-                    "Try the request again."
-                ),
-                tr=(
-                    "Bu adımı tamamlayamadım ama projen ve kayıtlı taslağın güvende. "
-                    "İsteği tekrar dene."
-                ),
-            )
-        )
+        en, tr = _TURN_FAILURE_COPY.get(code, _TURN_FAILURE_DEFAULT_COPY)
+        failure_copy = say(en=en, tr=tr)
     event = _append_sync_event(
         db,
         thread,
@@ -3201,8 +3244,8 @@ def _project_retryable_failure(
         payload={
             "turn_id": str(turn.id),
             "code": code,
-            "retryable": True,
-            "recovery": "retry",
+            "retryable": retryable,
+            "recovery": recovery,
             # Planning failed before a tool execution receipt existed.
             # Keep this empty rather than inventing a receipt identity.
             "receipt_ids": [],
@@ -3721,11 +3764,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
         )
         successor_turn_id = _fail_turn(
             identifier,
-            code=(
-                "runtime_provider_outcome_unknown"
-                if isinstance(exc, ProviderOutcomeUnknownError)
-                else "runtime_turn_failed"
-            ),
+            code=_turn_failure_code(exc),
             lease_owner=lease_owner,
             lease_epoch=lease_epoch,
             detail=_failure_detail(exc),
@@ -4692,6 +4731,11 @@ _DETERMINISTIC_JOB_FAILURE_CODES = {
     "silent_audio_declined",
 }
 
+# Not a property of the edit, but a retry now answers the same: the AI provider's spend cap
+# or our AI budget is exhausted until someone raises it. No Retry button, no ask-for-a-change
+# copy; the table sentence says to wait.
+_NOT_RETRYABLE_NOW_JOB_FAILURE_CODES = {"ai_quota_exhausted"}
+
 
 _VARIANT_DECLINE_FAILURE_CODES = {"variant_render_failed", "creator_render_contract_unverified"}
 
@@ -4949,9 +4993,6 @@ _WORKER_TEXT_TR: dict[str, str] = {
     ),
     "Record it again and check that nothing is covering the microphone.": (
         "Yeniden kaydet ve mikrofonun üstünü hiçbir şeyin kapatmadığından emin ol."
-    ),
-    "Try again in a moment, or ask me to make the edit again.": (
-        "Biraz sonra tekrar dene ya da düzenlemeyi yeniden yapmamı iste."
     ),
     "Ask me to make the change as a new edit instead.": (
         "Bunun yerine değişikliği yeni bir düzenleme olarak yapmamı iste."
@@ -6377,8 +6418,13 @@ _JOB_FAILURE_MESSAGES_TR: dict[str, str] = {
         "formatla yeni bir düzenleme başlat."
     ),
     "phone_capability_unavailable": (
-        "Bu düzenleme için gereken bir iPhone özelliği henüz kullanılamıyor. Daha sonra tekrar "
-        "dene ya da farklı bir stil iste."
+        "Bu düzenleme için gereken bir iPhone oluşturma özelliği şu anda kapalı. Düzenlemen ve "
+        "çekimlerin kayıtlı. Daha sonra tekrar dene ya da farklı bir stil iste."
+    ),
+    "ai_quota_exhausted": (
+        "Kria'nın yapay zekâ hizmeti şimdilik kullanım sınırına ulaştı, bu yüzden videon "
+        "oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Hemen tekrar denemek işe yaramaz; "
+        "daha sonra tekrar dene."
     ),
     "creation_text_timeout": (
         "Bu kadar klip için ekrandaki yazıları hazırlamak yapay zekânın izin verdiği süreden "
@@ -6402,8 +6448,9 @@ _JOB_FAILURE_MESSAGES_TR: dict[str, str] = {
         "Kria'dan yeniden hazırlamasını iste."
     ),
     "originals_not_uploaded": (
-        "Orijinal çekimlerin yüklenmedi, bu yüzden iPhone'unda oluşturulamıyor. Kliplerini "
-        "yeniden ekle ve tekrar dene."
+        "Kliplerinin yalnızca önizleme kopyaları yüklü (orijinaller iPhone'unda duruyor), bu "
+        "yüzden bu düzenleme iPhone'unda yapılmalı. Düzenlemen kayıtlı. Projeyi klipler olan "
+        "iPhone'da aç ve Kria'dan videoyu yeniden yapmasını iste."
     ),
     "processing_timeout": (
         "İşlem zaman aşımına uğradı; kliplerin çok ağır (muhtemelen 4K/HDR). Daha az ya da "
@@ -6418,8 +6465,9 @@ _JOB_FAILURE_MESSAGES_TR: dict[str, str] = {
     "matching_failed": "Çekimlerini müzikle eşleştirme tamamlanmadı. Tekrar dene.",
     "auto_music_disabled": "Otomatik müzik eşleştirme şu anda kapalı. Daha sonra tekrar dene.",
     "cloud_render_disabled": (
-        "Bu proje iPhone ile oluşturmayı gerektiriyor. Kria'yı güncelle, sonra projeyi açıp "
-        "tekrar dene."
+        "Bu proje yalnızca sunucularımızda oluşturulabiliyor ve sunucuda oluşturma şu anda "
+        "kapalı, bu yüzden bu sürüm yapılmadı. Bu kliplerle iPhone'unda yeni bir düzenleme "
+        "başlatarak videoyu orada yap."
     ),
     "dispatch_publish_failed": "Video sıraya iletilemedi. Bir kez daha dene.",
     "drive_import_failed": "Drive'dan içe aktarma tamamlanmadı. Tekrar dene.",
@@ -6461,6 +6509,7 @@ _FAILURE_TITLES: dict[str, tuple[str, str]] = {
     "creation_text_timeout": ("Planning took too long", "Planlama çok uzun sürdü"),
     "plan_ai_timeout": ("Planning took too long", "Planlama çok uzun sürdü"),
     "creation_text_failed": ("The text couldn't be added", "Yazılar eklenemedi"),
+    "ai_quota_exhausted": ("Kria's AI is at its limit", "Kria'nın yapay zekâsı sınırda"),
 }
 _FAILURE_TITLE_DEVICE = (
     "Your iPhone couldn't finish the video",
@@ -6806,7 +6855,10 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         # `awaiting_device`); the creator retries from the phone's render panel.
         # Deterministic compiler rejects fail identically on every retry: ask
         # the creator for a change instead of offering a dead retry loop.
-        deterministic = not device_failed and failure_code in _DETERMINISTIC_JOB_FAILURE_CODES
+        deterministic = not device_failed and (
+            failure_code in _DETERMINISTIC_JOB_FAILURE_CODES
+            or failure_code in _NOT_RETRYABLE_NOW_JOB_FAILURE_CODES
+        )
         # Typed creator-contract decline (additive; the failure code is unchanged):
         # missing evidence is a repair/retry; an unavailable capability is a refusal
         # that asks for a different request; conflicts and choices keep the existing

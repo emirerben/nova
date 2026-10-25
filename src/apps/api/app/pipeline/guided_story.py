@@ -126,11 +126,89 @@ USER_SONG_LIPSYNC_LOCKED = "user_song_lipsync_locked"
 
 
 class GuidedStoryError(RuntimeError):
-    """Plain-language strict-render failure with a stable machine code."""
+    """Plain-language strict-render failure with a stable machine code.
 
-    def __init__(self, code: str, message: str):
+    ``transient`` is True only when a storage / probe / mix I/O call failed for a
+    reason a later attempt can get past (5xx, 429, connection reset, timeout). It
+    always comes with a ``*_unavailable`` code (``edit_proposals.
+    TRANSIENT_GUIDED_RENDER_CODES``): the worker retries it with backoff and it never
+    counts toward the render block. Every identity / generation / kind / empty-media /
+    archived-track failure stays ``transient=False`` and blocks after
+    ``GUIDED_RENDER_MAX_ATTEMPTS``, since the same approved plan fails the same way.
+    """
+
+    def __init__(self, code: str, message: str, *, transient: bool = False):
         self.code = code
+        self.transient = transient
         super().__init__(message)
+
+
+GUIDED_MEDIA_UNAVAILABLE = "guided_story_media_unavailable"
+GUIDED_MUSIC_UNAVAILABLE = "guided_story_music_unavailable"
+
+
+def _is_permanent_storage_failure(exc: BaseException) -> bool:
+    from google.api_core import exceptions as google_errors  # noqa: PLC0415
+
+    return isinstance(
+        exc,
+        (
+            FileNotFoundError,
+            google_errors.NotFound,
+            google_errors.PreconditionFailed,
+            google_errors.Forbidden,
+            google_errors.Unauthorized,
+        ),
+    )
+
+
+def _is_retryable_storage_failure(exc: BaseException) -> bool:
+    import requests  # noqa: PLC0415
+    from google.api_core import exceptions as google_errors  # noqa: PLC0415
+    from google.auth import exceptions as auth_errors  # noqa: PLC0415
+
+    return isinstance(
+        exc,
+        (
+            ConnectionError,
+            TimeoutError,
+            subprocess.TimeoutExpired,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+            requests.exceptions.ChunkedEncodingError,
+            auth_errors.TransportError,
+            google_errors.ServerError,
+            google_errors.TooManyRequests,
+            google_errors.RetryError,
+        ),
+    )
+
+
+def is_transient_storage_failure(exc: BaseException) -> bool:
+    """True when ``exc``'s cause chain is a blip, not a missing / replaced object.
+
+    A NotFound, a missing local file or a generation precondition anywhere in the chain
+    means the approved object itself is gone or changed: permanent, whatever wraps it.
+    """
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and all(current is not seen for seen in chain):
+        chain.append(current)
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    if any(_is_permanent_storage_failure(link) for link in chain):
+        return False
+    return any(_is_retryable_storage_failure(link) for link in chain)
+
+
+def guided_io_error(
+    permanent_code: str, transient_code: str, message: str, cause: BaseException
+) -> GuidedStoryError:
+    """The error for an I/O wrapper: transient only when the cause chain says so."""
+    if is_transient_storage_failure(cause):
+        return GuidedStoryError(transient_code, message, transient=True)
+    return GuidedStoryError(permanent_code, message)
 
 
 class GuidedStoryMoment(BaseModel):
@@ -3992,9 +4070,11 @@ def validate_guided_source_pool_generations(guided_snapshot: object) -> None:
             if str(current.generation) != snapshot.narration.generation:
                 raise ValueError("narration generation changed")
         except Exception as exc:  # noqa: BLE001 — exact audio identity is a render fence
-            raise GuidedStoryError(
+            raise guided_io_error(
                 "guided_story_media_missing",
+                GUIDED_MEDIA_UNAVAILABLE,
                 "The approved voiceover changed or is no longer available.",
+                exc,
             ) from exc
 
 
@@ -4091,9 +4171,11 @@ def _mix_pinned_narration(
             generation=narration.generation,
         )
     except Exception as exc:  # noqa: BLE001 — narration identity is an approval fence
-        raise GuidedStoryError(
+        raise guided_io_error(
             "guided_story_media_missing",
+            GUIDED_MEDIA_UNAVAILABLE,
             "The approved voiceover changed or is no longer available.",
+            exc,
         ) from exc
 
     result = subprocess.run(
@@ -4350,8 +4432,11 @@ def _download_selected(plan: dict[str, Any], tmpdir: str) -> tuple[dict[str, str
         try:
             download_generation_to_file(row["gcs_path"], local, generation=row["generation"])
         except Exception as exc:  # noqa: BLE001
-            raise GuidedStoryError(
-                "guided_story_media_missing", f"Approved media {media_id} could not be loaded."
+            raise guided_io_error(
+                "guided_story_media_missing",
+                GUIDED_MEDIA_UNAVAILABLE,
+                f"Approved media {media_id} could not be loaded.",
+                exc,
             ) from exc
         # Identity receipt hashes the UNTOUCHED download (bytes as approved in
         # GCS) — compute before any normalization mutates the local file.
@@ -4386,8 +4471,11 @@ def _download_selected(plan: dict[str, Any], tmpdir: str) -> tuple[dict[str, str
                 actual_kind = "image"
                 duration_s = None
         except Exception as exc:  # noqa: BLE001
-            raise GuidedStoryError(
-                "guided_story_media_replaced", f"Approved media {media_id} has the wrong format."
+            raise guided_io_error(
+                "guided_story_media_replaced",
+                GUIDED_MEDIA_UNAVAILABLE,
+                f"Approved media {media_id} has the wrong format.",
+                exc,
             ) from exc
         if actual_kind != row["kind"]:
             raise GuidedStoryError(
@@ -5724,9 +5812,11 @@ def _mix_pinned_music(
             audio_gain=float(music.get("level", 1.0)),
         )
     except Exception as exc:  # noqa: BLE001
-        raise GuidedStoryError(
+        raise guided_io_error(
             "guided_story_music_missing",
+            GUIDED_MUSIC_UNAVAILABLE,
             "The exact approved music file is no longer available.",
+            exc,
         ) from exc
 
 

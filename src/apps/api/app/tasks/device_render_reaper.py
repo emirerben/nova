@@ -35,7 +35,9 @@ from app.models import Job
 from app.services.device_render import (
     DEVICE_RENDER_FIELD,
     apply_device_failure_variant_update,
+    device_paused,
     device_record,
+    has_accepted_artifact,
     mark_device_failed,
     save_device_record,
 )
@@ -52,7 +54,7 @@ _STALE_PHASES = ("awaiting_device", "syncing")
 # assumption ever regresses.
 _BATCH_LIMIT = 200
 
-_STALE_DETAIL = "No delivery from your iPhone in the last 24 hours. Open the project to retry."
+_STALE_DETAIL = "No delivery from your iPhone in the last 24 hours. Open the project to finish it."
 
 
 def _record_freshness(record: dict[str, Any], job_updated_at: datetime) -> datetime:
@@ -65,6 +67,33 @@ def _record_freshness(record: dict[str, Any], job_updated_at: datetime) -> datet
             except ValueError:
                 continue
     return job_updated_at
+
+
+def _superseded(job: Job, variant_id: str, record: dict[str, Any]) -> bool:
+    """The variant has moved past this record (newer generation or approved attempt).
+
+    Failing it would label the NEWER edit with an old phone's silence; the phone gets
+    ``superseded`` from GET and follows the newer attempt instead.
+    """
+    from app.kria.prepared_execution import variant_fence  # noqa: PLC0415
+
+    assembly = job.assembly_plan or {}
+    variant = next(
+        (
+            v
+            for v in assembly.get("variants") or []
+            if isinstance(v, dict) and v.get("variant_id") == variant_id
+        ),
+        None,
+    )
+    if variant is not None and str(variant.get("render_generation_id") or "") != str(
+        record.get("base_generation") or ""
+    ):
+        return True
+    fence = variant_fence(assembly, variant_id)
+    return (fence is not None or record.get("prepared_execution") is not None) and record.get(
+        "prepared_execution"
+    ) != fence
 
 
 def _reap_job(job_id: Any, *, threshold_s: int, now: datetime) -> int:
@@ -89,6 +118,10 @@ def _reap_job(job_id: Any, *, threshold_s: int, now: datetime) -> int:
             status = record.get("status") or {}
             if not isinstance(status, dict) or status.get("phase") not in _STALE_PHASES:
                 continue
+            # A user Stop is a deliberate pause, not an abandoned phone; and a record
+            # the variant moved past is not this project's delivery any more.
+            if device_paused(record) or _superseded(job, variant_id, record):
+                continue
             freshness = _record_freshness(record, job.updated_at)
             if (now - freshness) < timedelta(seconds=threshold_s):
                 continue
@@ -102,9 +135,12 @@ def _reap_job(job_id: Any, *, threshold_s: int, now: datetime) -> int:
             fresh = device_record(job, variant_id)
             fresh["reaped_at"] = now.isoformat()
             save_device_record(job, variant_id, fresh)
-            apply_device_failure_variant_update(
-                job, variant_id, reason_code="device_render_stale", detail=_STALE_DETAIL
-            )
+            # An edit's last accepted video stays live and the project stays Ready; a
+            # reopen re-pins and restarts the same recipe (GET `_auto_resume_reaped`).
+            if not has_accepted_artifact(job, variant_id):
+                apply_device_failure_variant_update(
+                    job, variant_id, reason_code="device_render_stale", detail=_STALE_DETAIL
+                )
             reaped += 1
         if reaped:
             db.commit()

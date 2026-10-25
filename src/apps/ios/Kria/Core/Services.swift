@@ -161,6 +161,8 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func completeDeviceExport(_ body: DeviceExportCompleteBody) async throws
     func reportDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, reasonCode: String, detail: String) async throws -> DeviceRenderFailureAck
     func retryDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity) async throws -> DeviceRenderRetryAck
+    /// `rendersLocally`: this phone checked the pinned recipe and can render it now.
+    func retryDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, rendersLocally: Bool) async throws -> DeviceRenderRetryAck
 
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread
     func deleteProject(_ project: ProjectSummary) async throws
@@ -400,6 +402,9 @@ extension KriaAPIClient {
     func completeDeviceExport(_ body: DeviceExportCompleteBody) async throws { throw APIError.unsupported }
     func reportDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, reasonCode: String, detail: String) async throws -> DeviceRenderFailureAck { throw APIError.unsupported }
     func retryDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity) async throws -> DeviceRenderRetryAck { throw APIError.unsupported }
+    func retryDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, rendersLocally: Bool) async throws -> DeviceRenderRetryAck {
+        try await retryDeviceRenderFailure(jobID: jobID, identity: identity)
+    }
 
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
     func setSongRange(threadID: UUID, range: SongFilmingRange?, expectedRevision: Int, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
@@ -1480,17 +1485,28 @@ struct KriaAPI: KriaAPIClient {
         try await request(path: "generative-jobs/\(jobID.uuidString)/status", method: "GET", bodyData: nil, decode: EditorStatusEnvelope.self).variants
     }
     func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue] {
-        guard var variant = try await editorVariants(jobID: jobID).first(where: { $0["variant_id"]?.stringValue == variantID }) else { throw APIError.invalidResponse }
-        if variant["resolved_archetype"] == .string("guided_story"),
-           case let .object(capabilities) = variant["editor_capabilities"], capabilities["timeline"] == .bool(true) {
+        // Status and timeline are two reads. An editor commit, a render claim or a device publish
+        // between them moves the generation, and those are exactly the moments that start an editor
+        // refresh. Re-read both before calling the pair a conflict.
+        for attempt in 0..<3 {
+            guard var variant = try await editorVariants(jobID: jobID).first(where: { $0["variant_id"]?.stringValue == variantID }) else { throw APIError.invalidResponse }
+            guard variant["resolved_archetype"] == .string("guided_story"),
+                  case let .object(capabilities) = variant["editor_capabilities"], capabilities["timeline"] == .bool(true) else {
+                return variant
+            }
             let timeline = try await request(path: "generative-jobs/\(jobID.uuidString)/variants/\(variantID)/timeline", method: "GET", bodyData: nil, decode: [String: JSONValue].self)
+            // Same rule as the server's `variant_render_baseline`: a variant that never finished a
+            // render has "" as its baseline, which is a real value and not a conflict.
             let generation = [variant["render_generation_id"], variant["render_finished_at"]]
-                .compactMap { $0?.stringValue }.first { !$0.isEmpty }
-            guard let generation, timeline["base_generation"] == .string(generation) else { throw APIError.conflict }
-            variant["user_timeline"] = .object(timeline)
-            variant["editor_revision_number"] = timeline["revision_number"]
+                .compactMap { $0?.stringValue }.first { !$0.isEmpty } ?? ""
+            if timeline["base_generation"] == .string(generation) {
+                variant["user_timeline"] = .object(timeline)
+                variant["editor_revision_number"] = timeline["revision_number"]
+                return variant
+            }
+            if attempt < 2 { try await Task.sleep(for: .milliseconds(150 * (attempt + 1))) }
         }
-        return variant
+        throw APIError.conflict
     }
     func editorCommit(itemID: String, variantID: String, request commit: EditorCommitRequest) async throws -> EditorCommitResponse {
         try await request(path: "plan-items/\(itemID)/variants/\(variantID)/editor-commit", method: "POST", bodyData: try JSONEncoder().encode(commit), decode: EditorCommitResponse.self)
@@ -1732,7 +1748,7 @@ struct KriaAPI: KriaAPIClient {
             NativePreviewDiagnostics.record("http-failure", fields: ["status": String(http.statusCode)])
             #endif
             let problem = Self.decodeProblem(from: data)
-            throw APIError.requestFailed(status: http.statusCode, detail: RequestFailureDetail(Self.decodeDetail(from: data), retryAfter: http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init), code: problem?.code, problemMessage: problem?.message))
+            throw APIError.requestFailed(status: http.statusCode, detail: RequestFailureDetail(Self.decodeDetail(from: data), retryAfter: http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init), code: problem?.code, problemMessage: problem?.message, object: Self.decodeDetailObject(from: data)))
         }
         if http.statusCode == 204, let empty = EmptyProjectResponse() as? T { return (empty, http) }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .custom(ServerDateCoding.decode); return (try decoder.decode(T.self, from: data), http)
@@ -1840,6 +1856,11 @@ struct KriaAPI: KriaAPIClient {
             return loc.isEmpty ? msg : "\(loc): \(msg)"
         }
         return nil
+    }
+    /// FastAPI's object detail as JSON values (nil for any other shape).
+    private static func decodeDetailObject(from data: Data) -> [String: JSONValue]? {
+        struct Envelope: Decodable { let detail: [String: JSONValue] }
+        return try? JSONDecoder().decode(Envelope.self, from: data).detail
     }
     /// Decodes the runtime-v2 `KriaProblemOut` envelope (`{"problem": {"code",
     /// "message", ...}}`). Nil when the body isn't shaped that way, e.g. the
@@ -2329,8 +2350,12 @@ struct RequestFailureDetail: Equatable, Sendable, CustomStringConvertible {
     /// instead of a `detail` string. Kept apart from `message` so existing error copy is unchanged.
     let code: String?
     let problemMessage: String?
-    init(_ message: String?, retryAfter: TimeInterval? = nil, code: String? = nil, problemMessage: String? = nil) {
+    /// FastAPI's object `detail` (`{"detail": {"code", ...}}`), e.g. the device-render 426
+    /// that names the request it is about. Nil for string details.
+    let object: [String: JSONValue]?
+    init(_ message: String?, retryAfter: TimeInterval? = nil, code: String? = nil, problemMessage: String? = nil, object: [String: JSONValue]? = nil) {
         self.code = code
+        self.object = object
         self.problemMessage = problemMessage?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.message = trimmed?.isEmpty == false ? trimmed : nil

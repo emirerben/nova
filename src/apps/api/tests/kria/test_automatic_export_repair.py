@@ -15,12 +15,26 @@ from app.services.device_render import device_record, save_device_record
 from tests.kria.test_render_retry_postgres import seed_failed
 
 
-@pytest.mark.parametrize("live_claim", [False, True])
-def test_background_queue_deadline_preserves_last_good_and_respects_live_worker(live_claim):
-    from app.tasks.export_verification import _expire_queued
+@pytest.mark.parametrize("shape", ["queue_outage", "live_claim", "recheck_window_spent"])
+def test_background_queue_deadline_preserves_last_good_and_respects_live_worker(shape, monkeypatch):
+    """A queue outage rechecks the SAME bytes; it is never the phone's 24h silence.
 
+    Failure modes: a queue timeout failing the render as `timed_out` (the copy blames
+    a silent iPhone), a live worker's claim being stolen, an endless requeue, and the
+    last good video being relabelled when the check finally gives up.
+    """
+    from app.tasks import export_verification
+    from app.tasks.export_verification import RECHECK_WINDOW_SECONDS, _expire_queued
+
+    enqueued = []
+    monkeypatch.setattr(export_verification, "enqueue", lambda *args: enqueued.append(args))
     case = seed_failed()
     now = datetime.now(UTC)
+    first_queued = (
+        now - timedelta(seconds=RECHECK_WINDOW_SECONDS + 60)
+        if shape == "recheck_window_spent"
+        else now - timedelta(minutes=21)
+    )
     with sync_session() as db:
         job = db.get(Job, case.job_id)
         record = device_record(job, "first")
@@ -28,9 +42,10 @@ def test_background_queue_deadline_preserves_last_good_and_respects_live_worker(
         record["attempts"] = {
             "pending": {
                 "verification_task": {
-                    "state": "running" if live_claim else "queued",
+                    "state": "running" if shape == "live_claim" else "queued",
                     "runs": 1,
                     "queued_at": (now - timedelta(minutes=21)).isoformat(),
+                    "first_queued_at": first_queued.isoformat(),
                     "lease_until": (now + timedelta(seconds=300)).isoformat(),
                 }
             }
@@ -42,8 +57,24 @@ def test_background_queue_deadline_preserves_last_good_and_respects_live_worker(
     with sync_session() as db:
         job = db.get(Job, case.job_id)
         record = device_record(job, "first")
+        task = record["attempts"]["pending"]["verification_task"]
+        # The last accepted video and its labels never move, in every shape.
         assert job.assembly_plan["variants"][0] == before
-        assert record["status"]["phase"] == ("syncing" if live_claim else "needs_attention")
+        if shape == "live_claim":
+            assert record["status"]["phase"] == "syncing"
+            assert task["state"] == "running"
+            assert enqueued == []
+        elif shape == "queue_outage":
+            assert record["status"]["phase"] == "syncing", "the phone keeps 'Checking'"
+            assert task["state"] == "queued"
+            assert task["requeues"] == 1
+            assert task["first_queued_at"] == first_queued.isoformat()
+            assert [args[2]["attempt_id"] for args in enqueued] == ["pending"]
+        else:
+            assert record["status"]["phase"] == "needs_attention"
+            assert record["status"]["reason_code"] == "verification_unavailable"
+            assert "couldn't check this video" in record["status"]["reason"]
+            assert enqueued == []
 
 
 @pytest.mark.parametrize(

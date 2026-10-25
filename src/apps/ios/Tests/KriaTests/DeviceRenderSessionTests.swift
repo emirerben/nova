@@ -42,6 +42,20 @@ private actor SessionPublisher: DeviceRenderPublishing {
     }
 }
 
+private extension DeviceRenderRetryPolicy {
+    static let noWait = DeviceRenderRetryPolicy(transientDelays: [], reportBackoffCap: .zero, sleep: { _ in })
+}
+
+private actor OutagePublisher: DeviceRenderPublishing {
+    private var offline = false
+    func setOffline(_ value: Bool) { offline = value }
+    func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool {
+        if offline { throw URLError(.notConnectedToInternet) }
+        return true
+    }
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication { .published }
+}
+
 private actor PausedSessionPublisher: DeviceRenderPublishing {
     private var releaseContinuation: CheckedContinuation<Void, Never>?
     private(set) var publishStarted = false
@@ -227,10 +241,60 @@ private actor RetryGate {
         })
         let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
         await sessions.reconcile(key, capabilities: .disabled)
-        XCTAssertEqual(sessions.presentations[key]?.phase, .needsAttention)
+        // `.disabled` is also a failed capability read: check again, never "not available".
+        XCTAssertEqual(sessions.presentations[key]?.waiting, .checking)
         XCTAssertFalse(sessions.presentations[key]?.requiresServerRetry ?? true)
         let calls = await exporter.calls
         XCTAssertEqual(calls, 0)
+        await sessions.stopAll()
+    }
+
+    /// S3-b: a rollout pause is a hold. The phone shows a waiting state and never
+    /// starts the export (whose grant or upload the server would refuse).
+    func testRolloutPauseWaitsWithoutStartingTheExport() async throws {
+        let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let request = request(job), exporter = SessionExport()
+        let sessions = DeviceRenderSessions(fetch: { _, _ in
+            DeviceRenderStatusResponse(phase: "awaiting_device", request: request, reason: "Rendering on iPhone is paused for now.", phoneRenderingPaused: true)
+        }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: SessionPublisher())
+        })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        XCTAssertEqual(sessions.presentations[key]?.phase, .preparing)
+        XCTAssertEqual(sessions.presentations[key]?.message, "Rendering on iPhone is paused for now.")
+        XCTAssertFalse(sessions.presentations[key]?.requiresServerRetry ?? true)
+        let calls = await exporter.calls
+        XCTAssertEqual(calls, 0)
+        await sessions.stopAll()
+    }
+
+    /// S3-c/S3-d: a render parked by an outage resumes on its own when Kria returns
+    /// to the foreground, and its parked state is never worded as a failure.
+    func testParkedRenderResumesOnForeground() async throws {
+        let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let request = request(job), exporter = SessionExport(), publisher = OutagePublisher()
+        let coordinator = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(),
+                                                      publisher: publisher, retryPolicy: .noWait, backgroundExecution: nil)
+        let sessions = DeviceRenderSessions(fetch: { _, _ in DeviceRenderStatusResponse(phase: "awaiting_device", request: request) }, factory: { _, _ in coordinator })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await publisher.setOffline(true)
+        await sessions.reconcile(key, capabilities: enabled)
+        await coordinator.waitUntilIdle()
+        let parked = await coordinator.snapshot()
+        XCTAssertEqual(parked?.phase, .preparing)
+        XCTAssertNil(parked?.error)
+        XCTAssertNil(sessions.presentations[key]?.message)
+        await publisher.setOffline(false)
+        await sessions.resumeParked()
+        await coordinator.waitUntilIdle()
+        let final = await coordinator.snapshot()?.phase
+        XCTAssertEqual(final, .synced)
+        let calls = await exporter.calls
+        XCTAssertEqual(calls, 1)
+        await sessions.stopAll()
     }
 
     func testSyncRetryKeepsFinishedExportAndAttempt() async throws {
@@ -238,7 +302,9 @@ private actor RetryGate {
         defer { try? FileManager.default.removeItem(at: output) }
         let request = request(job), exporter = SessionExport(), publisher = SessionPublisher()
         await publisher.fail(true)
-        let coordinator = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: publisher)
+        // A 503 is transient: park after no waits instead of the real 2-30 s backoff.
+        let coordinator = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: publisher,
+                                                      retryPolicy: .noWait, backgroundExecution: nil)
         let sessions = DeviceRenderSessions(fetch: { _, _ in DeviceRenderStatusResponse(phase: "awaiting_device", request: request) }, factory: { _, _ in coordinator })
         let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
         await sessions.reconcile(key, capabilities: enabled)
@@ -267,7 +333,9 @@ private actor RetryGate {
         defer { try? FileManager.default.removeItem(at: output) }
         let request = request(job), exporter = SessionExport(), publisher = SessionPublisher()
         await publisher.fail(true)
-        let coordinator = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: publisher)
+        // A 503 is transient: park after no waits instead of the real 2-30 s backoff.
+        let coordinator = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: publisher,
+                                                      retryPolicy: .noWait, backgroundExecution: nil)
         let sessions = DeviceRenderSessions(fetch: { _, _ in
             DeviceRenderStatusResponse(phase: "syncing", request: request, outputVerificationRequired: true)
         }, factory: { _, _ in coordinator })
@@ -301,7 +369,7 @@ private actor RetryGate {
             factory: { _, request in
                 try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: SessionPublisher())
             },
-            retryFailure: { _, _ in
+            retryFailure: { _, _, _ in
                 await status.retry(to: second)
                 let data = Data("""
                 {"identity":{"jobId":"\(second.identity.jobID.uuidString)","variantId":"first","recipeRevision":2,"recipeDigest":"\(second.identity.recipeDigest)"},"phase":"awaiting_device"}
@@ -388,7 +456,7 @@ private actor RetryGate {
             factory: { _, _ in
                 try DeviceRenderCoordinator(directory: output, exporter: SessionExport(), sources: SessionSources(), publisher: SessionPublisher())
             },
-            retryFailure: { _, _ in
+            retryFailure: { _, _, _ in
                 await gate.wait()
                 let data = Data("""
                 {"identity":{"jobId":"\(second.identity.jobID.uuidString)","variantId":"first","recipeRevision":2,"recipeDigest":"\(second.identity.recipeDigest)"},"phase":"awaiting_device"}
@@ -753,7 +821,7 @@ private actor RetryGate {
     func testUnsupportedRecipeHidesRetryWithGuidanceCopyOtherReasonsStayRetryable() {
         XCTAssertFalse(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: "unsupported_recipe"))
         let message = DeviceRenderAttentionCopy.message(phase: .needsAttention, reasonCode: "unsupported_recipe", fallback: nil)
-        XCTAssertTrue(message?.localizedCaseInsensitiveContains("start a new edit") ?? false)
+        XCTAssertTrue(message?.localizedCaseInsensitiveContains("in chat") ?? false)
         for code in ["thermal", "insufficient_storage", "export_failed", "cancelled_by_user"] {
             XCTAssertTrue(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: code), code)
         }

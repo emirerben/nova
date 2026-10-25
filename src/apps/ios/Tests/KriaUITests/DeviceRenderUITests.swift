@@ -34,14 +34,18 @@ final class DeviceRenderUITests: XCTestCase {
     }
 
     /// The server refused the recipe itself (`unsupported_recipe`): trying again would fail the
-    /// same way, so the card says to start a new edit and offers no retry.
-    func testUnsupportedRecipeAsksForANewEditWithoutRetry() {
+    /// same way, so the card says the edit needs a change and hands over to the conversation
+    /// (never a card with no button), and offers no retry.
+    func testUnsupportedRecipeAsksForAChangeInChatWithoutRetry() {
         let app = launch(scenario: "unsupported_recipe")
         let card = startPhoneEdit(in: app)
 
-        XCTAssertTrue(card.staticTexts["This edit needs your attention"].waitForExistence(timeout: 20), app.debugDescription)
-        let guidance = card.staticTexts.containing(NSPredicate(format: "label CONTAINS[c] %@", "Start a new edit")).firstMatch
+        XCTAssertTrue(card.staticTexts["This edit needs a change"].waitForExistence(timeout: 20), app.debugDescription)
+        let guidance = card.staticTexts.containing(NSPredicate(format: "label CONTAINS[c] %@", "in chat")).firstMatch
         XCTAssertTrue(guidance.waitForExistence(timeout: 5))
+        let review = app.buttons["device-render-review-in-chat"]
+        XCTAssertTrue(review.waitForExistence(timeout: 5), "the way forward is on the card")
+        XCTAssertEqual(review.label, "Review the updated edit")
         XCTAssertFalse(card.buttons["device-render-retry"].exists)
         XCTAssertFalse(card.buttons["device-render-stop"].exists)
         XCTAssertFalse(card.buttons["device-render-play"].exists)

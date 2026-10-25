@@ -238,31 +238,63 @@ def recover(http, case, revision=3):
 
 @pytest.mark.parametrize("whole_job", [False, True], ids=["variant", "whole-job"])
 @pytest.mark.parametrize("source_status", ["failed", "dispatched"])
-def test_legacy_device_retry_cannot_bypass_runtime_approval(client, whole_job, source_status):
+@pytest.mark.parametrize("chatted_since", [False, True], ids=["quiet", "chatted-since"])
+def test_runtime_device_retry_redelivers_the_approved_recipe_without_approval(
+    client, whole_job, source_status, chatted_since
+):
+    """Founder decision: re-delivering the SAME pinned, approved recipe needs no new
+    approval tied to the newest chat turn (S3-n). The creator typing "why did it
+    fail?" after the failure must not make Try again a dead end.
+    """
     http, publish = client
     case = seed_failed(whole_job=whole_job)
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=case.user_id)
     with sync_session() as db:
         job = db.get(Job, case.job_id)
         db.get(CreatorAgentExecution, case.execution_id).status = source_status
+        if chatted_since:
+            # A newer turn is what made the approval path refuse with "You have
+            # changed this project since that failure".
+            event = CreationThreadEvent(
+                thread_id=case.thread_id,
+                sequence=3,
+                revision=4,
+                role="user",
+                event_type="user_message",
+                content="why did it fail?",
+            )
+            db.add(event)
+            db.flush()
+            db.add(
+                CreatorAgentTurn(
+                    thread_id=case.thread_id,
+                    session_id=case.session_id,
+                    source_event_id=event.id,
+                    client_event_id=str(uuid.uuid4()),
+                    request_digest="b" * 64,
+                    status="completed",
+                )
+            )
         db.commit()
         identity = device_status(job, "first").request.identity
-        assert "retry_requires_approval" not in device_record(job, "first")["status"]
     status = http.get(f"/me/jobs/{case.job_id}/device-render?variant_id=first")
     assert status.status_code == 200, status.text
-    assert status.json()["retry_requires_approval"] is True
+    assert status.json()["retry_requires_approval"] is False
     response = http.post(
         f"/me/jobs/{case.job_id}/device-render/retry",
         json={"identity": identity.model_dump(mode="json")},
     )
-    assert response.status_code == 409, response.text
-    assert response.json()["detail"] == (
-        "Open this project's chat and review Retry approved edit before rendering again."
-    )
+    assert response.status_code == 200, response.text
     with sync_session() as db:
-        status = device_status(db.get(Job, case.job_id), "first")
-        assert status.request.identity == identity
-        assert status.phase == "needs_attention"
+        job = db.get(Job, case.job_id)
+        status = device_status(job, "first")
+        assert status.phase == "awaiting_device"
+        assert status.request.identity.recipe_revision == identity.recipe_revision + 1
+        # Exactly the approved recipe: nothing re-planned, nothing re-decided.
+        assert status.request.recipe.model_dump(mode="json") == case.recipe
+        assert response.json()["identity"] == status.request.identity.model_dump(mode="json")
+        assert job.failure_reason is None
+        # No new consent was minted and no approval dispatch was published.
         assert (
             db.scalar(
                 select(func.count())
@@ -605,7 +637,18 @@ def test_expired_retry_cannot_renew_after_a_new_request(client):
     assert response.json()["problem"]["code"] == "render_retry_target_stale"
 
 
-@pytest.mark.parametrize("reason", ["unsupported_recipe", "cancelled_by_user", "original_missing"])
+def test_a_user_stop_stays_an_exact_retry_not_a_change_request(client):
+    # A legacy record that recorded a Stop as needs_attention must stay resumable.
+    from app.kria.render_retry import retry_program_available
+
+    case = seed_failed(reason="cancelled_by_user")
+    with sync_session() as db:
+        assert retry_program_available(
+            db.get(Job, case.job_id), db.get(CreatorAgentExecution, case.execution_id)
+        )
+
+
+@pytest.mark.parametrize("reason", ["unsupported_recipe", "contract_changed", "original_missing"])
 def test_observer_hint_does_not_offer_unrecoverable_native_retry(client, reason):
     from app.kria.render_retry import retry_program_available
 

@@ -495,6 +495,38 @@ enum AccountIdentity {
             selectedProject = newest
         }
     }
+    /// Asks the chat workspace to show a conversation (the gallery editor has none
+    /// underneath it). `threadID` nil: the conversation is unknown, so the workspace opens
+    /// the projects drawer instead of a dead end.
+    struct ChatRouteRequest: Equatable { let id = UUID(); let threadID: UUID? }
+    @Published private(set) var chatRouteRequest: ChatRouteRequest?
+    /// The phone render of the video "Review in chat" came from. The conversation polls and
+    /// shows its card when it is not the thread's current job (a gallery video of an older
+    /// version), so that video's way forward stays on screen.
+    @Published private(set) var chatDeviceRenderFocus: DeviceRenderKey?
+
+    /// Opens the creation thread an edit came from, from anywhere (the gallery editor's
+    /// "Review in chat"): selects that project, then asks the workspace to close the
+    /// gallery and show it. `deviceRender`: the edit's own phone render, kept in view there.
+    func openCreationThread(_ threadID: UUID?, deviceRender: DeviceRenderKey? = nil) async {
+        if let threadID {
+            if let known = projects.first(where: { $0.id == threadID }) {
+                selectProject(known)
+            } else if let thread = try? await api.project(threadID: threadID) {
+                let project = thread.summary
+                if !projects.contains(where: { $0.id == project.id }) { projects.insert(project, at: 0) }
+                selectProject(project)
+            }
+        }
+        let opened = threadID.map { id in selectedProject?.id == id } ?? false
+        chatDeviceRenderFocus = opened ? deviceRender : nil
+        chatRouteRequest = ChatRouteRequest(threadID: opened ? threadID : nil)
+    }
+
+    /// The creator sent a message in that conversation: a change makes a new job there, and
+    /// the older video's card would only repeat what it asked for.
+    func clearChatDeviceRenderFocus() { chatDeviceRenderFocus = nil }
+
     func selectProject(_ project: ProjectSummary) {
         guard !deletedProjectIDs.contains(project.id) else { return }
         selectedProject = projects.first(where: { $0.id == project.id }) ?? project

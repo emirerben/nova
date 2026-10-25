@@ -920,10 +920,17 @@ JOB_FAILURE_MESSAGES: dict[str, str] = {
         "with a different clip or format."
     ),
     # KRI-286: retryable -- the device capability this edit needs is not switched on
-    # yet (a rollout decision), so the same edit works once it is.
+    # yet (a rollout decision or an ops kill switch), so the same edit works once it is.
     "phone_capability_unavailable": (
-        "This edit needs an iPhone feature that isn't available yet. "
-        "Try again later, or ask for a different style."
+        "This edit needs an iPhone rendering feature that's switched off right now. "
+        "Your edit and footage are saved. Try again later, or ask for a different style."
+    ),
+    # A provider spend cap or an exhausted AI budget: retrying right away answers the
+    # same, so the copy says to wait instead of offering a retry loop.
+    "ai_quota_exhausted": (
+        "Kria's AI service has reached its usage limit for now, so your video wasn't made. "
+        "Your edit and footage are saved. Trying again right away won't help; try again "
+        "later."
     ),
     # KRI-673: the AI that writes the on-screen text ran out of time on a big edit (prod:
     # 35 clips). Say which step, and what actually helps.
@@ -936,8 +943,9 @@ JOB_FAILURE_MESSAGES: dict[str, str] = {
         "Our AI took too long to plan this edit, so your video wasn't made. "
         "Your edit and footage are saved. Try again in a moment."
     ),
-    # Catch-all for an unclassified planning failure: do not blame the iPhone, it was
-    # never involved (KRI-673).
+    # Catch-all for an unclassified planning failure (our bug, or storage that stayed
+    # unavailable after the worker's own retries): do not blame the iPhone, it was never
+    # involved (KRI-673).
     "phone_plan_failed": (
         "Something broke while planning this edit, so your video wasn't made. "
         "Your edit and footage are saved. Try again, or ask for a change."
@@ -951,9 +959,12 @@ JOB_FAILURE_MESSAGES: dict[str, str] = {
         "This edit was prepared by a newer version of Kria than the one rendering it. "
         "Ask Kria to prepare it again."
     ),
+    # A phone project reached the server renderer, which only has preview copies of the
+    # clips. Re-attaching uploads previews again, so never tell the creator to do that.
     "originals_not_uploaded": (
-        "Your original footage wasn't uploaded, so this can't render on your "
-        "iPhone. Reattach your clips and try again."
+        "Only preview copies of your clips are uploaded (the originals stay on your "
+        "iPhone), so this edit has to be made on your iPhone. Your edit is saved. Open the "
+        "project on the iPhone that has the clips and ask Kria to make it again."
     ),
     "processing_timeout": (
         "Processing timed out — your clips are heavy (likely 4K/HDR). Try fewer or shorter clips."
@@ -966,8 +977,12 @@ JOB_FAILURE_MESSAGES: dict[str, str] = {
     ),
     "matching_failed": "Matching your footage to music didn't finish. Try again.",
     "auto_music_disabled": "Automatic music matching is turned off right now. Try again later.",
+    # Server rendering is off and this project was never set up to render on the iPhone
+    # (a web or older project), so updating the app changes nothing.
     "cloud_render_disabled": (
-        "This project needs the iPhone renderer. Update Kria, then open the project and try again."
+        "This project can only be rendered on our servers, and server rendering is "
+        "switched off, so this version wasn't made. Start a new edit on your iPhone with "
+        "these clips to make it there."
     ),
     "dispatch_publish_failed": "The render couldn't be handed to the queue. Give it another go.",
     "drive_import_failed": "Importing from Drive didn't finish. Try again.",

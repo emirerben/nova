@@ -1844,6 +1844,10 @@ final class CreationUITests: XCTestCase {
         // A stopped device render hands over to the status card (retry / find originals), not a server 409 message.
         XCTAssertTrue(app.descendants(matching: .any)["device-render-status"].firstMatch.waitForExistence(timeout: 20))
         XCTAssertFalse(app.otherElements["plan-feed"].exists)
+        // A Stop is the creator's pause: resumable, never "needs attention".
+        XCTAssertTrue(app.staticTexts["Rendering paused"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.buttons["device-render-retry"].label, "Resume")
+        XCTAssertFalse(app.staticTexts["This edit needs your attention"].exists)
         attach(app, "plan-feed-device-stopped")
     }
 

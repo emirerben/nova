@@ -30,6 +30,61 @@ path starts with new, explicitly consented analysis-proxy uploads.
 
 Rollback: set `PHONE_RENDERING_ENABLED=false`. This blocks new attempts while
 preserving published outputs and allowing already-reserved exports to finalize.
+A pinned recipe the phone has not started is held: `GET /device-render` keeps its
+real `awaiting_device` phase with `phone_rendering_paused: true` (a waiting state,
+never a synthetic `needs_attention` that `/retry` would refuse). Asset grants and
+new reservations answer 503 `problem.code: phone_rendering_paused` (the phone parks
+and retries; an attempt already reserved still finalizes), and a failure report under
+the hold is acknowledged as `paused` without failing the record, variant or Job.
+
+Phone render lifecycle (killer-screens train):
+- A user Stop (`cancelled_by_user`) is a resumable pause: the record keeps its
+  phase, the project keeps its label, no chat failure card; `GET` reports
+  `paused_by_user`, and `/device-render/retry` resumes the same identity. The
+  phone re-sends the Stop report until the server accepts it.
+- `/device-render/retry` re-delivers the pinned recipe directly, also for
+  chat-approved (runtime-v2) renders; `retry_requires_approval` is always false.
+- Phone-facing 409s carry `problem.code` beside the legacy `detail`:
+  `superseded` (with `active_job_id` when a newer Job owns the project),
+  `render_cancelled`, `editor_empty`, `contract_changed`, `requires_change`,
+  `requires_update`, `held_by_newer_build`, `published`, `not_awaiting_retry`,
+  `output_unverified`.
+- A contract refusal found on `GET` is persisted once (`contract_changed`).
+- A reaped render restarts on its own when a phone build reopens the project.
+- A recipe the phone declines is the creator's turn, never "needs attention":
+  `unsupported_recipe` shows "This edit needs a change" (chat), and `/retry`
+  answers `requires_change`. `renderer_outdated` shows "Update Kria" (TestFlight,
+  `KriaUpdateLink`) and "Review in chat"; the record stores
+  `declined_client_protocol` and `declined_gap` (`floor` when that build failed a
+  protocol gate of the recipe, else `renderer`). `/retry` from that build answers
+  `requires_update` unless the phone sends `renders_locally` (its renderer can
+  produce the recipe now). A `floor` decline is re-pinned on `GET` by a newer build
+  that passes every gate (`_client_update_detail` runs first; one that still fails
+  gets the 426); a `renderer` decline waits for the phone's own "Try again".
+- The device-render 426 names its request (`identity`, `phase`,
+  `minimum_client_protocol`) so the phone reports the right one.
+- **Release order: deploy the API (Fly) before the TestFlight build.** The phone sends
+  `renders_locally` only when true (an older API's `DeviceRetryBody` forbids extra keys
+  and answers 422), but `renders_locally`, the named 426, `held_by_newer_build` and
+  `declined_gap` only work once the API has them.
+- A `renderer_outdated` (or `device_unavailable`) record shows what this build's gate
+  says once it reports no version gap: "Ready to render on this iPhone"
+  (`renderable_now`), "This edit needs a change" for a missing capability, or the
+  cooling/storage wait; "Update Kria" only for a real version gap. "Ready on this
+  iPhone" only for a finished video of the record's own request.
+- Two devices: the GET records `max_reader_client_protocol` (kept across re-pins of
+  the same recipe); a `renderer_outdated` from an older build, or while the record
+  is syncing, answers 409 `held_by_newer_build` and fails nothing.
+- A phone that loses a verified capability after its export started (or finished)
+  lets it finish and uploads it; it declines (and tells the server) only otherwise.
+- Verification that could not run is requeued for the same bytes for up to
+  24h (`verification_unavailable` after that); a real rejection is
+  `output_check_failed`. A check whose record the fence moved past is closed as
+  `superseded` and never fails the newer attempt.
+- The phone waits on a running check with 2-30 s backoff for 15 min, then parks
+  the finished MP4 without re-uploading; parked renders resume on foreground.
+- A failure on an edit whose variant has an accepted output never relabels the
+  variant or Job.
 The pilot does not satisfy or remove the remaining KRI-29 release gates.
 
 ## Adding media to a saved guided edit (KRI-145)

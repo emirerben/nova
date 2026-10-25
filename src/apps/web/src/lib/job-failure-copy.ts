@@ -1,7 +1,8 @@
 export interface JobFailureMessage {
   title: string;
   detail: string;
-  action: "review_media" | "retry_upload" | "retry_render" | "contact_support";
+  /** `wait`: nothing the creator can do right now fixes it; offer no retry. */
+  action: "review_media" | "retry_upload" | "retry_render" | "contact_support" | "wait";
   actionLabel: string;
 }
 
@@ -14,6 +15,18 @@ export interface JobFailureMessage {
  */
 export function jobFailureCopy(reason?: string | null): JobFailureMessage {
   const key = (reason ?? "").trim().toLowerCase();
+
+  // The AI provider's spend cap or Kria's AI budget: every retry answers the same
+  // until it is raised, so never a Retry button and never "try again" now.
+  if (key.includes("ai_quota")) {
+    return {
+      title: "Kria's AI is at its limit",
+      detail:
+        "Kria's AI service has reached its usage limit for now, so this video wasn't made. Your edit and footage are saved. Trying again right away won't help; try again later.",
+      action: "wait",
+      actionLabel: "Try again later",
+    };
+  }
 
   if (
     key.includes("storage") ||
