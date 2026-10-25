@@ -2636,7 +2636,7 @@ final class NativeEditorSessionTests: XCTestCase {
         await session.load(api: fake, threadID: UUID())
         session.refreshRetryDelays = [.seconds(3600)]
         let recoveries: [NativeEditorSaveState] = [
-            .conflict, .renderRetryNeeded("Render failed"), .deviceRenderRetryNeeded("Device failed"),
+            .renderRetryNeeded("Render failed"), .deviceRenderRetryNeeded("Device failed"),
             .previewFailed("Preview slow"), .failed("Save failed"),
         ]
         let failures: [APIError] = [

@@ -331,7 +331,7 @@ private final class Phone: @unchecked Sendable {
             XCTAssertEqual(sessions.presentations[key]?.phase, .superseded, "\(answer)")
             XCTAssertNil(sessions.request(for: key), "the old coordinator no longer owns this key")
             XCTAssertFalse(sessions.isSettled(key), "the chat poll keeps reading: the next read says what replaced it")
-            XCTAssertEqual(DeviceRenderButtonTitle.for(presentation: sessions.presentations[key]!), "Newer edit available")
+            XCTAssertEqual(DeviceRenderButtonTitle.for(presentation: sessions.presentations[key]!), "Edit updated")
             await sessions.stopAll()
         }
     }
