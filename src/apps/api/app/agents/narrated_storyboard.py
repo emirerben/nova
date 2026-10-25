@@ -16,7 +16,6 @@ from typing import ClassVar, Literal
 from pydantic import BaseModel, Field
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
-from app.agents._skills import load_skill
 from app.pipeline.prompt_loader import load_prompt
 
 _WORD_ID_RE = re.compile(r"^w\d{6}$")
@@ -80,7 +79,7 @@ class NarratedStoryboardAgent(Agent[NarratedStoryboardInput, NarratedStoryboardO
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.narrated_storyboard",
         prompt_id="narrated_storyboard",
-        prompt_version="2026-10-25-editorial-skills-v2",
+        prompt_version="2026-10-06.1",
         model="gemini-2.5-flash",
         thinking_budget=512,
         timeout_s=45.0,
@@ -95,7 +94,7 @@ class NarratedStoryboardAgent(Agent[NarratedStoryboardInput, NarratedStoryboardO
         return ["matches"]
 
     def render_prompt(self, input: NarratedStoryboardInput) -> str:  # noqa: A002
-        prompt = load_prompt(
+        return load_prompt(
             "narrated_storyboard",
             words_json=json.dumps(input.words, ensure_ascii=False),
             segments_json=json.dumps(
@@ -108,8 +107,6 @@ class NarratedStoryboardAgent(Agent[NarratedStoryboardInput, NarratedStoryboardO
             creator_request=input.creator_request or "(none)",
             language=input.language or "(unknown)",
         )
-
-        return load_skill("meaningful-moment") + "\n\n" + load_skill("edit-story") + "\n\n" + prompt
 
     def parse(
         self,

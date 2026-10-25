@@ -45,8 +45,8 @@ The existing agents already know their format or role, so local loading is enoug
 
 Main Creator chooses strategy within the phone capability manifest. The resolver
 chooses clip membership from shared records, not source timestamps. Speech excerpt
-planning chooses verbatim passages; workers ground their timing. Narrated storyboard
-planning matches timed voiceover beats to available clips. Slide composition keeps
+planning chooses verbatim passages; workers ground their timing. Phone narrated alignment
+places each clip at a supplied word ID while retaining locked order and pins. Slide composition keeps
 every input asset. The deterministic phone montage compiler has no model prompt
 and is unchanged. No web editor implementation or browser repair is in scope.
 
@@ -90,3 +90,18 @@ No application comments or suppressions are added.
 inspection gaps. Native output verification and production rollout are separate
 from this bounded prompt integration. No flags, models, spend limits, endpoints,
 renderer behavior, approval rules, or output schemas change.
+
+## Phone narrated consumer correction
+
+A final caller trace found that the phone path deliberately skips the cloud-only
+NarratedStoryboardAgent. That integration is removed. Replace its three synthetic
+cases with spoken-cue, locked-order, and pinned-ending cases for the actual phone
+NarratedClipAlignmentAgent before changing that agent. Keep a separate late-action
+resolver case, explicitly limited to source membership rather than exact windows.
+The corpus now has 14 cases. This does not add a new model call to any phone job.
+
+The phone alignment contract owns every supplied clip and returns start_word_id,
+not source timestamps. Its locked order and pins are hard constraints. Its existing
+policy may override advisory described groups when narration reaches them in a
+different order; the new guidance must preserve that distinction. No fallback or
+parser behavior changes.

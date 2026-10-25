@@ -68,7 +68,7 @@ def test_corpus_has_required_formats_and_language():
         "nova.creator.main",
         "nova.plan.clip_request_resolver",
         "nova.plan.speech_excerpt_planner",
-        "nova.compose.narrated_storyboard",
+        "nova.compose.narrated_clip_alignment",
         "nova.plan.slide_post_composer",
     }
     assert any("Köprü" in json.dumps(case.input, ensure_ascii=False) for case in cases)
