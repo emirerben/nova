@@ -68,7 +68,7 @@
       "KriaUITests/CreationUITests/testUnreadableAttachmentDoesNotBlockSend",
       "KriaUITests/CreationUITests/testFailedUploadWithRecordDoesNotBlockSendAndOffersRetry",
       "KriaUITests/DeviceRenderUITests/testPhoneRenderReachesReadyWithPlaySaveAndShare",
-      "KriaUITests/DeviceRenderUITests/testUnsupportedRecipeAsksForANewEditWithoutRetry",
+      "KriaUITests/DeviceRenderUITests/testUnsupportedRecipeAsksForAChangeInChatWithoutRetry",
       "KriaUITests/DeviceRenderUITests/testTimedOutRenderRetriesToReady",
       "KriaUITests/DeviceRenderUITests/testDrawerFollowsDeviceDeliveryFailureThroughRelaunchRetryAndReady",
       "KriaUITests/DeviceRenderUITests/testRecordOnlyEditFailureShowsNeedsAttentionWithoutTheGenericFailure",
