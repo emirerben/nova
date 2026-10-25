@@ -3025,3 +3025,11 @@ token to `current_detector_policy` / bump `DETECTOR_VERSION` (retires `ready` an
 **Client gate:** questions are emitted, and the 409 enforced, only for builds sending `X-Kria-Client-Protocol` >= `OPEN_QUESTIONS_MIN_CLIENT_PROTOCOL` (22, the first build that renders them). Older builds get ideas without `open_questions` and select without the gate, so they never hit a 409 they cannot explain. Kill switch: `…=999` (api) + restart.
 **Privacy:** answers stay in the story row. `prepare_story_snapshot` strips `open_questions` from the prepared payload, so they never reach approvals, runtime documents, or job rows.
 **Revisit if:** answers should regenerate the proposed copy (today the creator edits the wording; no model reads the answer).
+
+---
+
+## [2026-10-25] Research topic suggestion is a regex prefill, never a search
+
+**Decision:** The server suggests a research topic with a no-model heuristic over the creator's query and clip descriptions and returns it as `suggested_research_topic`. The creator must confirm it into the existing topic field; only that field is sent to public search.
+**Why:** Searching on a guess from private media would break the invariant that public search sees only a topic the creator confirmed, and a model call per request would add cost to every idea request. A query-named place or landmark is trusted; a bare name in clips needs two clips (one clip is too often a person or brand). Lowercase places and names under four characters are missed on purpose: a miss only means the creator types the topic, a false positive would put a stranger's name in a search box.
+**Revisit if:** creators ignore the chip because it misses their places; then consider a gazetteer, not a model.

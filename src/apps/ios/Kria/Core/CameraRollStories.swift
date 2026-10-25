@@ -96,6 +96,9 @@ struct CameraRollStoryResearch: Codable, Sendable {
 struct CameraRollStories: Codable, Sendable {
     let stories: [CameraRollStory]
     let coverage: Coverage?
+    /// A public place the server noticed; a prefill the creator must confirm before anything is searched.
+    var suggestedResearchTopic: String? = nil
+    enum CodingKeys: String, CodingKey { case stories, coverage; case suggestedResearchTopic = "suggested_research_topic" }
     struct Coverage: Codable, Sendable {
         let moments: [CameraRollMoment]
         let incompleteSpeech: [UUID]

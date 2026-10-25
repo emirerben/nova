@@ -1239,6 +1239,11 @@
             },
             "title": "Stories",
             "type": "array"
+          },
+          "suggested_research_topic": {
+            "nullable": true,
+            "title": "Suggested Research Topic",
+            "type": "string"
           }
         },
         "required": [

@@ -220,6 +220,15 @@ builds get the list stripped and no gate. `prepare_story_snapshot` strips `open_
 prepared payload, so creator answers never leave the story row. `StoryContentPlan` is
 `extra="forbid"`: rolling back needs a tolerant reader first or the new keys stripped.
 
+`POST .../stories` may add `suggested_research_topic` (omitted when null): a public place or
+landmark named in the creator's query, else repeated in their clip descriptions
+(`research_topic_suggestion.py`, regex only, no model, capitalised names, 4+ characters; absent
+when the request already carries a `research_topic`). It is computed on every request, cached
+hit or not, and only prefills the "Research an angle" field through the "Add background facts"
+chip. Public search still receives exactly the `research_topic` the creator sends. The idea card
+labels the footage section "From your footage" and research as "Background facts" with tappable
+source links; the research review gates are unchanged.
+
 Stories support review, exact-interval replacement/order/removal, original/muted audio,
 rejection and selection. Selection prepares the common revisioned draft, with a server-owned
 story/collection/compiler binding. Separate expiring approval freezes the existing guided

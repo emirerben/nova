@@ -25,6 +25,7 @@ from app.pipeline.clip_cache import (
 from app.schemas.media_collections import CollectionStoriesOut, CollectionStoryOut
 from app.services import creator_editorial_taste, media_collections, media_moments
 from app.services.media_collection_analysis import claim_collection_analysis, collection_run_context
+from app.services.research_topic_suggestion import suggest_research_topic
 from app.services.researched_text import ResearchUnavailable
 from app.services.story_idea_research import (
     research_spec_identity,
@@ -156,8 +157,19 @@ async def generate_stories(db, owner, identifier, body):
     evidence = await candidate_evidence(db, owner, identifier, body.expected_revision, body.query)
     require_requested_coverage(evidence, body)
     candidates = [value for value in evidence.moments if 1 <= value.end_s - value.start_s <= 20]
+    # A prefill for the creator to confirm; nothing is searched until they send it back.
+    suggested_topic = (
+        None
+        if getattr(body, "research_topic", None)
+        else suggest_research_topic(body.query, [value.text for value in candidates])
+    )
     if not candidates:
-        return CollectionStoriesOut(revision=body.expected_revision, stories=[], coverage=evidence)
+        return CollectionStoriesOut(
+            revision=body.expected_revision,
+            stories=[],
+            coverage=evidence,
+            suggested_research_topic=suggested_topic,
+        )
     # Retrieve editorial examples against the actual outing, even when the
     # creator leaves the broad default query unchanged.
     taste_query = (body.query + " " + " ".join(value.text[:160] for value in candidates))[:2000]
@@ -304,7 +316,12 @@ async def generate_stories(db, owner, identifier, body):
             db.add(row)
         accepted.append(story_out(row))
     await db.commit()
-    return CollectionStoriesOut(revision=body.expected_revision, stories=accepted, coverage=fresh)
+    return CollectionStoriesOut(
+        revision=body.expected_revision,
+        stories=accepted,
+        coverage=fresh,
+        suggested_research_topic=suggested_topic,
+    )
 
 
 async def owned_story(db, owner, identifier, story_id, body):

@@ -214,6 +214,9 @@ class CollectionStoriesOut(BaseModel):
     revision: int
     stories: list[CollectionStoryOut]
     coverage: MomentSearchOut
+    suggested_research_topic: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class SavedCollectionStoriesOut(BaseModel):

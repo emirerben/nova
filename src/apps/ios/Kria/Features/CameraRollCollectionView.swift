@@ -33,6 +33,8 @@ struct CameraRollCollectionView: View {
     @State private var showsStories = false
     @State private var showsSaved = false
     @State private var showsOptions = false
+    @State private var reopensOptions = false
+    @State private var researchExpanded = false
     @State private var showsGroups = false
     @State private var showsTaste = false
     @State private var tasteAvailable = false
@@ -102,9 +104,13 @@ struct CameraRollCollectionView: View {
             .photosPicker(isPresented: $showsPicker, selection: $selection,
                           maxSelectionCount: max(1, CameraRollCollection.maximumCount - collection.entries.count),
                           matching: .any(of: [.images, .videos]), photoLibrary: .shared())
-            .sheet(isPresented: $showsStories) {
+            .sheet(isPresented: $showsStories, onDismiss: {
+                if reopensOptions { reopensOptions = false; showsOptions = true }
+            }) {
                 if let stories {
-                    CameraRollStoriesView(api: api, collection: collection, result: stories, cacheOnly: cacheOnlyRequired || cacheOnly, onSelected: onSelected, onReviewed: { reviewed in
+                    CameraRollStoriesView(api: api, collection: collection, result: stories, cacheOnly: cacheOnlyRequired || cacheOnly, onAddBackground: { topic in
+                        researchTopic = topic; researchExpanded = true; reopensOptions = true
+                    }, onSelected: onSelected, onReviewed: { reviewed in
                         if var saved = collection.matchingSavedIdeas {
                             saved.result = reviewed
                             collection.savedIdeas = saved
@@ -298,9 +304,15 @@ struct CameraRollCollectionView: View {
                 Section("Direction") {
                     TextField("Any direction? Optional", text: $query)
                         .accessibilityIdentifier("collection-story-query")
-                    DisclosureGroup("Research an angle") {
+                    DisclosureGroup("Research an angle", isExpanded: $researchExpanded) {
                         TextField("Public place or topic", text: $researchTopic)
                             .accessibilityIdentifier("collection-research-topic")
+                        if researchTopic.isEmpty, let topic = stories?.suggestedResearchTopic {
+                            Button("Add background facts: \(topic)") { researchTopic = topic }
+                                .accessibilityIdentifier("collection-research-suggestion")
+                        }
+                        Text("Only this topic is searched. Your clips and direction stay private.")
+                            .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                     }
                 }
                 if !cacheOnlyRequired {
@@ -460,7 +472,8 @@ struct CameraRollCollectionView: View {
         running = true; error = nil; status = nil
         defer { running = false }
         do {
-            let found = try await api.savedCameraRollStories(id: collection.id, revision: saved.revision, storyIDs: saved.result.stories.map(\.id))
+            var found = try await api.savedCameraRollStories(id: collection.id, revision: saved.revision, storyIDs: saved.result.stories.map(\.id))
+            found.suggestedResearchTopic = saved.result.suggestedResearchTopic
             try Task.checkCancellation()
             stories = found
             showsStories = true
