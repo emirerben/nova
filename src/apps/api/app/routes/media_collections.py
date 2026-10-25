@@ -38,7 +38,8 @@ def require_collections(native_client: NativeClient, user: CurrentUser):
 
 def _asks_open_questions(client_protocol: int | None) -> bool:
     return (
-        client_protocol is not None
+        settings.camera_roll_story_extras_enabled
+        and client_protocol is not None
         and client_protocol >= settings.open_questions_min_client_protocol
     )
 

@@ -900,6 +900,14 @@ class Settings(BaseSettings):
     # nor explain the 409). 22 = the first iOS build with the question UI. Kill switch:
     # `OPEN_QUESTIONS_MIN_CLIENT_PROTOCOL=999` (api) + restart.
     open_questions_min_client_protocol: int = 22
+    # Camera-roll idea extras: `content_plan.form` and `content_plan.open_questions` on stored
+    # stories. Default TRUE. False: new ideas are stored in the legacy shape (no form, no
+    # questions) and `select` never gates on questions. Rollback of the deploy that introduced
+    # them: set this false FIRST (api + worker, restart) so no new rows carry keys the previous
+    # image's `extra="forbid"` plan rejects, then strip the keys from existing rows
+    # (docs/pipelines/media-library.md). Apply:
+    # `fly secrets set CAMERA_ROLL_STORY_EXTRAS_ENABLED=false`.
+    camera_roll_story_extras_enabled: bool = True
     # KRI-815: with footage and no voiceover, Kria chat writes a footage-grounded voiceover
     # script (`voiceover_script` on the reply) instead of a narrated draft that can only fail at
     # approval. Independent of TRANSCRIPT_HELPER_ENABLED. Kill switch: false + restart (api +

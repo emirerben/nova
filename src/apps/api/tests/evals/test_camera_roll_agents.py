@@ -517,8 +517,8 @@ def test_story_planning_receives_real_coverage_without_double_counting_overlaps(
 
 
 # Failure catalogue for editorial forms: a missing/unknown form, a form claimed over
-# footage or research that cannot support it, three ideas that are one form reworded,
-# and a pre-form saved plan that must still load unchanged.
+# footage or research that cannot support it, and a pre-form saved plan that must still
+# load unchanged.
 def _form_input(sources=3, research=False):
     from app.agents.camera_roll_stories import CameraRollStoriesInput
     from app.schemas.research import ResearchEvidence
@@ -600,13 +600,29 @@ def test_guide_and_factual_story_are_dropped_when_their_evidence_is_missing():
     assert _forms(researched, _form_story("factual_story", facts=("fact-0",))) == ["factual_story"]
 
 
-def test_three_ideas_of_one_form_keep_two_instead_of_failing():
+def test_three_ideas_of_one_form_are_kept_for_narrow_requests():
+    # "just the performance clips" or a one-clip collection legitimately yields one form;
+    # the prompt owns variety, the parser must not 503 the creator for obeying it.
     value = _form_input()
-    same = [_form_story("atmosphere", n=i) for i in range(3)]
-    assert _forms(value, *same) == ["atmosphere"] * 2
-    assert _forms(value, *same[:2]) == ["atmosphere"] * 2
+    same = [_form_story("performance", n=i) for i in range(3)]
+    assert _forms(value, *same) == ["performance"] * 3
     mixed = [_form_story("atmosphere", n=0), _form_story("review", n=1), same[2]]
-    assert _forms(value, *mixed) == ["atmosphere", "review", "atmosphere"]
+    assert _forms(value, *mixed) == ["atmosphere", "review", "performance"]
+
+
+def test_extras_kill_switch_stores_the_legacy_plan_shape(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "camera_roll_story_extras_enabled", False)
+    story = _form_story("review")
+    story["content_plan"]["open_questions"] = ["Which café is this?"]
+    parsed = (
+        CameraRollStoriesAgent(None)
+        .parse(json.dumps(dict(stories=[story])), _form_input())
+        .stories[0]
+    )
+    dumped = parsed.content_plan.model_dump(mode="json")
+    assert "form" not in dumped and "open_questions" not in dumped
 
 
 def test_forms_flag_off_neither_requires_validates_nor_stores_a_form(monkeypatch):

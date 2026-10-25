@@ -199,7 +199,8 @@ Each idea carries an additive `content_plan.form` (`guide`, `factual_story`, `at
 `review`, `performance`). `FORM_EVIDENCE` in `schemas/media_collections.py` lists what a form
 needs: `guide` three distinct source clips, `factual_story` a selected research fact, the rest
 nothing. `CameraRollStoriesAgent.parse` requires a known form, drops an idea whose form lacks its
-evidence, and keeps the first two when three surviving ideas share one form. `STORY_IDEA_FORMS_ENABLED=false` turns all of this off
+evidence; three surviving ideas that share one form are kept (a narrow request legitimately
+yields them) and logged. `STORY_IDEA_FORMS_ENABLED=false` turns all of this off
 (rollback lever; procedure in DECISIONS.md "Idea forms"). Saved stories from before the field have no `form` key; `StoryContentPlan`
 stays version 1 and omits a null form when serializing, so stored JSON, digests and approval
 bindings of those rows are byte-identical. A wording edit keeps the stored form (builds that
@@ -210,15 +211,21 @@ An idea may carry up to three `content_plan.open_questions` (`id`, `question`, `
 answers or skips through the existing `PATCH .../stories/{id}` wording edit (a new story
 revision); `resolve_open_questions` merges only `answer`/`dismissed` by id, rejects unknown ids,
 and keeps the stored list when a build that predates the field sends none. `select_story`
-answers 409 `story_open_questions` while any question is neither answered nor skipped (replays
-of an already-accepted selection are not re-checked). Legacy rows have no key and build as
+answers 409 `story_open_questions` while any question is neither answered nor skipped, but only to builds
+declaring `X-Kria-Client-Protocol` >= `OPEN_QUESTIONS_MIN_CLIENT_PROTOCOL` (22); older
+builds cannot answer and build the neutral-copy idea (replays of an already-accepted selection
+are not re-checked). The prepared story, its digest and planning diagnostics omit
+`open_questions`: answers stay on the story row only. Legacy rows have no key and build as
 before. `story_content_digest` and the research review prompt ignore the list, so answering
-never stales a research review. The card's length is `duration_s`, summed from the story's
-moments on every read. Only builds sending `X-Kria-Client-Protocol` >=
-`OPEN_QUESTIONS_MIN_CLIENT_PROTOCOL` (22) are shown `open_questions` and held by the 409; older
-builds get the list stripped and no gate. `prepare_story_snapshot` strips `open_questions` from the
-prepared payload, so creator answers never leave the story row. `StoryContentPlan` is
-`extra="forbid"`: rolling back needs a tolerant reader first or the new keys stripped.
+never stales a research review. `CAMERA_ROLL_STORY_EXTRAS_ENABLED=false` stores new ideas without
+`form`/`open_questions` and stops the gate. Rollback of the deploy that introduced these keys:
+set it false first (api + worker, restart), then strip the keys from existing rows with
+`UPDATE media_collection_stories SET story_json = jsonb_set(story_json, '{content_plan}',
+(story_json->'content_plan') - 'form' - 'open_questions') WHERE story_json->'content_plan'
+?| array['form','open_questions'];` (let in-flight prepared turns drain first), then redeploy
+the old image. The card's length is `duration_s`, summed from the story's
+moments on every read. Builds below the protocol also get `open_questions` stripped from
+responses (`prepare_story_snapshot` strips it from the prepared payload for everyone).
 
 `POST .../stories` may add `suggested_research_topic` (omitted when null): a public place or
 landmark named in the creator's query, else repeated in their clip descriptions
