@@ -33,9 +33,10 @@ of the turn left it runs inline; otherwise it runs in its own task
 run anchors its drafted strategy to the turn, so the re-run drafts exactly what is being
 researched (a re-plan's wording never matches) and waits for the task instead of paying
 for the same research twice. Results are cached by everything they were researched for
-(the ask, the full creator request, the live requirements, the reply language, the draft
-and its media). Only finished results are cached, first one wins: a timeout is never
-cached, so the next run researches again.
+(the ask, the full creator request, the live requirements, the reply language, the draft,
+its media, the ready Visuals and the slot windows the clip analysis planned). Only finished
+results are cached, first one wins: a timeout is never cached, so the next run researches
+again.
 
 Kill switch: ``KRIA_RESEARCH_PREVIEW_ENABLED=false`` + restart (api + worker). Off, nothing
 here runs and the render researches after approval exactly as before.
@@ -43,6 +44,7 @@ here runs and the render researches after approval exactly as before.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import time
@@ -122,12 +124,15 @@ def basis_digest(
     creator_request: str,
     brief: CreativeBrief | None,
     language: str | None,
+    analysis: Mapping[str, Any] | None = None,
 ) -> str:
     """What a prepared result was researched for.
 
     The ask, the full creator request (the copy writer's instruction), every live
     requirement (a later "keep it under 6 words" changes the wording), the reply language,
-    the draft and its media. Anything else changing means researching again.
+    the draft, its media, and ``analysis`` (`analysis_basis`): the ready Visuals the plan
+    places and the slot windows the clip analysis planned, which change without the draft
+    or its media changing. Anything else changing means researching again.
     """
     from app.kria.brief_binding import media_identity  # noqa: PLC0415
 
@@ -139,10 +144,65 @@ def basis_digest(
         "strategy": dict(strategy or {}),
         "media": media_identity(dict(media_snapshot)),
         "length_plan": dict(media_snapshot).get("length_plan"),
+        "analysis": dict(analysis) if analysis is not None else None,
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode()
     ).hexdigest()
+
+
+def _visual_identity(visual: Any) -> str:
+    """One ready Visual as the plan reads it (id, generation, length, analysis, context)."""
+    if dataclasses.is_dataclass(visual) and not isinstance(visual, type):
+        raw: Any = dataclasses.asdict(visual)
+    else:
+        raw = getattr(visual, "__dict__", visual)
+    return hashlib.sha256(
+        json.dumps(raw, sort_keys=True, ensure_ascii=False, default=str).encode()
+    ).hexdigest()
+
+
+def analysis_basis(
+    *,
+    creator_id: object,
+    edit_format: object,
+    brief: CreativeBrief | None,
+    strategy: Mapping[str, Any] | None,
+    media_snapshot: Mapping[str, Any],
+    visuals: Any,
+    client_protocol: int | None = None,
+) -> dict[str, Any]:
+    """The research inputs the request and the draft do not name.
+
+    The ready Visuals the plan places and the slot windows the worker's own montage plan
+    (`phone_montage_preflight.preflight_montage_plan`) cuts from the clip analysis: the
+    windows research binds each explanation to. A Visual added or re-analysed, or clip
+    analysis that moves a window, changes this, so a cached result researched for the
+    old windows is never pinned (the render would refuse it after approval). ``slots`` is
+    ``None`` when the draft does not render through the unified phone montage.
+    """
+    from app.pipeline.guided_story import compile_proposal_execution_plan  # noqa: PLC0415
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+    from app.services.creation_text_composition import _lanes  # noqa: PLC0415
+    from app.services.phone_montage_preflight import preflight_montage_plan  # noqa: PLC0415
+
+    rows = list(visuals() if callable(visuals) else visuals or [])
+    try:
+        planned = preflight_montage_plan(
+            creator_id=creator_id,
+            edit_format=edit_format,
+            brief=brief,
+            strategy=strategy,
+            media_snapshot=media_snapshot,
+            visuals=rows,
+            client_protocol=client_protocol,
+        )
+    except UnsupportedPhonePlan:
+        planned = None
+    slots = None
+    if planned is not None:
+        _texts, slots = _lanes(compile_proposal_execution_plan(planned[0].snapshot))
+    return {"visuals": [_visual_identity(row) for row in rows], "slots": slots}
 
 
 @dataclass(frozen=True)
@@ -158,6 +218,10 @@ class ResearchInputs:
     media_snapshot: dict
     creator_request: str
     language: str | None = None
+    # KRI-898: the app build that sent the message (the plan holds a freeze only for it).
+    client_protocol: int | None = None
+    # `analysis_basis` for the Visuals this research reads; part of the basis.
+    analysis: dict | None = None
 
     @property
     def found(self) -> tuple[BriefRequirement, ResearchRequest]:
@@ -175,6 +239,22 @@ class ResearchInputs:
             creator_request=self.creator_request,
             brief=self.brief,
             language=self.language,
+            analysis=self.analysis,
+        )
+
+    def with_visuals(self, visuals: Any) -> ResearchInputs:
+        """These inputs with ``analysis`` read from ``visuals`` (the ones research reads)."""
+        return replace(
+            self,
+            analysis=analysis_basis(
+                creator_id=self.creator_id,
+                edit_format=self.edit_format,
+                brief=self.brief,
+                strategy=self.strategy,
+                media_snapshot=self.media_snapshot,
+                visuals=visuals,
+                client_protocol=self.client_protocol,
+            ),
         )
 
     @property
@@ -193,6 +273,8 @@ class ResearchInputs:
             "media_snapshot": self.media_snapshot,
             "creator_request": self.creator_request,
             "language": self.language,
+            "client_protocol": self.client_protocol,
+            "analysis": self.analysis,
         }
 
     @classmethod
@@ -207,6 +289,8 @@ class ResearchInputs:
             media_snapshot=dict(raw.get("media_snapshot") or {}),
             creator_request=str(raw.get("creator_request") or ""),
             language=raw.get("language"),
+            client_protocol=raw.get("client_protocol"),
+            analysis=raw.get("analysis"),
         )
 
 
@@ -266,6 +350,7 @@ def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> Prepare
             strategy=inputs.strategy,
             media_snapshot=inputs.media_snapshot,
             visuals=visuals,
+            client_protocol=inputs.client_protocol,
         )
     except UnsupportedPhonePlan:
         return None  # the planner declines; the KRI-775 check and the worker say why
@@ -548,13 +633,19 @@ def for_draft(
     strategy: Mapping[str, Any] | None,
     media_snapshot: Mapping[str, Any],
     terms: Mapping[str, Any] | None,
+    creator_id: object,
+    edit_format: object,
+    visuals: Any,
+    client_protocol: int | None = None,
 ) -> DraftResearch | None:
     """The planning step's result for the brief the draft turn actually persisted.
 
-    A result researched for anything else (the brief or draft changed in between) is
-    reported as a precise limit, never pinned to the wrong clips. ``terms`` carries the
-    basis inputs the planning step read and the persisted draft does not hold (the full
-    creator request, the reply language).
+    A result researched for anything else (the brief, the draft, its ready Visuals or the
+    slot windows the clip analysis plans changed in between) is reported as a precise
+    limit, never pinned to the wrong clips. ``terms`` carries the basis inputs the
+    planning step read and the persisted draft does not hold (the full creator request,
+    the reply language). ``visuals`` are the item's ready Visuals now, read the way the
+    planning step read them, so the basis is recomputed from this commit's own inputs.
     """
     if prepared is None:
         return None
@@ -570,6 +661,15 @@ def for_draft(
         creator_request=str((terms or {}).get("creator_request") or ""),
         brief=brief,
         language=(terms or {}).get("language"),
+        analysis=analysis_basis(
+            creator_id=creator_id,
+            edit_format=edit_format,
+            brief=brief,
+            strategy=strategy,
+            media_snapshot=media_snapshot,
+            visuals=visuals,
+            client_protocol=client_protocol,
+        ),
     )
     if result.basis_digest != expected:
         result = _failed(
@@ -602,6 +702,7 @@ def load_inputs_sync(planned: Any, snapshot: Mapping[str, Any], *, turn_id: uuid
     from app.models import CreationThreadEvent, CreatorAgentTurn, PlanItem  # noqa: PLC0415
     from app.services.choice_questions import answered_brief  # noqa: PLC0415
     from app.services.phone_montage_preflight import _ready_visuals  # noqa: PLC0415
+    from app.services.phone_rollout import stamped_client_protocol  # noqa: PLC0415
     from app.tasks.kria_runtime import _full_creator_request_sync  # noqa: PLC0415
 
     creator_id = snapshot.get("creator_id")
@@ -655,7 +756,8 @@ def load_inputs_sync(planned: Any, snapshot: Mapping[str, Any], *, turn_id: uuid
             media_snapshot=media,
             creator_request=request or "",
             language=current_reply_language(),
-        )
+            client_protocol=stamped_client_protocol(snapshot.get("client_protocol")),
+        ).with_visuals(visuals)
     return inputs, visuals
 
 
@@ -688,9 +790,14 @@ def run_task_body(payload: Mapping[str, Any]) -> str:
     from app.agents._runtime import RunContext  # noqa: PLC0415
     from app.kria.reply_language import reply_language_for  # noqa: PLC0415
 
-    inputs = ResearchInputs.from_payload(payload)
-    basis = inputs.basis
+    queued = ResearchInputs.from_payload(payload)
     try:
+        # Research the Visuals as they are now, and cache under the basis they make: a
+        # Visual that changed since the turn queued this is a new basis, which the turn's
+        # next run computes the same way.
+        visuals = visuals_for_task(queued)
+        inputs = queued.with_visuals(visuals)
+        basis = inputs.basis
         if cache_get(inputs.thread_id, basis) is not None:
             return "cached"
         ctx = RunContext(
@@ -701,7 +808,7 @@ def run_task_body(payload: Mapping[str, Any]) -> str:
         )
         try:
             with reply_language_for(inputs.language):
-                prepared = prepare(inputs, visuals=visuals_for_task(inputs), ctx=ctx)
+                prepared = prepare(inputs, visuals=visuals, ctx=ctx)
         except ResearchNotFinished as exc:
             # Transient (provider slow or outcome unknown): never cached, so the waiting
             # turn run (or the creator's resend) researches again.
@@ -713,7 +820,7 @@ def run_task_body(payload: Mapping[str, Any]) -> str:
         log.info("kria_research_preview_prepared", status=prepared.status, basis=basis[:12])
         return prepared.status
     finally:
-        release_inflight(inputs.thread_id, basis)
+        release_inflight(queued.thread_id, queued.basis)
 
 
 def enqueue(inputs: ResearchInputs) -> None:

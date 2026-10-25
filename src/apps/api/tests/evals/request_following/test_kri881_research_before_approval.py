@@ -35,6 +35,10 @@ F18 A transient timeout in the background task is cached as a final failure, so 
     later run (and the creator's resend) shows "sources could not be confirmed" for an hour.
 F19 A newer instruction ("keep each explanation under 6 words") reuses wording researched
     under the old one, because the cache key ignores the full request and requirements.
+F20 A Visual added after research is cached, F21 clip analysis that moves a slot window:
+    the cached wording, bound to the old windows, is pinned and the job fails after
+    approval. F22 The draft commit checks the result against the planning step's Visuals
+    instead of its own.
 (Lyric caption rows under an approved explanation: test_creation_composition.py.)
 
 Artifact: ``.dev/kri-881/report.json`` (approval-time wording and sources, render-time text
@@ -913,3 +917,143 @@ async def test_a_newer_instruction_is_researched_again_not_served_from_the_cache
     assert research_preview.run_task_body(newer) == "ready"
     assert calls["search"] == 2
     _REPORT["newer_instruction"] = {"verdict": "pass", "calls": calls}
+
+
+# -- F20/F21: the cache basis covers what research read beyond the draft ---------------------
+#
+# F20 A Visual added (or re-analysed) after research is cached: the cached wording, bound to
+#     the old slot windows, is pinned to an approval whose render plans other windows, and
+#     the job fails after approval.
+# F21 Clip analysis that moves a slot window (a stronger best moment) does the same: the
+#     media identity ignores analysis, so the old basis still matched.
+# F22 The planning step researched one set of Visuals and the draft commit sees another:
+#     ``for_draft`` must recompute the basis from the commit's own Visuals, not echo the
+#     planning step's.
+
+
+def _visual(media_id: str = "t06-map") -> object:
+    from app.pipeline.unified_montage import UnifiedClip  # noqa: PLC0415
+
+    return UnifiedClip(
+        media_id=media_id,
+        proxy_path=f"users/test/visuals/{media_id}.jpg",
+        generation="1",
+        duration_s=0.0,
+        analysis={"subject": "a map of the Troad", "description": "A map of ancient Troy"},
+        lane="asset",
+        kind="image",
+        manifest_id=f"asset-{media_id}",
+        aspect=0.5625,
+        source_filename=f"{media_id}.jpg",
+        user_context="",
+        content_hash=None,
+    )
+
+
+async def _researched_payload(monkeypatch) -> tuple[dict, dict[str, int]]:  # noqa: ANN001
+    from app.kria import research_preview  # noqa: PLC0415
+
+    calls = _record(monkeypatch, INSTITUTIONAL)
+    tasks = _defer_to_background(monkeypatch)
+    first, _accepted, _thread_id = await _turn(monkeypatch)
+    assert first["status"] == "continued", first
+    payload = tasks[0]["args"][0]
+    assert research_preview.run_task_body(payload) == "ready"
+    assert research_preview.run_task_body(payload) == "cached"
+    assert calls["search"] == 1
+    return payload, calls
+
+
+@pytest.mark.asyncio
+async def test_a_visual_added_after_research_is_researched_again(monkeypatch) -> None:
+    """F20."""
+    from app.kria import research_preview  # noqa: PLC0415
+
+    payload, calls = await _researched_payload(monkeypatch)
+    monkeypatch.setattr(research_preview, "visuals_for_task", lambda _inputs: [_visual()])
+
+    assert research_preview.run_task_body(payload) == "ready"
+    assert calls["search"] == 2
+    _REPORT["visual_changed"] = {"verdict": "pass", "calls": calls}
+
+
+def _moved_window(payload: dict, *, best_moment_s: float) -> dict:
+    """``payload`` after clip analysis found the ruins' strongest moment at ``best_moment_s``."""
+    out = copy.deepcopy(payload)
+    ruins = next(
+        row for row in out["media_snapshot"]["clip_assignments"] if row["media_id"] == "t06-ruins"
+    )
+    ruins["analysis"]["best_moments"] = [
+        {
+            "start_s": best_moment_s,
+            "end_s": best_moment_s + 4.0,
+            "energy": 9.0,
+            "description": "The walls up close",
+        }
+    ]
+    return out
+
+
+@pytest.mark.asyncio
+async def test_analysis_that_moves_a_window_is_researched_again(monkeypatch) -> None:
+    """F21. A 40 s ruins take, so its cut is a window inside the clip, not the whole clip."""
+    import sys  # noqa: PLC0415
+
+    from app.kria import research_preview  # noqa: PLC0415
+
+    module = sys.modules[__name__]
+    monkeypatch.setattr(
+        module,
+        "CLIPS",
+        [(*clip[:1], 40.0, *clip[2:]) if clip[0] == "t06-ruins" else clip for clip in CLIPS],
+    )
+    researched, calls = await _researched_payload(monkeypatch)
+    # A draft whose media carries no length plan: the planner cuts each window from the
+    # clip analysis itself (`unified_montage._window_start_s`), at plan time.
+    payload = copy.deepcopy(researched)
+    payload["media_snapshot"].pop("length_plan", None)
+    moved = _moved_window(payload, best_moment_s=20.0)
+    before = research_preview.ResearchInputs.from_payload(payload).with_visuals([])
+    after = research_preview.ResearchInputs.from_payload(moved).with_visuals([])
+    # The precondition: the analysis moved a planned window, and nothing the draft names.
+    assert before.analysis["slots"] != after.analysis["slots"]
+    assert before.media_snapshot["clip_paths"] == after.media_snapshot["clip_paths"]
+    assert before.strategy == after.strategy
+
+    assert research_preview.run_task_body(payload) == "ready"
+    assert research_preview.run_task_body(payload) == "cached"
+    assert calls["search"] == 2
+    assert research_preview.run_task_body(moved) == "ready"
+    assert calls["search"] == 3
+    _REPORT["analysis_moved_window"] = {"verdict": "pass", "calls": calls}
+
+
+@pytest.mark.asyncio
+async def test_the_draft_commit_checks_research_against_its_own_visuals(monkeypatch) -> None:
+    """F22."""
+    from app.kria import research_preview  # noqa: PLC0415
+
+    payload, _calls = await _researched_payload(monkeypatch)
+    inputs = research_preview.ResearchInputs.from_payload(payload).with_visuals([])
+    prepared = research_preview.cache_get(inputs.thread_id, inputs.basis)
+    assert prepared is not None and prepared.status == "ready"
+
+    def draft(visuals: list) -> research_preview.DraftResearch | None:  # noqa: ANN001
+        return research_preview.for_draft(
+            prepared.model_dump(mode="json"),
+            brief=inputs.brief,
+            strategy=inputs.strategy,
+            media_snapshot=inputs.media_snapshot,
+            terms=inputs.terms,
+            creator_id=inputs.creator_id,
+            edit_format=inputs.edit_format,
+            visuals=lambda: visuals,
+            client_protocol=inputs.client_protocol,
+        )
+
+    same = draft([])
+    assert same is not None and same.ready
+    changed = draft([_visual()])
+    assert changed is not None and not changed.ready
+    assert changed.prepared.reason == "The draft changed while its sources were checked."
+    _REPORT["draft_commit_visuals"] = {"verdict": "pass"}

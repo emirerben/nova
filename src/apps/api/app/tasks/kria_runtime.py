@@ -1600,7 +1600,11 @@ def _complete_draft_turn(
                         # KRI-881: research that failed before approval is a precise limit
                         # the creator rules on here, never a ready card.
                         from app.kria import research_preview  # noqa: PLC0415
+                        from app.services.phone_montage_preflight import (  # noqa: PLC0415
+                            _ready_visuals,
+                        )
 
+                        draft_strategy = document.strategy or {}
                         draft_research = research_preview.for_draft(
                             planned.prepared_research,
                             brief=brief,
@@ -1609,6 +1613,17 @@ def _complete_draft_turn(
                             if planned.media_snapshot is not None
                             else snapshot_media(item),
                             terms=planned.prepared_research_terms,
+                            # The basis inputs research read beyond the draft: this item's
+                            # ready Visuals now and the slot windows they plan with.
+                            creator_id=thread.creator_id,
+                            edit_format=draft_strategy.get("edit_format") or item.edit_format,
+                            visuals=lambda: _ready_visuals(
+                                db,
+                                item=item,
+                                user_id=thread.creator_id,
+                                strategy=document.strategy,
+                            ),
+                            client_protocol=client_protocol,
                         )
                         if draft_research is not None and not draft_research.ready:
                             phone_blockers = [
