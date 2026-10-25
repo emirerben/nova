@@ -2971,3 +2971,152 @@ def test_phone_subtitled_multi_clip_flag_on_compiles_native(monkeypatch) -> None
         ),
     )
     assert plan.strategy.render_program == "native"
+
+
+# --- exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED) ----------------------------
+# Failure modes 5, 9, 13, 14 in docs/reviews/timed-cards-montage-voiceover-failure-modes.md.
+
+_TIMED_POOL = [
+    {"media_id": "asset-menu", "kind": "image", "label": "menu photo"},
+    {"media_id": "asset-brew", "kind": "video", "label": "brewing video"},
+]
+
+
+def _enable_timed_cards(monkeypatch, *, features=PHONE_SUBTITLED_OVERLAY_FEATURES) -> None:
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "phone_timed_cards_enabled", True, raising=False)
+    monkeypatch.setattr(capabilities.settings, "media_overlays_enabled", True)
+    monkeypatch.setattr(
+        capabilities.settings, "phone_render_verified_features", ["narrationAudio", *features]
+    )
+
+
+def _timed_manifest(monkeypatch, edit_format="montage", *, has_voiceover=False):
+    return capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format=edit_format,
+        media=[{"media_id": "phone-a", "kind": "video"}, *_TIMED_POOL],
+        phone_source_media_ids=["phone-a"],
+        phone_rendering_allowed=True,
+        has_voiceover=has_voiceover,
+    )
+
+
+def _timed_strategy(**card) -> CreativeStrategy:
+    row = {"card_id": "menu", "visual_id": "menu photo", "at_s": 3.0, "hold_s": 2.0}
+    row.update(card)
+    return CreativeStrategy(selected_media_ids=["phone-a"], timed_cards=[row])
+
+
+def test_timed_cards_capability_absent_and_strategy_stripped_when_flag_off(monkeypatch) -> None:
+    """9: off = byte-identical manifest (no key, same hashes) and a plain notice."""
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "media_overlays_enabled", True)
+    monkeypatch.setattr(
+        capabilities.settings,
+        "phone_render_verified_features",
+        list(PHONE_SUBTITLED_OVERLAY_FEATURES),
+    )
+    before = _timed_manifest(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "phone_timed_cards_enabled", False, raising=False)
+    manifest = _timed_manifest(monkeypatch)
+    assert capabilities.CAPABILITY_TIMED_CARDS not in manifest.capabilities
+    assert manifest.manifest_hash == before.manifest_hash
+    assert manifest.context_hash == before.context_hash
+    assert manifest.capabilities["media_overlays"].reason_code == "unsupported_on_phone"
+    repaired, notices = capabilities.repair_creator_timed_cards(manifest, _timed_strategy())
+    assert repaired.timed_cards is None
+    assert notices == [capabilities.TIMED_CARDS_UNAVAILABLE_NOTICE]
+    plan = capabilities.compile_strategy_to_plan(manifest, _timed_strategy())
+    assert plan.strategy.timed_cards is None
+    assert capabilities.TIMED_CARDS_UNAVAILABLE_NOTICE in plan.notices
+
+
+@pytest.mark.parametrize(
+    ("edit_format", "has_voiceover", "features", "expected"),
+    [
+        ("montage", False, PHONE_SUBTITLED_OVERLAY_FEATURES, True),
+        ("day_vlog", False, PHONE_SUBTITLED_OVERLAY_FEATURES, True),
+        ("montage", True, PHONE_SUBTITLED_OVERLAY_FEATURES, True),
+        ("narrated_planned", True, PHONE_SUBTITLED_OVERLAY_FEATURES, True),
+        # A narrated item with no voiceover yet is self-narration -> Talking's lane, not this.
+        ("narrated_planned", False, PHONE_SUBTITLED_OVERLAY_FEATURES, False),
+        # Talking never advertises it: reaction beats own that edit.
+        ("subtitled", False, PHONE_SUBTITLED_OVERLAY_FEATURES, False),
+        # A device feature missing closes it everywhere.
+        ("montage", False, ("stillImages", "visualBlocks"), False),
+    ],
+)
+def test_timed_cards_capability_matrix(
+    monkeypatch, edit_format, has_voiceover, features, expected
+) -> None:
+    """14: advertised only where a phone writer compiles the lane."""
+    _enable_timed_cards(monkeypatch, features=features)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    monkeypatch.setattr(
+        capabilities.settings, "phone_render_verified_features", ["narrationAudio", *features]
+    )
+    manifest = _timed_manifest(monkeypatch, edit_format, has_voiceover=has_voiceover)
+    capability = manifest.capabilities[capabilities.CAPABILITY_TIMED_CARDS]
+    assert capability.available is expected, capability
+    if not expected:
+        assert capability.reason_code in {"unsupported_on_phone", "phone_timed_cards_format"}
+    # The generic `media_overlays` treatment stays refused on these edits: the phone compiler
+    # still rejects `editor_media_overlays` (`mediaCards`); only the timed lane opens.
+    if edit_format != "subtitled":
+        assert manifest.capabilities["media_overlays"].reason_code == "unsupported_on_phone"
+
+
+def test_timed_cards_capability_is_phone_only(monkeypatch) -> None:
+    _enable_timed_cards(monkeypatch)
+    cloud = capabilities.resolve_creator_manifest(
+        item_id="item-cloud",
+        edit_format="montage",
+        media=[{"media_id": "clip-a", "kind": "video"}, *_TIMED_POOL],
+    )
+    capability = cloud.capabilities[capabilities.CAPABILITY_TIMED_CARDS]
+    assert capability.available is False and capability.reason_code == "phone_only"
+
+
+def test_timed_card_repair_resolves_labels_and_drops_unknown_visuals(monkeypatch) -> None:
+    """13: a label canonicalises to the manifest id; an unknown visual is dropped, named."""
+    _enable_timed_cards(monkeypatch)
+    manifest = _timed_manifest(monkeypatch)
+    strategy = CreativeStrategy(
+        selected_media_ids=["phone-a"],
+        timed_cards=[
+            {"card_id": "menu", "visual_id": "menu photo", "at_s": 3.0, "hold_s": 2.0},
+            {"card_id": "ghost", "visual_id": "receipt", "at_s": 5.0, "label": "the receipt"},
+            {"card_id": "clip", "visual_id": "asset-menu", "clip_id": "phone-a", "offset_s": 1},
+            {"card_id": "lost", "visual_id": "asset-menu", "clip_id": "phone-zz"},
+        ],
+    )
+    repaired, notices = capabilities.repair_creator_timed_cards(manifest, strategy)
+    assert [c.card_id for c in repaired.timed_cards] == ["menu", "clip"]
+    assert repaired.timed_cards[0].visual_id == "asset-menu"
+    assert repaired.timed_cards[0].label == "menu photo"
+    assert repaired.timed_cards[1].clip_id == "phone-a"
+    assert notices == [
+        'Couldn\'t find "the receipt" in your Visuals for the small card at 5.0 s; left it out.',
+        "Couldn't find the clip the small card should follow; left that card out.",
+    ]
+    # The repaired strategy is what approval dispatches.
+    plan = capabilities.compile_strategy_to_plan(manifest, strategy)
+    assert [c.card_id for c in plan.strategy.timed_cards] == ["menu", "clip"]
+
+
+def test_timed_video_card_repair_requires_verified_visual_videos(monkeypatch) -> None:
+    """5: a Visuals VIDEO card needs `visualVideos`; otherwise dropped with a notice."""
+    _enable_timed_cards(monkeypatch)
+    manifest = _timed_manifest(monkeypatch)
+    strategy = _timed_strategy(card_id="brew", visual_id="brewing video", label="brewing video")
+    repaired, notices = capabilities.repair_creator_timed_cards(manifest, strategy)
+    assert repaired.timed_cards is None
+    assert notices == [
+        "Videos can't show as small cards in this edit yet, so the brewing video card at "
+        "3.0 s is left out."
+    ]
+    _enable_timed_cards(monkeypatch, features=(*PHONE_SUBTITLED_OVERLAY_FEATURES, "visualVideos"))
+    manifest = _timed_manifest(monkeypatch)
+    repaired, notices = capabilities.repair_creator_timed_cards(manifest, strategy)
+    assert notices == [] and repaired.timed_cards[0].visual_id == "asset-brew"

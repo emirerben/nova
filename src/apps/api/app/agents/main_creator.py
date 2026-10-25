@@ -49,7 +49,11 @@ from app.schemas.edit_proposal import (
     resolve_video_reuse_policy,
     turkish_media_scope,
 )
-from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS, ending_clip_candidates
+from app.services.creator_capabilities import (
+    CAPABILITY_REACTION_BEATS,
+    CAPABILITY_TIMED_CARDS,
+    ending_clip_candidates,
+)
 from app.services.length_policy import creator_duration_s
 
 log = structlog.get_logger()
@@ -140,7 +144,9 @@ log = structlog.get_logger()
 # v92 (KRI-881): main's v91 plus a research / sources ask as a typed `text` requirement with
 # `facts.research` ({topic, request_quote}); the server researches it before approval.
 # v93 combines main v92 research-before-approval with runtime creative skills.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-25-v94"
+# v95: exact-timed small cards (`timed_cards`, flag PHONE_TIMED_CARDS_ENABLED) on phone
+# Montage / Voiceover edits, and the shared brief records a `timed_card` fact for the ask.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-25-v95"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -316,6 +322,27 @@ plays to its end and this video follows it, so never also use that video in `rea
 stays for a photo held over the last seconds of the talk, and a plain "end on ..." about the talk
 itself is not an `ending_clip`. Say in `summary`, in plain words, that the video is added after
 the talk with its own sound.
+""".strip("\n")
+
+# Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED) on a phone Montage / Voiceover
+# edit. Appended to the `$reaction_beats_section` slot ONLY when the manifest advertises
+# `timed_cards`; "" otherwise, so every other prompt stays byte-identical.
+_TIMED_CARDS_PROMPT_SECTION = """
+SMALL CARDS AT AN EXACT TIME (iPhone Montage and Voiceover)
+When the creator wants a Visuals photo (or video) shown as a SMALL picture-in-picture card at a
+stated moment of the finished video -- "show the menu photo as a small card at 3 seconds for 2
+seconds", "put the receipt in the corner during the second clip", "menü fotoğrafı 3. saniyede 2
+saniye küçük kart olarak gelsin" -- set `timed_cards`: up to 12 objects, each {"card_id":
+"short-slug", "visual_id": "the matching media_context IMAGE (or VIDEO) entry's exact media_id",
+"label": "the creator's own words for it, e.g. 'menu photo'", "at_s": seconds into the finished
+video, or null, "clip_id": "the media_id of one of the project's own clips the card should show
+during, or null", "offset_s": seconds after that clip starts (default 0), "hold_s": seconds on
+screen (default 2.0, 0.5 to 8)}. Exactly one of `at_s` / `clip_id` per card. Find `visual_id`
+exactly as for reaction beats: match what the creator named against `media_context` and copy
+THAT entry's `media_id` verbatim; never invent or shorten an id. A photo timed to a SPOKEN word
+("when I say X") is a reaction beat (where available), never a timed card; a photo that should
+fill the whole screen or play as its own moment is a selected media / clip intent, never a timed
+card. Say in `summary`, in plain words, where and for how long each small card shows.
 """.strip("\n")
 
 # KRI-519: the same beats on a phone Voiceover edit, grounded against the recorded
@@ -583,7 +610,13 @@ light yet, so never say in `summary` that it is brightened or darkened; keep tex
 in the frame ("no text on her face or on the plate", "yüzüme ve tabağa yazı gelmesin") => a
 `style` requirement with {"keep_text_off": [{"kind": "face"}, {"kind": "object", "label":
 "plate"}]}, each object in the creator's own words, never translated (the app asks the creator to
-mark the object on a frame; never describe where it is yourself).
+mark the object on a frame; never describe where it is yourself); a photo or video shown as a
+SMALL card at an exact moment ("show the menu photo as a small card at 3 seconds for 2 seconds",
+"put the receipt in the corner during the second clip", "menü fotoğrafı 3. saniyede 2 saniye
+küçük kart olarak gelsin") => a `style` requirement with {"timed_card": {"visual": "<the
+creator's own words for the photo or video>", "at_s": 3.0 or null, "clip": "<the clip they named,
+in their words, or null>", "hold_s": 2.0 or null}}; a photo at a SPOKEN word is a pop-in, not a
+timed_card.
 Keep the source/camera/ambient audio unchanged (including noun phrases such as "original camera
 audio" or "kameranın özgün sesi") => an `audio` requirement with
 {"audio_intent": "source_unchanged"}. This fact describes ONLY unprocessed source sound.
@@ -848,6 +881,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 + (
                     "\n" + _ENDING_CLIP_PROMPT_SECTION
                     if ending_clip_candidates(input.capability_manifest)
+                    else ""
+                )
+                # Exact-timed small cards: same slot, "" unless the manifest advertises them.
+                + (
+                    "\n" + _TIMED_CARDS_PROMPT_SECTION
+                    if _timed_cards_available(input.capability_manifest)
                     else ""
                 )
             ),
@@ -1259,6 +1298,15 @@ def _reaction_beats_available(manifest: ResolvedCreatorManifest) -> bool:
     """
 
     capability = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
+    return bool(capability is not None and capability.available)
+
+
+def _timed_cards_available(manifest: ResolvedCreatorManifest) -> bool:
+    """Whether the SMALL CARDS AT AN EXACT TIME guidance is shown: a read of the manifest's
+    own `timed_cards` capability (`creator_capabilities.resolve_creator_manifest` owns the
+    flag / format / device gate; `repair_creator_timed_cards` never trusts the model alone)."""
+
+    capability = manifest.capabilities.get(CAPABILITY_TIMED_CARDS)
     return bool(capability is not None and capability.available)
 
 

@@ -57,10 +57,13 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # hashes re-pinned after reviewing both edits.
 # v92 merges main's v91 (KRI-724/840/841/842/847/849 brief facts) with KRI-881: brief-on
 # hashes re-pinned (brief-off equal KRI-881's v81, main left those prompts unchanged).
+# v95 (exact-timed small cards) adds the `timed_card` fact to the brief section: brief-on
+# hashes re-pinned; brief-off unchanged (the SMALL CARDS section renders only on a manifest
+# that advertises `timed_cards`, which these renders never do).
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "b80d32863ac80c351ffb45d3044a2457de8644527e0348c1a837eeac81e073ff",
+    (True, True): "94ba94a4b0b5c5f5017496e3ca699e31c0be3cb77f54e80acfef1b1078af4465",
     (True, False): "cc7c6427ab34d031e6428fc804484ff65079c972be7c38a1e3a144d2b720ee23",
-    (False, True): "6cb97ffc9d133889113b38bc8159eb7547e2841ed63e0a8582e127ebe9618d92",
+    (False, True): "f6eb8378434e27f6d1ef6cb5eee29e8c9b8c9ca5f36232ed5d9a6000437c2755",
     (False, False): "038960cbc071317802dbc9a082906f258c7f59cb5e064c7069c52ef52f4d79be",
 }
 
@@ -142,7 +145,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-25-v94"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-25-v95"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

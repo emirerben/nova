@@ -941,6 +941,49 @@ def phone_voiceover_reaction_beats_supported(*, require_client: bool | None = No
     )
 
 
+# Device features an exact-timed small card needs: the same ones the Talking overlay lane
+# compiles against (`subtitled-overlays` is the track the card lands on).
+PHONE_TIMED_CARD_FEATURES: tuple[str, ...] = PHONE_SUBTITLED_OVERLAY_FEATURES
+
+
+def phone_timed_cards_supported() -> bool:
+    """Single source of truth for "can a phone-rendered Montage (guided / unified
+    montage, montage-family voiceover) or narrated Voiceover edit draw a Visuals photo
+    as a small picture-in-picture card at an exact second right now".
+
+    Consulted by `app.services.creator_capabilities.resolve_creator_manifest` (whether
+    `timed_cards` is advertised), by `repair_creator_timed_cards` (whether a strategy's
+    cards survive approval), by the three phone writers in `app.tasks.generative_build`
+    (whether the worker grounds and compiles them) and by `phone_editor` (whether a Save
+    keeps them), so none advertises a lane another would refuse.
+
+    True iff ALL of:
+      - `phone_timed_cards_enabled` (this feature's own flag, default off).
+      - `media_overlays_enabled` (the generic overlay lane kill switch).
+      - every feature in `PHONE_TIMED_CARD_FEATURES` is in
+        `phone_render_verified_features` (device-parity gate).
+
+    Says nothing about the edit format or a recorded voiceover -- callers combine it with
+    their own shape check. A VIDEO card additionally needs
+    `phone_timed_video_cards_supported()`.
+    """
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        getattr(settings, "phone_timed_cards_enabled", False)
+        and settings.media_overlays_enabled
+        and all(feature in verified for feature in PHONE_TIMED_CARD_FEATURES)
+    )
+
+
+def phone_timed_video_cards_supported() -> bool:
+    """`phone_timed_cards_supported()` AND the device plays Visuals videos
+    (`visualVideos` verified): a timed card may then bind a video, played muted
+    from its start (the same muted-card shape KRI-183 draws)."""
+    return phone_timed_cards_supported() and (
+        "visualVideos" in set(settings.phone_render_verified_features)
+    )
+
+
 # Device features a photo or video added in the phone editor needs (KRI-287):
 # the set the guided editor's own media import is gated on
 # (`generative_jobs._phone_editor_media_available`).

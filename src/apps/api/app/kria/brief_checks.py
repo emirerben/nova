@@ -142,6 +142,24 @@ class BeatFact:
 
 
 @dataclass(frozen=True)
+class TimedCardFact:
+    """One exact-timed small card: as approval keeps it (a draft, ``status`` "planned") or as
+    the phone render placed it (``phone_timed_card_receipt``: "placed" / "unplaced")."""
+
+    card_id: str
+    label: str | None = None
+    # Seconds into the output where the card shows; None for a clip-anchored draft card.
+    at_s: float | None = None
+    end_s: float | None = None
+    hold_s: float | None = None
+    clip_id: str | None = None
+    status: str = "planned"
+    # The worker's stable reason when unplaced (`past_end`, `face_collision`, ...).
+    reason: str | None = None
+    timeline_end_s: float | None = None
+
+
+@dataclass(frozen=True)
 class SpokenTextFact:
     """One text-on-a-spoken-word ask as a phone Talking render handled it (KRI-707)."""
 
@@ -599,6 +617,11 @@ class PlanFacts:
     # KRI-842: a finished phone montage Voiceover (`resolved_archetype == "voiceover"`), which
     # cannot play one clip's sound under or after the voice.
     voiceover_edit: bool = False
+    # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED): whether the edit can draw one
+    # at all (None = not checked), and the cards as approval keeps them (a draft, repaired
+    # against the manifest) or as the phone render placed them (`phone_timed_card_receipt`).
+    timed_cards_available: bool | None = None
+    timed_cards: tuple[TimedCardFact, ...] | None = None
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -672,6 +695,94 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
         "closing_badge_id": closing.badge_visual_id if closing is not None else None,
         "ending_clip": ending,
         "ending_clip_known": True,
+    }
+
+
+def _timed_card_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) -> dict:
+    """Exact-timed small cards as approval will keep them: the same repair
+    `compile_strategy_to_plan` runs (unavailable capability -> none; unresolved visual or
+    clip -> dropped), so the draft receipt never promises a card the render cannot draw."""
+    from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+    from app.services.creator_capabilities import (  # noqa: PLC0415
+        CAPABILITY_TIMED_CARDS,
+        repair_creator_timed_cards,
+    )
+
+    capability = manifest.capabilities.get(CAPABILITY_TIMED_CARDS)
+    available = bool(capability is not None and capability.available)
+    try:
+        parsed = CreativeStrategy.model_validate(dict(strategy))
+    except ValueError:
+        return {"timed_cards_available": available}
+    if not parsed.timed_cards:
+        return {"timed_cards_available": available, "timed_cards": ()}
+    repaired, _notices = repair_creator_timed_cards(manifest, parsed)
+    kept = {card.card_id: card for card in repaired.timed_cards or []}
+    facts: list[TimedCardFact] = []
+    for card in parsed.timed_cards:
+        survivor = kept.get(card.card_id)
+        if survivor is None:
+            facts.append(
+                TimedCardFact(
+                    card_id=card.card_id,
+                    label=card.label,
+                    at_s=card.at_s,
+                    hold_s=card.hold_s,
+                    clip_id=card.clip_id,
+                    status="unplaced",
+                    reason="lane_disabled" if not available else "visual_not_found",
+                )
+            )
+            continue
+        facts.append(
+            TimedCardFact(
+                card_id=survivor.card_id,
+                label=survivor.label,
+                at_s=survivor.at_s,
+                hold_s=survivor.hold_s,
+                clip_id=survivor.clip_id,
+                status="planned",
+            )
+        )
+    return {"timed_cards_available": available, "timed_cards": tuple(facts)}
+
+
+def _timed_card_receipt_facts(receipt: object) -> dict[str, Any]:
+    """Cards off a rendered phone variant's ``phone_timed_card_receipt`` (``{}`` when none)."""
+    if not isinstance(receipt, Mapping) or receipt.get("matcher") not in ("timed", "disabled"):
+        return {}
+    end = _finite_number(receipt.get("timeline_end_s"))
+    facts: list[TimedCardFact] = []
+    for entry in receipt.get("placed") if isinstance(receipt.get("placed"), list) else []:
+        if not isinstance(entry, Mapping) or not entry.get("card_id"):
+            continue
+        facts.append(
+            TimedCardFact(
+                card_id=str(entry["card_id"]),
+                label=str(entry.get("label") or "") or None,
+                at_s=_finite_number(entry.get("at_s")),
+                end_s=_finite_number(entry.get("end_s")),
+                hold_s=_finite_number(entry.get("hold_s")),
+                status="placed",
+                timeline_end_s=end,
+            )
+        )
+    for entry in receipt.get("unplaced") if isinstance(receipt.get("unplaced"), list) else []:
+        if not isinstance(entry, Mapping) or not entry.get("card_id"):
+            continue
+        facts.append(
+            TimedCardFact(
+                card_id=str(entry["card_id"]),
+                label=str(entry.get("label") or "") or None,
+                at_s=_finite_number(entry.get("at_s")),
+                status="unplaced",
+                reason=str(entry.get("reason") or "") or None,
+                timeline_end_s=_finite_number(entry.get("timeline_end_s")) or end,
+            )
+        )
+    return {
+        "timed_cards_available": receipt.get("matcher") != "disabled",
+        "timed_cards": tuple(facts),
     }
 
 
@@ -783,6 +894,7 @@ def plan_facts_from_strategy(
     extra: dict[str, Any] = {}
     if manifest is not None:
         extra = _beat_facts(strategy, manifest)
+        extra.update(_timed_card_facts(strategy, manifest))
         extra["fullscreen_sequence"] = _draft_fullscreen_sequence(strategy, manifest)
         extra["video_clip_count"] = _video_clip_count(strategy, manifest)
         extra["take_duration_s"] = _selected_video_seconds(strategy, manifest)
@@ -1766,6 +1878,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     changes.update(_spoken_text_facts(variant))
     changes.update(_protected_text_facts(variant))
     changes.update(_beat_room_facts(variant.get("phone_beat_receipt")))
+    changes.update(_timed_card_receipt_facts(variant.get("phone_timed_card_receipt")))
     changes.update(_overlay_sequence_facts(variant.get("phone_overlay_receipt")))
     changes.update(_rendered_caption_facts(variant))
     receipt = variant.get("clip_sound")
@@ -4499,6 +4612,151 @@ def _sequence_problem(req: BriefRequirement, facts: PlanFacts) -> str | None:
             "söylediğin kelimeye göre zamanlanmıyor"
         ),
     )
+
+
+def _timed_card_ask(req: BriefRequirement) -> Mapping[str, Any] | None:
+    """The model's recorded ``timed_card`` fact (KRI-667: never a new word regex here):
+    ``{"visual": ..., "at_s": ..., "clip": ..., "hold_s": ...}``, else None."""
+    fact = req.facts.get("timed_card")
+    return fact if isinstance(fact, Mapping) else None
+
+
+def _cards_for_ask(ask: Mapping[str, Any], cards: Sequence[TimedCardFact]) -> list[TimedCardFact]:
+    """The cards this ask is about: the one nearest its second (within 0.6 s), else the ones
+    whose label shares a word with the visual it named, else every card (one ask, one lane)."""
+    at_s = _finite_number(ask.get("at_s"))
+    if at_s is not None:
+        near = [c for c in cards if c.at_s is not None and abs(c.at_s - at_s) <= 0.6]
+        if near:
+            return near
+    visual = _fold(str(ask.get("visual") or ""))
+    words = {w for w in visual.split() if len(w) > 2}
+    if words:
+        named = [c for c in cards if c.label and words & set(_fold(c.label).split())]
+        if named:
+            return named
+    return list(cards)
+
+
+def _timed_card_name(card: TimedCardFact) -> str:
+    return card.label or say(en="the photo", tr="fotoğraf")
+
+
+def _timed_card_met(card: TimedCardFact) -> str:
+    name = _timed_card_name(card)
+    hold = card.hold_s if card.hold_s is not None else 0.0
+    if card.at_s is None:
+        return say(
+            en=f"Small card of {name} during the clip you named for {hold:.1f} s",
+            tr=f"{name} söylediğin klipte {hold:.1f} sn küçük kart olarak",
+        )
+    return say(
+        en=f"Small card of {name} at {card.at_s:.1f} s for {hold:.1f} s",
+        tr=f"{name} {card.at_s:.1f} sn'de {hold:.1f} sn küçük kart olarak",
+    )
+
+
+def _timed_card_problem(card: TimedCardFact) -> str:
+    name = _timed_card_name(card)
+    at = f"{card.at_s:.1f} s" if card.at_s is not None else None
+    reason = card.reason or ""
+    if reason == "past_end":
+        end = card.timeline_end_s
+        return say(
+            en=(
+                f"{at} is past the end of the video"
+                + (f" ({end:.1f} s)" if end is not None else "")
+                + f", so the small card of {name} isn't shown"
+            ),
+            tr=(
+                f"{at} videonun sonundan sonra"
+                + (f" ({end:.1f} sn)" if end is not None else "")
+                + f", o yüzden {name} küçük kartı gösterilmiyor"
+            ),
+        )
+    if reason == "face_collision":
+        return say(
+            en=f"I couldn't place the small card of {name} without covering a face",
+            tr=f"{name} küçük kartını bir yüzü kapatmadan yerleştiremedim",
+        )
+    if reason == "overlaps_card":
+        return say(
+            en=f"The small card of {name} would overlap another card, so it isn't shown",
+            tr=f"{name} küçük kartı başka bir kartla çakışıyor, o yüzden gösterilmiyor",
+        )
+    if reason == "video_not_supported":
+        return say(
+            en=f"Videos can't show as small cards in this edit yet, so {name} is left out",
+            tr=f"Bu düzenlemede videolar henüz küçük kart olarak çıkamıyor, {name} koymadım",
+        )
+    if reason in ("lane_disabled", "unavailable"):
+        return _timed_cards_unavailable()
+    if reason in ("visual_not_found", "visual_not_bound"):
+        return say(
+            en=f"I couldn't find {name} in your Visuals for the small card",
+            tr=f"Küçük kart için {name} görsellerinde bulamadım",
+        )
+    if reason == "clip_not_in_edit":
+        return say(
+            en=f"The clip the small card of {name} should follow isn't in this edit",
+            tr=f"{name} küçük kartının takip edeceği klip bu düzenlemede yok",
+        )
+    return say(
+        en=f"The small card of {name} couldn't be drawn on this render",
+        tr=f"{name} küçük kartı bu videoya çizilemedi",
+    )
+
+
+def _timed_cards_unavailable() -> str:
+    # A function, not a constant: `say` reads the chat's language at call time.
+    return say(
+        en="Small cards at an exact time aren't available for this edit yet",
+        tr="Tam zamanlı küçük kartlar bu düzenleme için henüz yok",
+    )
+
+
+def _cant_check_timed_card() -> str:
+    return say(
+        en="I can't check the small card on this draft yet.",
+        tr="Bu taslakta küçük kartı henüz kontrol edemiyorum.",
+    )
+
+
+def _check_timed_cards(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """An exact-timed small card ask, judged against the repaired draft or the render's own
+    `phone_timed_card_receipt` -- "met" names the second and hold the card really has."""
+    ask = _timed_card_ask(req) or {}
+    if facts.timed_cards_available is False:
+        return _receipt(req, "not_possible", _timed_cards_unavailable() + ".")
+    if facts.timed_cards is None:
+        return _receipt(req, "partial", _cant_check_timed_card())
+    cards = _cards_for_ask(ask, facts.timed_cards)
+    if not cards:
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en="This draft doesn't place a small card at that moment.",
+                tr="Bu taslak o anda küçük bir kart koymuyor.",
+            ),
+        )
+    shown = [c for c in cards if c.status in ("planned", "placed")]
+    missing = [c for c in cards if c.status == "unplaced"]
+    if shown and not missing:
+        reason = _names_join([_timed_card_met(c) for c in shown]) + "."
+        verification = "checked" if any(c.status == "placed" for c in shown) else None
+        return _receipt(req, "met", reason, verification=verification)
+    problems = [_timed_card_problem(c) for c in missing]
+    if shown:
+        problems.insert(0, _names_join([_timed_card_met(c) for c in shown]))
+        return _receipt(req, "partial", "; ".join(problems) + ".")
+    return _receipt(req, "not_possible", "; ".join(problems) + ".")
+
+
+def _names_join(items: Sequence[str]) -> str:
+    if len(items) <= 1:
+        return items[0] if items else ""
+    return ", ".join(items[:-1]) + say(en=" and ", tr=" ve ") + items[-1]
 
 
 def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -8350,6 +8608,8 @@ def _has_checker(req: BriefRequirement) -> bool:
         return True  # KRI-842
     if asks_if_unclear(req):
         return True  # KRI-849: the unclear-word line (``_with_unclear_word``)
+    if _timed_card_ask(req) is not None:
+        return True  # an exact-timed small card, judged against the draft or the render
     if asks_clip_speed(req):
         # KRI-689: judged wherever the plan knows it cannot retime (the phone montage); a plan
         # that does not say gets the neutral `_NO_CHECKER`, which `is_judged` treats as unjudged.
@@ -8713,6 +8973,11 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
                 if seated.status != "met":
                     return seated
             return _check_closing_speech(req, facts)
+    if _timed_card_ask(req) is not None and (facts.timed_cards is not None or not facts.editor):
+        # An exact-timed small card: the recorded fact owns the ask (a draft read against its
+        # manifest, or a finished phone render's own `phone_timed_card_receipt`); an editor
+        # turn with no such receipt keeps its before/after diff.
+        return _check_timed_cards(req, facts)
     if _wants_whole_line(req):
         return _check_whole_line(req, facts)
     if req.kind == "text":

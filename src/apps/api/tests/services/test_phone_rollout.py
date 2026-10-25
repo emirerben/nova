@@ -1032,3 +1032,48 @@ def test_guided_sfx_needs_the_flag_the_generic_gate_and_both_device_features(
     assert phone_guided_sfx_supported() is (
         flag and sfx_enabled and verified == ["soundEffects", "audioMix"]
     )
+
+
+# --- exact-timed small cards (PHONE_TIMED_CARDS_ENABLED) ------------------------------------
+
+
+def _enable_phone_timed_cards(monkeypatch):
+    from app.services.phone_rollout import PHONE_TIMED_CARD_FEATURES
+
+    monkeypatch.setattr(settings, "phone_timed_cards_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "media_overlays_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_verified_features", list(PHONE_TIMED_CARD_FEATURES))
+
+
+def test_phone_timed_cards_supported_gate(monkeypatch):
+    """14: flag AND generic overlay gate AND every overlay feature; videos need visualVideos."""
+    from app.services.phone_rollout import (
+        PHONE_TIMED_CARD_FEATURES,
+        phone_timed_cards_supported,
+        phone_timed_video_cards_supported,
+    )
+
+    assert PHONE_TIMED_CARD_FEATURES == PHONE_SUBTITLED_OVERLAY_FEATURES
+    _enable_phone_timed_cards(monkeypatch)
+    assert phone_timed_cards_supported() is True
+    assert phone_timed_video_cards_supported() is False
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", [*PHONE_TIMED_CARD_FEATURES, "visualVideos"]
+    )
+    assert phone_timed_video_cards_supported() is True
+
+    monkeypatch.setattr(settings, "phone_timed_cards_enabled", False, raising=False)
+    assert phone_timed_cards_supported() is False
+    _enable_phone_timed_cards(monkeypatch)
+    monkeypatch.setattr(settings, "media_overlays_enabled", False)
+    assert phone_timed_cards_supported() is False
+    _enable_phone_timed_cards(monkeypatch)
+    monkeypatch.setattr(settings, "phone_render_verified_features", ["stillImages", "audioMix"])
+    assert phone_timed_cards_supported() is False
+
+
+def test_phone_timed_cards_off_by_default():
+    from app.services.phone_rollout import phone_timed_cards_supported
+
+    assert settings.phone_timed_cards_enabled is False
+    assert phone_timed_cards_supported() is False

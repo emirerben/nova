@@ -427,6 +427,7 @@
         "src/apps/api/app/pipeline/phone_narrated_plan.py",
         "src/apps/api/app/pipeline/phone_subtitled_plan.py",
         "src/apps/api/app/pipeline/phone_subtitled_title.py",
+        "src/apps/api/app/pipeline/phone_timed_cards.py",
         "src/apps/api/app/pipeline/unified_montage.py",
         "src/apps/api/app/routes/creator_agent.py",
         "src/apps/api/app/schemas/clip_intents.py",

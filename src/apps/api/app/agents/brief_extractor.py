@@ -46,7 +46,9 @@ from app.pipeline.prompt_loader import load_prompt
 # v21 (KRI-849): shared brief records `ask_if_unclear` and the creator's `unclear_answer`.
 # v34 (KRI-881): main's v33 plus the shared brief section typing a research ask
 # (`facts.research`).
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-24-v34"
+# v35: the shared brief section records a `timed_card` fact (a photo as a small card at an
+# exact second / clip) for phone Montage and Voiceover edits.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-25-v35"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
