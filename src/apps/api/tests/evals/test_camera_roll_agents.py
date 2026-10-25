@@ -610,6 +610,24 @@ def test_three_ideas_cannot_be_one_form_reworded():
     assert _forms(value, *mixed) == ["atmosphere", "review", "atmosphere"]
 
 
+def test_one_form_is_allowed_when_footage_supports_only_one():
+    three = [_form_story("performance", n=i) for i in range(3)]
+    assert _forms(_form_input(sources=1), *three) == ["performance"] * 3
+    researched = [_form_story("factual_story", facts=("fact-0",), n=i) for i in range(3)]
+    assert _forms(_form_input(research=True), *researched) == ["factual_story"] * 3
+
+
+def test_forms_flag_off_neither_requires_validates_nor_stores_a_form(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "story_idea_forms_enabled", False)
+    value = _form_input(sources=1)
+    bare = _form_story("guide", n=0)  # guide over one clip would be dropped when on
+    missing = _form_story("review", n=1)
+    missing["content_plan"].pop("form")
+    assert _forms(value, bare, missing) == [None, None]
+
+
 def test_pre_form_plan_loads_and_serializes_without_a_form_key():
     from app.schemas.media_collections import StoryContentPlan
 

@@ -199,8 +199,9 @@ Each idea carries an additive `content_plan.form` (`guide`, `factual_story`, `at
 `review`, `performance`). `FORM_EVIDENCE` in `schemas/media_collections.py` lists what a form
 needs: `guide` three distinct source clips, `factual_story` a selected research fact, the rest
 nothing. `CameraRollStoriesAgent.parse` requires a known form, drops an idea whose form lacks its
-evidence, and raises `SchemaError` when three surviving ideas share one form while the footage
-supports several. Saved stories from before the field have no `form` key; `StoryContentPlan`
+evidence, and raises `SchemaError` when three surviving ideas share one form while variety is expected
+(2+ distinct source clips, no research). `STORY_IDEA_FORMS_ENABLED=false` turns all of this off
+(rollback lever; procedure in DECISIONS.md "Idea forms"). Saved stories from before the field have no `form` key; `StoryContentPlan`
 stays version 1 and omits a null form when serializing, so stored JSON, digests and approval
 bindings of those rows are byte-identical. A wording edit keeps the stored form (builds that
 predate the field send none back).

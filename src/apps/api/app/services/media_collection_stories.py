@@ -351,8 +351,11 @@ async def correct_story(db, owner, identifier, story_id, body):
             raise HTTPException(422, "Keep one reason for each story moment")
         # The form decides which evidence the idea was admitted on; wording edits
         # (including from builds that predate the field) cannot add, drop or change it.
+        from app.config import settings
+
         revised = body.content_plan.model_dump(mode="json", exclude={"form"})
-        if form := (row.story_json.get("content_plan") or {}).get("form"):
+        form = (row.story_json.get("content_plan") or {}).get("form")
+        if form and settings.story_idea_forms_enabled:
             revised["form"] = form
         row.story_json = {**row.story_json, "content_plan": revised}
     elif body.moment_order is not None:

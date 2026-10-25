@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents.media_moment_relevance import MomentRelevanceInput
+from app.config import settings
 from app.schemas.media_collections import FORM_EVIDENCE, StoryContentPlan, StoryForm
 from app.schemas.research import ResearchEvidence, StoryResearch
 
@@ -44,6 +45,15 @@ class _StoryProposals(BaseModel):
     stories: list[_StoryProposal] = Field(default_factory=list, max_length=3)
 
 
+class _LegacyStoryProposal(_StoryProposal):
+    content_plan: StoryContentPlan
+
+
+class _LegacyStoryProposals(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    stories: list[_LegacyStoryProposal] = Field(default_factory=list, max_length=3)
+
+
 class CameraRollStoriesInput(MomentRelevanceInput):
     editorial_taste_context: str = Field(default="", max_length=8000, exclude_if=lambda v: not v)
     public_research: ResearchEvidence | None = Field(default=None, exclude_if=lambda v: v is None)
@@ -56,14 +66,11 @@ def _meets_form_evidence(story, source_stops):
     return facts >= need.research_facts and source_stops >= need.source_stops
 
 
-def _satisfiable_forms(input):  # noqa: A002
-    stops = len({candidate.source for candidate in input.candidates})
-    facts = len(input.public_research.facts) if input.public_research else 0
-    return [
-        form
-        for form, need in FORM_EVIDENCE.items()
-        if facts >= need.research_facts and stops >= need.source_stops
-    ]
+def _variety_expected(input):  # noqa: A002
+    # Footage from one source clip, or a researched run (whose ideas naturally share
+    # factual_story), may genuinely support a single form; only multi-clip, unresearched
+    # footage is expected to vary.
+    return not input.public_research and len({c.source for c in input.candidates}) > 1
 
 
 class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutput]):
@@ -244,7 +251,10 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
     def parse(self, raw_text, input):  # noqa: A002
         try:
             input = self.Input.model_validate(input.model_dump())
-            proposals = _StoryProposals.model_validate_json(raw_text)
+            forms_on = settings.story_idea_forms_enabled
+            proposals = (
+                _StoryProposals if forms_on else _LegacyStoryProposals
+            ).model_validate_json(raw_text)
             result = self.Output(
                 stories=[
                     StoryIdea(
@@ -285,6 +295,10 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
                     )
                 elif ids:
                     raise ValueError("Story has no researched evidence")
+            if not forms_on:
+                for story in result.stories:
+                    story.content_plan.form = None
+                return result
             sources = {candidate.id: candidate.source for candidate in input.candidates}
             result.stories = [
                 story
@@ -295,7 +309,7 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             # form fail the whole response because dropping any would hide the variety miss.
             if (
                 len(result.stories) == 3
-                and len(_satisfiable_forms(input)) > 1
+                and _variety_expected(input)
                 and len({story.content_plan.form for story in result.stories}) < 2
             ):
                 raise ValueError("Three ideas must not share one editorial form")
