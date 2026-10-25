@@ -3014,3 +3014,11 @@ token to `current_detector_policy` / bump `DETECTOR_VERSION` (retires `ready` an
 **Revisit if:** the collapsed-set 503 rate is visible in prod agent_run outcomes, then prefer one bounded re-ask.
 
 **Rollback:** `STORY_IDEA_FORMS_ENABLED` (default `true`). `false` (Fly secret, api + worker, restart) = form neither required, validated nor stored on new ideas, and wording edits drop a stored form. An older API image cannot read stored `content_plan.form` (`extra="forbid"` => 500 on the saved-stories list), so before rolling the image back: flip the flag off, then strip stored forms with `UPDATE media_collection_stories SET story_json = story_json #- '{content_plan,form}'`. During a rolling deploy an old machine can 500 on a new row for minutes; ship the API before any iOS build that echoes `form`.
+
+---
+
+## [2026-10-25] Open questions: server-owned text, answer through the wording edit
+
+**Decision:** Unknowns live in `content_plan.open_questions`, not in `why_it_works` prose. Answer/skip state is written through the existing `correct_story` wording edit (a story revision), and `select_story` refuses with 409 `story_open_questions` until none is pending. The client may change only `answer`/`dismissed` of known ids; an omitted list keeps the stored one.
+**Why:** Prose cannot gate anything. A separate answers store would need its own revisioning and approval binding, while a wording edit already invalidates stale approvals. Letting a missing list overwrite the stored one would let a build that predates the field silently clear the gate. A malformed or surplus question is trimmed by the agent instead of failing the response, since the idea itself is still valid.
+**Revisit if:** answers should regenerate the proposed copy (today the creator edits the wording; the answer is carried into the prepared story but no model rewrites it).

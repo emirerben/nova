@@ -10698,6 +10698,14 @@
             "title": "Format",
             "type": "string"
           },
+          "open_questions": {
+            "items": {
+              "$ref": "#/components/schemas/StoryOpenQuestion"
+            },
+            "maxItems": 3,
+            "title": "Open Questions",
+            "type": "array"
+          },
           "opening_text": {
             "maxLength": 100,
             "minLength": 1,
@@ -10831,6 +10839,41 @@
           "query"
         ],
         "title": "StoryGenerationBody",
+        "type": "object"
+      },
+      "StoryOpenQuestion": {
+        "additionalProperties": false,
+        "description": "An unknown the creator must answer or skip before the idea is built.",
+        "properties": {
+          "answer": {
+            "maxLength": 200,
+            "minLength": 1,
+            "nullable": true,
+            "title": "Answer",
+            "type": "string"
+          },
+          "dismissed": {
+            "default": false,
+            "title": "Dismissed",
+            "type": "boolean"
+          },
+          "id": {
+            "default": "",
+            "maxLength": 8,
+            "title": "Id",
+            "type": "string"
+          },
+          "question": {
+            "maxLength": 140,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "StoryOpenQuestion",
         "type": "object"
       },
       "StoryResearch": {

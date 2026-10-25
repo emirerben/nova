@@ -644,3 +644,26 @@ def test_pre_form_plan_loads_and_serializes_without_a_form_key():
     )
     plan = StoryContentPlan.model_validate(legacy)
     assert plan.form is None and plan.model_dump(mode="json") == legacy
+
+
+def test_open_questions_are_trimmed_and_never_cost_the_idea():
+    story = _form_story("review")
+    story["content_plan"]["open_questions"] = [
+        "Which café is this?",
+        {"question": "  Who filmed it?  ", "answer": "forged", "id": "x"},
+        "",
+        "q" * 141,
+        7,
+        "Third usable question?",
+        "Fourth is surplus?",
+    ]
+    parsed = CameraRollStoriesAgent(None).parse(json.dumps(dict(stories=[story])), _form_input())
+    questions = parsed.stories[0].content_plan.open_questions
+    assert [(q.id, q.question, q.answer, q.dismissed) for q in questions] == [
+        ("q1", "Which café is this?", None, False),
+        ("q2", "Who filmed it?", None, False),
+        ("q3", "Third usable question?", None, False),
+    ]
+    story["content_plan"]["open_questions"] = "not a list"
+    parsed = CameraRollStoriesAgent(None).parse(json.dumps(dict(stories=[story])), _form_input())
+    assert "open_questions" not in parsed.stories[0].content_plan.model_dump()

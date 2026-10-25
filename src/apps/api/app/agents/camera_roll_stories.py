@@ -3,7 +3,7 @@
 import json
 from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents.media_moment_relevance import MomentRelevanceInput
@@ -30,6 +30,18 @@ class CameraRollStoriesOutput(BaseModel):
 
 class _ProposedContentPlan(StoryContentPlan):
     form: StoryForm
+
+    @field_validator("open_questions", mode="before")
+    @classmethod
+    def usable_questions(cls, value):
+        # Questions are optional extras: a blank, overlong or surplus one must never
+        # cost the creator the whole idea, and the model never sets answers or ids.
+        kept = []
+        for entry in value if isinstance(value, list) else []:
+            text = entry.get("question") if isinstance(entry, dict) else entry
+            if isinstance(text, str) and 0 < len(text.strip()) <= 140:
+                kept.append({"question": text.strip()})
+        return kept[:3]
 
 
 class _StoryProposal(BaseModel):
@@ -77,7 +89,7 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.media.camera_roll_stories",
         prompt_id="camera_roll_stories",
-        prompt_version="2026-10-25.1",
+        prompt_version="2026-10-25.2",
         model="gemini-2.5-flash",
         max_attempts=1,
         timeout_s=20,
@@ -124,7 +136,8 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             '"format": "text_story", "form": "guide|factual_story|atmosphere|review|performance", '
             '"audience": "", "angle": "", "why_it_works": "", '
             '"opening_text": "", "closing_text": null, "caption": "", '
-            '"beat_reasons": ["why this exact moment advances the idea"]}}]}. '
+            '"beat_reasons": ["why this exact moment advances the idea"], '
+            '"open_questions": ["short question only the creator can answer"]}}]}. '
             "Aim for three DISTINCT, worthwhile content ideas grounded in candidate evidence, "
             "the creator's query, and supplied public_research only. Explore different viewer "
             "takeaways, specific observations, footage subsets and editorial forms before "
@@ -169,8 +182,12 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "a duration. The posting caption can add detail but cannot substitute for a clear "
             "on-screen premise. Do not invent quotes, "
             "verdicts, practical details or missing actions. If the idea needs the creator's "
-            "opinion or an unknown fact, explicitly name the question in why_it_works and keep "
-            "the proposed on-screen copy neutral until they answer. A guide can show the actual "
+            "opinion or a fact only they know, put it in content_plan.open_questions (at most "
+            "three, each under 100 characters, addressed to the creator, for example 'Which "
+            "café is this?') and keep the proposed on-screen copy neutral until they answer; "
+            "do not bury the question in why_it_works. Never ask what the footage already "
+            "shows or what public_research covers, and use an empty list when nothing is "
+            "unknown. A guide can show the actual "
             "journey and stops without inventing prices, opening hours or historical facts. "
             "Avoid brochure slogans such as 'Journey Through Time' and generic lists of objects. "
             "Use specific observations supported by THESE moments. A visible replica is a "

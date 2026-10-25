@@ -206,6 +206,17 @@ stays version 1 and omits a null form when serializing, so stored JSON, digests 
 bindings of those rows are byte-identical. A wording edit keeps the stored form (builds that
 predate the field send none back).
 
+An idea may carry up to three `content_plan.open_questions` (`id`, `question`, `answer`,
+`dismissed`): facts only the creator knows. The question text is server-owned. The creator
+answers or skips through the existing `PATCH .../stories/{id}` wording edit (a new story
+revision); `resolve_open_questions` merges only `answer`/`dismissed` by id, rejects unknown ids,
+and keeps the stored list when a build that predates the field sends none. `select_story`
+answers 409 `story_open_questions` while any question is neither answered nor skipped (replays
+of an already-accepted selection are not re-checked). Legacy rows have no key and build as
+before. `story_content_digest` and the research review prompt ignore the list, so answering
+never stales a research review. The card's length is `duration_s`, summed from the story's
+moments on every read.
+
 Stories support review, exact-interval replacement/order/removal, original/muted audio,
 rejection and selection. Selection prepares the common revisioned draft, with a server-owned
 story/collection/compiler binding. Separate expiring approval freezes the existing guided
