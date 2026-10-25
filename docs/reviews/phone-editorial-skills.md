@@ -21,9 +21,9 @@ media, invented overlays, and slide media dropped for a cleaner story.
 ## Evaluation design
 
 Freeze hand-authored synthetic inputs, expected decisions, and plausible wrong
-responses before changing production prompts. Use existing real Agent.run and
+responses before changing their production consumers. Use existing real Agent.run and
 parse boundaries with replayed provider transport. The corpus checks request
-selection, available source windows, complete quotations, and format constraints.
+selection, available late-action source membership, complete quotations, and format constraints.
 Each wrong response must parse and pass the ordinary structural floor, yet fail
 the independent expected decision. This checks the evaluator's ability to reject
 wrong content rather than merely rejecting malformed JSON.
@@ -52,56 +52,65 @@ and is unchanged. No web editor implementation or browser repair is in scope.
 
 ## Verification and remaining gaps
 
-The evaluation-only commit precedes the runtime integration. Its baseline has
-27 passing checks and 13 expected skill-wiring failures. All 13 positive decision
-examples and all 13 wrong-content controls pass their respective evaluator checks.
-With the skills integrated, all 40 corpus checks pass.
+The first evaluation-only commit precedes runtime changes. It has 27 passing
+checks and 13 expected skill-wiring failures. A later phone caller trace establishes
+that narration alignment, rather than the cloud-only storyboard, is the phone
+consumer. Its replacement cases are frozen before changing that consumer. That
+baseline has 40 passing checks and three expected alignment-wiring failures.
 
-The full free replay suite plus the changed-agent checks and existing phone speech
-and narrated-plan checks pass 2445 tests, with 16 existing skips and 7 expected
-failures. The selected reliability gates pass 619 checks with no environment
-skips or errors. Both skill files validate. Existing base-prompt hashes remain
-unchanged beneath the explicitly versioned skill prefix.
+The final corpus contains 14 synthetic cases. Each has a positive example and a
+structurally valid wrong-content control. Cases cover quiet and late actions,
+absent and uncertain matches, complete and Turkish speech, continuous voice,
+visual montage, Talking, narrated word cues and pins, and mixed-media slide order.
+The late-action resolver case establishes source membership only. No new agent
+can select exact source intervals that its input and output contracts do not expose.
 
 Run from the task worktree:
 
 ```bash
 bash scripts/check-api.sh test tests/evals/test_phone_editorial_skills.py -q
-bash scripts/check-api.sh test tests/evals/ tests/agents/test_main_creator_agent.py tests/agents/test_main_creator_user_song.py tests/agents/test_clip_request_resolver.py tests/agents/test_narrated_storyboard.py tests/agents/test_slide_post_composer.py tests/services/test_phone_speech_montage_job.py tests/pipeline/test_phone_narrated_plan.py -q
+bash scripts/check-api.sh test tests/evals/ tests/agents/test_main_creator_agent.py tests/agents/test_main_creator_user_song.py tests/agents/test_clip_request_resolver.py tests/agents/test_narrated_clip_alignment.py tests/agents/test_slide_post_composer.py tests/services/test_phone_speech_montage_job.py tests/pipeline/test_phone_narrated_plan.py tests/tasks/test_phone_voiceover_requested_edits.py -q
 python3 scripts/reliability-gates.py run --changed --log .dev/editorial-reliability.log
+make ios-verify
 ```
 
-The synthetic corpus runs through the existing live-eval interface when explicitly
+The final corpus passes 43 checks. Full free replay plus affected-agent and phone
+backend checks pass 2486 tests, with 16 skips and 7 expected failures. Selected
+reliability gates pass 844 checks with no environment skips or errors. The iPhone
+build succeeds; its unit suite executes 1937 tests with 26 skips and no failures.
+The local UI suite remains pending. These native checks exercise the existing app,
+not fresh model-generated edits under the new backend prompts.
+
+Existing base-prompt hashes
+remain unchanged beneath the explicit skill prefix. Both skills validate. The
+selector policy suite passes 41 tests and all changed paths have a CI journey.
+The new mapping tests actual phone alignment and the existing requested-voiceover
+recipe path. Other mandatory CI selections remain intact.
+
+The synthetic corpus also supports the existing live-eval interface when explicitly
 approved under its development ledger. Its exact expected choices are development
 constraints, not a general measure of subjective editing quality. No paid run was
 performed. Default CI uses replay only. Prompt versions are bumped on every changed
-agent. CI selects the new corpus when any of its runtime consumers or skills change.
+agent. CI selects the corpus when its runtime consumers or skills change.
 
-The local iPhone verification is pending. The first sandboxed attempt could not
-access simulator services and the Swift package cache. A retry with those services
-available is running. This is not evidence of an application regression.
+The phone narration worker deliberately skips the cloud-only storyboard. Its
+alignment agent owns clip placements at supplied word IDs. Locked order and pins
+remain hard constraints; the existing policy may override advisory described
+sequences when narration reaches clips in another order. No parser, fallback,
+compiler, native renderer, or additional model-call behavior changes.
 
-Current-agent review covers skill scope, source identity, prompt-version ownership,
-quote preservation, capability and approval boundaries, and the wrong-content
-controls. The user prohibits delegation, so no independent agent review is claimed.
-No application comments or suppressions are added.
+Current-agent review covers skill scope, real phone callers, source identity,
+prompt-version ownership, quote preservation, capability and approval boundaries,
+and wrong-content controls. The user prohibits delegation, so no independent
+agent review is claimed. No application comments or suppressions are added.
 
- KRI-215 owns live creative comparison; KRI-730 owns retrieval and source
-inspection gaps. Native output verification and production rollout are separate
-from this bounded prompt integration. No flags, models, spend limits, endpoints,
+KRI-215 owns live creative comparison; KRI-730 owns retrieval and source-inspection
+gaps. Native output verification of fresh model choices and production rollout are
+separate from this bounded integration. No flags, models, spend limits, endpoints,
 renderer behavior, approval rules, or output schemas change.
 
-## Phone narrated consumer correction
-
-A final caller trace found that the phone path deliberately skips the cloud-only
-NarratedStoryboardAgent. That integration is removed. Replace its three synthetic
-cases with spoken-cue, locked-order, and pinned-ending cases for the actual phone
-NarratedClipAlignmentAgent before changing that agent. Keep a separate late-action
-resolver case, explicitly limited to source membership rather than exact windows.
-The corpus now has 14 cases. This does not add a new model call to any phone job.
-
-The phone alignment contract owns every supplied clip and returns start_word_id,
-not source timestamps. Its locked order and pins are hard constraints. Its existing
-policy may override advisory described groups when narration reaches them in a
-different order; the new guidance must preserve that distinction. No fallback or
-parser behavior changes.
+Experience First keeps the scope on actual iPhone callers. Sequence Work into
+Verifiable Units puts evaluation cases before each new runtime consumer. Test
+Behavior, Not Implementation requires wrong decisions to fail even when their
+response shapes are valid. Prove It Works separates replay, native compatibility,
+and unverified creative quality.

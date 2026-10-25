@@ -26,6 +26,7 @@ from typing import ClassVar
 from pydantic import BaseModel, Field, model_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
+from app.agents._skills import load_skill
 from app.pipeline.prompt_loader import load_prompt
 
 _WORD_ID_RE = re.compile(r"^w\d{6}$")
@@ -155,7 +156,7 @@ class NarratedClipAlignmentAgent(Agent[NarratedClipAlignmentInput, NarratedClipA
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.narrated_clip_alignment",
         prompt_id="narrated_clip_alignment",
-        prompt_version="2026-10-08.1",
+        prompt_version="2026-10-25-editorial-skills-v2",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         timeout_s=45.0,
@@ -170,7 +171,7 @@ class NarratedClipAlignmentAgent(Agent[NarratedClipAlignmentInput, NarratedClipA
         return ["placements"]
 
     def render_prompt(self, input: NarratedClipAlignmentInput) -> str:  # noqa: A002
-        return load_prompt(
+        prompt = load_prompt(
             "narrated_clip_alignment",
             words_json=json.dumps(input.words, ensure_ascii=False),
             clips_json=json.dumps(
@@ -180,6 +181,8 @@ class NarratedClipAlignmentAgent(Agent[NarratedClipAlignmentInput, NarratedClipA
             order_mode=_order_mode_text(input),
             language=input.language or "(unknown)",
         )
+
+        return load_skill("meaningful-moment") + "\n\n" + load_skill("edit-story") + "\n\n" + prompt
 
     def parse(
         self,

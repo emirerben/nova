@@ -39,7 +39,9 @@ source moment when available rather than an arbitrary start. Do not reorder or
 rewrite narration to fit convenient footage. Missing visual evidence calls for the
 caller's supported omission or clarification behavior, not a fabricated match.
 An illustrative shot is not evidence of an unstated location, outcome, or event.
-The caller owns exact timing unless its schema explicitly delegates that choice.
+Honor locked order and opening or closing pins. Follow the caller's policy when
+narration and advisory sequence cues differ. The caller owns exact timing unless
+its schema explicitly delegates that choice.
 
 ## Slide post
 
