@@ -115,7 +115,7 @@ protocol SlidePostProposalClient: Sendable {
     func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse
 }
 
-protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
+protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, CameraRollItemsClient, Sendable {
     func editorialTaste() async throws -> EditorialTasteProfile
     func saveEditorialTaste(_ body: EditorialTasteWrite) async throws -> EditorialTasteProfile
     func forgetEditorialTaste(revision: Int, eventID: String) async throws -> EditorialTasteProfile
@@ -136,6 +136,12 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func createCameraRollStoryThread(id: UUID, revision: Int) async throws -> CreationThread
     func inspectCameraRollMoment(collectionID: UUID, revision: Int, momentID: UUID, question: String, cacheOnly: Bool) async throws -> CameraRollInspection
     func importCollectionMedia(file: URL, kind: String) async throws -> SavedMediaAsset
+    func importCollectionMedia(file: URL, kind: String, progress: (@Sendable (Double) -> Void)?) async throws -> SavedMediaAsset
+    func generateCameraRollStories(id: UUID, request: CameraRollStoryRequest) async throws -> CameraRollStories
+    func deleteCameraRollStory(collectionID: UUID, storyID: UUID) async throws -> CameraRollStoryDeletion
+    func restoreCameraRollStory(collectionID: UUID, storyID: UUID) async throws
+    func deleteCameraRollGroup(collectionID: UUID, group: String, expectedRevision: Int) async throws -> CameraRollGroupDeletion
+    func replaceCameraRollMembers(collectionID: UUID, name: String, members: [CameraRollCollectionMember], expectedRevision: Int) async throws -> SavedCameraRollCollection
     func cameraRollCollection(id: UUID) async throws -> SavedCameraRollCollection
     func saveCameraRollCollection(_ collection: CameraRollCollection, revision: Int) async throws -> SavedCameraRollCollection
     func repairSavedMedia(asset: SavedMediaAsset, file: URL) async throws -> SavedMediaAsset
@@ -2068,7 +2074,7 @@ private struct EditorSaveValidationIssue: Decodable {
     let loc: [JSONValue]?
 }
 
-private struct EmptyProjectResponse: Decodable {}
+struct EmptyProjectResponse: Decodable {}
 private struct LibraryResponse: Decodable {
     let jobs: [LibraryJob]
     let nextCursor: String?
