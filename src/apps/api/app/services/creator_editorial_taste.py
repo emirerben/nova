@@ -32,6 +32,9 @@ from app.services.private_text import normalize_private_text
 FEEDBACK_POOL = 200
 JUDGMENTS_PER_SIDE = 2
 REJECTED_POOL = 50
+# These reasons say the idea was wrong for that footage or those facts, not that the
+# angle is bad, so they never count toward a pattern or suppress a similar idea later.
+CONTEXTUAL_REASONS = frozenset({"footage_mismatch", "wrong_facts", "invented_experience"})
 # Jaccard over 3+ letter words. 0.8 means four of five words shared: a reword that
 # adds or swaps one word still matches; a new angle on the same footage does not.
 # Texts with fewer than four distinct words only match when they are identical.
@@ -39,6 +42,9 @@ REJECTED_POOL = 50
 # shared by two different ideas can wrongly match (the best idea is always kept).
 NEAR_REPEAT = 0.8
 NEAR_REPEAT_MIN_WORDS = 4
+# Ids live in the 16 kB revision payload beside up to 12 kB of rules; ten stay far inside it.
+# Retrieval only ever shows three examples, so older confirmations simply age out.
+IDEA_EXAMPLES_KEPT = 10
 
 
 def signals_enabled():
@@ -90,10 +96,71 @@ async def sources(db, owner, version):
     )
 
 
+def idea_example_content(row):
+    """What the creator confirmed, frozen from the exact proposal they judged.
+
+    A rewrite is the positive example and carries the rejected angle as context;
+    otherwise only a would_post idea qualifies. None means nothing worth keeping.
+    """
+    idea = (row.proposal or {}).get("idea") or {}
+    plan = idea.get("content_plan") or {}
+    title = short(idea.get("title"), 200)
+    if row.rewrite.strip():
+        words = [short(row.rewrite, 800)]
+        angle = short(plan.get("angle"), 280)
+        note = f"The creator rewrote an idea they did not accept as offered: {angle}"[:1500]
+    elif row.verdict == "would_post":
+        candidates = [
+            idea.get("hook"),
+            plan.get("opening_text"),
+            plan.get("angle"),
+            plan.get("closing_text"),
+            plan.get("caption"),
+            *(idea.get("on_screen_copy") or []),
+        ]
+        words = list(dict.fromkeys(v for v in (short(c, 300) for c in candidates) if v))[:12]
+        note = ""
+    else:
+        return None
+    if not title or not words:
+        return None
+    return {
+        "project_id": str(row.id),
+        "owner_id": str(row.user_id),
+        "title": title,
+        "kind": "idea",
+        "words": words,
+        "transcript": "",
+        "creator_requests": [],
+        "source_descriptions": [],
+        "creator_editorial_note": note,
+    }
+
+
+async def idea_sources(db, owner, version):
+    payload = version.payload if version else {}
+    ids = [uuid.UUID(v) for v in payload.get("idea_example_ids", [])]
+    if not ids:
+        return []
+    rows = (
+        await db.scalars(
+            select(CreatorIdeaFeedback).where(
+                CreatorIdeaFeedback.user_id == owner, CreatorIdeaFeedback.id.in_(ids)
+            )
+        )
+    ).all()
+    found = []
+    for row in sorted(rows, key=lambda r: ids.index(r.id)):
+        if content := idea_example_content(row):
+            found.append({**content, "source_sha256": digest(content)})
+    return found
+
+
 async def read_profile(db, owner):
     version = await latest(db, owner)
     payload = version.payload if version else {}
     rows = await sources(db, owner, version)
+    ideas = await idea_sources(db, owner, version)
     user = await db.get(User, owner)
     return {
         "revision": version.revision if version else 0,
@@ -103,6 +170,7 @@ async def read_profile(db, owner):
         "examples": [
             {"id": str(row.id), "source_sha256": row.source_sha256, **row.content} for row in rows
         ],
+        "idea_examples": [{"id": v["project_id"], **v} for v in ideas],
     }
 
 
@@ -281,6 +349,7 @@ async def write_profile(db, owner, body):
     revision = current.revision if current else 0
     if body.expected_revision != revision:
         raise HTTPException(409, "Taste changed; review the current profile")
+    prior_ideas = current.payload.get("idea_example_ids", []) if current else []
     references = []
     for project in body.project_ids:
         material = await capture_project(db, owner, project)
@@ -310,6 +379,7 @@ async def write_profile(db, owner, body):
                 "enabled": body.enabled,
                 "rules": body.rules,
                 "example_ids": references,
+                "idea_example_ids": prior_ideas,
                 "confirmation": "explicit_authenticated_creator_confirmation",
             },
         )
@@ -416,6 +486,45 @@ async def record_feedback(db, owner, body):
     return {"id": str(row.id), "recorded": True, "requires_render_approval": True}
 
 
+async def confirm_idea_example(db, owner, feedback_id, body):
+    """Explicit second tap: only an already-saved judgment can become an example."""
+    user = await lock_owner(db, owner)
+    if not user.creator_memory_enabled:
+        raise HTTPException(409, "Personalization is paused")
+    fingerprint = digest({"operation": "idea_example", "feedback_id": str(feedback_id)})
+    key = "idea-example:" + digest(body.client_event_id)
+    if await operation(db, owner, key, fingerprint):
+        return await read_profile(db, owner)
+    version = await latest(db, owner)
+    if not version or not version.payload.get("enabled"):
+        raise HTTPException(409, "Enable editorial personalization before saving examples")
+    row = await db.scalar(
+        select(CreatorIdeaFeedback).where(
+            CreatorIdeaFeedback.id == feedback_id, CreatorIdeaFeedback.user_id == owner
+        )
+    )
+    if row is None:
+        raise HTTPException(404, "Judgment not found")
+    if idea_example_content(row) is None:
+        raise HTTPException(422, "Only a would-post idea or your own rewrite can be an example")
+    confirmed = version.payload.get("idea_example_ids", [])
+    if str(row.id) not in confirmed:
+        db.add(
+            CreatorEditorialTasteRevision(
+                user_id=owner,
+                revision=version.revision + 1,
+                idempotency_key=key,
+                request_sha256=fingerprint,
+                payload={
+                    **version.payload,
+                    "idea_example_ids": [*confirmed, str(row.id)][-IDEA_EXAMPLES_KEPT:],
+                },
+            )
+        )
+        await db.flush()
+    return await read_profile(db, owner)
+
+
 async def active_version(db, owner):
     if not settings.creator_editorial_taste_for(owner):
         return None
@@ -471,6 +580,7 @@ async def generation_context(db, owner, query):
     if version is None:
         return ""
     rows = await sources(db, owner, version)
+    ideas = await idea_sources(db, owner, version)
     corpus = {
         "owner_id": str(owner),
         "revision": version.revision,
@@ -479,7 +589,8 @@ async def generation_context(db, owner, query):
         "examples": [
             {**row.content, "verdict": "positive", "source_sha256": row.source_sha256}
             for row in rows
-        ],
+        ]
+        + [{**v, "verdict": "positive"} for v in ideas],
         "holdout_project_ids": [],
     }
     context = TasteStore.context_for(corpus, str(owner), query)["context"]
@@ -557,6 +668,8 @@ async def rejected_ideas(db, owner, collection_id):
     ).all()
     found = []
     for row in rows:
+        if CONTEXTUAL_REASONS & set(row.reasons or []):
+            continue
         plan = ((row.proposal or {}).get("idea") or {}).get("content_plan") or {}
         found.append(
             {

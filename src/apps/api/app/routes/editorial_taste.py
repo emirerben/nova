@@ -1,11 +1,13 @@
 """Explicit account calibration and creative feedback, separate from render approval."""
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import CurrentUser
 from app.database import get_db
-from app.schemas.editorial_taste import IdeaFeedbackWrite, TasteErase, TasteWrite
+from app.schemas.editorial_taste import IdeaExampleWrite, IdeaFeedbackWrite, TasteErase, TasteWrite
 from app.services import creator_editorial_taste as service
 
 
@@ -42,5 +44,17 @@ async def erase(body: TasteErase, user: CurrentUser, db: AsyncSession = Depends(
 @router.post("/feedback")
 async def feedback(body: IdeaFeedbackWrite, user: CurrentUser, db: AsyncSession = Depends(get_db)):
     result = await service.record_feedback(db, user.id, body)
+    await db.commit()
+    return result
+
+
+@router.post("/feedback/{feedback_id}/example")
+async def idea_example(
+    feedback_id: UUID,
+    body: IdeaExampleWrite,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await service.confirm_idea_example(db, user.id, feedback_id, body)
     await db.commit()
     return result

@@ -1448,6 +1448,11 @@
             "title": "Formats",
             "type": "array"
           },
+          "idea_example_feedback": {
+            "default": false,
+            "title": "Idea Example Feedback",
+            "type": "boolean"
+          },
           "live_plan_review_enabled": {
             "default": false,
             "title": "Live Plan Review Enabled",
