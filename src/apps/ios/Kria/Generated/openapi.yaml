@@ -1239,6 +1239,11 @@
             },
             "title": "Stories",
             "type": "array"
+          },
+          "suggested_research_topic": {
+            "nullable": true,
+            "title": "Suggested Research Topic",
+            "type": "string"
           }
         },
         "required": [
@@ -1448,6 +1453,11 @@
             "title": "Formats",
             "type": "array"
           },
+          "idea_example_feedback": {
+            "default": false,
+            "title": "Idea Example Feedback",
+            "type": "boolean"
+          },
           "live_plan_review_enabled": {
             "default": false,
             "title": "Live Plan Review Enabled",
@@ -1583,6 +1593,11 @@
           "voiceover_script_cards": {
             "default": false,
             "title": "Voiceover Script Cards",
+            "type": "boolean"
+          },
+          "wrong_fact_feedback": {
+            "default": false,
+            "title": "Wrong Fact Feedback",
             "type": "boolean"
           }
         },
@@ -10668,6 +10683,18 @@
             "title": "Closing Text",
             "type": "string"
           },
+          "form": {
+            "enum": [
+              "guide",
+              "factual_story",
+              "atmosphere",
+              "review",
+              "performance"
+            ],
+            "nullable": true,
+            "title": "Form",
+            "type": "string"
+          },
           "format": {
             "default": "text_story",
             "enum": [
@@ -10675,6 +10702,14 @@
             ],
             "title": "Format",
             "type": "string"
+          },
+          "open_questions": {
+            "items": {
+              "$ref": "#/components/schemas/StoryOpenQuestion"
+            },
+            "maxItems": 3,
+            "title": "Open Questions",
+            "type": "array"
           },
           "opening_text": {
             "maxLength": 100,
@@ -10809,6 +10844,41 @@
           "query"
         ],
         "title": "StoryGenerationBody",
+        "type": "object"
+      },
+      "StoryOpenQuestion": {
+        "additionalProperties": false,
+        "description": "An unknown the creator must answer or skip before the idea is built.",
+        "properties": {
+          "answer": {
+            "maxLength": 200,
+            "minLength": 1,
+            "nullable": true,
+            "title": "Answer",
+            "type": "string"
+          },
+          "dismissed": {
+            "default": false,
+            "title": "Dismissed",
+            "type": "boolean"
+          },
+          "id": {
+            "default": "",
+            "maxLength": 8,
+            "title": "Id",
+            "type": "string"
+          },
+          "question": {
+            "maxLength": 140,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "StoryOpenQuestion",
         "type": "object"
       },
       "StoryResearch": {
@@ -16233,6 +16303,16 @@
               "title": "Story Ids",
               "type": "array"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -16277,6 +16357,16 @@
             "schema": {
               "format": "uuid",
               "title": "Identifier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
               "type": "string"
             }
           }
@@ -16347,6 +16437,16 @@
               "title": "Story Id",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -16413,6 +16513,16 @@
             "schema": {
               "format": "uuid",
               "title": "Story Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
               "type": "string"
             }
           }
@@ -16483,6 +16593,16 @@
               "title": "Story Id",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -16549,6 +16669,16 @@
             "schema": {
               "format": "uuid",
               "title": "Story Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
               "type": "string"
             }
           }

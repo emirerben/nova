@@ -25,6 +25,7 @@ from app.pipeline.clip_cache import (
 from app.schemas.media_collections import CollectionStoriesOut, CollectionStoryOut
 from app.services import creator_editorial_taste, media_collections, media_moments
 from app.services.media_collection_analysis import claim_collection_analysis, collection_run_context
+from app.services.research_topic_suggestion import suggest_research_topic
 from app.services.researched_text import ResearchUnavailable
 from app.services.story_idea_research import (
     research_spec_identity,
@@ -156,8 +157,19 @@ async def generate_stories(db, owner, identifier, body):
     evidence = await candidate_evidence(db, owner, identifier, body.expected_revision, body.query)
     require_requested_coverage(evidence, body)
     candidates = [value for value in evidence.moments if 1 <= value.end_s - value.start_s <= 20]
+    # A prefill for the creator to confirm; nothing is searched until they send it back.
+    suggested_topic = (
+        None
+        if getattr(body, "research_topic", None)
+        else suggest_research_topic(body.query, [value.text for value in candidates])
+    )
     if not candidates:
-        return CollectionStoriesOut(revision=body.expected_revision, stories=[], coverage=evidence)
+        return CollectionStoriesOut(
+            revision=body.expected_revision,
+            stories=[],
+            coverage=evidence,
+            suggested_research_topic=suggested_topic,
+        )
     # Retrieve editorial examples against the actual outing, even when the
     # creator leaves the broad default query unchanged.
     taste_query = (body.query + " " + " ".join(value.text[:160] for value in candidates))[:2000]
@@ -183,6 +195,7 @@ async def generate_stories(db, owner, identifier, body):
     )
     spec = CameraRollStoriesAgent.spec
     research_topic = getattr(body, "research_topic", None)
+    rejected = await creator_editorial_taste.rejected_research(db, owner, research_topic)
     digest = hashlib.sha256(
         json.dumps(
             [
@@ -191,7 +204,9 @@ async def generate_stories(db, owner, identifier, body):
                 [value.evidence.get("index_spec") for value in candidates],
                 body.expected_revision,
                 body.allow_partial_analysis,
-                [research_topic, research_spec_identity()] if research_topic else None,
+                [research_topic, research_spec_identity(), *([rejected] if rejected else [])]
+                if research_topic
+                else None,
             ],
             sort_keys=True,
         ).encode()
@@ -217,6 +232,7 @@ async def generate_stories(db, owner, identifier, body):
                 else CameraRollStoriesAgent(default_client()).run,
                 input,
                 *([research_topic] if research_topic else []),
+                **({"rejected": rejected} if rejected else {}),
                 ctx=collection_run_context(
                     creator_id=str(owner),
                     request_id=f"collection-stories:{digest}:{claim.attempt_token}",
@@ -244,12 +260,15 @@ async def generate_stories(db, owner, identifier, body):
     # Serialize the final check with pause, Forget, profile changes and feedback.
     # Never hold this lock across a provider call.
     await creator_editorial_taste.lock_owner(db, owner)
-    if taste != await creator_editorial_taste.generation_context(db, owner, taste_query):
+    if taste != await creator_editorial_taste.generation_context(
+        db, owner, taste_query
+    ) or rejected != await creator_editorial_taste.rejected_research(db, owner, research_topic):
         raise HTTPException(409, "Personalization changed; request ideas again")
     fresh = await candidate_evidence(db, owner, identifier, body.expected_revision, body.query)
     require_requested_coverage(fresh, body)
     by_id = {str(value.id): value for value in fresh.moments}
-    accepted = []
+    refused = await creator_editorial_taste.rejected_ideas(db, owner, identifier)
+    valid = []
     seen = set()
     for index, idea in enumerate(ideas.stories):
         ids = idea.moment_ids
@@ -267,6 +286,13 @@ async def generate_stories(db, owner, identifier, body):
         if not 1 <= duration <= 60 or identity in seen:
             continue
         seen.add(identity)
+        repeat = creator_editorial_taste.repeated_rejection(plan.angle, plan.opening_text, refused)
+        valid.append((index, idea, moments, repeat))
+    # Never answer with nothing: when every idea repeats a refusal, the first
+    # (best-ranked) stays and records which judgment it resembles.
+    kept = [value for value in valid if value[3] is None] or valid[:1]
+    accepted = []
+    for index, idea, moments, repeat in kept:
         story_id = uuid.uuid5(identifier, f"{digest}:{index}")
         row = await db.get(MediaCollectionStory, story_id)
         if row is None:
@@ -280,14 +306,22 @@ async def generate_stories(db, owner, identifier, body):
                 moments_json=[value.model_dump(mode="json") for value in moments],
                 events_json=[
                     event(
-                        "offered", 1, editorial_taste=creator_editorial_taste.context_receipt(taste)
+                        "offered",
+                        1,
+                        editorial_taste=creator_editorial_taste.context_receipt(taste),
+                        **({"repeat_of_rejected": repeat} if repeat else {}),
                     )
                 ],
             )
             db.add(row)
         accepted.append(story_out(row))
     await db.commit()
-    return CollectionStoriesOut(revision=body.expected_revision, stories=accepted, coverage=fresh)
+    return CollectionStoriesOut(
+        revision=body.expected_revision,
+        stories=accepted,
+        coverage=fresh,
+        suggested_research_topic=suggested_topic,
+    )
 
 
 async def owned_story(db, owner, identifier, story_id, body):
@@ -317,6 +351,32 @@ async def owned_story(db, owner, identifier, story_id, body):
     return row, duplicate
 
 
+def resolve_open_questions(stored, sent):
+    """Only answer/skip state is client-writable; the questions themselves are server-owned.
+
+    Builds that predate the field echo no list back, which must not erase a pending
+    question and so reopen or bypass the gate."""
+    known = {value["id"] for value in stored}
+    if any(value.id not in known for value in sent):
+        raise HTTPException(422, "That question is not part of this idea")
+    by_id = {value.id: value for value in sent}
+    return [
+        {**value, "answer": by_id[value["id"]].answer, "dismissed": by_id[value["id"]].dismissed}
+        if value["id"] in by_id
+        else value
+        for value in stored
+    ]
+
+
+def unresolved_question_ids(row):
+    plan = row.story_json.get("content_plan") or {}
+    return [
+        value["id"]
+        for value in plan.get("open_questions", [])
+        if value.get("answer") is None and not value.get("dismissed")
+    ]
+
+
 async def correct_story(db, owner, identifier, story_id, body):
     row, duplicate = await owned_story(db, owner, identifier, story_id, body)
     digest = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
@@ -332,10 +392,20 @@ async def correct_story(db, owner, identifier, story_id, body):
     elif body.content_plan is not None:
         if len(body.content_plan.beat_reasons) != len(moments):
             raise HTTPException(422, "Keep one reason for each story moment")
-        row.story_json = {
-            **row.story_json,
-            "content_plan": body.content_plan.model_dump(mode="json"),
-        }
+        # The form decides which evidence the idea was admitted on; wording edits
+        # (including from builds that predate the field) cannot add, drop or change it.
+        from app.config import settings
+
+        stored = row.story_json.get("content_plan") or {}
+        revised = body.content_plan.model_dump(mode="json", exclude={"form", "open_questions"})
+        form = stored.get("form")
+        if form and settings.story_idea_forms_enabled:
+            revised["form"] = form
+        if questions := resolve_open_questions(
+            stored.get("open_questions", []), body.content_plan.open_questions
+        ):
+            revised["open_questions"] = questions
+        row.story_json = {**row.story_json, "content_plan": revised}
     elif body.moment_order is not None:
         known = {value["id"]: value for value in moments}
         if any(str(value) not in known for value in body.moment_order):
@@ -519,7 +589,7 @@ async def _recoverable_selection_hold(db, thread, item, turn, story):
     )
 
 
-async def select_story(db, owner, identifier, story_id, body):
+async def select_story(db, owner, identifier, story_id, body, gate_open_questions=True):
     from sqlalchemy import select
 
     from app.config import settings
@@ -617,6 +687,14 @@ async def select_story(db, owner, identifier, story_id, body):
         raise HTTPException(409, "Held selection was not found in this project")
     if story_out(row).rejected:
         raise HTTPException(409, "Choose another story; this version was rejected")
+    if gate_open_questions and unresolved_question_ids(row):
+        raise HTTPException(
+            409,
+            {
+                "code": "story_open_questions",
+                "message": "Answer or skip this idea's questions before building it",
+            },
+        )
     thread = await db.get(CreationThread, body.thread_id)
     if thread is None or thread.creator_id != owner:
         raise HTTPException(404, "Chat not found")

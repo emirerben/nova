@@ -13,6 +13,7 @@ from app.agents.camera_roll_stories import (
     CameraRollStoriesInput,
     CameraRollStoriesOutput,
 )
+from app.schemas.research import same_claim
 from app.services.researched_text import (
     GroundedGeminiClient,
     GroundedResearchAgent,
@@ -22,7 +23,25 @@ from app.services.researched_text import (
 )
 
 
+def without_rejected(evidence, rejected):
+    facts = []
+    for fact in evidence.facts:
+        if any(same_claim(fact.text, text) for text in rejected["fact_texts"]):
+            continue
+        sources = [s for s in fact.sources if s.url not in rejected["source_urls"]]
+        if sources:
+            facts.append(fact.model_copy(update={"sources": sources}))
+    if not facts:
+        raise ResearchUnavailable(
+            "Every fact found was one you marked wrong. Try a more specific topic."
+        )
+    return evidence.model_copy(update={"facts": facts})
+
+
 def story_content_digest(title, content_plan, moment_ids):
+    # Answering an open question is not a wording change the research review must redo.
+    if content_plan and "open_questions" in content_plan:
+        content_plan = {k: v for k, v in content_plan.items() if k != "open_questions"}
     return hashlib.sha256(
         json.dumps([title, content_plan, moment_ids], sort_keys=True).encode()
     ).hexdigest()
@@ -86,7 +105,9 @@ class StoryResearchReviewAgent(Agent[StoryResearchReviewInput, StoryResearchRevi
             "stories": [
                 {
                     "title": story.title,
-                    "copy_and_reasoning": story.content_plan.model_dump(exclude={"beat_reasons"}),
+                    "copy_and_reasoning": story.content_plan.model_dump(
+                        exclude={"beat_reasons", "form", "open_questions"}
+                    ),
                     "selected_facts": (
                         [fact.model_dump() for fact in story.research.evidence.facts]
                         if story.research
@@ -263,13 +284,15 @@ def research_spec_identity():
     ]
 
 
-def research_story_ideas(input, topic, *, ctx):  # noqa: A002
+def research_story_ideas(input, topic, *, ctx, rejected=None):  # noqa: A002
     # Topic is a separate current creator input, not inferred from private media,
     # memory or query text. Public search sees no other part of the request.
     request = ResearchRequest(topic=topic, request_quote=topic)
     request.authorize(topic)
     ctx = replace(ctx, thought_summary_callback=None)
     evidence = primary_evidence(GroundedResearchAgent(GroundedGeminiClient()).run(request, ctx=ctx))
+    if rejected:
+        evidence = without_rejected(evidence, rejected)
     researched = input.model_copy(update={"public_research": evidence, "research_topic": topic})
     ideas = CameraRollStoriesAgent(default_client()).run(researched, ctx=ctx)
     if ideas.stories:

@@ -120,6 +120,7 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func saveEditorialTaste(_ body: EditorialTasteWrite) async throws -> EditorialTasteProfile
     func forgetEditorialTaste(revision: Int, eventID: String) async throws -> EditorialTasteProfile
     func recordIdeaFeedback(_ body: IdeaFeedbackWrite) async throws -> IdeaFeedbackReceipt
+    func confirmIdeaExample(feedbackID: UUID, eventID: String) async throws
     func updateCameraRollContentPlan(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, plan: CameraRollContentPlan) async throws -> CameraRollStory
     func changeCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, order: [UUID]?, audioPolicy: String?, eventID: String) async throws -> CameraRollStory
     func indexCameraRollCollection(id: UUID, revision: Int, offset: Int) async throws -> CameraRollIndexPass
@@ -1153,7 +1154,10 @@ enum KriaClientProtocolContract {
     /// The server stamps the key only for this protocol (and only with `TEXT_BEHIND_SUBJECT_PHONE_ENABLED` +
     /// `behindSubject` verified); an older build asked for it gets plain text, and 426 `client_update_required`
     /// for a pinned recipe that already carries the key, since it cannot decode it.
-    static let version = 21
+    /// 22: renders and answers a camera-roll idea's `open_questions`. The server holds "Use this idea"
+    /// behind them (409 `story_open_questions`) and sends the list only from this protocol; older builds
+    /// see no questions and are not gated.
+    static let version = 22
     static let header = "X-Kria-Client-Protocol"
 }
 

@@ -7,6 +7,7 @@ struct CameraRollStoriesView: View {
     let collection: CameraRollCollection
     let result: CameraRollStories
     var cacheOnly = false
+    var onAddBackground: @MainActor (String) -> Void = { _ in }
     let onSelected: @MainActor (CreationThread) async -> Void
     var onReviewed: @MainActor (CameraRollStories) -> Void = { _ in }
     @Environment(\.dismiss) private var dismiss
@@ -38,6 +39,15 @@ struct CameraRollStoriesView: View {
                     Label("Some audio needs checking", systemImage: "info.circle")
                         .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
                 }
+                if let topic = result.suggestedResearchTopic, !stories.contains(where: { $0.research != nil }) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Button { dismiss(); onAddBackground(topic) } label: {
+                            Label("Add background facts", systemImage: "text.book.closed")
+                        }.buttonStyle(KriaSecondaryButtonStyle(minHeight: 44)).accessibilityIdentifier("story-add-background")
+                        Text("You confirm the topic first. Only “\(topic)” is searched, never your footage.")
+                            .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                    }
+                }
                 if stories.allSatisfy(\.rejected) { ContentUnavailableView("No story to suggest", systemImage: "photo.stack", description: Text("Try a smaller collection or a more specific story. You can also create a video from your chosen footage in chat.")) }
                 ForEach(stories.filter { !$0.rejected }) { story in
                     VStack(alignment: .leading, spacing: 16) {
@@ -47,6 +57,10 @@ struct CameraRollStoriesView: View {
                             Text("\(story.duration, specifier: "%.1f") sec").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                         }
                         if let plan = story.contentPlan {
+                            if let label = plan.formLabel {
+                                Text(label).font(KriaFont.body(12).weight(.semibold)).foregroundStyle(KriaColor.mutedInk)
+                                    .accessibilityIdentifier("story-form-\(story.id)")
+                            }
                             Text(plan.angle).font(KriaFont.body(16).weight(.semibold))
                         }
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -73,6 +87,11 @@ struct CameraRollStoriesView: View {
                             }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
                                 .background(KriaColor.selectionSoft, in: RoundedRectangle(cornerRadius: 16))
                         }
+                        if let plan = story.contentPlan, !(plan.openQuestions ?? []).isEmpty {
+                            CameraRollOpenQuestionsView(story: story, plan: plan) { revised in
+                                await resolve(story, plan: revised)
+                            }
+                        }
                         if taste?.enabled == true && taste?.memoryPaused == false {
                             Button(feedbackSaved.contains("\(story.id)-\(story.revision)") ? "Feedback saved" : "Would you post this?") { ratingStory = story }
                                 .font(KriaFont.body(13)).frame(minHeight: 44)
@@ -81,7 +100,8 @@ struct CameraRollStoriesView: View {
                         if let research = story.research { CameraRollIdeaResearchView(research: research) }
                         Button { selectionTask = Task { await select(story) } } label: {
                             Text("Use this idea").frame(maxWidth: .infinity)
-                        }.buttonStyle(KriaPrimaryButtonStyle()).accessibilityIdentifier("story-choose-\(story.id)")
+                        }.buttonStyle(KriaPrimaryButtonStyle()).disabled(!(story.contentPlan?.unresolvedQuestions.isEmpty ?? true))
+                            .accessibilityIdentifier("story-choose-\(story.id)")
                         DisclosureGroup("See clips and details") {
                             storyDetails(story)
                         }.font(KriaFont.body(14))
@@ -121,7 +141,7 @@ struct CameraRollStoriesView: View {
                 }
             }
             .onDisappear {
-                onReviewed(CameraRollStories(stories: stories, coverage: result.coverage))
+                onReviewed(CameraRollStories(stories: stories, coverage: result.coverage, suggestedResearchTopic: result.suggestedResearchTopic))
                 selectionTask?.cancel(); player?.pause()
             }
             .interactiveDismissDisabled(busy)
@@ -172,6 +192,8 @@ struct CameraRollStoriesView: View {
                 set: { keep in Task { await change(story, order: nil, audioPolicy: keep ? "preserve_source_audio" : "muted", action: keep ? "sound-original" : "sound-muted") } }
             )).accessibilityIdentifier("story-sound")
             if story.audioPolicy == "muted" { Text("Muted footage").font(.footnote).foregroundStyle(.secondary) }
+            Text("From your footage").font(KriaFont.body(13).weight(.semibold))
+                .accessibilityIdentifier("story-provenance-footage-\(story.id)")
             ForEach(Array(story.moments.enumerated()), id: \.element.id) { index, moment in
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .top, spacing: 12) {
@@ -241,6 +263,13 @@ struct CameraRollStoriesView: View {
             stories = stories.map { $0.id == changed.id ? changed : $0 }
         } catch { self.error = CameraRollCollectionFailure.message(error) }
     }
+    @MainActor private func resolve(_ story: CameraRollStory, plan: CameraRollContentPlan) async {
+        busy = true; error = nil; defer { busy = false }
+        do {
+            let changed = try await api.updateCameraRollContentPlan(collectionID: collection.id, story: story, collectionRevision: collection.serverRevision ?? 0, plan: plan)
+            stories = stories.map { $0.id == changed.id ? changed : $0 }
+        } catch { self.error = CameraRollCollectionFailure.message(error) }
+    }
     @MainActor private func replace(_ story: CameraRollStory, index: Int, moment: CameraRollMoment) async {
         busy = true; error = nil; defer { busy = false }
         do {
@@ -281,6 +310,10 @@ struct CameraRollStoriesView: View {
         } catch { self.error = CameraRollCollectionFailure.message(error) }
     }
     @MainActor private func select(_ story: CameraRollStory) async {
+        guard story.contentPlan?.unresolvedQuestions.isEmpty ?? true else {
+            error = CameraRollCollectionFailure.openQuestions
+            return
+        }
         busy = true; error = nil; heldRecovery = nil; defer { busy = false }
         do {
             guard let owner = api.mediaLibraryOwner else { throw APIError.unsupported }
@@ -333,9 +366,10 @@ struct CameraRollStoriesView: View {
 private struct CameraRollIdeaResearchView: View {
     let research: CameraRollStoryResearch
     var body: some View {
-        DisclosureGroup("Research behind the idea") {
+        DisclosureGroup("Background facts") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("About \(research.topic)").font(KriaFont.body(13).weight(.semibold))
+                Text("Background on \(research.topic)").font(KriaFont.body(13).weight(.semibold))
+                Text("Public sources, not something your footage shows.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                 if !research.reviewCurrent {
                     Text("Wording or footage changed. Recheck these sources.")
                         .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
@@ -353,6 +387,38 @@ private struct CameraRollIdeaResearchView: View {
                 }
             }.padding(.top, 8)
         }.font(KriaFont.body(13)).accessibilityIdentifier("story-research-sources")
+    }
+}
+
+private struct CameraRollOpenQuestionsView: View {
+    let story: CameraRollStory
+    let plan: CameraRollContentPlan
+    let save: @MainActor (CameraRollContentPlan) async -> Void
+    @State private var drafts: [String: String] = [:]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(plan.unresolvedQuestions.isEmpty ? "Your answers" : "Before you build this").font(KriaFont.body(13).weight(.semibold))
+            ForEach(plan.openQuestions ?? []) { item in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(item.question).font(KriaFont.body(15).weight(.medium))
+                    if item.isResolved {
+                        Text(item.answer ?? "Skipped").font(KriaFont.body(14)).foregroundStyle(KriaColor.mutedInk)
+                            .accessibilityIdentifier("story-question-resolved-\(item.id)")
+                    } else {
+                        TextField("Your answer", text: Binding(get: { drafts[item.id] ?? "" }, set: { drafts[item.id] = String($0.prefix(200)) }), axis: .vertical)
+                            .accessibilityIdentifier("story-question-answer-\(item.id)")
+                        HStack {
+                            Button("Save answer") { Task { await save(plan.resolving(item.id, answer: drafts[item.id] ?? "")) } }
+                                .disabled((drafts[item.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                                .accessibilityIdentifier("story-question-save-\(item.id)")
+                            Button("Skip") { Task { await save(plan.resolving(item.id, answer: nil)) } }
+                                .accessibilityIdentifier("story-question-skip-\(item.id)")
+                        }.buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
+                    }
+                }
+            }
+        }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+            .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 16))
     }
 }
 

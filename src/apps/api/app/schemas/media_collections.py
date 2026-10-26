@@ -1,6 +1,6 @@
 """Bounded, owned catalogue selections. Never accepts a Photos identifier or bytes."""
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, NamedTuple
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -126,12 +126,47 @@ class MomentInspectionOut(BaseModel):
     sample_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+StoryForm = Literal["guide", "factual_story", "atmosphere", "review", "performance"]
+
+
+class FormEvidence(NamedTuple):
+    research_facts: int = 0
+    source_stops: int = 0
+
+
+# What the offered footage/research must contain before an idea may claim a form.
+FORM_EVIDENCE: dict[StoryForm, FormEvidence] = {
+    "guide": FormEvidence(source_stops=3),
+    "factual_story": FormEvidence(research_facts=1),
+    "atmosphere": FormEvidence(),
+    "review": FormEvidence(),
+    "performance": FormEvidence(),
+}
+
+
+class StoryOpenQuestion(BaseModel):
+    """An unknown the creator must answer or skip before the idea is built."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    id: str = Field(default="", max_length=8)
+    question: str = Field(min_length=1, max_length=140)
+    answer: str | None = Field(default=None, min_length=1, max_length=200)
+    dismissed: bool = False
+
+    @model_validator(mode="after")
+    def answered_or_skipped(self):
+        if self.answer is not None and self.dismissed:
+            raise ValueError("A question is either answered or skipped")
+        return self
+
+
 class StoryContentPlan(BaseModel):
     """Suggested creative wording, kept distinct from source-analysis descriptions."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     version: Literal[1] = 1
     format: Literal["text_story"] = "text_story"
+    form: StoryForm | None = Field(default=None, exclude_if=lambda value: value is None)
     audience: str = Field(min_length=1, max_length=200)
     angle: str = Field(min_length=1, max_length=280)
     why_it_works: str = Field(min_length=1, max_length=500)
@@ -141,11 +176,18 @@ class StoryContentPlan(BaseModel):
         default="", max_length=300
     )
     beat_reasons: list[str] = Field(min_length=1, max_length=8)
+    open_questions: list[StoryOpenQuestion] = Field(
+        default_factory=list, max_length=3, exclude_if=lambda value: not value
+    )
 
     @model_validator(mode="after")
     def bounded_reasons(self):
         if any(not reason.strip() or len(reason) > 240 for reason in self.beat_reasons):
             raise ValueError("Each beat needs a short reason")
+        for position, question in enumerate(self.open_questions, 1):
+            question.id = question.id or f"q{position}"
+        if len({question.id for question in self.open_questions}) != len(self.open_questions):
+            raise ValueError("Open questions need distinct ids")
         return self
 
 
@@ -172,6 +214,9 @@ class CollectionStoriesOut(BaseModel):
     revision: int
     stories: list[CollectionStoryOut]
     coverage: MomentSearchOut
+    suggested_research_topic: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class SavedCollectionStoriesOut(BaseModel):

@@ -3,12 +3,16 @@
 import json
 from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field
+import structlog
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents.media_moment_relevance import MomentRelevanceInput
-from app.schemas.media_collections import StoryContentPlan
+from app.config import settings
+from app.schemas.media_collections import FORM_EVIDENCE, StoryContentPlan, StoryForm
 from app.schemas.research import ResearchEvidence, StoryResearch
+
+log = structlog.get_logger()
 
 
 class StoryIdea(BaseModel):
@@ -27,11 +31,27 @@ class CameraRollStoriesOutput(BaseModel):
     stories: list[StoryIdea] = Field(default_factory=list, max_length=3)
 
 
+class _ProposedContentPlan(StoryContentPlan):
+    form: StoryForm
+
+    @field_validator("open_questions", mode="before")
+    @classmethod
+    def usable_questions(cls, value):
+        # Questions are optional extras: a blank, overlong or surplus one must never
+        # cost the creator the whole idea, and the model never sets answers or ids.
+        kept = []
+        for entry in value if isinstance(value, list) else []:
+            text = entry.get("question") if isinstance(entry, dict) else entry
+            if isinstance(text, str) and 0 < len(text.strip()) <= 140:
+                kept.append({"question": text.strip()})
+        return kept[:3]
+
+
 class _StoryProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(min_length=1, max_length=100)
     moment_ids: list[str] = Field(min_length=1, max_length=8)
-    content_plan: StoryContentPlan
+    content_plan: _ProposedContentPlan
     research_fact_ids: list[str] = Field(default_factory=list, max_length=3)
 
 
@@ -40,17 +60,32 @@ class _StoryProposals(BaseModel):
     stories: list[_StoryProposal] = Field(default_factory=list, max_length=3)
 
 
+class _LegacyStoryProposal(_StoryProposal):
+    content_plan: StoryContentPlan
+
+
+class _LegacyStoryProposals(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    stories: list[_LegacyStoryProposal] = Field(default_factory=list, max_length=3)
+
+
 class CameraRollStoriesInput(MomentRelevanceInput):
     editorial_taste_context: str = Field(default="", max_length=8000, exclude_if=lambda v: not v)
     public_research: ResearchEvidence | None = Field(default=None, exclude_if=lambda v: v is None)
     research_topic: str = Field(default="", max_length=200, exclude_if=lambda v: not v)
 
 
+def _meets_form_evidence(story, source_stops):
+    need = FORM_EVIDENCE[story.content_plan.form]
+    facts = len(story.research.evidence.facts) if story.research else 0
+    return facts >= need.research_facts and source_stops >= need.source_stops
+
+
 class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.media.camera_roll_stories",
         prompt_id="camera_roll_stories",
-        prompt_version="2026-10-24.1",
+        prompt_version="2026-10-25.3",
         model="gemini-2.5-flash",
         max_attempts=1,
         timeout_s=20,
@@ -94,9 +129,11 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             'Return JSON {"stories": [{"title": "", "moment_ids": ["id"], '
             '"research_fact_ids": [], '
             '"content_plan": {"version": 1, '
-            '"format": "text_story", "audience": "", "angle": "", "why_it_works": "", '
+            '"format": "text_story", "form": "guide|factual_story|atmosphere|review|performance", '
+            '"audience": "", "angle": "", "why_it_works": "", '
             '"opening_text": "", "closing_text": null, "caption": "", '
-            '"beat_reasons": ["why this exact moment advances the idea"]}}]}. '
+            '"beat_reasons": ["why this exact moment advances the idea"], '
+            '"open_questions": ["short question only the creator can answer"]}}]}. '
             "Aim for three DISTINCT, worthwhile content ideas grounded in candidate evidence, "
             "the creator's query, and supplied public_research only. Explore different viewer "
             "takeaways, specific observations, footage subsets and editorial forms before "
@@ -107,13 +144,19 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "footage supports just one worthwhile idea or the creator explicitly requests one; "
             "return zero when none is supported. Never invent facts, personal opinions or "
             "missing footage to fill the count. An explicit narrow creator request takes "
-            "priority over variety. Choose a "
-            "suitable editorial "
-            "form that fits the creator's request and footage: a useful guide, an honest firsthand "
-            "review, a concrete observation or joke, a simple atmosphere/day-in-the-life post, "
-            "or a recorded performance. These forms are equally valid; a mood post needs no "
-            "question, twist or invented narrative. Explain the actual value: what viewers learn, "
-            "recognize, find funny or enjoy seeing. Name the intended audience in ordinary words. "
+            "priority over variety. Set content_plan.form to the editorial form that fits the "
+            "creator's request and footage: guide (a useful multi-stop walkthrough; needs at "
+            "least three different source references among its moments), factual_story (a "
+            "specific researched fact is the point; only when public_research is supplied), "
+            "atmosphere (a simple mood or day-in-the-life post), review (an honest firsthand "
+            "opinion, observation or joke), or performance (a recorded performance). Never "
+            "claim a form whose footage or research requirement is unmet: that idea is "
+            "discarded. These forms are equally valid; a mood post needs no "
+            "question, twist or invented narrative. When you return three ideas, use at least "
+            "two different forms unless the creator asked narrowly for one form; three "
+            "rewordings of one form are not three options. Explain the actual value: what "
+            "viewers learn, recognize, find funny or enjoy seeing. Name the intended audience in "
+            "ordinary words. "
             "Do not force a question, comparison, engagement-bait ending or a dramatic hook. "
             "Candidates with evidence_scope whole_source_context cover the full analysed "
             "short clip, not a detected highlight. Their overall description is fallible, "
@@ -135,8 +178,12 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "a duration. The posting caption can add detail but cannot substitute for a clear "
             "on-screen premise. Do not invent quotes, "
             "verdicts, practical details or missing actions. If the idea needs the creator's "
-            "opinion or an unknown fact, explicitly name the question in why_it_works and keep "
-            "the proposed on-screen copy neutral until they answer. A guide can show the actual "
+            "opinion or a fact only they know, put it in content_plan.open_questions (at most "
+            "three, each under 100 characters, addressed to the creator, for example 'Which "
+            "café is this?') and keep the proposed on-screen copy neutral until they answer; "
+            "do not bury the question in why_it_works. Never ask what the footage already "
+            "shows or what public_research covers, and use an empty list when nothing is "
+            "unknown. A guide can show the actual "
             "journey and stops without inventing prices, opening hours or historical facts. "
             "Avoid brochure slogans such as 'Journey Through Time' and generic lists of objects. "
             "Use specific observations supported by THESE moments. A visible replica is a "
@@ -217,7 +264,10 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
     def parse(self, raw_text, input):  # noqa: A002
         try:
             input = self.Input.model_validate(input.model_dump())
-            proposals = _StoryProposals.model_validate_json(raw_text)
+            forms_on = settings.story_idea_forms_enabled
+            proposals = (
+                _StoryProposals if forms_on else _LegacyStoryProposals
+            ).model_validate_json(raw_text)
             result = self.Output(
                 stories=[
                     StoryIdea(
@@ -258,6 +308,40 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
                     )
                 elif ids:
                     raise ValueError("Story has no researched evidence")
+            if not forms_on:
+                for story in result.stories:
+                    story.content_plan.form = None
+            else:
+                sources = {candidate.id: candidate.source for candidate in input.candidates}
+                result.stories = [
+                    story
+                    for story in result.stories
+                    if _meets_form_evidence(story, len({sources[v] for v in story.moment_ids}))
+                ]
+                # A mislabelled idea is dropped on its own. Three ideas sharing one form are
+                # kept: an explicit narrow request ("just the performance clips") or a one-clip
+                # collection legitimately yields them, and the server cannot tell those apart
+                # from a lazy model. The prompt owns variety; this only makes misses visible.
+                if (
+                    len(result.stories) == 3
+                    and len({s.content_plan.form for s in result.stories}) < 2
+                ):
+                    log.info(
+                        "camera_roll_stories_single_form_set",
+                        form=result.stories[0].content_plan.form,
+                    )
+            if not settings.camera_roll_story_extras_enabled:
+                # Kill switch / rollback prep: store the legacy plan shape. Form was only
+                # needed to filter above; the research digest is recomputed over the stored shape.
+                from app.services.story_idea_research import story_content_digest
+
+                for story in result.stories:
+                    story.content_plan.form = None
+                    story.content_plan.open_questions = []
+                    if story.research:
+                        story.research.reviewed_content_sha256 = story_content_digest(
+                            story.title, story.content_plan.model_dump(), story.moment_ids
+                        )
             return result
         except ValueError as exc:
             raise SchemaError("Invalid camera-roll story response") from exc

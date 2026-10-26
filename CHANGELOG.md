@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.130.0] - 2026-10-26
+
+### Changed
+- feat(camera-roll): suggest background research, label footage vs background (#1832) <!-- release-pr: 1832 -->
+
+## [0.81.129.0] - 2026-10-26
+
+### Changed
+- feat(camera-roll): open questions gate building an idea (#1830) <!-- release-pr: 1830 -->
+
+## [0.81.128.0] - 2026-10-26
+
+### Changed
+- feat(camera-roll): typed idea form with server-side evidence rules (#1828) <!-- release-pr: 1828 -->
+
+## [0.81.127.0] - 2026-10-26
+
+### Changed
+- feat(taste): one-tap "Use as a taste example?" for would-post ideas and rewrites (#1831) <!-- release-pr: 1831 -->
+
+## [0.81.126.0] - 2026-10-26
+
+### Changed
+- feat(taste): similarity-ranked feedback and no re-offered rejected ideas (#1829) <!-- release-pr: 1829 -->
+
+## [0.81.125.0] - 2026-10-26
+
+### Changed
+- feat(taste): wrong_facts feedback excludes rejected research facts on the next run (#1827) <!-- release-pr: 1827 -->
+
+## [0.81.124.0] - 2026-10-26
+
+### Changed
+- feat(taste): read-only repeat-rejection measurement lever (#1826) <!-- release-pr: 1826 -->
+
 ## [0.81.123.0] - 2026-10-25
 
 ### Added

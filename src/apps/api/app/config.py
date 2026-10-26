@@ -616,6 +616,10 @@ class Settings(BaseSettings):
     # Admission alone personalizes nothing: a creator must confirm a profile first.
     creator_editorial_taste_enabled: bool = False
     creator_editorial_taste_user_ids: list[str] = []
+    # Independent kill switch for what ACTS on idea feedback: similarity ranking of saved
+    # judgments, the repeat-of-refused-idea filter, and wrong-facts research exclusion.
+    # False keeps profile/rules/examples and the two newest judgments (pre-feedback-loop).
+    creator_editorial_taste_feedback_signals_enabled: bool = True
 
     def creator_editorial_taste_for(self, user_id: object) -> bool:
         if not self.creator_editorial_taste_enabled:
@@ -910,6 +914,20 @@ class Settings(BaseSettings):
     # `fly secrets set MOMENT_ORDER_MIN_CLIENT_PROTOCOL=999` (api + worker) + restart turns
     # off the question AND every v2 pin.
     moment_order_min_client_protocol: int = 20
+    # Camera-roll idea `open_questions`: an app build declaring `X-Kria-Client-Protocol` >=
+    # this renders the questions and is held by the 409 `story_open_questions` gate on
+    # select. Lower builds never see the list and are never gated (they could neither answer
+    # nor explain the 409). 22 = the first iOS build with the question UI. Kill switch:
+    # `OPEN_QUESTIONS_MIN_CLIENT_PROTOCOL=999` (api) + restart.
+    open_questions_min_client_protocol: int = 22
+    # Camera-roll idea extras: `content_plan.form` and `content_plan.open_questions` on stored
+    # stories. Default TRUE. False: new ideas are stored in the legacy shape (no form, no
+    # questions) and `select` never gates on questions. Rollback of the deploy that introduced
+    # them: set this false FIRST (api + worker, restart) so no new rows carry keys the previous
+    # image's `extra="forbid"` plan rejects, then strip the keys from existing rows
+    # (docs/pipelines/media-library.md). Apply:
+    # `fly secrets set CAMERA_ROLL_STORY_EXTRAS_ENABLED=false`.
+    camera_roll_story_extras_enabled: bool = True
     # KRI-815: with footage and no voiceover, Kria chat writes a footage-grounded voiceover
     # script (`voiceover_script` on the reply) instead of a narrated draft that can only fail at
     # approval. Independent of TRANSCRIPT_HELPER_ENABLED. Kill switch: false + restart (api +
@@ -2060,6 +2078,12 @@ class Settings(BaseSettings):
     # NEXT_PUBLIC_SLIDE_POSTS_ENABLED twin. Rollback:
     #   fly secrets set SLIDE_POSTS_ENABLED=false --app nova-video (api + worker)
     slide_posts_enabled: bool = True
+    # Camera-roll idea forms (`content_plan.form`). Off: parse neither requires, validates
+    # nor stores a form (legacy-shaped ideas; wording edits drop a stored form), so new rows
+    # stay readable by an older API image. Flip BEFORE rolling the API image back; see
+    # agents/DECISIONS.md "Idea forms". Apply: fly secrets set STORY_IDEA_FORMS_ENABLED=false
+    # (api + worker) + restart.
+    story_idea_forms_enabled: bool = True
     # KRI-298/299: rich per-slide text (styled `SlideEdits.texts`, rendered as Pillow PNG
     # overlays). Off: the renderer keeps the legacy drawtext path using the mirrored
     # `text` (texts[0]); saved `texts` are preserved. Dual-flag with the iOS capability

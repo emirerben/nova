@@ -62,10 +62,31 @@ exclude copied footage across projects using canonical media identities. No
 independent holdout evaluation has run. The first ten are all development data.
 
 The bounded context uses a transparent lexical baseline over at most three
-positive examples, confirmed profile rules and up to two reviewed calibrations.
+positive examples, confirmed profile rules and up to four reviewed calibrations (two `would_post`, two others).
 It labels examples as evidence of taste, never as facts about the current footage.
 Inspect retrieval choices and measure them before choosing a more expensive
 retrieval or model approach. Do not interpret structural checks as creative wins.
+
+In the account API, camera-roll generation ranks the creator's saved idea judgments
+by word overlap with the outing and footage descriptions (same lexical baseline, no new
+retrieval system). It sends up to two `would_post` and two other judgments, newest first
+on ties. Judgments with a `footage_mismatch`, `wrong_facts` or `invented_experience` reason
+are contextual: they never feed the repeat filter below. It never infers an aggregate preference from the pile (no "too_generic x3"
+line): each judgment stays contextual. After generation, `generate_stories` drops any idea
+whose angle or opening text is a near repeat of a `not_for_me` idea the creator refused
+**for the same collection (outing)**: identical text, or at least 0.8 word overlap
+(Jaccard over 3+ letter words, four or more distinct words). Refusals never filter another
+outing. It never drops every idea: the best one stays and its `offered` event records
+`repeat_of_rejected` (a feedback id). Paraphrases with new vocabulary escape this check.
+Pause and Forget empty both paths.
+
+Kill switch: `CREATOR_EDITORIAL_TASTE_FEEDBACK_SIGNALS_ENABLED` (default `true`). `false`
+turns off similarity ranking (back to the two newest judgments), the repeat filter and
+the wrong-facts exclusion, and hides the `wrong_fact_feedback` capability, while profile,
+rules and examples keep working. Apply with `fly secrets set ...=false` on api + worker
+and restart. Account rollout: `CREATOR_EDITORIAL_TASTE_ENABLED=true` plus
+`CREATOR_EDITORIAL_TASTE_USER_IDS` as a JSON array of account ids, or `["*"]` for every
+account.
 
 External TikTok research is a separate reference pool. Preserve post ids, original
 capture dates, raw metric provenance, missing captions, promotion markers and the
@@ -95,6 +116,33 @@ GET/PUT/DELETE routes manage confirmed projects/rules; POST `/feedback` records
 A judgment does not build a project or authorize rendering. Project notes remain
 contextual; they never silently become standing rules.
 
+The `wrong_facts` reason (researched ideas only) is actionable, not just context: the
+next research run for the same topic drops every fact that says what a fact the creator
+saw on that idea said, and every stable source address it cited, before
+`CameraRollStoriesAgent` sees the evidence. Fact ids restart at `fact-0` on each search
+and Gemini rewords facts and issues fresh grounding-redirect URLs every time, so identity
+is word overlap (Jaccard >= 0.5 over 3+ letter words) with the stored wording, read from
+the feedback row's `proposal` (no column); redirect URLs are never stored as identity.
+A paraphrase with new vocabulary can still come back. The exclusion joins the
+proposal cache key, so the same request re-searches and re-reviews. Forget, pause and the
+feature gate empty it; if every fact found was rejected the request fails closed (503).
+Clients show the choice only when `/creation-threads/capabilities` returns
+`wrong_fact_feedback: true`; an older server would 422 the whole judgment. Rollback is a
+normal deploy revert (capability disappears, old rows are inert).
+
+A saved `would_post` judgment, or any judgment carrying the creator's own rewrite, can
+become a taste example without a built project, but only on a second explicit tap:
+`IdeaFeedbackView` asks "Use as a taste example?" and calls
+`POST /me/editorial-taste/feedback/{id}/example`. Saving the judgment never does it, and
+declining adds nothing. No migration: the confirmation is a new profile revision whose
+payload lists `idea_example_ids` (newest ten kept); the words are read back from the
+feedback row's frozen proposal, so story deletion, Forget and Memory clear remove them,
+pause and the feature gate empty them, and a profile re-save carries them over. A rewrite
+is the example's words and the rejected angle rides as its contextual note. Examples show
+in `idea_examples` on GET and in the same top-three retrieval as project examples.
+Clients ask only when `/creation-threads/capabilities` returns `idea_example_feedback: true`.
+Rollback is a normal deploy revert (capability disappears, old payload ids are inert).
+
 PUT requires `expected_revision`, a stable `idempotency_key`, owned `project_ids`,
 `rules`, optional `project_notes` (at most 1,500 characters per project),
 `confirmed: true` and `enabled`. Project notes preserve full contextual feedback;
@@ -104,7 +152,7 @@ confirming a newer profile. The service captures saved server metadata, not clie
 supplied post words. This is not pixel inspection or evidence of publication.
 
 The actual camera-roll proposer retrieves at most three examples against the
-query and outing descriptions. Confirmed rules and up to two recent judgments
+query and outing descriptions. Confirmed rules and up to four similarity-ranked judgments
 enter its bounded sensitive input. The prompt version and context bind its cache.
 Story history stores opaque version/source-hash receipts, not copied private words.
 Preferences and Memory pause are rechecked under an owner lock after generation;
@@ -209,3 +257,37 @@ a human training decision and an approved priced plan remain necessary. No numer
 sample threshold automatically sends data or starts training. Four real CLI
 journeys exercise this workflow with synthetic responses and synthetic judgments;
 they prove the mechanics and make no creative-quality claim.
+
+## Measuring feedback (read-only, zero model cost)
+
+`scripts/editorial-taste-measure.py` reads one account's `CreatorIdeaFeedback` rows
+and offered `MediaCollectionStory` rows through the app's DB session, in a
+`READ ONLY` transaction, and reports:
+
+- would_post rate by ISO week (UTC) with a 95% Wilson band, plus offered counts.
+- repeat-rejection rate: among rejections (not `would_post`) with a rejection reason
+  recorded after an earlier reasoned rejection, the share repeating an earlier reason.
+  Each repeat is split by the story's offered-time `editorial_taste.feedback_ids`
+  receipt: the earlier judgment was in the prompt, was not, or the story predates
+  receipts. The receipt is fixed when the story is offered, so an earlier judgment
+  made after that moment gets its own bucket (`earlier_judgment_after_offer`) and is
+  not counted as the prompt dropping it. Only up to four judgments (two `would_post`, two others, ranked by
+  similarity to the outing) reach a prompt, so "not in the prompt" is expected for older reasons.
+- wrong_facts rate: rows with `invented_experience` or `footage_mismatch`.
+- context diff for `--query`: `generation_context` with and without `reviewed_ideas`
+  (sizes, hashes, verdicts/reasons and note lengths; no text).
+
+```bash
+src/apps/api/.venv/bin/python scripts/editorial-taste-measure.py \
+  --owner <creator-uuid> --query 'food review' [--json] [--simulate-flag-on]
+```
+
+The whole report fails closed: if the taste flag is off for the owner, personalization
+is paused, or the profile is not enabled, it reads no judgments and prints `blocked_by`
+with the reason (`--simulate-flag-on` only overrides the flag). Output carries a hashed owner, run count, spread and a **Limiter** line (one account,
+small samples, no control arm). It never prints idea words, notes, the query or the
+raw owner id. A non-local `DATABASE_URL` is refused unless `--allow-prod` is passed;
+that flag only permits the read-only session. `--simulate-flag-on` builds the context
+as if `CREATOR_EDITORIAL_TASTE_ENABLED` covered the owner, in-process only. Observed
+rates are descriptive of one account and cannot show that the flag improved taste.
+Journey: `src/apps/api/tests/integration/test_editorial_taste_measure_cli.py`.

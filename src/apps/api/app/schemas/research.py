@@ -1,6 +1,7 @@
 """Shared provider-owned public research evidence; never model-authored links."""
 
 import ipaddress
+import re
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -36,6 +37,35 @@ class ResearchSource(BaseModel):
             if not address.is_global:
                 raise ValueError("Private source address")
         return value
+
+
+def _claim_words(text) -> set[str]:
+    return set(re.findall(r"\w{3,}", str(text).casefold()))
+
+
+def same_claim(a, b, threshold: float = 0.5) -> bool:
+    """True when two fact sentences say the same thing in different words.
+
+    Fact ids are positional (fact-N) and Gemini rewords the same fact on every grounded
+    search, so exact wording cannot identify a fact across runs. Jaccard overlap of 3+
+    letter words is the same lexical baseline used for taste retrieval. Failure modes:
+    a paraphrase with new vocabulary escapes; two facts about the same noun can match.
+    """
+    left, right = _claim_words(a), _claim_words(b)
+    if not left or not right:
+        return False
+    if " ".join(str(a).casefold().split()) == " ".join(str(b).casefold().split()):
+        return True
+    return len(left & right) / len(left | right) >= threshold
+
+
+def stable_source_url(url) -> bool:
+    """False for Google grounding redirects: the token in the path changes every search."""
+    parsed = urlsplit(str(url))
+    return not (
+        (parsed.hostname or "").lower() == "vertexaisearch.cloud.google.com"
+        and parsed.path.startswith("/grounding-api-redirect/")
+    )
 
 
 class ResearchFact(BaseModel):

@@ -50,6 +50,7 @@ extension CameraRollCollection {
 /// Collection failures must not inherit the editor's generic conflict wording.
 enum CameraRollCollectionFailure {
     static let unavailable = "This footage needs analysis. Your collection is saved; new analysis is unavailable right now."
+    static let openQuestions = "Answer or skip this idea's questions before building it."
     static func isChanged(_ error: Error) -> Bool {
         guard let error = error as? APIError else { return false }
         return error.conflictCode == "collection_changed" || error.conflictDetail == "This collection changed. Refresh before continuing."
@@ -63,6 +64,7 @@ enum CameraRollCollectionFailure {
         switch reason {
         case "collection_analysis_unavailable", "No eligible cached result; new model calls are disabled": return unavailable
         case "collection_analysis_pending", "Stories are pending; retry shortly": return "Your story ideas are still being prepared. Your collection is saved; try again shortly."
+        case "story_open_questions": return openQuestions
         case "collection_media_unavailable", "Selected media is unavailable or its source changed. Remove or repair it.": return "Some footage is unavailable. Remove or restore it before finding ideas."
         default:
             if case .conflict = apiError { return "Could not finish finding ideas. Your collection is saved. Try again." }
