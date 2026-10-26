@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.126.0] - 2026-10-26
+
+### Changed
+- feat(taste): similarity-ranked feedback and no re-offered rejected ideas (#1829) <!-- release-pr: 1829 -->
+
 ## [0.81.125.0] - 2026-10-26
 
 ### Changed
