@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.127.0] - 2026-10-26
+
+### Changed
+- feat(taste): one-tap "Use as a taste example?" for would-post ideas and rewrites (#1831) <!-- release-pr: 1831 -->
+
 ## [0.81.126.0] - 2026-10-26
 
 ### Changed
