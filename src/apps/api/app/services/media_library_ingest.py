@@ -860,11 +860,11 @@ async def retry_library_asset(
     await lock_library_owner(db, owner_id)
     asset, _ = await resolve_library_source(db, owner_id, asset_id)
     asset.status = "pending"
-    # A creator Retry restarts the reconciler's re-dispatch budget (KRI-820).
-    if isinstance(asset.metadata_json, dict) and "_analysis_redispatches" in asset.metadata_json:
-        asset.metadata_json = {
-            k: v for k, v in asset.metadata_json.items() if k != "_analysis_redispatches"
-        }
+    # A creator Retry restarts the re-dispatch budget (KRI-820) and the failure history
+    # that decides whether the item shows as retrying or given up.
+    reset = {"_analysis_redispatches", "analysis_failure", "moment_index"}
+    if isinstance(asset.metadata_json, dict) and reset & asset.metadata_json.keys():
+        asset.metadata_json = {k: v for k, v in asset.metadata_json.items() if k not in reset}
     # The upload receipt is a durable publication outbox, even after finalize.
     rows = (
         await db.scalars(

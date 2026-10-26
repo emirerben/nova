@@ -2278,7 +2278,15 @@
         "src/apps/ios/Kria/Core/CameraRollStories.swift",
         "src/apps/ios/Kria/Core/CreationFlow.swift",
         "src/apps/ios/Kria/Core/Services.swift",
-        "src/apps/ios/Kria/Features/CameraRollCollectionView.swift",
+        "src/apps/ios/Kria/Core/CameraRollItemState.swift",
+        "src/apps/ios/Kria/Core/CameraRollSurface.swift",
+        "src/apps/ios/Kria/Core/CameraRollUploadEngine.swift",
+        "src/apps/ios/Kria/Features/CameraRoll/CameraRollIdeaViews.swift",
+        "src/apps/ios/Kria/Features/CameraRoll/CameraRollSurfaceFixture.swift",
+        "src/apps/ios/Kria/Features/CameraRoll/CameraRollSurfaceView.swift",
+        "src/apps/ios/Kria/Features/CameraRoll/CameraRollTasteView.swift",
+        "src/apps/ios/Kria/Features/CameraRoll/CameraRollThumbnail.swift",
+        "src/apps/ios/Kria/Features/CameraRoll/CameraRollTileView.swift",
         "src/apps/ios/Kria/Features/CameraRollExportProofView.swift",
         "src/apps/ios/Kria/Features/CameraRollSavedPicker.swift",
         "src/apps/ios/Kria/Features/CameraRollStoriesUITestFixture.swift",
@@ -3119,6 +3127,56 @@
       ],
       "follow_ups": [
         "Don Julio M1 iPhone re-send after deploy: reply names the suggested song and says tango only if its labels say tango"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-947-951-same-moment-picker",
+      "tickets": [
+        "KRI-947",
+        "KRI-951",
+        "KRI-946"
+      ],
+      "symptom": "Don Julio walk-in M2 (545F53A9): the tapped queue was asked again once the re-plan filed it under order, the skipped ribeye photo came back under order, and one question named the butcher twice and the photo twice with two identical iPhone rows each.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-947",
+      "journey": "kri-947-951-same-moment-picker",
+      "paths": [
+        "src/apps/api/app/services/clip_selection.py",
+        "src/apps/api/app/services/clip_intent_resolution.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/tests/fixtures/kri947_kri951_don_julio_walkin_m2_picker.json"
+      ],
+      "regression_tests": [
+        "tests/services/test_kri947_kri951_m2_picker_rows.py",
+        "tests/services/test_clip_selection.py",
+        "tests/services/test_kri696_picker_creator_caption.py"
+      ],
+      "harness": "mocked_internal",
+      "kill_switch": "kria_clip_selection_questions_enabled",
+      "evidence": {
+        "offline_replay": "Every clip_question / clip_selection event of the prod thread, unchanged, through the real fold, match and question builder: rounds 3 and 6 re-asks gone, rounds 3 and 4 one row and one name per moment (EN + TR). Chain: the round 1 and round 3 planner rows through plan_and_resolve_clip_intents with a resolver that finds nothing: the queue settles from the round 1 tap, the butcher is one row with the one-moment sentence, one tap settles both butcher intents and the resolver is not called. Red before the change, green after; wrong-content controls green both ways; four scratch mutations (exclude/label sharing, cross-op word overlap, joining different clips, hidden rows not recorded) each turn a test red.",
+        "live_model": "Not run; no paid calls. The change adds no model call.",
+        "native_output": "unknown; the joined row is additive (also_answers) and the iOS parser reads only key/label/op/candidates/suggestions; not device-checked.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "tap, None of these and Skip on a joined row answer every hidden row",
+        "a later re-plan rewording the hidden caption row still binds by intent id + creator text",
+        "different clips, exclude and label rows are never joined or shared",
+        "long descriptions cut at different places per op prefix",
+        "rebuilding a joined question (exclude merge path)",
+        "title words on a hidden row keep the KRI-802 wording card alone",
+        "one-video and several-clip wording, Turkish copy"
+      ],
+      "neighbours_gap": [
+        "The clip-intent planner and resolver agents are replaced by their parsed outputs (no raw provider text through their parsers).",
+        "Label rows about the same moment as an include row stay a second row (existing rule: a label never borrows a membership answer).",
+        "M2 still needs KRI-948 (single take) and KRI-949 (photo candidate) to reach a proposal."
+      ],
+      "follow_ups": [
+        "Don Julio walk-in M2 iPhone re-send after KRI-947/948/949 deploy: no moment asked twice, no name repeated"
       ],
       "red_control": "not_applicable"
     }

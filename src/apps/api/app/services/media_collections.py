@@ -8,10 +8,16 @@ import uuid
 from datetime import datetime, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import MediaAsset, MediaAssetSource, MediaCollection, MediaCollectionMember
+from app.models import (
+    MediaAsset,
+    MediaAssetSource,
+    MediaCollection,
+    MediaCollectionMember,
+    MediaCollectionStory,
+)
 from app.schemas.media_collections import CollectionMember, CollectionOut, CollectionWrite
 from app.services.media_library_ingest import lock_library_owner
 
@@ -30,7 +36,66 @@ async def owned_collection(
                 "message": "This collection changed. Refresh before continuing.",
             },
         )
+    # Heal a stored original-role binding in memory; the next committing flow persists it.
+    # The revision is untouched: the creator's selection did not change, only its source.
+    selected = members(row)
+    bound = await analysis_bound_members(db, owner, selected)
+    if bound != selected:
+        row.selection_json = {
+            **(row.selection_json or {}),
+            "members": [member.model_dump(mode="json") for member in bound],
+        }
     return row
+
+
+async def analysis_bound_members(
+    db: AsyncSession, owner: uuid.UUID, selected: list[CollectionMember]
+) -> list[CollectionMember]:
+    """Bind a device-only video to the analysis proxy that holds its facts.
+
+    Attaching the full original later (KRI-822) leaves the analysis, moments and phone
+    execution on the proxy, so a member bound to that original would never be indexed or
+    offered. Same rule as `media_library_analysis._requested_source`.
+    """
+    if not selected:
+        return selected
+    bound_ids = [member.source_id for member in selected]
+    originals = set(
+        (
+            await db.scalars(
+                select(MediaAssetSource.asset_id)
+                .join(MediaAsset, MediaAsset.id == MediaAssetSource.asset_id)
+                .where(
+                    MediaAssetSource.user_id == owner,
+                    MediaAssetSource.id.in_(bound_ids),
+                    MediaAssetSource.role == "original",
+                    MediaAsset.user_id == owner,
+                    MediaAsset.kind == "video",
+                    MediaAsset.original_availability == "device_only",
+                )
+            )
+        ).all()
+    )
+    if not originals:
+        return selected
+    proxies: dict[uuid.UUID, uuid.UUID] = {}
+    for proxy in await db.scalars(
+        select(MediaAssetSource)
+        .where(
+            MediaAssetSource.user_id == owner,
+            MediaAssetSource.asset_id.in_(originals),
+            MediaAssetSource.role == "analysis_proxy",
+            MediaAssetSource.status == "available",
+        )
+        .order_by(MediaAssetSource.created_at.desc(), MediaAssetSource.id.desc())
+    ):
+        proxies.setdefault(proxy.asset_id, proxy.id)
+    return [
+        member.model_copy(update={"source_id": proxies[member.asset_id]})
+        if member.asset_id in proxies
+        else member
+        for member in selected
+    ]
 
 
 def members(row: MediaCollection) -> list[CollectionMember]:
@@ -64,6 +129,50 @@ async def eligible_sources(
     return {
         asset.id: (asset, source) for asset, source in rows if wanted.get(asset.id) == source.id
     }
+
+
+def unchanged_groups(before: list[CollectionMember], after: list[CollectionMember]) -> set[str]:
+    """Event names whose exact (asset, source) membership is the same in both selections."""
+
+    def by_group(selected):
+        grouped: dict[str, set] = {}
+        for member in selected:
+            if member.group is not None:
+                grouped.setdefault(member.group, set()).add((member.asset_id, member.source_id))
+        return grouped
+
+    old, new = by_group(before), by_group(after)
+    return {name for name, pairs in old.items() if new.get(name) == pairs}
+
+
+async def carry_forward_stories(
+    db: AsyncSession,
+    owner: uuid.UUID,
+    identifier: uuid.UUID,
+    *,
+    from_revision: int,
+    to_revision: int,
+    groups: set[str],
+) -> None:
+    """Keep an event's ideas when only other events changed.
+
+    Ideas are pinned to the collection revision they were found against, so any write would
+    orphan every event's ideas. An event whose members are identical keeps the same evidence,
+    so its ideas move to the new revision. Only rows that were current can move: an older
+    revision of the event may have had different members.
+    """
+    if not groups:
+        return
+    await db.execute(
+        update(MediaCollectionStory)
+        .where(
+            MediaCollectionStory.user_id == owner,
+            MediaCollectionStory.collection_id == identifier,
+            MediaCollectionStory.collection_revision == from_revision,
+            MediaCollectionStory.story_json["group"].astext.in_(sorted(groups)),
+        )
+        .values(collection_revision=to_revision)
+    )
 
 
 def collection_out(row: MediaCollection, eligible: dict) -> CollectionOut:
@@ -138,8 +247,9 @@ async def write_collection(
     ).hexdigest()
     if row is not None and (row.selection_json or {}).get("request_digest") == digest:
         return collection_out(row, await eligible_sources(db, owner, members(row)))
-    sources = await eligible_sources(db, owner, body.members)
-    if len(sources) != len(body.members):
+    requested = await analysis_bound_members(db, owner, body.members)
+    sources = await eligible_sources(db, owner, requested)
+    if len(sources) != len(requested):
         owned_ids = set(
             (
                 await db.scalars(
@@ -161,7 +271,7 @@ async def write_collection(
                 ),
             },
         )
-    grouped = _group(body.members, sources, members(row) if row else [])
+    grouped = _group(requested, sources, members(row) if row else [])
     # Opening the native collection saves its current selection again. Compare the
     # effective content, not the request digest (which contains expected_revision).
     # A stale identical snapshot is safe to acknowledge; it cannot overwrite data.
@@ -183,6 +293,7 @@ async def write_collection(
     if row is None:
         row = MediaCollection(id=identifier, user_id=owner, name=body.name, revision=0)
         db.add(row)
+    previous_revision, previous = row.revision, members(row)
     row.name = body.name.strip()
     row.revision += 1
     row.selection_json = {
@@ -190,6 +301,14 @@ async def write_collection(
         "members": [member.model_dump(mode="json") for member in grouped],
     }
     await db.flush()
+    await carry_forward_stories(
+        db,
+        owner,
+        identifier,
+        from_revision=previous_revision,
+        to_revision=row.revision,
+        groups=unchanged_groups(previous, grouped),
+    )
     await db.execute(
         delete(MediaCollectionMember).where(
             MediaCollectionMember.collection_id == identifier,

@@ -615,6 +615,16 @@
       ]
     },
     {
+      "id": "kri-947-951-same-moment-picker",
+      "needs_native": false,
+      "api_tests": "tests/services/test_kri947_kri951_m2_picker_rows.py tests/services/test_clip_selection.py tests/services/test_kri696_picker_creator_caption.py tests/kria/test_kri802_question_batch.py tests/kria/test_kri807_unmatched_exclusion_picker.py",
+      "paths": [
+        "src/apps/api/app/services/clip_selection.py",
+        "src/apps/api/tests/fixtures/kri947_kri951_don_julio_walkin_m2_picker.json",
+        "src/apps/api/tests/services/test_kri947_kri951_m2_picker_rows.py"
+      ]
+    },
+    {
       "id": "kri-845-clip-detail-evidence",
       "needs_native": false,
       "api_tests": "tests/kria/test_kri845_clip_detail_evidence.py tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/evals/test_clip_metadata_evals.py tests/evals/test_clip_request_resolver_evals.py tests/agents/test_clip_metadata.py tests/services/test_kri520_clip_intent_copy.py tests/pipeline/test_clip_cache.py tests/schemas/test_clip_intents.py",
@@ -898,6 +908,16 @@
         "src/apps/api/app/tasks/generative_build.py",
         "src/apps/api/app/tasks/kria_runtime.py",
         "src/apps/api/tests/fixtures/kri775_merope_m2_turns.json"
+      ]
+    },
+    {
+      "id": "kri-941-listed-order",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_kri941_listed_order_replay.py tests/pipeline/test_unified_montage_sequence.py tests/services/test_order_sequence_contract.py",
+      "paths": [
+        "src/apps/api/app/services/clip_order_sequence.py",
+        "src/apps/api/tests/fixtures/kri941_donjulio_m1_turn2.json",
+        "src/apps/api/tests/pipeline/test_kri941_listed_order_replay.py"
       ]
     },
     {
@@ -1348,7 +1368,10 @@
         "KriaTests/CameraRollCollectionTests/testBoundedSelectionAndUnselectedMetadata",
         "KriaTests/CameraRollCollectionTests/testTimeGroupsAndExplicitCorrectionSurviveMetadataRefresh",
         "KriaTests/CameraRollCollectionTests/testFiveHundredItemsSurviveResume",
-        "KriaUITests/CameraRollCollectionUITests/testPartiallyIndexedCollectionWaitsForExplicitPartialChoice",
+        "KriaTests/CameraRollCollectionTests/testAutomaticEventKeysDoNotMoveWhenANeighbourGoesOrArrives",
+        "KriaUITests/CameraRollCollectionUITests/testEveryItemStateIsVisible",
+        "KriaUITests/CameraRollCollectionUITests/testUndoTappedWhileTheEventDeleteIsInFlightKeepsItsIdeas",
+        "KriaUITests/CameraRollCollectionUITests/testDeletingAnIdeaCanBeUndone",
         "KriaUITests/CameraRollStoriesUITests/testThreeIdeasRemainIndependentWhenOneIsRejected"
       ],
       "paths": [
@@ -1370,7 +1393,15 @@
         "src/apps/ios/Kria/Core/CameraRollCollection.swift",
         "src/apps/ios/Kria/Core/CameraRollCollectionAPI.swift",
         "src/apps/ios/Kria/Core/CameraRollStories.swift",
-        "src/apps/ios/Kria/Features/CameraRollCollectionView.swift",
+        "src/apps/ios/Kria/Core/CameraRollItemState.swift",
+        "src/apps/ios/Kria/Core/CameraRollSurface.swift",
+        "src/apps/ios/Kria/Core/CameraRollUploadEngine.swift",
+        "src/apps/ios/Kria/Features/CameraRoll/CameraRollIdeaViews.swift",
+        "src/apps/ios/Kria/Features/CameraRoll/CameraRollSurfaceFixture.swift",
+        "src/apps/ios/Kria/Features/CameraRoll/CameraRollSurfaceView.swift",
+        "src/apps/ios/Kria/Features/CameraRoll/CameraRollTasteView.swift",
+        "src/apps/ios/Kria/Features/CameraRoll/CameraRollThumbnail.swift",
+        "src/apps/ios/Kria/Features/CameraRoll/CameraRollTileView.swift",
         "src/apps/ios/Kria/Features/CameraRollExportProofView.swift",
         "src/apps/ios/Kria/Features/CameraRollSavedPicker.swift",
         "src/apps/ios/Kria/Features/CameraRollStoriesUITestFixture.swift",
@@ -1386,7 +1417,7 @@
         "src/apps/api/app/migrations/versions/0124_creator_editorial_taste.py",
         "src/apps/api/tests/integration/test_editorial_taste.py",
         "src/apps/ios/Kria/Core/EditorialTaste.swift",
-        "src/apps/ios/Kria/Features/EditorialTasteView.swift",
+        "src/apps/ios/Kria/Features/IdeaFeedbackView.swift",
         "src/apps/api/app/services/editorial_taste_evaluation.py",
         "scripts/editorial-taste-eval.py",
         "src/apps/api/tests/journeys/test_editorial_taste_evaluation_cli.py"

@@ -1,0 +1,1033 @@
+{
+ "source": "prod job b3820ddc, creation thread 33BA8AFB, Don Julio walk-in M1, 2026-10-25 (KRI-941). Clip records keep the analysis a plan reads; storage paths, generations, hashes, library ids, file names and transcripts are stripped.",
+ "brief": {
+  "version": 1,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 18
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "18 seconds",
+    "source_turn_id": "a3e6811b-7ce2-4a1a-8a00-cf2efc4af5a0"
+   },
+   {
+    "id": "r2",
+    "kind": "order",
+    "facts": {
+     "last_clip": "my friend in the black T-shirt saying \"Super excited!\"",
+     "first_clip": "the DON JULIO window sign from the street"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "the door, the butcher, the grill, the flowers on the ceiling, the Michelin plaques",
+    "source_turn_id": "a3e6811b-7ce2-4a1a-8a00-cf2efc4af5a0"
+   },
+   {
+    "id": "r3",
+    "kind": "timing",
+    "facts": {
+     "end_line": "Super excited!"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "keep that line whole with its sound",
+    "source_turn_id": "a3e6811b-7ce2-4a1a-8a00-cf2efc4af5a0"
+   },
+   {
+    "id": "r4",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Parrilla Don Julio 🇦🇷",
+    "description": "Title",
+    "source_turn_id": "a3e6811b-7ce2-4a1a-8a00-cf2efc4af5a0"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "open",
+    "literal": "The butcher's counter 🔪",
+    "description": "the butcher shot",
+    "source_turn_id": "a3e6811b-7ce2-4a1a-8a00-cf2efc4af5a0"
+   },
+   {
+    "id": "r6",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "open",
+    "literal": "MICHELIN 2024 · 2025",
+    "description": "the plaques shot",
+    "source_turn_id": "a3e6811b-7ce2-4a1a-8a00-cf2efc4af5a0"
+   },
+   {
+    "id": "r7",
+    "kind": "audio",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Clip sound off except that last line.",
+    "source_turn_id": "a3e6811b-7ce2-4a1a-8a00-cf2efc4af5a0"
+   },
+   {
+    "id": "r8",
+    "kind": "audio",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Suggest a tango song I could add when I post, but don't put music in the video.",
+    "source_turn_id": "a3e6811b-7ce2-4a1a-8a00-cf2efc4af5a0"
+   }
+  ]
+ },
+ "strategy": {
+  "pacing": "balanced",
+  "direction": "guided_story",
+  "rationale": "I am putting the requested title onto the video. The strategy targets an exact 18-second guided sequence with no added music, using clip intents to cleanly apply your custom text over the butcher and plaque shots. The voice_mode is set to excerpts to ensure only your friend's 'Super excited!' dialogue punches through the otherwise muted video.",
+  "voice_mode": "excerpts",
+  "edit_format": "montage",
+  "media_scope": "selected",
+  "clip_intents": [
+   {
+    "op": "order",
+    "position": "first",
+    "attribute": "the DON JULIO window sign from the street",
+    "intent_id": "order_start_don_julio_sign"
+   },
+   {
+    "op": "order",
+    "position": "last",
+    "attribute": "my friend in the black T-shirt saying \"Super excited!\"",
+    "intent_id": "order_end_friend_excited"
+   },
+   {
+    "op": "order",
+    "attribute": "the door, the butcher, the grill, the flowers on the ceiling, the Michelin plaques",
+    "intent_id": "order_sequence_between"
+   },
+   {
+    "op": "include",
+    "attribute": "the one where she cuts the ribeye",
+    "intent_id": "include_butcher_ribeye"
+   },
+   {
+    "op": "caption",
+    "attribute": "the butcher shot",
+    "intent_id": "caption_butcher_shot",
+    "creator_text": "The butcher's counter 🔪"
+   },
+   {
+    "op": "caption",
+    "attribute": "the plaques shot",
+    "intent_id": "caption_plaques_shot",
+    "creator_text": "MICHELIN 2024 · 2025"
+   }
+  ],
+  "caption_style": "auto",
+  "montage_audio": {
+   "source_media_ids": [],
+   "preview_source_beds": false,
+   "preserve_source_audio": true
+  },
+  "opening_title": "Parrilla Don Julio 🇦🇷",
+  "audio_strategy": "original_audio",
+  "render_program": "guided",
+  "story_structure": [
+   "Start on the street sign and the door.",
+   "Cut to the butcher cutting the ribeye and then the grill.",
+   "Show the ceiling flowers and the Michelin plaques.",
+   "End on the friend's 'Super excited!' quote."
+  ],
+  "target_duration_s": 18,
+  "selected_media_ids": [
+   "analysis-proxy-ios-197B7255-5AC4-4E2B-B23A-42BFBE04B77D.mp4",
+   "analysis-proxy-ios-D4C43FA3-8B5B-4C10-901C-55F8A4E4710E.mp4",
+   "analysis-proxy-ios-B2C132E8-59A6-44C8-B288-7BC86E81F386.mp4",
+   "analysis-proxy-ios-3749EC57-BD55-4FAF-8CF2-FE5894C53CE7.mp4",
+   "analysis-proxy-ios-D36DBDCF-780A-45A5-B4F1-244FB74AFC08.mp4",
+   "analysis-proxy-ios-EC7B4FD2-2502-4824-B1A9-49C54DF0F2E0.mp4",
+   "analysis-proxy-ios-F1681162-CF0F-43E6-A7A1-8833DBA8F276.mp4"
+  ],
+  "video_reuse_policy": "once",
+  "optional_treatments": [],
+  "resolved_clip_intents": [
+   {
+    "op": "order",
+    "status": "resolved",
+    "position": "first",
+    "attribute": "the DON JULIO window sign from the street",
+    "intent_id": "order_start_don_julio_sign",
+    "assignments": [
+     {
+      "evidence": "Don Julio Parrilla sign",
+      "media_id": "analysis-proxy-ios-197B7255-5AC4-4E2B-B23A-42BFBE04B77D.mp4",
+      "confidence": 0.9
+     }
+    ]
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "position": "last",
+    "attribute": "my friend in the black T-shirt saying \"Super excited!\"",
+    "intent_id": "order_end_friend_excited",
+    "assignments": [
+     {
+      "evidence": "man stands outside a restaurant called Parrilla Don Julio, expresses excitement for the meal, and makes a peace sign. ... transcript: Super excited.",
+      "media_id": "analysis-proxy-ios-F1681162-CF0F-43E6-A7A1-8833DBA8F276.mp4",
+      "confidence": 0.9
+     }
+    ]
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "attribute": "the door, the butcher, the grill, the flowers on the ceiling, the Michelin plaques",
+    "intent_id": "order_sequence_between",
+    "assignments": [
+     {
+      "evidence": "waiter stands by the entrance",
+      "media_id": "analysis-proxy-ios-D4C43FA3-8B5B-4C10-901C-55F8A4E4710E.mp4",
+      "confidence": 0.8
+     },
+     {
+      "evidence": "chef cuts a piece of meat",
+      "media_id": "analysis-proxy-ios-B2C132E8-59A6-44C8-B288-7BC86E81F386.mp4",
+      "confidence": 0.9
+     },
+     {
+      "evidence": "chef grilling food ... large silver grill",
+      "media_id": "analysis-proxy-ios-3749EC57-BD55-4FAF-8CF2-FE5894C53CE7.mp4",
+      "confidence": 0.8
+     },
+     {
+      "evidence": "elaborate floral and lighting decorations ... bundles of dried flowers",
+      "media_id": "analysis-proxy-ios-D36DBDCF-780A-45A5-B4F1-244FB74AFC08.mp4",
+      "confidence": 0.8
+     },
+     {
+      "evidence": "two Michelin guide plaques for 2024 and 2025",
+      "media_id": "analysis-proxy-ios-EC7B4FD2-2502-4824-B1A9-49C54DF0F2E0.mp4",
+      "confidence": 0.9
+     }
+    ]
+   },
+   {
+    "op": "include",
+    "status": "resolved",
+    "attribute": "the one where she cuts the ribeye",
+    "intent_id": "include_butcher_ribeye",
+    "assignments": [
+     {
+      "evidence": "female chef is seasoning large cuts of raw meat with salt ... chef cuts a piece of meat",
+      "media_id": "analysis-proxy-ios-B2C132E8-59A6-44C8-B288-7BC86E81F386.mp4",
+      "confidence": 0.9
+     }
+    ]
+   },
+   {
+    "op": "caption",
+    "status": "resolved",
+    "attribute": "the butcher shot",
+    "intent_id": "caption_butcher_shot",
+    "assignments": [
+     {
+      "evidence": "chef preparing meat ... chef cuts a piece of meat",
+      "media_id": "analysis-proxy-ios-B2C132E8-59A6-44C8-B288-7BC86E81F386.mp4",
+      "confidence": 0.9
+     }
+    ],
+    "caption_text": "The butcher's counter 🔪",
+    "creator_text": "The butcher's counter 🔪",
+    "caption_grounding": "creator_text"
+   },
+   {
+    "op": "caption",
+    "status": "resolved",
+    "attribute": "the plaques shot",
+    "intent_id": "caption_plaques_shot",
+    "assignments": [
+     {
+      "evidence": "two Michelin guide plaques for 2024 and 2025",
+      "media_id": "analysis-proxy-ios-EC7B4FD2-2502-4824-B1A9-49C54DF0F2E0.mp4",
+      "confidence": 0.9
+     }
+    ],
+    "caption_text": "MICHELIN 2024 · 2025",
+    "creator_text": "MICHELIN 2024 · 2025",
+    "caption_grounding": "creator_text"
+   }
+  ],
+  "selected_music_section": null
+ },
+ "clips": [
+  {
+   "media_id": "analysis-proxy-ios-EC7B4FD2-2502-4824-B1A9-49C54DF0F2E0.mp4",
+   "kind": "video",
+   "duration_s": 7.0,
+   "width": 1080,
+   "height": 1920,
+   "has_audio": true,
+   "capture_time": "2026-10-25T15:18:28Z",
+   "analysis": {
+    "subject": "restaurant interior with Michelin plaques",
+    "description": "camera slowly pans down showing restaurant ceiling and wall camera focuses on the Michelin plaques and clover award",
+    "best_moments": [
+     {
+      "end_s": 4.0,
+      "energy": 3.0,
+      "start_s": 0.0,
+      "description": "camera slowly pans down showing restaurant ceiling and wall"
+     },
+     {
+      "end_s": 8.0,
+      "energy": 4.0,
+      "start_s": 4.5,
+      "description": "camera focuses on the Michelin plaques and clover award"
+     }
+    ],
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "red Michelin 2024 plaque",
+      "red Michelin 2025 plaque",
+      "green clover-shaped award",
+      "dried purple flowers",
+      "dried white flowers"
+     ],
+     "brands": [
+      "Michelin"
+     ],
+     "people": {
+      "note": "two men seated at a table",
+      "count": 2,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "to_camera": false,
+      "has_speech": true
+     },
+     "setting": "restaurant interior with a rustic brick wall",
+     "subject": "restaurant interior with Michelin plaques",
+     "summary": "The clip shows the interior of a restaurant with a brick wall, decorative dried flowers on the ceiling, and two Michelin guide plaques for 2024 and 2025. Two men are seated at a table in the foreground, out of focus.",
+     "activity": "displaying restaurant accolades",
+     "audio_type": "ambient",
+     "content_type": "ambience",
+     "on_screen_text": "",
+     "visual_quality": "sharp and steady",
+     "notable_moments": [
+      {
+       "end_s": 4.0,
+       "start_s": 0.0,
+       "description": "camera slowly pans down showing restaurant ceiling and wall"
+      },
+      {
+       "end_s": 8.0,
+       "start_s": 4.5,
+       "description": "camera focuses on the Michelin plaques and clover award"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-197B7255-5AC4-4E2B-B23A-42BFBE04B77D.mp4",
+   "kind": "video",
+   "duration_s": 4.0,
+   "width": 1080,
+   "height": 1920,
+   "has_audio": true,
+   "capture_time": "2026-10-25T15:17:41Z",
+   "analysis": {
+    "subject": "Don Julio restaurant exterior",
+    "description": "restaurant exterior visible",
+    "best_moments": [
+     {
+      "end_s": 2.65,
+      "energy": 4.0,
+      "start_s": 0.8,
+      "description": "restaurant exterior visible"
+     }
+    ],
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "Don Julio Parrilla sign"
+     ],
+     "brands": [
+      "Don Julio Parrilla"
+     ],
+     "people": {
+      "note": "two pedestrians on the sidewalk, two people inside the restaurant",
+      "count": 4,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "to_camera": false,
+      "has_speech": true
+     },
+     "actions": [
+      "person in yellow shirt walks past restaurant",
+      "person in pink shirt walks towards restaurant entrance"
+     ],
+     "setting": "city street sidewalk outside a restaurant",
+     "subject": "Don Julio restaurant exterior",
+     "summary": "A person in a yellow shirt walks past the exterior of a restaurant named \"Don Julio Parrilla\" while another person in a pink shirt walks toward the entrance. People are visible inside the restaurant through the window.",
+     "activity": "walking past a restaurant",
+     "audio_type": "ambient",
+     "content_type": "broll",
+     "on_screen_text": "",
+     "visual_quality": "sharp and steady",
+     "notable_moments": [
+      {
+       "end_s": 2.65,
+       "start_s": 0.8,
+       "description": "restaurant exterior visible"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-D4C43FA3-8B5B-4C10-901C-55F8A4E4710E.mp4",
+   "kind": "video",
+   "duration_s": 4.0,
+   "width": 1080,
+   "height": 1920,
+   "has_audio": true,
+   "capture_time": "2026-10-25T15:17:48Z",
+   "analysis": {
+    "subject": "restaurant staff and patrons",
+    "description": "waiter standing by restaurant entrance chefs working in open kitchen restaurant interior with patrons and chefs",
+    "best_moments": [
+     {
+      "end_s": 1.5,
+      "energy": 5.0,
+      "start_s": 0.0,
+      "description": "waiter standing by restaurant entrance"
+     },
+     {
+      "end_s": 4.5,
+      "energy": 6.0,
+      "start_s": 2.0,
+      "description": "chefs working in open kitchen"
+     },
+     {
+      "end_s": 7.5,
+      "energy": 5.0,
+      "start_s": 5.0,
+      "description": "restaurant interior with patrons and chefs"
+     }
+    ],
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "black and white striped awning",
+      "red outdoor umbrella",
+      "restaurant tables and chairs",
+      "kitchen equipment",
+      "chef hats",
+      "white chef coats",
+      "black aprons"
+     ],
+     "brands": [],
+     "people": {
+      "note": "a male waiter, several chefs, and multiple restaurant patrons",
+      "count": 8,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "to_camera": false,
+      "has_speech": true
+     },
+     "actions": [
+      "camera pans from outside to inside",
+      "waiter stands by the entrance",
+      "chefs work in an open kitchen",
+      "patrons sit at tables"
+     ],
+     "setting": "restaurant with outdoor seating and open kitchen",
+     "subject": "restaurant staff and patrons",
+     "summary": "The camera pans from outside a restaurant to inside, showing chefs working in an open kitchen and patrons seated at tables. A waiter stands by the entrance.",
+     "activity": "working in an open kitchen, dining, waiting on customers",
+     "audio_type": "dialogue",
+     "content_type": "broll",
+     "on_screen_text": "",
+     "visual_quality": "shaky handheld, stays sharp",
+     "notable_moments": [
+      {
+       "end_s": 1.5,
+       "start_s": 0.0,
+       "description": "waiter standing by restaurant entrance"
+      },
+      {
+       "end_s": 4.5,
+       "start_s": 2.0,
+       "description": "chefs working in open kitchen"
+      },
+      {
+       "end_s": 7.5,
+       "start_s": 5.0,
+       "description": "restaurant interior with patrons and chefs"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-3749EC57-BD55-4FAF-8CF2-FE5894C53CE7.mp4",
+   "kind": "video",
+   "duration_s": 8.0,
+   "width": 1080,
+   "height": 1920,
+   "has_audio": true,
+   "capture_time": "2026-10-25T15:18:12Z",
+   "analysis": {
+    "subject": "chef cooking",
+    "description": "chef pulls tray from grill chef inspects food on tray chef handles food with tongs chef returns food to grill",
+    "best_moments": [
+     {
+      "end_s": 2.13,
+      "energy": 6.0,
+      "start_s": 0.0,
+      "description": "chef pulls tray from grill"
+     },
+     {
+      "end_s": 4.1,
+      "energy": 5.0,
+      "start_s": 2.27,
+      "description": "chef inspects food on tray"
+     },
+     {
+      "end_s": 7.37,
+      "energy": 6.0,
+      "start_s": 5.07,
+      "description": "chef handles food with tongs"
+     },
+     {
+      "end_s": 10.97,
+      "energy": 4.0,
+      "start_s": 9.47,
+      "description": "chef returns food to grill"
+     }
+    ],
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "large silver grill",
+      "black chef apron",
+      "white chef hat",
+      "long silver tongs"
+     ],
+     "brands": [],
+     "people": {
+      "note": "one chef and one person partially visible",
+      "count": 2,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "to_camera": false,
+      "has_speech": true
+     },
+     "actions": [
+      "chef pulls tray from grill",
+      "chef checks food with tongs",
+      "chef pushes tray back into grill"
+     ],
+     "setting": "commercial kitchen",
+     "subject": "chef cooking",
+     "summary": "A chef in a white uniform and black apron uses tongs to manage food on a large grill or oven in a professional kitchen setting.",
+     "activity": "chef grilling food",
+     "audio_type": "dialogue",
+     "content_type": "action",
+     "on_screen_text": "",
+     "visual_quality": "sharp and steady",
+     "notable_moments": [
+      {
+       "end_s": 2.13,
+       "start_s": 0.0,
+       "description": "chef pulls tray from grill"
+      },
+      {
+       "end_s": 4.1,
+       "start_s": 2.27,
+       "description": "chef inspects food on tray"
+      },
+      {
+       "end_s": 7.37,
+       "start_s": 5.07,
+       "description": "chef handles food with tongs"
+      },
+      {
+       "end_s": 10.97,
+       "start_s": 9.47,
+       "description": "chef returns food to grill"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-B2C132E8-59A6-44C8-B288-7BC86E81F386.mp4",
+   "kind": "video",
+   "duration_s": 10.0,
+   "width": 1080,
+   "height": 1920,
+   "has_audio": true,
+   "capture_time": "2026-10-25T15:18:02Z",
+   "analysis": {
+    "subject": "chef preparing meat",
+    "description": "chef cuts raw meat chef seasons raw meat chef places meat on grill",
+    "best_moments": [
+     {
+      "end_s": 2.2,
+      "energy": 5.0,
+      "start_s": 0.5,
+      "description": "chef cuts raw meat"
+     },
+     {
+      "end_s": 7.4,
+      "energy": 6.0,
+      "start_s": 3.7,
+      "description": "chef seasons raw meat"
+     },
+     {
+      "end_s": 9.9,
+      "energy": 7.0,
+      "start_s": 7.7,
+      "description": "chef places meat on grill"
+     }
+    ],
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "white cutting board",
+      "four large raw beef cuts",
+      "small white salt shaker",
+      "large silver chef's knife",
+      "small wooden bowl of salt",
+      "large metal grill"
+     ],
+     "brands": [],
+     "people": {
+      "note": "two chefs in white uniforms and aprons",
+      "count": 2,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "language": "pt",
+      "segments": [
+       {
+        "text": "A dona manda a marcha, a parte de todo o povo entrar, a gente vai...",
+        "end_s": 5.92,
+        "start_s": 0.82
+       },
+       {
+        "text": "O problema aqui vai ser o cheiro.",
+        "end_s": 7.92,
+        "start_s": 5.92
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true
+     },
+     "actions": [
+      "chef cuts a piece of meat",
+      "chef sprinkles salt on raw meat",
+      "chef lifts a piece of meat",
+      "chef places meat onto the grill"
+     ],
+     "setting": "restaurant kitchen with a large grill",
+     "subject": "chef preparing meat",
+     "summary": "A female chef is seasoning large cuts of raw meat with salt on a cutting board before placing one piece onto a grill. Another chef is visible in the background working at the grill.",
+     "activity": "seasoning and grilling raw cuts of meat",
+     "audio_type": "mixed",
+     "content_type": "action",
+     "on_screen_text": "",
+     "visual_quality": "sharp and steady",
+     "notable_moments": [
+      {
+       "end_s": 2.2,
+       "start_s": 0.5,
+       "description": "chef cuts raw meat"
+      },
+      {
+       "end_s": 7.4,
+       "start_s": 3.7,
+       "description": "chef seasons raw meat"
+      },
+      {
+       "end_s": 9.9,
+       "start_s": 7.7,
+       "description": "chef places meat on grill"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-F1681162-CF0F-43E6-A7A1-8833DBA8F276.mp4",
+   "kind": "video",
+   "duration_s": 8.5,
+   "width": 1080,
+   "height": 1920,
+   "has_audio": true,
+   "capture_time": "2026-10-25T15:18:46Z",
+   "analysis": {
+    "subject": "man outside a restaurant",
+    "description": "man points at restaurant sign man makes peace sign and smiles man laughs and turns to enter",
+    "best_moments": [
+     {
+      "end_s": 4.14,
+      "energy": 7.0,
+      "start_s": 2.22,
+      "description": "man points at restaurant sign"
+     },
+     {
+      "end_s": 6.54,
+      "energy": 9.0,
+      "start_s": 4.29,
+      "description": "man makes peace sign and smiles"
+     },
+     {
+      "end_s": 8.79,
+      "energy": 6.0,
+      "start_s": 7.5,
+      "description": "man laughs and turns to enter"
+     }
+    ],
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "Parrilla Don Julio sign",
+      "red outdoor umbrella",
+      "outdoor dining tables with white tablecloths"
+     ],
+     "brands": [],
+     "people": {
+      "note": "a young man in a black t-shirt, restaurant staff, and other patrons",
+      "count": 5,
+      "speaks_to_camera": true
+     },
+     "speech": {
+      "language": "en",
+      "segments": [
+       {
+        "text": "Farille Don Julio, what do you think?",
+        "end_s": 4.24,
+        "start_s": 2.22
+       },
+       {
+        "text": "Are you excited for the meet?",
+        "end_s": 5.32,
+        "start_s": 4.44
+       },
+       {
+        "text": "Super excited.",
+        "end_s": 6.44,
+        "start_s": 5.86
+       },
+       {
+        "text": "Nice.",
+        "end_s": 7.08,
+        "start_s": 6.8
+       }
+      ],
+      "to_camera": true,
+      "has_speech": true
+     },
+     "actions": [
+      "man walks towards camera",
+      "man gestures with peace sign",
+      "man looks at sign",
+      "man walks into building"
+     ],
+     "setting": "outdoor patio of a restaurant",
+     "subject": "man outside a restaurant",
+     "summary": "A man stands outside a restaurant called Parrilla Don Julio, expresses excitement for the meal, and makes a peace sign. He then walks into the restaurant.",
+     "activity": "entering a restaurant and posing for the camera",
+     "audio_type": "dialogue",
+     "content_type": "talking_head",
+     "on_screen_text": "",
+     "visual_quality": "sharp and steady with a smooth pan",
+     "notable_moments": [
+      {
+       "end_s": 4.14,
+       "start_s": 2.22,
+       "description": "man points at restaurant sign"
+      },
+      {
+       "end_s": 6.54,
+       "start_s": 4.29,
+       "description": "man makes peace sign and smiles"
+      },
+      {
+       "end_s": 8.79,
+       "start_s": 7.5,
+       "description": "man laughs and turns to enter"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-D36DBDCF-780A-45A5-B4F1-244FB74AFC08.mp4",
+   "kind": "video",
+   "duration_s": 12.0,
+   "width": 1080,
+   "height": 1920,
+   "has_audio": true,
+   "capture_time": "2026-10-25T15:18:23Z",
+   "analysis": {
+    "subject": "restaurant interior with chefs and decor",
+    "description": "camera panning past windows overhead chandelier and mezzanine view pan to main dining area with patrons",
+    "best_moments": [
+     {
+      "end_s": 2.8,
+      "energy": 6.0,
+      "start_s": 1.2,
+      "description": "camera panning past windows"
+     },
+     {
+      "end_s": 8.0,
+      "energy": 6.5,
+      "start_s": 6.7,
+      "description": "overhead chandelier and mezzanine view"
+     },
+     {
+      "end_s": 11.2,
+      "energy": 5.5,
+      "start_s": 9.4,
+      "description": "pan to main dining area with patrons"
+     }
+    ],
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "large metal grill oven",
+      "various cuts of meat on grill",
+      "bundles of dried flowers",
+      "large wooden wagon wheel chandelier",
+      "glassware on shelves"
+     ],
+     "brands": [
+      "DON JULIO"
+     ],
+     "people": {
+      "note": "chefs in uniform and various patrons",
+      "count": 10,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "to_camera": false,
+      "has_speech": true
+     },
+     "actions": [
+      "camera pans up across restaurant interior",
+      "chef attends to the grill",
+      "patrons interact in the dining area"
+     ],
+     "setting": "restaurant interior",
+     "subject": "restaurant interior with chefs and decor",
+     "summary": "The video shows the interior of a restaurant with chefs working at a grill, patrons dining, and elaborate floral and lighting decorations. The camera pans from the ground floor up to a mezzanine level.",
+     "activity": "chefs grilling food; patrons dining; camera panning through the restaurant",
+     "audio_type": "dialogue",
+     "content_type": "ambience",
+     "on_screen_text": "",
+     "visual_quality": "smooth pan, stays sharp",
+     "notable_moments": [
+      {
+       "end_s": 2.8,
+       "start_s": 1.2,
+       "description": "camera panning past windows"
+      },
+      {
+       "end_s": 8.0,
+       "start_s": 6.7,
+       "description": "overhead chandelier and mezzanine view"
+      },
+      {
+       "end_s": 11.2,
+       "start_s": 9.4,
+       "description": "pan to main dining area with patrons"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-A647A837-61E3-4D2D-A40B-91EBD02FB1EE.mp4",
+   "kind": "video",
+   "duration_s": 8.0,
+   "width": 1080,
+   "height": 1920,
+   "has_audio": true,
+   "capture_time": "2026-10-25T15:18:07Z",
+   "analysis": {
+    "subject": "chef preparing meat",
+    "description": "chef seasons large meat cut chef moves seasoned meat",
+    "best_moments": [
+     {
+      "end_s": 1.7,
+      "energy": 6.0,
+      "start_s": 0.0,
+      "description": "chef seasons large meat cut"
+     },
+     {
+      "end_s": 6.6,
+      "energy": 5.0,
+      "start_s": 4.5,
+      "description": "chef moves seasoned meat"
+     }
+    ],
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "three raw meat cuts",
+      "white cutting board",
+      "small wooden bowl",
+      "silver spice shaker",
+      "large stainless steel grill oven"
+     ],
+     "brands": [
+      "DOM JUA"
+     ],
+     "people": {
+      "note": "a female chef and a male chef",
+      "count": 2,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "to_camera": false,
+      "has_speech": false
+     },
+     "actions": [
+      "female chef picks up a spice shaker",
+      "female chef sprinkles seasoning on meat",
+      "female chef puts down the spice shaker",
+      "female chef picks up a piece of meat"
+     ],
+     "setting": "professional kitchen",
+     "subject": "chef preparing meat",
+     "summary": "A female chef seasons raw cuts of meat on a cutting board, while a male chef works at a large industrial grill oven in the background.",
+     "activity": "seasoning raw meat, operating a grill oven",
+     "audio_type": "ambient",
+     "content_type": "broll",
+     "on_screen_text": "",
+     "visual_quality": "sharp and steady",
+     "notable_moments": [
+      {
+       "end_s": 1.7,
+       "start_s": 0.0,
+       "description": "chef seasons large meat cut"
+      },
+      {
+       "end_s": 6.6,
+       "start_s": 4.5,
+       "description": "chef moves seasoned meat"
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "prod": {
+  "clip_ids": [
+   "analysis-proxy-ios-197B7255-5AC4-4E2B-B23A-42BFBE04B77D.mp4",
+   "analysis-proxy-ios-EC7B4FD2-2502-4824-B1A9-49C54DF0F2E0.mp4",
+   "analysis-proxy-ios-D4C43FA3-8B5B-4C10-901C-55F8A4E4710E.mp4",
+   "analysis-proxy-ios-3749EC57-BD55-4FAF-8CF2-FE5894C53CE7.mp4",
+   "analysis-proxy-ios-B2C132E8-59A6-44C8-B288-7BC86E81F386.mp4",
+   "analysis-proxy-ios-D36DBDCF-780A-45A5-B4F1-244FB74AFC08.mp4",
+   "analysis-proxy-ios-F1681162-CF0F-43E6-A7A1-8833DBA8F276.mp4"
+  ],
+  "intent_outcomes": [
+   {
+    "op": "order",
+    "code": "landed",
+    "name": "first: the DON JULIO window sign from the street",
+    "reason": null,
+    "status": "met",
+    "position": "first"
+   },
+   {
+    "op": "order",
+    "code": "landed",
+    "name": "last: my friend in the black T-shirt saying \"Super excited!\"",
+    "reason": null,
+    "status": "met",
+    "position": "last"
+   },
+   {
+    "op": "order",
+    "code": "landed",
+    "name": "then: the door, the butcher, the grill, the flowers on the ceiling, the Michelin plaques",
+    "reason": null,
+    "status": "met",
+    "position": "then"
+   }
+  ],
+  "requirement_receipts": [
+   {
+    "requirement_id": "r1",
+    "status": "met",
+    "verification": "checked",
+    "reason": null
+   },
+   {
+    "requirement_id": "r2",
+    "status": "met",
+    "verification": "checked",
+    "reason": null
+   },
+   {
+    "requirement_id": "r3",
+    "status": "partial",
+    "verification": "unchecked",
+    "reason": "I can't verify this timing automatically."
+   },
+   {
+    "requirement_id": "r4",
+    "status": "met",
+    "verification": "checked",
+    "reason": null
+   },
+   {
+    "requirement_id": "r5",
+    "status": "met",
+    "verification": "checked",
+    "reason": null
+   },
+   {
+    "requirement_id": "r6",
+    "status": "met",
+    "verification": "checked",
+    "reason": null
+   },
+   {
+    "requirement_id": "r7",
+    "status": "partial",
+    "verification": "unchecked",
+    "reason": "I can't verify this one automatically yet."
+   },
+   {
+    "requirement_id": "r8",
+    "status": "partial",
+    "verification": "unchecked",
+    "reason": "I can't verify this one automatically yet."
+   }
+  ]
+ }
+}

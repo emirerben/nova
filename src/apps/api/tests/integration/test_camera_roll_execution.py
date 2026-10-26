@@ -1474,10 +1474,10 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         assert sections["post_caption"]["payload"]["text"] == caption
 
 
-async def test_ready_source_without_timed_evidence_stays_unindexed_without_retry(
+async def test_ready_long_source_without_timed_evidence_gets_a_sampled_window(
     collection_world,  # noqa: F811
 ):
-    """Completed facts without intervals are not evidence of a queued analysis."""
+    """Completed facts without intervals are neither queued analysis nor unusable footage."""
     client, assets, sources, _owner, _app = collection_world
     async with AsyncSessionLocal() as db:
         rows = (
@@ -1503,19 +1503,18 @@ async def test_ready_source_without_timed_evidence_stays_unindexed_without_retry
     assert (await client.put(path, json=selection(assets, sources))).status_code == 200
     indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
     assert indexed.status_code == 200, indexed.text
-    assert assets[0] in indexed.json()["unusable_timing_asset_ids"]
+    # The fixture clip is 180 s: too long to be "the whole clip", so a fixed window stands in.
+    assert assets[0] in indexed.json()["sampled_asset_ids"]
+    assert assets[0] not in indexed.json()["unusable_timing_asset_ids"]
     assert indexed.json()["missing_analysis_asset_ids"] == []
-    found = await client.get(f"{path}/moments", params={"query": "ferry", "expected_revision": 1})
+    found = await client.get(f"{path}/moments", params={"query": "sampled", "expected_revision": 1})
     assert found.status_code == 200, found.text
-    assert assets[0] in found.json()["unindexed_asset_ids"]
+    assert assets[0] not in found.json()["unindexed_asset_ids"]
+    window = next(value for value in found.json()["moments"] if value["asset_id"] == assets[0])
+    assert window["end_s"] - window["start_s"] == 10
+    assert window["uncertain"] is True and window["evidence"]["sampled_window"] is True
+    assert window["evidence"]["semantic_localization"] == "none"
     async with AsyncSessionLocal() as db:
-        assert (
-            await db.scalars(
-                select(MediaSourceMoment).where(
-                    MediaSourceMoment.source_id == uuid.UUID(sources[0])
-                )
-            )
-        ).all() == []
         rows = (
             await db.scalars(
                 select(MediaAssetAnalysis).where(
@@ -1524,8 +1523,8 @@ async def test_ready_source_without_timed_evidence_stays_unindexed_without_retry
             )
         ).all()
         assert len(rows) == 2 and all(row.status == "ready" for row in rows)
-    # collection_world rejects every download/provider analysis attempt. No
-    # highlights are fabricated and the original READY facts stay unchanged.
+    # collection_world rejects every download/provider analysis attempt: the window is
+    # derived from the cached facts and the original READY facts stay unchanged.
 
 
 @pytest.mark.parametrize(
@@ -1629,7 +1628,16 @@ async def test_completed_untimed_source_gets_truthful_bounded_context_only(
         f"{path}/moments", params={"query": "synthetic", "expected_revision": 1}
     )
     assert found.status_code == 200, found.text
-    if condition == "complete":
+    if condition == "too-long":
+        # Longer than the whole-clip limit with nothing detected: a sampled window, not a gap.
+        assert indexed.json()["sampled_asset_ids"] == [assets[0]]
+        assert indexed.json()["unusable_timing_asset_ids"] == []
+        assert indexed.json()["context_asset_ids"] == []
+        assert found.json()["unindexed_asset_ids"] == []
+        window = found.json()["moments"][0]
+        assert window["evidence_scope"] == "timed_moment"
+        assert window["end_s"] - window["start_s"] == 10
+    elif condition == "complete":
         assert indexed.json()["missing_analysis_asset_ids"] == []
         assert indexed.json()["context_asset_ids"] == [assets[0]]
         assert indexed.json()["unusable_timing_asset_ids"] == []
