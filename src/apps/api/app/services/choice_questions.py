@@ -3222,8 +3222,20 @@ def _take_line_choice(
     looked for after it, as the cut does (`apply_take_window`). Without one, the start the
     take holds for the creator's own quote bounds the lines instead. ``None`` when the take
     has no line to offer.
+
+    KRI-967: a quote the take says only PART of ("Parrilla Don Julio, what do you think?" over
+    whisper's "So," / "what do you think?") is named as such, and when the clip's independent
+    transcript heard the missing words right there (`take_lines.partly_heard`), the line they
+    were said as is recommended, shown and pinned together with the heard line ("So, what do
+    you think?"), so the cut opens / ends where the creator's words were said. Option keys,
+    the other options and the digest are unchanged, so an earlier answer keeps its meaning.
     """
-    from app.kria.take_lines import offer_lines, pinned_line_text  # noqa: PLC0415
+    from app.kria.take_lines import (  # noqa: PLC0415
+        offer_lines,
+        partly_heard,
+        pinned_line_text,
+        span_lines,
+    )
     from app.pipeline.phone_opening_cut import ground_take_line  # noqa: PLC0415
     from app.services.speech_segments import exact_line_count  # noqa: PLC0415
 
@@ -3238,24 +3250,46 @@ def _take_line_choice(
         )
         after_s = grounded.word_start_s if grounded is not None else None
     lines = ctx.start_lines if start else ctx.end_lines
-    offer = offer_lines(lines, quote, side=side, limit=MAX_CHOICE_OPTIONS - 1, after_s=after_s)
+    part = partly_heard(
+        [line for line in lines if after_s is None or line.start_s >= after_s - 1e-6],
+        ctx.words,
+        quote,
+        side=side,
+        reference=take.reference,
+    )
+    said_as = part.said_as if part is not None else None
+    offer = offer_lines(
+        lines, quote, side=side, limit=MAX_CHOICE_OPTIONS - 1, after_s=after_s, prefer=said_as
+    )
     if not offer.lines:
         return None
+
+    def shown(line: Any) -> Any:
+        """The line an option stands for: the said-as line joined to the heard one (KRI-967)."""
+        if part is None or said_as is None or line.index != said_as.index:
+            return line
+        return span_lines(line, part.line) if start else span_lines(part.line, line)
 
     def pinned(line: Any) -> str:
         # A start pick is looked for from the top of the take, an end pick from the start line.
         def count(text: str) -> int:
             return exact_line_count(take.words, text, min_after_s=after_s or 0.0)
 
-        return pinned_line_text(ctx.words, line, side=side, count=count, max_chars=_LINE_VALUE_MAX)
+        return pinned_line_text(
+            ctx.words, shown(line), side=side, count=count, max_chars=_LINE_VALUE_MAX
+        )
 
     conflict = CONFLICT_TAKE_LINE_START if start else CONFLICT_TAKE_LINE_END
     options = [
         ConflictOption(
             key=f"{_LINE_KEY}{line.index}",
-            label=_line_label(line.text),
+            label=_line_label(shown(line).text),
             recommended=offer.recommended is line,
-            aliases=(line.text,),
+            # The line's own text stays an alias: a typed reply that answered it still does.
+            aliases=(line.text,) if shown(line) is line else (line.text, shown(line).text),
+            description=(
+                None if shown(line) is line or part is None else _said_as_note(part, start)
+            ),
         )
         for line in offer.lines
     ]
@@ -3285,7 +3319,7 @@ def _take_line_choice(
             ),
         )
     )
-    shown = " ".join(quote.split())[:_QUOTE_SHOWN_MAX]
+    shown_quote = " ".join(quote.split())[:_QUOTE_SHOWN_MAX]
     reason = (
         say(en="Which line should it open on?", tr="Hangi cümleyle açılsın?")
         if start
@@ -3297,8 +3331,8 @@ def _take_line_choice(
         field_path="take_start_line" if start else "take_end_line",
         requirement_ids=ids,
         intro=say(
-            en=f"I couldn't find “{shown}” in what's said in your video.",
-            tr=f"“{shown}” cümlesini videonda söylenenler arasında bulamadım.",
+            en=_take_line_intro(part, shown_quote, start, tr=False),
+            tr=_take_line_intro(part, shown_quote, start, tr=True),
         ),
         reason=reason,
         options=tuple(options),
@@ -3314,6 +3348,48 @@ def _take_line_choice(
             start_pick if not start else None,
         ),
         effects={f"{_LINE_KEY}{line.index}": {"value": pinned(line)} for line in offer.lines},
+    )
+
+
+def _fragment(text: str) -> str:
+    """A line or quote fragment named inside a sentence, without its clause punctuation."""
+    return text.strip(" \"'“”‘’«»,;:.!?…¿¡—–-")
+
+
+def _take_line_intro(part: Any, quote: str, start: bool, *, tr: bool) -> str:
+    """The sentence that opens the take-line question, in English or Turkish.
+
+    KRI-967: for a quote the take says only part of (``part``), what it says, the words it
+    doesn't, and -- when the clip's independent transcript heard them there -- what the timed
+    transcript has in their place. Otherwise the KRI-844 sentence, unchanged."""
+    if part is None:
+        if tr:
+            return f"“{quote}” cümlesini videonda söylenenler arasında bulamadım."
+        return f"I couldn't find “{quote}” in what's said in your video."
+    heard, unheard = part.heard, part.unheard
+    if tr:
+        where = "öncesindeki" if start else "ardındaki"
+        found = f"Videonda “{heard}” cümlesini buldum ama {where} “{unheard}” kısmını bulamadım."
+    else:
+        where = "before" if start else "after"
+        found = f"I found “{heard}” in your video, but not “{unheard}” {where} it."
+    if part.said_as is None:
+        return found
+    said = _fragment(part.said_as.text)
+    there = f"Dökümde orada “{said}” yazıyor." if tr else f"The transcript has “{said}” there."
+    return f"{found} {there}"
+
+
+def _said_as_note(part: Any, start: bool) -> str:
+    """KRI-967: the description under the option that opens / ends where the words were said."""
+    if start:
+        return say(
+            en=f"Opens where “{part.unheard}” is said.",
+            tr=f"“{part.unheard}” denen yerden açılır.",
+        )
+    return say(
+        en=f"Ends right after “{part.unheard}” is said.",
+        tr=f"“{part.unheard}” dendiği yerin hemen ardından biter.",
     )
 
 

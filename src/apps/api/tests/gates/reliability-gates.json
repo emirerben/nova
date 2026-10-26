@@ -3171,6 +3171,56 @@
         "Don Julio walk-in M2 iPhone re-send after KRI-947/948/949 deploy: no moment asked twice, no name repeated"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-967-unheard-quote-head",
+      "tickets": [
+        "KRI-967",
+        "KRI-964"
+      ],
+      "symptom": "Don Julio walk-in T1 (F0F3D5FB): the quoted start line \"Parrilla Don Julio, what do you think?\" was not in the timed transcript (whisper wrote 'So,' for the name), so the take-line question recommended \"what do you think?\" and the video opened one line late (16.05 s), without the words the creator asked to open on.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-967",
+      "journey": "kri-628-opening-cut",
+      "paths": [
+        "src/apps/api/app/kria/take_lines.py",
+        "src/apps/api/app/kria/opening_cut_ask.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/tests/fixtures/kri967_dj_walkin_t1_unheard_head.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri967_unheard_quote_head.py",
+        "tests/kria/test_kri844_take_line_ask.py",
+        "tests/kria/test_kri844_dj_t2_cross_language_replay.py"
+      ],
+      "harness": "mocked_internal",
+      "evidence": {
+        "offline_replay": "The thread's real clip record (round-1 question digest f1017fed1df5aefc1d17c0cb reproduced from it), real question and tap, prod receipts and the reference listener's words, through the planner gate, answered_brief, estimate_take_window and generative_build._phone_opening_cut. Red on 18a46b862 (6 of 21: recommendation, cut, copy, cap, end mirror, Turkish); green after. Recommended pick: draft card 14.85-20.29 s, worker cut 14.85-20.27 s (prod 16.05-20.27). Seven scratch mutations (no reference evidence, said-as line dropped when capped, pin not joined, no gap check, own-utterance accepted, quote words accepted, length unbounded) each turn a test red.",
+        "live_model": "Not run; no paid calls. The change adds no model call and no prompt edit.",
+        "native_output": "unknown; the option description is additive and the iOS card already shows option details; not device-checked.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "no independent transcript / it never heard the head / heard it elsewhere: tail stays recommended, card names the missing words",
+        "neighbour line far away, its own utterance, made of quote words, or much longer than the head: no invented start",
+        "fully matched quote asks nothing; unmatched quote asked byte-identically",
+        "prod tap on line_1 keeps its value and digest; prod aliases still answer their options",
+        "neighbour kept when more lines than fit; 'you choose' takes it",
+        "end-side mirror (heard head, unheard tail of the end quote)",
+        "brief rewritten to the tapped label (the path prod took after the tap)",
+        "worker words without 'So,' and the reference listener's words: the cut never opens later than today or at 0",
+        "Turkish card"
+      ],
+      "neighbours_gap": [
+        "The Main Creator draft is a literal strategy and the thread's database reads are mocked (planner gate replayed).",
+        "The worker's own pre-cut word timings were not in the run folder; they are reconstructed from the prod caption cues. If the real preflight words lack 'So,', the cut stays at 16.05 s while the draft card says 0:14.",
+        "On words that heard the name itself (the reference listener's), the joined pin grounds fuzzily on the tail and opens where prod did (16.33 s there), not at the name."
+      ],
+      "follow_ups": [
+        "Don Julio walk-in T1 iPhone re-send after deploy: the start question recommends \"So, what do you think?\" and the opening_cut receipt starts near 14.85 s with spoken \"So, what do you think?\""
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }
