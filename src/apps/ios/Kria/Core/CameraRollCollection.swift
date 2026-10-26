@@ -20,10 +20,17 @@ struct CameraRollCollection: Codable, Sendable {
     static let maximumCount = 500
     static let batchSize = 32
     let id: UUID
-    var savedIdeas: SavedCameraRollIdeas?
+    /// Ideas the server holds for each event, kept so the surface opens with them before the network answers.
+    /// A file written before ideas were per event stored one `savedIdeas` object; that key is no longer read, so
+    /// such a file still loads and its ideas come back from the server.
+    var ideasByGroup: [String: SavedCameraRollGroupIdeas] = [:]
+    /// What the creator calls an event. The server's group key never changes when they rename, so ideas stay put.
+    var eventTitles: [String: String] = [:]
     var serverRevision: Int?
     var name: String
     private(set) var entries: [Entry]
+
+    enum CodingKeys: String, CodingKey { case id, ideasByGroup, eventTitles, serverRevision, name, entries }
 
     struct Entry: Codable, Sendable, Identifiable {
         let id: String
@@ -33,6 +40,17 @@ struct CameraRollCollection: Codable, Sendable {
     }
 
     enum SelectionError: Error { case tooManyAssets, invalidSnapshot, erasedAccount }
+
+    /// Files from before ideas were per event lack the newer keys, so each is optional on read.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        entries = try c.decode([Entry].self, forKey: .entries)
+        serverRevision = try c.decodeIfPresent(Int.self, forKey: .serverRevision)
+        ideasByGroup = try c.decodeIfPresent([String: SavedCameraRollGroupIdeas].self, forKey: .ideasByGroup) ?? [:]
+        eventTitles = try c.decodeIfPresent([String: String].self, forKey: .eventTitles) ?? [:]
+    }
 
     init(id: UUID = UUID(), name: String, identifiers: [String]) throws {
         self.id = id
@@ -93,7 +111,13 @@ struct CameraRollCollection: Codable, Sendable {
     }
 
     func group(for identifier: String) -> String {
-        if let corrected = entries.first(where: { $0.id == identifier })?.correctedGroup { return corrected }
+        groupMap()[identifier] ?? name
+    }
+
+    /// Every entry's event in one pass. A creator's correction wins; otherwise a gap of more than four hours or
+    /// 25 km between capture times starts a new event, and an entry with no capture time joins the collection's name.
+    func groupMap() -> [String: String] {
+        var map: [String: String] = [:]
         let dated = entries.compactMap { entry -> (String, ClipCaptureRaw)? in
             guard let capture = entry.metadata?.capture, capture.captureTime != nil else { return nil }
             return (entry.id, capture)
@@ -111,10 +135,35 @@ struct CameraRollCollection: Codable, Sendable {
                 farApart = CLLocation(latitude: lat, longitude: lon).distance(from: CLLocation(latitude: lastLat, longitude: lastLon)) > 25_000
             }
             if gap > 4 * 3600 || farApart { event += 1 }
-            if id == identifier { return "Event \(event)" }
+            map[id] = "Event \(event)"
             last = capture
         }
-        return name
+        for entry in entries {
+            if let corrected = entry.correctedGroup { map[entry.id] = corrected }
+            else if map[entry.id] == nil { map[entry.id] = name }
+        }
+        return map
+    }
+
+    /// Entries are taken out of the collection whole so Undo can put the very same bindings back.
+    func title(forGroup group: String) -> String { eventTitles[group] ?? group }
+
+    mutating func rename(group: String, to title: String) {
+        let cleaned = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+        eventTitles[group] = cleaned.isEmpty || cleaned == group ? nil : cleaned
+    }
+
+    mutating func remove(inGroup group: String) -> [Entry] {
+        let map = groupMap()
+        let leaving = entries.filter { map[$0.id] == group }
+        let gone = Set(leaving.map(\.id))
+        entries.removeAll { gone.contains($0.id) }
+        return leaving
+    }
+
+    mutating func restore(_ restored: [Entry]) {
+        let present = Set(entries.map(\.id))
+        entries.append(contentsOf: restored.filter { !present.contains($0.id) })
     }
 
     func localCopy() throws -> Self {

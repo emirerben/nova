@@ -244,6 +244,8 @@ final class CreationChatFixture: @unchecked Sendable {
             let talkingMaxClips = ProcessInfo.processInfo.environment["KRIA_CHAT_TALKING_MAX_CLIPS"].flatMap(Int.init) ?? 10
             var capabilities: [String: Any] = ["formats": [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", talkingMaxClips), ("slides", "slides", 20)].map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
             if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1" { capabilities["live_plan_review_enabled"] = true }
+            // `-camera-roll-surface-fixture` (KRI-944): the Camera roll row in the drawer. The surface brings its own fixture API.
+            if ProcessInfo.processInfo.arguments.contains("-camera-roll-surface-fixture") { capabilities["media_collections"] = true }
             // `KRIA_SUGGESTION_CHIPS=1` (KRI-756): the server offers footage-aware suggestion chips. Unset = an old server.
             if ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS"] == "1" { capabilities["suggestion_chips"] = true }
             // `KRIA_CHAT_PLAN_BLOCKS_VERSION=2`: the server speaks live-plan contract v2 (structured payloads,

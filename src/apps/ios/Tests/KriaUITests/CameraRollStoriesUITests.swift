@@ -111,7 +111,7 @@ extension CameraRollStoriesUITests {
         XCTAssertTrue(forget.waitForExistence(timeout: 5))
         forget.tap()
         app.alerts.buttons["Forget"].tap()
-        XCTAssertTrue(app.staticTexts["Choose posts you like"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Posts you like"].waitForExistence(timeout: 5))
         let proof = XCTAttachment(screenshot: app.screenshot())
         proof.name = "Editorial taste is explicit and can be forgotten"
         proof.lifetime = .keepAlways

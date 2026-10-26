@@ -138,6 +138,7 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, CameraRollItem
     func importCollectionMedia(file: URL, kind: String) async throws -> SavedMediaAsset
     func importCollectionMedia(file: URL, kind: String, progress: (@Sendable (Double) -> Void)?) async throws -> SavedMediaAsset
     func generateCameraRollStories(id: UUID, request: CameraRollStoryRequest) async throws -> CameraRollStories
+    func savedCameraRollStories(id: UUID, revision: Int, group: String) async throws -> [CameraRollStory]
     func deleteCameraRollStory(collectionID: UUID, storyID: UUID) async throws -> CameraRollStoryDeletion
     func restoreCameraRollStory(collectionID: UUID, storyID: UUID) async throws
     func deleteCameraRollGroup(collectionID: UUID, group: String, expectedRevision: Int) async throws -> CameraRollGroupDeletion
