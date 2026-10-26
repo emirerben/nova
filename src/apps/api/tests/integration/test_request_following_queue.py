@@ -658,6 +658,8 @@ async def test_actual_export_review_reloads_and_enters_private_safe_daily_report
     assert report.status_code == 200, report.text
     data = report.json()
     assert data["counts"]["export_reviewed_sessions"] == 1
+    assert data["delivery"]["unfulfilled_reviewed_sessions"] == 1
+    assert data["delivery"]["fulfilled_reviewed_sessions"] == 0
     assert data["requirements"] == {
         "met": 0,
         "partial": 0,
@@ -683,6 +685,35 @@ async def test_actual_export_review_reloads_and_enters_private_safe_daily_report
     # Report credential cannot be used as an admin credential.
     assert (await client.get(url, headers={"X-Admin-Token": "report-read-only"})).status_code == 401
     assert (await client.post(url + "/review", json=body)).status_code == 409
+
+
+async def test_ready_job_without_review_remains_unknown_fulfillment(output_journey):
+    client, _, _, _, _ = output_journey
+    response = await client.get(
+        "/request-following-report", headers={"X-Report-Token": "report-read-only"}
+    )
+    data = response.json()
+    assert data["delivery"]["ready_job_sessions"] == 1
+    assert data["delivery"]["unknown_fulfillment_sessions"] == 1
+    assert data["delivery"]["fulfilled_reviewed_sessions"] == 0
+    assert data["delivery"]["verified_device_exports"] == 0
+
+
+async def test_complete_human_review_is_separate_from_device_export_ack(output_journey):
+    client, case, _, _, _ = output_journey
+    url, body = await outcome_body(client, case)
+    for outcome in body["outcome_review"]["outcomes"]:
+        outcome["verdict"] = "met"
+    assert (await client.post(url + "/review", json=body)).status_code == 200
+    data = (
+        await client.get(
+            "/request-following-report", headers={"X-Report-Token": "report-read-only"}
+        )
+    ).json()
+    assert data["delivery"]["fulfilled_reviewed_sessions"] == 1
+    assert data["delivery"]["unknown_fulfillment_sessions"] == 0
+    assert data["delivery"]["verified_device_exports"] == 0
+    assert data["delivery"]["first_attempt_fulfillment"] is None
 
 
 async def test_output_review_requires_actual_viewing_and_complete_verdicts(output_journey):
