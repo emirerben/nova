@@ -24,7 +24,7 @@ from typing import Any
 
 import structlog
 from pydantic import ValidationError
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents._model_client import default_client
@@ -112,6 +112,7 @@ from app.models import (
     CreationThread,
     CreationThreadEvent,
     CreatorAgentSession,
+    CreatorAgentTurn,
     CreatorEditDraft,
     Job,
     Persona,
@@ -152,12 +153,15 @@ from app.services.clip_intent_planning import (
     kept_labels_from_strategy,
     plan_and_resolve_clip_intents,
     shot_captions_safe,
+    whole_video_text_asks,
 )
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_selection import answered_rows, fold_clip_selections
 from app.services.clip_understanding import understanding_incomplete
 from app.services.creative_copy_decisions import (
+    CreativeCopyState,
     authorship_question,
+    bind_approved_copy,
     creator_quoted,
     fold_creative_copy,
     localize_question,
@@ -862,6 +866,62 @@ def _declares_delegation(outputs, updates) -> bool:  # noqa: ANN001
         and not updates
         and all(getattr(output, "delegates_all_choices", False) is True for output in outputs)
     )
+
+
+async def _with_approved_copy(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    prior: CreativeBrief | None,
+    updates: tuple[BriefUpdate, ...],
+    states: Mapping[str, CreativeCopyState],
+) -> tuple[BriefUpdate, ...]:
+    """KRI-945: this turn's updates plus the approved opening wording as the title literal.
+
+    An approval may fill only a title requirement stated no later than the creator's
+    approving tap: its source turn's message comes at or before the tap in the thread.
+    """
+    state = states.get("opening_title")
+    unbound: dict[uuid.UUID, list[str]] = {}
+    for req in prior.live() if prior is not None else ():
+        if req.kind == "text" and req.scope == "title" and req.literal is None:
+            try:
+                unbound.setdefault(uuid.UUID(str(req.source_turn_id)), []).append(req.id)
+            except ValueError:
+                continue
+    answered: set[str] = set()
+    if state is not None and state.approved and state.question_id and unbound:
+        tapped = (
+            await db.execute(
+                select(func.max(CreationThreadEvent.sequence)).where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.role == "user",
+                    CreationThreadEvent.payload["choice_selection"]["question_id"].astext
+                    == state.question_id,
+                )
+            )
+        ).scalar_one_or_none()
+        stated = (
+            await db.execute(
+                select(CreatorAgentTurn.id, CreationThreadEvent.sequence)
+                .join(
+                    CreationThreadEvent, CreationThreadEvent.id == CreatorAgentTurn.source_event_id
+                )
+                .where(
+                    CreatorAgentTurn.thread_id == thread_id,
+                    CreatorAgentTurn.id.in_(list(unbound)),
+                )
+            )
+        ).all()
+        await db.rollback()  # no connection pinned across what follows
+        if tapped is not None:
+            answered = {
+                req_id
+                for turn_id, sequence in stated
+                if sequence <= tapped
+                for req_id in unbound.get(turn_id, ())
+            }
+    return bind_approved_copy(prior, updates, states, answered_ids=answered)
 
 
 def adapt_creator_action(
@@ -3317,6 +3377,7 @@ async def _plan_creator_action(
             effective_brief, getattr(action.strategy, "shot_labels", None) or ()
         )
         kept_labels = await _load_kept_labels(db, item_id) if effective_brief is not None else []
+        whole_video_texts = whole_video_text_asks(effective_brief)
         earlier_excluded = (
             await _earlier_exclusions(db, item_id) if settings.clip_intent_exclude_enabled else []
         )
@@ -3356,6 +3417,8 @@ async def _plan_creator_action(
                 **({"brief_labels": brief_labels} if brief_labels else {}),
                 **({"kept_labels": kept_labels} if kept_labels else {}),
                 **({} if shot_captions else {"shot_captions": False}),
+                # KRI-945: a caption for the brief's researched text or title is never asked.
+                **({"whole_video_texts": whole_video_texts} if whole_video_texts else {}),
                 # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
                 # never a clip question; its receipt tells the creator.
                 **(
@@ -5454,6 +5517,13 @@ async def _plan_live_turn(
     # KRI-776: the creator's own moment numbers ride on the brief, whatever the Main
     # Creator's paraphrase kept ("six moments, about 2 seconds each" became a bare order list).
     updates = carry_moment_ask(prior_brief, tuple(unique_updates.values()), user_message)
+    updates = await _with_approved_copy(
+        db,
+        thread_id=thread_id,
+        prior=prior_brief,
+        updates=updates,
+        states=inputs.creative_copy_state or {},
+    )
     delegated = (
         extracted_delegation if extraction_complete else _declares_delegation(outputs, updates)
     )

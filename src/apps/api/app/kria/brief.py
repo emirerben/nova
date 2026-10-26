@@ -48,6 +48,7 @@ from app.kria.reply_language import detect_chat_language
 from app.models import CreationThreadEvent, CreativeBriefVersion, CreatorAgentTurn
 from app.schemas.clip_intents import asks_clip_description
 from app.schemas.text_style_intent import normalize_title_animation
+from app.services.creative_copy_decisions import APPROVED_COPY_FACT
 from app.services.kria_editor_ops_diff import font_family_key
 
 RequirementKind = Literal["text", "order", "select", "timing", "audio", "style"]
@@ -531,6 +532,7 @@ def merge_requirements(
 # changes the words ("the hook should say ...") restates the requirement without them; the
 # creator never withdrew them, so a same-kind, same-scope change keeps them unless it sets them.
 # KRI-841: so is the video a Talking edit ends on (`ending_clip`) and whether it keeps its sound.
+# KRI-945: and the server's mark on a title literal it copied from an approved wording.
 STICKY_FACTS = frozenset(
     {
         "first_clip",
@@ -540,15 +542,23 @@ STICKY_FACTS = frozenset(
         "placeholder",
         "ending_clip",
         "keep_audio",
+        APPROVED_COPY_FACT,
     }
 )
 
 
 def _carry_sticky_facts(target: BriefRequirement, update: BriefUpdate) -> dict[str, Any]:
-    if update.kind != target.kind or update.scope != target.scope:
-        return update.facts
-    kept = {k: v for k, v in target.facts.items() if k in STICKY_FACTS and k not in update.facts}
-    return {**kept, **update.facts} if kept else update.facts
+    facts = update.facts
+    if update.kind == target.kind and update.scope == target.scope:
+        kept = {
+            k: v for k, v in target.facts.items() if k in STICKY_FACTS and k not in update.facts
+        }
+        facts = {**kept, **update.facts} if kept else update.facts
+    mark = facts.get(APPROVED_COPY_FACT)
+    if mark is not None and not (isinstance(mark, Mapping) and mark.get("text") == update.literal):
+        # KRI-945: the mark belongs to the words it copied; other words are someone else's.
+        facts = {k: v for k, v in facts.items() if k != APPROVED_COPY_FACT}
+    return facts
 
 
 def apply_updates(

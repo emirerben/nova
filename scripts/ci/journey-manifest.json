@@ -1799,6 +1799,17 @@
         "src/apps/api/tests/kria/test_kri807_unmatched_exclusion_picker.py",
         "src/apps/api/tests/kria/test_confirmed_title_inventory_postgres.py"
       ]
+    },
+    {
+      "id": "kri-945-global-text",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri945_global_text_journey.py tests/kria/test_kri945_claims_journey.py tests/services/test_kri945_whole_video_captions.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri945_cunda_island_turns.json",
+        "src/apps/api/tests/kria/test_kri945_global_text_journey.py",
+        "src/apps/api/tests/kria/test_kri945_claims_journey.py",
+        "src/apps/api/tests/services/test_kri945_whole_video_captions.py"
+      ]
     }
   ]
 }

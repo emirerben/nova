@@ -271,6 +271,8 @@ class CreativeCopyState:
     approved: str | None = None
     cancelled: bool = False
     provenance: str | None = None
+    # The wording question the creator approved with a tap (None for any other state).
+    question_id: str | None = None
 
 
 def fold_creative_copy(
@@ -376,6 +378,7 @@ def fold_creative_copy(
                     candidate=candidate,
                     approved=candidate,
                     provenance="generated",
+                    question_id=str(selection.get("question_id")),
                 )
         elif option == OPT_CANCEL:
             states[target] = CreativeCopyState(
@@ -389,6 +392,82 @@ def fold_creative_copy(
                 target=target, dependency_digest=dependency_digest, status=option
             )
     return states
+
+
+# Marks a title literal as the server's copy of an approved wording: ``{"target", "text"}``.
+# Sticky (`brief.STICKY_FACTS`), so a restated requirement keeps it; only a literal equal to
+# its ``text`` is the server's to maintain.
+APPROVED_COPY_FACT = "approved_copy"
+
+
+def bind_approved_copy(
+    brief: Any,
+    updates: Iterable[Any],
+    states: Mapping[Target, CreativeCopyState],
+    *,
+    answered_ids: Iterable[str] = (),
+) -> tuple[Any, ...]:
+    """``updates`` plus the server's write of the approved opening wording into the brief.
+
+    KRI-945: the fold above approves the words, but the brief's title requirement kept
+    ``literal=None``, so no check could prove the hook before render. The one live
+    ``text``/``title`` requirement gets the approved words as its literal, marked with
+    ``APPROVED_COPY_FACT``. Only a requirement in ``answered_ids`` (stated no later than
+    the approving tap) is filled: an approval never answers an ask stated after it ("Start
+    fresh", a new hook ask). A literal the server wrote is withdrawn when the fold stops
+    approving it (revise, skip, new footage). A literal anyone else wrote, or a requirement
+    this turn's own updates change or remove, is never touched.
+    """
+    from app.kria.brief import BriefUpdate, BriefUpdateBatchError, apply_updates  # noqa: PLC0415
+
+    batch = tuple(updates)
+    if brief is None:
+        return batch
+    try:
+        effective = apply_updates(brief, batch, source_turn_id=None)
+    except BriefUpdateBatchError:
+        return batch
+    targeted = {update.target_requirement_id for update in batch if update.operation != "add"}
+    prior = {req.id: req for req in brief.live()}
+    titles = [req for req in effective.live() if req.kind == "text" and req.scope == "title"]
+    if len(titles) != 1 or titles[0].id not in prior or titles[0].id in targeted:
+        return batch
+    req = prior[titles[0].id]
+    marker = req.facts.get(APPROVED_COPY_FACT)
+    ours = (
+        req.literal is not None
+        and isinstance(marker, Mapping)
+        and marker.get("text") == req.literal
+    )
+    state = states.get("opening_title")
+    approved = state.approved if state is not None and state.status == "approved" else None
+    facts = {key: value for key, value in req.facts.items() if key != APPROVED_COPY_FACT}
+    if approved is not None:
+        if not (
+            (req.literal is None and req.id in set(answered_ids))
+            or (ours and req.literal != approved)
+        ):
+            return batch
+        literal: str | None = approved
+        facts[APPROVED_COPY_FACT] = {"target": "opening_title", "text": approved}
+    elif ours:
+        literal = None
+    else:
+        return batch
+    try:
+        change = BriefUpdate(
+            operation="change",
+            target_requirement_id=req.id,
+            expected_version=brief.version,
+            kind=req.kind,
+            scope=req.scope,
+            literal=literal,
+            description=req.description,
+            facts=facts,
+        )
+    except ValueError:
+        return batch  # words longer than a brief literal holds stay on the strategy only
+    return (*batch, change)
 
 
 def latest_open_creative_question(events: Events) -> dict[str, Any] | None:
@@ -425,9 +504,11 @@ def latest_open_creative_question(events: Events) -> dict[str, Any] | None:
 
 
 __all__ = [
+    "APPROVED_COPY_FACT",
     "CREATIVE_COPY_CONFLICT",
     "CreativeCopyState",
     "authorship_question",
+    "bind_approved_copy",
     "creator_quoted",
     "fold_creative_copy",
     "latest_open_creative_question",
