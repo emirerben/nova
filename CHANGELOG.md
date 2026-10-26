@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.130.0] - 2026-10-26
+
+### Changed
+- feat(camera-roll): suggest background research, label footage vs background (#1832) <!-- release-pr: 1832 -->
+
 ## [0.81.129.0] - 2026-10-26
 
 ### Changed
