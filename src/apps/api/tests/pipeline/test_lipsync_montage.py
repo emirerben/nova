@@ -6,6 +6,7 @@ import pytest
 
 from app.pipeline.guided_story import GuidedStoryError, GuidedStoryExecutionPlan
 from app.pipeline.lipsync_montage import (
+    MAX_WINDOW_MS,
     LipsyncPlanError,
     LipsyncSyncError,
     lipsync_sync_error_s,
@@ -15,7 +16,6 @@ from app.pipeline.lipsync_montage import (
     resync_moment_rows,
 )
 from app.pipeline.phone_guided_plan import compile_phone_guided_plan
-from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 from app.schemas.user_song import PlacementCandidate, TakeAlignment, UserSongPlan, UserSongTake
 from tests.pipeline.user_song_helpers import (
     SONG_ITEM_ID,
@@ -163,10 +163,10 @@ def test_window_is_capped_at_120_seconds_keeping_the_densest_stretch():
     ]
     result = plan(clips, rows, song=song)
     window = result.user_song.window_end_s - result.user_song.window_start_s
-    assert window <= MAX_PROPOSAL_DURATION_S + 1e-6
-    assert result.song_receipt["capped_at_s"] == MAX_PROPOSAL_DURATION_S
+    assert window <= MAX_WINDOW_MS / 1000 + 1e-6
+    assert result.song_receipt["capped_at_s"] == MAX_WINDOW_MS / 1000
     assert result.user_song.window_start_s >= 79
-    assert result.snapshot.duration_s <= MAX_PROPOSAL_DURATION_S
+    assert result.snapshot.duration_s <= MAX_WINDOW_MS / 1000
     assert_in_sync(result, compiled_plan(result))
 
 
@@ -177,7 +177,7 @@ def test_cap_never_leaves_a_sliver_segment():
     result = plan(clips, rows, song=song)
     for cut in result.snapshot.fast_cuts:
         assert cut.output_duration_s >= 1.0 - 1e-6
-    assert result.snapshot.duration_s <= MAX_PROPOSAL_DURATION_S + 1e-6
+    assert result.snapshot.duration_s <= MAX_WINDOW_MS / 1000 + 1e-6
 
 
 def test_every_segment_is_at_least_a_second():
@@ -655,8 +655,8 @@ def test_kept_broll_stays_inside_the_120_second_cap():
     clips = [take("A", 119.0), take("U", 20)]
     result = plan(clips, [confident("A", 10), unmatched("U")], song=song)
     window = result.user_song.window_end_s - result.user_song.window_start_s
-    assert window <= MAX_PROPOSAL_DURATION_S + 1e-6
-    assert result.snapshot.duration_s <= MAX_PROPOSAL_DURATION_S + 1e-6
+    assert window <= MAX_WINDOW_MS / 1000 + 1e-6
+    assert result.snapshot.duration_s <= MAX_WINDOW_MS / 1000 + 1e-6
 
 
 def test_every_unplaced_take_is_editable_unused_media_and_compiles():

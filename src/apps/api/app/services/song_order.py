@@ -366,7 +366,7 @@ def build_song_order_question(
             for c in sorted(cands, key=lambda c: -c.likelihood)[:MAX_ALTERNATES_PER_ITEM]
         ]
     ordered = [items[m] for m in order]
-    from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S  # noqa: PLC0415
+    from app.pipeline.best_parts import edit_cap_s  # noqa: PLC0415
 
     return SongOrderQuestion(
         question_id=question_id or str(uuid.uuid4()),
@@ -380,7 +380,7 @@ def build_song_order_question(
             if isinstance(song_duration_s, (int, float)) and song_duration_s > 0
             else None
         ),
-        max_window_s=float(MAX_PROPOSAL_DURATION_S),
+        max_window_s=edit_cap_s("song"),
         first_line_s=first_line_s,
     )
 
