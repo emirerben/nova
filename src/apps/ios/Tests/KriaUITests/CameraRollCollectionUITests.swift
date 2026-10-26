@@ -198,7 +198,7 @@ final class CameraRollCollectionUITests: XCTestCase {
         XCTAssertTrue(taste.waitForExistence(timeout: 10))
         taste.tap()
         XCTAssertTrue(app.staticTexts["What makes a good post for you?"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Posts you like"].exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Posts you like")).firstMatch.exists)
         attach("Your taste", app.screenshot())
         app.buttons["camera-roll-back"].tap()
         XCTAssertTrue(app.staticTexts["camera-roll-title"].waitForExistence(timeout: 5))

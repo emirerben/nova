@@ -117,7 +117,7 @@ struct CameraRollTasteView: View {
                                 if isSelected { selected.remove(choice.id) } else if selected.count < 50 { selected.insert(choice.id) }
                             } label: {
                                 Text(choice.title).font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.ink)
-                                    .multilineTextAlignment(.leading).lineLimit(5).padding(10)
+                                    .multilineTextAlignment(.leading).lineLimit(4).padding(.horizontal, 10).padding(.bottom, 10).padding(.top, 36)
                                     .frame(width: 84, height: 112, alignment: .topLeading)
                                     .background(isSelected ? KriaColor.butter : KriaColor.fill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                                     .overlay(alignment: .topTrailing) {
