@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.134.0] - 2026-10-26
+
+### Fixed
+- fix(phone): draw the confirmed title and clip labels on kept-line montages (KRI-939) (#1839) <!-- release-pr: 1839 -->
+
 ## [0.81.133.0] - 2026-10-26
 
 ### Changed
