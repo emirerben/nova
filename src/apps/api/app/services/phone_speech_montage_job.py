@@ -28,7 +28,9 @@ Kill switch: ``SPEECH_EXCERPT_MONTAGE_ENABLED=false`` + worker restart.
 from __future__ import annotations
 
 import copy
+import unicodedata
 import uuid
+from collections.abc import Sequence
 from typing import Any
 
 import structlog
@@ -326,7 +328,7 @@ def run_phone_speech_montage_job(
         ordered = order_by_capture_time(broll_ids, times)
         broll_ids, ordering_basis = ordered.ordered_ids, ordered.basis
     broll = tuple(binding_by_media[m] for m in broll_ids)
-    opening, labels = _confirmed_text(contract)
+    opening, labels, closing, lines = _confirmed_text(contract, _creator_pins(strategy))
     recipe, receipt = compile_phone_speech_montage_plan(
         tuple(sections),
         broll,
@@ -334,6 +336,8 @@ def run_phone_speech_montage_job(
         opening_title=opening.text if opening else None,
         opening_title_hold_s=opening.duration_s if opening else None,
         clip_labels=labels,
+        closing_text=closing,
+        extra_lines=lines,
         pinned_texts=_creator_pins(strategy),
         pinned_font_family=(strategy or {}).get("font_family")
         if isinstance(strategy, dict)
@@ -366,6 +370,9 @@ def run_phone_speech_montage_job(
         record["ordering_basis"] = ordering_basis
     if pins_drawn:
         record["pinned_texts"] = pins_drawn
+    if receipt.text_rows:
+        # The words the recipe draws, for the chat receipts (never what a model claimed).
+        record["texts"] = [row["text"] for row in receipt.text_rows]
     if brief is not None and brief.live():
         from app.kria.brief_checks import (  # noqa: PLC0415
             build_receipts,
@@ -456,15 +463,26 @@ def run_phone_speech_montage_job(
     return True
 
 
-def _confirmed_text(contract: Any) -> tuple[Any, tuple[Any, ...]]:
-    """KRI-939: the approved title and clip labels an excerpt montage must draw.
+def _confirmed_text(
+    contract: Any, pins: Sequence[Any] = ()
+) -> tuple[Any, tuple[Any, ...], Any, tuple[Any, ...]]:
+    """The approved words an excerpt montage must draw: ``(title, labels, closing, lines)``.
 
-    The title is the contract's ``opening`` text, else its first ``any`` text (both are
-    satisfied by one title from 0 s). ``clip`` texts become labels on their clip's cuts.
-    A ``closing`` text, or a second free-standing ``any`` text, is not drawn here, so the
-    verifier still refuses it by name instead of the edit claiming words it lacks.
+    KRI-939: the title is the contract's ``opening`` text, else its first ``any`` text (both
+    are satisfied by one title from 0 s); ``clip`` texts become labels on their clip's cuts.
+    The ``closing`` text is drawn to the last frame, and every further ``any`` text as a line
+    of its own, except one the edit already shows: the title's twin, a label's words, a
+    corner pin (drawn by ``_with_creator_pins``), the closing text, or a chapter list its
+    labels spell out (KRI-545, mirrored from ``verify_phone_recipe``).
     """
-    from app.pipeline.phone_speech_montage_plan import PhoneClipLabel  # noqa: PLC0415
+    from app.kria.brief_route import chapter_list  # noqa: PLC0415
+    from app.pipeline.phone_speech_montage_plan import (  # noqa: PLC0415
+        PhoneClipLabel,
+        PhoneFreeText,
+    )
+
+    def normal(text: str) -> str:
+        return " ".join(unicodedata.normalize("NFC", text).split())
 
     texts = tuple(contract.exact_texts) if contract is not None else ()
     opening = next((t for t in texts if t.role == "opening"), None) or next(
@@ -475,7 +493,31 @@ def _confirmed_text(contract: Any) -> tuple[Any, tuple[Any, ...]]:
         for t in texts
         if t.role == "clip"
     )
-    return opening, labels
+    closing_row = next((t for t in texts if t.role == "closing"), None)
+    closing = (
+        PhoneFreeText(text=closing_row.text, hold_s=closing_row.duration_s)
+        if closing_row is not None
+        else None
+    )
+    label_texts = [label.text for label in labels]
+    shown = {
+        normal(text)
+        for text in (
+            *([opening.text] if opening is not None else []),
+            *label_texts,
+            *(str(getattr(pin, "text", "") or "") for pin in pins),
+            *([closing_row.text] if closing_row is not None else []),
+        )
+    }
+    lines: list[Any] = []
+    for t in texts:
+        if t.role != "any" or t is opening or normal(t.text) in shown:
+            continue
+        if t.duration_s is None and chapter_list(t.text, label_texts) is not None:
+            continue
+        shown.add(normal(t.text))
+        lines.append(PhoneFreeText(text=t.text, hold_s=t.duration_s))
+    return opening, labels, closing, tuple(lines)
 
 
 def _creator_pins(strategy: Any) -> list[Any]:

@@ -79,3 +79,11 @@ the wrap width is the room between the anchor and the safe margins
 (`text_fit.authored_safe_width`), not a flat 0.9 x W. The server slide export draws
 through Pillow, not Skia, so `tests/pipeline/test_authored_newlines.py` renders the same
 text through the real `slide_post.build.render_text_element_png`.
+
+`kept_line_closing_and_second_line.json` is the text a kept-spoken-line phone montage
+(`phone_speech_montage_plan._with_confirmed_text`) now draws beyond the KRI-939 title and
+labels, generated from the replay in `tests/services/test_phone_speech_montage_job.py`:
+Don Julio M1's title + labels with a closing text stepped above the last label and a second
+line in the title slot after the title (0–10 s); the same in Turkish with emoji (10–20 s);
+and a 2 s edit where the second line stacks in the lower band above the closing text
+(20–22 s). Every text must draw whole and un-clipped.

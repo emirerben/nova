@@ -157,6 +157,16 @@ class PhoneClipLabel:
     shot_index: int | None = None
 
 
+@dataclass(frozen=True)
+class PhoneFreeText:
+    """Confirmed words with no clip of their own: a ``closing`` text that must be on screen
+    at the last frame, or a further whole-video line beside the title. ``hold_s`` is the
+    contract's confirmed on-screen time, ``None`` for the default hold."""
+
+    text: str
+    hold_s: float | None = None
+
+
 @dataclass
 class SpeechMontageReceipt:
     """What the compiler actually put on the timeline (never what a model claimed)."""
@@ -265,6 +275,8 @@ def compile_phone_speech_montage_plan(
     opening_title: str | None = None,
     opening_title_hold_s: float | None = None,
     clip_labels: Sequence[PhoneClipLabel] = (),
+    closing_text: PhoneFreeText | None = None,
+    extra_lines: Sequence[PhoneFreeText] = (),
     pinned_texts: Sequence[Any] | None = None,
     pinned_font_family: str | None = None,
 ) -> tuple[EditRecipeV2, SpeechMontageReceipt]:
@@ -278,6 +290,8 @@ def compile_phone_speech_montage_plan(
     ``opening_title`` / ``clip_labels`` are the approved on-screen words (KRI-939): the
     title from 0 s, each label on every cut of its clip. Before this the excerpt recipe
     carried no text at all and the contract verifier refused it after approval.
+    ``closing_text`` ends on the last frame; each of ``extra_lines`` gets its own window
+    after the title (see ``_with_confirmed_text``).
     """
     if not sections:
         raise UnsupportedPhonePlan("the spoken-excerpt montage has no sections")
@@ -475,6 +489,8 @@ def compile_phone_speech_montage_plan(
         opening_title=opening_title,
         opening_title_hold_s=opening_title_hold_s,
         clip_labels=clip_labels,
+        closing_text=closing_text,
+        extra_lines=extra_lines,
         pinned_texts=pinned_texts,
         pinned_font_family=pinned_font_family,
     )
@@ -807,24 +823,40 @@ def implicit_picture_duration(
 _LABEL_Y = 0.78  # mirrors `phone_plan_repair._LABEL_Y`
 _LABEL_STACK_STEP_Y = 0.09  # mirrors `phone_plan_repair._STACK_STEP_Y`
 _LABEL_LAYER_PREFIX = "label-"
+_CLOSING_LAYER_PREFIX = "closing-"
+_LINE_LAYER_PREFIX = "line-"
+# The shortest window a further whole-video line gets of its own after the title; with
+# less room left it shares the opening seconds instead, stacked in the lower band.
+_MIN_LINE_HOLD_S = 1.5
 
 
-def _opening_title_element(
-    opening_title: str,
+def _title_slot_element(
+    text: str,
     *,
     hold_s: float | None,
     duration: float,
     picture: Sequence[TimelineClip],
     pinned_texts: Sequence[Any] | None,
     pinned_font_family: str | None,
+    start_s: float = 0.0,
+    element_id: str | None = None,
 ) -> Any:
-    """The approved title as one TextElement from 0 s, stepped below a top corner pin."""
+    """Words in the title's look and place from ``start_s``, stepped below a top corner pin.
+
+    The approved title (from 0 s), and any further whole-video line, each in a window of
+    its own after it (so two lines never share the slot at once).
+    """
     from app.pipeline.phone_narrated_plan import narrated_title_element  # noqa: PLC0415
 
     hold = _DEFAULT_TITLE_HOLD_S if hold_s is None else float(hold_s)
     title = narrated_title_element(
-        opening_title, end_s=hold, timeline_duration_s=duration, canvas=_STORY_CANVAS
+        text, end_s=start_s + hold, timeline_duration_s=duration, canvas=_STORY_CANVAS
     )
+    if title is not None and element_id is not None:
+        # A further line is not the narrated intro the editor treats as the title.
+        title = title.model_copy(
+            update={"id": element_id, "start_s": round(start_s, 4), "source_params": None}
+        )
     if title is None or not pinned_texts:
         return title
     # KRI-526/527: the title steps below a top corner pin that shares its hold. The pins
@@ -865,6 +897,56 @@ def _opening_title_element(
     return title.model_copy(update={"y_frac": moved})
 
 
+def _band_row(
+    element_id: str, text: str, start: float, end: float, y: float, font_family: str | None
+) -> dict[str, Any]:
+    """One lower-band text (clip-label look) as an unstyled variant row."""
+    from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+
+    return TextElement(
+        id=element_id,
+        text=text,
+        start_s=round(start, 4),
+        end_s=round(end, 4),
+        role="generative_intro",
+        position="custom",
+        x_frac=0.5,
+        y_frac=y,
+        font_family=font_family or "Fraunces",
+        size_px=64,
+        color="#FFF8F0",
+        stroke_width=0,
+        shadow_enabled=True,
+        shadow_style="standard",
+        effect="static",
+        alignment="center",
+        max_width_frac=0.84,
+    ).model_dump(mode="json", exclude_none=True)
+
+
+def _styled(rows: list[dict[str, Any]]) -> list[Any]:
+    from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+    from app.services.phone_text_styling import generation_style_rows  # noqa: PLC0415
+
+    return [
+        TextElement.model_validate(row) for row in generation_style_rows(rows, canvas=_STORY_CANVAS)
+    ]
+
+
+def _free_band_y(start: float, end: float, taken: Sequence[tuple[float, float, float]]) -> float:
+    """The lowest lower-band row free for ``[start, end)``: a closing text or a stacked
+    line steps up above any label (or each other) on screen at the same time."""
+    level = 0
+    while any(
+        s < end - 1e-3
+        and start < e - 1e-3
+        and abs(y - (_LABEL_Y - _LABEL_STACK_STEP_Y * level)) < _LABEL_STACK_STEP_Y / 2
+        for s, e, y in taken
+    ):
+        level += 1
+    return _LABEL_Y - _LABEL_STACK_STEP_Y * level
+
+
 def _clip_label_elements(
     labels: Sequence[PhoneClipLabel],
     picture: Sequence[TimelineClip],
@@ -879,9 +961,6 @@ def _clip_label_elements(
     montage is labelled twice. Two labels on one clip stack upwards instead of overlapping.
     A label whose clip is not in the edit draws nothing: the verifier still refuses it.
     """
-    from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
-    from app.services.phone_text_styling import generation_style_rows  # noqa: PLC0415
-
     ordered = sorted(picture, key=lambda clip: clip.timeline_start)
     rows: list[dict] = []
     stacked: dict[str, int] = {}
@@ -897,29 +976,17 @@ def _clip_label_elements(
             level = stacked.get(clip.id, 0)
             stacked[clip.id] = level + 1
             end = clip.timeline_start + clip.source_duration / clip.rate + (clip.hold_duration or 0)
-            element = TextElement(
-                id=f"clip-label-{len(rows)}",
-                text=text,
-                start_s=round(clip.timeline_start, 4),
-                end_s=round(end, 4),
-                role="generative_intro",
-                position="custom",
-                x_frac=0.5,
-                y_frac=_LABEL_Y - _LABEL_STACK_STEP_Y * level,
-                font_family=font_family or "Fraunces",
-                size_px=64,
-                color="#FFF8F0",
-                stroke_width=0,
-                shadow_enabled=True,
-                shadow_style="standard",
-                effect="static",
-                alignment="center",
-                max_width_frac=0.84,
+            rows.append(
+                _band_row(
+                    f"clip-label-{len(rows)}",
+                    text,
+                    clip.timeline_start,
+                    end,
+                    _LABEL_Y - _LABEL_STACK_STEP_Y * level,
+                    font_family,
+                )
             )
-            rows.append(element.model_dump(mode="json", exclude_none=True))
-    return [
-        TextElement.model_validate(row) for row in generation_style_rows(rows, canvas=_STORY_CANVAS)
-    ]
+    return _styled(rows)
 
 
 def _with_confirmed_text(
@@ -930,10 +997,24 @@ def _with_confirmed_text(
     opening_title: str | None,
     opening_title_hold_s: float | None,
     clip_labels: Sequence[PhoneClipLabel] = (),
+    closing_text: PhoneFreeText | None = None,
+    extra_lines: Sequence[PhoneFreeText] = (),
     pinned_texts: Sequence[Any] | None = None,
     pinned_font_family: str | None = None,
 ) -> tuple[EditRecipeV2, float | None, list[dict[str, Any]]]:
-    """``recipe`` (no text yet) with the approved title and clip labels.
+    """``recipe`` (no text yet) with the approved title, clip labels and free texts.
+
+    Placement, so no two texts share a place at the same time:
+
+    * title: the title slot from 0 s;
+    * ``closing_text``: the lower band over the last seconds, ending on the last frame
+      (the verifier's closing check), stepped above a label on the same cut;
+    * each of ``extra_lines``: the title slot in its own window after the title (and
+      before the closing text). On an edit too short for that it is on screen from 0 s in
+      the lower band, stepped above the labels and the closing text.
+
+    Lower band rather than mid-frame for the closing text: this route has no face
+    tracking, and the speaker's face sits in the upper middle of a talking shot.
 
     Returns ``(recipe, hold, rows)``: ``hold`` is how long the title is on screen (``None``
     when there is no title) and ``rows`` the drawn elements as variant-row JSON. Shared by
@@ -945,15 +1026,14 @@ def _with_confirmed_text(
         _with_text_layers,
     )
 
+    slot = {
+        "duration": duration,
+        "picture": picture,
+        "pinned_texts": pinned_texts,
+        "pinned_font_family": pinned_font_family,
+    }
     title = (
-        _opening_title_element(
-            opening_title,
-            hold_s=opening_title_hold_s,
-            duration=duration,
-            picture=picture,
-            pinned_texts=pinned_texts,
-            pinned_font_family=pinned_font_family,
-        )
+        _title_slot_element(opening_title, hold_s=opening_title_hold_s, **slot)
         if opening_title
         else None
     )
@@ -963,22 +1043,70 @@ def _with_confirmed_text(
         if getattr(asset, "media_id", None)
     }
     labels = _clip_label_elements(clip_labels, picture, media_of, font_family=pinned_font_family)
+    taken = [(float(e.start_s), float(e.end_s), float(e.y_frac)) for e in labels]
+
+    closing_rows: list[dict[str, Any]] = []
+    limit = duration
+    if closing_text is not None and closing_text.text.split():
+        words = " ".join(closing_text.text.split())
+        hold = min(duration, closing_text.hold_s or _DEFAULT_TITLE_HOLD_S)
+        start = max(0.0, duration - hold)
+        y = _free_band_y(start, duration, taken)
+        taken.append((start, duration, y))
+        closing_rows.append(
+            _band_row("closing-text", words, start, duration, y, pinned_font_family)
+        )
+        limit = start
+
+    lines: list[Any] = []
+    stacked_rows: list[dict[str, Any]] = []
+    cursor = float(title.end_s) if title is not None else 0.0
+    for index, line in enumerate(extra_lines):
+        words = " ".join(line.text.split())
+        if not words:
+            continue
+        want = line.hold_s or _DEFAULT_TITLE_HOLD_S
+        room = limit - cursor
+        if room >= (line.hold_s or _MIN_LINE_HOLD_S) - 1e-6:
+            element = _title_slot_element(
+                words,
+                hold_s=min(want, room),
+                start_s=cursor,
+                element_id=f"text-line-{index}",
+                **slot,
+            )
+            if element is not None:
+                lines.append(element)
+                cursor = float(element.end_s)
+                continue
+        end = min(duration, want)
+        y = _free_band_y(0.0, end, taken)
+        taken.append((0.0, end, y))
+        stacked_rows.append(_band_row(f"text-line-{index}", words, 0.0, end, y, pinned_font_family))
+    closing = _styled(closing_rows)
+    stacked = _styled(stacked_rows)
+
     layers: list[Any] = []
     if title is not None:
         layers += _compile_title_layers([title], canvas=_STORY_CANVAS, timeline_duration_s=duration)
-    if labels:
-        layers += _compile_title_layers(
-            labels,
-            canvas=_STORY_CANVAS,
-            timeline_duration_s=duration,
-            layer_prefix=_LABEL_LAYER_PREFIX,
-        )
+    for elements, prefix in (
+        (lines + stacked, _LINE_LAYER_PREFIX),
+        (labels, _LABEL_LAYER_PREFIX),
+        (closing, _CLOSING_LAYER_PREFIX),
+    ):
+        if elements:
+            layers += _compile_title_layers(
+                elements,
+                canvas=_STORY_CANVAS,
+                timeline_duration_s=duration,
+                layer_prefix=prefix,
+            )
     if not layers:
         return recipe, None, []
     hold = float(title.end_s) - float(title.start_s) if title is not None else None
     rows = [
         element.model_dump(mode="json", exclude_none=True)
-        for element in ([title] if title is not None else []) + labels
+        for element in ([title] if title is not None else []) + lines + stacked + labels + closing
     ]
     return _with_text_layers(recipe, layers), hold, rows
 
@@ -1201,6 +1329,7 @@ __all__ = [
     "MUSIC_TRACK_ID",
     "SPEECH_AUDIO_TRACK_ID",
     "PhoneClipLabel",
+    "PhoneFreeText",
     "PhoneSpeechSection",
     "SpeechMontageReceipt",
     "compile_phone_speech_montage_plan",
