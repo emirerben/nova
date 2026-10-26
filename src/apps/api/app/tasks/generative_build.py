@@ -5068,9 +5068,75 @@ def _run_phone_guided_job(
                     reason="compile_dropped",
                 )
                 timed_cards = ()
+    # KRI-942: the creator's "clip sound off / on" asks, built on the compiled clock like the
+    # cards above. A candidate the compile, the pilot check or the contract's camera-audio
+    # promise refuses steps down to the next; the last one is the plan as it was.
+    from app.services.phone_clip_sound_toggle import (  # noqa: PLC0415
+        conflict_reasons,
+        plan_toggle_lane,
+        sound_contract_conflict,
+        toggle_record,
+    )
+    from app.services.phone_rollout import phone_clip_sound_windows_supported  # noqa: PLC0415
+
+    toggle_receipt: dict | None = None
+    toggle_changed = False
+    toggle_lane = plan_toggle_lane(
+        snapshot,
+        raw_plan=raw_plan,
+        plan=plan,
+        recipe=recipe,
+        bindings=bindings,
+        strategy=creator_strategy,
+        windows_supported=phone_clip_sound_windows_supported(),
+    )
+    if toggle_lane is not None:
+        conflicted: dict[str, str] = {}
+        for candidate in toggle_lane.candidates:
+            if candidate is toggle_lane.candidates[-1]:
+                toggle_receipt = toggle_record(
+                    toggle_lane, candidate, recipe, bindings, extra_reasons=conflicted
+                )
+                break
+            try:
+                candidate_plan = GuidedStoryExecutionPlan.model_validate(candidate.raw_plan)
+                candidate_compiled = compile_phone_guided_repaired(
+                    candidate_plan,
+                    bindings,
+                    contract=contract,
+                    visuals=visuals,
+                    narration=narration_bed,
+                    song=song_bed,
+                    sound_effects=sound_effects,
+                    landscape_fit="fit" if landscape_fit == "fit" else "fill",
+                    **(
+                        {"timed_cards": timed_cards, "allow_editor_media": True}
+                        if timed_cards
+                        else {}
+                    ),
+                )
+                validate_phone_pilot_recipe(
+                    candidate_compiled.recipe, allow_editor_media=bool(timed_cards)
+                )
+            except (UnsupportedPhonePlan, ValueError) as exc:
+                log.warning(
+                    "phone_clip_sound.candidate_refused", job_id=job_id, error=str(exc)[:200]
+                )
+                continue
+            if sound_contract_conflict(contract, candidate_compiled.recipe, bindings):
+                conflicted = conflict_reasons(toggle_lane)
+                continue
+            raw_plan, plan, compiled = candidate.raw_plan, candidate_plan, candidate_compiled
+            recipe, repair_notes = compiled.recipe, list(compiled.notes)
+            toggle_changed = True
+            toggle_receipt = toggle_record(toggle_lane, candidate, recipe, bindings)
+            break
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(timed_cards))
     repair_notes = _phone_repair_notes(snapshot, contract, recipe.duration, repair_notes)
-    repaired_plan_payload = copy.deepcopy(raw_plan) if current_phone_text_policy() else None
+    # The editor's Save recompiles from this private plan, so it must hold the moments' sound.
+    repaired_plan_payload = (
+        copy.deepcopy(raw_plan) if current_phone_text_policy() or toggle_changed else None
+    )
     if compiled.plan is not plan:
         repaired_plan_payload = compiled.plan.model_dump(mode="json", exclude_none=False)
         # The editor recompiles from the persisted rows: keep them equal to what compiled.
@@ -5159,6 +5225,11 @@ def _run_phone_guided_job(
             current["variants"][0][TIMED_CARD_RECEIPT_FIELD] = timed_receipt
             if timed_cards:
                 current["variants"][0][TIMED_CARDS_FIELD] = timed_card_rows(timed_cards)
+        if toggle_receipt is not None:
+            from app.services.phone_clip_sound_toggle import TOGGLE_RECEIPT_FIELD  # noqa: PLC0415
+
+            # KRI-942: what the pinned recipe plays for each on/off ask, and why not.
+            current["variants"][0][TOGGLE_RECEIPT_FIELD] = toggle_receipt
         if repaired_plan_payload is not None:
             # The editor's first Save recompiles from this private per-variant plan, not
             # the approved canonical plan (whose text lane is re-validated against the

@@ -268,6 +268,15 @@ class Settings(BaseSettings):
     # --app nova-video` + `fly machine restart <id>` (api + worker); rollback with
     # `=false` the same way.
     phone_timed_cards_enabled: bool = False
+    # KRI-942: lets a phone montage turn off PART of a clip's own sound ("no sound from 5 to
+    # 8 seconds", "keep only that line"). The worker then sends recipe `mute_windows`, which
+    # the engine ramps at each edge; `phone_rollout.phone_clip_sound_windows_supported()`
+    # also needs `visualBlocks` verified (the capability mute windows require). Whole-clip
+    # on/off (`source_audio_muted`, clip volume 0) never needs this flag. False (default):
+    # a part-of-a-clip "off" is not built and a part-of-a-clip "on" keeps that whole clip
+    # audible; the receipt says so. Apply: `fly secrets set PHONE_CLIP_SOUND_WINDOWS_ENABLED=
+    # true --app nova-video` + restart api + worker; rollback with `=false` the same way.
+    phone_clip_sound_windows_enabled: bool = False
     # KRI-183 (video Visuals as PiP): when this flag AND
     # `phone_rollout.phone_subtitled_overlays_supported()` hold AND
     # "visualVideos" is in `phone_render_verified_features` -- i.e.
@@ -611,7 +620,7 @@ class Settings(BaseSettings):
     media_library_enabled: bool = False
     media_collection_proposals_enabled: bool = False
     media_collection_proposal_user_ids: list[UUID] = Field(default_factory=list)
-    media_collection_cache_only: bool = True
+    media_collection_cache_only: bool = False
     # Per-account allowlist; ["*"] admits everyone (the ENABLED kill switch still applies).
     # Admission alone personalizes nothing: a creator must confirm a profile first.
     creator_editorial_taste_enabled: bool = False
@@ -823,7 +832,7 @@ class Settings(BaseSettings):
     # FALSE (dark). Off = no events, no job metadata, capability false, byte-identical.
     # Kill switch = false + restart (api + worker). Contract: docs/pipelines/live-plan-blocks.md.
     live_plan_review_enabled: bool = False
-    # Longest song accepted (seconds); the montage itself is capped at 120 s.
+    # Longest song accepted (seconds); a song-owned montage is capped at 120 s.
     user_song_max_duration_s: float = Field(default=600.0, gt=0)
     # How long a planner turn waits for song analysis / take alignment before it
     # answers "still checking your clips".

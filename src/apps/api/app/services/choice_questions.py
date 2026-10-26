@@ -52,6 +52,7 @@ from app.kria.freeze_ask import (
     times_one_moment,
 )
 from app.kria.reply_language import current_reply_language, say
+from app.pipeline.best_parts import edit_cap_s
 from app.services.clip_facts import (
     CAPTURE_ORDER_KEYS,
     capture_from_assignment,
@@ -2947,6 +2948,7 @@ _COVERAGE_LABELS_TR = {
     "Update the selected clips": "Seçili klipleri güncelle",
     "Choose fewer clips": "Daha az klip seç",
     "Add longer footage": "Daha uzun çekim ekle",
+    "Use a shorter voiceover": "Daha kısa bir seslendirme kullan",
 }
 
 
@@ -3069,6 +3071,25 @@ def _source_coverage(
             tr=f"Her biri kurguya girebilsin diye bu video için en fazla {source_limit} klip seç.",
         )
         label = "Choose fewer clips"
+    elif "natural_source_capacity" in codes and (
+        envelope.get("natural_duration_s") or 0
+    ) > edit_cap_s(envelope.get("natural_owner")):
+        # The edit cap, not the footage, is the limit: more footage cannot help.
+        natural_owner = envelope.get("natural_owner")
+        natural_duration = envelope.get("natural_duration_s")
+        edit_cap = edit_cap_s(natural_owner)
+        reason = say(
+            en=(
+                f"The selected {natural_owner} runs {natural_duration:g} seconds, but an edit "
+                f"can be at most {edit_cap:g} seconds. Use a shorter "
+                f"{natural_owner}."
+            ),
+            tr=(
+                f"Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla "
+                f"{edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan."
+            ),
+        )
+        label = "Use a shorter voiceover"
     elif "natural_source_capacity" in codes:
         natural_owner = envelope.get("natural_owner")
         natural_duration = envelope.get("natural_duration_s")

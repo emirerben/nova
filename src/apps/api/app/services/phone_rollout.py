@@ -300,11 +300,12 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
     ]
     if recipe.visual_fills:
         raise ValueError("Visual blocks await native parity and device qualification")
-    if recipe.audio.mute_windows:
+    if recipe.audio.mute_windows and not phone_clip_sound_windows_supported():
         # KRI-118 L1 item 6: mute windows are a distinct feature from visual
         # blocks (silent overlay tracks) -- this used to reuse the "Visual
         # blocks..." message meant for that other rejection, which read as
         # nonsensical/misleading for a recipe with no visual fills at all.
+        # KRI-942: the creator's part-of-a-clip "sound off" is the one sender, behind its flag.
         raise ValueError("Muted sections aren't supported on iPhone yet")
     if placements and not (
         (getattr(settings, "phone_editor_media_enabled", False) or allow_editor_media)
@@ -1030,6 +1031,20 @@ def phone_timed_cards_supported() -> bool:
         getattr(settings, "phone_timed_cards_enabled", False)
         and settings.media_overlays_enabled
         and all(feature in verified for feature in PHONE_TIMED_CARD_FEATURES)
+    )
+
+
+def phone_clip_sound_windows_supported() -> bool:
+    """Can a phone montage silence PART of a clip's own sound right now (KRI-942)?
+
+    True iff `phone_clip_sound_windows_enabled` AND `visualBlocks` is verified (the
+    capability recipe `mute_windows` require, `EditRecipeV2._references`). Read by the guided
+    phone writer (whether it sends the windows) and by `validate_phone_pilot_recipe` (whether
+    a recipe carrying them may pin). Whole-clip on/off never needs it.
+    """
+    return bool(
+        getattr(settings, "phone_clip_sound_windows_enabled", False)
+        and "visualBlocks" in settings.phone_render_verified_features
     )
 
 

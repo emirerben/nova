@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Literal
 
+from app.kria.portable_visual import AudioMuteWindow
 from app.kria.recipes import (
     AssetFingerprint,
     AudioMixRecipe,
@@ -1008,6 +1009,11 @@ def compile_phone_guided_plan(
         required_capabilities |= set(USER_SONG_REQUIRED_CAPABILITIES)
         if creator_hears_camera:
             required_capabilities |= {"audioMix"}
+    mute_windows = _source_mute_windows(plan.story_timeline, clips)
+    if mute_windows and audio.original_volume > 0:
+        # KRI-942: part of a clip's own sound turned off in chat. The recipe validator adds
+        # the capability the engine's mute windows need (`visualBlocks`).
+        audio = audio.model_copy(update={"mute_windows": mute_windows})
     if sound_effects:
         # Imported lazily: phone_subtitled_plan imports UnsupportedPhonePlan from here.
         from app.pipeline.phone_subtitled_plan import _compile_sfx_track  # noqa: PLC0415
@@ -1046,6 +1052,31 @@ def compile_phone_guided_plan(
         audio=audio,
         required_capabilities=required_capabilities,
     )
+
+
+def _source_mute_windows(moments, clips: list[TimelineClip]) -> list[AudioMuteWindow]:  # noqa: ANN001
+    """Each moment's ``source_audio_mute_spans`` on the compiled clock (KRI-942).
+
+    A span is in the clip's source seconds; it lands where the COMPILED clip (after the
+    device refit) plays those seconds, clamped to the clip's own sound. A sliver shorter
+    than a frame is dropped.
+    """
+    by_id = {clip.id: clip for clip in clips}
+    windows: list[AudioMuteWindow] = []
+    for moment in moments:
+        clip = by_id.get(moment.moment_id)
+        if clip is None or not moment.source_audio_mute_spans:
+            continue
+        start = clip.timeline_start
+        end = start + clip.source_duration / clip.rate
+        for source_start, source_end in moment.source_audio_mute_spans:
+            lo = max(start, start + (source_start - clip.source_start) / clip.rate)
+            hi = min(end, start + (source_end - clip.source_start) / clip.rate)
+            if hi - lo >= _FRAME_S:
+                windows.append(
+                    AudioMuteWindow(start=round(lo, 6), end=round(hi, 6), clip_ids=[clip.id])
+                )
+    return windows[:100]
 
 
 def _sfx_key(request: SubtitledSoundEffect) -> tuple:
