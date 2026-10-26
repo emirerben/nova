@@ -11,9 +11,10 @@ struct ChatWorkspaceView: View {
     @State private var drawerMounted = false
     @State private var showsGallery = false
     @State private var showsAccount = false
-    @State private var showsCollections = false
     @State private var collectionsEnabled = false
-    @State private var collectionCacheOnlyRequired = true
+    @State private var collectionCacheOnlyRequired = false
+    /// Kept for the life of the workspace so uploads and analysis carry on while the creator is in a chat.
+    @State private var cameraRoll: CameraRollSurfaceModel?
     @State private var projectActions = ProjectActionsPresenter()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -29,7 +30,7 @@ struct ChatWorkspaceView: View {
                 close: { setDrawerOpen(false) },
                 openGallery: { setDrawerOpen(false); Perf.begin("gallery.open"); showsGallery = true },
                 openAccount: { setDrawerOpen(false); showsAccount = true },
-                openCollections: collectionsEnabled ? { setDrawerOpen(false); showsCollections = true } : nil
+                openCollections: collectionsEnabled ? { openCameraRoll() } : nil
             ),
             content: workspace
         )
@@ -45,7 +46,7 @@ struct ChatWorkspaceView: View {
         .task {
             let collectionCapabilities = try? await model.api.creationCapabilities()
             collectionsEnabled = collectionCapabilities?.mediaCollections == true
-            collectionCacheOnlyRequired = collectionCapabilities?.mediaCollectionCacheOnly ?? true
+            collectionCacheOnlyRequired = collectionCapabilities?.mediaCollectionCacheOnly ?? false
             Perf.mark("workspace.task")
             await model.openWorkspace(preferredProjectID: UUID(uuidString: lastProjectID))
             Perf.mark("workspace.opened")
@@ -75,20 +76,30 @@ struct ChatWorkspaceView: View {
             NavigationStack { GalleryView(openProjects: { showsGallery = false; setDrawerOpen(true) }) }
                 .environmentObject(model)
         }
-        .sheet(isPresented: $showsCollections) { CameraRollCollectionView(api: model.api, cacheOnlyRequired: collectionCacheOnlyRequired, onSelected: { thread in
-            await model.loadProjects()
-            model.selectProject(thread.summary)
-            showsCollections = false
-        }) }
         .sheet(isPresented: $showsAccount) {
             NavigationStack { AccountView() }
         }
     }
 
+    private func openCameraRoll() {
+        if cameraRoll == nil {
+            cameraRoll = CameraRollSurfaceModel.make(api: model.api, cacheOnlyRequired: collectionCacheOnlyRequired)
+        }
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) { model.openCameraRoll() }
+        setDrawerOpen(false)
+    }
+
     private var workspace: some View {
         NavigationStack {
             Group {
-                if let project = model.selectedProject {
+                if model.showsCameraRoll, let cameraRoll {
+                    WorkspaceCrossfade(dismiss: {}) { _ in
+                        CameraRollSurfaceView(model: cameraRoll, openProjects: { setDrawerOpen(!showsProjects) }, onSelected: { thread in
+                            await model.loadProjects()
+                            model.selectProject(thread.summary)
+                        })
+                    }
+                } else if let project = model.selectedProject {
                     CreationWorkspaceView(
                         project: project,
                         openProjects: { setDrawerOpen(!showsProjects) },

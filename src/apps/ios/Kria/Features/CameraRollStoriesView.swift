@@ -7,9 +7,19 @@ struct CameraRollStoriesView: View {
     let collection: CameraRollCollection
     let result: CameraRollStories
     var cacheOnly = false
+    /// One idea on the camera roll's detail page (Paper A4): no navigation of its own, and a bar of actions at
+    /// the bottom. The standalone form (several ideas, its own navigation) stays for the offline review host.
+    var embedded = false
+    /// Offline fixtures have no pictures to fetch; tiles show their colour instead.
+    var thumbnailsDisabled = false
+    /// Start building the idea as soon as the page opens ("Use this idea" on an idea card). Waits when the idea
+    /// still has open questions.
+    var autoSelect = false
     var onAddBackground: @MainActor (String) -> Void = { _ in }
     let onSelected: @MainActor (CreationThread) async -> Void
     var onReviewed: @MainActor (CameraRollStories) -> Void = { _ in }
+    /// "Not this one" in the embedded form: the idea is deleted (and not offered again) rather than just hidden.
+    var onDelete: @MainActor () -> Void = {}
     @Environment(\.dismiss) private var dismiss
     @State private var stories: [CameraRollStory] = []
     @State private var busy = false
@@ -27,8 +37,58 @@ struct CameraRollStoriesView: View {
     @State private var showsTaste = false
     @State private var ratingStory: CameraRollStory?
     @State private var feedbackSaved = Set<String>()
+    @State private var didAutoSelect = false
 
     var body: some View {
+        Group {
+            if embedded { embeddedContent } else { standaloneContent }
+        }
+        .onAppear { stories = result.stories }
+        .task {
+            taste = try? await api.editorialTaste()
+            if result.coverage != nil {
+                for story in result.stories {
+                    try? await api.recordCameraRollStoryExposure(collectionID: collection.id, story: story, collectionRevision: collection.serverRevision ?? 0)
+                }
+            }
+            if embedded, autoSelect, !didAutoSelect, let story = result.stories.first, story.contentPlan?.unresolvedQuestions.isEmpty ?? true {
+                didAutoSelect = true
+                selectionTask = Task { await select(story) }
+            }
+        }
+        .onDisappear {
+            onReviewed(CameraRollStories(stories: stories, coverage: result.coverage, suggestedResearchTopic: result.suggestedResearchTopic))
+            selectionTask?.cancel(); player?.pause()
+        }
+        .interactiveDismissDisabled(busy)
+        .sheet(item: $ratingStory) { story in
+            IdeaFeedbackView(api: api, collectionID: collection.id, story: story) {
+                feedbackSaved.insert("\(story.id)-\(story.revision)")
+            }
+        }
+        .sheet(isPresented: $showsPreview, onDismiss: { player?.pause(); player = nil }) {
+            if let player { VideoPlayer(player: player).ignoresSafeArea(edges: .bottom) }
+        }
+        .sheet(item: $editingWording) { story in
+            if let plan = story.contentPlan {
+                CameraRollWordingEditor(plan: plan) { revised in
+                    busy = true; error = nil; defer { busy = false }
+                    let changed = try await api.updateCameraRollContentPlan(collectionID: collection.id, story: story, collectionRevision: collection.serverRevision ?? 0, plan: revised)
+                    stories = stories.map { $0.id == changed.id ? changed : $0 }
+                }
+            }
+        }
+        .sheet(item: $relinkingStory) { story in
+            if let owner = api.mediaLibraryOwner {
+                CollectionOriginalsReview(assets: missingOriginals, owner: owner) {
+                    relinkingStory = nil
+                    selectionTask = Task { await select(story) }
+                }
+            }
+        }
+    }
+
+    private var standaloneContent: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
@@ -52,7 +112,7 @@ struct CameraRollStoriesView: View {
                 ForEach(stories.filter { !$0.rejected }) { story in
                     VStack(alignment: .leading, spacing: 16) {
                         HStack(alignment: .firstTextBaseline) {
-                            Text(story.title).font(KriaFont.display(26))
+                            Text(story.title).font(KriaFont.headline(26))
                             Spacer()
                             Text("\(story.duration, specifier: "%.1f") sec").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                         }
@@ -68,7 +128,7 @@ struct CameraRollStoriesView: View {
                                 ForEach(story.moments) { moment in
                                     if let entry = collection.entries.first(where: { $0.savedAsset?.id == moment.assetID }) {
                                         Button { Task { await preview(moment) } } label: {
-                                            CameraRollCollectionThumbnail(entry: entry, api: api, size: CGSize(width: 104, height: 138))
+                                            CameraRollCollectionThumbnail(entry: entry, api: api, metadataOnly: thumbnailsDisabled, size: CGSize(width: 104, height: 138))
                                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                                         }.buttonStyle(.plain).accessibilityLabel("Preview \(moment.text)")
                                     }
@@ -131,49 +191,112 @@ struct CameraRollStoriesView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.disabled(busy) }
             }
-            .onAppear { stories = result.stories }
-            .task {
-                taste = try? await api.editorialTaste()
-                if result.coverage != nil {
-                    for story in result.stories {
-                        try? await api.recordCameraRollStoryExposure(collectionID: collection.id, story: story, collectionRevision: collection.serverRevision ?? 0)
-                    }
-                }
-            }
-            .onDisappear {
-                onReviewed(CameraRollStories(stories: stories, coverage: result.coverage, suggestedResearchTopic: result.suggestedResearchTopic))
-                selectionTask?.cancel(); player?.pause()
-            }
-            .interactiveDismissDisabled(busy)
-            .sheet(isPresented: $showsTaste) {
-                EditorialTasteView(api: api) { value in taste = value }
-            }
-            .sheet(item: $ratingStory) { story in
-                IdeaFeedbackView(api: api, collectionID: collection.id, story: story) {
-                    feedbackSaved.insert("\(story.id)-\(story.revision)")
-                }
-            }
-            .sheet(isPresented: $showsPreview, onDismiss: { player?.pause(); player = nil }) {
-                if let player { VideoPlayer(player: player).ignoresSafeArea(edges: .bottom) }
-            }
-            .sheet(item: $editingWording) { story in
-                if let plan = story.contentPlan {
-                    CameraRollWordingEditor(plan: plan) { revised in
-                        busy = true; error = nil; defer { busy = false }
-                        let changed = try await api.updateCameraRollContentPlan(collectionID: collection.id, story: story, collectionRevision: collection.serverRevision ?? 0, plan: revised)
-                        stories = stories.map { $0.id == changed.id ? changed : $0 }
-                    }
-                }
-            }
-            .sheet(item: $relinkingStory) { story in
-                if let owner = api.mediaLibraryOwner {
-                    CollectionOriginalsReview(assets: missingOriginals, owner: owner) {
-                        relinkingStory = nil
-                        selectionTask = Task { await select(story) }
-                    }
-                }
+            .navigationDestination(isPresented: $showsTaste) {
+                CameraRollTasteView(api: api) { value in taste = value }
             }
         }
+    }
+
+    // MARK: Embedded (Paper A4)
+
+    @ViewBuilder private var embeddedContent: some View {
+        if let story = stories.first(where: { !$0.rejected }) ?? result.stories.first {
+            ZStack(alignment: .bottom) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(embeddedKicker(story)).cameraRollKicker()
+                            Text(story.title).cameraRollTitle().fixedSize(horizontal: false, vertical: true)
+                                .accessibilityAddTraits(.isHeader)
+                        }
+                        clipStrip(story)
+                        if let plan = story.contentPlan {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("Opening text").cameraRollKicker()
+                                    Spacer()
+                                    Button("Edit") { editingWording = story }.font(KriaFont.body(13).weight(.semibold)).frame(minHeight: 44)
+                                        .accessibilityIdentifier("story-edit-wording")
+                                }
+                                Text(plan.openingText).font(KriaFont.body(17).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                                if let closing = plan.closingText { Text("Then: \(closing)").font(KriaFont.body(14)).foregroundStyle(KriaColor.mutedInk) }
+                            }
+                            .padding(.horizontal, 16).padding(.vertical, 6).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                            if !(plan.openQuestions ?? []).isEmpty {
+                                CameraRollOpenQuestionsView(story: story, plan: plan) { revised in await resolve(story, plan: revised) }
+                            }
+                        }
+                        if let research = story.research { CameraRollIdeaResearchView(research: research) }
+                        DisclosureGroup("See clips and details") { storyDetails(story) }.font(KriaFont.body(14))
+                        if busy { ProgressView("Preparing…").accessibilityIdentifier("story-busy") }
+                        if let error { Text(error).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText).accessibilityIdentifier("story-error") }
+                        if let heldRecovery {
+                            Button("Try this idea again") { selectionTask = Task { await recover(heldRecovery) } }
+                                .buttonStyle(KriaPrimaryButtonStyle()).disabled(busy).accessibilityIdentifier("story-recover-held-selection")
+                        }
+                    }.padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 190)
+                }.kriaScrollEdgeFade()
+                actionBar(story)
+            }
+            .background(KriaColor.paper).kriaPage()
+        } else {
+            Text("This idea was removed.").font(KriaFont.body(15)).foregroundStyle(KriaColor.mutedInk).frame(maxHeight: .infinity)
+        }
+    }
+
+    private func embeddedKicker(_ story: CameraRollStory) -> String {
+        let seconds = Int(story.duration.rounded())
+        return "\(story.contentPlan?.formLabel ?? "Idea") · \(story.moments.count) \(story.moments.count == 1 ? "clip" : "clips") · \(seconds / 60):\(String(format: "%02d", seconds % 60))"
+    }
+
+    private func clipStrip(_ story: CameraRollStory) -> some View {
+        let shown = Array(story.moments.prefix(3))
+        return HStack(spacing: 8) {
+            ForEach(shown) { moment in
+                if let entry = collection.entries.first(where: { $0.savedAsset?.id == moment.assetID }) {
+                    Button { Task { await preview(moment) } } label: {
+                        CameraRollCollectionThumbnail(entry: entry, api: api, metadataOnly: thumbnailsDisabled, size: CGSize(width: 84, height: 112))
+                            .overlay(alignment: .topLeading) {
+                                Text(GalleryTileChrome.duration(moment.end - moment.start)).font(KriaFont.body(11).weight(.semibold)).foregroundStyle(.white)
+                                    .padding(.horizontal, 7).padding(.vertical, 3).background(KriaColor.ink.opacity(0.62), in: Capsule()).padding(6)
+                            }
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }.buttonStyle(.plain).accessibilityLabel("Preview \(moment.text)")
+                }
+            }
+            if story.moments.count > shown.count {
+                Text("+\(story.moments.count - shown.count)").font(KriaFont.body(14).weight(.bold)).foregroundStyle(KriaColor.mutedInk)
+                    .frame(width: 84, height: 112).background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+        }
+    }
+
+    private func actionBar(_ story: CameraRollStory) -> some View {
+        VStack(spacing: 8) {
+            Button { selectionTask = Task { await select(story) } } label: {
+                Text("Use this idea").font(KriaFont.body(16).weight(.bold)).foregroundStyle(KriaColor.ink)
+                    .frame(maxWidth: .infinity, minHeight: 52).background(KriaColor.butter, in: Capsule()).contentShape(Capsule())
+            }
+            .buttonStyle(.plain).disabled(busy || !(story.contentPlan?.unresolvedQuestions.isEmpty ?? true))
+            .opacity(busy || !(story.contentPlan?.unresolvedQuestions.isEmpty ?? true) ? 0.45 : 1)
+            .accessibilityIdentifier("story-choose-\(story.id)")
+            HStack(spacing: 8) {
+                if taste?.enabled == true && taste?.memoryPaused == false {
+                    Button { ratingStory = story } label: { secondaryLabel(feedbackSaved.contains("\(story.id)-\(story.revision)") ? "Feedback saved" : "Would you post this?") }
+                        .buttonStyle(.plain).accessibilityIdentifier("idea-feedback")
+                }
+                Button { onDelete() } label: { secondaryLabel("Not this one") }
+                    .buttonStyle(.plain).disabled(busy).accessibilityIdentifier("story-not-this-one")
+            }
+        }
+        .padding(12).background(Color.white, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .shadow(color: KriaColor.ink.opacity(0.18), radius: 28, y: 6).padding(.horizontal, 12).padding(.bottom, 28)
+    }
+
+    private func secondaryLabel(_ title: String) -> some View {
+        Text(title).font(KriaFont.body(14).weight(.semibold)).foregroundStyle(KriaColor.ink)
+            .frame(maxWidth: .infinity, minHeight: 40).background(KriaColor.fill, in: Capsule()).frame(minHeight: 44).contentShape(Capsule())
     }
 
     private func storyDetails(_ story: CameraRollStory) -> some View {
@@ -198,7 +321,7 @@ struct CameraRollStoriesView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .top, spacing: 12) {
                         if let entry = collection.entries.first(where: { $0.savedAsset?.id == moment.assetID }) {
-                            CameraRollCollectionThumbnail(entry: entry, api: api, size: CGSize(width: 72, height: 88))
+                            CameraRollCollectionThumbnail(entry: entry, api: api, metadataOnly: thumbnailsDisabled, size: CGSize(width: 72, height: 88))
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
                         }
                         VStack(alignment: .leading, spacing: 6) {
@@ -363,7 +486,7 @@ struct CameraRollStoriesView: View {
     }
 }
 
-private struct CameraRollIdeaResearchView: View {
+struct CameraRollIdeaResearchView: View {
     let research: CameraRollStoryResearch
     var body: some View {
         DisclosureGroup("Background facts") {
@@ -390,7 +513,7 @@ private struct CameraRollIdeaResearchView: View {
     }
 }
 
-private struct CameraRollOpenQuestionsView: View {
+struct CameraRollOpenQuestionsView: View {
     let story: CameraRollStory
     let plan: CameraRollContentPlan
     let save: @MainActor (CameraRollContentPlan) async -> Void
@@ -407,18 +530,24 @@ private struct CameraRollOpenQuestionsView: View {
                     } else {
                         TextField("Your answer", text: Binding(get: { drafts[item.id] ?? "" }, set: { drafts[item.id] = String($0.prefix(200)) }), axis: .vertical)
                             .accessibilityIdentifier("story-question-answer-\(item.id)")
-                        HStack {
-                            Button("Save answer") { Task { await save(plan.resolving(item.id, answer: drafts[item.id] ?? "")) } }
-                                .disabled((drafts[item.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        let answerIsEmpty = (drafts[item.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        HStack(spacing: 8) {
+                            Button { Task { await save(plan.resolving(item.id, answer: drafts[item.id] ?? "")) } } label: { questionChip("Save answer") }
+                                .disabled(answerIsEmpty).opacity(answerIsEmpty ? 0.45 : 1)
                                 .accessibilityIdentifier("story-question-save-\(item.id)")
-                            Button("Skip") { Task { await save(plan.resolving(item.id, answer: nil)) } }
+                            Button { Task { await save(plan.resolving(item.id, answer: nil)) } } label: { questionChip("Skip") }
                                 .accessibilityIdentifier("story-question-skip-\(item.id)")
-                        }.buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
+                        }.buttonStyle(.plain)
                     }
                 }
             }
         }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-            .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 16))
+            .background(KriaColor.menu, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private func questionChip(_ title: String) -> some View {
+        Text(title).font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.ink)
+            .padding(.horizontal, 14).frame(height: 36).background(Color.white, in: Capsule()).frame(minHeight: 44).contentShape(Capsule())
     }
 }
 
@@ -466,7 +595,7 @@ private struct CollectionOriginalsReview: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    Text("Use the full-quality footage").font(KriaFont.display(26))
+                    Text("Use the full-quality footage").font(KriaFont.headline(26))
                     Text("Choose the matching originals from Photos. They stay on your iPhone.").font(KriaFont.body(14)).foregroundStyle(KriaColor.mutedInk)
                     ForEach(assets) { asset in
                         HStack { Text(asset.displayName).font(KriaFont.body(14)); Spacer(); Image(systemName: linked.contains(asset.id) ? "checkmark.circle.fill" : "video").foregroundStyle(KriaColor.mutedInk) }
