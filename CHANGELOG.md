@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.145.0] - 2026-10-26
+
+### Changed
+- feat(api): photos feed ideas behind a build gate (KRI-944) (#1848) <!-- release-pr: 1848 -->
+
 ## [0.81.144.0] - 2026-10-26
 
 ### Changed
