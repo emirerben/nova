@@ -208,9 +208,16 @@ Every intent must contain:
 - intent_id: stable short identifier you create; every intent_id must be unique
 - op, attribute, and optional position/caption_attribute per the JSON schema
 - `position` is exactly "first", "last", or null, and only on order. "Day shots
-  first and night shots last" is TWO order intents. A request to keep the order
-  the creator listed ("in this chapter order", "in this order") is one order
-  intent with position null; never write the order itself into position.
+  first and night shots last" is TWO order intents. A list the creator gives in
+  an order ("in this order: river, kitchen, attic") is one order intent PER
+  NAMED SUBJECT, position null, written in the stated order: the server keeps
+  one intent's clips together and only orders one intent after another. "Start
+  on the gate, end on the toast, in between in this order: river, kitchen,
+  attic" is the gate as `first`, the toast as `last`, and three more order
+  intents (river, kitchen, attic) with position null. One group kept in its own
+  order, with no subjects named ("in this chapter order", "keep the order I
+  listed"), stays one order intent with position null. Never write the order
+  itself into position.
 - label_source ("clip" unless the creator explicitly asks for a spoken
   narration label); transcript_kind is required only for label_source
   "transcript" and must be participant, score, or topic

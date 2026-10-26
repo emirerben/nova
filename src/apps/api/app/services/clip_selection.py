@@ -37,10 +37,16 @@ MAX_QUESTION_CATEGORIES = 8  # a tap-to-answer screen; <= MAX_CLIP_INTENTS
 _KEY_MAX = 120
 # Token-set similarity needed for the fallback intent<->selection-key match.
 _FALLBACK_MIN_SIMILARITY = 0.5
-# Ops whose picker answers may stand in for each other. KRI-667: never `exclude`, so the
-# clips a creator tapped for "include: laundry" can never become the clips an
-# "exclude: laundry" leaves out (an exclude is its own picker category, KRI-761).
+# Ops whose picker answers may stand in for each other even through the loose word-overlap
+# fallback. KRI-667: never `exclude`, so the clips a creator tapped for "include: laundry"
+# can never become the clips an "exclude: laundry" leaves out (an exclude is its own picker
+# category, KRI-761).
 _MEMBERSHIP_OPS = frozenset({"group", "include"})
+# KRI-947: ops whose picker row asks the same "which clips show <attribute>?", so an answer
+# settles that attribute under any of them (the re-plan filed the tapped "include: the
+# queue" as "order: the queue" and asked again). Exact attribute or identity only, never
+# word overlap; never `exclude` (KRI-667) and never `label` (its per-clip text is its own ask).
+_SAME_CLIPS_OPS = frozenset({"group", "include", "order", "caption"})
 # KRI-697: an `intent_id` binds an answer only with a 4+ letter word outside these generic
 # words AND not as one word plus digits ("clip_1", "media2"): a re-plan may reuse those
 # positional ids for a different intent. A descriptive id ("caption_rule3_text") binds.
@@ -109,6 +115,32 @@ def _ops_compatible(a: str, b: str) -> bool:
     return a == b or (a in _MEMBERSHIP_OPS and b in _MEMBERSHIP_OPS)
 
 
+def _shares_answer(a: str, b: str) -> bool:
+    return a == b or (a in _SAME_CLIPS_OPS and b in _SAME_CLIPS_OPS)
+
+
+def _same_attribute(a_key: str, b_key: str) -> bool:
+    """Two keys name the same attribute, whatever their ops.
+
+    The ``_KEY_MAX`` cut falls at a different place under each op prefix, so a cut key's
+    attribute may be a prefix of the other's.
+    """
+    a, b = a_key.partition(":")[2], b_key.partition(":")[2]
+    if not a or not b:
+        return a_key == b_key
+    return (
+        a == b
+        or (len(a_key) >= _KEY_MAX and b.startswith(a))
+        or (len(b_key) >= _KEY_MAX and a.startswith(b))
+    )
+
+
+def answered_rows(category: dict[str, Any]) -> list[dict[str, Any]]:
+    """A picker row and every row joined behind it (KRI-951): one answer answers them all."""
+    hidden = category.get("also_answers") or []
+    return [category, *(r for r in hidden if isinstance(r, dict) and r.get("key"))]
+
+
 def _identities(intent_id: object, creator_text: object) -> list[str]:
     """What a picker answer stays bound to when a later turn rewords the row (KRI-697)."""
     out: list[str] = []
@@ -168,6 +200,24 @@ def _photo_candidates(
     ]
 
 
+def _row_identity(row: dict[str, Any]) -> dict[str, Any]:
+    """What an answer must be recorded under for a row joined behind another (KRI-951)."""
+    return {
+        "key": row["key"],
+        "op": row.get("op"),
+        **{f: row[f] for f in ("intent_id", "creator_text") if row.get(f)},
+    }
+
+
+def _joins(row: dict[str, Any], cat: dict[str, Any], candidates: list[str]) -> bool:
+    return (
+        row["op"] in _SAME_CLIPS_OPS
+        and cat.get("op") in _SAME_CLIPS_OPS
+        and _same_attribute(row["key"], cat["key"])
+        and row["candidate_media_ids"] == candidates
+    )
+
+
 def build_clip_question(
     categories: list[dict[str, Any]],
     *,
@@ -178,6 +228,12 @@ def build_clip_question(
 
     ``media_kinds`` (media id -> ``"video"``/``"image"``, in clip order) lets the payload
     name its photo candidates; without it, or with no photo offered, the payload is unchanged.
+
+    KRI-951: rows about the same attribute under ``_SAME_CLIPS_OPS`` ops ("include: the
+    ribeye photo" + "caption: the ribeye photo") that offer the same clips are ONE row; the
+    others ride its ``also_answers`` (the app ignores it) and the answer is recorded for
+    each. Rows offering different clips stay apart: a tap replaces the clips, so a joined
+    answer could drop a clip already found for one of them.
     """
     kept: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -185,8 +241,18 @@ def build_clip_question(
         candidates = list(dict.fromkeys(cat["candidate_media_ids"]))[:MAX_QUESTION_CLIPS]
         if cat["key"] in seen or not candidates:
             continue
-        seen.add(cat["key"])
+        rows = answered_rows(cat)
+        seen.update(r["key"] for r in rows)
         allowed = set(candidates)
+        suggested = [m for m in dict.fromkeys(cat.get("suggested_media_ids") or []) if m in allowed]
+        hidden = [_row_identity(r) for r in rows[1:]]
+        same = next((row for row in kept if _joins(row, cat, candidates)), None)
+        if same is not None:
+            same["also_answers"] = [*same.get("also_answers", []), _row_identity(cat), *hidden]
+            same["suggested_media_ids"] = list(
+                dict.fromkeys([*same["suggested_media_ids"], *suggested])
+            )
+            continue
         kept.append(
             {
                 "key": cat["key"],
@@ -195,9 +261,8 @@ def build_clip_question(
                 # KRI-697: the answer's identity across re-plans (the app ignores these).
                 **{f: cat[f] for f in ("intent_id", "creator_text") if cat.get(f)},
                 "candidate_media_ids": candidates,
-                "suggested_media_ids": [
-                    m for m in dict.fromkeys(cat.get("suggested_media_ids") or []) if m in allowed
-                ],
+                "suggested_media_ids": suggested,
+                **({"also_answers": hidden} if hidden else {}),
             }
         )
     if not kept:
@@ -218,8 +283,9 @@ def clip_question_text(categories: list[dict[str, Any]], *, only_video: bool = F
 
     ``only_video`` (KRI-779): every category's one candidate is the project's only video,
     so there is no "which clip" to ask: the question is whether the moment is in it at all.
+    KRI-951: each moment is named once, however many rows ask about it.
     """
-    labels = [c["label"] for c in categories]
+    labels = _distinct_labels([c["label"] for c in categories])
     if only_video:
         return _not_in_the_video_text(labels)
     if len(labels) == 1:
@@ -248,6 +314,18 @@ def clip_question_text(categories: list[dict[str, Any]], *, only_video: bool = F
             "Her biri için klipleri seç ya da hiç klibi olmayanları işaretle."
         ),
     )
+
+
+def _distinct_labels(labels: list[str]) -> list[str]:
+    """First of each label; capitals, spacing and punctuation do not make a new moment."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for label in labels:
+        folded = "-".join(_words(label)) or label.strip().casefold()
+        if folded not in seen:
+            seen.add(folded)
+            out.append(label)
+    return out
 
 
 def _not_in_the_video_text(labels: list[str]) -> str:
@@ -300,17 +378,27 @@ class ClipSelections:
         return bool(self.by_key)
 
     def match(self, intent: ClipIntent) -> SelectionEntry | None:
-        """Newest of the exact key / identity answers, else token-set similarity.
+        """Newest of the same-attribute / identity answers, else token-set similarity.
 
         Every route is op-compatible. Identity (``intent_id`` / ``creator_text``) keeps an
         answer when a re-plan rewords the attribute ("when I say ..." -> "the clip for
-        rule 3"), which token similarity cannot (KRI-697).
+        rule 3"), which token similarity cannot (KRI-697). The same attribute or identity
+        also carries an answer to another ``_SAME_CLIPS_OPS`` op (KRI-947); word overlap
+        only within ``_MEMBERSHIP_OPS``.
         """
         key = intent_key(intent)
-        hits = [self.by_key[key]] if key in self.by_key else []
+        hits = [
+            entry
+            for answered, entry in self.by_key.items()
+            if answered == key
+            or (
+                _shares_answer(answered.partition(":")[0], intent.op)
+                and _same_attribute(answered, key)
+            )
+        ]
         for identity in _identities(intent.intent_id, intent.creator_text):
             op, entry = self.by_identity.get(identity, ("", None))
-            if entry is not None and _ops_compatible(op, intent.op):
+            if entry is not None and _shares_answer(op, intent.op):
                 hits.append(entry)
         if hits:
             return max(hits, key=lambda e: e.seq)
@@ -361,9 +449,10 @@ def fold_clip_selections(
     by_identity: dict[str, tuple[str, SelectionEntry]] = {}
 
     def record(category: dict[str, Any], entry: SelectionEntry) -> None:
-        by_key[category["key"]] = entry
-        for identity in _identities(category.get("intent_id"), category.get("creator_text")):
-            by_identity[identity] = (str(category.get("op") or ""), entry)
+        for row in answered_rows(category):
+            by_key[row["key"]] = entry
+            for identity in _identities(row.get("intent_id"), row.get("creator_text")):
+                by_identity[identity] = (str(row.get("op") or ""), entry)
 
     seq = 0
     for role, payload in events:

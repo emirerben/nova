@@ -12,6 +12,7 @@ from app.pipeline.best_parts import (
     BestPart,
     BestPartsConflict,
     BestPartsResult,
+    edit_cap_s,
     select_best_parts,
     select_moment_windows,
     select_pinned_moment_windows,
@@ -298,6 +299,7 @@ def build_length_plan(
     """
 
     natural_owner = natural_length_owner(strategy)
+    cap_s = edit_cap_s(natural_owner)
     owner = length_owner(strategy, creator_duration_proven=creator_target_s is not None)
     sources = _sources(
         media_snapshot, selected_ids, strategy, spoken_moments, quiet_moments, still_holds
@@ -373,6 +375,7 @@ def build_length_plan(
             hero_sources,
             minimum_duration_s=minimums,
             maximum_duration_s=maximums,
+            cap_duration_s=cap_s,
         )
         requested = (
             creator_target_s
@@ -442,6 +445,7 @@ def build_length_plan(
                     maximum_duration_s={media_id: by_id[media_id]["maximum_duration_s"]}
                     if by_id[media_id]["maximum_duration_s"] is not None
                     else {},
+                    cap_duration_s=cap_s,
                 )
                 for media_id, slot in zip(hero_order, recipe["slots"], strict=True)
             ]
@@ -492,8 +496,8 @@ def build_length_plan(
         result = moment_windows
     elif eligible:
         budget = creator_target_s if creator_target_s is not None else natural_duration_s
-        raw_capacity = min(120.0, round(sum(source["duration_s"] for source in ordered_sources), 3))
-        if creator_target_s is not None and creator_target_s <= 120:
+        raw_capacity = min(cap_s, round(sum(source["duration_s"] for source in ordered_sources), 3))
+        if creator_target_s is not None and creator_target_s <= cap_s:
             # Source bounds and the portable minimum can satisfy a target
             # within its approved tolerance without inventing more footage.
             # Keep the creator's original target in the contract/envelope.
@@ -522,6 +526,7 @@ def build_length_plan(
                 for source in ordered_sources
                 if source["maximum_duration_s"] is not None or source["quiet_ceiling_s"] is not None
             },
+            cap_duration_s=cap_s,
         )
     windows = result.receipt() if result is not None else []
     conflicts = [
@@ -595,7 +600,7 @@ def build_length_plan(
             }
         )
     physical_capacity_s = min(
-        120.0, round(sum(source["duration_s"] for source in ordered_sources), 3)
+        cap_s, round(sum(source["duration_s"] for source in ordered_sources), 3)
     )
     # Durable clarification reads ``capacity_raw_s`` rather than the transient
     # selector receipt. For bounded mixed-media edits it must therefore expose
