@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.125.0] - 2026-10-26
+
+### Changed
+- feat(taste): wrong_facts feedback excludes rejected research facts on the next run (#1827) <!-- release-pr: 1827 -->
+
 ## [0.81.124.0] - 2026-10-26
 
 ### Changed
