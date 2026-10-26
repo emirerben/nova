@@ -792,7 +792,9 @@ async def test_described_caption_still_ungrounded_after_vision_asks_creator(monk
     assert resolved.status == "needs_creator"
     assert resolved.caption_text is None
     # KRI-613: a model question that already asks is not followed by "?. Could you clarify?".
-    assert result.question == "What should the caption on the park clips say?"
+    assert result.question == 'What should the caption for "park clips" say?'
+    # Membership settled (the park clips were kept); only the caption text is open.
+    assert result.diagnostics["stage"] == "caption_authoring"
 
 
 async def test_caption_intent_with_no_members_asks_creator(monkeypatch) -> None:

@@ -121,6 +121,75 @@ def is_open_request(text: str | None) -> bool:
     return bool(lines) and all(_normalized(line) in _OPEN_REQUESTS for line in lines)
 
 
+def _phone_route(
+    contract: Any,
+    strategy: Mapping[str, Any],
+    *,
+    media: Mapping[str, Any],
+    edit_format: object,
+    creator_id: object,
+) -> str | None:
+    """The phone route dispatch would stamp on this draft (`render_route`), else None."""
+    from app.kria.brief_checks import defers_to_unified_montage  # noqa: PLC0415
+    from app.services.creator_render_contract import PLAN_AUTHORITY_FIELD  # noqa: PLC0415
+    from app.services.render_route import (  # noqa: PLC0415
+        resolve_route,
+        route_capabilities_from_settings,
+        route_inputs_from_job,
+    )
+
+    clip_paths = [str(path) for path in media.get("clip_paths") or []]
+    if not defers_to_unified_montage(
+        creator_id=creator_id,
+        edit_format=edit_format,
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=clip_paths,
+    ):
+        return None
+    candidates: dict[str, Any] = {
+        "clip_paths": clip_paths,
+        "edit_format": edit_format,
+        "creator_strategy": dict(strategy),
+        PLAN_AUTHORITY_FIELD: 1,
+    }
+    if media.get("voiceover_path"):
+        candidates["voiceover_gcs_path"] = media["voiceover_path"]
+    if media.get("song_path"):
+        candidates["user_song"] = {"gcs_path": media["song_path"]}
+    inputs = route_inputs_from_job(
+        {"creator_brief_binding": {"media_snapshot": dict(media)}},
+        candidates,
+        platform="phone",
+        capabilities=route_capabilities_from_settings(),
+        contract=contract,
+    )
+    resolution = resolve_route(inputs) if inputs is not None else None
+    return str(resolution.route) if resolution is not None and resolution.route else None
+
+
+def _contract_drawn_texts(
+    contract: Any,
+    strategy: Mapping[str, Any],
+    *,
+    media: Mapping[str, Any],
+    manifest: ResolvedCreatorManifest | None,
+    creator_id: object,
+) -> tuple[str, ...]:
+    """KRI-945: the pinned texts this draft's writer puts on screen whatever its plan holds."""
+    from app.pipeline.phone_plan_repair import contract_text_drawn  # noqa: PLC0415
+
+    if contract is None or not contract.exact_texts or creator_id is None:
+        return ()
+    route = _phone_route(
+        contract,
+        strategy,
+        media=media,
+        edit_format=strategy.get("edit_format") or (manifest.edit_format if manifest else None),
+        creator_id=creator_id,
+    )
+    return tuple(row.text for row in contract.exact_texts if contract_text_drawn(row, route=route))
+
+
 def assess_readiness(
     brief: CreativeBrief | None,
     strategy: Mapping[str, Any] | None,
@@ -133,12 +202,19 @@ def assess_readiness(
     protected_regions: list[Any] | None = None,
     protected_marks: bool = False,
     prepared_collection_story: dict | None = None,
+    creator_id: object = None,
+    prepared_research: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Account for every live ID using existing policy, checkers and contract.
 
     KRI-901: ``protected_marks`` says this draft renders on the phone Talking writer for an
     app that shows the mark card (`protected_targets.marks_route`); only then do
-    ``protected_regions`` (the marks this approval would pin) change a verdict."""
+    ``protected_regions`` (the marks this approval would pin) change a verdict.
+
+    KRI-945: ``creator_id`` decides the phone route the draft renders on, so a pinned
+    contract text the writer puts back on screen is executable; without it none is.
+    ``prepared_research`` is the research done before approval (the draft's, or the one
+    its binding pinned), which alone can prove a researched-facts ask."""
     requirements = brief.live() if brief is not None else []
     strategy = strategy or {}
     policy_problem = None
@@ -217,7 +293,13 @@ def assess_readiness(
     facts = (
         plan_facts_from_editor_payload(editor_payload, editor_text_diff)
         if editor_payload is not None
-        else plan_facts_from_strategy(strategy, clip_ids=ids, manifest=manifest)
+        else dataclasses.replace(
+            plan_facts_from_strategy(strategy, clip_ids=ids, manifest=manifest),
+            contract_drawn_texts=_contract_drawn_texts(
+                contract, strategy, media=media, manifest=manifest, creator_id=creator_id
+            ),
+            research=dict(prepared_research) if prepared_research is not None else None,
+        )
     )
     # Use the existing source-bounded execution plan, never the model's duration
     # target as proof. The same validator is used by the render path.
@@ -584,6 +666,8 @@ async def assess_saved_document(  # noqa: ANN201
         protected_regions=list(document.brief_binding.protected_regions or []),
         protected_marks=saved_protected_marks(document, creator_id=creator_id, item=item),
         prepared_collection_story=document.prepared_collection_story,
+        creator_id=creator_id,
+        prepared_research=document.brief_binding.prepared_research,
     )
     if digest(media_identity(snapshot_media(item))) != report["media_digest"]:
         raise ApprovalReadinessError(

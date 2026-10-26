@@ -19,11 +19,13 @@ from app.agents.clip_intent_planner import (
     ClipIntentPlannerAgent,
     ClipIntentPlannerInput,
     ConfirmedTitleCopy,
+    PlannedClipIntent,
     salvage_question,
 )
 from app.config import settings
 from app.kria.brief_route import fold_text, loose_text
 from app.kria.reply_language import current_reply_language, say
+from app.kria.research_preview import RESEARCH_FACT
 from app.schemas.clip_intents import (
     CLIP_DESCRIPTION_ATTRIBUTE,
     CREATOR_SELECTED_EVIDENCE,
@@ -57,6 +59,7 @@ from app.services.creator_label_reply import (
     label_text_reply,
 )
 from app.services.spoken_quotes import regound_quoted_intents
+from app.text_fold import loose_words
 
 if TYPE_CHECKING:
     from app.kria.brief import CreativeBrief
@@ -211,6 +214,63 @@ def without_spoken_text_captions(
             intent.op == "caption"
             and intent.creator_text is not None
             and fold_text(intent.creator_text) in cues
+        )
+    ]
+
+
+def whole_video_text_asks(brief: CreativeBrief | None) -> list[str]:
+    """The creator's words for each live whole-video text another lane writes (KRI-945).
+
+    A researched global text (``facts.research``) is written and sourced by the research
+    lane, a title by the title lane; the words are the research request quote, the literal
+    and the description. A global text with only a literal or a description is left out:
+    prod briefs scope chapter captions ("Bölüm başlıkları") and spoken-word texts global,
+    and those are placed on clips.
+    """
+    if brief is None:
+        return []
+    asks: list[str] = []
+    for requirement in brief.live():
+        research = requirement.facts.get(RESEARCH_FACT)
+        if requirement.kind != "text" or not (
+            requirement.scope == "title"
+            or (requirement.scope == "global" and isinstance(research, Mapping))
+        ):
+            continue
+        quote = research.get("request_quote") if isinstance(research, Mapping) else None
+        words = [quote, requirement.literal, requirement.description]
+        asks.append(" ".join(w for w in words if isinstance(w, str)))
+    return asks
+
+
+# Share of a caption quote's words that must come from a whole-video ask for the caption to
+# be that ask. A separate clip caption in the same message shares only glue words.
+_WHOLE_VIDEO_QUOTE_SHARE = 0.75
+
+
+def _quotes_ask(quote: str, ask: str) -> bool:
+    said = set(loose_words(quote))
+    shared = said & set(loose_words(ask))
+    return len(shared) >= 2 and len(shared) >= _WHOLE_VIDEO_QUOTE_SHARE * len(said)
+
+
+def without_whole_video_captions(
+    intents: list[PlannedClipIntent], asks: Sequence[str]
+) -> list[PlannedClipIntent]:
+    """Leave out the `caption` intents the resolver would author for a whole-video text.
+
+    "Some facts about Cunda, an introductory explanation" became a footage caption, footage
+    never grounds researched facts, and every turn asked what the caption should say. Only
+    a caption with no creator words whose quote is that ask goes: the creator's own words,
+    and a caption on clips asked for separately, are never touched.
+    """
+    return [
+        intent
+        for intent in intents
+        if not (
+            intent.op == "caption"
+            and intent.creator_text is None
+            and any(_quotes_ask(intent.source_quote, ask) for ask in asks)
         )
     ]
 
@@ -774,6 +834,7 @@ async def plan_and_resolve_clip_intents(
     brief_labels: Sequence[BriefLabel] = (),
     kept_labels: Sequence[KeptLabel] = (),
     shot_captions: bool = True,
+    whole_video_texts: Sequence[str] = (),
 ) -> PlannedIntentResolution:
     """``describe_clips`` (KRI-612): the Creative Brief asks for a line on each clip saying
     what it shows, so the inventory always carries one description label for it.
@@ -787,7 +848,10 @@ async def plan_and_resolve_clip_intents(
     names them again).
 
     ``shot_captions`` (KRI-804, ``shot_captions_safe``): whether a creator text a label can't
-    print may become the shot's caption, which prints it as written."""
+    print may become the shot's caption, which prints it as written.
+
+    ``whole_video_texts`` (KRI-945, ``whole_video_text_asks``): the brief's researched texts and
+    titles. A caption the resolver would author for one is never a clip question."""
     if len(creator_request) > CREATOR_REQUEST_MAX_CHARS:
         return PlannedIntentResolution(
             [],
@@ -873,13 +937,17 @@ async def plan_and_resolve_clip_intents(
                 },
             ),
         )
-    if output.silent_drops:
-        # KRI-456: style asks / title lines the planner minted as caption intents and the
-        # parser dropped without asking. Closed-vocabulary counts only, never text.
+    planned_intents = without_whole_video_captions(output.intents, whole_video_texts)
+    silent_drops = dict(output.silent_drops)
+    if len(planned_intents) < len(output.intents):
+        silent_drops["whole_video_caption_dropped"] = len(output.intents) - len(planned_intents)
+    if silent_drops:
+        # KRI-456 / KRI-945: style asks, title lines and whole-video texts the planner minted
+        # as caption intents, dropped without asking. Closed-vocabulary counts only, never text.
         log.info(
             "clip_intent_planner.silent_drops",
-            silent_drops=output.silent_drops,
-            kept=len(output.intents),
+            silent_drops=silent_drops,
+            kept=len(planned_intents),
         )
     if output.salvage_question:
         # Some instructions were valid but others could not be verified (or the
@@ -918,7 +986,7 @@ async def plan_and_resolve_clip_intents(
     dropped_exclusions = output.silent_drops.get("exclusion_dropped", 0)
     intents = [
         ClipIntent.model_validate(intent.model_dump(exclude={"source_quote"}))
-        for intent in output.intents
+        for intent in planned_intents
     ]
     if not clip_facts_on:
         # Defense in depth: the flag-off prompt never teaches `order_by`, so a

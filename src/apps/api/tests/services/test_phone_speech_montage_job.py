@@ -503,3 +503,116 @@ def test_a_bound_job_judges_an_order_the_plan_did_not_apply(world, monkeypatch):
     receipt = _receipts(world)["r1"]
     assert receipt["status"] == "not_possible"
     assert "attached" in receipt["reason"]
+
+
+# KRI-939: a montage that keeps one spoken line routes here, and this route drew no
+# confirmed title or clip label, so `verify_phone_recipe` refused every such edit after
+# approval. Ways the fix could still fail, each pinned below:
+#   1. the title is missing, starts after 0 s, or is shorter than its confirmed hold;
+#   2. the title's words drift (emoji dropped, re-cased, truncated);
+#   3. a clip label spans a cut, or labels only the first of that clip's cuts;
+#   4. text is claimed for a clip the edit never shows (must still refuse, never fake it);
+#   5. the variant row omits the rows, so the editor preview shows no text the render has.
+TITLE = "Parrilla Don Julio 🇦🇷"
+BUTCHER = "The butcher's counter 🔪"
+PLAQUES = "MICHELIN 2024 · 2025"
+
+
+def _walk_in_plan():
+    return _plan(
+        {"kind": "montage", "duration_s": 6.0, "cut_s": 1.0},
+        {"kind": "speech", "clip_ref": "c1", "quote": "never rush a good espresso"},
+    )
+
+
+def _drawn(layer):
+    # One run per wrapped line here; line wrapping is layout, not a change to the words.
+    return " ".join(" ".join(run.text for run in layer.runs).split())
+
+
+def _layers_inside(recipe, media_id, text):
+    asset_media = {a.id: getattr(a, "media_id", None) for a in recipe.asset_manifest.assets}
+    picture = [
+        clip
+        for track in recipe.tracks
+        if track.kind == "video"
+        for clip in track.clips
+        if asset_media.get(clip.source_asset_id) == media_id
+    ]
+    assert picture, f"{media_id} is not in the edit"
+    for clip in picture:
+        end = clip.timeline_start + clip.source_duration / clip.rate
+        assert any(
+            _drawn(layer) == text
+            and layer.start >= clip.timeline_start - 1e-3
+            and layer.end <= end + 1e-3
+            for layer in recipe.text_layers
+        ), f"{text!r} missing on the {media_id} cut at {clip.timeline_start}"
+    return picture
+
+
+def test_kept_line_montage_draws_the_confirmed_title_and_clip_labels(world, monkeypatch):
+    from app.services.creator_render_contract import TextRequirement
+
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [
+            *settings.phone_render_verified_features,
+            "positionedText",
+            "animatedText",
+            "authoredText",
+        ],
+    )
+    from app.services.device_render import (
+        device_record,
+        device_status,
+        verify_device_record_contract,
+    )
+
+    contract = _contract(
+        world,
+        original_audio="require",
+        audio_source_ids=("talk",),
+        exact_texts=(
+            TextRequirement(role="opening", text=TITLE, duration_s=2.2),
+            TextRequirement(role="any", text=TITLE),
+            TextRequirement(role="clip", text=BUTCHER, media_id="b1"),
+            TextRequirement(role="clip", text=PLAQUES, media_id="b2"),
+        ),
+    )
+    assert _run(world, _walk_in_plan()) is True
+    assert world.job.status == "awaiting_device"
+    status = device_status(world.job, "speech_montage")
+    recipe = status.request.recipe
+    titles = [layer for layer in recipe.text_layers if _drawn(layer) == TITLE]
+    assert len(titles) == 1 and titles[0].start == 0 and titles[0].end >= 2.2 - 1 / 30
+    assert len(_layers_inside(recipe, "b1", BUTCHER)) >= 2  # every cut, not just the first
+    _layers_inside(recipe, "b2", PLAQUES)
+    verify_device_record_contract(world.job, device_record(world.job, "speech_montage"), status)
+    assert device_record(world.job, "speech_montage")["contract_digest"] == contract.digest
+    rows = world.job.assembly_plan["variants"][0]["text_elements"]
+    assert {TITLE, BUTCHER, PLAQUES} <= {row["text"] for row in rows}
+    assert all(row["source_params"]["read_only"] for row in rows)
+
+
+def test_a_label_for_a_clip_the_edit_never_shows_still_refuses(world):
+    from app.services.creator_render_contract import CreatorRenderContractError, TextRequirement
+
+    _contract(
+        world,
+        original_audio="require",
+        audio_source_ids=("talk",),
+        exact_texts=(TextRequirement(role="clip", text=BUTCHER, media_id="talk"),),
+    )
+    plan = _plan(
+        {
+            "kind": "speech",
+            "clip_ref": "c1",
+            "quote": "never rush a good espresso",
+            "visual": "cutaways",
+        }
+    )
+    with pytest.raises(CreatorRenderContractError):
+        _run(world, plan)
+    assert world.db.commits == 0

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.135.0] - 2026-10-26
+
+### Changed
+- fix(kria): intro facts + hook request no longer dead-ends (KRI-945) (#1843) <!-- release-pr: 1843 -->
+
+## [0.81.134.0] - 2026-10-26
+
+### Fixed
+- fix(phone): draw the confirmed title and clip labels on kept-line montages (KRI-939) (#1839) <!-- release-pr: 1839 -->
+
 ## [0.81.133.0] - 2026-10-26
 
 ### Changed
