@@ -70,7 +70,9 @@ struct CameraRollStory: Codable, Identifiable, Sendable {
     let audioPolicy: String
     var contentPlan: CameraRollContentPlan? = nil
     var research: CameraRollStoryResearch? = nil
-    enum CodingKeys: String, CodingKey { case id, revision, title, hook, payoff, rationale, moments, rejected, research; case duration = "duration_s", audioPolicy = "audio_policy", contentPlan = "content_plan" }
+    /// The event this idea was generated for; nil on ideas from before per-event generation.
+    var group: String? = nil
+    enum CodingKeys: String, CodingKey { case id, revision, title, hook, payoff, rationale, moments, rejected, research, group; case duration = "duration_s", audioPolicy = "audio_policy", contentPlan = "content_plan" }
 }
 struct CameraRollStoryResearch: Codable, Sendable {
     let topic: String
@@ -103,7 +105,10 @@ struct CameraRollStories: Codable, Sendable {
         let moments: [CameraRollMoment]
         let incompleteSpeech: [UUID]
         let unindexed: [UUID]
-        enum CodingKeys: String, CodingKey { case moments; case incompleteSpeech = "incomplete_speech_asset_ids", unindexed = "unindexed_asset_ids" }
+        /// Sources whose candidates were cut by the per-search cap, and whether the cap was hit at all.
+        var truncated: [UUID]? = nil
+        var candidateLimitReached: Bool? = nil
+        enum CodingKeys: String, CodingKey { case moments; case incompleteSpeech = "incomplete_speech_asset_ids", unindexed = "unindexed_asset_ids", truncated = "truncated_asset_ids", candidateLimitReached = "candidate_limit_reached" }
     }
 }
 struct CameraRollIndexPass: Decodable, Sendable {
@@ -112,7 +117,10 @@ struct CameraRollIndexPass: Decodable, Sendable {
     let unavailable: [UUID]
     let untimed: [UUID]
     var unusableTiming: [UUID]? = nil
-    enum CodingKeys: String, CodingKey { case nextOffset = "next_offset", missing = "missing_analysis_asset_ids", unavailable = "unavailable_asset_ids", untimed = "untimed_asset_ids", unusableTiming = "unusable_timing_asset_ids" }
+    var truncated: [UUID]? = nil
+    /// Photos and short sources used as whole-source context rather than timed moments.
+    var contextAssetIDs: [UUID]? = nil
+    enum CodingKeys: String, CodingKey { case nextOffset = "next_offset", missing = "missing_analysis_asset_ids", unavailable = "unavailable_asset_ids", untimed = "untimed_asset_ids", unusableTiming = "unusable_timing_asset_ids", truncated = "truncated_asset_ids", contextAssetIDs = "context_asset_ids" }
 }
 struct CameraRollInspection: Decodable, Sendable { let answer: String; let confidence: Double; let evidence: String }
 

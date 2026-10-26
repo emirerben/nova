@@ -34,6 +34,11 @@ VERIFIER_VERSION = "phone-simple-cut-v3"
 VERIFIER_ORDER = ("phone-simple-cut-v1", "phone-simple-cut-v2", VERIFIER_VERSION)
 HISTORICAL_VERIFIER_VERSIONS = frozenset(VERIFIER_ORDER)
 POLICY_FIELD = "actual_export_policy"
+# The picture check compares an export with the original VIDEO it was cut from; a still clip has
+# no such reference, so `unsupported_reasons` declares it unsupported and a prepared story that
+# cites a photo cannot be built. Flip this only together with a still branch in
+# `verify_actual_export` (guard: tests/pipeline/test_photo_story_gate.py).
+VERIFIES_STILL_PICTURES = False
 SAMPLE_RATE = 8000
 # Both the phone export and its analysis proxies are local ISO media files.
 # Do not autodetect a disguised playlist/container or let a decoder fetch URLs.
