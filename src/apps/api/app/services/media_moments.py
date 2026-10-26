@@ -37,6 +37,13 @@ INDEX_VERSION = "source-intervals-v3"
 MAX_SOURCE_MOMENTS = 2000
 SOURCE_CHECK_BATCH_SIZE = 10
 WHOLE_SOURCE_CONTEXT_VERSION = "whole-source-context-v1"
+# Story candidates: 100 normally, growing to one-per-source up to this many sources so a
+# large collection never silently leaves later sources out of every idea.
+CANDIDATE_CAP = 100
+FAIR_CANDIDATE_CAP = 150
+SAMPLED_WINDOW_S = 10.0
+# Asset-metadata marker: the last index pass found nothing usable in this source.
+INDEX_OUTCOME_KEY = "moment_index"
 
 
 def _number(value: Any) -> float | None:
@@ -189,6 +196,55 @@ def _whole_source_context(analysis: dict, duration: float) -> dict | None:
     }
 
 
+def _sampled_window(analysis: dict, duration: float) -> dict | None:
+    """A fixed window of a clip too long for whole-clip context that has no detected moments.
+
+    Position is not semantic: it is only the first of a few probe positions that avoids the
+    analysis' own unusable spans. The text says so, so the idea writer cannot claim an event.
+    """
+    if analysis.get("source") in {"probe_only", "stub"}:
+        return None
+    probed = _number(analysis.get("duration_s"))
+    if probed is not None and probed > 0 and abs(probed - duration) > 1 / 30:
+        return None
+    if duration <= 20:
+        return None
+    length = SAMPLED_WINDOW_S
+    spans = [
+        (start, end)
+        for raw in (analysis.get("unusable_spans") or [])[:20]
+        if isinstance(raw, dict)
+        and (start := _number(raw.get("start_s"))) is not None
+        and (end := _number(raw.get("end_s"))) is not None
+    ]
+    positions = [
+        round(max(0.0, min(duration - length, duration * f - length / 2)), 1)
+        for f in (0.5, 0.25, 0.75)
+    ]
+    start = next(
+        (p for p in positions if not any(s < p + length and e > p for s, e in spans)),
+        positions[0],
+    )
+    understanding = analysis.get("understanding")
+    understanding = understanding if isinstance(understanding, dict) else {}
+    description = _clean_text(analysis.get("description"), 1600) or _clean_text(
+        understanding.get("summary"), 1600
+    )
+    return {
+        "kind": "visual",
+        "start_s": start,
+        "end_s": start + length,
+        "text": f"Sampled {length:g}s window of a {duration:g}s clip; no localized highlight "
+        "was detected. "
+        + (
+            "Cached overall description: " + description
+            if description
+            else "No visual description is available; review the footage."
+        ),
+        "uncertain": True,
+    }
+
+
 def _valid_context_bounds(start: float, end: float, duration: Any) -> bool:
     duration = _number(duration)
     return (
@@ -231,6 +287,57 @@ def _interval_quality(analysis: dict, duration: float, interval: dict) -> dict:
     }
 
 
+async def _fact_status(db: AsyncSession, owner: uuid.UUID, asset, source, analyzer) -> str | None:
+    """Status of one analysis row, or None when it was never created."""
+    ref = facts._Source(
+        str(asset.id),
+        str(source.id),
+        str(owner),
+        asset.kind,
+        source.role,
+        source.object_path,
+        source.object_generation,
+        source.uploaded_sha256,
+        source.status,
+    )
+    key = facts._key(ref, analyzer)
+    return await db.scalar(
+        select(MediaAssetAnalysis.status)
+        .where(
+            MediaAssetAnalysis.user_id == owner,
+            MediaAssetAnalysis.source_identity == key.source_identity,
+            MediaAssetAnalysis.analyzer == key.analyzer,
+            MediaAssetAnalysis.model == key.model,
+            MediaAssetAnalysis.prompt_version == key.prompt_version,
+            MediaAssetAnalysis.schema_version == key.schema_version,
+        )
+        .order_by(MediaAssetAnalysis.updated_at.desc())
+        .limit(1)
+    )
+
+
+def transcript_pending(asset, status: str | None) -> bool:
+    """Whether a transcript may still arrive. A silent video's never will: do not wait for it."""
+    if status in {"queued", "analyzing"}:
+        return True
+    if status == "failed":
+        return False
+    audible = (asset.metadata_json or {}).get("has_audio") is True
+    return audible and asset.status in {"pending", "processing"}
+
+
+def _record_index_outcome(asset, source, usable: bool) -> None:
+    metadata = dict(asset.metadata_json or {})
+    marker = None if usable else {"source_id": str(source.id), "outcome": "none"}
+    if metadata.get(INDEX_OUTCOME_KEY) == marker:
+        return
+    if marker is None:
+        metadata.pop(INDEX_OUTCOME_KEY, None)
+    else:
+        metadata[INDEX_OUTCOME_KEY] = marker
+    asset.metadata_json = metadata
+
+
 async def index_collection(
     db: AsyncSession, owner: uuid.UUID, identifier: uuid.UUID, body: CollectionIndexBody
 ) -> CollectionIndexOut:
@@ -240,6 +347,7 @@ async def index_collection(
     batch = selected[body.offset : body.offset + body.limit]
     available = await eligible_sources(db, owner, batch)
     unavailable, missing, truncated, untimed, context, unusable_timing = [], [], [], [], [], []
+    sampled = []
     indexed = 0
     for member in batch:
         pair = available.get(member.asset_id)
@@ -262,10 +370,16 @@ async def index_collection(
         transcript = await asyncio.to_thread(
             facts.get_media_asset_analysis, **kwargs, analyzer="transcript"
         )
-        if duration is None or duration <= 0:
-            (missing if analysis is None or transcript is None else unusable_timing).append(
-                asset.id
+        waiting = analysis is None or (
+            transcript is None
+            and transcript_pending(
+                asset, await _fact_status(db, owner, asset, source, "transcript")
             )
+        )
+        if duration is None or duration <= 0:
+            (missing if waiting else unusable_timing).append(asset.id)
+            if not waiting:
+                _record_index_outcome(asset, source, usable=False)
             continue
         spec = _index_spec(asset.kind)
         version = hashlib.sha256(
@@ -286,11 +400,7 @@ async def index_collection(
             existing is not None
             and existing.evidence_json.get("evidence_scope") == "whole_source_context"
         ):
-            candidate = (
-                _whole_source_context(analysis, duration)
-                if analysis is not None and transcript is not None
-                else None
-            )
+            candidate = _whole_source_context(analysis, duration) if not waiting else None
             if (
                 candidate is None
                 or existing.evidence_json.get("context_contract") != WHOLE_SOURCE_CONTEXT_VERSION
@@ -304,18 +414,27 @@ async def index_collection(
             indexed += 1
             if existing.evidence_json.get("context_contract") == WHOLE_SOURCE_CONTEXT_VERSION:
                 context.append(asset.id)
+            if existing.evidence_json.get("sampled_window"):
+                sampled.append(asset.id)
+            _record_index_outcome(asset, source, usable=True)
             continue
         intervals, capped = source_intervals(analysis or {}, transcript or {}, duration)
-        whole_context = False
+        whole_context = sampled_window = False
         if not intervals:
-            if analysis is None or transcript is None:
+            if waiting:
                 missing.append(asset.id)
             elif candidate := _whole_source_context(analysis, duration):
                 intervals = [candidate]
                 whole_context = True
                 context.append(asset.id)
+            elif candidate := _sampled_window(analysis, duration):
+                intervals = [candidate]
+                sampled_window = True
+                sampled.append(asset.id)
             else:
                 unusable_timing.append(asset.id)
+        if not waiting:
+            _record_index_outcome(asset, source, usable=bool(intervals))
         if capped:
             truncated.append(asset.id)
         await db.execute(
@@ -350,6 +469,11 @@ async def index_collection(
                             if whole_context
                             else {}
                         ),
+                        **(
+                            {"sampled_window": True, "semantic_localization": "none"}
+                            if sampled_window
+                            else {}
+                        ),
                         "quality": _interval_quality(analysis or {}, duration, interval),
                         "complete_timed_speech": isinstance((transcript or {}).get("words"), list)
                         and all(
@@ -376,7 +500,9 @@ async def index_collection(
         truncated_asset_ids=truncated,
         untimed_asset_ids=untimed,
         context_asset_ids=context,
+        sampled_asset_ids=sampled,
         unusable_timing_asset_ids=unusable_timing,
+        candidate_limit_reached=bool(truncated),
     )
 
 
@@ -617,6 +743,12 @@ async def search_moments(
                 MediaSourceMoment.evidence_json["index_spec"].astext == _retained_timed_spec()[0],
             ),
         )
+    # Fair story evidence: every source (up to FAIR_CANDIDATE_CAP) gets its best interval
+    # before any source gets a second one.
+    candidate_cap = CANDIDATE_CAP
+    if all_candidates:
+        candidate_cap = max(CANDIDATE_CAP, min(len(sources), FAIR_CANDIDATE_CAP))
+        limit = max(limit, candidate_cap)
     vector = func.to_tsvector("simple", MediaSourceMoment.text)
     terms = func.plainto_tsquery("simple", query)
     statement = (
@@ -632,7 +764,7 @@ async def search_moments(
             MediaAssetSource.status == "available",
             current_or_retained,
         )
-        .limit(101)
+        .limit(candidate_cap + 1)
     )
     ordering = (
         func.ts_rank_cd(vector, terms).desc(),
@@ -665,8 +797,8 @@ async def search_moments(
     checked_sources = {}
     capped = False
     rows = (await db.execute(statement)).all()
-    capped = len(rows) > 100
-    rows = rows[:100]
+    capped = len(rows) > candidate_cap
+    rows = rows[:candidate_cap]
     current_sources = {
         source.id: source
         for moment, source in rows
@@ -740,6 +872,7 @@ async def search_moments(
         )
         if len(results) >= limit:
             break
+    offered = {value.source_id for value in results}
     return MomentSearchOut(
         revision=row.revision,
         moments=results,
@@ -751,7 +884,10 @@ async def search_moments(
             if member.source_id in indexed and member.source_id not in full_speech
         ],
         truncated_asset_ids=[
-            member.asset_id for member in selected if member.source_id in capped_sources
+            member.asset_id
+            for member in selected
+            if member.source_id in capped_sources
+            or (capped and member.source_id in indexed and member.source_id not in offered)
         ],
         candidate_limit_reached=capped,
     )

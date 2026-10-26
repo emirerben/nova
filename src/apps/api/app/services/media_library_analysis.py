@@ -6,6 +6,7 @@ import hashlib
 import os
 import tempfile
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -22,6 +23,14 @@ from app.pipeline.clip_cache import (
 )
 
 log = structlog.get_logger()
+
+# Why an analysis failed, as the creator-facing item state sees it. The first two are
+# transient (the reconciler and the task re-attempt them); the rest never improve on retry.
+TRANSIENT_FAILURE_REASONS = frozenset({"provider_error", "budget_paused"})
+FAILURE_KEY = "analysis_failure"
+# Videos longer than this are rejected at ingest; an image this large is not worth a model call.
+MAX_ANALYZABLE_VIDEO_S = 1800
+MAX_ANALYZABLE_IMAGE_BYTES = 25 * 1024 * 1024
 _FACT_SCHEMA_SUFFIX = "source-facts/filter-policy-v1"
 _SEMANTIC_SCHEMA_SUFFIX = "semantic-complete-v2"
 
@@ -76,6 +85,90 @@ def _spec(kind: str, analyzer: str | None) -> tuple[str, str, str, str]:
         ClipMetadataAgent.spec.prompt_version,
         f"video-v{ANALYSIS_VERSION}/{_FACT_SCHEMA_SUFFIX}/{_SEMANTIC_SCHEMA_SUFFIX}",
     )
+
+
+def classify_analysis_failure(exc: BaseException) -> str:
+    """Map a provider/cost-control exception onto the creator-facing failure reason."""
+    from app.agents._runtime import AiBudgetExceededError, ProviderQuotaExceededError
+
+    if isinstance(exc, AiBudgetExceededError | ProviderQuotaExceededError):
+        return "budget_paused"
+    return "provider_error"
+
+
+def analysis_exclusion_reason(
+    kind: str, metadata: dict | None, byte_count: int | None
+) -> str | None:
+    """A reason a video or image can never be analysed, decided from facts we already hold."""
+    duration = (metadata or {}).get("duration_s")
+    if (
+        kind == "video"
+        and isinstance(duration, int | float)
+        and not isinstance(duration, bool)
+        and duration > MAX_ANALYZABLE_VIDEO_S
+    ):
+        return "too_long"
+    if kind == "image" and byte_count is not None and byte_count > MAX_ANALYZABLE_IMAGE_BYTES:
+        return "too_large"
+    return None
+
+
+def record_analysis_failure(
+    *,
+    asset_id: str,
+    owner_id: str,
+    reason: str,
+    attempts: int | None = None,
+    not_before: datetime | None = None,
+) -> None:
+    """Persist why the latest analysis failed and how many attempts have failed.
+
+    One atomic statement: concurrent workers cannot lose an increment. ``attempts`` pins the
+    count (terminal rejections); ``not_before`` makes the write a no-op when a newer failure
+    was already recorded, so a task backstop never double-counts the attempt that recorded it.
+    """
+    now = datetime.now(UTC)
+    with sync_engine.begin() as conn:
+        conn.execute(
+            text("""
+            UPDATE media_assets SET updated_at = now(), metadata_json = jsonb_set(
+                coalesce(metadata_json, '{}'::jsonb), ARRAY[CAST(:key AS text)],
+                jsonb_build_object(
+                    'reason', CAST(:reason AS text),
+                    'attempts', COALESCE(
+                        CAST(:attempts AS int),
+                        COALESCE(CAST(metadata_json->CAST(:key AS text)->>'attempts' AS int), 0) + 1
+                    ),
+                    'at', CAST(:at AS text)
+                )
+            )
+            WHERE id = CAST(:asset_id AS uuid) AND user_id = CAST(:owner_id AS uuid)
+              AND (CAST(:not_before AS text) IS NULL
+                   OR metadata_json->CAST(:key AS text)->>'at' IS NULL
+                   OR metadata_json->CAST(:key AS text)->>'at' < CAST(:not_before AS text))
+        """),
+            {
+                "key": FAILURE_KEY,
+                "asset_id": asset_id,
+                "owner_id": owner_id,
+                "reason": reason,
+                "attempts": attempts,
+                "at": now.isoformat(),
+                "not_before": not_before.isoformat() if not_before else None,
+            },
+        )
+
+
+def clear_analysis_failure(*, asset_id: str, owner_id: str) -> None:
+    with sync_engine.begin() as conn:
+        conn.execute(
+            text("""
+            UPDATE media_assets SET metadata_json = metadata_json - CAST(:key AS text)
+            WHERE id = CAST(:asset_id AS uuid) AND user_id = CAST(:owner_id AS uuid)
+              AND jsonb_exists(metadata_json, CAST(:key AS text))
+        """),
+            {"key": FAILURE_KEY, "asset_id": asset_id, "owner_id": owner_id},
+        )
 
 
 def _row_to_source(row: Any) -> _Source:
@@ -406,8 +499,17 @@ def ensure_media_asset_analysis(
                 _analyze_source(source, analyzer=analyzer) if analyzer else _analyze_source(source)
             )
     except Exception as exc:
-        log.warning("media_asset_analysis_failed", asset_id=asset_id, error_type=type(exc).__name__)
+        reason = classify_analysis_failure(exc)
+        log.warning(
+            "media_asset_analysis_failed",
+            asset_id=asset_id,
+            error_type=type(exc).__name__,
+            reason=reason,
+        )
         complete_media_asset_fact(claim, None, failed=True)
+        if analyzer != "transcript":
+            # A missing transcript degrades to visual-only evidence; it is not an asset failure.
+            record_analysis_failure(asset_id=asset_id, owner_id=owner_id, reason=reason)
         return None
     if not complete_media_asset_fact(claim, result):
         return None

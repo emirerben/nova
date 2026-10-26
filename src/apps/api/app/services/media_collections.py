@@ -30,7 +30,66 @@ async def owned_collection(
                 "message": "This collection changed. Refresh before continuing.",
             },
         )
+    # Heal a stored original-role binding in memory; the next committing flow persists it.
+    # The revision is untouched: the creator's selection did not change, only its source.
+    selected = members(row)
+    bound = await analysis_bound_members(db, owner, selected)
+    if bound != selected:
+        row.selection_json = {
+            **(row.selection_json or {}),
+            "members": [member.model_dump(mode="json") for member in bound],
+        }
     return row
+
+
+async def analysis_bound_members(
+    db: AsyncSession, owner: uuid.UUID, selected: list[CollectionMember]
+) -> list[CollectionMember]:
+    """Bind a device-only video to the analysis proxy that holds its facts.
+
+    Attaching the full original later (KRI-822) leaves the analysis, moments and phone
+    execution on the proxy, so a member bound to that original would never be indexed or
+    offered. Same rule as `media_library_analysis._requested_source`.
+    """
+    if not selected:
+        return selected
+    bound_ids = [member.source_id for member in selected]
+    originals = set(
+        (
+            await db.scalars(
+                select(MediaAssetSource.asset_id)
+                .join(MediaAsset, MediaAsset.id == MediaAssetSource.asset_id)
+                .where(
+                    MediaAssetSource.user_id == owner,
+                    MediaAssetSource.id.in_(bound_ids),
+                    MediaAssetSource.role == "original",
+                    MediaAsset.user_id == owner,
+                    MediaAsset.kind == "video",
+                    MediaAsset.original_availability == "device_only",
+                )
+            )
+        ).all()
+    )
+    if not originals:
+        return selected
+    proxies: dict[uuid.UUID, uuid.UUID] = {}
+    for proxy in await db.scalars(
+        select(MediaAssetSource)
+        .where(
+            MediaAssetSource.user_id == owner,
+            MediaAssetSource.asset_id.in_(originals),
+            MediaAssetSource.role == "analysis_proxy",
+            MediaAssetSource.status == "available",
+        )
+        .order_by(MediaAssetSource.created_at.desc(), MediaAssetSource.id.desc())
+    ):
+        proxies.setdefault(proxy.asset_id, proxy.id)
+    return [
+        member.model_copy(update={"source_id": proxies[member.asset_id]})
+        if member.asset_id in proxies
+        else member
+        for member in selected
+    ]
 
 
 def members(row: MediaCollection) -> list[CollectionMember]:
@@ -138,8 +197,9 @@ async def write_collection(
     ).hexdigest()
     if row is not None and (row.selection_json or {}).get("request_digest") == digest:
         return collection_out(row, await eligible_sources(db, owner, members(row)))
-    sources = await eligible_sources(db, owner, body.members)
-    if len(sources) != len(body.members):
+    requested = await analysis_bound_members(db, owner, body.members)
+    sources = await eligible_sources(db, owner, requested)
+    if len(sources) != len(requested):
         owned_ids = set(
             (
                 await db.scalars(
@@ -161,7 +221,7 @@ async def write_collection(
                 ),
             },
         )
-    grouped = _group(body.members, sources, members(row) if row else [])
+    grouped = _group(requested, sources, members(row) if row else [])
     # Opening the native collection saves its current selection again. Compare the
     # effective content, not the request digest (which contains expected_revision).
     # A stale identical snapshot is safe to acknowledge; it cannot overwrite data.

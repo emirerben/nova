@@ -1083,6 +1083,11 @@
       },
       "CollectionIndexOut": {
         "properties": {
+          "candidate_limit_reached": {
+            "default": false,
+            "title": "Candidate Limit Reached",
+            "type": "boolean"
+          },
           "context_asset_ids": {
             "items": {
               "format": "uuid",
@@ -1111,6 +1116,14 @@
           "revision": {
             "title": "Revision",
             "type": "integer"
+          },
+          "sampled_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Sampled Asset Ids",
+            "type": "array"
           },
           "truncated_asset_ids": {
             "items": {
@@ -1154,6 +1167,102 @@
           "truncated_asset_ids"
         ],
         "title": "CollectionIndexOut",
+        "type": "object"
+      },
+      "CollectionItemOut": {
+        "description": "One collection member's server-derived progress. See media_collection_items.py.",
+        "properties": {
+          "asset_id": {
+            "format": "uuid",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "attempts": {
+            "default": 0,
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "group": {
+            "nullable": true,
+            "title": "Group",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "video",
+              "image",
+              "audio"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "provider_error",
+              "budget_paused",
+              "unsupported_type",
+              "too_large",
+              "too_long",
+              "icloud_unavailable",
+              "no_usable_moment",
+              "access_revoked"
+            ],
+            "nullable": true,
+            "title": "Reason",
+            "type": "string"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "uploading",
+              "analyzing",
+              "ready",
+              "needs_retry",
+              "failed",
+              "excluded"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_id",
+          "kind",
+          "state",
+          "updated_at"
+        ],
+        "title": "CollectionItemOut",
+        "type": "object"
+      },
+      "CollectionItemsOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionItemOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "items"
+        ],
+        "title": "CollectionItemsOut",
         "type": "object"
       },
       "CollectionMember": {
@@ -1472,7 +1581,7 @@
             "$ref": "#/components/schemas/CreationMediaCapabilitiesOut"
           },
           "media_collection_cache_only": {
-            "default": true,
+            "default": false,
             "title": "Media Collection Cache Only",
             "type": "boolean"
           },
@@ -6980,6 +7089,14 @@
               "type": "string"
             },
             "title": "Unindexed Asset Ids",
+            "type": "array"
+          },
+          "unsupported_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Unsupported Asset Ids",
             "type": "array"
           }
         },
@@ -16030,6 +16147,55 @@
           }
         ],
         "summary": "Inspect",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-collections/{identifier}/items": {
+      "get": {
+        "description": "Per-member progress (queued -> analyzing -> ready, or an honest failure) for polling.",
+        "operationId": "items_me_media_collections__identifier__items_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionItemsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Items",
         "tags": [
           "media-library"
         ]

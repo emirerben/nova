@@ -100,7 +100,7 @@ def test_story_replay_separates_review_reasoning_from_proposed_creative_copy():
 def test_candidate_budget_cannot_grow_with_collection_size():
     value = evidence()
     with pytest.raises(ValidationError):
-        MomentRelevanceInput(query=value.query, candidates=value.candidates * 101)
+        MomentRelevanceInput(query=value.query, candidates=value.candidates * 151)
 
 
 # Failure catalogue: long moment/source UUIDs are easy to confuse; a model must
