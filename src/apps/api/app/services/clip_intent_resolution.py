@@ -638,11 +638,19 @@ def _membership_question(attribute: str) -> str:
 
 
 def _caption_question(intent: ClipIntent) -> str:
-    """The creator-facing question when a caption never grounds."""
+    """The creator-facing question when a caption never grounds.
+
+    The attribute is the model's free-form phrase ("an introductory explanation", "pub
+    clips"), so it is quoted rather than slotted behind a fixed article."""
     return say(
-        en=f"What should the caption on the {intent.attribute} say?",
-        tr=f'"{intent.attribute}" kliplerindeki yazı ne olsun?',
+        en=f'What should the caption for "{intent.attribute}" say?',
+        tr=f'"{intent.attribute}" için yazı ne olsun?',
     )
+
+
+def _is_caption_authoring_failure(work: _IntentWork) -> bool:
+    """Membership settled (clips were kept) and the caption text itself is what is unsettled."""
+    return work.intent.op == "caption" and bool(work.kept) and bool(work.intent_question)
 
 
 def _caption_authoring_question(intent: ClipIntent) -> str:
@@ -2223,8 +2231,14 @@ async def resolve_clip_intents_for_turn(
         (i if i.status == "resolved" else i.model_copy(update={"question": turn_question}))
         for i in resolved_intents
     ]
+    if status != "needs_creator":
+        diagnostics_stage = "vision"
+    elif creator_work and all(_is_caption_authoring_failure(w) for w in creator_work):
+        diagnostics_stage = "caption_authoring"
+    else:
+        diagnostics_stage = "membership"
     final_diagnostics = {
-        "stage": "vision" if status != "needs_creator" else "membership",
+        "stage": diagnostics_stage,
         "reason": error_code or status,
         "resolver_ms": resolver_ms,
         **shard_stats.as_dict(),

@@ -1570,11 +1570,39 @@ def _complete_draft_turn(
                             client_protocol=client_protocol,
                         )
                     )
+                    from app.kria import research_preview  # noqa: PLC0415
+                    from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+                    from app.services.phone_montage_preflight import (  # noqa: PLC0415
+                        _ready_visuals,
+                    )
+
+                    # KRI-881: the research done before approval, for the brief this turn
+                    # persisted. KRI-945: readiness drafts are judged on it too.
+                    draft_strategy = document.strategy or {}
+                    draft_research = research_preview.for_draft(
+                        planned.prepared_research,
+                        brief=brief,
+                        strategy=document.strategy,
+                        media_snapshot=planned.media_snapshot
+                        if planned.media_snapshot is not None
+                        else snapshot_media(item),
+                        terms=planned.prepared_research_terms,
+                        # The basis inputs research read beyond the draft: this item's
+                        # ready Visuals now and the slot windows they plan with.
+                        creator_id=thread.creator_id,
+                        edit_format=draft_strategy.get("edit_format") or item.edit_format,
+                        visuals=lambda: _ready_visuals(
+                            db,
+                            item=item,
+                            user_id=thread.creator_id,
+                            strategy=document.strategy,
+                        ),
+                        client_protocol=client_protocol,
+                    )
                     if not readiness_required:
                         # KRI-775: the phone montage worker refuses a draft whose order or
                         # length falls short. Plan it now (deterministic, fail-open) so its
                         # receipts hold the draft back here instead of after approval.
-                        from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
                         from app.services.phone_montage_preflight import (  # noqa: PLC0415
                             phone_montage_blockers,
                             with_blocked_requirements,
@@ -1593,32 +1621,6 @@ def _complete_draft_turn(
                         )
                         # KRI-881: research that failed before approval is a precise limit
                         # the creator rules on here, never a ready card.
-                        from app.kria import research_preview  # noqa: PLC0415
-                        from app.services.phone_montage_preflight import (  # noqa: PLC0415
-                            _ready_visuals,
-                        )
-
-                        draft_strategy = document.strategy or {}
-                        draft_research = research_preview.for_draft(
-                            planned.prepared_research,
-                            brief=brief,
-                            strategy=document.strategy,
-                            media_snapshot=planned.media_snapshot
-                            if planned.media_snapshot is not None
-                            else snapshot_media(item),
-                            terms=planned.prepared_research_terms,
-                            # The basis inputs research read beyond the draft: this item's
-                            # ready Visuals now and the slot windows they plan with.
-                            creator_id=thread.creator_id,
-                            edit_format=draft_strategy.get("edit_format") or item.edit_format,
-                            visuals=lambda: _ready_visuals(
-                                db,
-                                item=item,
-                                user_id=thread.creator_id,
-                                strategy=document.strategy,
-                            ),
-                            client_protocol=client_protocol,
-                        )
                         if draft_research is not None and not draft_research.ready:
                             phone_blockers = [
                                 *phone_blockers,
@@ -1756,6 +1758,13 @@ def _complete_draft_turn(
                 if _readiness_source is not None
                 else []
             )
+            # KRI-945: what the approval would pin (`BriefBinding.prepared_research`), or the
+            # research limit the creator is told about.
+            _readiness_research = (
+                draft_research.prepared.model_dump(mode="json")
+                if draft_research is not None
+                else None
+            )
             readiness_report = assess_readiness(
                 brief,
                 document.strategy or {},
@@ -1769,6 +1778,8 @@ def _complete_draft_turn(
                 protected_regions=_readiness_marks,
                 protected_marks=_marks_route,
                 prepared_collection_story=document.prepared_collection_story,
+                creator_id=thread.creator_id,
+                prepared_research=_readiness_research,
             )
             if not readiness_report["ready"]:
                 reply_text = readiness_reply(brief, readiness_report)
@@ -1951,6 +1962,8 @@ def _complete_draft_turn(
                     protected_regions=_readiness_marks,
                     protected_marks=_marks_route,
                     prepared_collection_story=document.prepared_collection_story,
+                    creator_id=thread.creator_id,
+                    prepared_research=_readiness_research,
                 )
             requirement_receipts = [
                 {**receipt, "brief_version": brief.version} for receipt in requirement_receipts

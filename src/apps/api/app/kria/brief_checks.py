@@ -358,6 +358,12 @@ class PlanFacts:
     # stated first/last clip stays unjudged there instead of failing a plan that seated it.
     sequence_spots_met: tuple[str, ...] | None = None
     texts: tuple[str, ...] = ()
+    # KRI-945: pinned contract texts the render puts on screen whatever the plan holds
+    # (`phone_plan_repair.contract_text_drawn`). Empty = no such writer, or not known.
+    contract_drawn_texts: tuple[str, ...] = ()
+    # KRI-945: the research done before approval (`PreparedResearch` as JSON), pinned to the
+    # approval with it. None = none was done (or this facts source never has it).
+    research: Mapping[str, Any] | None = None
     # Where the title came from: "creator" (their words), "brief" (written from the
     # brief's facts), "default" (nothing to title with), None = unknown.
     title_source: str | None = None
@@ -7987,7 +7993,9 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
             else _fold(facts.title) == wanted
         )
     else:
-        found = any(_contains_text(t, wanted) for t in facts.texts)
+        found = any(_contains_text(t, wanted) for t in facts.texts) or _drawn_by_contract(
+            req, facts
+        )
     # Chapter lists are satisfied by their separate labels, not a joined title.
     if found or chapter_list(req.literal, facts.texts) is not None:
         # Copy presence cannot certify independently requested visual/temporal behavior.
@@ -8049,6 +8057,60 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         "partial",
         say(en="That exact text isn't in this draft.", tr="Bu tam yazı bu taslakta yok."),
     )
+
+
+def _drawn_by_contract(req: BriefRequirement, facts: PlanFacts) -> bool:
+    """KRI-945: whole-video words the render's contract repair puts over the opening.
+
+    Only a plain ask: one with a fact of its own (a position, a clip, a moment, a length;
+    anything but the research ask it came from) or a spoken-word cue is not what the repair
+    draws, so it keeps its own verdict.
+    """
+    if not facts.contract_drawn_texts:
+        return False
+    from app.kria.research_preview import RESEARCH_FACT  # noqa: PLC0415
+
+    wanted = _fold(req.literal or "")
+    return (
+        req.scope == "global"
+        and bool(wanted)
+        and not _is_spoken_text_cue(req)
+        and set(req.facts) <= {RESEARCH_FACT}
+        and any(_fold(text) == wanted for text in facts.contract_drawn_texts)
+    )
+
+
+def _check_research(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """KRI-945: a researched-facts ask, judged by the research done before approval.
+
+    Met only when the sourced explanations researched for exactly this ask are pinned; a
+    research limit is the precise ``not_possible`` the creator rules on. ``None`` when
+    nothing was researched for it (no evidence either way).
+    """
+    if facts.research is None:
+        return None
+    from app.kria import research_preview  # noqa: PLC0415
+    from app.schemas.research import PreparedResearch  # noqa: PLC0415
+
+    found = research_preview.research_requirement(CreativeBrief(requirements=[req]))
+    if found is None:
+        return None
+    try:
+        prepared = PreparedResearch.model_validate(facts.research)
+    except ValueError:
+        return None
+    request = found[1]
+    if (prepared.requirement_id, prepared.topic, prepared.request_quote) != (
+        req.id,
+        request.topic,
+        request.request_quote,
+    ):
+        return None
+    if prepared.status == "failed":
+        return research_preview.blocker_receipt(prepared, req)
+    if not prepared.texts:
+        return None
+    return _receipt(req, "met", None, verification="checked", stage="applied")
 
 
 # Fact keys that name the spoken words a text line waits for (one list with the phone
@@ -9196,6 +9258,9 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
     if _wants_whole_line(req):
         return _check_whole_line(req, facts)
     if req.kind == "text":
+        researched = None if req.literal else _check_research(req, facts)
+        if researched is not None:
+            return researched
         if req.scope == "per_clip" or req.scope.startswith("clip:"):
             return _with_text_look(req, facts, _check_per_clip_text(req, facts))
         if req.literal:

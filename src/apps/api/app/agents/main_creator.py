@@ -149,7 +149,9 @@ log = structlog.get_logger()
 # text / music or a speed ramp; the phone montage plans the rate onto the named clips.
 # v96: exact-timed small cards (`timed_cards`, flag PHONE_TIMED_CARDS_ENABLED) on phone
 # Montage / Voiceover edits, and the shared brief records a `timed_card` fact for the ask.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-26-v96"
+# v97 (KRI-945): the described-text exception covers text on particular clips only; an
+# intro, explanation or facts for the whole video is never a clip intent.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-26-v97"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -181,9 +183,10 @@ _CLIP_FACTS_NOTE = (
 # Position matters: appended after the rule the model kept asking the creator
 # for exact words (6/6 live runs); stated at the rule it proposes (6/6).
 _DESCRIBED_TEXT_EXCEPTION = (
-    " EXCEPTION -- described text: when the creator asks for on-screen text they DESCRIBE"
-    ' rather than dictate ("the name of the dish on each food clip", "a caption about the'
-    ' weather on the park clips"), the missing words are not yours to write and NOT a reason'
+    " EXCEPTION -- described text on clips: when the creator asks for on-screen text ON"
+    ' PARTICULAR CLIPS that they DESCRIBE rather than dictate ("the name of the dish on each'
+    ' food clip", "a caption about the weather on the park clips"), the missing words are not'
+    " yours to write and NOT a reason"
     " to ask: emit a `clip_intents` entry (see OPEN-VOCABULARY CLIP INTENTS; `op` is exactly"
     " one of label, group, order, include, caption -- a per-clip tag is `label`, one phrase"
     " over a group of clips is `caption`) and propose the strategy; the server reads the"
@@ -196,7 +199,10 @@ _DESCRIBED_TEXT_EXCEPTION = (
     ' null}, {"intent_id": "weather", "op": "caption", "attribute": "the park clips",'
     ' "creator_text": null, "caption_attribute": "the weather"}]; "the name of the dish on'
     ' each food clip" => {"op": "label", "attribute": "the dish shown in the clip",'
-    ' "creator_text": null}.'
+    ' "creator_text": null}. Text for the WHOLE video is never a `clip_intents` entry, even'
+    " when described: an introduction, an explanation or facts about the place or topic"
+    ' ("some facts about Lisbon to show why people should go, an introductory explanation")'
+    " follows Researched explanations, and a hook is the opening title."
 )
 
 # KRI-118 item 1: guidance for the chat-picked "shape" layered on top of
