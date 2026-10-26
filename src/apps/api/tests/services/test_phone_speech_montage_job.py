@@ -616,3 +616,213 @@ def test_a_label_for_a_clip_the_edit_never_shows_still_refuses(world):
     with pytest.raises(CreatorRenderContractError):
         _run(world, plan)
     assert world.db.commits == 0
+
+
+# The KRI-939 follow-up: a closing text ("end on the words …") and a second free-standing
+# line were still refused by name on this route, because the job handed the compiler only
+# the title and clip labels. The replay extends Don Julio walk-in M1's real contract (job
+# 1cb33402: opening + duplicate `any` title, two clip labels) with both. Failure modes:
+# docs/reviews/kept-line-closing-and-second-text.md.
+CLOSING = "See you at Don Julio 🔥"
+SECOND_LINE = "Palermo, Buenos Aires"
+FRAME = 1 / 30
+
+
+def _text_features(monkeypatch):
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [
+            *settings.phone_render_verified_features,
+            "positionedText",
+            "animatedText",
+            "authoredText",
+        ],
+    )
+
+
+def _band(layer):
+    """The layer's vertical extent in canvas pixels (top, bottom): run baselines are
+    absolute, an ascender reaches about one font size above, a descender ~0.3 below."""
+    tops = [run.baseline_y - run.font_size for run in layer.runs]
+    bottoms = [run.baseline_y + 0.3 * run.font_size for run in layer.runs]
+    return min(tops), max(bottoms)
+
+
+def _collide(a, b):
+    """Two layers on screen at the same time in the same vertical band."""
+    same_time = a.start < b.end - 1e-3 and b.start < a.end - 1e-3
+    (a_top, a_bottom), (b_top, b_bottom) = _band(a), _band(b)
+    return same_time and a_top < b_bottom and b_top < a_bottom
+
+
+def _only(recipe, text):
+    found = [layer for layer in recipe.text_layers if _drawn(layer) == text]
+    assert len(found) == 1, f"{text!r} drawn {len(found)} times"
+    return found[0]
+
+
+def _m1_texts(*extra):
+    from app.services.creator_render_contract import TextRequirement
+
+    return (
+        TextRequirement(role="opening", text=TITLE, duration_s=2.2),
+        TextRequirement(role="any", text=TITLE),
+        TextRequirement(role="clip", text=BUTCHER, media_id="b1"),
+        TextRequirement(role="clip", text=PLAQUES, media_id="b2"),
+        *extra,
+    )
+
+
+def _verified(world):
+    from app.services.device_render import (
+        device_record,
+        device_status,
+        verify_device_record_contract,
+    )
+
+    assert world.job.status == "awaiting_device", world.job.error_detail
+    status = device_status(world.job, "speech_montage")
+    verify_device_record_contract(world.job, device_record(world.job, "speech_montage"), status)
+    return status.request.recipe
+
+
+def test_kept_line_montage_draws_the_closing_text_and_a_second_line(world, monkeypatch):
+    from app.services.creator_render_contract import TextRequirement
+
+    _text_features(monkeypatch)
+    _contract(
+        world,
+        original_audio="require",
+        audio_source_ids=("talk",),
+        exact_texts=_m1_texts(
+            TextRequirement(role="closing", text=CLOSING),
+            TextRequirement(role="any", text=SECOND_LINE),
+        ),
+    )
+    assert _run(world, _walk_in_plan()) is True
+    recipe = _verified(world)
+    title, closing, second = (_only(recipe, t) for t in (TITLE, CLOSING, SECOND_LINE))
+    assert closing.end >= recipe.duration - FRAME
+    assert closing.start > 0 and closing.end - closing.start >= 2.0
+    # Its own layer, its own time: never stacked into (or on top of) another text.
+    assert second.id not in {title.id, closing.id}
+    assert second.start >= title.end - 1e-3 and second.end <= closing.start + 1e-3
+    layers = recipe.text_layers
+    assert not [(a.id, b.id) for a in layers for b in layers if a.id < b.id and _collide(a, b)]
+    rows = world.job.assembly_plan["variants"][0]["text_elements"]
+    assert {TITLE, BUTCHER, PLAQUES, CLOSING, SECOND_LINE} <= {row["text"] for row in rows}
+    assert all(row["source_params"]["read_only"] for row in rows)
+
+
+def test_a_turkish_closing_text_and_second_line_keep_their_exact_letters(world, monkeypatch):
+    from app.services.creator_render_contract import TextRequirement
+
+    _text_features(monkeypatch)
+    closing, second = "Görüşürüz, İstanbul! 🇹🇷", "Kadıköy'de bir akşam"
+    _contract(
+        world,
+        original_audio="require",
+        audio_source_ids=("talk",),
+        exact_texts=(
+            TextRequirement(role="opening", text="Akşam yemeği"),
+            TextRequirement(role="closing", text=closing),
+            TextRequirement(role="any", text=second),
+        ),
+    )
+    assert _run(world, _walk_in_plan()) is True
+    recipe = _verified(world)
+    assert _only(recipe, closing).end >= recipe.duration - FRAME
+    _only(recipe, second)
+
+
+def test_a_short_edit_still_shows_every_text_without_overlap(world, monkeypatch):
+    """No room for a window of its own: the second line stacks clear of the title."""
+    from app.services.creator_render_contract import TextRequirement
+
+    _text_features(monkeypatch)
+    _contract(
+        world,
+        original_audio="require",
+        audio_source_ids=("talk",),
+        exact_texts=(
+            TextRequirement(role="opening", text=TITLE),
+            TextRequirement(role="closing", text=CLOSING),
+            TextRequirement(role="any", text=SECOND_LINE),
+        ),
+    )
+    plan = _plan({"kind": "speech", "clip_ref": "c1", "quote": "never rush a good espresso"})
+    assert _run(world, plan) is True
+    recipe = _verified(world)
+    assert recipe.duration < 4
+    closing = _only(recipe, CLOSING)
+    assert 0 <= closing.start and closing.end >= recipe.duration - FRAME
+    _only(recipe, SECOND_LINE)
+    layers = recipe.text_layers
+    assert not [(a.id, b.id) for a in layers for b in layers if a.id < b.id and _collide(a, b)]
+
+
+def test_texts_the_edit_already_shows_are_not_drawn_twice(world, monkeypatch):
+    """The `any` twin of the title and an `any` copy of a label are already on screen."""
+    from app.services.creator_render_contract import TextRequirement
+
+    _text_features(monkeypatch)
+    _contract(
+        world,
+        original_audio="require",
+        audio_source_ids=("talk",),
+        exact_texts=_m1_texts(TextRequirement(role="any", text=BUTCHER)),
+    )
+    assert _run(world, _walk_in_plan()) is True
+    recipe = _verified(world)
+    _only(recipe, TITLE)
+    assert len([layer for layer in recipe.text_layers if _drawn(layer) == BUTCHER]) == len(
+        _layers_inside(recipe, "b1", BUTCHER)
+    )
+
+
+def test_the_receipt_counts_the_drawn_closing_text_and_second_line(world, monkeypatch):
+    from app.kria.brief import BriefRequirement, CreativeBrief
+    from app.services.creator_render_contract import TextRequirement
+
+    _text_features(monkeypatch)
+    _contract(
+        world,
+        original_audio="require",
+        audio_source_ids=("talk",),
+        exact_texts=(
+            TextRequirement(role="closing", text=CLOSING),
+            TextRequirement(role="any", text=SECOND_LINE),
+        ),
+    )
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(
+                id="r1",
+                kind="text",
+                scope="global",
+                description=f"put the text {SECOND_LINE}",
+                literal=SECOND_LINE,
+                source_turn_id="t1",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        gb,
+        "_load_unified_montage_inputs",
+        lambda _id: (world.job.user_id, world.assignments, brief),
+    )
+    assert _run(world, _walk_in_plan()) is True
+    _verified(world)
+    assert _receipts(world)["r1"]["status"] == "met"
+
+
+def test_a_contract_without_closing_or_extra_text_compiles_as_before(world, monkeypatch):
+    """No closing / extra `any` text: the recipe is the KRI-939 one, layer for layer."""
+    _text_features(monkeypatch)
+    _contract(world, original_audio="require", audio_source_ids=("talk",), exact_texts=_m1_texts())
+    assert _run(world, _walk_in_plan()) is True
+    recipe = _verified(world)
+    assert {_drawn(layer) for layer in recipe.text_layers} == {TITLE, BUTCHER, PLAQUES}
+    assert all(layer.id.startswith(("title-", "label-")) for layer in recipe.text_layers)
