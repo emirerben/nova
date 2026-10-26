@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.140.0] - 2026-10-26
+
+### Changed
+- feat(kria): voiceover and talk-to-camera edits may run 240s (KRI-955) (#1850) <!-- release-pr: 1850 -->
+
 ## [0.81.139.0] - 2026-10-26
 
 ### Changed
