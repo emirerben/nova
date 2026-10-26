@@ -118,12 +118,12 @@ from app.models import (
     Persona,
     PlanItem,
 )
+from app.pipeline.best_parts import edit_cap_s
 from app.pipeline.pinned_text import pin_range_grounded
 from app.routes._copilot import CopilotTurnBody, is_overlay_display_ask, run_copilot_turn
 from app.routes.generative_jobs import variant_render_baseline
 from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
 from app.schemas.edit_proposal import (
-    MAX_PROPOSAL_DURATION_S,
     MixedMediaTimingProfile,
     PinnedText,
 )
@@ -261,6 +261,16 @@ def _timing_profile(strategy: Mapping[str, Any]) -> MixedMediaTimingProfile | No
         return MixedMediaTimingProfile.model_validate(raw)
     except ValueError:
         return None
+
+
+def _edit_cap_s(strategy: Mapping[str, Any]) -> float:
+    """The longest edit this strategy can be planned to: spoken sources run longer."""
+    from app.services.length_policy import natural_length_owner  # noqa: PLC0415
+
+    try:
+        return edit_cap_s(natural_length_owner(strategy))
+    except ValueError:
+        return edit_cap_s(None)
 
 
 def _enrich_best_parts_snapshot(
@@ -4626,7 +4636,7 @@ async def _gate_unresolved_choices(
         enriched_snapshot,
         events,
         ChoiceCapability(
-            max_duration_s=float(MAX_PROPOSAL_DURATION_S),
+            max_duration_s=_edit_cap_s(strategy),
             creator_id=creator_id,
             voice_route=settings.voice_behind_footage_enabled,
             speech_occurrence=settings.speech_occurrence_question_enabled,
