@@ -45,6 +45,8 @@ struct CameraRollCollectionView: View {
     @State private var readyVideoCount = 0
     @State private var metadataElapsedMs = 0.0
     @State private var resumedCollection = false
+    @State private var itemStore = CameraRollItemStore()
+    @State private var itemEngine: CameraRollItemEngine?
     private var metadataOnly: Bool {
         #if DEBUG
         ProcessInfo.processInfo.arguments.contains("-camera-roll-device-collection")
@@ -435,22 +437,32 @@ struct CameraRollCollectionView: View {
         guard let originals, !fixture, !metadataOnly, !cacheOnly, !cacheOnlyRequired else { return false }
         running = true; error = nil; status = nil
         defer { running = false }
+        let engine = itemEngine ?? CameraRollItemEngine(client: api, store: itemStore)
+        itemEngine = engine
+        engine.sync(entries: collection.entries)
+        let jobs = collection.entries.filter { $0.savedAsset == nil }.map { entry in
+            let isMovie = providers[entry.id]?.supportedContentTypes.contains { $0.conforms(to: .movie) } == true
+            return CameraRollUploadItem(id: entry.id, kind: entry.metadata?.kind ?? (isMovie ? "video" : "image"), duration: entry.metadata?.duration ?? 0)
+        }
+        let owner = originals.owner
+        await engine.upload(jobs, loop: .live(api: api, providers: providers)) { id, asset in
+            guard api.mediaLibraryOwner == owner else { throw SourceAssetError.invalidBinding }
+            collection.bind(asset, to: id)
+            persist()
+        }
+        guard !Task.isCancelled else { status = "Paused. Completed uploads are saved; you can resume."; return false }
         do {
-            for entry in collection.entries where entry.savedAsset == nil {
-                try Task.checkCancellation()
-                let item = providers[entry.id] ?? PhotosPickerItem(itemIdentifier: entry.id)
-                let file = try await PhotoItemFileLoader().load(item: item, identifier: entry.id)
-                defer { try? FileManager.default.removeItem(at: file) }
-                let kind = entry.metadata?.kind ?? (item.supportedContentTypes.contains { $0.conforms(to: .movie) } ? "video" : "image")
-                let asset = try await api.importCollectionMedia(file: file, kind: kind)
-                guard api.mediaLibraryOwner == originals.owner else { throw SourceAssetError.invalidBinding }
-                collection.bind(asset, to: entry.id)
-                persist()
-            }
-            let saved = try await api.saveCameraRollCollection(collection, revision: revision)
+            // Items that failed stay local; the rest are saved so their analysis starts and can be polled.
+            var uploaded = collection
+            try uploaded.select(uploaded.entries.filter { $0.savedAsset != nil }.map(\.id))
+            let left = collection.entries.count - uploaded.entries.count
+            guard !uploaded.entries.isEmpty else { status = "None of the \(left) items could be uploaded."; return false }
+            let saved = try await api.saveCameraRollCollection(uploaded, revision: revision)
             revision = saved.revision
             collection.serverRevision = revision
             persist()
+            engine.startPolling(collectionID: collection.id)
+            guard left == 0 else { status = "\(left) \(left == 1 ? "item" : "items") didn't upload. Retry them, or continue with the rest."; return false }
             status = "Collection saved. Analysis is queued for the selected uploads."
             return true
         } catch is CancellationError { status = "Paused. Completed uploads are saved; you can resume." }
