@@ -65,7 +65,9 @@ _FIXTURE = json.loads(
     ).read_text()
 )
 VIDEO = _FIXTURE["video"]
-PHOTO = "asset-d17aeec6-0000-4000-8000-000000000001"  # never offered in prod (KRI-949)
+# The thread's Visuals photo: prod never offered it; since KRI-949 every row the resolver
+# found nothing for offers it too.
+PHOTO = "asset-d17aeec6-0000-4000-8000-000000000001"
 
 
 def _question(sequence: int) -> dict:
@@ -372,7 +374,10 @@ def _clips() -> list[IntentClip]:
 
 
 def _wire(monkeypatch, rows: list[dict]) -> MagicMock:
-    """The planner replays these real rows; the resolver finds nothing on its own."""
+    """The planner replays these real rows; the resolver finds nothing on its own.
+
+    As in prod: the queue (rounds 1 and 3) and the butcher (round 3) came back n=0.
+    """
     monkeypatch.setattr(service.settings, "kria_clip_selection_questions_enabled", True)
     agent = MagicMock()
     agent.run.return_value = ClipIntentPlannerOutput(intents=[_planned(r) for r in rows])
@@ -408,9 +413,10 @@ async def test_prod_rounds_1_to_3_ask_the_butcher_once_and_never_the_queue_again
     first = (await _turn()).resolution
     assert first.needs_creator
     (row,) = first.clip_question["categories"]
+    # The resolver found nothing for the queue, so the photo is offered too (KRI-949).
     assert (row["key"], row["candidate_media_ids"]) == (
         "include:the-queue-under-the-striped-awning",
-        [VIDEO],
+        [VIDEO, PHOTO],
     )
     thread = [("assistant", {"clip_question": first.clip_question})]
     thread.append(_tap(first.clip_question, row["key"], [VIDEO]))  # the seq-7 tap
@@ -425,10 +431,11 @@ async def test_prod_rounds_1_to_3_ask_the_butcher_once_and_never_the_queue_again
     assert [h["key"] for h in butcher["also_answers"]] == [
         "order:the-butcher-holding-a-cut-of-beef"
     ]
+    assert butcher["candidate_media_ids"] == [VIDEO, PHOTO]
     asked = {i.question for i in third.intents if i.status != "resolved"}
     assert asked == {
-        'I couldn\'t find "the butcher holding a cut of beef" in your video. '
-        "Tap the video if it's in there, or tell me it isn't."
+        'I couldn\'t tell which of your clips show "the butcher holding a cut of beef". '
+        "Tap the clips that do, or tell me there aren't any."
     }
 
     # One tap on the one row settles both butcher intents; nothing is asked any more.

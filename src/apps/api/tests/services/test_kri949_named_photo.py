@@ -21,6 +21,9 @@ round-4 and round-6 replays reproduce prod's question and ``clip_question`` word
 
 Ways this could fail, each pinned below:
 - rounds 4/6 still offer only the video, or still say "in your video",
+- round 4 asks the photo in two rows (include + caption, KRI-951), drops the caption's
+  "Ojo de bife 🥩" from the joined row, or one tap on the photo does not settle both and the
+  round-6 re-plan under ``order`` (KRI-947),
 - the photo row has no thumbnail entry (KRI-693 ``candidate_media``),
 - the photo is used without the creator choosing it (a guess, possibly the wrong photo),
 - a video-only project loses KRI-779's plain "in your video" question,
@@ -41,6 +44,7 @@ import pytest
 from app.kria.reply_language import reply_language_for
 from app.schemas.clip_intents import ClipIntent
 from app.services.clip_intent_resolution import IntentClip
+from app.services.clip_selection import fold_clip_selections
 from tests.services.test_kri779_single_take_moments import _by_id, _patch, _resolve
 
 pytestmark = pytest.mark.asyncio
@@ -159,29 +163,45 @@ def _round6(attribute: str = "the ribeye photo", op: str = "order"):
     return intents, resolver
 
 
-async def test_round_four_offers_the_photo_for_both_rows(monkeypatch) -> None:
+async def test_round_four_offers_the_photo_in_one_row_for_both_intents(monkeypatch) -> None:
     intents, resolver = _round4()
     _patch(monkeypatch, resolver)
 
     result = await _resolve(intents, _clips(PHOTO), request=REQUEST)
 
     assert result.status == "needs_creator"
-    categories = result.clip_question["categories"]
-    assert [(c["key"], c["candidate_media_ids"]) for c in categories] == [
-        ("include:the-ribeye-photo", [TAKE, PHOTO]),
-        ("caption:the-ribeye-photo", [TAKE, PHOTO]),
+    # KRI-951: include + caption offer the same clips, so they are one row; the caption
+    # rides behind it with the creator's text.
+    (row,) = result.clip_question["categories"]
+    assert (row["key"], row["candidate_media_ids"]) == ("include:the-ribeye-photo", [TAKE, PHOTO])
+    assert [(h["key"], h["creator_text"]) for h in row["also_answers"]] == [
+        ("caption:the-ribeye-photo", "Ojo de bife 🥩")
     ]
-    assert categories[1]["creator_text"] == "Ojo de bife 🥩"
     # KRI-693: the photo row is drawn with its thumbnail, named as a photo.
     assert result.clip_question["candidate_media"] == [
         {"media_id": PHOTO, "kind": "image", "label": "Photo 1"}
     ]
-    assert "in your video" not in result.question
+    assert result.question == WHICH_CLIPS
     # Nothing is chosen for the creator: the photo is offered, never assumed.
     assert _by_id(result)["include_ribeye_photo"].assignments == []
     assert _by_id(result)["caption_ribeye_photo"].assignments == []
     # What the resolver matched keeps its own clips.
     assert [a.media_id for a in _by_id(result)["include_cook"].assignments] == [TAKE]
+
+    # One tap on the photo settles both intents and round 6's re-plan under ``order``
+    # (KRI-947), so the photo is not asked a third time.
+    question = result.clip_question
+    tap = {
+        "question_id": question["question_id"],
+        "answers": [{"key": row["key"], "media_ids": [PHOTO]}],
+    }
+    sel = fold_clip_selections(
+        [("assistant", {"clip_question": question}), ("user", {"clip_selection": tap})]
+    )
+    (round6_photo,) = [i for i in _round6()[0] if i.intent_id == "clip_order_4"]
+    for intent in (_by_id(result)["include_ribeye_photo"], _by_id(result)["caption_ribeye_photo"]):
+        assert sel.match(intent).media_ids == (PHOTO,), intent.intent_id
+    assert sel.match(round6_photo).media_ids == (PHOTO,)
 
 
 async def test_round_six_offers_the_photo(monkeypatch) -> None:
