@@ -242,7 +242,7 @@ async def test_story_candidates_cover_large_collections_in_bounded_passes(
         StoryIdea,
     )
     from app.models import MediaSourceMoment
-    from app.services.media_moments import _index_spec
+    from app.services.media_moments import FAIR_CANDIDATE_CAP, _index_spec
 
     client, _, _, owner, _ = collection_world
     asset_ids, source_ids = [], []
@@ -319,11 +319,11 @@ async def test_story_candidates_cover_large_collections_in_bounded_passes(
     candidates = []
 
     def ideas(self, input, *, ctx):
-        assert len(input.candidates) <= 100
+        assert len(input.candidates) <= FAIR_CANDIDATE_CAP
         selected_sources = {value.source for value in input.candidates}
-        assert len(selected_sources) == min(collection_size, 100)
+        assert len(selected_sources) == min(collection_size, FAIR_CANDIDATE_CAP)
         assert selected_sources <= set(source_ids)
-        if collection_size <= 100:
+        if collection_size <= FAIR_CANDIDATE_CAP:
             assert selected_sources == set(source_ids), "Every added source must remain eligible"
         assert source_ids[-1] in selected_sources
         candidates.extend(value.id for value in input.candidates)
@@ -351,7 +351,7 @@ async def test_story_candidates_cover_large_collections_in_bounded_passes(
         f"{path}/stories", json={"expected_revision": 1, "query": "finalharbour"}
     )
     assert stories.status_code == 200, stories.text
-    assert len(checked) == min(collection_size, 100)
+    assert len(checked) == min(collection_size, FAIR_CANDIDATE_CAP)
     late = max(searched.json()["moments"], key=lambda value: value["end_s"])
     assert late["id"] not in candidates
     story = stories.json()["stories"][0]
@@ -1698,3 +1698,599 @@ async def test_idea_forms_gate_evidence_and_survive_wording_edits_and_legacy_row
     )
     assert edited.status_code == 200, edited.text
     assert "form" not in edited.json()["content_plan"]
+
+
+# --- KRI-944: analysis that converges, and one honest per-item state --------------------
+
+
+async def _add_video(
+    owner,
+    *,
+    status="ready",
+    has_audio=False,
+    duration=8.0,
+    facts_status="ready",
+    transcript_status=None,
+    metadata=None,
+    kind="video",
+    role="analysis_proxy",
+    byte_count=None,
+):
+    """A catalogue asset with a proxy source and (optionally) pre-existing fact rows."""
+    ready_video = {
+        "duration_s": duration,
+        "description": "A red ferry crossing a harbour",
+        "understanding": {"summary": "Ferry crossing", "notable_moments": []},
+    }
+    async with AsyncSessionLocal() as db:
+        asset = MediaAsset(
+            user_id=owner.id,
+            kind=kind,
+            status=status,
+            original_availability="device_only",
+            original_byte_count=byte_count,
+            metadata_json={"duration_s": duration, "has_audio": has_audio, **(metadata or {})},
+        )
+        db.add(asset)
+        await db.flush()
+        source = MediaAssetSource(
+            user_id=owner.id,
+            asset_id=asset.id,
+            role=role,
+            object_path=f"users/{owner.id}/kri944/{asset.id}.mp4",
+            object_generation="42",
+            uploaded_sha256=hashlib.sha256(str(asset.id).encode()).hexdigest(),
+            byte_count=1234,
+            content_type="video/mp4",
+            status="available",
+        )
+        db.add(source)
+        await db.flush()
+        ref = facts._Source(
+            str(asset.id),
+            str(source.id),
+            str(owner.id),
+            kind,
+            role,
+            source.object_path,
+            "42",
+            source.uploaded_sha256,
+            "available",
+        )
+        for analyzer, state, result in (
+            (None, facts_status, ready_video),
+            ("transcript", transcript_status, {"words": []}),
+        ):
+            if state is None:
+                continue
+            key = facts._key(ref, analyzer)
+            db.add(
+                MediaAssetAnalysis(
+                    user_id=owner.id,
+                    asset_id=asset.id,
+                    source_id=source.id,
+                    analyzer=key.analyzer,
+                    model=key.model,
+                    prompt_version=key.prompt_version,
+                    schema_version=key.schema_version,
+                    source_identity=key.source_identity,
+                    status=state,
+                    result_json=result if state == "ready" else None,
+                )
+            )
+        await db.commit()
+        return str(asset.id), str(source.id)
+
+
+async def _items(client, path):
+    response = await client.get(f"{path}/items")
+    assert response.status_code == 200, response.text
+    return {item["asset_id"]: item for item in response.json()["items"]}
+
+
+async def test_failed_analysis_retries_itself_and_ends_ready(collection_world, monkeypatch):
+    """A transient provider failure is not permanent: it is retried, then it converges."""
+    from celery.exceptions import Retry
+
+    from app.tasks import media_library as task
+
+    client, _, _, owner, _ = collection_world
+    asset_id, source_id = await _add_video(owner, status="pending", facts_status=None)
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    assert (await client.put(path, json=selection([asset_id], [source_id], 1))).status_code == 200
+    assert (await _items(client, path))[asset_id]["state"] == "queued"
+
+    outcomes = [RuntimeError("provider 503"), None]
+
+    def analyze(source, *, analyzer=None, snapshot_local_path=None):
+        outcome = outcomes.pop(0)
+        if outcome is not None:
+            raise outcome
+        return {
+            "duration_s": 8.0,
+            "description": "A red ferry crossing a harbour",
+            "understanding": {"summary": "Ferry crossing", "notable_moments": []},
+        }
+
+    monkeypatch.setattr(facts, "_analyze_source", analyze)
+    with pytest.raises(Retry):
+        await asyncio.to_thread(task.analyze_media_asset_task.run, asset_id, str(owner.id))
+    failed = (await _items(client, path))[asset_id]
+    assert (failed["state"], failed["reason"], failed["attempts"], failed["retryable"]) == (
+        "needs_retry",
+        "provider_error",
+        1,
+        True,
+    )
+
+    # The worker dying before its own retry fires is covered by the reconciler, after a backoff.
+    sent = []
+    monkeypatch.setattr(task.analyze_media_asset_task, "delay", lambda *args: sent.append(args))
+    await asyncio.to_thread(task.reconcile_media_library_analysis.run)
+    assert [a for a in sent if a[0] == asset_id] == [], "A fresh failure waits out its backoff"
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(MediaAsset)
+            .where(MediaAsset.id == uuid.UUID(asset_id))
+            .values(updated_at=datetime.now(UTC) - timedelta(minutes=11))
+        )
+        await db.commit()
+    await asyncio.to_thread(task.reconcile_media_library_analysis.run)
+    assert (asset_id, str(owner.id)) in sent
+    await asyncio.to_thread(task.analyze_media_asset_task.run, asset_id, str(owner.id))
+    ready = (await _items(client, path))[asset_id]
+    assert (ready["state"], ready["reason"], ready["attempts"]) == ("ready", None, 0)
+    async with AsyncSessionLocal() as db:
+        asset = await db.get(MediaAsset, uuid.UUID(asset_id))
+        assert asset.status == "ready" and "analysis_failure" not in asset.metadata_json
+
+
+async def _age(asset_id, minutes):
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(MediaAsset)
+            .where(MediaAsset.id == uuid.UUID(asset_id))
+            .values(updated_at=datetime.now(UTC) - timedelta(minutes=minutes))
+        )
+        await db.commit()
+
+
+async def test_task_retries_do_not_spend_the_reconciler_budget(collection_world, monkeypatch):
+    """A burst of task retries is not three strikes: revivals are counted on their own."""
+    from celery.exceptions import Retry
+
+    from app.services.media_library_ingest import retry_library_asset
+    from app.tasks import media_library as task
+
+    client, _, _, owner, _ = collection_world
+    asset_id, source_id = await _add_video(owner, status="pending", facts_status=None)
+
+    def analyze(source, *, analyzer=None, snapshot_local_path=None):
+        raise RuntimeError("provider 503")
+
+    monkeypatch.setattr(facts, "_analyze_source", analyze)
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    assert (await client.put(path, json=selection([asset_id], [source_id], 1))).status_code == 200
+    resent = []
+    monkeypatch.setattr(
+        task.analyze_media_asset_task,
+        "delay",
+        lambda *a: resent.append(a) if a[0] == asset_id else None,
+    )
+    run = task.analyze_media_asset_task.run
+
+    for _ in range(4):  # more failed runs than the old whole-budget of three
+        with pytest.raises(Retry):
+            await asyncio.to_thread(run, asset_id, str(owner.id))
+    item = (await _items(client, path))[asset_id]
+    assert (item["state"], item["attempts"], item["retryable"]) == ("needs_retry", 4, True)
+
+    # The reconciler still has its whole budget: three revivals, then the row is terminal.
+    for revival in range(1, 4):
+        await _age(asset_id, 300)
+        await asyncio.to_thread(task.reconcile_media_library_analysis.run)
+        assert len(resent) == revival
+        if revival < 3:
+            with pytest.raises(Retry):
+                await asyncio.to_thread(run, asset_id, str(owner.id))
+    assert (await asyncio.to_thread(run, asset_id, str(owner.id)))["status"] == "failed"
+    item = (await _items(client, path))[asset_id]
+    assert (item["state"], item["reason"], item["retryable"]) == ("failed", "provider_error", False)
+
+    await _age(asset_id, 24 * 60)
+    await asyncio.to_thread(task.reconcile_media_library_analysis.run)
+    assert len(resent) == 3, "A terminal row is not re-sent"
+    # The creator's own retry is always allowed and starts the history over.
+    async with AsyncSessionLocal() as db:
+        await retry_library_asset(db, owner.id, uuid.UUID(asset_id))
+    assert resent[-1] == (asset_id, str(owner.id))
+    assert (await _items(client, path))[asset_id]["state"] in {"queued", "analyzing"}
+
+
+async def test_budget_pause_is_left_to_the_reconciler_and_outlasts_a_provider_blip(
+    collection_world, monkeypatch
+):
+    from app.agents._runtime import AiBudgetExceededError
+    from app.tasks import media_library as task
+
+    client, _, _, owner, _ = collection_world
+    asset_id, source_id = await _add_video(owner, status="pending", facts_status=None)
+
+    def analyze(source, *, analyzer=None, snapshot_local_path=None):
+        raise AiBudgetExceededError(
+            scope="environment:test", reset_at="2026-11-01", cached_behavior_available=False
+        )
+
+    monkeypatch.setattr(facts, "_analyze_source", analyze)
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    assert (await client.put(path, json=selection([asset_id], [source_id], 1))).status_code == 200
+    resent = []
+    monkeypatch.setattr(
+        task.analyze_media_asset_task,
+        "delay",
+        lambda *a: resent.append(a) if a[0] == asset_id else None,
+    )
+
+    # A task countdown would be gone long before a spend cap lifts, so none is scheduled.
+    result = await asyncio.to_thread(task.analyze_media_asset_task.run, asset_id, str(owner.id))
+    assert result["status"] == "failed"
+    item = (await _items(client, path))[asset_id]
+    assert (item["state"], item["reason"]) == ("needs_retry", "budget_paused")
+
+    for revival in range(1, 7):
+        await _age(asset_id, 30)
+        await asyncio.to_thread(task.reconcile_media_library_analysis.run)
+        assert len(resent) == revival - 1, "Waits out its backoff first"
+        await _age(asset_id, 300)
+        await asyncio.to_thread(task.reconcile_media_library_analysis.run)
+        assert len(resent) == revival
+        await asyncio.to_thread(task.analyze_media_asset_task.run, asset_id, str(owner.id))
+    item = (await _items(client, path))[asset_id]
+    assert (item["state"], item["reason"], item["retryable"]) == ("failed", "budget_paused", False)
+
+
+@pytest.mark.parametrize("silence", ["no-audio-track", "old-asset-no-row"])
+async def test_silent_video_becomes_ready_instead_of_missing_forever(collection_world, silence):
+    client, _, _, owner, _ = collection_world
+    asset_id, source_id = await _add_video(owner, has_audio=silence != "no-audio-track")
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    assert (await client.put(path, json=selection([asset_id], [source_id], 1))).status_code == 200
+    indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
+    assert indexed.status_code == 200, indexed.text
+    assert indexed.json()["missing_analysis_asset_ids"] == []
+    assert indexed.json()["context_asset_ids"] == [asset_id], "The whole short clip is offered"
+    assert (await _items(client, path))[asset_id]["state"] == "ready"
+    found = await client.get(f"{path}/moments", params={"query": "ferry", "expected_revision": 1})
+    assert [value["asset_id"] for value in found.json()["moments"]] == [asset_id]
+
+
+async def test_failed_transcript_on_a_speaking_clip_is_retried_not_indexed_as_silent(
+    collection_world, monkeypatch
+):
+    from celery.exceptions import Retry
+
+    from app.tasks import media_library as task
+
+    client, _, _, owner, _ = collection_world
+    asset_id, source_id = await _add_video(
+        owner, status="pending", has_audio=True, facts_status=None
+    )
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    assert (await client.put(path, json=selection([asset_id], [source_id], 1))).status_code == 200
+    transcripts = [RuntimeError("provider 503"), {"words": []}]
+
+    def analyze(source, *, analyzer=None, snapshot_local_path=None):
+        if analyzer == "transcript":
+            outcome = transcripts.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+        return {
+            "duration_s": 8.0,
+            "description": "A red ferry crossing a harbour",
+            "understanding": {"summary": "Ferry crossing", "notable_moments": []},
+        }
+
+    monkeypatch.setattr(facts, "_analyze_source", analyze)
+    with pytest.raises(Retry):
+        await asyncio.to_thread(task.analyze_media_asset_task.run, asset_id, str(owner.id))
+    item = (await _items(client, path))[asset_id]
+    assert (item["state"], item["reason"], item["retryable"]) == (
+        "needs_retry",
+        "provider_error",
+        True,
+    )
+    indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
+    assert indexed.json()["missing_analysis_asset_ids"] == [asset_id], "Not passed off as silent"
+
+    await asyncio.to_thread(task.analyze_media_asset_task.run, asset_id, str(owner.id))
+    assert (await _items(client, path))[asset_id]["state"] == "ready"
+    indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
+    assert indexed.json()["missing_analysis_asset_ids"] == []
+    assert indexed.json()["context_asset_ids"] == [asset_id]
+
+
+async def test_speaking_clip_with_spent_transcript_retries_falls_back_to_its_visuals(
+    collection_world,
+):
+    client, _, _, owner, _ = collection_world
+    spent = {
+        "analysis_failure": {
+            "reason": "provider_error",
+            "attempts": 12,
+            "revivals": 3,
+            "at": "2026-10-26T00:00:00Z",
+        }
+    }
+    asset_id, source_id = await _add_video(
+        owner, status="failed", has_audio=True, transcript_status="failed", metadata=spent
+    )
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    assert (await client.put(path, json=selection([asset_id], [source_id], 1))).status_code == 200
+    indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
+    assert indexed.json()["missing_analysis_asset_ids"] == []
+    assert indexed.json()["context_asset_ids"] == [asset_id]
+    item = (await _items(client, path))[asset_id]
+    assert (item["state"], item["reason"], item["retryable"]) == ("failed", "provider_error", False)
+
+
+async def test_audible_video_still_waits_for_its_transcript(collection_world):
+    """Only a video that will never get a transcript skips it."""
+    client, _, _, owner, _ = collection_world
+    asset_id, source_id = await _add_video(
+        owner, status="processing", has_audio=True, transcript_status="analyzing"
+    )
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    assert (await client.put(path, json=selection([asset_id], [source_id], 1))).status_code == 200
+    indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
+    assert indexed.json()["missing_analysis_asset_ids"] == [asset_id]
+    assert (await _items(client, path))[asset_id]["state"] == "analyzing"
+
+
+async def test_every_source_is_represented_in_a_150_source_collection(
+    collection_world, monkeypatch
+):
+    """The cap is fair across sources: 150 sources means 150 candidates, one each."""
+    from app.agents.camera_roll_stories import (
+        CameraRollStoriesAgent,
+        CameraRollStoriesOutput,
+        StoryIdea,
+    )
+
+    client, _, _, owner, _ = collection_world
+    pairs = [await _add_video(owner, has_audio=False) for _ in range(150)]
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    body = selection([a for a, _ in pairs], [s for _, s in pairs], count=150)
+    assert (await client.put(path, json=body)).status_code == 200
+    index = {"expected_revision": 1, "limit": 32}
+    offset = 0
+    while offset is not None:
+        indexed = await client.post(f"{path}/index", json={**index, "offset": offset})
+        assert indexed.status_code == 200, indexed.text
+        assert indexed.json()["missing_analysis_asset_ids"] == []
+        offset = indexed.json()["next_offset"]
+    seen = []
+
+    def ideas(self, input, *, ctx):
+        seen.extend(value.source for value in input.candidates)
+        return CameraRollStoriesOutput(
+            stories=[
+                StoryIdea(
+                    title="Harbour",
+                    hook="Crossing",
+                    payoff="Arrival",
+                    rationale="Recorded arrival",
+                    moment_ids=[input.candidates[0].id],
+                    content_plan=dict(
+                        audience="Explorers",
+                        angle="An arrival",
+                        why_it_works="The opening question resolves at the destination.",
+                        opening_text="Where does this lead?",
+                        beat_reasons=["Shows the arrival"],
+                    ),
+                )
+            ]
+        )
+
+    monkeypatch.setattr(CameraRollStoriesAgent, "run", ideas)
+    stories = await client.post(f"{path}/stories", json={"expected_revision": 1, "query": "ferry"})
+    assert stories.status_code == 200, stories.text
+    assert set(seen) == {s for _, s in pairs}, "Every source contributes a candidate"
+    assert stories.json()["coverage"]["unindexed_asset_ids"] == []
+
+
+async def test_candidate_cap_names_the_sources_it_left_out(collection_world):
+    """Past the fair cap, nothing is dropped silently: the response says what was cut."""
+    from app.services.media_moments import FAIR_CANDIDATE_CAP
+
+    client, _, _, owner, _ = collection_world
+    count = FAIR_CANDIDATE_CAP + 10
+    pairs = [await _add_video(owner) for _ in range(count)]
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    body = selection([a for a, _ in pairs], [s for _, s in pairs], count=count)
+    assert (await client.put(path, json=body)).status_code == 200
+    offset = 0
+    while offset is not None:
+        indexed = await client.post(
+            f"{path}/index", json={"expected_revision": 1, "limit": 32, "offset": offset}
+        )
+        offset = indexed.json()["next_offset"]
+    from app.services import media_moments
+
+    async with AsyncSessionLocal() as db:
+        evidence = await media_moments.search_moments(
+            db,
+            owner.id,
+            uuid.UUID(path.rsplit("/", 1)[1]),
+            revision=1,
+            query="",
+            limit=100,
+            all_candidates=True,
+        )
+    assert evidence.candidate_limit_reached is True
+    assert len(evidence.moments) == FAIR_CANDIDATE_CAP
+    represented = {value.asset_id for value in evidence.moments}
+    assert {uuid.UUID(a) for a, _ in pairs} - represented == set(evidence.unoffered_asset_ids)
+    assert evidence.truncated_asset_ids == [], "No source's own intervals were cut"
+
+
+async def test_original_role_binding_is_rebound_to_the_proxy_and_used(
+    collection_world, monkeypatch
+):
+    """A device-only video bound to its later-attached original is not dropped silently."""
+    from app.agents.camera_roll_stories import (
+        CameraRollStoriesAgent,
+        CameraRollStoriesOutput,
+        StoryIdea,
+    )
+
+    client, _, _, owner, _ = collection_world
+    asset_id, proxy_id = await _add_video(owner, has_audio=False)
+    async with AsyncSessionLocal() as db:
+        original = MediaAssetSource(
+            user_id=owner.id,
+            asset_id=uuid.UUID(asset_id),
+            role="original",
+            object_path=f"users/{owner.id}/kri944/{asset_id}-original.mov",
+            object_generation="42",
+            uploaded_sha256=hashlib.sha256(b"original" + asset_id.encode()).hexdigest(),
+            byte_count=1234,
+            content_type="video/quicktime",
+            status="available",
+        )
+        db.add(original)
+        await db.commit()
+        original_id = str(original.id)
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    written = await client.put(path, json=selection([asset_id], [original_id], 1))
+    assert written.status_code == 200, written.text
+    assert written.json()["members"][0]["source_id"] == proxy_id
+
+    # A collection stored before the rebind existed heals on its next use.
+    async with AsyncSessionLocal() as db:
+        from app.models import MediaCollection
+
+        row = await db.get(MediaCollection, uuid.UUID(path.rsplit("/", 1)[1]))
+        row.selection_json = {
+            **row.selection_json,
+            "members": [{"asset_id": asset_id, "source_id": original_id, "group": "Event 1"}],
+        }
+        await db.commit()
+    indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
+    assert indexed.status_code == 200, indexed.text
+    assert indexed.json()["indexed_sources"] == 1
+    assert indexed.json()["missing_analysis_asset_ids"] == []
+
+    offered = []
+
+    def ideas(self, input, *, ctx):
+        offered.extend(value.source for value in input.candidates)
+        return CameraRollStoriesOutput(
+            stories=[
+                StoryIdea(
+                    title="Harbour",
+                    hook="Crossing",
+                    payoff="Arrival",
+                    rationale="Recorded arrival",
+                    moment_ids=[input.candidates[0].id],
+                    content_plan=dict(
+                        audience="Explorers",
+                        angle="An arrival",
+                        why_it_works="The opening question resolves at the destination.",
+                        opening_text="Where does this lead?",
+                        beat_reasons=["Shows the arrival"],
+                    ),
+                )
+            ]
+        )
+
+    monkeypatch.setattr(CameraRollStoriesAgent, "run", ideas)
+    stories = await client.post(f"{path}/stories", json={"expected_revision": 1, "query": "ferry"})
+    assert stories.status_code == 200, stories.text
+    assert offered == [proxy_id]
+    assert stories.json()["coverage"]["unsupported_asset_ids"] == []
+
+
+async def test_items_route_reports_every_state_and_reason(collection_world):
+    client, _, _, owner, _ = collection_world
+    failure = lambda reason, attempts, revivals=0: {  # noqa: E731
+        "analysis_failure": {
+            "reason": reason,
+            "attempts": attempts,
+            "revivals": revivals,
+            "at": "2026-10-26T00:00:00Z",
+        }
+    }
+    cases = {
+        "queued": await _add_video(owner, status="pending", facts_status=None),
+        "analyzing": await _add_video(owner, status="processing", facts_status="analyzing"),
+        "ready": await _add_video(owner),
+        "needs_retry": await _add_video(
+            owner, status="failed", facts_status="failed", metadata=failure("provider_error", 1)
+        ),
+        "budget": await _add_video(
+            owner, status="failed", facts_status="failed", metadata=failure("budget_paused", 2)
+        ),
+        "failed": await _add_video(
+            owner,
+            status="failed",
+            facts_status="failed",
+            metadata=failure("provider_error", 9, revivals=3),
+        ),
+        "legacy-failed": await _add_video(owner, status="failed", facts_status="failed"),
+        "legacy-old-failed": await _add_video(owner, status="failed", facts_status="failed"),
+        "audio": await _add_video(owner, kind="audio"),
+        "no-moment": await _add_video(
+            owner, metadata={"moment_index": {"source_id": "x", "outcome": "none"}}
+        ),
+        "too-long": await _add_video(owner, duration=2400.0, status="pending", facts_status=None),
+        "too-large": await _add_video(
+            owner, kind="image", byte_count=30 * 1024 * 1024, status="pending", facts_status=None
+        ),
+        "original-only": await _add_video(owner, role="original"),
+        "revoked": await _add_video(owner),
+        "photo": await _add_video(owner, kind="image"),
+    }
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    members = [
+        {"asset_id": a, "source_id": s, "group": "Day 1" if i % 2 else "Day 2"}
+        for i, (a, s) in enumerate(cases.values())
+    ]
+    body = {"name": "States", "expected_revision": 0, "members": members}
+    assert (await client.put(path, json=body)).status_code == 200
+    await _age(cases["legacy-old-failed"][0], 8 * 24 * 60)
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(MediaAsset)
+            .where(MediaAsset.id == uuid.UUID(cases["revoked"][0]))
+            .values(archived_at=datetime.now(UTC))
+        )
+        await db.commit()
+    response = await client.get(f"{path}/items")
+    assert response.status_code == 200, response.text
+    assert response.json()["revision"] == 1
+    items = {item["asset_id"]: item for item in response.json()["items"]}
+    assert cases.pop("audio")[0] not in items, "Only footage has a tile"
+    got = {
+        name: (items[a]["state"], items[a]["reason"], items[a]["retryable"], items[a]["attempts"])
+        for name, (a, _) in cases.items()
+    }
+    assert got == {
+        "queued": ("queued", None, False, 0),
+        "analyzing": ("analyzing", None, False, 0),
+        "ready": ("ready", None, False, 0),
+        "needs_retry": ("needs_retry", "provider_error", True, 1),
+        "budget": ("needs_retry", "budget_paused", True, 2),
+        "failed": ("failed", "provider_error", False, 9),
+        "legacy-failed": ("needs_retry", "provider_error", True, 0),
+        "legacy-old-failed": ("failed", "provider_error", False, 0),
+        "no-moment": ("failed", "no_usable_moment", False, 0),
+        "too-long": ("excluded", "too_long", False, 0),
+        "too-large": ("excluded", "too_large", False, 0),
+        "original-only": ("excluded", "unsupported_type", False, 0),
+        "revoked": ("excluded", "access_revoked", False, 0),
+        "photo": ("ready", None, False, 0),
+    }
+    assert {items[a]["group"] for a, _ in cases.values()} == {"Day 1", "Day 2"}
+    assert items[cases["photo"][0]]["kind"] == "image"
+    assert (await client.get(f"/me/media-collections/{uuid.uuid4()}/items")).status_code == 404

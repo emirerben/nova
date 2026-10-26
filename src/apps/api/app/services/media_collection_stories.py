@@ -131,13 +131,21 @@ async def candidate_evidence(
         if asset.kind == "video" and source.role == "analysis_proxy"
     }
     # Only offer the hardware-verified adapter. Other catalogue sources remain
-    # searchable, but cannot be advertised as executable phone stories.
+    # searchable, but cannot be advertised as executable phone stories. A video bound to
+    # one of them is reported, not dropped: bindings that have an analysis proxy were
+    # already re-bound to it (`media_collections.analysis_bound_members`).
+    unsupported = [
+        asset.id
+        for asset, source in eligible.values()
+        if asset.kind == "video" and source.role != "analysis_proxy"
+    ]
     return evidence.model_copy(
         update={
             "moments": [value for value in evidence.moments if value.source_id in supported],
             "unindexed_asset_ids": [
                 value for value in evidence.unindexed_asset_ids if value in supported_assets
             ],
+            "unsupported_asset_ids": unsupported,
         }
     )
 

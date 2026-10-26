@@ -11,6 +11,7 @@ from app.database import get_db
 from app.schemas.media_collections import (
     CollectionIndexBody,
     CollectionIndexOut,
+    CollectionItemsOut,
     CollectionOut,
     CollectionStoriesOut,
     CollectionStoryOut,
@@ -75,6 +76,16 @@ async def read(identifier: uuid.UUID, user: CurrentUser, db: AsyncSession = Depe
     row = await collections.owned_collection(db, user.id, identifier)
     available = await collections.eligible_sources(db, user.id, collections.members(row))
     return collections.collection_out(row, available)
+
+
+@router.get("/{identifier}/items", response_model=CollectionItemsOut)
+async def items(identifier: uuid.UUID, user: CurrentUser, db: AsyncSession = Depends(get_db)):
+    """Per-member progress (queued -> analyzing -> ready, or an honest failure) for polling."""
+    from app.services.media_collection_items import collection_items
+
+    return await collection_items(
+        db, user.id, await collections.owned_collection(db, user.id, identifier)
+    )
 
 
 @router.post("/{identifier}/index", response_model=CollectionIndexOut)

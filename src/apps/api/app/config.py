@@ -620,7 +620,7 @@ class Settings(BaseSettings):
     media_library_enabled: bool = False
     media_collection_proposals_enabled: bool = False
     media_collection_proposal_user_ids: list[UUID] = Field(default_factory=list)
-    media_collection_cache_only: bool = True
+    media_collection_cache_only: bool = False
     # Per-account allowlist; ["*"] admits everyone (the ENABLED kill switch still applies).
     # Admission alone personalizes nothing: a creator must confirm a profile first.
     creator_editorial_taste_enabled: bool = False

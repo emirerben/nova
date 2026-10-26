@@ -22,7 +22,7 @@ class MomentCandidate(BaseModel):
 
 class MomentRelevanceInput(BaseModel):
     query: str = Field(min_length=1, max_length=500)
-    candidates: list[MomentCandidate] = Field(max_length=100)
+    candidates: list[MomentCandidate] = Field(max_length=150)
 
 
 class MomentRelevanceOutput(BaseModel):
