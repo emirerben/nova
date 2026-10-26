@@ -247,7 +247,7 @@ def test_prompt_states_the_pins() -> None:
     assert "CLIP ORDER: FREE" not in prompt
     first = agent.render_prompt(_pinned_input(pinned_first=["b"]))
     assert "`b` must be the FIRST clip" in first
-    assert NarratedClipAlignmentAgent.spec.prompt_version == "2026-10-08.1"
+    assert NarratedClipAlignmentAgent.spec.prompt_version == "2026-10-25-editorial-skills-v2"
 
 
 # --- Cappadocia regression: prod job 38caaebd -------------------------------

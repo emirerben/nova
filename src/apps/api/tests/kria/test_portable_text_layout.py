@@ -61,7 +61,8 @@ def test_compiled_runs_match_actual_cloud_layout(shaped, anchor, fixed):
     [
         {"effect": "dissolve-out"},
         {"emoji_prefix": "🙂"},
-        {"behind_subject": True},
+        # `behind_subject` is no longer refused: the phone lane stamps or strips it
+        # (`tests/kria/test_text_behind_subject_phone.py`).
         {"theme_transition": {"type": "unknown"}},
         {"spans": [{"text": "hello"}]},
     ],

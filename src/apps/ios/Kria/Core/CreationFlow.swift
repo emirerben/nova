@@ -46,9 +46,24 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     /// Server asks "which part of the song did you film?" in the chat (`song_range_question` payloads) and accepts
     /// `song_range` on a turn (KRI-588). Nil/false (older server) = the plain text message only, no card.
     var songRangeQuestions: Bool? = nil
+    /// Server may ask "Mark the plate on one frame" (`protected_region_question` payloads) and accepts the mark as
+    /// `protected_region` on a turn (KRI-901). Nil/false (older server) = the plain text message only, no card.
+    var protectedRegionMarks: Bool? = nil
+    /// Server may ask "show me your moments" (`moment_order_question` payloads) and accepts the answer as
+    /// `moment_order` on a turn (KRI-723). Nil/false (older server, or the 999 kill switch) = the text only, no card.
+    var momentOrderQuestions: Bool? = nil
     /// Server sends `choice_question` payloads (tappable options for a conflict in the instructions) and accepts
     /// `choice_selection` on a turn (KRI-282). Nil/false = the plain text question only.
     var choiceQuestions: Bool? = nil
+    /// The feedback route accepts the `wrong_facts` reason (an idea's researched facts were wrong). Nil/false (older
+    /// server) = no such choice: the older route rejects the whole judgment for an unknown reason.
+    var wrongFactFeedback: Bool? = nil
+    /// The server can turn a saved would-post idea or rewrite into a taste example on one confirming tap.
+    /// Nil/false (older server) = no prompt: the route would 404.
+    var ideaExampleFeedback: Bool? = nil
+    /// KRI-815: a reply may carry `voiceover_script` (a script written from the attached clips, with Record/Import).
+    /// Nil/false = the reply text only, which also holds the script.
+    var voiceoverScriptCards: Bool? = nil
     /// Additive server admission metadata. Nil preserves compatibility with a
     /// server predating iOS-only creation rollout.
     var creationMode: CreationMode? = nil
@@ -84,6 +99,9 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var songLimit: CreationMediaLimit? { media?[CreationMediaRole.song.capabilityKey] }
     var songUploadEnabled: Bool { songLimit != nil }
     var choiceQuestionsEnabled: Bool { choiceQuestions == true }
+    var voiceoverScriptCardsEnabled: Bool { voiceoverScriptCards == true }
+    var wrongFactFeedbackEnabled: Bool { wrongFactFeedback == true }
+    var ideaExampleFeedbackEnabled: Bool { ideaExampleFeedback == true }
     /// The chat composer needs BOTH flags: the server only reports chat-edit as on with rich text, and
     /// a stale cached capability must not enable it when rich text is off.
     var slidePostChatComposerEnabled: Bool { slidePostRichTextEnabled && slidePostChatEditEnabled }
@@ -111,7 +129,11 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case songOrderPlacements = "song_order_placements"
         case songFilmingRange = "song_filming_range"
         case songRangeQuestions = "song_range_questions"
+        case protectedRegionMarks = "protected_region_marks"
+        case momentOrderQuestions = "moment_order_questions"
         case choiceQuestions = "choice_questions"
+        case voiceoverScriptCards = "voiceover_script_cards"
+        case wrongFactFeedback = "wrong_fact_feedback", ideaExampleFeedback = "idea_example_feedback"
         case creationMode = "creation_mode", minimumClientProtocol = "minimum_client_protocol"
         case livePlanReviewEnabled = "live_plan_review_enabled", livePlanReviewVersion = "live_plan_review_version"
     }
@@ -148,7 +170,12 @@ extension CreationCapabilities {
         songOrderPlacements = try container.decodeIfPresent(Bool.self, forKey: .songOrderPlacements)
         songFilmingRange = try container.decodeIfPresent(Bool.self, forKey: .songFilmingRange)
         songRangeQuestions = try container.decodeIfPresent(Bool.self, forKey: .songRangeQuestions)
+        protectedRegionMarks = try container.decodeIfPresent(Bool.self, forKey: .protectedRegionMarks)
+        momentOrderQuestions = try container.decodeIfPresent(Bool.self, forKey: .momentOrderQuestions)
         choiceQuestions = try container.decodeIfPresent(Bool.self, forKey: .choiceQuestions)
+        voiceoverScriptCards = try container.decodeIfPresent(Bool.self, forKey: .voiceoverScriptCards)
+        wrongFactFeedback = try container.decodeIfPresent(Bool.self, forKey: .wrongFactFeedback)
+        ideaExampleFeedback = try container.decodeIfPresent(Bool.self, forKey: .ideaExampleFeedback)
         creationMode = try container.decodeIfPresent(CreationMode.self, forKey: .creationMode)
         minimumClientProtocol = try container.decodeIfPresent(Int.self, forKey: .minimumClientProtocol)
         livePlanReviewEnabled = try container.decodeIfPresent(Bool.self, forKey: .livePlanReviewEnabled)
@@ -217,6 +244,10 @@ struct CreationVisual: Codable, Sendable, Identifiable {
     /// assets and on servers that predate the fields.
     var errorCode: String? = nil
     var errorDetail: String? = nil
+    /// KRI-820: while queued/analyzing, the server's declared time by which this
+    /// Visual is ready or a retryable `analysis_timed_out` failure (ISO-8601).
+    var analysisDeadlineAt: String? = nil
+    var analysisDeadline: Date? { analysisDeadlineAt.flatMap(PlanBlock.parseDate) }
 
     /// Older APIs return original videos in display_url. For images, accept
     /// that URL only when its key is the original, never a flattened preview.
@@ -234,6 +265,7 @@ struct CreationVisual: Codable, Sendable, Identifiable {
         case gcsPath = "gcs_path", sourceURL = "source_url", durationS = "duration_s", mediaStatus = "media_status"
         case sourceFilename = "source_filename", displayURL = "display_url", previewURL = "preview_url"
         case errorCode = "error_code", errorDetail = "error_detail"
+        case analysisDeadlineAt = "analysis_deadline_at"
     }
 }
 struct CreationVisuals: Codable, Sendable {

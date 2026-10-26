@@ -1,10 +1,11 @@
 """Shared provider-owned public research evidence; never model-authored links."""
 
 import ipaddress
+import re
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ResearchSource(BaseModel):
@@ -38,6 +39,35 @@ class ResearchSource(BaseModel):
         return value
 
 
+def _claim_words(text) -> set[str]:
+    return set(re.findall(r"\w{3,}", str(text).casefold()))
+
+
+def same_claim(a, b, threshold: float = 0.5) -> bool:
+    """True when two fact sentences say the same thing in different words.
+
+    Fact ids are positional (fact-N) and Gemini rewords the same fact on every grounded
+    search, so exact wording cannot identify a fact across runs. Jaccard overlap of 3+
+    letter words is the same lexical baseline used for taste retrieval. Failure modes:
+    a paraphrase with new vocabulary escapes; two facts about the same noun can match.
+    """
+    left, right = _claim_words(a), _claim_words(b)
+    if not left or not right:
+        return False
+    if " ".join(str(a).casefold().split()) == " ".join(str(b).casefold().split()):
+        return True
+    return len(left & right) / len(left | right) >= threshold
+
+
+def stable_source_url(url) -> bool:
+    """False for Google grounding redirects: the token in the path changes every search."""
+    parsed = urlsplit(str(url))
+    return not (
+        (parsed.hostname or "").lower() == "vertexaisearch.cloud.google.com"
+        and parsed.path.startswith("/grounding-api-redirect/")
+    )
+
+
 class ResearchFact(BaseModel):
     id: str
     text: str = Field(min_length=1, max_length=3000)
@@ -56,3 +86,39 @@ class StoryResearch(BaseModel):
     evidence: ResearchEvidence
     reviewed_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     review_current: bool = True
+
+
+class PreparedResearchText(BaseModel):
+    """One sourced explanation the creator saw before approving (KRI-881)."""
+
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=180)
+    media_ids: list[str] = Field(min_length=1, max_length=50)
+    start_s: float = Field(ge=0)
+    end_s: float = Field(gt=0)
+    sources: list[ResearchSource] = Field(min_length=1, max_length=16)
+    facts: list[ResearchFact] = Field(min_length=1, max_length=5)
+
+
+class PreparedResearch(BaseModel):
+    """Research done before approval and pinned to it (KRI-881).
+
+    Server-owned: written by the planning step from provider-owned grounding, carried in
+    the approved brief binding (so its digest covers it) and replayed by the render,
+    which never searches or writes it again. ``failed`` carries the precise reason the
+    creator was told before approval; it is never pinned to an approval.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    version: Literal[1] = 1
+    status: Literal["ready", "failed"]
+    requirement_id: str = Field(min_length=1, max_length=24)
+    topic: str = Field(min_length=3, max_length=500)
+    request_quote: str = Field(min_length=4, max_length=400)
+    basis_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    texts: list[PreparedResearchText] = Field(default_factory=list, max_length=12)
+    retrieved_at: str = ""
+    # One copy of the provider's search attribution for every explanation (F12).
+    search_entry_html: str = Field(default="", max_length=100000)
+    limitations: str = Field(default="", max_length=1000)
+    reason: str = Field(default="", max_length=500)

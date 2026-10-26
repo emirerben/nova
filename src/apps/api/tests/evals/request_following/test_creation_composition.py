@@ -903,3 +903,62 @@ def test_style_all_before_sequence_preserves_selector_fences(monkeypatch):
         t["font_family"] == "Inter" and t["color"] == "#FFFFFF" for t in plan["text_elements"]
     )
     assert [t["text"] for t in plan["text_elements"] if "::sequence-" in t["id"]] == TITLE.split()
+
+
+def test_approved_research_replays_over_the_lyric_lane_it_was_shown_on(monkeypatch):
+    """KRI-881: research approved before render was placed on the lane the composer sees,
+    with the song-lyric caption rows hidden. Replaying it against the FULL lane would
+    delete every lyric word inside an explanation and refuse the render over any word
+    that straddles its edge. It must replay as shown, every lyric row untouched."""
+    from app.agents.edit_copilot import EditCopilotAgent
+    from app.schemas.research import PreparedResearch
+    from app.services.creation_text_composition import _lanes, compose_creation_text
+
+    plan = _song_caption_plan()
+    execution = compile_proposal_execution_plan(plan.snapshot)
+    _texts, slots = _lanes(execution)
+    lyrics_before = [
+        row for row in execution["text_elements"] if row["id"].startswith("song-caption-")
+    ]
+    # Two consecutive clips after the opening; lyric words every 0.5 s, so some sit fully
+    # inside the explanation and the last one straddles its end.
+    pair = slots[2:4]
+    start = float(pair[0]["output_start_s"])
+    end = float(pair[1]["output_end_s"]) - 0.1
+    covered = [row for row in lyrics_before if row["start_s"] < end and row["end_s"] > start]
+    assert any(row["start_s"] < start or row["end_s"] > end for row in covered)
+    source = {"title": "Archaeological Site of Troy", "url": "https://whc.unesco.org/en/list/849/"}
+    prepared = PreparedResearch(
+        status="ready",
+        requirement_id="r1",
+        topic="History of Troy",
+        request_quote="Include sources for the historical facts",
+        basis_digest="0" * 64,
+        texts=[
+            {
+                "text": "Settled from Bronze Age to Rome",
+                "media_ids": [str(row["media_id"]) for row in pair],
+                "start_s": start,
+                "end_s": end,
+                "sources": [source],
+                "facts": [{"id": "fact-0", "text": "Troy was settled.", "sources": [source]}],
+            }
+        ],
+        retrieved_at="2026-10-24T00:00:00Z",
+    )
+
+    def run(self, input, *, ctx=None):
+        reply = {"intent": "describe", "confidence": 0.9, "reply": "Kept.", "ops": []}
+        return self.parse(json.dumps(reply), input)
+
+    monkeypatch.setattr(EditCopilotAgent, "run", run)
+    composed = compose_creation_text(
+        plan.snapshot, creator_request="Include sources", prepared_research=prepared
+    )
+
+    after = compile_proposal_execution_plan(composed)["text_elements"]
+    assert [row for row in after if row["id"].startswith("song-caption-")] == lyrics_before
+    sourced = [row for row in after if (row.get("source_params") or {}).get("research")]
+    assert [(row["text"], row["start_s"], row["end_s"]) for row in sourced] == [
+        ("Settled from Bronze Age to Rome", start, end)
+    ]

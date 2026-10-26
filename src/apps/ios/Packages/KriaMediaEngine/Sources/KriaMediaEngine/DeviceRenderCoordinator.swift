@@ -87,13 +87,24 @@ public struct DeviceRenderReceipt: Codable, Equatable, Sendable {
     public var outputURL: URL?
     public var outputFingerprint: AssetFingerprint?
     public var error: String?
+    /// A report the server has not accepted yet (a Stop, or a genuine failure). It is
+    /// persisted with the receipt so a relaunch keeps delivering it: the phone and the
+    /// server must never disagree about whether this render stopped. Absent in older
+    /// receipts, which decode unchanged.
+    public var pendingReport: DeviceRenderPendingReport? = nil
+}
+
+public struct DeviceRenderPendingReport: Codable, Equatable, Sendable {
+    public let identity: DeviceRenderIdentity
+    public let reasonCode: DeviceRenderFailureReasonCode
+    public let detail: String
 }
 
 /// Server-side classification for why a device render could not finish, sent
 /// via `DeviceRenderFailureReporter` so the server stops waiting on a device
 /// that has already given up (rather than only learning about it, if ever,
 /// from an eventual client timeout). Raw values match the server's contract.
-public enum DeviceRenderFailureReasonCode: String, Sendable {
+public enum DeviceRenderFailureReasonCode: String, Codable, Sendable {
     case exportFailed = "export_failed"
     case insufficientStorage = "insufficient_storage"
     case thermal
@@ -110,7 +121,14 @@ public enum DeviceRenderFailureReasonCode: String, Sendable {
     /// updating the app — so this gets its own reason code and copy.
     /// Also structural: the retry button is suppressed the same way.
     case rendererOutdated = "renderer_outdated"
+    /// The creator tapped Stop. The server records a resumable pause, not a failure.
     case cancelledByUser = "cancelled_by_user"
+    /// An original clip (or its analysis proxy) is missing or changed on this iPhone.
+    /// Relinking the original fixes it, so this is the creator's to act on, unlike a
+    /// generic `export_failed`.
+    case originalMissing = "original_missing"
+    /// The phone cannot render right now for a reason of its own (not storage or heat).
+    case deviceUnavailable = "device_unavailable"
     case unknown
 
     /// Classifies a `CapabilityDecision` that routed away from local rendering.
@@ -128,10 +146,17 @@ public enum DeviceRenderFailureReasonCode: String, Sendable {
     }
 
     /// Classifies an error thrown while resolving sources or exporting locally.
-    public static func forRenderFailure(_ error: Error) -> Self {
+    /// With the recipe, a missing asset that is one of its originals is `originalMissing`
+    /// (prod `missingAsset("1")`); a missing font or library file stays `exportFailed`.
+    public static func forRenderFailure(_ error: Error, recipe: EditRecipe? = nil) -> Self {
         if error is CancellationError { return .cancelledByUser }
         if error is DeviceExportDurationLimitError { return .exportFailed }
         if case MediaEngineError.insufficientStorage = error { return .insufficientStorage }
+        if case SourceAssetError.missingOriginal = error { return .originalMissing }
+        if case SourceAssetError.changedOriginal = error { return .originalMissing }
+        if case let MediaEngineError.missingAsset(id) = error, let recipe, Self.originalIDs(in: recipe).contains(id) {
+            return .originalMissing
+        }
         // A schema-version mismatch surfacing here (recipe.validate() is also
         // called mid-render by `OriginalSourceResolver.resolve`) means this
         // build's renderer doesn't understand the recipe's schema at all —
@@ -143,14 +168,106 @@ public enum DeviceRenderFailureReasonCode: String, Sendable {
         if error is MediaEngineError || error is SourceAssetError { return .exportFailed }
         return .unknown
     }
+
+    private static func originalIDs(in recipe: EditRecipe) -> Set<String> {
+        guard let manifest = recipe.assetManifest else { return Set(recipe.assets.map(\.id)) }
+        return Set(manifest.assets.compactMap { asset in
+            if case .original = asset.source { return asset.id } else { return nil }
+        })
+    }
+}
+
+/// Conformed to by app errors that know they are temporary (offline, a 5xx, rate
+/// limiting). The coordinator waits and retries those instead of failing the render
+/// or telling the server the phone gave up. `URLError` transport failures are
+/// recognised without a conformance.
+public protocol DeviceRenderTransientFailure: Error {
+    var isTransientDeviceRenderFailure: Bool { get }
+}
+
+/// Thrown by a publisher whose upload landed but whose server-side output check is
+/// still running after it stopped waiting. Nothing failed and nothing needs to be sent
+/// again: the coordinator parks the finished MP4 in `.localReady` with no error and no
+/// retry, and the next `recover()` resumes waiting on the same upload.
+public struct DeviceRenderVerificationPending: Error, Equatable, Sendable {
+    public init() {}
+}
+
+public enum DeviceRenderReportOutcome: Sendable, Equatable {
+    /// The server recorded the report (or already holds the same state).
+    case accepted
+    /// The server refused it for good (e.g. the render already published); stop sending.
+    case rejected
+    /// No answer, or a temporary server problem: send it again later.
+    case transient
+}
+
+/// How long the coordinator waits between automatic retries. Injected so tests run
+/// without real sleeps.
+public struct DeviceRenderRetryPolicy: Sendable {
+    /// Waits before each retry of a transient failure inside one attempt. When they
+    /// run out the attempt parks in a resumable phase (never needs-attention); the
+    /// next `start`/`recover` continues it.
+    public var transientDelays: [Duration]
+    /// Longest wait between deliveries of a report the server has not accepted.
+    public var reportBackoffCap: Duration
+    public var sleep: @Sendable (Duration) async throws -> Void
+
+    public init(transientDelays: [Duration], reportBackoffCap: Duration, sleep: @escaping @Sendable (Duration) async throws -> Void) {
+        self.transientDelays = transientDelays; self.reportBackoffCap = reportBackoffCap; self.sleep = sleep
+    }
+
+    public static let standard = DeviceRenderRetryPolicy(
+        transientDelays: [.seconds(2), .seconds(5), .seconds(15), .seconds(30)],
+        reportBackoffCap: .seconds(60),
+        sleep: { try await Task.sleep(for: $0) }
+    )
+
+    func reportDelay(after failures: Int) -> Duration {
+        min(.seconds(1 << min(failures, 6)), reportBackoffCap)
+    }
+}
+
+/// The app's way to keep an export alive for a short while after the creator leaves
+/// Kria (a `UIApplication` background task on iOS; the package cannot import UIKit).
+/// `expiring` runs when the system is about to suspend the app; the coordinator then
+/// stops the encode and keeps the receipt resumable instead of failing it.
+public protocol DeviceRenderBackgroundExecution: Sendable {
+    /// Begins a background window and returns the action that ends it.
+    func begin(name: String, expiring: @escaping @Sendable () -> Void) async -> @Sendable () async -> Void
+}
+
+/// Process-wide installation point, so every coordinator the app creates gets the
+/// background window without each factory having to pass it.
+public enum DeviceRenderBackground {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var installed: (any DeviceRenderBackgroundExecution)?
+    public static func install(_ execution: (any DeviceRenderBackgroundExecution)?) {
+        lock.lock(); defer { lock.unlock() }
+        installed = execution
+    }
+    public static var current: (any DeviceRenderBackgroundExecution)? {
+        lock.lock(); defer { lock.unlock() }
+        return installed
+    }
 }
 
 /// Injected by the app so the coordinator can tell the server about a local
 /// failure without this package depending on app networking. Implementations
-/// must not throw: a failed report should be logged and swallowed, never
-/// crash or retry-loop the coordinator.
+/// must not throw.
 public protocol DeviceRenderFailureReporter: Sendable {
     func report(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode, detail: String) async
+    /// Delivers the report and says whether the server took it. The coordinator keeps
+    /// re-sending a `.transient` outcome with backoff until it is accepted or refused.
+    func deliver(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode, detail: String) async -> DeviceRenderReportOutcome
+}
+
+extension DeviceRenderFailureReporter {
+    /// A reporter that cannot tell is treated as accepted (the previous behavior).
+    public func deliver(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode, detail: String) async -> DeviceRenderReportOutcome {
+        await report(identity: identity, reasonCode: reasonCode, detail: detail)
+        return .accepted
+    }
 }
 
 public enum DevicePublication: Sendable { case published, superseded }
@@ -187,8 +304,14 @@ public actor DeviceRenderCoordinator {
     private let sources: any DeviceSourceResolving
     private let publisher: any DeviceRenderPublishing
     private let failureReporter: (any DeviceRenderFailureReporter)?
+    private let retryPolicy: DeviceRenderRetryPolicy
+    private let backgroundExecution: (any DeviceRenderBackgroundExecution)?
     private var receipt: DeviceRenderReceipt?
     private var running: Task<Void, Never>?
+    private var reporting: Task<Void, Never>?
+    /// The attempt the system is suspending (background window expired). Its stop is
+    /// parked as resumable, never reported as a failure.
+    private var suspendedAttempt: UUID?
     /// Live fraction (0...1) of the CURRENT attempt's export, reported by the exporter. In memory only:
     /// it is progress of a running encode, not recoverable state, so it never enters the receipt.
     private var exportFraction: Double?
@@ -196,20 +319,60 @@ public actor DeviceRenderCoordinator {
 
     public init(
         directory: URL, exporter: any LocalExporting, sources: any DeviceSourceResolving,
-        publisher: any DeviceRenderPublishing, failureReporter: (any DeviceRenderFailureReporter)? = nil
+        publisher: any DeviceRenderPublishing, failureReporter: (any DeviceRenderFailureReporter)? = nil,
+        retryPolicy: DeviceRenderRetryPolicy = .standard,
+        backgroundExecution: (any DeviceRenderBackgroundExecution)? = DeviceRenderBackground.current
     ) throws {
         self.directory = directory; self.exporter = exporter; self.sources = sources; self.publisher = publisher
         self.failureReporter = failureReporter
+        self.retryPolicy = retryPolicy
+        self.backgroundExecution = backgroundExecution
         let url = directory.appendingPathComponent("device-render.json")
         if FileManager.default.fileExists(atPath: url.path) {
             receipt = try JSONDecoder().decode(DeviceRenderReceipt.self, from: Data(contentsOf: url))
         }
     }
-    /// Fire-and-forget: never awaited, so a slow or failing report cannot
-    /// block `start()`/`cancel()` or make the coordinator retry-loop.
+    /// Never awaited by `start()`/`cancel()`: the report is persisted on the receipt
+    /// first, then delivered in the background and re-sent with backoff until the
+    /// server accepts or refuses it (`deliverPendingReport`).
     private func reportFailure(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode, detail: String) {
-        guard let failureReporter else { return }
-        Task { await failureReporter.report(identity: identity, reasonCode: reasonCode, detail: detail) }
+        guard failureReporter != nil else { return }
+        if receipt?.request.identity == identity {
+            receipt?.pendingReport = DeviceRenderPendingReport(identity: identity, reasonCode: reasonCode, detail: detail)
+            try? persist()
+        }
+        startReporting(DeviceRenderPendingReport(identity: identity, reasonCode: reasonCode, detail: detail))
+    }
+    /// Re-sends a report a previous launch could not deliver. `recover()` calls it; the
+    /// app may also call it when the connection returns.
+    public func deliverPendingReport() {
+        guard let pending = receipt?.pendingReport else { return }
+        startReporting(pending)
+    }
+    /// Waits for the report currently being delivered (tests, sign-out flushing).
+    public func waitForPendingReport() async { await reporting?.value }
+    private func startReporting(_ pending: DeviceRenderPendingReport) {
+        guard let failureReporter, reporting == nil else { return }
+        let policy = retryPolicy
+        reporting = Task {
+            var failures = 0
+            while !Task.isCancelled {
+                let outcome = await failureReporter.deliver(identity: pending.identity, reasonCode: pending.reasonCode, detail: pending.detail)
+                guard outcome == .transient else { break }
+                do { try await policy.sleep(policy.reportDelay(after: failures)) } catch { break }
+                failures += 1
+            }
+            await self.finishReporting(pending)
+        }
+    }
+    private func finishReporting(_ pending: DeviceRenderPendingReport) {
+        reporting = nil
+        if receipt?.pendingReport == pending {
+            receipt?.pendingReport = nil
+            try? persist()
+        }
+        // A newer report queued while this one was in flight goes out next.
+        if let next = receipt?.pendingReport { startReporting(next) }
     }
     public func snapshot() -> DeviceRenderReceipt? { receipt }
     public func isBusy() -> Bool { running != nil }
@@ -250,7 +413,9 @@ public actor DeviceRenderCoordinator {
     }
 
     /// An interrupted encoder restarts; an intact completed MP4 retries publication without encoding.
+    /// Also the foreground hook after a suspension (`DeviceRenderBackgroundExecution`).
     public func recover() throws {
+        deliverPendingReport()
         guard let saved = receipt, running == nil,
               ![.cancelled, .superseded, .synced, .needsAttention].contains(saved.phase) else { return }
         running = Task { await self.perform(attempt: saved.attemptID) }
@@ -273,10 +438,11 @@ public actor DeviceRenderCoordinator {
         try persist()
     }
 
-    /// Same effect as `cancel()`, but also tells the server the user
-    /// explicitly stopped this render, so it stops waiting on a device that
-    /// has given up. Call this ONLY from a user-facing cancel affordance
-    /// (e.g. a "Stop rendering" button) — never from housekeeping.
+    /// Same effect as `cancel()`, but also tells the server the user explicitly
+    /// stopped this render. The server records a resumable pause (not a failure), and
+    /// the report is retried until it lands so both sides agree the render stopped.
+    /// Call this ONLY from a user-facing cancel affordance (e.g. a "Stop rendering"
+    /// button) — never from housekeeping.
     public func cancelByUser() throws {
         let saved = receipt
         try cancel()
@@ -286,6 +452,42 @@ public actor DeviceRenderCoordinator {
 
     private func current(_ attempt: UUID) -> Bool {
         receipt?.attemptID == attempt && receipt?.phase != .cancelled
+    }
+    /// The background window expired: stop the encode before the system suspends the
+    /// app, and keep the receipt resumable (`recover()` continues it on foreground).
+    private func suspend(_ attempt: UUID) {
+        guard receipt?.attemptID == attempt, running != nil else { return }
+        suspendedAttempt = attempt
+        running?.cancel()
+    }
+    private func isTransient(_ error: Error) -> Bool {
+        if let error = error as? DeviceRenderTransientFailure { return error.isTransientDeviceRenderFailure }
+        if let error = error as? URLError { return Self.transportCodes.contains(error.code) }
+        return false
+    }
+    private static let transportCodes: Set<URLError.Code> = [
+        .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotConnectToHost,
+        .cannotFindHost, .dnsLookupFailed, .dataNotAllowed, .internationalRoamingOff, .callIsActive,
+        .secureConnectionFailed, .badServerResponse,
+    ]
+    /// AVFoundation reports an export the system interrupted (the app went to the
+    /// background) as an error, not a cancellation. It is a suspension, not a failure.
+    private static func isInterruption(_ error: Error) -> Bool {
+        #if canImport(AVFoundation)
+        // AVErrorOperationInterrupted, AVErrorSessionWasInterrupted and
+        // AVErrorMediaServicesWereReset; raw codes because the macOS SDK the package
+        // tests build against does not name all of them.
+        let error = error as NSError
+        return error.domain == AVFoundationErrorDomain && [-11847, -11818, -11819].contains(error.code)
+        #else
+        return false
+        #endif
+    }
+    /// Park the attempt where it can continue: before an output exists it waits in
+    /// `.preparing`, after it the finished MP4 waits in `.localReady` for publication.
+    private func park(_ attempt: UUID, error: String?) {
+        guard current(attempt) else { return }
+        try? update(attempt, phase: receipt?.outputURL == nil ? .preparing : .localReady, error: error)
     }
     private func persist() throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -343,58 +545,111 @@ public actor DeviceRenderCoordinator {
     }
     private func perform(attempt: UUID) async {
         defer { if receipt?.attemptID == attempt { running = nil } }
-        guard let saved = receipt, current(attempt) else { return }
-        do {
-            let serverCurrent = try await publisher.isCurrent(saved.request.identity)
-            guard current(attempt) else { return }
-            guard serverCurrent else { try update(attempt, phase: .superseded); return }
-            try await validateEstimatedDuration(for: saved.request)
-            guard current(attempt) else { return }
-            let output: URL
-            if let existing = try intactOutput(saved) {
-                output = existing
-                try await validateOutputDuration(output, for: saved.request)
+        guard current(attempt) else { return }
+        let endBackground = await backgroundExecution?.begin(name: "Kria render") { [weak self] in
+            Task { await self?.suspend(attempt) }
+        }
+        defer { if let endBackground { Task { await endBackground() } } }
+        var transientFailures = 0
+        while true {
+            do {
+                try await performOnce(attempt: attempt)
+                return
+            } catch is CancellationError {
+                if suspendedAttempt == attempt {
+                    suspendedAttempt = nil
+                    park(attempt, error: nil)
+                } else if current(attempt) {
+                    try? update(attempt, phase: .cancelled)
+                }
+                return
+            } catch {
                 guard current(attempt) else { return }
-            } else {
-                try update(attempt, phase: .preparing)
-                let assets = try await sources.resolve(for: saved.request.recipe)
-                guard current(attempt) else { return }
-                try update(attempt, phase: .rendering)
-                exportFraction = nil
-                output = directory.appendingPathComponent("\(attempt.uuidString).mp4")
-                _ = try await exporter.export(recipe: saved.request.recipe, assetURLs: assets, outputURL: output, exportID: attempt.uuidString,
-                                         progress: { [weak self] fraction in Task { await self?.recordExport(fraction, attempt: attempt) } })
-                guard current(attempt) else { return }
-                try await validateOutputDuration(output, for: saved.request)
-                guard current(attempt) else { return }
-                receipt?.outputURL = output
-                receipt?.outputFingerprint = try SHA256Fingerprinter().fingerprint(file: output)
-                try update(attempt, phase: .localReady)
-            }
-            try Task.checkCancellation()
-            let stillCurrent = try await publisher.isCurrent(saved.request.identity)
-            guard current(attempt) else { return }
-            guard stillCurrent else { try update(attempt, phase: .superseded); return }
-            try update(attempt, phase: .syncing)
-            let result = try await publisher.publish(file: output, identity: saved.request.identity, attemptID: attempt, brandTail: exporter.brandTail)
-            guard current(attempt) else { return }
-            try update(attempt, phase: result == .published ? .synced : .superseded)
-        } catch is CancellationError {
-            if current(attempt) { try? update(attempt, phase: .cancelled) }
-        } catch {
-            if current(attempt) {
+                if suspendedAttempt == attempt || Self.isInterruption(error) {
+                    // Leaving Kria mid-render is not a failure: keep it resumable.
+                    suspendedAttempt = nil
+                    park(attempt, error: nil)
+                    return
+                }
+                if error is DeviceRenderVerificationPending {
+                    // Uploaded; the server is still checking it. Wait without
+                    // re-uploading: the next recover() resumes the same check.
+                    park(attempt, error: nil)
+                    return
+                }
+                if isTransient(error) {
+                    // Offline, a 5xx or rate limiting during an asset grant, the
+                    // isCurrent read or the upload: wait and try again, never report.
+                    guard transientFailures < retryPolicy.transientDelays.count else {
+                        // Parked, not failed: no error, so it is never worded as one.
+                        // The app resumes it on foreground / the next reconcile.
+                        park(attempt, error: nil)
+                        return
+                    }
+                    park(attempt, error: nil)
+                    do { try await retryPolicy.sleep(retryPolicy.transientDelays[transientFailures]) } catch {
+                        // Only a suspension cancels this wait while the receipt is
+                        // current (Stop and a newer start already moved it on): the
+                        // background window ended, so keep it resumable.
+                        if suspendedAttempt == attempt { suspendedAttempt = nil }
+                        park(attempt, error: nil)
+                        return
+                    }
+                    transientFailures += 1
+                    guard current(attempt) else { return }
+                    continue
+                }
                 // A cached file may have reached `.localReady` in an older
                 // build before the bound existed. Treat an invalid measured
                 // duration as a local-render failure anyway: it is never
                 // eligible for another sync attempt.
                 let entersNeedsAttention = receipt?.outputURL == nil || error is DeviceExportDurationLimitError
                 let identity = receipt?.request.identity
+                let recipe = receipt?.request.recipe
                 let detail = error.localizedDescription
                 try? update(attempt, phase: entersNeedsAttention ? .needsAttention : .localReady, error: detail)
                 if entersNeedsAttention, let identity {
-                    reportFailure(identity: identity, reasonCode: .forRenderFailure(error), detail: detail)
+                    reportFailure(identity: identity, reasonCode: .forRenderFailure(error, recipe: recipe), detail: detail)
                 }
+                return
             }
         }
+    }
+    private func performOnce(attempt: UUID) async throws {
+        guard let saved = receipt, current(attempt) else { return }
+        let serverCurrent = try await publisher.isCurrent(saved.request.identity)
+        guard current(attempt) else { return }
+        guard serverCurrent else { try update(attempt, phase: .superseded); return }
+        try await validateEstimatedDuration(for: saved.request)
+        guard current(attempt) else { return }
+        let output: URL
+        if let existing = try intactOutput(saved) {
+            output = existing
+            try await validateOutputDuration(output, for: saved.request)
+            guard current(attempt) else { return }
+        } else {
+            try update(attempt, phase: .preparing)
+            let assets = try await sources.resolve(for: saved.request.recipe)
+            guard current(attempt) else { return }
+            try update(attempt, phase: .rendering)
+            exportFraction = nil
+            output = directory.appendingPathComponent("\(attempt.uuidString).mp4")
+            _ = try await exporter.export(recipe: saved.request.recipe, assetURLs: assets, outputURL: output, exportID: attempt.uuidString,
+                                     progress: { [weak self] fraction in Task { await self?.recordExport(fraction, attempt: attempt) } })
+            guard current(attempt) else { return }
+            try await validateOutputDuration(output, for: saved.request)
+            guard current(attempt) else { return }
+            receipt?.outputURL = output
+            receipt?.outputFingerprint = try SHA256Fingerprinter().fingerprint(file: output)
+            try update(attempt, phase: .localReady)
+        }
+        try Task.checkCancellation()
+        let stillCurrent = try await publisher.isCurrent(saved.request.identity)
+        guard current(attempt) else { return }
+        guard stillCurrent else { try update(attempt, phase: .superseded); return }
+        try update(attempt, phase: .syncing)
+        let result = try await publisher.publish(file: output, identity: saved.request.identity, attemptID: attempt, brandTail: exporter.brandTail)
+        guard current(attempt) else { return }
+        try update(attempt, phase: result == .published ? .synced : .superseded)
     }
 }

@@ -9,8 +9,9 @@ city", "the pub videos") never needs a new field, enum or keyword list.
 `app/schemas/clip_understanding.py::ClipUnderstanding` — `subject`, `summary`,
 `setting`, `activity`, `people{count, speaks_to_camera, note}`,
 `speech{has_speech, to_camera, transcript}`, `on_screen_text`, `brands`,
-`content_type`, `audio_type`, `notable_moments`. Everything is free text or a
-plain flag. It is AI-written evidence and is never on-screen copy by itself.
+`content_type`, `audio_type`, `notable_moments`, and (KRI-845) `props`,
+`actions`, `visual_quality`. Everything is free text or a plain flag. It is
+AI-written evidence and is never on-screen copy by itself.
 
 ## One writer, one reader
 
@@ -42,7 +43,13 @@ transcripts are third-party text that ends up in agent prompts.
   `tests/pipeline/test_guided_story_clip_understanding.py`.
 - **Versioning.** `ANALYSIS_VERSION = 8` is video-only; photos stay fresh at 6
   (`_MIN_FRESH_ANALYSIS_VERSION_BY_KIND`). Re-analysis is lazy. `clip_cache`
-  invalidates through `CACHE_SCHEMA_VERSION` + the analyzer `prompt_version`.
+  invalidates through `CACHE_SCHEMA_VERSION` (`s4` since KRI-845) + the analyzer
+  `prompt_version` (`2026-10-23.1`). KRI-845 did NOT bump `ANALYSIS_VERSION`
+  (that would re-run every stored video analysis, prod-wide and paid):
+  `analysis_is_stale` and `kria_clip_understanding._needs_understanding` never read
+  `prompt_version`, so a clip whose record is already non-empty keeps it. Only
+  clips analysed after the deploy carry `props` / `actions` / `visual_quality`;
+  footage attached earlier needs a fresh attach (a new chat) to get them.
 - **Generative candidate cache.** `generative_build._clip_meta_from_cache`
   derives accepted fields from `ClipMeta`, preserving understanding on fast
   reburns. Legacy rows use dataclass defaults; unknown keys are ignored. Guard:
@@ -510,6 +517,51 @@ model is a stand-in, so a live replay is still the proof of the model's match).
 Apply: `fly secrets set CLIP_EXPOSURE_FACT_ENABLED=true --app nova-video` +
 restart api and worker.
 
+## Props, actions and visual quality (KRI-845)
+
+"Skip the short clip where Caro bends and puts the plate on the table" could not
+tell the café clip M1_05 (carries a plate, bends, lowers it out of frame; no tray)
+from M1_08 (the creator's FIRST clip: holds the only black tray, picks up a plate,
+walks off); "the big wooden menus" read as "a waiter carrying a tray"; "the blurry
+shot of the empty table" matched nothing. The analyzer prompt asked for none of
+what separates them, so `analyze_clip.txt` now also asks for three fields:
+
+- `props`: 0-6 distinctive objects with colour / material / size ("black round tray").
+- `actions`: 0-4 verb phrases in order, with the prop and the direction of each
+  movement (puts down vs picks up, walks in vs walks off).
+- `visual_quality`: one phrase on how the footage looks: the camera move AND whether
+  the detail stays crisp. Smeared, doubled or ghosted edges for much of the clip are
+  "blurry" even when the subject is recognisable; a fast move that stays crisp is
+  "fast pan, stays sharp"; crisp static footage is "sharp and steady". Never
+  brightness (that is `visibility`, KRI-680).
+
+Path: `ClipMetadataOutput` -> `ClipMeta.clip_props` / `clip_actions` /
+`clip_visual_quality` -> `understanding_payload` -> `ClipUnderstanding.props` /
+`actions` / `visual_quality` (each `exclude_if` empty, so a record written before
+the change is byte-identical) -> `prompt_view()` -> the clip request resolver
+prompt, which says how to use them (a creator's "blurry" shot matches a reported
+blur, never "stays sharp"; a clip without the fields was not judged). The Main
+Creator's chat evidence (`creator_sessions._chat_evidence`) pops the three keys: its
+input is unchanged.
+
+Limits: nothing deterministic compares a skip with a first-clip pin. When the
+evidence is right the pin resolves to the tray clip and the skip to the other one;
+when the resolver reads the evidence onto the wrong clips, the code follows it
+(`test_known_limit_fully_swapped_evidence_is_followed_not_second_guessed`). A skip
+that names the same clip as a pin still asks (KRI-761). A singular skip ("the blurry shot")
+that the resolver matches on two clips at 0.9 drops both without asking: there is no singular-ask rule
+(`test_known_limit_two_blurry_pans_for_a_singular_skip_both_go`). Label and caption grounding
+(`vision_evidence_text`) reads `props` and `actions` like the other model-written fields, never
+`visual_quality`. Blur comes from the model's
+judgment of the frames: no sharpness number separates Don Julio M1_04 (blurry) from
+M1_06 (sharp).
+
+Coverage: `tests/kria/test_kri845_clip_detail_evidence.py` (authored analyzer
+outputs in `tests/fixtures/kri845_m1_clip_detail.json`; the resolver is a stand-in,
+so what Gemini writes and reads is the live check), four replay goldens under
+`tests/fixtures/agent_evals/`. Evidence, measurements and the paid-check plan:
+`docs/reviews/kri-845-clip-detail.md`.
+
 ## Kria thread clips: one loop per item, and Visuals queue fairness
 
 `attach_media` enqueues `tasks.analyze_kria_clips` (`app/tasks/kria_clip_understanding.py`)
@@ -540,6 +592,45 @@ Guards: `tests/test_pool_asset_fly_contract.py` and `tests/test_worker_prewarm_g
 (the Visuals queue has exactly the consumers of `autoplace-jobs`, and the switch is not
 in `[env]`); the queue assertions in `tests/routes/test_plan_item_assets.py` and
 `tests/tasks/test_pool_asset_reconcile.py`.
+
+## Visuals analysis has one declared bound (KRI-820)
+
+A hard-killed `analyze_pool_asset` (time-limit kill, SIGKILL, deploy) used to leave the
+row `analyzing` until the reaper requeued it up to 3 times on 10-/60-minute windows. One
+stalled photo read "Analyzing…" for 30–90+ minutes, Retry did nothing while it was
+queued or analyzing, and the iOS Slider blocked export and AI requests on any pending
+asset. On T08 a small JPEG stayed `analyzing` for 528.58 s.
+
+- **One deadline per attempt.** `plan_item_assets.analysis_deadline_at` (migration 0125;
+  rules in `app/services/pool_analysis_deadline.py`). Dispatch stamps
+  `now + claim_window + run_window` (image 10 min + 6 min, video 30 min + 12 min). The
+  worker's claim may only shorten it to `claim + run_window`. Celery retries, broker
+  re-sends and the reaper never extend it. Broker messages carry `expires=deadline`.
+- **Past the deadline** a queued/analyzing row is `failed / analysis_timed_out`,
+  `retryable=true`. The list/Slider projection (`_asset_out`) shows that at once. The
+  reaper (`reconcile_stale_pool_assets`, every 5 min) persists it and rotates the
+  attempt token, so a late worker cannot write. Nothing requeues it automatically, and
+  iOS does not auto-retry it either: the creator picks Retry or Remove.
+- **Retry** on an expired queued/analyzing row ends the old attempt and requeues a new
+  one in the same row-locked transaction. Inside the bound, Retry returns the row
+  unchanged, so duplicate taps and a tap racing the reaper share one token.
+- **Late results** are fenced by the attempt token, the ownership epoch and the
+  generation, as before. `refresh=True` runs never expire and never degrade a `ready` row.
+- **Creator preparation** leaves out pool sources that expired or whose analysis fails.
+  It lists them in `session.preparation.omitted` and tells the creator in the progress
+  message, then plans with the ready sources. It still fails with `analysis_unavailable`
+  when nothing usable is left, or on systemic errors (quota, budget, ownership,
+  missing bytes).
+- **Slider (iOS).** Export and Ask Kria are gated only on media the draft uses (slides
+  and stickers): `SlidePostAssetGate`. A photo whose AI analysis failed but whose
+  bytes were verified (`media_status == "ready"`) stays placeable, the same rule the
+  server's slide routes use. The Visuals progress copy names the server deadline.
+- **Media library.** `reconcile_media_library_analysis` re-sends a stale
+  pending/processing library asset at most `MEDIA_ANALYSIS_MAX_REDISPATCHES` (3) times,
+  then marks it `failed`.
+
+E2E: `tests/integration/test_pool_asset_stall_bound_postgres.py` (real Postgres, routes,
+task body, reaper and creator preparation; writes `.dev/kri-820-e2e/report.json`).
 
 ## Chat turns wait for analysis in flight
 

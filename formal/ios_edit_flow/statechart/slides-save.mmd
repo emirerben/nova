@@ -1,0 +1,107 @@
+---
+title: "iOS Slider (slide post): editing, saving, chat edits"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+    direction TB
+
+    %% src/apps/ios/Kria/Core/SlidePost.swift:750 (refresh) and :1568 (restore from UserDefaults)
+    state "Opening your post<br/>(local copy restored first)" as Opening
+    %% src/apps/ios/Kria/Core/SlidePost.swift:737 (hasUnsavedChanges false)
+    state "Post saved" as Clean
+    %% src/apps/ios/Kria/Core/SlidePost.swift:1068 (stageDraft) and :677 (draft didSet persist)
+    state "Unsaved slide edits<br/>(kept on this phone)" as Dirty
+    %% src/apps/ios/Kria/Core/SlidePost.swift:875 (persistDraft, expected_version)
+    state "Saving your post" as Saving
+    %% src/apps/ios/Kria/Core/SlidePost.swift:1074 (guard !isBusy drops the edit)
+    state "Edit made while saving<br/>is silently dropped" as EditDropped
+    %% src/apps/ios/Kria/Core/SlidePost.swift:1270 (addSticker nil while busy; :751 refresh skipped while busy)
+    state "Pasted picture dropped,<br/>says slide is full" as StickerMisleading
+    %% src/apps/ios/Kria/Core/SlidePost.swift:887 and :893 (refetch version, write yours over it)
+    state "Newer version on server:<br/>yours overwrites it silently" as OverwriteRemote
+    %% src/apps/ios/Kria/Core/SlidePost.swift:1546 (3rd conflict, maxRebases 2 at :714)
+    state "This post kept changing<br/>while we saved" as GaveUp
+    %% src/apps/ios/Kria/Core/SlidePost.swift:1544
+    state "Could not save" as SaveFailed
+    %% src/apps/ios/Kria/Core/SlidePost.swift:904 (renderStatus rendering)
+    state "Saved, re-rendering the post" as Rendering
+    %% src/apps/ios/Kria/Core/SlidePost.swift:919 (chatEdit)
+    state "Kria is editing your slides" as Chatting
+    %% src/apps/ios/Kria/Core/SlidePost.swift:966 (staged, unsaved, undoable)
+    state "Kria's edit shown, unsaved<br/>(Undo removes it)" as ChatStaged
+    %% src/apps/ios/Kria/Core/SlidePost.swift:953
+    state "Kria replied, nothing changed" as ChatNoEdit
+    %% src/apps/ios/Kria/Core/SlidePost.swift:958
+    state "Your slides changed meanwhile,<br/>Kria left them alone" as ChatRefused
+    %% src/apps/ios/Kria/Core/SlidePost.swift:943
+    state "Chat failed, Retry offered" as ChatFailed
+    %% src/apps/ios/Kria/Core/SlidePost.swift:821 (propose; blocked if unsaved)
+    state "Kria is arranging your post" as Proposing
+    %% src/apps/ios/Kria/Core/SlidePost.swift:824
+    state "Save your slide edits before<br/>asking for another direction" as ProposeBlocked
+    %% src/apps/ios/Kria/Core/SlidePost.swift:854 (proposal shown)
+    state "New arrangement shown" as ProposalShown
+    %% src/apps/ios/Kria/Core/SlidePost.swift:1039 (create, generate)
+    state "Creating your post" as Creating
+
+    [*] --> Opening
+    Opening --> Clean : server matches local copy
+    Opening --> Dirty : local copy has unsaved edits
+    Clean --> Dirty : edit text, sticker, drawing, framing
+    Dirty --> Dirty : more edits, undo, redo
+    Dirty --> Clean : undo back to saved
+    Dirty --> Clean : Discard local changes
+
+    Dirty --> Saving : tap Save, expected_version V
+    Saving --> EditDropped : you edit during save
+    EditDropped --> Saving : save continues
+    Saving --> StickerMisleading : re-pasted picture lands mid-save
+    StickerMisleading --> Saving : save continues
+    Saving --> OverwriteRemote : 409, version moved to V2
+    OverwriteRemote --> Saving : retry with V2, up to 2 times
+    OverwriteRemote --> GaveUp : 3rd 409
+    Saving --> SaveFailed : offline or invalid
+    Saving --> Rendering : saved as V+1
+    GaveUp --> Dirty : edits still here
+    SaveFailed --> Dirty : edits still here
+    Rendering --> Clean : render finished
+    Clean --> Saving : Undo last saved change
+
+    Dirty --> Chatting : ask Kria, unsaved draft sent
+    Clean --> Chatting : ask Kria
+    Chatting --> ChatStaged : Kria edited the slides
+    Chatting --> ChatNoEdit : reply only
+    Chatting --> ChatRefused : you edited while Kria worked
+    Chatting --> ChatFailed : error or offline
+    ChatStaged --> Dirty : keep, then Save
+    ChatStaged --> Clean : Undo
+    ChatNoEdit --> Dirty : back to editing
+    ChatRefused --> Dirty : ask again
+    ChatFailed --> Chatting : Retry
+
+    Clean --> Proposing : ask for a new direction
+    Dirty --> ProposeBlocked : ask for a new direction
+    ProposeBlocked --> Dirty : save first
+    Proposing --> ProposalShown : arrangement ready
+    Proposing --> SaveFailed : version moved or error
+    ProposalShown --> Saving : Apply
+
+    Dirty --> Creating : Create post, saves first
+    Clean --> Creating : Create post
+    Creating --> Rendering : generate accepted
+    Creating --> SaveFailed : version conflict 409
+
+    classDef working fill:#e8f0fe,stroke:#4a6fa5,color:#1b2631
+    classDef yourturn fill:#e6f4ea,stroke:#3d7a4f,color:#1b2631
+    classDef done fill:#d5f5e3,stroke:#1e8449,color:#145a32
+    classDef stuck fill:#fde7e9,stroke:#c0392b,stroke-width:3px,color:#641e16
+    classDef degraded fill:#fef5e7,stroke:#b9770e,stroke-width:2px,color:#6e2c00
+    classDef failed fill:#f4f6f7,stroke:#566573,color:#1b2631
+
+    class Opening,Saving,Rendering,Chatting,Proposing,Creating working
+    class Dirty,GaveUp,SaveFailed,ChatStaged,ChatNoEdit,ChatRefused,ChatFailed,ProposeBlocked,ProposalShown yourturn
+    class Clean done
+    class EditDropped,StickerMisleading,OverwriteRemote degraded

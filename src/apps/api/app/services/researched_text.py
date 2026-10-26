@@ -6,6 +6,7 @@ supply links, change cuts/audio, or identify an artifact from a location alone.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -19,7 +20,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.agents._model_client import GeminiClient, default_client
 from app.agents._runtime import Agent, AgentSpec, RunContext, SchemaError
 from app.config import settings
-from app.schemas.research import ResearchEvidence, ResearchFact, ResearchSource
+from app.schemas.research import (
+    PreparedResearch,
+    PreparedResearchText,
+    ResearchEvidence,
+    ResearchFact,
+    ResearchSource,
+)
 
 
 class ResearchUnavailable(ValueError):
@@ -400,54 +407,253 @@ def _window(slot: dict) -> tuple[float, float]:
     return start, end
 
 
+# Spoken edits: an explanation sits in a pause, this far from either spoken word.
+_SPEECH_PAD_S = 0.15
+_MIN_WINDOW_S = 2.0
+# Beat-cut montages: consecutive short clips group into windows about this long.
+_GROUPED_WINDOW_S = 3.0
+
+
+def _speech_lines(snapshot: dict) -> list[dict]:
+    """Spoken lines (caption cues) of a Talking edit in output time, sorted.
+
+    Empty unless the snapshot is a spoken edit (``spoken_edit``: Talking/talking
+    head). Narrated, voiceover and smart-caption montages keep their footage
+    windows: their cues are not the edit's primary recorded track.
+
+    Cues live in ``snapshot["captions"]["cues"]``; served caption mirrors may also
+    appear as ``caption_cue`` text bars. Both are the recorded speech.
+    """
+    if not snapshot.get("spoken_edit"):
+        return []
+    rows = list((snapshot.get("captions") or {}).get("cues") or [])
+    rows += [bar for bar in snapshot.get("text_bars") or [] if bar.get("caption_cue")]
+    lines: dict[tuple[float, float], str] = {}
+    for row in rows:
+        if not isinstance(row, dict) or row.get("removed"):
+            continue
+        try:
+            start, end = float(row.get("start_s")), float(row.get("end_s"))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(start) and math.isfinite(end) and end > start:
+            lines.setdefault((round(start, 3), round(end, 3)), str(row.get("text") or ""))
+    return [{"start_s": a, "end_s": b, "text": text} for (a, b), text in sorted(lines.items())]
+
+
+def _opening_end(snapshot: dict, slots: list[dict]) -> float:
+    """Where the protected opening ends: one rule for windows and for the guard.
+
+    Footage-only edits keep the first clip as the opening once any text sits on
+    it. A spoken edit's first clip is often the whole video, so there the opening
+    is only the title text that starts the video.
+    """
+    bars = [bar for bar in snapshot.get("text_bars") or [] if not bar.get("removed")]
+    if _speech_lines(snapshot):
+        return max(
+            (
+                float(bar.get("end_s", 0))
+                for bar in bars
+                if not bar.get("caption_cue") and float(bar.get("start_s", 0)) < 0.05
+            ),
+            default=0.0,
+        )
+    first_end = _window(slots[0])[1]
+    return first_end if any(float(bar.get("start_s", 0)) < first_end for bar in bars) else 0.0
+
+
+def _speech_windows(snapshot: dict, slots: list[dict], opener_end: float) -> list[tuple]:
+    """Pauses between spoken lines (and after the last), padded off the words."""
+    lines = _speech_lines(snapshot)
+    total = float(snapshot.get("total_duration_s") or _window(slots[-1])[1])
+    total = min(total, max(_window(slot)[1] for slot in slots))
+    windows = []
+    for index, line in enumerate(lines):
+        following = lines[index + 1]["start_s"] - _SPEECH_PAD_S if index + 1 < len(lines) else total
+        start = max(line["end_s"] + _SPEECH_PAD_S, opener_end)
+        windows.append((round(start, 3), round(min(following, total), 3), index + 1, line["text"]))
+    return windows
+
+
+def _adjacent_lines(lines: list[dict], start: float, end: float) -> list[dict]:
+    """The spoken lines just before and after an explanation's pause."""
+    before = [line for line in lines if line["end_s"] <= start][-1:]
+    after = [line for line in lines if line["start_s"] >= end][:1]
+    return [
+        {
+            "start_s": line["start_s"],
+            "end_s": line["end_s"],
+            "text": line["text"],
+            "text_sha256": hashlib.sha256(line["text"].encode("utf-8")).hexdigest(),
+        }
+        for line in before + after
+    ]
+
+
+def _grouped_windows(slots: list[dict], opener_end: float) -> list[tuple[float, float]]:
+    """Runs of consecutive short clips, so beat-cut montages still have readable windows.
+
+    A clip already at least ``_MIN_WINDOW_S`` long is its own window and breaks a run.
+    """
+    windows: list[tuple[float, float]] = []
+    run_start = run_end = None
+    for slot in slots:
+        start, end = _window(slot)
+        if start < opener_end or end - start >= _MIN_WINDOW_S:
+            run_start = None
+            continue
+        if run_start is None or abs(start - run_end) > 0.05:
+            run_start = start
+        run_end = end
+        if run_end - run_start >= _GROUPED_WINDOW_S:
+            windows.append((run_start, run_end))
+            run_start = None
+    if run_start is not None and run_end - run_start >= _MIN_WINDOW_S:
+        windows.append((run_start, run_end))
+    return windows
+
+
 def research_windows(snapshot: dict) -> list[dict]:
     slots = [slot for slot in snapshot.get("slots") or [] if not slot.get("removed")]
     if not slots:
         raise ResearchUnavailable("There is no footage to explain")
-    first_end = _window(slots[0])[1]
-    opener_end = (
-        first_end
-        if any(
-            float(row.get("start_s", 0)) < first_end
-            for row in snapshot.get("text_bars") or []
-            if not row.get("removed")
+    if snapshot.get("spoken_edit") and not _speech_lines(snapshot):
+        # Footage windows would cover the recorded words, so give the precise limit.
+        raise ResearchUnavailable(
+            "This edit has no speech timing, so an explanation cannot be placed in a pause"
         )
-        else 0
-    )
-    candidates = []
-    for row in snapshot.get("text_bars") or []:
-        if (
-            row.get("removed")
-            or row.get("caption_cue")
-            or row.get("id") in (snapshot.get("copy_constraints") or {})
-        ):
-            continue
-        candidates.append((float(row.get("start_s", 0)), float(row.get("end_s", 0))))
-    for beat in (snapshot.get("editorial_plan") or {}).get("beats", []):
-        if beat.get("output_start_s") is not None and beat.get("output_end_s") is not None:
-            candidates.append((float(beat["output_start_s"]), float(beat["output_end_s"])))
-    # A title-only draft still has later footage to explain. Existing text/beat
-    # windows are useful groupings, not an exhaustive list of available windows.
-    candidates.extend(_window(slot) for slot in slots)
+    opener_end = _opening_end(snapshot, slots)
+    candidates: list[tuple] = []
+    if _speech_lines(snapshot):
+        # KRI-816: a spoken edit's readable windows are its pauses; footage
+        # windows would put the explanation over the words.
+        candidates = _speech_windows(snapshot, slots, opener_end)
+    else:
+        for row in snapshot.get("text_bars") or []:
+            if (
+                row.get("removed")
+                or row.get("caption_cue")
+                or row.get("id") in (snapshot.get("copy_constraints") or {})
+            ):
+                continue
+            candidates.append((float(row.get("start_s", 0)), float(row.get("end_s", 0))))
+        for beat in (snapshot.get("editorial_plan") or {}).get("beats", []):
+            if beat.get("output_start_s") is not None and beat.get("output_end_s") is not None:
+                candidates.append((float(beat["output_start_s"]), float(beat["output_end_s"])))
+        # A title-only draft still has later footage to explain. Existing text/beat
+        # windows are useful groupings, not an exhaustive list of available windows.
+        candidates.extend(_window(slot) for slot in slots)
+        candidates.extend(_grouped_windows(slots, opener_end))
     result = []
-    for start, end in sorted(set(candidates)):
-        if start < opener_end or end - start < 2:
+    for start, end, *spoken in sorted(set(candidates)):
+        if start < opener_end or end - start < _MIN_WINDOW_S:
             continue
         chosen = [row for row in slots if _window(row)[0] < end and _window(row)[1] > start]
         if not chosen:
             continue
-        result.append(
-            {
-                "id": f"window-{len(result)}",
-                "start_s": start,
-                "end_s": end,
-                "max_characters": math.floor((end - start) * 15),
-                "media_ids": [row["media_id"] for row in chosen],
-                "seen": [row.get("seen") or {} for row in chosen],
-                "visible_text": [row.get("visible_text") or "" for row in chosen],
-            }
+        window = {
+            "id": f"window-{len(result)}",
+            "start_s": start,
+            "end_s": end,
+            "max_characters": math.floor((end - start) * 15),
+            "media_ids": [row["media_id"] for row in chosen],
+            "seen": [row.get("seen") or {} for row in chosen],
+            "visible_text": [row.get("visible_text") or "" for row in chosen],
+        }
+        if spoken:
+            # "The pause after the first spoken line" is choosable and checkable.
+            window["after_spoken_line"] = spoken[0]
+            window["previous_spoken_line"] = spoken[1][:200]
+        result.append(window)
+    if not result and _speech_lines(snapshot):
+        raise ResearchUnavailable(
+            "There is no pause of at least 2 seconds between spoken lines for a readable "
+            "explanation"
         )
     return result
+
+
+def _place_research_text(
+    snapshot: dict,
+    *,
+    text: str,
+    media_ids: list[str],
+    start: float,
+    end: float,
+    windows: list[tuple[float, float]],
+    remove_indexes: set[int],
+    metadata: dict,
+) -> dict:
+    """One sourced explanation as an ``add_text`` op, after the placement checks.
+
+    Shared by fresh research and the replay of research approved before render
+    (KRI-881), so both apply one set of rules: never over spoken words, never over the
+    protected opening or other protected text, readable, and never overlapping.
+    """
+    slots = snapshot.get("slots") or []
+    if any(start < line["end_s"] and end > line["start_s"] for line in _speech_lines(snapshot)):
+        raise ResearchUnavailable(
+            "The explanation would cover the spoken words; the edit is unchanged"
+        )
+    speech = _speech_lines(snapshot)
+    opening = _opening_end(snapshot, slots) if speech else _window(slots[0])[1]
+    if start < opening and any(
+        float(bar.get("start_s", 0)) < end and float(bar.get("end_s", 0)) > start
+        for bar in snapshot.get("text_bars") or []
+    ):
+        raise ResearchUnavailable("Research preserves the existing opening")
+    if end - start < 2 or len(text) > 180 or len(text) / (end - start) > 15:
+        raise ResearchUnavailable("This explanation needs a longer clip or shorter wording")
+    if any(start < b and end > a for a, b in windows):
+        raise ResearchUnavailable("Research explanations overlap")
+    windows.append((start, end))
+    for index, bar in enumerate(snapshot.get("text_bars") or []):
+        a, b = float(bar.get("start_s", 0)), float(bar.get("end_s", 0))
+        if start < b and end > a:
+            if (
+                speech  # a Talking edit's text in a pause is the creator's own
+                or bar.get("id") in (snapshot.get("copy_constraints") or {})
+                or a < start
+                or b > end
+                or (
+                    bar.get("caption_cue")
+                    or str(bar.get("role", "")).startswith(("caption", "lyric"))
+                )
+            ):
+                raise ResearchUnavailable(
+                    "The explanation overlaps protected text; the edit is unchanged"
+                )
+            remove_indexes.add(index)
+    research = {
+        "version": 1,
+        "timeline_binding": [
+            {
+                key: (
+                    slot.get("in_s", slot.get("source_start_s", 0))
+                    if key == "in_s"
+                    else slot.get(key)
+                )
+                for key in (
+                    "clip_index",
+                    "in_s",
+                    "duration_s",
+                    "transition_after",
+                    "transition_duration_s",
+                )
+            }
+            for slot in slots
+            if not slot.get("removed")
+        ],
+        "original_text": text,
+        "media_ids": media_ids,
+        # KRI-816: a spoken edit has no editable clips to compare; the cited
+        # text stays bound to the spoken lines around its pause instead.
+        **({"speech_binding": _adjacent_lines(speech, start, end)} if speech else {}),
+        "start_s": start,
+        "end_s": end,
+        **metadata,
+    }
+    return {"op": "add_text", "text": text, "start_s": start, "end_s": end, "research": research}
 
 
 def research_operations(
@@ -511,75 +717,32 @@ def research_operations(
             if window is None or window["media_ids"] != caption.media_ids:
                 raise ResearchUnavailable("An explanation has no valid output window")
             start, end = window["start_s"], window["end_s"]
-        if start < _window(slots[0])[1] and any(
-            float(bar.get("start_s", 0)) < end and float(bar.get("end_s", 0)) > start
-            for bar in snapshot.get("text_bars") or []
-        ):
-            raise ResearchUnavailable("Research preserves the existing opening")
-        if end - start < 2 or len(caption.text) > 180 or len(caption.text) / (end - start) > 15:
-            raise ResearchUnavailable("This explanation needs a longer clip or shorter wording")
-        if any(start < b and end > a for a, b in windows):
-            raise ResearchUnavailable("Research explanations overlap")
-        windows.append((start, end))
-        for index, bar in enumerate(snapshot.get("text_bars") or []):
-            a, b = float(bar.get("start_s", 0)), float(bar.get("end_s", 0))
-            if start < b and end > a:
-                if (
-                    bar.get("id") in (snapshot.get("copy_constraints") or {})
-                    or a < start
-                    or b > end
-                    or (
-                        bar.get("caption_cue")
-                        or str(bar.get("role", "")).startswith(("caption", "lyric"))
-                    )
-                ):
-                    raise ResearchUnavailable(
-                        "The explanation overlaps protected text; the edit is unchanged"
-                    )
-                remove_indexes.add(index)
         sources = {
             s.url: s.model_dump() for key in caption.evidence_ids for s in facts[key].sources
         }
-        metadata = {
-            "version": 1,
-            "timeline_binding": [
-                {
-                    key: (
-                        slot.get("in_s", slot.get("source_start_s", 0))
-                        if key == "in_s"
-                        else slot.get(key)
-                    )
-                    for key in (
-                        "clip_index",
-                        "in_s",
-                        "duration_s",
-                        "transition_after",
-                        "transition_duration_s",
-                    )
-                }
-                for slot in slots
-                if not slot.get("removed")
-            ],
-            "original_text": caption.text,
-            "media_ids": caption.media_ids,
-            "start_s": start,
-            "end_s": end,
-            "sources": list(sources.values()),
-            "facts": [facts[key].model_dump() for key in caption.evidence_ids],
-            "retrieved_at": evidence.retrieved_at,
-            "search_entry_html": evidence.search_entry_html,
-        }
         additions.append(
-            {
-                "op": "add_text",
-                "text": caption.text,
-                "start_s": start,
-                "end_s": end,
-                "research": metadata,
-            }
+            _place_research_text(
+                snapshot,
+                text=caption.text,
+                media_ids=caption.media_ids,
+                start=start,
+                end=end,
+                windows=windows,
+                remove_indexes=remove_indexes,
+                metadata={
+                    "sources": list(sources.values()),
+                    "facts": [facts[key].model_dump() for key in caption.evidence_ids],
+                    "retrieved_at": evidence.retrieved_at,
+                    "search_entry_html": evidence.search_entry_html,
+                },
+            )
         )
     if not additions:
         raise ResearchUnavailable("No researched explanation could be matched to the footage")
+    return _with_removals(additions, remove_indexes)
+
+
+def _with_removals(additions: list[dict], remove_indexes: set[int]) -> list[dict]:
     return [
         {"op": "remove_text", "bar_index": i} for i in sorted(remove_indexes, reverse=True)
     ] + additions
@@ -642,3 +805,81 @@ def run_researched_revision(
             {"request": "research", "reason": reason} for reason in result.unmet_requests
         ],
     )
+
+
+def prepared_research_texts(ops: list[dict]) -> list[PreparedResearchText]:
+    """The sourced explanations in fresh research ops, as the creator will approve them."""
+    texts = []
+    for op in ops:
+        research = op.get("research") if op.get("op") == "add_text" else None
+        if not isinstance(research, dict):
+            continue
+        texts.append(
+            PreparedResearchText(
+                text=str(op["text"]),
+                media_ids=list(research["media_ids"]),
+                start_s=float(op["start_s"]),
+                end_s=float(op["end_s"]),
+                sources=research["sources"],
+                facts=research["facts"],
+            )
+        )
+    return texts
+
+
+# A pinned explanation must still sit on its approved clips at render. Phone output
+# windows are planned in milliseconds, so a smaller drift is rounding, not a new plan.
+_PINNED_TOLERANCE_S = 0.001
+
+
+def pinned_research_operations(prepared: PreparedResearch, snapshot: dict) -> list[dict]:
+    """Replay research approved before render (KRI-881): no search, no model, no rewrite.
+
+    Each approved explanation must still sit on the same consecutive clips, inside their
+    render windows, and pass the same placement rules as fresh research. Anything else
+    raises ``ResearchUnavailable`` naming the explanation, so the render fails visibly
+    instead of searching again or silently dropping the sourced text.
+    """
+    if prepared.status != "ready" or not prepared.texts:
+        raise ResearchUnavailable("The approved research has no sourced explanation to show")
+    slots = [slot for slot in snapshot.get("slots") or [] if not slot.get("removed")]
+    windows: list[tuple[float, float]] = []
+    additions = []
+    remove_indexes: set[int] = set()
+    for number, row in enumerate(prepared.texts, 1):
+        label = f"The approved sourced explanation {number} (“{row.text}”)"
+        indexes = [i for i, slot in enumerate(slots) if str(slot.get("media_id")) in row.media_ids]
+        if (
+            not indexes
+            or indexes != list(range(indexes[0], indexes[-1] + 1))
+            or [str(slots[i].get("media_id")) for i in indexes] != row.media_ids
+        ):
+            raise ResearchUnavailable(f"{label} no longer matches its approved clips")
+        spans = [_window(slots[i]) for i in indexes]
+        if (
+            row.start_s < spans[0][0] - _PINNED_TOLERANCE_S
+            or row.end_s > spans[-1][1] + _PINNED_TOLERANCE_S
+            or any(a >= row.end_s or b <= row.start_s for a, b in spans)
+        ):
+            raise ResearchUnavailable(f"{label} no longer fits its clips' timing")
+        try:
+            additions.append(
+                _place_research_text(
+                    snapshot,
+                    text=row.text,
+                    media_ids=row.media_ids,
+                    start=row.start_s,
+                    end=row.end_s,
+                    windows=windows,
+                    remove_indexes=remove_indexes,
+                    metadata={
+                        "sources": [source.model_dump() for source in row.sources],
+                        "facts": [fact.model_dump() for fact in row.facts],
+                        "retrieved_at": prepared.retrieved_at,
+                        "search_entry_html": prepared.search_entry_html,
+                    },
+                )
+            )
+        except ResearchUnavailable as exc:
+            raise ResearchUnavailable(f"{label} no longer fits: {exc}") from exc
+    return _with_removals(additions, remove_indexes)

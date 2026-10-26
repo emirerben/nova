@@ -659,20 +659,28 @@ def test_a_full_volume_bed_is_not_under_the_voice() -> None:
 def test_a_mute_ask_is_partly_met_and_never_asks_the_creator_to_choose() -> None:
     mute = _req("m4", "audio", "mute the crowd noise")
 
+    # A render from before KRI-821 (the bed stayed at 25 %), with no control recorded.
     at_render = check_requirement(mute, plan_facts_from_phone_variant(_variant()))
+    # KRI-821: a wording-only (untyped) mute never decides the render, so the draft does not
+    # promise it; a typed `source_muted` the text corroborates renders at bed 0 and does.
     at_draft = check_requirement(mute, _draft_facts())
+    typed = _req("m5", "audio", "mute the crowd noise", audio_intent="source_muted")
+    typed_draft = check_requirement(typed, _draft_facts())
 
     assert at_render.status == "partial"
     assert at_render.reason == (
         "The footage sound still plays softly under your voice (about 25%); "
-        "lower it in the editor's mix"
+        "this edit has no control to turn it down yet"
     )
     assert at_draft.status == "partial"
     assert at_draft.reason == (
-        "The footage sound still plays softly under your voice; lower it in the editor's mix"
+        "The footage sound still plays softly under your voice; "
+        "this edit has no control to turn it down yet"
     )
+    assert typed_draft.status == "met"
+    assert typed_draft.reason == "Your footage sound is muted under your voice"
+    assert is_format_limit(at_render.reason)
     for receipt in (at_render, at_draft):
-        assert is_format_limit(receipt.reason)
         assert is_judged(mute, receipt)
         assert not needs_creator_choice(receipt.model_copy(update={"verification": "checked"}))
 

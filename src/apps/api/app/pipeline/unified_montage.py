@@ -46,6 +46,12 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.kria.asset_holds import (
+    AssetHold,
+    hold_outcomes,
+    hold_requirements,
+    holds_from_requirements,
+)
 from app.kria.brief_route import (
     END_KEYS,
     START_KEYS,
@@ -55,7 +61,17 @@ from app.kria.brief_route import (
     wants_filming_time_text,
     wants_hour_only_text,
 )
-from app.kria.freeze_ask import times_one_moment
+from app.kria.freeze_ask import (
+    CONFLICT_FREEZE_FRAME,
+    POSITION_LAST,
+    FreezeSpec,
+    live_freezes,
+    match_moments,
+    media_key,
+    parse_freeze_option,
+    times_one_moment,
+)
+from app.kria.speed_ask import SpeedSpec, live_speeds
 from app.pipeline.best_parts import BestPart, BestPartsResult, select_best_parts
 from app.pipeline.pinned_text import drawable_pins, pins_from_strategy
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
@@ -64,6 +80,7 @@ from app.schemas.edit_proposal import (
     MAX_PROPOSAL_DURATION_S,
     MIN_PROPOSAL_DURATION_S,
     ClipLabel,
+    CreatorStillHold,
     EditProposalSnapshot,
     FastMontageCut,
     MediaRef,
@@ -215,6 +232,16 @@ class BriefView:
     title_animation: str | None = None
     label_position: str | None = None
     placeholder_labels: bool = False
+    # KRI-828 / KRI-899: every live freeze the creator asked for (corroborated by their
+    # words), a later correction already folded into the freeze it changes
+    # (`freeze_ask.live_freezes`).
+    freezes: tuple[FreezeSpec, ...] = ()
+    # KRI-689: every live clip-speed ask (`speed_ask.live_speeds`): the rate and the creator's
+    # words for the footage it changes.
+    speeds: tuple[SpeedSpec, ...] = ()
+    # KRI-824: live ``timing`` / ``clip:<id>`` requirements, resolved against the plan's
+    # own photos by ``holds_from_requirements``; only server-stamped ones apply.
+    hold_requirements: tuple[Any, ...] = ()
 
 
 def brief_view(brief: Any) -> BriefView:
@@ -235,7 +262,10 @@ def brief_view(brief: Any) -> BriefView:
     title_animation: str | None = None
     label_position: str | None = None
     placeholder_labels = False
-    for req in brief.live():
+    live = brief.live()
+    freezes = live_freezes(live)
+    speeds = live_speeds(live)
+    for req in live:
         for key, value in (req.facts or {}).items():
             if value not in (None, "") and key not in facts:
                 facts[str(key)] = value
@@ -299,6 +329,9 @@ def brief_view(brief: Any) -> BriefView:
         title_animation=title_animation,
         label_position=label_position,
         placeholder_labels=placeholder_labels,
+        freezes=freezes,
+        speeds=speeds,
+        hold_requirements=hold_requirements(brief),
     )
 
 
@@ -483,6 +516,23 @@ class UnifiedMontagePlan:
     # ("held" / "not_held" / "ambiguous" / "not_found"), media_id, source_start_s,
     # source_end_s}. Empty without such an ask, so every earlier record is unchanged.
     named_lines: list[dict[str, Any]] = field(default_factory=list)
+    # KRI-828 / KRI-899: the creator's freezes as planned, one row per frozen moment:
+    # {requirement_id, requirement_ids (every live ask it answers, corrections included),
+    # status ("held" / "not_grounded"), media_id, cut_id, frame_source_s, hold_s, hold_basis,
+    # grounding}. Empty without a freeze ask (or when the route cannot draw one), so every
+    # earlier record is unchanged.
+    freeze_frames: list[dict[str, Any]] = field(default_factory=list)
+    # KRI-824: each photo the creator gave its own seconds: {media_id, hold_s,
+    # requirement_id, authority, rendered_s}. Empty without such an ask, so every earlier
+    # record is unchanged.
+    asset_holds: list[dict[str, Any]] = field(default_factory=list)
+    # KRI-689: the creator's clip-speed asks as planned, one row per ask: {requirement_id,
+    # status ("applied" / "locked" / "not_grounded" / "photo" / "ramp" / "replaced"), rate,
+    # rate_requested, rate_stated, cut_ids, cut_positions (1-based, screen order), media_ids,
+    # grounding, reason, shortened, replaced_by}. Empty without a speed ask, so every earlier
+    # record is unchanged; `brief_checks` reads a record WITHOUT the key as a plan that could
+    # not retime (KRI-689's original "Couldn't").
+    clip_speeds: list[dict[str, Any]] = field(default_factory=list)
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
@@ -510,6 +560,15 @@ class UnifiedMontagePlan:
         speech = {"closing_speech": dict(self.closing_speech)} if self.closing_speech else {}
         quote = {"closing_quote": dict(self.closing_quote)} if self.closing_quote else {}
         named = {"named_lines": [dict(row) for row in self.named_lines]} if self.named_lines else {}
+        freeze = (
+            {"freeze_frames": [dict(row) for row in self.freeze_frames]}
+            if self.freeze_frames
+            else {}
+        )
+        held = {"asset_holds": [dict(row) for row in self.asset_holds]} if self.asset_holds else {}
+        speeds = (
+            {"clip_speeds": [dict(row) for row in self.clip_speeds]} if self.clip_speeds else {}
+        )
         best_parts = (
             {"best_parts": list(self.best_parts_receipt)} if self.best_parts_receipt else {}
         )
@@ -573,6 +632,9 @@ class UnifiedMontagePlan:
             **choice,
             **zone,
             **named,
+            **freeze,
+            **held,
+            **speeds,
             **song,
             **speech,
             **quote,
@@ -702,6 +764,34 @@ def _shrink(frames: list[int], labelled: Sequence[bool], total: int, target: int
         if not shrank:
             break
     return total
+
+
+# ``CreatorStillHold.requirement_id`` of a photo held by the photos' group length.
+GROUP_STILL_HOLD_ID = "photos"
+
+
+def group_still_hold(
+    media_id: str, mixed_media_timing: MixedMediaTimingProfile | None
+) -> AssetHold | None:
+    """KRI-825: the photos' group length as one photo's creator-owned hold, else None."""
+    seconds = mixed_media_timing.image_hold_s if mixed_media_timing is not None else None
+    if seconds is None:
+        return None
+    return AssetHold(media_id, round(float(seconds), 3), GROUP_STILL_HOLD_ID, "explicit")
+
+
+def unheld_still_frames(mixed_media_timing: MixedMediaTimingProfile | None) -> int:
+    """Frames a photo nobody gave a length plays: the AI's cadence, else a default cut.
+
+    The one rule both this planner and the approved length budget
+    (``kria.planner._enrich_best_parts_snapshot``) read, so they cannot drift (KRI-825).
+    """
+    want_s = (
+        mixed_media_hold_bounds("image", mixed_media_timing).preferred_s
+        if mixed_media_timing is not None
+        else DEFAULT_CUT_S
+    )
+    return int(math.ceil(want_s * FPS - 1e-9))
 
 
 def _capacity_frames(clip: UnifiedClip) -> int:
@@ -1012,6 +1102,8 @@ def _sequence_outcomes(
     *,
     seats: MomentSeats | None = None,
     cuts: Sequence[tuple[str, float]] = (),
+    spans: Sequence[tuple[str, float, float]] = (),
+    moment_record: Sequence[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Did each described group land where the creator said? Read off the finished order.
 
@@ -1033,7 +1125,11 @@ def _sequence_outcomes(
     visuals = {clip.ref_id for clip in ordered if clip.lane != "clip"}
     named = {m for _p, _n, members, _s in rows for m in members if m in spot}
     relations = row_relations(rows, present=spot)
-    moments = _moment_outcomes(seats, cuts) if seats is not None else {}
+    moments = (
+        _moment_outcomes(seats, cuts, spans=spans, record=moment_record)
+        if seats is not None
+        else {}
+    )
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     landed_clips: set[str] = set()
@@ -1110,26 +1206,136 @@ def _sequence_outcomes(
     return out
 
 
-def _moment_outcomes(
-    seats: MomentSeats, cuts: Sequence[tuple[str, float]]
-) -> dict[int, dict[str, Any]]:
-    """KRI-796: each row ``moment_seats`` read, judged off the finished cuts.
+# KRI-723: what a named moment's row says when the plan cannot show it is that action. Each
+# is a limit the creator already knows about (an app that could not ask, a moment they let
+# Kria pick or said is not in their clips), so it never blocks the render
+# (``brief_checks.is_format_limit``).
+MOMENT_NOT_LOCATED = (
+    "I couldn't find this moment in your clip, so I can't confirm it's the one playing"
+)
+MOMENT_DELEGATED = "you let me pick this moment, so I chose it myself"
+MOMENT_SKIPPED = "you told me this moment isn't in your clips"
+# How much of the evidenced interval a cut must show to be that moment (KRI-596's share).
+_MOMENT_COVER = 0.5
 
-    A moment's row is met when the take plays as exactly its windows, in take order (the
-    i-th cut of the take is the i-th moment). A Visual's row is met when every Visual it
-    names plays right after its moment: as many cuts of the take before it as the moment's
-    number. Never read off the seating itself, so a layout that misses the spot says so.
+
+def _pinned_seating(
+    record: Sequence[Mapping[str, Any]], skipped: Sequence[Mapping[str, Any]]
+) -> dict[str, Any]:
+    """``moment_seats`` arguments for an approved plan's named moments (KRI-723)."""
+    rows = {int(m["row"]) for m in record if isinstance(m.get("row"), int)}
+    return {
+        "pinned": [
+            (int(m["row"]), str(m.get("words") or ""))
+            for m in sorted(record, key=lambda m: int(m.get("window_index", 0)))
+            if isinstance(m.get("row"), int)
+        ],
+        "skipped_rows": {
+            int(m["row"]) for m in skipped if isinstance(m.get("row"), int) and m["row"] not in rows
+        },
+    }
+
+
+def _pinned_cuts(
+    spans: Sequence[tuple[str, float, float, bool]],
+    record: Sequence[Mapping[str, Any]] | None,
+) -> list[tuple[int, str]]:
+    """(cut index, the creator's words) of each moment the CREATOR pointed at (KRI-723): the
+    take's cuts play the record's windows in order, so its j-th cut is the j-th moment. A
+    grounded moment's freeze keeps KRI-828's analysed-moment frame instead."""
+    if not record:
+        return []
+    rows = sorted(record, key=lambda m: int(m.get("window_index", 0)))
+    take = rows[0].get("media_id")
+    cuts = [k for k, (media, *_rest) in enumerate(spans) if media == take]
+    return [
+        (cuts[j], str(row.get("words") or ""))
+        for j, row in enumerate(rows)
+        if j < len(cuts) and row.get("origin") == "creator_answer"
+    ]
+
+
+def _moment_verdict(
+    moment: int,
+    take_spans: Sequence[tuple[float, float]],
+    record: Sequence[Mapping[str, Any]] | None,
+) -> tuple[str, str, str | None]:
+    """(status, code, reason) for the ``moment``-th window of the take (1-based).
+
+    Met only when the plan carries evidence for it (the creator's own pointed window or a
+    grounded interval) AND the cut in that spot really shows it. Six windows in the right
+    count and order are no evidence of six actions (KRI-723's wrong-content control).
     """
-    starts = [start for ref, start in cuts if ref == seats.take]
-    in_order = len(starts) == seats.moments and starts == sorted(starts)
+    if record is None or moment > len(record) or moment > len(take_spans):
+        return "partial", "not_located", MOMENT_NOT_LOCATED
+    row = sorted(record, key=lambda m: int(m.get("window_index", 0)))[moment - 1]
+    origin = row.get("origin")
+    if origin == "ai_pick_by_request":
+        return "partial", "delegated", MOMENT_DELEGATED
+    evidence = row.get("evidence") if isinstance(row.get("evidence"), Mapping) else {}
+    if origin == "grounded":
+        start, end = evidence.get("source_start_s"), evidence.get("source_end_s")
+    elif origin == "creator_answer":
+        start, end = row.get("source_start_s"), row.get("source_end_s")
+    else:
+        return "partial", "not_located", MOMENT_NOT_LOCATED
+    if not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or end <= start:
+        return "partial", "not_located", MOMENT_NOT_LOCATED
+    cut_start, cut_end = take_spans[moment - 1]
+    shown = min(cut_end, end) - max(cut_start, start)
+    if shown + 1e-6 < _MOMENT_COVER * min(cut_end - cut_start, end - start):
+        return "partial", "misplaced", "the clips did not end up there"
+    return "met", "landed", None
+
+
+def _moment_outcomes(
+    seats: MomentSeats,
+    cuts: Sequence[tuple[str, float]],
+    *,
+    spans: Sequence[tuple[str, float, float]] = (),
+    record: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[int, dict[str, Any]]:
+    """KRI-796 / KRI-723: each row ``moment_seats`` read, judged off the finished cuts.
+
+    A moment is met only when the take plays exactly its windows and the cut in its spot
+    shows the evidenced interval (``_moment_verdict``); without evidence it is an honest
+    "couldn't find it", never met. A Visual's row is met when every Visual it names plays
+    right after its moment (as many cuts of the take before it as the moment's number) AND
+    that moment is met. Never read off the seating itself, so a layout that misses the spot
+    says so.
+    """
+    take_spans = [(start, end) for ref, start, end in spans if ref == seats.take]
+    if not spans:
+        take_spans = [(start, start) for ref, start in cuts if ref == seats.take]
+    starts = [start for start, _end in take_spans]
+    # Without an approved record the windows play in take order (KRI-596); with one, in the
+    # creator's order, which the record's windows already are.
+    in_order = len(starts) == seats.moments and (record is not None or starts == sorted(starts))
+    verdicts = {
+        m: (
+            _moment_verdict(m, take_spans, record)
+            if in_order
+            else ("partial", "misplaced", "the clips did not end up there")
+        )
+        for m in range(1, seats.moments + 1)
+    }
+
+    def row(moment: int | None, verdict: tuple[str, str, str | None]) -> dict[str, Any]:
+        status, code, reason = verdict
+        return {"status": status, "code": code, "reason": reason, "moment": moment}
+
+    def worst(moments: Sequence[int]) -> tuple[str, str, str | None]:
+        missed = [verdicts[m] for m in moments if verdicts[m][0] != "met"]
+        misplaced = [v for v in missed if v[1] == "misplaced"]
+        return (misplaced or missed or [("met", "landed", None)])[0]
+
     out: dict[int, dict[str, Any]] = {}
     for index, moment in seats.named.items():
-        out[index] = {
-            "status": "met" if in_order else "partial",
-            "code": "landed" if in_order else "misplaced",
-            "reason": None if in_order else "the clips did not end up there",
-            "moment": moment,
-        }
+        out[index] = row(moment, verdicts[moment])
+    for index, moments in seats.listed.items():
+        out[index] = row(None, worst(moments))
+    for index in seats.skipped:
+        out[index] = row(None, ("partial", "skipped", MOMENT_SKIPPED))
     for index, (moment, members) in seats.placed.items():
         spots = [next((i for i, (ref, _s) in enumerate(cuts) if ref == m), None) for m in members]
         if None in spots:
@@ -1140,15 +1346,15 @@ def _moment_outcomes(
                 "moment": moment,
             }
             continue
-        met = in_order and all(
+        seated = in_order and all(
             sum(ref == seats.take for ref, _s in cuts[:spot]) == moment for spot in spots
         )
-        out[index] = {
-            "status": "met" if met else "partial",
-            "code": "landed" if met else "misplaced",
-            "reason": None if met else "the clips did not end up there",
-            "moment": moment,
-        }
+        verdict = (
+            verdicts[moment]
+            if seated
+            else ("partial", "misplaced", "the clips did not end up there")
+        )
+        out[index] = row(moment, verdict)
     return out
 
 
@@ -1311,6 +1517,8 @@ def plan_unified_montage(
     creator_duration_proven: bool = False,
     approved_length_plan: Mapping[str, Any] | None = None,
     speech_order: bool = False,
+    freeze_frames: bool = False,
+    clip_speed: bool = False,
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan for ``clips`` (attachment order).
 
@@ -1350,6 +1558,19 @@ def plan_unified_montage(
     is held whole and a creator-pinned closing clip that only introduces someone ends on
     a quiet stretch of that clip; an approved length plan already chose those windows.
     Off (the default), or with no spoken role in any clip, the plan is byte-identical.
+
+    ``freeze_frames`` (KRI-828) says the renderer that will draw this plan can hold a frame
+    (``freezeFrame`` verified). Then each of the creator's freeze asks (``view.freezes``,
+    KRI-899) is grounded to its own cut (see ``_ground_freezes``): that cut's window ends on
+    the frozen frame and holds it. Off, or with no freeze ask, the plan is byte-identical.
+
+    ``clip_speed`` (KRI-689) says the renderer can play a cut faster or slower
+    (``variableSpeed`` verified). Then each of the creator's speed asks (``view.speeds``) is
+    grounded to its cuts (see ``_ground_speeds``) and those cuts carry ``playback_rate``: a
+    planned cut keeps its OUTPUT length and shows ``rate`` times as much footage, an approved
+    window keeps its exact source edges and its output length follows the rate. Off, the asks
+    are recorded as locked so the receipt says why. With no speed ask, the plan is
+    byte-identical.
     """
     view = view or BriefView()
     strategy = strategy or {}
@@ -1446,6 +1667,9 @@ def plan_unified_montage(
     best_parts: BestPartsResult | None = None
     best_parts_conflicts: list[dict[str, Any]] = []
     has_approved_windows = False
+    # KRI-723: the approved plan's named moments (envelope v2), each with its authority.
+    moment_record: list[Mapping[str, Any]] | None = None
+    skipped_record: list[Mapping[str, Any]] = []
     mixed_media_timing: MixedMediaTimingProfile | None = None
     raw_mixed_media_timing = strategy.get("mixed_media_timing")
     if isinstance(raw_mixed_media_timing, MixedMediaTimingProfile):
@@ -1473,6 +1697,13 @@ def plan_unified_montage(
         approved_parts = read_length_plan(approved_length_plan, ordered)
         if approved_parts is None:
             raise ValueError("invalid approved length plan")
+        if isinstance(approved_length_plan.get("moments"), list):
+            moment_record = [m for m in approved_length_plan["moments"] if isinstance(m, Mapping)]
+            skipped_record = [
+                m
+                for m in approved_length_plan.get("skipped_moments") or []
+                if isinstance(m, Mapping)
+            ]
         if approved_parts:
             has_approved_windows = True
             best_parts = BestPartsResult(
@@ -1668,6 +1899,29 @@ def plan_unified_montage(
 
     # ── cut lengths ──────────────────────────────────────────────────────────
     approved_windows = has_approved_windows
+    # KRI-824: a photo the creator gave its own seconds plays exactly that, whatever the
+    # AI's photo pacing; only the item's own photos resolve, by brief scope id.
+    still_media = {clip.ref_id: clip.media_id for clip in ordered if clip.kind == "image"}
+    # A media id its own ref id already ends with ("asset-<uuid>") resolves through the ref;
+    # listing both would make every tail of that one photo look ambiguous.
+    still_media.update(
+        {
+            clip.media_id: clip.media_id
+            for clip in ordered
+            if clip.kind == "image" and not clip.ref_id.endswith(clip.media_id)
+        }
+    )
+    holds: dict[str, AssetHold] = {
+        still_media[ref]: hold
+        for ref, hold in holds_from_requirements(view.hold_requirements, still_media).items()
+    }
+    # KRI-825: a length the creator stated for the photos as a group ("every photo 1
+    # second", read from their own words into the profile) holds every other photo exactly
+    # the same way; a photo with its own stated length keeps that.
+    for media_id in still_media.values():
+        group = group_still_hold(media_id, mixed_media_timing)
+        if group is not None and media_id not in holds:
+            holds[media_id] = group
     # KRI-596: a long take may give several moments; each is its own cut, in plan order.
     windows_by_id: dict[str, list[BestPart]] = {}
     for part in best_parts.parts if best_parts else ():
@@ -1684,6 +1938,7 @@ def plan_unified_montage(
                 if clip.lane == "clip" and clip.media_id in windows_by_id
             },
             visuals={visual.ref_id for visual in visuals},
+            **(_pinned_seating(moment_record, skipped_record) if moment_record is not None else {}),
         )
         if sequence and approved_windows
         else None
@@ -1699,12 +1954,16 @@ def plan_unified_montage(
             # frame counts are only bookkeeping for the legacy code below;
             # cut construction continues to use the unrounded approved parts.
             want_s = sum(part.duration_s for part in approved_parts)
-        elif clip.kind == "image" and mixed_media_timing is not None:
-            want_s = mixed_media_hold_bounds("image", mixed_media_timing).preferred_s
+        elif clip.media_id in holds:
+            want_s = holds[clip.media_id].hold_s
+        elif clip.kind == "image" and (mixed_media_timing is not None or label is None):
+            want_s = unheld_still_frames(mixed_media_timing) / FPS
         else:
             want_s = label.min_display_s if label is not None else DEFAULT_CUT_S
         want = int(math.ceil(want_s * FPS - 1e-9))
-        if approved_parts:
+        if clip.media_id in holds and not approved_parts:
+            want = holds[clip.media_id].frames
+        if approved_parts or clip.media_id in holds:
             cap = want
         elif clip.kind == "image" and mixed_media_timing is not None:
             # The snapshot validator owns these photo bounds too.  Keep the
@@ -1731,6 +1990,13 @@ def plan_unified_montage(
     growth_ceiling = (
         list(capacity) if target_s else [min(cap, int(READING_MAX_S * FPS)) for cap in capacity]
     )
+    # A held photo is pinned like a labelled cut: never grown, never shrunk (``_shrink``
+    # only takes frames from unlabelled cuts), never trimmed for a song below.
+    pinned = [clip.media_id in holds for clip in ordered]
+    for index, held in enumerate(pinned):
+        if held:
+            growth_ceiling[index] = wanted[index]
+            labelled[index] = True
     # KRI-517: the creator asked to end on a clip that speaks, with its own audio. Its
     # cut holds the whole spoken line (never shrunk, never grown past it) and the other
     # cuts share the rest of the length. A line the creator's length cannot also fit
@@ -1797,15 +2063,20 @@ def plan_unified_montage(
         # named on the receipt; nothing is silently cut.
         while total > song_cap and ordered:
             excess = total - song_cap
-            if wanted[-1] - excess >= int(math.ceil(MIN_VIDEO_CUT_S * FPS)) or len(ordered) == 1:
-                wanted[-1] = max(1, wanted[-1] - excess)
+            # The last cut the AI sized gives way; a creator-held photo never does.
+            last = max((i for i, held in enumerate(pinned) if not held), default=None)
+            if last is None:
+                raise ValueError("the song is too short for the photo lengths you asked for")
+            if wanted[last] - excess >= int(math.ceil(MIN_VIDEO_CUT_S * FPS)) or len(ordered) == 1:
+                wanted[last] = max(1, wanted[last] - excess)
                 total = sum(wanted)
                 break
-            gone = ordered.pop()
-            total -= wanted.pop()
-            capacity.pop()
-            labelled.pop()
-            growth_ceiling.pop()
+            gone = ordered.pop(last)
+            total -= wanted.pop(last)
+            capacity.pop(last)
+            labelled.pop(last)
+            growth_ceiling.pop(last)
+            pinned.pop(last)
             labels.pop(gone.media_id, None)
             song_dropped.append(gone.media_id)
         if total < floor_frames:
@@ -1841,6 +2112,11 @@ def plan_unified_montage(
                 int(math.floor(label.min_display_s * 1000)) - 1 if label else _MIN_UNLABELLED_MS
             )
             nominal_ms.append(nominal)
+            if clip.media_id in holds:
+                # A creator-held photo keeps its length; the beat snap moves the others.
+                lo_ms.append(nominal)
+                hi_ms.append(nominal)
+                continue
             lo_ms.append(nominal if tiny else min(floor_ms, nominal))
             hi_ms.append(
                 nominal if tiny else max(nominal, int(round(max(ceiling, frames) * 1000 / FPS)))
@@ -1957,19 +2233,84 @@ def plan_unified_montage(
                 content_hash=clip.content_hash,
             )
         )
+    freeze_holds: dict[int, float] = {}
+    freeze_records: list[dict[str, Any]] = []
+    if freeze_frames and view.freezes and song_duration_s is None:
+        spans, freeze_holds, freeze_records = _ground_freezes(
+            view.freezes,
+            spans,
+            ordered,
+            answers=freeze_frame_answers(strategy),
+            pinned=_pinned_cuts(spans, moment_record),
+        )
+        if freeze_holds and target_s:
+            # A creator-stated length already sized the cuts: the hold comes out of it.
+            shrinkable = [
+                not approved
+                and not labelled[slots[k][0]]
+                and slots[k][1].kind == "video"
+                and k not in freeze_holds
+                for k, (_media, _start, _end, approved) in enumerate(spans)
+            ]
+            spans, reserved = _reserve_freeze_hold(
+                spans, freeze_holds, shrinkable, float(target_s), {}
+            )
+            if "length_over_s" in reserved:
+                freeze_records = [
+                    {**row, "length_over_s": reserved["length_over_s"]}
+                    if row.get("status") == "held"
+                    else row
+                    for row in freeze_records
+                ]
+    # KRI-689: the creator's speed asks, each grounded to its cuts. Under a song the cuts
+    # sit on the song's beats and its lyric captions, so nothing is retimed there (locked).
+    rates: dict[int, float] = {}
+    speed_records: list[dict[str, Any]] = []
+    if view.speeds:
+        if song_duration_s is not None:
+            speed_records = [_locked_speed(spec, "user_song") for spec in view.speeds]
+        elif not clip_speed:
+            speed_records = [_locked_speed(spec, "renderer") for spec in view.speeds]
+        else:
+            spans, rates, speed_records = _ground_speeds(
+                view.speeds,
+                spans,
+                ordered,
+                pinned=_pinned_cuts(spans, moment_record),
+                freeze_holds=freeze_holds,
+                # Only a creator-approved window keeps its edges; a selector's pick is a
+                # planned cut whose output length matters more than its exact footage.
+                creator_windows=approved_windows,
+            )
     cuts = [
         FastMontageCut(
             cut_id=f"unified-cut-{index + 1}",
             media_id=media_id,
             source_start_s=start,
             source_end_s=end,
-            output_duration_s=(end - start) if approved else round(end - start, 3),
+            output_duration_s=(
+                (
+                    ((end - start) if approved else round(end - start, 3))
+                    if index not in rates
+                    else round((end - start) / rates[index], 3)
+                )
+                + freeze_holds.get(index, 0.0)
+            ),
             role="hook" if index == 0 else "payoff" if index == len(spans) - 1 else "build",
             transition="none",
             beat_align=False,
+            **({"freeze_hold_s": freeze_holds[index]} if index in freeze_holds else {}),
+            **({"playback_rate": rates[index]} if index in rates else {}),
         )
         for index, (media_id, start, end, approved) in enumerate(spans)
     ]
+    for row in freeze_records:
+        if row.get("status") == "held":
+            row["cut_id"] = cuts[row.pop("cut_index")].cut_id
+    for row in speed_records:
+        indexes = row.pop("cut_indexes", [])
+        row["cut_ids"] = [cuts[k].cut_id for k in indexes]
+        row["cut_positions"] = [k + 1 for k in indexes]
     repeats = any(len(windows) > 1 for windows in windows_by_id.values())
     spoken_roles, opening_speech, closing_quiet = _spoken_records(ordered, cuts, seats)
     closing_speech, closing_quote = _closing_records(
@@ -2005,6 +2346,14 @@ def plan_unified_montage(
         snapshot_kwargs["user_song"] = song_plan
     if mixed_media_timing is not None:
         snapshot_kwargs["mixed_media_timing"] = mixed_media_timing
+    if holds:
+        snapshot_kwargs["creator_still_holds"] = [
+            CreatorStillHold(
+                media_id=media_id, hold_s=hold.frames / FPS, requirement_id=hold.requirement_id
+            )
+            for media_id, hold in holds.items()
+            if any(cut.media_id == media_id for cut in cuts)
+        ]
     # KRI-522: the brief is cumulative, so the creator's ask survives a later turn whose
     # strategy omits it; the strategy's own typed value is the fallback.
     title_animation = view.title_animation or normalize_title_animation(
@@ -2067,6 +2416,8 @@ def plan_unified_montage(
             labels,
             seats=moment_seating,
             cuts=[(ref_of[cut.media_id], cut.source_start_s) for cut in cuts],
+            spans=[(ref_of[cut.media_id], cut.source_start_s, cut.source_end_s) for cut in cuts],
+            moment_record=moment_record,
         ),
         ordering_choice=choice,
         dropped_label_clip_ids=dropped,
@@ -2098,6 +2449,641 @@ def plan_unified_montage(
         opening_speech=opening_speech,
         closing_quiet=closing_quiet,
         named_lines=named_lines,
+        freeze_frames=freeze_records,
+        clip_speeds=speed_records,
+        asset_holds=hold_outcomes(
+            holds,
+            {
+                media_id: sum(cut.output_duration_s for cut in cuts if cut.media_id == media_id)
+                for media_id in holds
+                if any(cut.media_id == media_id for cut in cuts)
+            },
+        ),
+    )
+
+
+def _reserve_freeze_hold(
+    spans: list[tuple[str, float, float, bool]],
+    holds: Mapping[int, float],
+    shrinkable: Sequence[bool],
+    target_s: float,
+    record: dict[str, Any],
+) -> tuple[list[tuple[str, float, float, bool]], dict[str, Any]]:
+    """KRI-828: make room for the hold inside the creator's stated length.
+
+    Cuts were sized to ``target_s`` before the freeze was placed, so the hold would push
+    the video past the length the creator asked for. The overshoot comes, whole frames at a
+    time, first out of the ends of the other plain video cuts (never below the shortest a
+    cut can be; never a photo, a chosen window or a held spoken line), then, only as far
+    as the length check's tolerance requires, out of the motion before the frozen frame
+    (the frame itself never moves). What still does not fit is recorded as
+    ``length_over_s``.
+    """
+    total = sum(end - start for _media, start, end, _approved in spans) + sum(holds.values())
+    excess = int(math.ceil((total - target_s) * FPS - 1e-6))
+    if excess <= 0:
+        return spans, record
+    spans = [*spans]
+    floor = int(math.ceil(MIN_VIDEO_CUT_S * FPS))
+    room = {
+        k: max(0, int(math.floor((end - start) * FPS + 1e-6)) - floor)
+        for k, (_media, start, end, _approved) in enumerate(spans)
+        if shrinkable[k]
+    }
+    taken = dict.fromkeys(room, 0)
+    while excess and any(room[k] > taken[k] for k in room):
+        # One frame at a time from the cut with the most room left: an even trim.
+        k = max(room, key=lambda key: (room[key] - taken[key], -key))
+        taken[k] += 1
+        excess -= 1
+    for k, frames in taken.items():
+        if frames:
+            media, start, end, approved = spans[k]
+            spans[k] = (media, start, round(end - frames / FPS, 3), approved)
+    # The chosen moment's own lead-in is the creator's too: it only gives what is still
+    # needed for the length to read as asked (within the receipt's tolerance, a frame
+    # inside it), never down to the exact target.
+    excess = max(0, excess - int(math.floor(target_s * _LENGTH_TOLERANCE * FPS)) + 1)
+    for k in holds:
+        if not excess:
+            break
+        media, start, end, approved = spans[k]
+        motion_room = max(0, int(math.floor((end - start - _FREEZE_MIN_MOTION_S) * FPS + 1e-6)))
+        frames = min(excess, motion_room)
+        if frames:
+            spans[k] = (media, round(start + frames / FPS, 3), end, approved)
+            excess -= frames
+    if excess:
+        record = {**record, "length_over_s": round(excess / FPS, 3)}
+    return spans, record
+
+
+# KRI-828: how far a creator's stated length may stretch and still read as asked; the
+# same share the brief's length check allows (``brief_checks.DURATION_TOLERANCE``).
+_LENGTH_TOLERANCE = 0.10
+# KRI-828: the least motion a held cut keeps before its frozen frame.
+_FREEZE_MIN_MOTION_S = 0.3
+# KRI-900: a frame the creator picked (`choice_questions._freeze_frame`) must sit at least
+# this far before its clip's end to be held.
+_FREEZE_END_MARGIN_S = 0.05
+
+
+def freeze_frame_answers(strategy: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:
+    """KRI-900: the creator's answers to "which frame should hold?" on the approved strategy.
+
+    Server-owned (`choice_questions.resolve_choices` writes ``choice_answers`` from the
+    thread's own answer events; model output never sets them).
+    """
+    rows = (strategy or {}).get("choice_answers")
+    return [
+        row
+        for row in (rows if isinstance(rows, list) else ())
+        if isinstance(row, Mapping) and row.get("kind") == CONFLICT_FREEZE_FRAME
+    ]
+
+
+def _speed_row(spec: SpeedSpec) -> dict[str, Any]:
+    return {
+        "requirement_id": spec.requirement_id,
+        "rate": spec.rate,
+        "rate_requested": spec.rate_requested,
+        "rate_stated": spec.rate_stated,
+    }
+
+
+def _locked_speed(spec: SpeedSpec, reason: str) -> dict[str, Any]:
+    """KRI-689: a speed ask no cut of this plan may carry (``reason``: "user_song" when the
+    cuts sit on a song's beats and captions, "renderer" when ``variableSpeed`` is not verified,
+    "frozen" when every named cut holds a freeze frame)."""
+    return {**_speed_row(spec), "status": "locked", "reason": reason, "cut_indexes": []}
+
+
+def _speed_targets(
+    spec: SpeedSpec,
+    spans: Sequence[tuple[str, float, float, bool]],
+    by_id: Mapping[str, UnifiedClip],
+    pinned: Sequence[tuple[int, str]],
+) -> tuple[list[int] | None, str]:
+    """(cut indexes the ask names, how they were found), or ``(None, "")`` when the creator's
+    words name no clip of this edit (or more than one): nothing is guessed (KRI-900's rule).
+
+    In order: a ``clip:<id>`` scope; the creator's words against the moments they pointed at
+    before approval (KRI-723, same matcher as a freeze); those words against the clips'
+    analysed moments (exactly one clip); a cut position ("the last clip"); nothing named =
+    every cut (a whole-edit ask).
+    """
+    if spec.media_id is not None:
+        ref_to_media = {clip.ref_id: clip.media_id for clip in by_id.values()}
+        media_id = ref_to_media.get(spec.media_id, spec.media_id)
+        hits = [k for k, (media, *_rest) in enumerate(spans) if media == media_id]
+        return (hits or None), "scope"
+    if spec.target_words:
+        from app.services.named_moments import pointed_match  # noqa: PLC0415
+
+        hit = (
+            pointed_match(spec.target_words, [words for _index, words in pinned])
+            if pinned
+            else None
+        )
+        if hit is not None and 0 <= pinned[hit][0] < len(spans):
+            return [pinned[hit][0]], "named_moment"
+        in_edit = [
+            media_id
+            for media_id in dict.fromkeys(media for media, *_rest in spans)
+            if media_id in by_id and by_id[media_id].kind == "video"
+        ]
+        matches = match_moments(
+            spec.target_words, [(media_id, by_id[media_id].analysis) for media_id in in_edit]
+        )
+        clips = list(dict.fromkeys(moment.media_id for moment in matches))
+        if len(clips) != 1:
+            return None, ""
+        return [
+            k for k, (media, *_rest) in enumerate(spans) if media == clips[0]
+        ], "analysed_moment"
+    if spec.position is not None:
+        if not spans:
+            return None, ""
+        return [len(spans) - 1 if spec.position == POSITION_LAST else 0], "cut_position"
+    return list(range(len(spans))), "all_clips"
+
+
+def _ground_speeds(
+    specs: Sequence[SpeedSpec],
+    spans: list[tuple[str, float, float, bool]],
+    clips: Sequence[UnifiedClip],
+    *,
+    pinned: Sequence[tuple[int, str]] = (),
+    freeze_holds: Mapping[int, float] | None = None,
+    creator_windows: bool = True,
+) -> tuple[list[tuple[str, float, float, bool]], dict[int, float], list[dict[str, Any]]]:
+    """KRI-689: every speed ask the creator made, each on the cuts it names.
+
+    A planned cut keeps its OUTPUT length, so the timeline the labels, the other cuts and
+    the total length hang on does not move: its source window becomes ``length x rate``
+    seconds anchored on the same start (slid back when it would run past the clip, never
+    into another cut of the same take). When the footage cannot cover that much, the rate is
+    lowered to what it covers (``footage_limited``; the receipt says "2.5x, not the 4x you
+    asked for") rather than the cut shortened. A creator-approved window (``creator_windows``
+    and the span's approved flag: a picked moment) keeps its exact edges and its output
+    length follows the rate (#1761's anchor). Photos have no speed; a cut holding a freeze
+    frame plays at 1x (the compiler's rule). A later ask on the same cut wins and the earlier
+    row says so.
+    """
+    freeze_holds = freeze_holds or {}
+    by_id = {clip.media_id: clip for clip in clips}
+    spans = [*spans]
+    rates: dict[int, float] = {}
+    owner: dict[int, int] = {}
+    rows: list[dict[str, Any]] = []
+    for spec in specs:
+        row = _speed_row(spec)
+        if spec.ramp:
+            rows.append({**row, "status": "ramp", "cut_indexes": []})
+            continue
+        targets, grounding = _speed_targets(spec, spans, by_id, pinned)
+        if targets is None:
+            rows.append({**row, "status": "not_grounded", "cut_indexes": []})
+            continue
+        videos = [
+            k for k in targets if by_id.get(spans[k][0]) and by_id[spans[k][0]].kind == "video"
+        ]
+        if not videos:
+            rows.append({**row, "status": "photo", "grounding": grounding, "cut_indexes": []})
+            continue
+        movable = [k for k in videos if k not in freeze_holds]
+        if not movable:
+            rows.append({**_locked_speed(spec, "frozen"), "grounding": grounding})
+            continue
+        limited = False
+        applied: list[int] = []
+        no_footage: list[int] = []
+        for k in movable:
+            media_id, start, end, approved = spans[k]
+            rate = spec.rate
+            if not (approved and creator_windows):
+                # The footage this cut may use: the clip minus the export margin, and never
+                # another cut of the same take (overlapping windows are refused downstream).
+                clip = by_id[media_id]
+                lower = max(
+                    [
+                        0.0,
+                        *(
+                            e
+                            for j, (m, _s, e, _a) in enumerate(spans)
+                            if j != k and m == media_id and e <= start + 1e-6
+                        ),
+                    ]
+                )
+                upper = min(
+                    [
+                        math.floor((clip.duration_s - _FREEZE_END_MARGIN_S) * 1000) / 1000,
+                        *(
+                            s
+                            for j, (m, s, _e, _a) in enumerate(spans)
+                            if j != k and m == media_id and s >= end - 1e-6
+                        ),
+                    ]
+                )
+                out_s = end - start
+                room = round(upper - lower, 3)
+                if out_s <= 0 or room < out_s - 1e-6:
+                    no_footage.append(k)
+                    continue  # not even the planned cut fits: nothing to retime
+                if rate > 1 and round(out_s * rate, 3) > room:
+                    rate = round(room / out_s, 3)
+                    if rate < 1.05:
+                        # The cut already shows the take whole: no footage to speed through.
+                        no_footage.append(k)
+                        continue
+                    limited = True
+                span = min(round(out_s * rate, 3), room)
+                new_start = start if start + span <= upper + 1e-6 else max(lower, upper - span)
+                new_start = round(new_start, 3)
+                spans[k] = (media_id, new_start, round(new_start + span, 3), approved)
+            if k in owner:
+                earlier = rows[owner[k]]
+                earlier["status"] = "replaced"
+                earlier["replaced_by"] = spec.requirement_id
+                earlier["rate"] = rate
+            rates[k] = rate
+            owner[k] = len(rows)
+            applied.append(k)
+        if not applied:
+            rows.append(
+                {
+                    **row,
+                    # Every named cut already shows its take whole: nothing to speed through.
+                    "status": "no_footage" if no_footage else "not_grounded",
+                    "grounding": grounding,
+                    "cut_indexes": [],
+                }
+            )
+            continue
+        rows.append(
+            {
+                **row,
+                # The slowest rate the footage allowed, when it allowed less than asked.
+                "rate": min(rates[k] for k in applied),
+                "status": "applied",
+                # "Every video clip" only when every one of them changed; otherwise the
+                # receipt names the cuts that did.
+                "grounding": (
+                    "clips_with_footage" if grounding == "all_clips" and no_footage else grounding
+                ),
+                "cut_indexes": applied,
+                "media_ids": list(dict.fromkeys(spans[k][0] for k in applied)),
+                "footage_limited": limited,
+            }
+        )
+    return spans, rates, rows
+
+
+def _ground_freezes(
+    specs: Sequence[FreezeSpec],
+    spans: list[tuple[str, float, float, bool]],
+    clips: Sequence[UnifiedClip],
+    *,
+    answers: Sequence[Mapping[str, Any]] = (),
+    pinned: Sequence[tuple[int, str]] = (),
+) -> tuple[list[tuple[str, float, float, bool]], dict[int, float], list[dict[str, Any]]]:
+    """KRI-899: every freeze the creator asked for, each on its own cut.
+
+    ``pinned`` (KRI-723): (cut index, the creator's words) for each named moment the approved
+    plan located; a freeze naming one holds that cut's own last frame (``_ground_freeze``).
+
+    The latest ask is placed first: when two asks hold the same frame ("freeze Atakan's bite
+    for one second", later "freeze the bite for 2 seconds"), the later one holds it and the
+    earlier one is answered by it (``requirement_ids``), so a frame is never held twice and
+    the latest correction wins. A cut already holding one freeze never takes another.
+    """
+    holds: dict[int, float] = {}
+    rows: list[dict[str, Any]] = []
+    claimed: dict[tuple[str, float], dict[str, Any]] = {}
+    for spec in reversed(specs):
+        spans, held, row = _ground_freeze(
+            spec,
+            spans,
+            clips,
+            claimed=claimed,
+            taken=set(holds),
+            answers=answers,
+            pinned=pinned,
+        )
+        frame = row.pop("_frame", None)
+        winner = claimed.get(frame) if frame is not None else None
+        if winner is not None:
+            winner["requirement_ids"] = [*row["requirement_ids"], *winner["requirement_ids"]]
+            continue
+        if frame is not None and row.get("status") == "held":
+            claimed[frame] = row
+        holds.update(held)
+        rows.append(row)
+    rows.reverse()
+    return spans, holds, rows
+
+
+def _freeze_answer(
+    spec: FreezeSpec, answers: Sequence[Mapping[str, Any]]
+) -> Mapping[str, Any] | None:
+    """The creator's answer that settles this freeze's frame (latest wins), or None."""
+    ids = set(spec.requirement_ids)
+    found = None
+    for row in answers:
+        if ids.intersection(str(rid) for rid in row.get("requirement_ids") or ()):
+            found = row
+    return found
+
+
+def _ground_freeze(
+    spec: FreezeSpec,
+    spans: list[tuple[str, float, float, bool]],
+    clips: Sequence[UnifiedClip],
+    *,
+    claimed: Mapping[tuple[str, float], Any] | None = None,
+    taken: set[int] | None = None,
+    answers: Sequence[Mapping[str, Any]] = (),
+    pinned: Sequence[tuple[int, str]] = (),
+) -> tuple[list[tuple[str, float, float, bool]], dict[int, float], dict[str, Any]]:
+    """Where the creator's freeze lands: one cut whose window ends on the frozen frame.
+
+    KRI-900: the frame is never guessed. It is, in order:
+
+    * the second the creator typed ("freeze at 58.2 seconds", `_typed_frame`);
+    * the frame the creator picked before approval (``answers``, the ``freeze_frame``
+      question): the cut of that clip nearest to it is re-anchored to end there (same length
+      of motion, never overlapping another cut of the same take) and holds ``spec.hold_s``.
+      "No freeze" is ``declined``;
+    * the final cut when the creator named it ("freeze the last shot / at the end"): its own
+      last frame. "The first frame / at the start" cannot be held (a hold sits where a cut
+      ends) and is ``needs_frame`` with its position;
+    * otherwise nothing is held. One analysed moment matching the creator's words
+      (``analysis.best_moments[].description``) is ``needs_frame`` (the moment is known,
+      the instant is not; the receipt asks for the second); no match, or a tie between
+      moments, is ``not_grounded``.
+    """
+    record: dict[str, Any] = {
+        "requirement_id": spec.requirement_id,
+        "requirement_ids": list(spec.requirement_ids),
+        "hold_s": spec.hold_s,
+        "hold_stated": spec.hold_stated,
+        "hold_basis": spec.hold_basis,
+        **(
+            {"hold_requested_s": spec.hold_requested_s} if spec.hold_requested_s is not None else {}
+        ),
+        **({"previous_hold_s": spec.previous_hold_s} if spec.previous_hold_s is not None else {}),
+    }
+    claimed = claimed or {}
+    taken = taken or set()
+    by_id = {clip.media_id: clip for clip in clips}
+    in_edit = [
+        media_id
+        for media_id in dict.fromkeys(media for media, *_rest in spans)
+        if media_id in by_id and by_id[media_id].kind == "video"
+    ]
+    if spec.frame_s is not None:
+        # The second the creator typed ("freeze at 58.2 seconds") wins over everything else.
+        media_id, frame = _typed_frame(spec, spans, by_id, in_edit)
+        record = {**record, "frame_requested_s": spec.frame_s, "frame_scope": spec.frame_scope}
+        return _hold_creator_frame(
+            spans, by_id, media_id, frame, spec, record, claimed, taken, "creator_frame"
+        )
+    answer = _freeze_answer(spec, answers)
+    if answer is not None:
+        option = parse_freeze_option(answer.get("option"))
+        if option is None:
+            return spans, {}, {**record, "status": "not_grounded"}
+        basis, digest, frame = option
+        if basis == "no_freeze":
+            return spans, {}, {**record, "status": "declined"}
+        # The picked clip is no longer in the edit: never a hold somewhere else.
+        media_id = next((m for m in in_edit if media_key(m) == digest), None)
+        if answer.get("source") == "creator_delegated":
+            basis = "delegated_frame"
+        return _hold_creator_frame(
+            spans, by_id, media_id, frame, spec, record, claimed, taken, basis
+        )
+    # KRI-723: the creator pointed at this moment before approval; its cut's last frame holds.
+    on_moment = _freeze_on_pinned_moment(
+        spec, spans, by_id, set(spec.target_words), record, taken, pinned
+    )
+    if on_moment is not None:
+        return on_moment
+    if spec.position == POSITION_LAST and not spec.target_words:
+        return _hold_cut_end(spans, by_id, spec, record, taken)
+    if spec.position is not None and not spec.target_words:
+        # "Freeze the first frame / at the start": a hold sits where a cut ends, so the
+        # opening frame cannot be held, and the end of the first cut is not what was named.
+        # Nothing is guessed; the receipt asks for the second (KRI-900).
+        return spans, {}, {**record, "status": "needs_frame", "position": spec.position}
+    matches = match_moments(
+        spec.target_words, [(media_id, by_id[media_id].analysis) for media_id in in_edit]
+    )
+    if len(matches) != 1:
+        return spans, {}, {**record, "status": "not_grounded"}
+    moment = matches[0]
+    # The moment is known, the instant inside it is not: nothing is guessed (KRI-900).
+    return (
+        spans,
+        {},
+        {
+            **record,
+            "status": "needs_frame",
+            "media_id": moment.media_id,
+            "moment_source_s": [round(moment.start_s, 3), round(moment.end_s, 3)],
+        },
+    )
+
+
+def _typed_frame(
+    spec: FreezeSpec,
+    spans: Sequence[tuple[str, float, float, bool]],
+    by_id: Mapping[str, UnifiedClip],
+    in_edit: Sequence[str],
+) -> tuple[str | None, float | None]:
+    """KRI-900: ``(clip, source second)`` of the frame the creator typed, or ``(None, None)``.
+
+    "2 seconds into the video" is a time of the edit: the cut playing then, and its source
+    second. "at 58.2 seconds" is a second of a clip: the clip of the moment the creator
+    named, else the cut they named by position, else the only video clip in the edit. Any
+    other case names no clip, and nothing is guessed.
+    """
+    at = float(spec.frame_s or 0.0)
+    if spec.frame_scope == "edit":
+        elapsed = 0.0
+        for media_id, start, end, _approved in spans:
+            if elapsed <= at < elapsed + (end - start):
+                return media_id, round(start + at - elapsed, 3)
+            elapsed += end - start
+        return None, None
+    clips: list[str] = []
+    if spec.target_words:
+        moments = match_moments(
+            spec.target_words, [(media_id, by_id[media_id].analysis) for media_id in in_edit]
+        )
+        clips = list(dict.fromkeys(moment.media_id for moment in moments))
+    elif spec.position is not None and spans:
+        clips = [spans[-1 if spec.position == POSITION_LAST else 0][0]]
+    else:
+        clips = list(in_edit)
+    return (clips[0], round(at, 3)) if len(clips) == 1 else (None, None)
+
+
+def _hold_creator_frame(
+    spans: list[tuple[str, float, float, bool]],
+    by_id: Mapping[str, UnifiedClip],
+    media_id: str | None,
+    frame: float | None,
+    spec: FreezeSpec,
+    record: dict[str, Any],
+    claimed: Mapping[tuple[str, float], Any],
+    taken: set[int],
+    grounding: str,
+) -> tuple[list[tuple[str, float, float, bool]], dict[int, float], dict[str, Any]]:
+    """Hold the frame the creator chose (picked before approval or typed), or nothing."""
+    clip = by_id.get(media_id) if media_id is not None else None
+    if clip is None or clip.kind != "video" or frame is None:
+        return spans, {}, {**record, "status": "not_grounded"}
+    if not (_FREEZE_MIN_MOTION_S <= frame < clip.duration_s - _FREEZE_END_MARGIN_S):
+        return spans, {}, {**record, "status": "not_grounded"}
+    if (media_id, frame) in claimed:
+        # A later ask already holds this frame: it answers this one too.
+        return spans, {}, {**record, "_frame": (media_id, frame)}
+    return _hold_at(spans, media_id, frame, spec, record, taken, grounding=grounding)
+
+
+def _hold_cut_end(
+    spans: list[tuple[str, float, float, bool]],
+    by_id: Mapping[str, UnifiedClip],
+    spec: FreezeSpec,
+    record: dict[str, Any],
+    taken: set[int],
+) -> tuple[list[tuple[str, float, float, bool]], dict[int, float], dict[str, Any]]:
+    """KRI-900: "freeze the last shot / at the end": the final cut holds its own last frame,
+    which is the video's last frame.
+
+    Nothing moves: the cut's window already ends on the frame it holds. A photo cut has
+    nothing to freeze (KRI-824 holds stills), and a cut already holding a freeze takes no
+    other: both are ``not_grounded``.
+    """
+    index = len(spans) - 1
+    if not spans:
+        return spans, {}, {**record, "status": "not_grounded", "position": spec.position}
+    media_id, start, end, _approved = spans[index]
+    clip = by_id.get(media_id)
+    if clip is None or clip.kind != "video" or index in taken:
+        return spans, {}, {**record, "status": "not_grounded", "position": spec.position}
+    return (
+        spans,
+        {index: spec.hold_s},
+        {
+            **record,
+            "status": "held",
+            "media_id": media_id,
+            "cut_index": index,
+            "frame_source_s": round(end, 3),
+            "grounding": "cut_position",
+            "position": spec.position,
+            # A later "the last shot for 2 seconds" folds into this hold (KRI-899).
+            "_frame": (media_id, round(end, 3)),
+        },
+    )
+
+
+def _hold_at(
+    spans: list[tuple[str, float, float, bool]],
+    media_id: str,
+    frame: float,
+    spec: FreezeSpec,
+    record: dict[str, Any],
+    taken: set[int],
+    *,
+    grounding: str,
+) -> tuple[list[tuple[str, float, float, bool]], dict[int, float], dict[str, Any]]:
+    """Re-anchor the cut of ``media_id`` nearest to ``frame`` so it ends there, and hold it."""
+    owned = [
+        (index, start, end)
+        for index, (media, start, end, _approved) in enumerate(spans)
+        if media == media_id
+    ]
+    free = [row for row in owned if row[0] not in taken]
+    if not free or frame <= 0:
+        return spans, {}, {**record, "status": "not_grounded"}
+    index, start, end = min(free, key=lambda row: abs((row[1] + row[2]) / 2 - frame))
+    earlier = [e for i, s, e in owned if i != index and s < frame]
+    if any(s < frame < e for i, s, e in owned if i != index):
+        # Another cut of the take already plays that frame: holding it here would repeat it.
+        return spans, {}, {**record, "status": "not_grounded"}
+    new_start = round(max(0.0, frame - (end - start), *earlier), 3)
+    if frame - new_start < _FREEZE_MIN_MOTION_S:
+        return spans, {}, {**record, "status": "not_grounded"}
+    approved = spans[index][3]
+    spans = [*spans]
+    spans[index] = (media_id, new_start, frame, approved)
+    return (
+        spans,
+        {index: spec.hold_s},
+        {
+            **record,
+            "status": "held",
+            "media_id": media_id,
+            "cut_index": index,
+            "frame_source_s": frame,
+            "grounding": grounding,
+            "_frame": (media_id, frame),
+        },
+    )
+
+
+def _freeze_on_pinned_moment(
+    spec: FreezeSpec,
+    spans: list[tuple[str, float, float, bool]],
+    by_id: Mapping[str, UnifiedClip],
+    target: set[str],
+    record: dict[str, Any],
+    taken: set[int],
+    pinned: Sequence[tuple[int, str]],
+) -> tuple[list[tuple[str, float, float, bool]], dict[int, float], dict[str, Any]] | None:
+    """KRI-723: "freeze the frame on Atakan's bite", and the creator pointed at that bite.
+
+    The creator's words for the freeze are matched against the named moments the approved
+    plan located (the same scorer as an analysed moment's description). Exactly one match
+    holds the LAST frame of that moment's cut: the window stays exactly what the creator
+    pointed at, never re-anchored onto a guessed best moment. No match, or two: None, and
+    the analysed-moment grounding runs as before.
+    """
+    from app.services.named_moments import pointed_match  # noqa: PLC0415
+
+    if not pinned or not target:
+        return None
+    hit = pointed_match(target, [words for _index, words in pinned])
+    if hit is None:
+        return None
+    index = pinned[hit][0]
+    if not 0 <= index < len(spans) or index in taken:
+        return None
+    media_id, start, end, approved = spans[index]
+    clip = by_id.get(media_id)
+    if clip is None or clip.kind != "video":
+        return None
+    frame = round(min(end, math.floor((clip.duration_s - 0.05) * 1000) / 1000), 3)
+    if frame - start < _FREEZE_MIN_MOTION_S:
+        return None
+    spans = [*spans]
+    spans[index] = (media_id, start, frame, approved)
+    return (
+        spans,
+        {index: spec.hold_s},
+        {
+            **record,
+            "status": "held",
+            "media_id": media_id,
+            "cut_index": index,
+            "frame_source_s": frame,
+            "grounding": "named_moment",
+            "moment_source_s": [round(start, 3), round(end, 3)],
+            "_frame": (media_id, frame),
+        },
     )
 
 
@@ -2512,6 +3498,8 @@ def _intent_outcomes(
     *,
     seats: MomentSeats | None = None,
     cuts: Sequence[tuple[str, float]] = (),
+    spans: Sequence[tuple[str, float, float]] = (),
+    moment_record: Sequence[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """What each requested group / sport label / chapter text did in this plan (KRI-282).
 
@@ -2522,7 +3510,12 @@ def _intent_outcomes(
     if not enabled:
         return []
     sequence = _sequence_outcomes(
-        _sequence_intents(strategy, enabled), ordered, seats=seats, cuts=cuts
+        _sequence_intents(strategy, enabled),
+        ordered,
+        seats=seats,
+        cuts=cuts,
+        spans=spans,
+        moment_record=moment_record,
     )
     position = {clip.ref_id: i for i, clip in enumerate(ordered)}
     printed = {

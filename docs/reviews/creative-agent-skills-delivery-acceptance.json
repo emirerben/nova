@@ -1,0 +1,31 @@
+{
+  "issue": "KRI-215",
+  "claim": "local_fix",
+  "original_request": "Fix the plural Turkish address and stop feeding unrelated themes into the writers. Then test, merge and deploy the skills so the agents in the app actually use them.",
+  "acceptance": [
+    "Newly authored public Turkish copy addresses viewers in plural while source quotations and first-person wording remain intact.",
+    "Actual writer-provider prompts omit account pillars, generated theme/idea, TikTok summary and proposed-plan topic text.",
+    "Only bounded delivery qualities from free-text tone reach the writers; actual creator instructions, source evidence and visual style remain.",
+    "Phone main-creator context follows the same projection; its public copy rule does not change chat address.",
+    "API and worker image contain the skills and affected agents load them after authorized rollout."
+  ],
+  "case_matrix": [
+    "EN/TR",
+    "hook/caption/sequence writers",
+    "main creator phone context",
+    "sparse/legacy account fields",
+    "explicit creator direction retained",
+    "quoted singular source speech retained",
+    "provider failure/timeout feed recovery"
+  ],
+  "regression_proof": {
+    "pre_fix": "Six newly added provider-capture assertions failed against the original prompt inputs; the phone context capture also failed before projection.",
+    "control": "Distinct untrusted topic markers are inserted in account context while source words, voice qualities, explicit directions and styling remain. The old projections leak markers; the corrected prompts omit them.",
+    "green_command": "bash scripts/check-api.sh test tests/evals/test_runtime_creative_skills.py -q"
+  },
+  "exclusions": [
+    "No renderer, media selection, duration, or native client implementation change.",
+    "No new paid model call, native export, or comparative writing-quality claim for this final input fix."
+  ],
+  "remaining_semantic_owner": "KRI-215"
+}

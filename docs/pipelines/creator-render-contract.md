@@ -354,6 +354,22 @@ require a declaration. A creator-named target uses ±10%; otherwise song placeme
 or a frozen music section, recorded narration, cleaned take, or selected best parts
 provide the clock. Derived lengths remain notes, not creator proof.
 
+An inclusive ceiling ("at most 10 seconds", "max 10 s", "en fazla 10 saniye", KRI-847) is not a
+±10% target. The model records it on the `timing` requirement as
+`facts.duration_bound = "at_most"` beside `duration_s` (absent or unknown = exact; a change
+that sets `duration_s` without it drops it, as does an answered length card).
+`length_policy.creator_duration_satisfied(..., "at_most")` is the exact check without its lower
+side (`0 < actual <= N + 10%`): it can only relax the existing check, never tighten it, so a
+wrong or stale fact cannot create a hard cap. It is used by the draft receipt ("you asked for
+at most 10s"), the length plan (`target_duration_bound` on the envelope), the choice cards,
+the approved music window and the render check ("You asked for at most 10 seconds; this edit
+is 11.5 seconds."). Exclusive wording ("under N", "less than N", TR "N saniyenin altında") is
+the strict whole-export cap of KRI-629 (`strict_duration_limit_s`), read from the description
+and judged on the measured export including its ending; `duration_bound` never changes it. The
+bound never rides on `CreatorRenderContract` (frozen schema, see above): dispatch writes it to
+`assembly_plan["creator_length_bounds"][contract_digest]`, and `read_length_policy` returns it
+as `state.requested_duration_bound`, so an exact job's stored keys are unchanged.
+
 `length_planning.py` freezes exact best-parts windows once at server planning, with
 source identities, capacity, deterministic ranking/fallback receipts, and generation.
 Phone and cloud compilers read that envelope. The silent cap is 120 seconds and
@@ -581,6 +597,258 @@ Preflight takes the dispatched adapter (`cloud_adapter_for_job`); without a name
 adapter it keeps the pre-PR conservative refusal, so nothing is lifted on an unknown
 route. `verify_cloud_variant` picks the adapter from the variant
 (`cloud_adapter_for_variant`).
+
+## Prepared execution snapshot (KRI-722)
+
+One immutable row per approved edit, `creator_prepared_executions` (migration 0125),
+ties consent to everything that runs under it. Code: `app/kria/prepared_execution.py`.
+Failure matrix: `docs/reviews/kri-722-prepared-execution.md`.
+
+```text
+ draft (immutable revision + snapshot_hash)
+        |
+ decide_approval: every gate passes ──> mint snapshot (same transaction)
+        |     approval.prepared_execution_id = snapshot.id
+        |     snapshot: draft id/revision/hash, approval id, readiness digest,
+        |     brief version + digest, binding digest, route, sources[] (path, media id,
+        |     original/analysis_proxy role, object generation, trim window),
+        |     worker capabilities digest, per-decision digests with origin,
+        |     compiled refs. No signed URLs or credentials (validator refuses them).
+        v
+ _claim_approval_dispatch: verify against live rows
+        |     draft hash, binding digest, capabilities, source generation + lineage
+        |     mismatch -> execution stale, code prepared_execution_stale /
+        |                 prepared_execution_source_lineage / prepared_execution_unsupported
+        |     ok -> new attempt_id; execution.result["prepared_execution"]
+        v
+ dispatch (strategy) or claim (editor): Job stamp
+        |     all_candidates["creator_prepared_execution"] = {id, digest, schema_version}
+        |     assembly_plan["creator_prepared_execution"] = {id, digest, attempt_id,
+        |        approval_id, draft_id, draft_revision, generation_id, contract_digest,
+        |        variant_id (editor only)}
+        v
+ device pin copies {id, attempt_id} into the variant record;
+ publication refuses a record whose attempt is not the Job's current one
+```
+
+Rules:
+
+- **Stamp, not flag.** `KRIA_PREPARED_EXECUTION_ENABLED` (default on) is read once,
+  at approve. Workers branch on the stamp. Unstamped Jobs (historical, flag off)
+  run the legacy path unchanged. The strict `CreatorRenderContract` model is not
+  touched, so stored contract digests do not move. The contract digest is per
+  attempt (it covers the Job's `creator_generation_id`), so it lives on the Job
+  stamp, not in the snapshot.
+- **Versions.** `SCHEMA_VERSION` and `COMPILER_VERSION` are refused when above the
+  worker's own (`prepared_execution_unsupported`, recovery `refresh_replan`). An
+  old worker without this code ignores the stamp (legacy), the same rolling-deploy
+  exposure as the plan-authority stamp.
+- **Retry (KRI-674).** The retry approval references its source attempt's snapshot.
+  `claim_render_retry` re-verifies it, mints a new `attempt_id`, moves the Job stamp
+  to it (`retry_of_attempt_id` names the previous one) and re-pins the recipe.
+  No planner runs. A snapshot a dispatch claim already invalidated is refused.
+- **Redelivery.** An accepted execution that already carries the
+  `prepared_execution` record for the same snapshot (lost acknowledgement,
+  outcome unknown) returns that record without re-fencing draft, binding,
+  capabilities or sources. Its Job may already be rendering; a deploy or flag
+  flip in between must not cancel it or invalidate the snapshot.
+- **Receipts.** A stamped Job's unified-montage receipts read the approved brief.
+  With a brief binding it comes from the Job's binding, checked against the
+  snapshot's binding digest. Without one (creators outside the binding cohort) the
+  snapshot pins the brief version current at approval (`brief_version` +
+  `brief_digest`), and the reader loads exactly that `creative_brief_versions` row.
+  Later chat cannot change what an accepted attempt reports. Unstamped Jobs, and
+  snapshots approved with no brief at all, keep the latest-brief read.
+- **Scoped decisions.** `decisions` is a map of per-key digests (`text`, `length`,
+  `order`, `audio`, `direction`, `editor`, `shape`, `speech_cleanup`), each with an
+  `origin` (`creator`, `creator_answer`, `model_default`, `system`) taken from
+  provenance only. Strategy groups are planner output, so `model_default` even when
+  a brief requirement asked for something inside them (field-level creator
+  attribution is KRI-824). Editor drafts are `model_default` (Kria chat edits, undo
+  baselines, comparisons) unless the payload is the creator's own editor state
+  carried unchanged (`client_state_id` set, no `changes`, no text diff).
+  Approval-card answers (`render_shape`, `speech_cleanup`) are `creator_answer`.
+  `changed_decisions()` names the keys two snapshots disagree on (for KRI-723+).
+- **Retention.** `prune_kria_drafts` keeps a draft body while a non-invalidated
+  snapshot references it.
+- **Cloud attempts** are fenced by `creator_generation_id` (each strategy dispatch
+  mints a new Job and generation; the stamp records it). Cloud exact retry is KRI-723.
+
+Not yet: concrete montage/speech/text/audio decisions still resolve inside the
+render (KRI-723/724/725); the snapshot refuses drift but does not hold compiler output.
+
+## Named moments of one take (KRI-723, first slice)
+
+"Six moments from it, in this order: A, B, C ..." names actions, not windows. Six ordinal
+energy windows in the right count and order are **not** evidence of six actions, so they never
+read `met`.
+
+- **Which moments.** `services/named_moments.named_moments`: resolved `then` order rows that
+  name the edit's only video (one row listing them, or one row per moment). Rows naming only
+  Visuals ride along. A moment count that disagrees with the named moments is not guessed at.
+- **Evidence, no model call.** `ground()` matches the creator's words against stored
+  `best_moments` / `understanding.notable_moments` (`start_s`, `end_s`, `description`) with the
+  KRI-828 scorer (now shared). One best match = `grounded`; a tie (or two moments on one
+  interval) = `ambiguous`; none = `unlocated`. Model prose, even with timestamps, never counts.
+- **Ask before approval.** In `_gate_unresolved_choices`, an unlocated/ambiguous moment on a
+  turn stamped `answers_moment_questions` (app protocol >= `moment_order_min_client_protocol`,
+  **20** = the first iOS build with `MomentOrderCard`; `999` is the kill switch) returns `moment_order_question` instead of a draft,
+  and keeps returning it until every moment is pointed at, skipped or left to Kria (a
+  free-text reply never turns into guessed windows). Pins are dark with the question: an app
+  that cannot answer keeps today's v1 windows byte-identical with an honest `not_located`
+  receipt, so 999 is a real kill switch. A selected photo beside the take is never asked
+  about (the length plan pins only all-video edits).
+- **Answer.** `SubmitTurnBody.moment_order` (`point` / `skip` / `delegate` per moment, in the
+  creator's final order). `runtime._validate_moment_order`: 409 `moment_order_stale` (old
+  question, re-uploaded take), 404 `moment_order_media_not_found` (not this thread's take),
+  422 `moment_order_invalid` / `moment_order_overlap`. The echo models read has no digits.
+  `fold_moment_orders` re-reads it from thread events; the key is the creator's folded words on
+  that file generation, so a reworded moment or re-uploaded take is re-asked.
+- **Envelope v2.** `build_length_plan(pinned_moments=...)` gives each moment one window in the
+  creator's order (a pointed window exactly as given; a grounded one centred on its evidence;
+  "you pick" / unlocated from the strongest free moment) and records `moments[]` (+
+  `skipped_moments`), whoever owns the length (a licensed-music section included). A pointed
+  window ends at the take's end (the record holds what plays). Pins that cannot all be placed
+  are a blocking `named_moments_unplaceable` conflict, never a fall-back to ordinal windows.
+  Only such an envelope is v2; every other plan stays byte-identical v1. Readers use
+  `supported_length_plan_version()`; `read_length_plan` refuses a v2 whose creator-pointed
+  window was changed.
+- **Execution and receipt.** The worker plays the envelope windows in order; Visual seating
+  and freeze ("freeze the frame on the bite") use the located moments. `_moment_outcomes` is
+  `met` only when the cut shows the evidenced interval; without evidence a row is `partial`
+  `not_located` (a format limit: it never blocks the render, never claims the action).
+
+Not in this slice: several takes interleaved, the user-song / lip-sync variants, text and
+music frozen once. Proof: `tests/kria/test_kri723_moment_authority_m2.py`
+(`KRI723_ARTIFACT=<dir>` writes `report.json`) and `tests/kria/test_kri723_moment_order_turns_postgres.py`.
+
+**iOS card (protocol 20).** `MomentOrderCard` (`Kria/Features/MomentOrderCard.swift`, model in
+`Kria/Core/MomentOrderQuestion.swift`) shows the moments in the creator's order (drag or arrows), and
+per row: "Show where" (the KRI-717 source-window picker on this iPhone's original), "Not in my clips"
+(`skip`) or "You pick" (`delegate`). A grounded row starts pointed at its evidence. The answer is
+sent as `moment_order` with the server's neutral echo as the message. 404/422 keep the card and its
+windows and show the server's reason on it; 409 `moment_order_stale` refreshes the thread, closes the
+old card and says the newest one is the one to answer. Capability `moment_order_questions` (false at
+999). Proof: `MomentOrderUITests` (XCUITest).
+
+## Which spoken occurrence (KRI-724, phone Talking slice)
+
+"Show MEROPE the first time **she** says Merope" on a one-take Talking video: the take's words
+carry no speaker and there is no diarization (no paid model), so the first "Merope" anyone says
+(Yasin's, off camera) is not evidence of hers. The creator is asked before approval.
+
+- **Ask.** `choice_questions._speech_occurrence` (kind `speech_occurrence`, priority after
+  `title_text`), only on a one-take `subtitled` / `talking_head` draft that is not a voiceover,
+  with `SPEECH_OCCURRENCE_QUESTION_ENABLED` on. It asks about (a) a text-at-a-spoken-word ask
+  that names someone else as the speaker, even when the word is said once, and (b) a named cut
+  line said 2+ times with no ordinal (today `said_more_than_once`, nothing cut). Occurrences
+  come from the take's timed sentences through the worker's own matchers
+  (`phone_spoken_text.spoken_word_occurrences`, `phone_opening_cut.line_occurrences`), inside
+  the start/end cut the draft will make (`estimate_take_window`). Options: up to five times as
+  `0:40 “…Merope, it's a Colombian coffee…”`, "Every time" for a cut, and an explicit waiver
+  ("Leave the text off" / "Don't cut it"). Nothing is recommended and "you choose" is not a
+  delegation (only the creator knows whose voice). It is the existing `choice_question` card:
+  no client or protocol change. The digest covers the media id and the occurrence times, so new
+  media re-asks; two unanswered asks pass the plan through with KRI-791's honest `partial`.
+- **Answer.** Option key `occ_<n>_of_<m>_t<centiseconds>` / `occ_all_of_<m>` / `waive`;
+  `ChoiceAnswer.value` (same field as KRI-844's PR #1787) holds the word / line. Answers are
+  server-owned (`resolve_choices` drops model-written ones) and frozen in
+  `BriefBinding.choice_answers` at approval. The pin is read **only** from those answers
+  (`opening_cut_ask.answered_occurrence_pins`), never from a brief fact. A waiver is an agreed
+  simpler obligation: `answered_brief` supersedes the text ask, or drops the line from
+  `cut_lines`.
+- **Execution.** `opening_cut_ask.select_occurrence`: the ordinal when the render hears as many
+  occurrences as were offered; otherwise the nearest one within `min(1 s, half the gap to its
+  neighbours)` of the picked time. Text: on the cut timeline (the pin's source time remapped
+  through the plan's removals); receipts `pinned_occurrence_missing` / `pinned_occurrence_cut`,
+  never a fall-back to the first match. Cuts: that occurrence (or every one); a missing pick
+  is `pinned_occurrence_missing`.
+- **Receipts.** A placed pinned text is `met` (the creator named whose word it is); the draft
+  says "I'll show it on the “Merope” you picked, at 0:40 in your take". A miss is `partial` with
+  the reason.
+- **Rollout.** Flag default `false`. Order: API + worker deploy first (workers ignore pins that
+  never exist), then `fly secrets set SPEECH_OCCURRENCE_QUESTION_ENABLED=true` (api + worker) +
+  restart. Off = the question is never asked; renders read the first match exactly as before.
+
+Not in this slice: the recorded-voiceover / narrated slice (KRI-889), a quoted start/end line
+that is not found (KRI-844), real speaker diarization, and physical-device export proof
+(KRI-734). Proof: `tests/kria/test_kri724_speech_occurrence_replay.py` (`KRI724_REPORT=<file>`
+writes the JSON), `tests/kria/test_kri724_speech_occurrence_turns_postgres.py`, and
+`python -m app.cli.verify_take_window --take tests/fixtures/kri790_merope_t1_take.json
+--answer occ_2 --spoken-text "MEROPE::Show MEROPE in big letters the first time she says
+Merope"` (`.take-window-verify/report.json`; `--video` adds the frame at the placed time).
+
+## Cloud adapters and the prepared snapshot (KRI-725, PR 1)
+
+KRI-722 stamps every approved cloud Job, but until this PR only the device path read
+the stamp after dispatch. The cloud adapters now enforce it in three places:
+
+- **Worker start** (`generative_build._enter_prepared_attempt` ->
+  `prepared_execution.verify_job_stamp`): one call in `_run_generative_job_impl`,
+  right after `preflight_cloud_contract`, under the Job lock. It checks that the
+  snapshot row exists, belongs to the Job's owner, parses at this worker's
+  schema/compiler version, is not invalidated, and matches the stamp's digest and
+  the Job's `creator_generation_id`. A refusal fails the Job with
+  `failure_reason = prepared_execution_stale | prepared_execution_unsupported`
+  before any ingest or model spend. It never rechecks live capabilities, so a
+  deploy cannot cancel an accepted attempt (KRI-722 F10). One-variant rerenders
+  (`regenerate_generative_variant`, `rebuild_slide_post_variant`) run the same
+  check only when a Kria editor approval or exact retry re-pinned that variant.
+  The creator's own later manual edits keep today's path.
+- **Publication** (`_prepared_attempt_superseded`, called first in
+  `_reject_unverified_cloud_variant` and in `_update_variant_entry`): inside a
+  prepared attempt, a new playable output publishes only while that attempt is
+  still the variant's `variant_fence`. A late completion of a superseded attempt
+  becomes a failed variant (`prepared_execution_code = prepared_execution_superseded`,
+  under the existing `creator_render_contract_unverified` class so every boundary
+  keeps the last-good artifact). The attempt is held in a task-scoped contextvar
+  that `_owned_job_task_fence` resets, so renderers cannot forget to attach it.
+- **Guided dispatch** (`content_plan_build._story_matches_prepared_execution`): the
+  recompiled story must match the snapshot's `compiled_refs.prepared_collection_story`
+  digest minted at approve, not only the live proposal's own digest.
+
+**Slides.** A slide-post approval pins every slide and sticker as a snapshot source
+(`slide:i`, `sticker:i:id`, with object generation) and the draft digest as
+`compiled_refs.slide_post`. The claim refuses a changed caption, order or photo.
+Dispatch copies the approved draft onto the Job (`approved_slide_post`), and the
+first render reads that copy instead of `PlanItem.slide_post`. It refuses a pinned
+asset whose generation moved after dispatch. Non-slide snapshots gain no key, so
+existing digests do not move. Kria's strategy policy does not offer `slides` today
+(`format_availability` -> `policy_edit_format_unavailable`), so in production slide
+posts still dispatch unstamped from the slides route. These fences apply as soon as
+a Kria approval can reach the slides adapter.
+
+No `COMPILER_VERSION` bump: a bump would invalidate every in-flight approval at
+deploy. An old worker that renders a stamped slides Job falls back to the live read,
+which is the same rolling-deploy exposure KRI-470/722 document.
+
+### Prepared coverage matrix
+
+`app/kria/prepared_coverage.py` keeps one row per render adapter. Each row names
+where every approval-critical input is pinned, the worker and publication fences,
+and the state of each decision key. A new adapter, or a key with no row, fails at
+import. `gap:` rows name the ticket that owns the missing capability. They are
+unmet demand, not support claims. `executed` means the decision is carried into the
+pinned execution and fenced. It does not mean output proof (KRI-734). The guard test
+`tests/kria/test_prepared_coverage_guard.py` keeps this table equal to the code:
+
+<!-- prepared-coverage:start -->
+| adapter | text | length | order | audio | direction | editor | shape | speech_cleanup |
+|---|---|---|---|---|---|---|---|---|
+| cloud_classic | gap:KRI-725 | executed | gap:KRI-725 | gap:KRI-725 | executed | executed | executed | executed |
+| cloud_guided_story | executed | executed | executed | gap:KRI-725 | executed | executed | executed | executed |
+| cloud_slides | executed | not_applicable | executed | not_applicable | executed | not_applicable | executed | not_applicable |
+| phone_guided_unified_montage | executed | executed | executed | executed | executed | executed | executed | not_applicable |
+| phone_narrated | executed | executed | executed | executed | executed | executed | executed | executed |
+| phone_speech_montage | executed | executed | executed | executed | executed | executed | executed | executed |
+| phone_subtitled | executed | executed | executed | executed | executed | executed | executed | executed |
+| phone_voice_behind_footage | executed | executed | executed | executed | executed | executed | executed | executed |
+| phone_voiceover_montage | executed | executed | executed | executed | executed | executed | executed | executed |
+<!-- prepared-coverage:end -->
+
+Evidence: `KRI725_ARTIFACT=.dev/kri-725 pytest tests/kria/test_kri725_cloud_prepared_postgres.py`
+writes `report.json`, `slides_positive.mp4` and `frames.png`. Failure matrix:
+`docs/reviews/kri-725-prepared-coverage.md`.
 
 ## Route resolution (KRI-470 PR-D)
 

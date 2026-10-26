@@ -1,0 +1,48 @@
+{
+  "agent": "nova.plan.clip_request_resolver",
+  "prompt_version": "synthetic-editorial-v1",
+  "input": {
+    "creator_request": "Include the bird taking flight.",
+    "intents": [
+      {
+        "intent_id": "spot",
+        "op": "include",
+        "attribute": "bird takes flight"
+      }
+    ],
+    "clips": [
+      {
+        "alias": "m001",
+        "record": {
+          "summary": "A noisy crowd runs past a park bench.",
+          "activity": "running",
+          "energy": 0.95
+        }
+      },
+      {
+        "alias": "m002",
+        "record": {
+          "summary": "A bird remains perched. No flight is visible.",
+          "activity": "perched bird",
+          "energy": 0.1
+        }
+      }
+    ]
+  },
+  "raw_text": "{\"intents\": [{\"intent_id\": \"spot\", \"assignments\": [], \"needs_vision\": [], \"question\": \"There is no flight in these clips. Do you have another take?\"}]}",
+  "meta": {
+    "source": "hand_authored_synthetic_development",
+    "case": "Related subject is not evidence of the requested action.",
+    "skills": [
+      "meaningful-moment"
+    ],
+    "expected": {
+      "intents": [
+        {
+          "assignments": []
+        }
+      ]
+    },
+    "wrong_raw_text": "{\"intents\": [{\"intent_id\": \"spot\", \"assignments\": [{\"media\": \"m002\", \"evidence\": \"Visible action in the record.\", \"confidence\": 0.95}], \"needs_vision\": []}]}"
+  }
+}

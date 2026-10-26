@@ -17,6 +17,7 @@ from app.kria.text_trim import trim_at_word
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.clip_intents import (
     CREATOR_CAPTION_MAX_CHARS,
+    CREATOR_LABEL_STORAGE_MAX,
     INTENT_ID_MAX_CHARS,
     MAX_CLIP_INTENTS,
     ClipIntent,
@@ -118,8 +119,10 @@ _QUOTE_TABLE = str.maketrans(
     }
 )
 # Label copy is a corner tag; caption copy is the creator's own chapter line,
-# printed as written (CREATOR_CAPTION_MAX_CHARS).
-_CREATOR_TEXT_MAX = 60
+# printed as written (CREATOR_CAPTION_MAX_CHARS). KRI-826: a label the creator wrote is
+# bounded by the label bar's two lines (`clean_creator_label_text`), so the planner
+# passes up to the stored bound and the fence, not this cap, answers "too long".
+_CREATOR_TEXT_MAX = CREATOR_LABEL_STORAGE_MAX
 _LABEL_PREVIEW_CHARS = 40
 _QUESTION_MAX_CHARS = 400
 _KNOWN_OPS = {"label", "group", "order", "include", "caption"}

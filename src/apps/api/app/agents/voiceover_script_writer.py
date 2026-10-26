@@ -75,6 +75,24 @@ def _clean_input(s: str) -> str:
     return _strip_tokens(_sanitize_text(s))
 
 
+def _script_checks(raw: object, text: str) -> list[ScriptCheck]:
+    """KRI-815: the model's own list of claims to verify, kept only where the phrase is
+    really in the script. Lenient: a malformed row is dropped, never a reason to fail."""
+    if not isinstance(raw, list):
+        return []
+    checks: list[ScriptCheck] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        phrase = _sanitize_script(str(row.get("phrase") or ""))[:160]
+        if not phrase or phrase not in text or any(c.phrase == phrase for c in checks):
+            continue
+        checks.append(
+            ScriptCheck(phrase=phrase, reason=_sanitize_script(str(row.get("reason") or ""))[:240])
+        )
+    return checks[:8]
+
+
 def split_script_lines(text: str) -> list[str]:
     """Split a spoken script into teleprompter lines at sentence/clause
     boundaries — speech-appropriate, NOT the 6-word on-screen cap of
@@ -120,18 +138,40 @@ class VoiceoverScriptWriterInput(BaseModel):
     # KRI-784: the creator's language ("tr"/"en"), from the chat or the caller. None:
     # read from the creator's own words below; English/unknown renders byte-identical.
     reply_language: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    # KRI-815 (Kria chat): one line per attached clip, in play order ("Clip 2: ..."), from the
+    # clips' stored understanding. Each line is sanitized and capped on its own, so five clips
+    # all reach the prompt (the single `footage_summary` field is capped as one short field).
+    # Empty => `footage_summary` is used, exactly as before.
+    footage_clips: list[str] = Field(default_factory=list, max_length=24)
+    # KRI-815: a revision of an earlier draft. Both empty => a new script (no revision block).
+    previous_script: str = Field(default="", exclude_if=lambda value: not value)
+    revision_note: str = Field(default="", exclude_if=lambda value: not value)
+
+
+class ScriptCheck(BaseModel):
+    """KRI-815: a claim in the script the footage and the creator's words do not back."""
+
+    phrase: str = Field(min_length=1, max_length=160)
+    reason: str = Field(default="", max_length=240)
 
 
 class VoiceoverScriptWriterOutput(BaseModel):
     text: str = Field(min_length=1)
     lines: list[str] = Field(default_factory=list)
+    # KRI-815: claims to check before recording (names, dates, numbers, facts the inputs do
+    # not state). Omitted from dumps when empty, so the transcript route stays unchanged.
+    needs_check: list[ScriptCheck] = Field(
+        default_factory=list, max_length=8, exclude_if=lambda value: not value
+    )
 
 
 class VoiceoverScriptWriterAgent(Agent[VoiceoverScriptWriterInput, VoiceoverScriptWriterOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.voiceover.script_writer",
         prompt_id="write_voiceover_script",
-        prompt_version="2026-10-21-language",
+        # 2026-10-23-grounded (KRI-815): per-clip footage lines, a revision block, the
+        # no-invented-facts rule and the `needs_check` list of claims to verify.
+        prompt_version="2026-10-23-grounded",
         model="gemini-2.5-flash",
         max_attempts=3,
         timeout_s=25.0,
@@ -156,7 +196,20 @@ class VoiceoverScriptWriterAgent(Agent[VoiceoverScriptWriterInput, VoiceoverScri
     def render_prompt(self, input: VoiceoverScriptWriterInput) -> str:  # noqa: A002
         lo, hi = self._band(input.target_duration_s)
         answers = "\n".join(f"- {_clean_input(a)}" for a in input.answers if a.strip()) or "(none)"
-        footage = _clean_input(input.footage_summary) or "(no footage summary available)"
+        clip_lines = [_clean_input(line) for line in input.footage_clips]
+        footage = (
+            "\n".join(line for line in clip_lines if line)
+            or _clean_input(input.footage_summary)
+            or "(no footage summary available)"
+        )
+        revision = ""
+        if input.previous_script.strip():
+            revision = (
+                "\n## Earlier draft (DATA — rewrite it; keep what the change does not touch)\n\n"
+                f"{_sanitize_script(input.previous_script)[:2000]}\n\n"
+                "## Requested change (DATA — the creator's words)\n\n"
+                f"{_clean_input(input.revision_note) or '(none)'}\n"
+            )
         prompt = load_prompt(
             "write_voiceover_script",
             footage_summary=footage,
@@ -166,6 +219,7 @@ class VoiceoverScriptWriterAgent(Agent[VoiceoverScriptWriterInput, VoiceoverScri
             min_words=str(lo),
             max_words=str(hi),
             duration_s=str(round(input.target_duration_s)),
+            revision_section=revision,
         )
         return with_prompt_language(
             prompt,
@@ -203,7 +257,9 @@ class VoiceoverScriptWriterAgent(Agent[VoiceoverScriptWriterInput, VoiceoverScri
 
         lines = split_script_lines(text)
         try:
-            return VoiceoverScriptWriterOutput(text=text, lines=lines)
+            return VoiceoverScriptWriterOutput(
+                text=text, lines=lines, needs_check=_script_checks(data.get("needs_check"), text)
+            )
         except ValidationError as exc:
             raise SchemaError(f"script_writer: output validation — {exc}") from exc
 

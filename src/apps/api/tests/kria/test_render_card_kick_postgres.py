@@ -370,6 +370,9 @@ def test_phone_reported_export_failure_posts_its_card_from_the_route_nudge(
     monkeypatch: pytest.MonkeyPatch, nudges: list[dict]
 ) -> None:
     seeded = _seed_dispatched_render(job_status="awaiting_device", assembly_plan={})
+    # A real device render belongs to a phone-rendering account. Under a rollout hold
+    # the route parks the report without a card (test_device_render_lifecycle_postgres).
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
     recipe = EditRecipeV1(
         assets=[{"id": "a", "relative_path": "a"}],
         tracks=[

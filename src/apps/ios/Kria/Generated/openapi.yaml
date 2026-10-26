@@ -1083,6 +1083,14 @@
       },
       "CollectionIndexOut": {
         "properties": {
+          "context_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Context Asset Ids",
+            "type": "array"
+          },
           "indexed_sources": {
             "title": "Indexed Sources",
             "type": "integer"
@@ -1126,6 +1134,14 @@
               "type": "string"
             },
             "title": "Untimed Asset Ids",
+            "type": "array"
+          },
+          "unusable_timing_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Unusable Timing Asset Ids",
             "type": "array"
           }
         },
@@ -1223,6 +1239,11 @@
             },
             "title": "Stories",
             "type": "array"
+          },
+          "suggested_research_topic": {
+            "nullable": true,
+            "title": "Suggested Research Topic",
+            "type": "string"
           }
         },
         "required": [
@@ -1432,6 +1453,11 @@
             "title": "Formats",
             "type": "array"
           },
+          "idea_example_feedback": {
+            "default": false,
+            "title": "Idea Example Feedback",
+            "type": "boolean"
+          },
           "live_plan_review_enabled": {
             "default": false,
             "title": "Live Plan Review Enabled",
@@ -1465,8 +1491,18 @@
             "title": "Minimum Client Protocol",
             "type": "integer"
           },
+          "moment_order_questions": {
+            "default": false,
+            "title": "Moment Order Questions",
+            "type": "boolean"
+          },
           "phone_rendering": {
             "$ref": "#/components/schemas/DeviceRenderCapabilities"
+          },
+          "protected_region_marks": {
+            "default": false,
+            "title": "Protected Region Marks",
+            "type": "boolean"
           },
           "runtime_versions": {
             "items": {
@@ -1552,6 +1588,16 @@
           "voice_dictation": {
             "default": false,
             "title": "Voice Dictation",
+            "type": "boolean"
+          },
+          "voiceover_script_cards": {
+            "default": false,
+            "title": "Voiceover Script Cards",
+            "type": "boolean"
+          },
+          "wrong_fact_feedback": {
+            "default": false,
+            "title": "Wrong Fact Feedback",
             "type": "boolean"
           }
         },
@@ -2255,6 +2301,12 @@
               "unsupported_recipe",
               "cancelled_by_user",
               "timed_out",
+              "renderer_outdated",
+              "device_unavailable",
+              "original_missing",
+              "output_check_failed",
+              "verification_unavailable",
+              "contract_changed",
               "unknown"
             ],
             "title": "Reason Code",
@@ -2276,7 +2328,8 @@
           },
           "phase": {
             "enum": [
-              "needs_attention"
+              "needs_attention",
+              "paused"
             ],
             "title": "Phase",
             "type": "string"
@@ -2289,6 +2342,12 @@
               "unsupported_recipe",
               "cancelled_by_user",
               "timed_out",
+              "renderer_outdated",
+              "device_unavailable",
+              "original_missing",
+              "output_check_failed",
+              "verification_unavailable",
+              "contract_changed",
               "unknown"
             ],
             "title": "Reason Code",
@@ -2481,6 +2540,11 @@
             "title": "Output Verification Required",
             "type": "boolean"
           },
+          "paused_by_user": {
+            "default": false,
+            "title": "Paused By User",
+            "type": "boolean"
+          },
           "phase": {
             "enum": [
               "awaiting_device",
@@ -2490,6 +2554,11 @@
             ],
             "title": "Phase",
             "type": "string"
+          },
+          "phone_rendering_paused": {
+            "default": false,
+            "title": "Phone Rendering Paused",
+            "type": "boolean"
           },
           "published_generation": {
             "default": null,
@@ -2565,6 +2634,11 @@
         "properties": {
           "identity": {
             "$ref": "#/components/schemas/DeviceRenderIdentity"
+          },
+          "renders_locally": {
+            "default": false,
+            "title": "Renders Locally",
+            "type": "boolean"
           }
         },
         "required": [
@@ -2934,6 +3008,8 @@
                 "freehandDrawing",
                 "textBend",
                 "singleWordText",
+                "freezeFrame",
+                "behindSubject",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -2944,7 +3020,8 @@
                 "audioDucking",
                 "slidePosts",
                 "semanticCamera",
-                "musicBed"
+                "musicBed",
+                "processedAudio"
               ],
               "type": "string"
             },
@@ -3056,6 +3133,8 @@
                 "freehandDrawing",
                 "textBend",
                 "singleWordText",
+                "freezeFrame",
+                "behindSubject",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -3066,7 +3145,8 @@
                 "audioDucking",
                 "slidePosts",
                 "semanticCamera",
-                "musicBed"
+                "musicBed",
+                "processedAudio"
               ],
               "type": "string"
             },
@@ -6319,6 +6399,15 @@
             "title": "Evidence",
             "type": "object"
           },
+          "evidence_scope": {
+            "default": "timed_moment",
+            "enum": [
+              "timed_moment",
+              "whole_source_context"
+            ],
+            "title": "Evidence Scope",
+            "type": "string"
+          },
           "generation": {
             "title": "Generation",
             "type": "string"
@@ -6754,6 +6843,84 @@
           "sample_sha256"
         ],
         "title": "MomentInspectionOut",
+        "type": "object"
+      },
+      "MomentOrderAnswerIn": {
+        "additionalProperties": false,
+        "description": "KRI-723: the answer to a ``moment_order_question``; old clients omit it.",
+        "properties": {
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/MomentPointIn"
+            },
+            "maxItems": 24,
+            "minItems": 1,
+            "title": "Answers",
+            "type": "array"
+          },
+          "question_id": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Question Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question_id",
+          "answers"
+        ],
+        "title": "MomentOrderAnswerIn",
+        "type": "object"
+      },
+      "MomentPointIn": {
+        "additionalProperties": false,
+        "description": "KRI-723: one row of a ``moment_order`` answer, in the creator's final order.\n\n``point``: the creator's window on the take, on the original's clock. ``skip``: \"this\nisn't in my clips\". ``delegate``: \"you pick\". The server checks the clip is this thread's\nand the window fits it; the storage generation is never the client's.",
+        "properties": {
+          "action": {
+            "enum": [
+              "point",
+              "skip",
+              "delegate"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "media_id": {
+            "default": null,
+            "maxLength": 160,
+            "minLength": 1,
+            "nullable": true,
+            "title": "Media Id",
+            "type": "string"
+          },
+          "moment_key": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Moment Key",
+            "type": "string"
+          },
+          "source_end_s": {
+            "default": null,
+            "maximum": 3600.0,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Source End S",
+            "type": "number"
+          },
+          "source_start_s": {
+            "default": null,
+            "maximum": 3600.0,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Source Start S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "moment_key",
+          "action"
+        ],
+        "title": "MomentPointIn",
         "type": "object"
       },
       "MomentSearchOut": {
@@ -7567,6 +7734,13 @@
       },
       "PoolAssetOut": {
         "properties": {
+          "analysis_deadline_at": {
+            "default": null,
+            "format": "date-time",
+            "nullable": true,
+            "title": "Analysis Deadline At",
+            "type": "string"
+          },
           "aspect": {
             "nullable": true,
             "title": "Aspect",
@@ -8028,6 +8202,12 @@
             "default": null,
             "nullable": true
           },
+          "behind_subject": {
+            "default": null,
+            "nullable": true,
+            "title": "Behind Subject",
+            "type": "boolean"
+          },
           "bend": {
             "default": null,
             "maximum": 100,
@@ -8330,6 +8510,136 @@
         "title": "PreviousValue",
         "type": "object"
       },
+      "ProcessedAudioRenderAsset": {
+        "additionalProperties": false,
+        "description": "A job-owned, immutable audio derivative for one bound phone source.\n\nThe storage object name is deliberately absent.  It remains private job\nstate and the download grant derives it only from a trusted receipt stored\nwith the variant that created this asset.",
+        "properties": {
+          "fingerprint": {
+            "$ref": "#/components/schemas/RenderFingerprint"
+          },
+          "generation": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Generation",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "job_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "processed_audio",
+            "enum": [
+              "processed_audio"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "render_generation": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Render Generation",
+            "type": "string"
+          },
+          "source_generation": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Source Generation",
+            "type": "string"
+          },
+          "source_media_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Source Media Id",
+            "type": "string"
+          },
+          "variant_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Variant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "job_id",
+          "variant_id",
+          "render_generation",
+          "source_media_id",
+          "source_generation",
+          "generation",
+          "fingerprint"
+        ],
+        "title": "ProcessedAudioRenderAsset",
+        "type": "object"
+      },
+      "ProtectedRegionIn": {
+        "additionalProperties": false,
+        "description": "KRI-827: the creator marks what to keep text off (\"the plate\"): a box on one frame of\none of their clips, normalized to the upright source frame. The server checks the clip\nis this thread's and stamps its generation; old clients omit it.",
+        "properties": {
+          "box": {
+            "maxItems": 4,
+            "minItems": 4,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Box",
+            "type": "array"
+          },
+          "label": {
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "media_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Media Id",
+            "type": "string"
+          },
+          "source_t_s": {
+            "maximum": 3600.0,
+            "minimum": 0.0,
+            "title": "Source T S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "label",
+          "media_id",
+          "source_t_s",
+          "box"
+        ],
+        "title": "ProtectedRegionIn",
+        "type": "object"
+      },
       "QuestionnaireBody": {
         "properties": {
           "hobbies": {
@@ -8459,6 +8769,7 @@
                 "mapping": {
                   "library": "#/components/schemas/LibraryRenderAsset",
                   "original": "#/components/schemas/OriginalRenderAsset",
+                  "processed_audio": "#/components/schemas/ProcessedAudioRenderAsset",
                   "song": "#/components/schemas/SongRenderAsset",
                   "visual": "#/components/schemas/VisualRenderAsset",
                   "voiceover": "#/components/schemas/VoiceoverRenderAsset"
@@ -8480,6 +8791,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/SongRenderAsset"
+                },
+                {
+                  "$ref": "#/components/schemas/ProcessedAudioRenderAsset"
                 }
               ]
             },
@@ -8929,6 +9243,28 @@
           "reveal_ramp_ms"
         ],
         "title": "ResolvedTextMotion",
+        "type": "object"
+      },
+      "SavedCollectionStoriesOut": {
+        "properties": {
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "stories": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionStoryOut"
+            },
+            "maxItems": 20,
+            "title": "Stories",
+            "type": "array"
+          }
+        },
+        "required": [
+          "revision",
+          "stories"
+        ],
+        "title": "SavedCollectionStoriesOut",
         "type": "object"
       },
       "SemanticSearchBody": {
@@ -9533,6 +9869,13 @@
       },
       "SlidePostStateAsset": {
         "properties": {
+          "analysis_deadline_at": {
+            "default": null,
+            "format": "date-time",
+            "nullable": true,
+            "title": "Analysis Deadline At",
+            "type": "string"
+          },
           "capture": {
             "$ref": "#/components/schemas/ClipCapture",
             "default": null,
@@ -9549,6 +9892,12 @@
             "nullable": true,
             "title": "Duration S",
             "type": "number"
+          },
+          "error_code": {
+            "default": null,
+            "nullable": true,
+            "title": "Error Code",
+            "type": "string"
           },
           "id": {
             "title": "Id",
@@ -9567,6 +9916,11 @@
             "nullable": true,
             "title": "Preview Url",
             "type": "string"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
           },
           "source_filename": {
             "default": null,
@@ -10329,6 +10683,18 @@
             "title": "Closing Text",
             "type": "string"
           },
+          "form": {
+            "enum": [
+              "guide",
+              "factual_story",
+              "atmosphere",
+              "review",
+              "performance"
+            ],
+            "nullable": true,
+            "title": "Form",
+            "type": "string"
+          },
           "format": {
             "default": "text_story",
             "enum": [
@@ -10336,6 +10702,14 @@
             ],
             "title": "Format",
             "type": "string"
+          },
+          "open_questions": {
+            "items": {
+              "$ref": "#/components/schemas/StoryOpenQuestion"
+            },
+            "maxItems": 3,
+            "title": "Open Questions",
+            "type": "array"
           },
           "opening_text": {
             "maxLength": 100,
@@ -10472,6 +10846,41 @@
         "title": "StoryGenerationBody",
         "type": "object"
       },
+      "StoryOpenQuestion": {
+        "additionalProperties": false,
+        "description": "An unknown the creator must answer or skip before the idea is built.",
+        "properties": {
+          "answer": {
+            "maxLength": 200,
+            "minLength": 1,
+            "nullable": true,
+            "title": "Answer",
+            "type": "string"
+          },
+          "dismissed": {
+            "default": false,
+            "title": "Dismissed",
+            "type": "boolean"
+          },
+          "id": {
+            "default": "",
+            "maxLength": 8,
+            "title": "Id",
+            "type": "string"
+          },
+          "question": {
+            "maxLength": 140,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "StoryOpenQuestion",
+        "type": "object"
+      },
       "StoryResearch": {
         "properties": {
           "basis": {
@@ -10562,6 +10971,12 @@
             "title": "Expected Thread Revision",
             "type": "integer"
           },
+          "recover_held_turn_id": {
+            "format": "uuid",
+            "nullable": true,
+            "title": "Recover Held Turn Id",
+            "type": "string"
+          },
           "thread_id": {
             "format": "uuid",
             "title": "Thread Id",
@@ -10622,6 +11037,16 @@
             "minLength": 1,
             "title": "Message",
             "type": "string"
+          },
+          "moment_order": {
+            "$ref": "#/components/schemas/MomentOrderAnswerIn",
+            "default": null,
+            "nullable": true
+          },
+          "protected_region": {
+            "$ref": "#/components/schemas/ProtectedRegionIn",
+            "default": null,
+            "nullable": true
           },
           "scope": {
             "default": null,
@@ -11905,6 +12330,12 @@
       },
       "TurnAccepted": {
         "properties": {
+          "recoverable_held_turn_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Recoverable Held Turn Id",
+            "type": "string"
+          },
           "replayed": {
             "default": false,
             "title": "Replayed",
@@ -15835,6 +16266,87 @@
       }
     },
     "/me/media-collections/{identifier}/stories": {
+      "get": {
+        "operationId": "saved_stories_me_media_collections__identifier__stories_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Revision",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "story_ids",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 20,
+              "nullable": true,
+              "title": "Story Ids",
+              "type": "array"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedCollectionStoriesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Saved Stories",
+        "tags": [
+          "media-library"
+        ]
+      },
       "post": {
         "operationId": "stories_me_media_collections__identifier__stories_post",
         "parameters": [
@@ -15845,6 +16357,16 @@
             "schema": {
               "format": "uuid",
               "title": "Identifier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
               "type": "string"
             }
           }
@@ -15915,6 +16437,16 @@
               "title": "Story Id",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -15981,6 +16513,16 @@
             "schema": {
               "format": "uuid",
               "title": "Story Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
               "type": "string"
             }
           }
@@ -16051,6 +16593,16 @@
               "title": "Story Id",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -16117,6 +16669,16 @@
             "schema": {
               "format": "uuid",
               "title": "Story Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
               "type": "string"
             }
           }

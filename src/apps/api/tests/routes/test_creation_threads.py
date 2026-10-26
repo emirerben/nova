@@ -4838,7 +4838,7 @@ async def test_list_summaries_batch_active_job_and_agent_status_for_safe_actions
         "status": "processing",
         "current_phase": "assemble",
         "failure_reason": None,
-        "variants": [{"variant_id": "one", "render_status": "rendering"}],
+        "variants": [{"variant_id": "one", "render_status": "rendering", "delivery_phase": None}],
     }
     assert output[0].creator_agent == {"status": "rendering"}
 

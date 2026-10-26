@@ -18,13 +18,14 @@ import structlog
 from pydantic import BaseModel, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
+from app.agents._skills import load_skill
 from app.agents.music_matcher import _sanitize_text
 from app.kria.reply_language import agent_reply_language, with_prompt_language
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-COMPOSER_PROMPT_VERSION = "2026-10-21-language"
+COMPOSER_PROMPT_VERSION = "2026-10-25-editorial-skills-v2"
 
 _MAX_CAPTION_LEN = 2200  # matches SlidePostDraft.caption cap
 _MAX_ALT_LEN = 500
@@ -106,7 +107,7 @@ class SlidePostComposerAgent(Agent[SlidePostComposerInput, SlidePostComposerOutp
             media_block=_format_media_block(input.media),
         )
         return with_prompt_language(
-            prompt,
+            load_skill("edit-story") + "\n\n" + prompt,
             agent_reply_language(input.reply_language, input.notes, input.theme, input.idea),
         )
 

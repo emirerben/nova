@@ -30,6 +30,7 @@ from app.agents.edit_copilot import (
 )
 from app.kria.brief import BriefRequirement
 from app.schemas.edit_proposal import EditProposalSnapshot
+from app.schemas.research import PreparedResearch
 from app.schemas.text_composition import TextCompositionProgram
 from app.services.kria_editor_ops import apply_text_lane_ops, is_caption_text_bar
 
@@ -595,85 +596,19 @@ def _check_editorial_text(snapshot: EditProposalSnapshot, plan: dict) -> None:
             )
 
 
-def compose_creation_text(
+def creation_model_snapshot(
     snapshot: EditProposalSnapshot,
     *,
-    creator_request: str,
-    ctx: RunContext | None = None,
-    copy_constraints: Mapping[str, str] | None = None,
-    text_requirements: Sequence[BriefRequirement] | None = None,
-) -> EditProposalSnapshot:
-    from app.pipeline.guided_story import compile_proposal_execution_plan
+    texts: list[dict],
+    slots: list[dict],
+    constraints: Mapping[str, str],
+    text_requirements: Sequence[BriefRequirement] | None,
+) -> dict[str, Any]:
+    """What the text composer (and the research step) see of a planned draft.
 
-    if snapshot.text_composition is not None:
-        _check_added_text(snapshot.text_composition.operations, text_requirements)
-        plan = compile_proposal_execution_plan(snapshot)
-        _check_editorial_text(snapshot, plan)
-        constraints = dict(copy_constraints or {})
-        if text_requirements is not None:
-            constraints = {**snapshot_copy_constraints(snapshot, plan), **constraints}
-        _check_copy(plan["text_elements"], constraints)
-        if constraints:
-            snapshot = snapshot.model_copy(
-                update={
-                    "text_composition": snapshot.text_composition.model_copy(
-                        update={
-                            "copy_constraints": {
-                                **snapshot.text_composition.copy_constraints,
-                                **constraints,
-                            }
-                        }
-                    )
-                }
-            )
-        return snapshot
-    if not creator_request.strip():
-        _check_editorial_text(snapshot, compile_proposal_execution_plan(snapshot))
-        return snapshot
-    if len(creator_request) > 12000:
-        raise CreationTextCompositionError("Text composition needs the complete creator request")
-    plan = compile_proposal_execution_plan(snapshot)
-    texts, slots = _lanes(plan)
-    constraints = dict(copy_constraints or {})
-    if text_requirements is not None:
-        constraints = {**snapshot_copy_constraints(snapshot, plan), **constraints}
-    _check_copy(texts, constraints)
-    if text_requirements is not None and constraints:
-        from app.kria.brief_checks import check_requirement, plan_facts_from_editor_payload
-
-        # A bound brief owns the current request, not the historical conversation.
-        # Skip only when every requested text/style behavior is already proven.
-        relevant = [
-            req
-            for req in text_requirements
-            if req.kind in {"text", "style"} or req.scope == "title"
-        ]
-        facts = plan_facts_from_editor_payload({**plan, "title": snapshot.opening_title})
-        relationships_verified = not _requests_text_relationships(creator_request) or all(
-            any(
-                key in req.facts
-                for key in ("heading_level", "below_text", "smaller_than", "size_px")
-            )
-            for req in relevant
-            if req.kind == "text"
-        )
-        if (
-            snapshot.editorial_plan is None
-            # An entrance-effect match does not prove requested segmentation or
-            # per-word timing. Let the text composer read the complete request;
-            # pinned compositions above still replay without another model call.
-            and snapshot.title_animation is None
-            and relevant
-            and relationships_verified
-            and all(check_requirement(req, facts).status == "met" for req in relevant)
-        ):
-            return snapshot.model_copy(
-                update={
-                    "text_composition": TextCompositionProgram(
-                        base_digest=_digest(texts, slots), copy_constraints=constraints
-                    )
-                }
-            )
+    One builder for the render-time composer and the pre-approval research preview
+    (KRI-881), so research written before approval read exactly what render reads.
+    """
     # Narration/caption cues remain owned by their existing lane.
     model_texts = texts
     caption_lane = _song_caption_lane(snapshot)
@@ -716,8 +651,155 @@ def compose_creation_text(
             for req in text_requirements
             if req.live and (req.kind in {"text", "style"} or req.scope == "title")
         ]
+    return model_snapshot
+
+
+def compose_creation_text(
+    snapshot: EditProposalSnapshot,
+    *,
+    creator_request: str,
+    ctx: RunContext | None = None,
+    copy_constraints: Mapping[str, str] | None = None,
+    text_requirements: Sequence[BriefRequirement] | None = None,
+    prepared_research: PreparedResearch | None = None,
+) -> EditProposalSnapshot:
+    """Compose the initial text lane of a planned draft.
+
+    ``prepared_research`` (KRI-881) is the sourced wording the creator approved with its
+    citations. It is replayed onto the same clips without any search or rewrite, and the
+    composer cannot change it; a draft it no longer fits fails with the reason.
+    """
+    from app.pipeline.guided_story import compile_proposal_execution_plan
+
+    pinned_research = (
+        prepared_research
+        if prepared_research is not None and prepared_research.status == "ready"
+        else None
+    )
+    if snapshot.text_composition is not None:
+        _check_added_text(snapshot.text_composition.operations, text_requirements)
+        plan = compile_proposal_execution_plan(snapshot)
+        _check_editorial_text(snapshot, plan)
+        constraints = dict(copy_constraints or {})
+        if text_requirements is not None:
+            constraints = {**snapshot_copy_constraints(snapshot, plan), **constraints}
+        _check_copy(plan["text_elements"], constraints)
+        if constraints:
+            snapshot = snapshot.model_copy(
+                update={
+                    "text_composition": snapshot.text_composition.model_copy(
+                        update={
+                            "copy_constraints": {
+                                **snapshot.text_composition.copy_constraints,
+                                **constraints,
+                            }
+                        }
+                    )
+                }
+            )
+        return snapshot
+    if not creator_request.strip() and pinned_research is None:
+        _check_editorial_text(snapshot, compile_proposal_execution_plan(snapshot))
+        return snapshot
+    if len(creator_request) > 12000:
+        raise CreationTextCompositionError("Text composition needs the complete creator request")
+    plan = compile_proposal_execution_plan(snapshot)
+    texts, slots = _lanes(plan)
+    constraints = dict(copy_constraints or {})
+    if text_requirements is not None:
+        constraints = {**snapshot_copy_constraints(snapshot, plan), **constraints}
+    _check_copy(texts, constraints)
+    if text_requirements is not None and constraints and pinned_research is None:
+        from app.kria.brief_checks import check_requirement, plan_facts_from_editor_payload
+
+        # A bound brief owns the current request, not the historical conversation.
+        # Skip only when every requested text/style behavior is already proven.
+        relevant = [
+            req
+            for req in text_requirements
+            if req.kind in {"text", "style"} or req.scope == "title"
+        ]
+        facts = plan_facts_from_editor_payload({**plan, "title": snapshot.opening_title})
+        relationships_verified = not _requests_text_relationships(creator_request) or all(
+            any(
+                key in req.facts
+                for key in ("heading_level", "below_text", "smaller_than", "size_px")
+            )
+            for req in relevant
+            if req.kind == "text"
+        )
+        if (
+            snapshot.editorial_plan is None
+            # An entrance-effect match does not prove requested segmentation or
+            # per-word timing. Let the text composer read the complete request;
+            # pinned compositions above still replay without another model call.
+            and snapshot.title_animation is None
+            and relevant
+            and relationships_verified
+            and all(check_requirement(req, facts).status == "met" for req in relevant)
+        ):
+            return snapshot.model_copy(
+                update={
+                    "text_composition": TextCompositionProgram(
+                        base_digest=_digest(texts, slots), copy_constraints=constraints
+                    )
+                }
+            )
+    if pinned_research is not None:
+        # KRI-881: the creator approved these sourced explanations with their citations.
+        # They are replayed first, never searched or written again, and protected from the
+        # composer like any confirmed copy.
+        from app.services.researched_text import (  # noqa: PLC0415
+            ResearchUnavailable,
+            pinned_research_operations,
+        )
+
+        # Placed against the lane research saw before approval: song-lyric caption rows
+        # are hidden there (`creation_model_snapshot`), so they are never removed or
+        # treated as text the explanation must avoid; indexes map back to the full lane.
+        lyric_lane = _song_caption_lane(snapshot) is not None
+        research_texts = (
+            [row for row in texts if not is_caption_text_bar(row)] if lyric_lane else texts
+        )
+        try:
+            pinned_ops = pinned_research_operations(
+                pinned_research,
+                {"slots": slots, "text_bars": research_texts, "copy_constraints": constraints},
+            )
+        except ResearchUnavailable as exc:
+            raise CreationTextCompositionError(str(exc)) from exc
+        if lyric_lane:
+            pinned_ops = _to_full_bar_indexes(pinned_ops, texts)
+        pinned_texts = replay_text_composition(
+            plan,
+            TextCompositionProgram(base_digest=_digest(texts, slots), operations=pinned_ops),
+        )["text_elements"]
+        constraints = {
+            **constraints,
+            **{
+                row["id"]: row["text"]
+                for row in pinned_texts
+                if isinstance((row.get("source_params") or {}).get("research"), dict)
+            },
+        }
+        texts_for_model = pinned_texts
+    else:
+        pinned_ops = []
+        texts_for_model = texts
+    model_snapshot = creation_model_snapshot(
+        snapshot,
+        texts=texts_for_model,
+        slots=slots,
+        constraints=constraints,
+        text_requirements=text_requirements,
+    )
+    caption_lane = model_snapshot.get("caption_lane")
+    model_texts = model_snapshot["text_bars"]
     # The complete request remains data; the composer adds server instructions.
-    composer_input = EditCopilotInput(utterance=creator_request, variant_snapshot=model_snapshot)
+    composer_input = EditCopilotInput(
+        utterance=creator_request or "Keep the approved sourced explanations.",
+        variant_snapshot=model_snapshot,
+    )
     try:
         output = CreationTextComposer(default_client()).run(composer_input, ctx=ctx)
     except ProviderOutcomeUnknownError:
@@ -740,7 +822,15 @@ def compose_creation_text(
             raise CreationTextTimeoutError(
                 f"Text composition timed out for {len(slots)} clips", slot_count=len(slots)
             ) from exc
-    if output.research_request is not None:
+    if output.research_request is not None and pinned_research is not None:
+        # The creator approved this research before render: it is never searched again.
+        log.info(
+            "creation_text_pinned_research_replayed",
+            job_id=getattr(ctx, "job_id", None),
+            explanations=len(pinned_research.texts),
+        )
+        output = output.model_copy(update={"research_request": None})
+    elif output.research_request is not None:
         from app.services.researched_text import run_researched_revision
 
         output = run_researched_revision(
@@ -762,7 +852,9 @@ def compose_creation_text(
     operations = output.ops
     _check_added_text(operations, text_requirements)
     if caption_lane is not None:
-        operations = _to_full_bar_indexes(operations, texts)
+        operations = _to_full_bar_indexes(operations, texts_for_model)
+    # The composer addressed the lane with the approved research already in place.
+    operations = [*pinned_ops, *operations]
     program = TextCompositionProgram(
         base_digest=_digest(texts, slots), operations=operations, copy_constraints=constraints
     )

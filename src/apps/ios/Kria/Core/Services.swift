@@ -120,16 +120,19 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func saveEditorialTaste(_ body: EditorialTasteWrite) async throws -> EditorialTasteProfile
     func forgetEditorialTaste(revision: Int, eventID: String) async throws -> EditorialTasteProfile
     func recordIdeaFeedback(_ body: IdeaFeedbackWrite) async throws -> IdeaFeedbackReceipt
+    func confirmIdeaExample(feedbackID: UUID, eventID: String) async throws
     func updateCameraRollContentPlan(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, plan: CameraRollContentPlan) async throws -> CameraRollStory
     func changeCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, order: [UUID]?, audioPolicy: String?, eventID: String) async throws -> CameraRollStory
     func indexCameraRollCollection(id: UUID, revision: Int, offset: Int) async throws -> CameraRollIndexPass
     func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool) async throws -> CameraRollStories
+    func savedCameraRollStories(id: UUID, revision: Int, storyIDs: [UUID]) async throws -> CameraRollStories
     func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool, researchTopic: String?) async throws -> CameraRollStories
     func cameraRollStories(id: UUID, revision: Int, query: String, cacheOnly: Bool, researchTopic: String?, allowPartialAnalysis: Bool) async throws -> CameraRollStories
     func recordCameraRollStoryExposure(collectionID: UUID, story: CameraRollStory, collectionRevision: Int) async throws
     func correctCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, index: Int, momentID: UUID, eventID: String) async throws -> CameraRollStory
     func rejectCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, eventID: String) async throws -> CameraRollStory
     func selectCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, threadID: UUID, threadRevision: Int, eventID: String) async throws -> TurnAccepted
+    func recoverCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, threadID: UUID, threadRevision: Int, eventID: String, heldTurnID: UUID) async throws -> TurnAccepted
     func createCameraRollStoryThread(id: UUID, revision: Int) async throws -> CreationThread
     func inspectCameraRollMoment(collectionID: UUID, revision: Int, momentID: UUID, question: String, cacheOnly: Bool) async throws -> CameraRollInspection
     func importCollectionMedia(file: URL, kind: String) async throws -> SavedMediaAsset
@@ -161,6 +164,8 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func completeDeviceExport(_ body: DeviceExportCompleteBody) async throws
     func reportDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, reasonCode: String, detail: String) async throws -> DeviceRenderFailureAck
     func retryDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity) async throws -> DeviceRenderRetryAck
+    /// `rendersLocally`: this phone checked the pinned recipe and can render it now.
+    func retryDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, rendersLocally: Bool) async throws -> DeviceRenderRetryAck
 
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread
     func deleteProject(_ project: ProjectSummary) async throws
@@ -221,6 +226,15 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     /// `suggestion` names the suggestion chip the message was sent from (KRI-756, server capability
     /// `suggestion_chips`); nil = omitted. Attribution only: it never changes what the turn does.
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?) async throws -> TurnAccepted
+    /// `protectedRegion` answers a "Mark the plate" card (KRI-901, server capability `protected_region_marks`): a box on
+    /// one frame of one of the creator's clips. nil = omitted. A 404 `protected_region_media_not_found` / 422
+    /// `protected_region_invalid` carries the server's copy for the card.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?, protectedRegion: ProtectedRegionAnswer?) async throws -> TurnAccepted
+    /// `momentOrder` answers a "show me your moments" card (KRI-723, server capability `moment_order_questions`): the
+    /// creator's order and, per moment, a window on the take, "not in my clips" or "you pick". nil = omitted. A 409
+    /// `moment_order_stale`, 404 `moment_order_media_not_found` or 422 `moment_order_invalid` / `moment_order_overlap`
+    /// carries the server's copy for the card.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?, protectedRegion: ProtectedRegionAnswer?, momentOrder: MomentOrderAnswer?) async throws -> TurnAccepted
     /// A short-lived signed URL for the thread's attached song, so the song timeline can draw and play it
     /// (KRI-561). `generation` pins the song the question was built against; a 409 `song_changed` means it was
     /// replaced. A 404 means the server does not offer it.
@@ -391,6 +405,9 @@ extension KriaAPIClient {
     func completeDeviceExport(_ body: DeviceExportCompleteBody) async throws { throw APIError.unsupported }
     func reportDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, reasonCode: String, detail: String) async throws -> DeviceRenderFailureAck { throw APIError.unsupported }
     func retryDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity) async throws -> DeviceRenderRetryAck { throw APIError.unsupported }
+    func retryDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, rendersLocally: Bool) async throws -> DeviceRenderRetryAck {
+        try await retryDeviceRenderFailure(jobID: jobID, identity: identity)
+    }
 
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
     func setSongRange(threadID: UUID, range: SongFilmingRange?, expectedRevision: Int, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
@@ -428,6 +445,16 @@ extension KriaAPIClient {
     /// Substitutes that predate suggestion chips send the message without the attribution.
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?) async throws -> TurnAccepted {
         try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange)
+    }
+
+    /// Substitutes that predate the mark card send the message without the mark.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?, protectedRegion: ProtectedRegionAnswer?) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: suggestion)
+    }
+
+    /// Substitutes that predate the moment card send the message without the moments.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?, protectedRegion: ProtectedRegionAnswer?, momentOrder: MomentOrderAnswer?) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: suggestion, protectedRegion: protectedRegion)
     }
 
     func creationCapabilities() async throws -> CreationCapabilities { throw APIError.unsupported }
@@ -487,12 +514,13 @@ struct SongAudioLink: Decodable, Equatable, Sendable {
 
 struct TurnAccepted: Codable, Sendable {
     let turnID: String; let threadRevision: Int; let status: String
+    var recoverableHeldTurnID: UUID? = nil
     /// KRI-374: a take-order question carried on the turn response, when the server sends it there. Decoded
     /// leniently: a malformed or newer shape is dropped (nil), never a decode failure for the turn.
     var songOrderQuestion: SongOrderQuestion? = nil
     /// KRI-588: a song-range question carried on the turn response, decoded the same lenient way.
     var songRangeQuestion: SongRangeQuestion? = nil
-    enum CodingKeys: String, CodingKey { case turnID = "turn_id"; case threadRevision = "thread_revision"; case status; case songOrderQuestion = "song_order_question"; case songRangeQuestion = "song_range_question" }
+    enum CodingKeys: String, CodingKey { case turnID = "turn_id"; case threadRevision = "thread_revision"; case status; case recoverableHeldTurnID = "recoverable_held_turn_id"; case songOrderQuestion = "song_order_question"; case songRangeQuestion = "song_range_question" }
     init(turnID: String, threadRevision: Int, status: String, songOrderQuestion: SongOrderQuestion? = nil, songRangeQuestion: SongRangeQuestion? = nil) {
         self.turnID = turnID; self.threadRevision = threadRevision; self.status = status
         self.songOrderQuestion = songOrderQuestion; self.songRangeQuestion = songRangeQuestion
@@ -502,12 +530,14 @@ struct TurnAccepted: Codable, Sendable {
         turnID = try c.decode(String.self, forKey: .turnID)
         threadRevision = try c.decode(Int.self, forKey: .threadRevision)
         status = try c.decode(String.self, forKey: .status)
+        recoverableHeldTurnID = try c.decodeIfPresent(UUID.self, forKey: .recoverableHeldTurnID)
         songOrderQuestion = (try? c.decodeIfPresent(JSONValue.self, forKey: .songOrderQuestion)).flatMap { $0 }.flatMap(SongOrderQuestion.init(json:))
         songRangeQuestion = (try? c.decodeIfPresent(JSONValue.self, forKey: .songRangeQuestion)).flatMap { $0 }.flatMap(SongRangeQuestion.init(json:))
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(turnID, forKey: .turnID); try c.encode(threadRevision, forKey: .threadRevision); try c.encode(status, forKey: .status)
+        try c.encodeIfPresent(recoverableHeldTurnID, forKey: .recoverableHeldTurnID)
     }
 }
 /// Mirrors the server's `MobileUserOut` (`GET /auth/mobile/me`) — the account screen's
@@ -616,7 +646,8 @@ struct CreationThread: Codable, Identifiable, Sendable {
             activeJobID: activeJobID.flatMap(UUID.init(uuidString:)),
             activePlanItemID: activePlanItemID,
             awaitsConfirmation: awaitsNewPlanConfirmation,
-            editFormat: state?["format"]?.stringValue ?? state?["edit_format"]?.stringValue
+            editFormat: state?["format"]?.stringValue ?? state?["edit_format"]?.stringValue,
+            deliveryNeedsAttention: deliveryNeedsAttention
         )
     }
 
@@ -647,6 +678,26 @@ struct CreationThread: Codable, Identifiable, Sendable {
         }
         return variants.first(where: \.isPlayable)
     }
+    /// The variant whose device delivery the project's status follows: the
+    /// server-selected one when present, else the first variant with an id
+    /// (a phone job only ever has one live variant).
+    private var deliveryVariant: CreationVariant? {
+        let variants = job?.variants ?? []
+        if let selectedID = state?["selected_variant_id"]?.stringValue,
+           let selected = variants.first(where: { $0.variantID == selectedID }) {
+            return selected
+        }
+        return variants.first { $0.variantID != nil }
+    }
+
+    /// KRI-823: the current device delivery needs the creator, even though the
+    /// job lifecycle still reads `awaiting_device`. The server fences
+    /// `delivery_phase` to the variant's current render generation, so a late
+    /// failure from an older generation never arrives here.
+    var deliveryNeedsAttention: Bool {
+        activeJobID != nil && deliveryVariant?.needsDeliveryAttention == true
+    }
+
     private var projectStatus: ProjectStatus {
         // Preparation belongs to the current request even when this project
         // already has a ready or failed job. Keep its progress visible after
@@ -670,6 +721,9 @@ struct CreationThread: Codable, Identifiable, Sendable {
             return .draft
         }
         guard let status = job?.status.lowercased() else { return .rendering }
+        // A device delivery failure never moves job.status off awaiting_device;
+        // the drawer must say what the detail card says (KRI-823).
+        if deliveryNeedsAttention { return .failed }
         if status == "ready" || status == "done" || status.contains("_ready") { return .ready }
         if status == "failed" || status == "cancelled" || status == "no_labeled_tracks" || status.contains("_failed") { return .failed }
         return .rendering
@@ -684,10 +738,20 @@ struct CreationVariant: Codable, Sendable {
     let posterURL: URL?
     let failureReason: String?
     var renderDestination: String? = nil
+    /// The device delivery phase of this variant's CURRENT generation
+    /// (`awaiting_device|syncing|published|needs_attention`), or nil for a
+    /// cloud job, an older generation, or an older server (KRI-823).
+    var deliveryPhase: String? = nil
 
+    var needsDeliveryAttention: Bool {
+        deliveryPhase == "needs_attention" || renderStatus?.lowercased() == "needs_attention"
+    }
+
+    /// Only a variant with media plays. A failed replacement keeps the last
+    /// accepted output on the variant, so it stays playable (KRI-823).
     var isPlayable: Bool {
         guard outputURL != nil, let status = renderStatus?.lowercased() else { return false }
-        return ["ready", "failed", "error", "render_failed"].contains(status)
+        return ["ready", "failed", "error", "render_failed"].contains(status) || needsDeliveryAttention
     }
 
     enum CodingKeys: String, CodingKey {
@@ -699,6 +763,7 @@ struct CreationVariant: Codable, Sendable {
         case posterURL = "poster_url"
         case failureReason = "failure_reason"
         case renderDestination = "render_destination"
+        case deliveryPhase = "delivery_phase"
     }
 }
 
@@ -1070,7 +1135,29 @@ enum KriaClientProtocolContract {
     /// 13: accepts durable background output checks and resumes status polling.
     /// 14 (KRI-802): answers a reply that asks a choice card and a clip picker together on ONE turn (the first
     /// answer waits for the second). The server asks those two together only to this protocol.
-    static let version = 14
+    /// 15 (KRI-821): opens Sounds > Original audio on a phone Voiceover edit (narrated or montage `voiceover`) at
+    /// the variant's saved `original_audio_level`. The server advertises `original_audio` there only to this protocol.
+    /// 16 (KRI-828): decodes the `freezeFrame` recipe capability (a creator's freeze frame: a main-track
+    /// `holdDuration` longer than one frame, the clip's last frame held). The server plans a freeze only for
+    /// this protocol inside an HTTP request; older builds cannot decode the case and fail the recipe.
+    /// 17: previews voiceover source-audio selections from per-slot
+    /// `source_audio_volume` without applying the global original-audio gain twice.
+    /// 18: decodes and grants immutable `processed_audio` source derivatives.
+    /// 19 (KRI-901): shows the "Mark the plate" card (`protected_region_question`) and answers it with
+    /// `protected_region` on the next turn. The server asks for a mark before approval only from this protocol;
+    /// older builds keep approving as before.
+    /// 20 (KRI-723): shows the "show me your moments" card (`moment_order_question`) and answers it with
+    /// `moment_order` on the next turn. The server asks for the moments before approval only from this protocol;
+    /// older builds keep today's windows with an honest "couldn't find it" receipt.
+    /// 21: decodes a recipe text layer's `behind_subject` and the `behindSubject` capability, and draws text
+    /// behind people (a per-frame Vision person mask occludes the layer; `KriaMediaEngine.NativeSubjectMatte`).
+    /// The server stamps the key only for this protocol (and only with `TEXT_BEHIND_SUBJECT_PHONE_ENABLED` +
+    /// `behindSubject` verified); an older build asked for it gets plain text, and 426 `client_update_required`
+    /// for a pinned recipe that already carries the key, since it cannot decode it.
+    /// 22: renders and answers a camera-roll idea's `open_questions`. The server holds "Use this idea"
+    /// behind them (409 `story_open_questions`) and sends the list only from this protocol; older builds
+    /// see no questions and are not gated.
+    static let version = 22
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1385,7 +1472,13 @@ struct KriaAPI: KriaAPIClient {
         try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: nil)
     }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?) async throws -> TurnAccepted {
-        let body = SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: suggestion)
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: suggestion, protectedRegion: nil)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?, protectedRegion: ProtectedRegionAnswer?) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: suggestion, protectedRegion: protectedRegion, momentOrder: nil)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?, protectedRegion: ProtectedRegionAnswer?, momentOrder: MomentOrderAnswer?) async throws -> TurnAccepted {
+        let body = SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: suggestion, protectedRegion: protectedRegion, momentOrder: momentOrder)
         return try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(body), decode: TurnAccepted.self)
     }
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread {
@@ -1406,17 +1499,28 @@ struct KriaAPI: KriaAPIClient {
         try await request(path: "generative-jobs/\(jobID.uuidString)/status", method: "GET", bodyData: nil, decode: EditorStatusEnvelope.self).variants
     }
     func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue] {
-        guard var variant = try await editorVariants(jobID: jobID).first(where: { $0["variant_id"]?.stringValue == variantID }) else { throw APIError.invalidResponse }
-        if variant["resolved_archetype"] == .string("guided_story"),
-           case let .object(capabilities) = variant["editor_capabilities"], capabilities["timeline"] == .bool(true) {
+        // Status and timeline are two reads. An editor commit, a render claim or a device publish
+        // between them moves the generation, and those are exactly the moments that start an editor
+        // refresh. Re-read both before calling the pair a conflict.
+        for attempt in 0..<3 {
+            guard var variant = try await editorVariants(jobID: jobID).first(where: { $0["variant_id"]?.stringValue == variantID }) else { throw APIError.invalidResponse }
+            guard variant["resolved_archetype"] == .string("guided_story"),
+                  case let .object(capabilities) = variant["editor_capabilities"], capabilities["timeline"] == .bool(true) else {
+                return variant
+            }
             let timeline = try await request(path: "generative-jobs/\(jobID.uuidString)/variants/\(variantID)/timeline", method: "GET", bodyData: nil, decode: [String: JSONValue].self)
+            // Same rule as the server's `variant_render_baseline`: a variant that never finished a
+            // render has "" as its baseline, which is a real value and not a conflict.
             let generation = [variant["render_generation_id"], variant["render_finished_at"]]
-                .compactMap { $0?.stringValue }.first { !$0.isEmpty }
-            guard let generation, timeline["base_generation"] == .string(generation) else { throw APIError.conflict }
-            variant["user_timeline"] = .object(timeline)
-            variant["editor_revision_number"] = timeline["revision_number"]
+                .compactMap { $0?.stringValue }.first { !$0.isEmpty } ?? ""
+            if timeline["base_generation"] == .string(generation) {
+                variant["user_timeline"] = .object(timeline)
+                variant["editor_revision_number"] = timeline["revision_number"]
+                return variant
+            }
+            if attempt < 2 { try await Task.sleep(for: .milliseconds(150 * (attempt + 1))) }
         }
-        return variant
+        throw APIError.conflict
     }
     func editorCommit(itemID: String, variantID: String, request commit: EditorCommitRequest) async throws -> EditorCommitResponse {
         try await request(path: "plan-items/\(itemID)/variants/\(variantID)/editor-commit", method: "POST", bodyData: try JSONEncoder().encode(commit), decode: EditorCommitResponse.self)
@@ -1658,7 +1762,7 @@ struct KriaAPI: KriaAPIClient {
             NativePreviewDiagnostics.record("http-failure", fields: ["status": String(http.statusCode)])
             #endif
             let problem = Self.decodeProblem(from: data)
-            throw APIError.requestFailed(status: http.statusCode, detail: RequestFailureDetail(Self.decodeDetail(from: data), retryAfter: http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init), code: problem?.code, problemMessage: problem?.message))
+            throw APIError.requestFailed(status: http.statusCode, detail: RequestFailureDetail(Self.decodeDetail(from: data), retryAfter: http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init), code: problem?.code, problemMessage: problem?.message, object: Self.decodeDetailObject(from: data)))
         }
         if http.statusCode == 204, let empty = EmptyProjectResponse() as? T { return (empty, http) }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .custom(ServerDateCoding.decode); return (try decoder.decode(T.self, from: data), http)
@@ -1766,6 +1870,11 @@ struct KriaAPI: KriaAPIClient {
             return loc.isEmpty ? msg : "\(loc): \(msg)"
         }
         return nil
+    }
+    /// FastAPI's object detail as JSON values (nil for any other shape).
+    private static func decodeDetailObject(from data: Data) -> [String: JSONValue]? {
+        struct Envelope: Decodable { let detail: [String: JSONValue] }
+        return try? JSONDecoder().decode(Envelope.self, from: data).detail
     }
     /// Decodes the runtime-v2 `KriaProblemOut` envelope (`{"problem": {"code",
     /// "message", ...}}`). Nil when the body isn't shaped that way, e.g. the
@@ -2083,8 +2192,8 @@ private enum ServerDateCoding {
     }
 }
 struct SubmitTurnRequest: Encodable {
-    let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil; var clipSelection: ClipSelectionSubmission? = nil; var songOrder: SongOrderSubmission? = nil; var choiceSelection: ChoiceSelectionSubmission? = nil; var songRange: SongRangeAnswer? = nil; var suggestion: SuggestionTap? = nil
-    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order"; case choiceSelection = "choice_selection"; case songRange = "song_range"; case suggestion }
+    let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil; var clipSelection: ClipSelectionSubmission? = nil; var songOrder: SongOrderSubmission? = nil; var choiceSelection: ChoiceSelectionSubmission? = nil; var songRange: SongRangeAnswer? = nil; var suggestion: SuggestionTap? = nil; var protectedRegion: ProtectedRegionAnswer? = nil; var momentOrder: MomentOrderAnswer? = nil
+    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order"; case choiceSelection = "choice_selection"; case songRange = "song_range"; case suggestion; case protectedRegion = "protected_region"; case momentOrder = "moment_order" }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(message, forKey: .message); try c.encode(clientEventID, forKey: .clientEventID)
@@ -2095,6 +2204,8 @@ struct SubmitTurnRequest: Encodable {
         try c.encodeIfPresent(choiceSelection, forKey: .choiceSelection)
         try c.encodeIfPresent(songRange, forKey: .songRange)
         try c.encodeIfPresent(suggestion, forKey: .suggestion)
+        try c.encodeIfPresent(protectedRegion, forKey: .protectedRegion)
+        try c.encodeIfPresent(momentOrder, forKey: .momentOrder)
     }
 }
 
@@ -2253,8 +2364,12 @@ struct RequestFailureDetail: Equatable, Sendable, CustomStringConvertible {
     /// instead of a `detail` string. Kept apart from `message` so existing error copy is unchanged.
     let code: String?
     let problemMessage: String?
-    init(_ message: String?, retryAfter: TimeInterval? = nil, code: String? = nil, problemMessage: String? = nil) {
+    /// FastAPI's object `detail` (`{"detail": {"code", ...}}`), e.g. the device-render 426
+    /// that names the request it is about. Nil for string details.
+    let object: [String: JSONValue]?
+    init(_ message: String?, retryAfter: TimeInterval? = nil, code: String? = nil, problemMessage: String? = nil, object: [String: JSONValue]? = nil) {
         self.code = code
+        self.object = object
         self.problemMessage = problemMessage?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.message = trimmed?.isEmpty == false ? trimmed : nil
@@ -2540,12 +2655,29 @@ extension DraftSnapshot {
                 sections["audio_mix"] = .object(audioMix)
             }
             // The creator's own original-audio level (Sounds > Original audio). Only a phone-rendered
-            // guided edit honors it, so no other variant's persisted value reaches the document.
-            if !isIntentionalEmpty, authoritativeVariant["resolved_archetype"]?.stringValue == "guided_story",
+            // guided or Voiceover (narrated / montage `voiceover`, KRI-821) edit honors it, so no other
+            // variant's persisted value reaches the document.
+            if !isIntentionalEmpty,
+               ["guided_story", "narrated", "voiceover"].contains(authoritativeVariant["resolved_archetype"]?.stringValue ?? ""),
                authoritativeVariant["render_destination"]?.stringValue == "device",
                case .number? = authoritativeVariant["original_audio_level"] {
                 var audioMix = Self.object(sections["audio_mix"]) ?? [:]
                 audioMix["original_level"] = authoritativeVariant["original_audio_level"]
+                sections["audio_mix"] = .object(audioMix)
+            }
+            // A phone Voiceover selection uses the server's final ducked
+            // source-bed gain, not its pre-duck display level. The per-slot
+            // `source_audio_volume` marker remains 0/1; this becomes the one
+            // global factor applied by AudioMixRecipe. Require the explicit
+            // selected-source list so an older narrated variant cannot gain
+            // camera audio merely because it happens to carry a number.
+            if !isIntentionalEmpty,
+               authoritativeVariant["render_destination"]?.stringValue == "device",
+               ["narrated", "voiceover"].contains(authoritativeVariant["resolved_archetype"]?.stringValue ?? ""),
+               authoritativeVariant["source_audio_media_ids"] != nil,
+               case .number? = authoritativeVariant["source_audio_bed_gain"] {
+                var audioMix = Self.object(sections["audio_mix"]) ?? [:]
+                audioMix["original_level"] = authoritativeVariant["source_audio_bed_gain"]
                 sections["audio_mix"] = .object(audioMix)
             }
             if !isIntentionalEmpty, let title = authoritativeVariant["track_title"] {

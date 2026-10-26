@@ -19,6 +19,7 @@ import uuid
 import pytest
 
 from app.agents._runtime import ModelInvocation
+from app.agents._skills import load_skill
 from app.config import settings
 from app.database import AsyncSessionLocal, sync_session
 from app.kria.api_schemas import SubmitTurnBody
@@ -231,7 +232,9 @@ class CopyTransport:
                 }
             else:
                 answer = {"intents": [], "question": None}
-        elif prompt.startswith("You resolve a creator's open-vocabulary request"):
+        elif prompt.startswith(
+            load_skill("meaningful-moment") + "\n\nYou resolve a creator's open-vocabulary request"
+        ):
             answer = {
                 "intents": [
                     {

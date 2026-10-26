@@ -17,13 +17,20 @@ KRI-791: the structured fields come first (KRI-667). When the model leaves the t
 words that are not the text (`brief_checks.worded_spoken_cue`). ``speaker`` is someone other
 than the creator the ask names ("she", ``facts.speaker``): the take's words don't say who
 speaks, so the text shows the first time anyone says the word and the receipts say so.
+
+KRI-724: unless the creator picked which time they mean before approval (a
+``speech_occurrence`` answer, `choice_questions._speech_occurrence`). ``pin`` is read only
+from the approved, server-owned answers (`brief_spoken_texts(brief, answers)`), never from a
+fact the model wrote.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any
+
+from app.kria.opening_cut_ask import OCCURRENCE_WAIVE, OccurrencePin, answered_occurrence_pins
 
 if TYPE_CHECKING:
     from app.kria.brief import BriefRequirement, CreativeBrief
@@ -64,6 +71,24 @@ class SpokenTextAsk:
     # Someone other than the creator the ask says speaks the word ("she"); None for the
     # creator's own voice or anyone's.
     speaker: str | None = None
+    # KRI-724: the occurrence the creator picked ("the second 'Merope'"), from the approved
+    # answers only. None = no pick: the first time anyone says it.
+    pin: OccurrencePin | None = None
+    # A structured selection among repeated trigger phrases.  ``None`` keeps
+    # the legacy Talking path's first-hit rule; narrated voiceovers refuse an
+    # unqualified repeat rather than inventing a moment.
+    occurrence: str | int | None = None
+
+
+def _fact_occurrence(req: BriefRequirement) -> str | int | None:
+    value = req.facts.get("occurrence")
+    if isinstance(value, str) and value in {"first", "last"}:
+        return value
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value
+    if isinstance(value, str) and value.isdecimal() and int(value) >= 1:
+        return int(value)
+    return None
 
 
 def spoken_triggers(req: BriefRequirement) -> tuple[str, ...]:
@@ -102,7 +127,17 @@ def requirement_spoken_text(req: BriefRequirement) -> SpokenTextAsk | None:
         return None
     # A speaker the model wrote wins, even "I" over a "she" in the wording.
     speaker = _fact_speaker(req) if SPOKEN_TEXT_SPEAKER_KEY in req.facts else worded_speaker
-    return SpokenTextAsk(requirement_id=req.id, text=text, triggers=triggers, speaker=speaker)
+    # Only the structured field chooses among repeats (KRI-667: no regex reads the
+    # creator's wording for it). Without it, a repeated word is ambiguous and the
+    # narrated lane asks which occurrence the creator means.
+    occurrence = _fact_occurrence(req)
+    return SpokenTextAsk(
+        requirement_id=req.id,
+        text=text,
+        triggers=triggers,
+        speaker=speaker,
+        occurrence=occurrence,
+    )
 
 
 def spoken_text_asks(requirements: Iterable[BriefRequirement]) -> tuple[SpokenTextAsk, ...]:
@@ -110,9 +145,33 @@ def spoken_text_asks(requirements: Iterable[BriefRequirement]) -> tuple[SpokenTe
     return tuple(ask for req in requirements if (ask := requirement_spoken_text(req)) is not None)
 
 
-def brief_spoken_texts(brief: CreativeBrief | None) -> tuple[SpokenTextAsk, ...]:
-    """`spoken_text_asks` over a brief's live requirements (empty without one)."""
-    return spoken_text_asks(brief.live()) if brief is not None else ()
+def with_answered_pins(
+    asks: Iterable[SpokenTextAsk], answers: Iterable[Mapping[str, Any]] | None
+) -> tuple[SpokenTextAsk, ...]:
+    """``asks`` with the creator's picked occurrence on each one they answered (KRI-724).
+    An ask the creator answered "leave the text off" for is dropped."""
+    answers = list(answers or ())
+    out: list[SpokenTextAsk] = []
+    for ask in asks:
+        answered = (
+            answered_occurrence_pins(answers, ask.requirement_id, ask.triggers[0])
+            if answers
+            else None
+        )
+        if answered == OCCURRENCE_WAIVE:
+            continue
+        out.append(replace(ask, pin=answered) if isinstance(answered, OccurrencePin) else ask)
+    return tuple(out)
+
+
+def brief_spoken_texts(
+    brief: CreativeBrief | None, answers: Iterable[Mapping[str, Any]] | None = None
+) -> tuple[SpokenTextAsk, ...]:
+    """`spoken_text_asks` over a brief's live requirements (empty without one), with the
+    approved ``answers``' picks (`with_answered_pins`)."""
+    if brief is None:
+        return ()
+    return with_answered_pins(spoken_text_asks(brief.live()), answers)
 
 
 __all__ = [
@@ -123,4 +182,5 @@ __all__ = [
     "requirement_spoken_text",
     "spoken_text_asks",
     "spoken_triggers",
+    "with_answered_pins",
 ]

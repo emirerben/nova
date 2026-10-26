@@ -43,6 +43,43 @@ import SwiftData
         XCTAssertEqual(model.selectedProject?.serverRevision, 7)
     }
 
+    // Gallery editor "Review in chat" (round 3). Failure modes: the button only goes back to
+    // the video detail (no chat, no render card); an unknown project is never fetched; an
+    // unknown conversation leads nowhere instead of the projects list.
+    func testOpenCreationThreadSelectsAKnownProjectAndAsksForTheChat() async {
+        let project = PreviewFixtures.projects[1]
+        let model = AppModel(api: NativeEditorTestSupport.api())
+        model.projects = PreviewFixtures.projects; model.selectedProject = PreviewFixtures.projects[0]
+        await model.openCreationThread(project.id)
+        XCTAssertEqual(model.selectedProject?.id, project.id)
+        XCTAssertEqual(model.chatRouteRequest?.threadID, project.id)
+    }
+
+    func testOpenCreationThreadFetchesAProjectThisPhoneHasNotListed() async {
+        let id = UUID()
+        let fetched = response(id, title: "From the gallery")
+        NativeEditorURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/creation-threads/\(id.uuidString)")
+            return (200, fetched)
+        }
+        let model = AppModel(api: NativeEditorTestSupport.api())
+        model.projects = [PreviewFixtures.projects[0]]
+        await model.openCreationThread(id)
+        XCTAssertEqual(model.selectedProject?.id, id)
+        XCTAssertTrue(model.projects.contains { $0.id == id })
+        XCTAssertEqual(model.chatRouteRequest?.threadID, id)
+    }
+
+    func testOpenCreationThreadWithoutAKnownThreadOpensTheProjectsList() async {
+        NativeEditorURLProtocol.handler = { _ in (404, Data()) }
+        let model = AppModel(api: NativeEditorTestSupport.api())
+        await model.openCreationThread(nil)
+        XCTAssertNotNil(model.chatRouteRequest)
+        XCTAssertNil(model.chatRouteRequest?.threadID, "nil: the workspace opens the projects drawer")
+        await model.openCreationThread(UUID())
+        XCTAssertNil(model.chatRouteRequest?.threadID, "a thread that can't be loaded also falls back to the list")
+    }
+
     func testRenameFailurePreservesProject() async {
         let project = PreviewFixtures.projects[0]
         NativeEditorURLProtocol.handler = { _ in (500, Data()) }

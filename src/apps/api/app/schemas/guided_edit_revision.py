@@ -103,6 +103,16 @@ class GuidedEditorSegment(BaseModel):
     # The creator turned this occurrence's own (camera) sound off. Omitted when
     # false/None so every revision written before the control keeps its state hash.
     source_audio_muted: bool | None = Field(default=None, exclude_if=lambda value: not value)
+    # KRI-828: the creator's freeze: the frame at ``source_end_s`` holds for these seconds at
+    # the end of the slot (``duration_s`` includes them). Omitted when unset so every earlier
+    # revision keeps its state hash.
+    freeze_hold_s: float | None = Field(
+        # Up to `freeze_ask.MAX_FREEZE_HOLD_S` (10 s), the longest freeze a creator can ask for.
+        default=None,
+        gt=0,
+        le=10.0,
+        exclude_if=lambda value: value is None,
+    )
     # Layout is authored per timeline occurrence, not per source media ID.
     # Keep it optional and omit nulls so revisions written before this field
     # existed retain their exact state hash and continue to validate.
@@ -597,6 +607,14 @@ def guided_editor_revision_from_approval(
                 source_start_s=float(moment.get("source_start_s") or 0.0),
                 source_end_s=float(moment.get("source_end_s") or duration),
                 duration_s=max(MIN_GUIDED_EDITOR_SEGMENT_S, duration),
+                freeze_hold_s=moment.get("freeze_hold_s") or None,
+                # KRI-689: a rate the montage plan authored survives into the editor, so the
+                # first Save does not reset the clip to 1x.
+                playback_rate=(
+                    float(moment["playback_rate"])
+                    if moment.get("playback_rate") is not None
+                    else None
+                ),
                 layout=(
                     moment.get("layout")
                     if isinstance(moment.get("layout"), str)

@@ -4,7 +4,6 @@ Character limits enforced + truncated at last sentence.
 Fallback: template strings on any Gemini failure.
 """
 
-
 import structlog
 from pydantic import BaseModel, field_validator
 
@@ -12,7 +11,7 @@ log = structlog.get_logger()
 
 # Platform character/tag limits
 INSTAGRAM_CAPTION_MAX = 2200
-INSTAGRAM_HASHTAG_COUNT = 10
+INSTAGRAM_HASHTAG_COUNT = 5
 TIKTOK_CAPTION_MAX = 2200
 TIKTOK_HASHTAG_COUNT = 5
 YOUTUBE_TITLE_MAX = 100
@@ -128,20 +127,33 @@ def _template_copy(hook_text: str) -> PlatformCopy:
         tiktok=TikTokCopy(
             hook=hook,
             caption="Auto-copy failed — edit before posting",
-            hashtags=["viral", "fyp", "trending", "video", "content"],
+            hashtags=[],
         ),
         instagram=InstagramCopy(
             hook=hook,
             caption="Auto-copy failed — edit before posting",
-            hashtags=["reels", "viral", "trending", "instagram", "content",
-                      "creator", "video", "fyp", "explore", "share"],
+            hashtags=[],
         ),
         youtube=YouTubeCopy(
             title=f"{hook[:90]} #shorts",
             description="Auto-copy failed — edit before posting",
-            tags=["shorts", "viral", "trending", "youtube", "video",
-                  "content", "creator", "fyp", "subscribe", "like",
-                  "comment", "share", "new", "today", "watch"],
+            tags=[
+                "shorts",
+                "viral",
+                "trending",
+                "youtube",
+                "video",
+                "content",
+                "creator",
+                "fyp",
+                "subscribe",
+                "like",
+                "comment",
+                "share",
+                "new",
+                "today",
+                "watch",
+            ],
         ),
     )
 

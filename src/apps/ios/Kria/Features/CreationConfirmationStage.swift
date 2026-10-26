@@ -88,6 +88,11 @@ extension CreationThread {
     var lastAssistantErrorCode: String? {
         events.last(where: { Self.assistantFailureEventTypes.contains($0.eventType) })?.payload?["code"]?.stringValue
     }
+    /// The typed creator decline behind the failure (`decline_reason` on
+    /// `assistant_render_failed`), e.g. `needs_choice`. Nil on untyped failures.
+    var lastAssistantDeclineReason: String? {
+        events.last(where: { Self.assistantFailureEventTypes.contains($0.eventType) })?.payload?["decline_reason"]?.stringValue
+    }
     /// Recovery targets the failed receipt itself; it must never become a chat request.
     var failedRenderExecutionID: UUID? {
         guard runtimeVersion == 2,
@@ -136,6 +141,27 @@ let nonRetryablePhoneGateErrorCodes: Set<String> = [
     "phone_not_enrolled", "phone_plan_unapproved", "phone_format_unavailable", "phone_voiceover_unavailable",
     "strategy_invalid", "phone_self_narration_multi_clip", "speech_cleanup_unavailable_on_phone",
     "phone_plan_unsupported",
+]
+
+/// Failures no retry fixes yet, though nothing about the edit is wrong: the AI
+/// provider's spend cap or Kria's AI budget is exhausted until someone raises it
+/// (`_NOT_RETRYABLE_NOW_JOB_FAILURE_CODES` in `app.tasks.kria_runtime`). The
+/// server's copy says to wait, so the card offers no Retry, no Refresh and no
+/// New chat; the composer stays for when the creator wants to send it again.
+let notRetryableNowFailureCodes: Set<String> = ["ai_quota_exhausted"]
+
+func isNotRetryableNowFailureCode(_ code: String?) -> Bool {
+    guard let code else { return false }
+    return notRetryableNowFailureCodes.contains(code)
+}
+
+/// Typed creator declines (`decline_reason`) whose next step is a reply in this
+/// chat: a choice only the creator can make, a confirmed detail the plan is
+/// missing, or a capability the edit has to drop. The server's copy asks that
+/// question (and may attach `choice_question` options to the same event), so a
+/// New chat would throw the conversation away (S4-h).
+let replyInChatDeclineReasons: Set<String> = [
+    "needs_choice", "requirement_conflict", "capability_unavailable", "evidence_missing",
 ]
 
 /// True for `nonRetryablePhoneGateErrorCodes`. A runtime-v2 speech-cleanup
@@ -239,6 +265,7 @@ struct CreationConfirmationStage: View {
     /// failed analysis, or a create-without-cleanup fallback).
     private var offersGenerate: Bool {
         guard !isFailure, !isNonRetryablePhoneGateFailure else { return false }
+        guard !isNotRetryableNowFailureCode(thread.lastAssistantErrorCode) else { return false }
         guard hasCleanup else { return true }
         guard analysis["id"]?.stringValue != nil,
               ["ready", "no_findings"].contains(analysis["status"]?.stringValue ?? "") else { return false }
@@ -323,7 +350,13 @@ struct CreationConfirmationStage: View {
     /// rejection, the server's own message and no button that implies retrying
     /// could work (KRI-132) -- confirming again dispatches the identical request.
     @ViewBuilder private func retryOrCreateButton(payload: [String: JSONValue]) -> some View {
-        if isNonRetryablePhoneGateFailure {
+        if isFailure && isNotRetryableNowFailureCode(thread.lastAssistantErrorCode) {
+            Text(thread.lastAssistantErrorMessage ?? "Kria’s AI has reached its usage limit for now. Your project is saved; trying again right away won’t help.")
+                .font(KriaFont.body(13))
+                .foregroundStyle(KriaColor.failureText)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("creation-confirmation-not-retryable-now")
+        } else if isNonRetryablePhoneGateFailure {
             Text(thread.lastAssistantErrorMessage ?? "This edit can’t render on your iPhone yet. Your project is saved.")
                 .font(KriaFont.body(13))
                 .foregroundStyle(KriaColor.failureText)

@@ -25,6 +25,9 @@ struct NativeEditorView: View {
     @ScaledMetric(relativeTo: .body) private var captionLineHeight: CGFloat = 22
     @State private var inspector: NativeEditorInspector?
     @State private var showsUnsavedExit = false
+    /// "Review in chat" from the gallery editor: leaving (after the unsaved-changes prompt)
+    /// opens the edit's conversation instead of going back to the video detail.
+    @State private var exitsToChat = false
     @State private var showsDeviceRender = false
     @State private var showsResearchSources = false
     @State private var opensRetryConversation = false
@@ -109,7 +112,7 @@ struct NativeEditorView: View {
                     } else {
                         NativeEditorLoadSurface(
                             title: "Opening the editor…",
-                            detail: "Loading the latest cut and its editing controls.",
+                            detail: session.loadWaitingMessage ?? "Loading the latest cut and its editing controls.",
                             projectTitle: project.workspaceTitle,
                             isLoading: true,
                             onBack: requestBack,
@@ -171,6 +174,10 @@ struct NativeEditorView: View {
                             opensRetryConversation = true
                             showsDeviceRender = false
                         } : nil,
+                        reviewInChat: {
+                            opensRetryConversation = true
+                            showsDeviceRender = false
+                        },
                         retry: { await session.refreshDeviceRender(retry: true) })
                         .padding(20)
                         .presentationDetents([.medium, .large])
@@ -235,7 +242,7 @@ struct NativeEditorView: View {
                 titleVisibility: .visible
             ) {
                 Button("Save and exit") { Task { await saveAndExit() } }
-                Button("Discard changes", role: .destructive, action: onBack)
+                Button("Discard changes", role: .destructive, action: leave)
                 Button("Stay", role: .cancel) {}
             } message: {
                 Text("Unsaved editor changes are stored only on this device until you save.")
@@ -264,7 +271,14 @@ struct NativeEditorView: View {
             // server probe is picked up instead of leaving "Preparing media
             // import…" up until a relaunch.
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active { Task { await session.resumeEditorImports() } }
+                if phase == .active {
+                    Task { await session.resumeEditorImports() }
+                    Task { await session.resumeRefreshSync() }
+                }
+            }
+            // A refresh waiting out its backoff runs as soon as the connection is back.
+            .onReceive(NetworkReachability.shared.$isOnline.removeDuplicates()) { online in
+                if online { Task { await session.resumeRefreshSync() } }
             }
             .onDisappear {
                 finishPanelEditing()
@@ -321,8 +335,10 @@ struct NativeEditorView: View {
             }
             VStack(spacing: 0) {
                 NativeEditorSaveBanner(session: session,
-                    retryApproved: session.deviceRenderKey.map { model.deviceRenders.retryNeedsApproval($0) } == true ? { reviewRetryInChat() } : nil)
+                    retryApproved: session.deviceRenderKey.map { model.deviceRenders.retryNeedsApproval($0) } == true ? { reviewRetryInChat() } : nil,
+                    reviewInChat: { reviewRetryInChat() })
                 NativeEditorExportBanner(exporter: exporter)
+                NativeEditorRefreshIndicator(session: session, onBackToChat: conversation == nil ? requestBack : onBack)
                 if let message = session.cloudEditorUnavailableMessage {
                     Label(message, systemImage: "lock")
                         .font(KriaFont.body(13))
@@ -337,8 +353,8 @@ struct NativeEditorView: View {
                         .padding(.horizontal, 16)
                         .padding(.bottom, 4)
                 }
-                if let key = session.deviceRenderKey, let phase = model.deviceRenders.presentations[key]?.phase {
-                    Button(DeviceRenderButtonTitle.for(phase: phase)) { showsDeviceRender = true }
+                if let key = session.deviceRenderKey, let presentation = model.deviceRenders.presentations[key] {
+                    Button(DeviceRenderButtonTitle.for(presentation: presentation)) { showsDeviceRender = true }
                         .font(KriaFont.body(12).weight(.semibold))
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .accessibilityIdentifier("native-editor-device-render")
@@ -961,26 +977,43 @@ struct NativeEditorView: View {
     }
 
     private func reviewRetryInChat() {
-        if conversation != nil { showsConversation = true }
-        else { requestBack() }
+        if conversation != nil { showsConversation = true; return }
+        // Opened from the gallery: no conversation underneath. Open this edit's own
+        // creation thread (open-in-editor names it); going back would only reach the
+        // video detail, which has no chat and no render card. Unsaved changes get the same
+        // "Save your changes before leaving?" prompt, and leaving goes to that thread.
+        exitsToChat = true
+        finishPanelEditing()
+        if session.hasUnsavedChanges { showsUnsavedExit = true }
+        else { leave() }
     }
 
     private func requestBack() {
+        exitsToChat = false
         if session.pendingText != nil { session.cancelTextCreation(); resignKeyboard(); return }
         if panel != nil { changePanel(to: nil); return }
         finishPanelEditing()
         if session.hasUnsavedChanges { showsUnsavedExit = true }
-        else { onBack() }
+        else { leave() }
+    }
+
+    /// Back to where the editor came from, or ("Review in chat" from the gallery) to the
+    /// edit's own conversation, which also keeps this video's phone render card in view.
+    private func leave() {
+        guard exitsToChat else { onBack(); return }
+        exitsToChat = false
+        let threadID = session.creationThreadID, key = session.deviceRenderKey
+        Task { await model.openCreationThread(threadID, deviceRender: key) }
     }
 
     private func saveAndExit() async {
         await session.save()
         guard !session.hasUnsavedChanges else { return }
         switch session.saveState {
-        case .conflict, .loadFailed, .failed, .renderRetryNeeded, .deviceRenderRetryNeeded:
+        case .loadFailed, .failed, .renderRetryNeeded, .deviceRenderRetryNeeded:
             return
         default:
-            onBack()
+            leave()
         }
     }
 }

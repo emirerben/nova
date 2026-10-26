@@ -40,7 +40,7 @@ import subprocess
 import tempfile
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -62,6 +62,7 @@ from app.agents._runtime import (
 from app.database import sync_session as _sync_session
 from app.db_locks import CONTENT_PLAN_LOCK
 from app.models import ContentPlan, Job, PlanItem, PlanItemAsset, SoundEffect
+from app.services import pool_analysis_deadline as pool_deadline
 from app.services.content_plan_persona import (
     PlanPersonaOwnershipError,
     load_owned_plan_persona_sync,
@@ -87,12 +88,13 @@ _POOL_ANALYSIS_MAX_RETRIES = 4
 # The count alone does not bound wall time: a video invocation already retries
 # internally (gemini_upload_and_wait ~99s of backoff + the agent runtime's own
 # schedule) and can approach the 240s soft limit, so 5 invocations could keep a
-# Visual `analyzing` for ~20 min — past the reaper's 10-min `analyzing` window
-# (maintenance._POOL_ANALYZING_STALE_AFTER). No retry is scheduled once the
+# Visual `analyzing` for ~20 min. No retry is scheduled once the
 # chain's wall time (from the attempt's first invocation) plus the countdown
 # would exceed this budget; the run falls through to the terminal persist.
-# 360s + one last retry capped by the 240s soft limit = 600s, the reaper's
-# 10-min window (which is measured from each retry's own re-armed start anyway).
+# 360s + one last retry capped by the 240s soft limit = 600s.
+# KRI-820: attempts that carry a declared deadline (`analysis_deadline_at`,
+# services/pool_analysis_deadline.py) retry only while another soft-limited run
+# still fits before it; this wall-clock budget now only bounds refresh runs.
 _POOL_ANALYSIS_RETRY_BUDGET_S = 360
 # Wall-clock (epoch seconds) of the attempt's first invocation. A header, like
 # the attempt token, so a retry published mid rolling-deploy never hands an old
@@ -1542,16 +1544,21 @@ def analyze_pool_asset(
             if current_token and not attempt_token:
                 log.info("autoplace.asset_missing_attempt", asset_id=asset_id)
                 return
+            now = datetime.now(UTC)
+            if pool_deadline.is_expired(asset, now):
+                # KRI-820: the attempt's declared bound already passed (a late
+                # broker copy, or a retry whose countdown ran out the clock).
+                # Persist the retryable timeout instead of starting paid work.
+                pool_deadline.mark_timed_out(asset)
+                db.commit()
+                log.info("autoplace.asset_attempt_expired", asset_id=asset_id, stage="claim")
+                return
             if retry_attempt:
                 # A Celery retry re-enters the attempt it belongs to: the row
                 # was deliberately left `analyzing` (never flipped to failed
                 # before exhaustion) and its media readiness/preview were
-                # already published by the first invocation. Re-arm the
-                # reaper's `analyzing` staleness clock now that the retried run
-                # has actually started. The countdown + queue wait before this
-                # point still count against the previous run's start, which is
-                # one reason the chain is also bounded by
-                # _POOL_ANALYSIS_RETRY_BUDGET_S.
+                # already published by the first invocation. Its deadline is
+                # NOT re-armed (KRI-820): the bound covers the whole chain.
                 if asset.status != "analyzing":
                     log.info(
                         "autoplace.asset_retry_not_analyzing",
@@ -1560,22 +1567,48 @@ def analyze_pool_asset(
                         retries=retry_attempt,
                     )
                     return
-                asset.analysis_started_at = datetime.now(UTC)
-                db.commit()
+                deadline = getattr(asset, "analysis_deadline_at", None)
+                soft_limit = timedelta(seconds=_AUTOPLACE_TASK_LIMITS["soft_time_limit"])
+                if deadline is not None and now + soft_limit > deadline:
+                    # A late-delivered retry whose run cannot finish in bound:
+                    # persist the timeout rather than starting paid work that
+                    # would outlive the deadline (and race a creator Retry).
+                    pool_deadline.mark_timed_out(asset)
+                    db.commit()
+                    log.info("autoplace.asset_attempt_expired", asset_id=asset_id, stage="retry")
+                    return
             else:
                 if asset.status not in {"uploaded", "queued"}:
                     return
-                now = datetime.now(UTC)
                 dispatched_at = getattr(asset, "analysis_last_dispatched_at", None)
                 if dispatched_at is not None:
                     queue_wait_s = max(0.0, (now - dispatched_at).total_seconds())
+                # A claim may shorten the bound to one run, never extend it.
+                claim_deadline = pool_deadline.claim_deadline(
+                    pool_deadline.effective_deadline(asset), kind, now
+                )
+                soft_limit = timedelta(seconds=_AUTOPLACE_TASK_LIMITS["soft_time_limit"])
+                if now + soft_limit > claim_deadline:
+                    # Claimed too late for one run to fit: no paid work that
+                    # the reaper would fence out at the deadline anyway.
+                    pool_deadline.mark_timed_out(asset)
+                    db.commit()
+                    log.info(
+                        "autoplace.asset_attempt_expired", asset_id=asset_id, stage="claim_fit"
+                    )
+                    return
                 asset.status = "analyzing"
-                asset.media_status = "pending"
+                if getattr(asset, "media_status", None) != "ready":
+                    # KRI-820: an analysis-only Retry of already verified bytes
+                    # keeps the photo usable in a draft while it re-analyzes.
+                    asset.media_status = "pending"
                 asset.analysis_started_at = now
+                asset.analysis_deadline_at = claim_deadline
                 asset.error_code = None
                 asset.error_detail = None
                 asset.error_retryable = False
                 db.commit()
+        attempt_deadline = None if refresh else getattr(asset, "analysis_deadline_at", None)
 
     with pipeline_trace_for(scope):
         analysis: dict | None = None
@@ -1819,10 +1852,22 @@ def analyze_pool_asset(
             failed = True
 
         chain_elapsed_s = time.time() - retry_started_at
-        if (
-            transient_failure
-            and chain_elapsed_s + _POOL_ANALYSIS_RETRY_COUNTDOWN_S > _POOL_ANALYSIS_RETRY_BUDGET_S
-        ):
+        if transient_failure and attempt_deadline is not None:
+            # KRI-820: retry only when another full soft-limited run fits
+            # before the attempt's deadline; otherwise persist the failure now.
+            retry_fits = (
+                datetime.now(UTC)
+                + timedelta(
+                    seconds=_POOL_ANALYSIS_RETRY_COUNTDOWN_S
+                    + _AUTOPLACE_TASK_LIMITS["soft_time_limit"]
+                )
+                <= attempt_deadline
+            )
+        else:
+            retry_fits = (
+                chain_elapsed_s + _POOL_ANALYSIS_RETRY_COUNTDOWN_S <= _POOL_ANALYSIS_RETRY_BUDGET_S
+            )
+        if transient_failure and not retry_fits:
             # Out of wall-clock budget: fall through to the terminal persist.
             log.warning(
                 "autoplace.analysis_retry_budget_exhausted",
@@ -1895,6 +1940,10 @@ def analyze_pool_asset(
             if not refresh and attempt_token:
                 if getattr(asset, "analysis_attempt_token", None) != attempt_token:
                     log.info("autoplace.asset_stale_attempt", asset_id=asset_id, stage="persist")
+                    return
+                if pool_deadline.is_expired(asset):  # KRI-820: expiry is one-way
+                    pool_deadline.mark_timed_out(asset)
+                    db.commit()
                     return
             if failed:
                 if refresh:

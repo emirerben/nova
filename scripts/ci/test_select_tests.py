@@ -21,11 +21,17 @@ ALL = {"api", "ios", "ios_ui", "shared_motion"}
 class ClassificationTests(unittest.TestCase):
     def test_learning_loop_docs_map_to_an_executed_journey(self):
         path = "src/apps/api/tests/evals/request_following/README.md"
-        matches = [j for j in ci.JOURNEYS
-                   if any(ci.matches_journey_path(path, prefix) for prefix in j["paths"])]
+        matches = [
+            j
+            for j in ci.JOURNEYS
+            if any(ci.matches_journey_path(path, prefix) for prefix in j["paths"])
+        ]
         self.assertEqual([j["id"] for j in matches], ["kri-215-learning-loop"])
         workflow = (SCRIPT.parents[2] / ".github/workflows/ci.yml").read_text()
-        self.assertIn("contains(needs.changes.outputs.journey_ids, 'kri-215-learning-loop')", workflow)
+        self.assertIn(
+            "contains(needs.changes.outputs.journey_ids, 'kri-215-learning-loop')",
+            workflow,
+        )
         self.assertIn("pytest tests/incidents/test_request_following_loop.py", workflow)
 
     def test_manifest_native_routing_is_conservative_and_mixed_safe(self):
@@ -630,7 +636,6 @@ class GitDiffTests(unittest.TestCase):
                     True,
                     "covered",
                     "kri-492-length-ownership,kri-524-creation,kri-787-merope-t1-replay,kri-577-reliability-gates,kri-788-order-answer-dispatch,kri-648-phone-text",
-
                 ),
             ),
             (
@@ -699,7 +704,7 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/prompts/main_creator.txt",
-                (True, "covered", "kri-586-hook-copy"),
+                (True, "covered", "kri-586-hook-copy,kri-815-voiceover-script"),
             ),
             (
                 "src/apps/api/tests/fixtures/agent_evals/main_creator/kri586_generate_after_choice.json",
@@ -743,7 +748,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/pipeline/narrated_photo_sequence.py",
-                (True, "covered", "kri-577-reliability-gates,kri-598-voiceover-planner"),
+                (
+                    True,
+                    "covered",
+                    "kri-577-reliability-gates,kri-598-voiceover-planner",
+                ),
             ),
             (
                 "src/apps/api/tests/fixtures/kri623_tigre_m2_montage_turn.json",
@@ -771,11 +780,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
-                (True, "covered", "kri-625-moment-quality"),
+                (True, "covered", "kri-845-clip-detail-evidence,kri-625-moment-quality"),
             ),
             (
                 "src/apps/api/prompts/analyze_clip.txt",
-                (True, "covered", "kri-625-moment-quality"),
+                (True, "covered", "kri-845-clip-detail-evidence,kri-625-moment-quality"),
             ),
             (
                 "src/apps/api/prompts/edit_copilot.txt",
@@ -824,6 +833,14 @@ class GitDiffTests(unittest.TestCase):
             (
                 "src/apps/api/tests/pipeline/test_phone_talking_cutaways.py",
                 (True, "covered", "kri-719-talking-multi-clip"),
+            ),
+            (
+                "src/apps/api/app/pipeline/phone_subtitled_lanes.py",
+                (True, "covered", "kri-841-talking-ending-clip"),
+            ),
+            (
+                "src/apps/api/tests/tasks/test_kri841_talking_ending_clip.py",
+                (True, "covered", "kri-841-talking-ending-clip"),
             ),
             (
                 "src/apps/api/app/services/length_planning.py",
@@ -926,7 +943,11 @@ class GitDiffTests(unittest.TestCase):
         self.write("src/apps/ios/Kria/Core/Services.swift", "changed")
         self.assertEqual(
             ci.journey_details("pull_request", self.base, self.commit()),
-            (True, "covered", "kri-524-creation,kri-557-thinking,kri-648-phone-text,kri-551-consented-retakes"),
+            (
+                True,
+                "covered",
+                "kri-524-creation,kri-557-thinking,kri-648-phone-text,kri-551-consented-retakes",
+            ),
         )
 
     def test_journey_native_runner_is_linux_for_python_only_and_mac_for_mixed(self):
@@ -935,7 +956,7 @@ class GitDiffTests(unittest.TestCase):
         head = self.commit()
         self.assertEqual(
             ci.journey_details("pull_request", self.base, head)[2],
-            "kri-577-reliability-gates,kri-590-voiceover-cues",
+            "kri-577-reliability-gates,kri-590-voiceover-cues,kri-215-phone-editorial-skills",
         )
         self.assertFalse(ci.journey_needs_native("pull_request", self.base, head))
         self.base = head
@@ -1009,7 +1030,9 @@ class GitDiffTests(unittest.TestCase):
             "--stdin", stdin="src/apps/api/app/kria/zz_unmapped.py\nREADME.md\n"
         )
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout.split(), ["src/apps/api/app/kria/zz_unmapped.py"])
+        self.assertEqual(
+            result.stdout.split(), ["src/apps/api/app/kria/zz_unmapped.py"]
+        )
 
     def test_preship_runs_the_journey_mapping_check(self):
         preship = (SCRIPT.parents[2] / "scripts/preship-check.sh").read_text()
@@ -1041,7 +1064,7 @@ class GitDiffTests(unittest.TestCase):
             output.read_text(),
             "api=false\nios=true\nios_ui=true\nshared_motion=false\nnative_validation=true\nios_ui_groups=full\n"
             "ios_ui_shards=1\njourney=false\njourney_coverage=not_applicable\n"
-            "journey_ids=\njourney_needs_native=false\n",
+            'journey_ids=\njourney_needs_native=false\nnative_legs=["unit"]\n',
         )
         self.assertIn("ios: run", summary.read_text())
         self.assertIn("iOS UI groups: full (1 native leg)", summary.read_text())

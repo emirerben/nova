@@ -8,8 +8,10 @@ Mocks cannot show that two jobs' events reduce to the right "Updated" state.
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -350,18 +352,39 @@ async def _post_caption_block(user_id, thread_id):
 async def test_post_caption_is_generated_persisted_and_reported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[str] = []
+    from tests.evals.runners.eval_runner import CassetteModelClient
 
-    def fake(hook: str, job_id: str):
-        calls.append(hook)
-        return {"text": "Athens in a day", "hashtags": ["athens", "travel"], "platform": "tiktok"}
+    fixture_path = (
+        Path(__file__).parents[1]
+        / "fixtures/agent_evals/platform_copy/golden/baseline_three_platform.json"
+    )
+    data = json.loads(json.loads(fixture_path.read_text())["raw_text"])
+    data["tiktok"]["caption"] = "Athens in a day"
+    data["tiktok"]["hashtags"] = ["athens", "travel"]
+    cassette = CassetteModelClient(json.dumps(data))
+    prompts: list[str] = []
 
-    monkeypatch.setattr(plan_blocks, "_generate_post_caption", fake)
+    def invoke(**kwargs):
+        prompts.append(kwargs["prompt"])
+        return cassette.invoke(**kwargs)
+
+    monkeypatch.setattr(
+        "app.agents._model_client.default_client", lambda: SimpleNamespace(invoke=invoke)
+    )
     user_id, thread_id, _ = _seed_runtime_project()
-    job = _titled_job(user_id, thread_id)  # the title block starts the copy in the background
+    job = _job(user_id, _item_id(thread_id))
+    with sync_session() as db:
+        row = db.get(Job, job)
+        row.transcript = {"full_text": "We walked through Athens before sunrise."}
+        row.all_candidates = {"creator_strategy": {"summary": "A quiet Athens morning walk"}}
+        db.commit()
+    plan_blocks.emit_plan_blocks(job, [b("title", "decided", "Athens", payload={"text": "Athens"})])
     plan_blocks.emit_post_caption(job)
     plan_blocks.emit_post_caption(job)  # resolved once; the second call is a no-op
-    assert calls == ["Athens"]
+    assert len(prompts) == 1
+    assert "We walked through Athens before sunrise." in prompts[0]
+    assert "A quiet Athens morning walk" not in prompts[0]
+    assert "# Social caption" in prompts[0]
     blk = await _post_caption_block(user_id, thread_id)
     assert blk.state == "decided" and not blk.skipped
     assert blk.payload == {

@@ -16,6 +16,7 @@ Fonts loaded from font-registry.json (shared with frontend).
 Fallback: Pillow default if all resolution fails.
 """
 
+import functools
 import json
 import math
 import os
@@ -1450,6 +1451,38 @@ def _handwriting_ass_dialogue_events(
     return events
 
 
+def _fit_authored_ass_text(
+    text: str,
+    font_family: str | None,
+    text_size_px: int | None,
+    position_x_frac: float | None,
+    text_anchor: str,
+) -> tuple[str, int | None]:
+    """(rows joined by newlines, size) for ``wrap_lines=False`` libass text (KRI-826).
+
+    The size comes back unchanged unless the text had to shrink; text whose font
+    cannot be resolved is returned as authored.
+    """
+    from PIL import Image, ImageDraw  # noqa: PLC0415
+
+    from app.pipeline.text_fit import authored_safe_width  # noqa: PLC0415
+
+    family = font_family or "Playfair Display"
+    safe_family = glyph_safe_family(family, text) or family
+    base = int(text_size_px) if text_size_px else OVERLAY_FONT_SIZE
+    draw = ImageDraw.Draw(Image.new("RGBA", (8, 8), (0, 0, 0, 0)))
+    font, size, rows = _authored_rows_pillow(
+        text,
+        lambda px: _resolve_font_family(safe_family, px),
+        base,
+        authored_safe_width(CANVAS_W, position_x_frac, text_anchor),
+        draw,
+    )
+    if font is None:
+        return text, text_size_px
+    return "\n".join(rows), (size if (text_size_px or size != base) else None)
+
+
 def _write_animated_ass(
     text: str,
     start_s: float,
@@ -1510,6 +1543,13 @@ def _write_animated_ass(
     overlays which sit at lower-left / lower-right (off-center).
     `text_anchor` selects the horizontal side of explicit coordinates.
     """
+    if not wrap_lines and text:
+        # KRI-826: \q2 turns libass wrapping off, so the creator's lines are fitted
+        # here (hard breaks kept, soft wrap / shrink at the safe width), exactly as
+        # the Pillow PNG path and Skia `_authored_lines` do.
+        text, text_size_px = _fit_authored_ass_text(
+            text, font_family, text_size_px, position_x_frac, text_anchor
+        )
     alignment, margin_v = _ASS_POSITION.get(position, (5, 0))
 
     # Resolve horizontal anchor — explicit x_frac wins, otherwise center.
@@ -2563,12 +2603,225 @@ class _SpacedDraw:
         extra = round(self._px(font) * max(0, len(text) - 1))
         return (box[0], box[1], box[2] + extra, box[3])
 
+    def textlength(self, text, font=None):
+        return sum(font.getlength(ch) for ch in text) + self._px(font) * len(text)
+
     def text(self, xy, text, font=None, fill=None, anchor=None, **kw):
         x, y = xy
         step = self._px(font)
         for ch in text:
             self._inner.text((x, y), ch, font=font, fill=fill, anchor=anchor, **kw)
             x += font.getlength(ch) + step
+
+
+# -- KRI-826: inline emoji + authored-line fit for the Pillow renderer ---------
+
+# Color emoji faces Pillow can draw with ``embedded_color``. The prod image ships
+# fonts-noto-color-emoji (the same face Skia falls back to); macOS has Apple's.
+_EMOJI_FONT_CANDIDATES = (
+    "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+    "/usr/share/fonts/noto/NotoColorEmoji.ttf",
+    "/System/Library/Fonts/Apple Color Emoji.ttc",
+)
+# Bitmap emoji faces only load at their strike sizes (Noto 109, Apple 160/96/64).
+_EMOJI_FONT_SIZES = (109, 160, 96, 64)
+
+
+def _is_emoji_cluster(cluster: str) -> bool:
+    import regex  # noqa: PLC0415
+
+    return bool(
+        regex.search(r"\p{Emoji_Presentation}|\p{Regional_Indicator}|\uFE0F|\u20E3", cluster)
+        or ("\u200d" in cluster and regex.search(r"\p{Extended_Pictographic}", cluster))
+    )
+
+
+def _emoji_runs(text: str) -> list[tuple[bool, str]] | None:
+    """``text`` split into (is_emoji, run) pieces; None when it has no emoji."""
+    import regex  # noqa: PLC0415
+
+    if not text or text.isascii():
+        return None
+    runs: list[tuple[bool, str]] = []
+    for cluster in regex.findall(r"\X", text):
+        flag = _is_emoji_cluster(cluster)
+        if runs and runs[-1][0] == flag and not flag:
+            runs[-1] = (flag, runs[-1][1] + cluster)
+        else:
+            runs.append((flag, cluster))
+    return runs if any(flag for flag, _ in runs) else None
+
+
+@functools.lru_cache(maxsize=1)
+def _emoji_font():
+    from PIL import ImageFont  # noqa: PLC0415
+
+    for path in _EMOJI_FONT_CANDIDATES:
+        if not os.path.exists(path):
+            continue
+        for size in _EMOJI_FONT_SIZES:
+            try:
+                return ImageFont.truetype(path, size), size
+            except OSError:
+                continue
+    log.warning("emoji_font_unavailable")
+    return None
+
+
+@functools.lru_cache(maxsize=256)
+def _emoji_sprite(cluster: str, size: int):
+    """(rgba sprite, left, top-from-baseline, advance) for one emoji at ``size`` px."""
+    from PIL import Image, ImageDraw  # noqa: PLC0415
+
+    loaded = _emoji_font()
+    if loaded is None or size <= 0:
+        return None
+    face, base = loaded
+    left, top, right, bottom = face.getbbox(cluster, anchor="ls")
+    if right <= left or bottom <= top:
+        return None
+    sprite = Image.new("RGBA", (right - left, bottom - top), (0, 0, 0, 0))
+    ImageDraw.Draw(sprite).text((-left, -top), cluster, font=face, anchor="ls", embedded_color=True)
+    k = size / base
+    scaled = sprite.resize(
+        (max(1, round(sprite.width * k)), max(1, round(sprite.height * k))),
+        Image.Resampling.LANCZOS,
+    )
+    return scaled, left * k, top * k, face.getlength(cluster) * k
+
+
+def _composite_clipped(layer, sprite, x: int, y: int) -> None:
+    """alpha_composite ``sprite`` at (x, y), cropping whatever falls off ``layer``."""
+    left, top = max(0, -x), max(0, -y)
+    right = min(sprite.width, layer.width - x)
+    bottom = min(sprite.height, layer.height - y)
+    if right <= left or bottom <= top:
+        return
+    layer.alpha_composite(sprite.crop((left, top, right, bottom)), dest=(x + left, y + top))
+
+
+class _EmojiDraw:
+    """ImageDraw stand-in that draws inline color emoji (KRI-826).
+
+    Pillow's text face has no emoji glyphs, so they used to draw as boxes. Text
+    runs go to ``inner`` unchanged (text without emoji is byte-identical); each
+    emoji cluster is drawn from the color emoji face at the text size, baseline
+    aligned. ``mode``: "color" pastes the emoji, "silhouette" pastes its shape in
+    ``fill`` (drop shadow), "skip" only advances (gradient glyph mask).
+    """
+
+    def __init__(self, inner, image, mode: str) -> None:
+        self._inner = inner
+        self._image = image
+        self._mode = mode
+
+    @staticmethod
+    def _baseline(y: float, font, anchor) -> float:
+        if anchor == "ls":
+            return y
+        try:
+            return y + font.getmetrics()[0]
+        except AttributeError:
+            return y
+
+    def textlength(self, text, font=None):
+        return _pillow_text_advance(self._inner, text, font)
+
+    def _walk(self, xy, text, font, anchor):
+        x, y = xy
+        base = self._baseline(y, font, anchor)
+        for is_emoji, part in _emoji_runs(text) or [(False, text)]:
+            sprite = _emoji_sprite(part, int(getattr(font, "size", 0) or 0)) if is_emoji else None
+            if is_emoji and sprite is not None:
+                yield True, part, x, base, sprite
+                x += sprite[3]
+            else:
+                yield False, part, x, base, None
+                x += _pillow_text_advance(self._inner, part, font)
+
+    def textbbox(self, xy, text, font=None, anchor=None, **kw):
+        if _emoji_runs(text) is None:
+            return self._inner.textbbox(xy, text, font=font, anchor=anchor, **kw)
+        tops, bottoms, right = [], [], xy[0]
+        for is_emoji, part, x, base, sprite in self._walk(xy, text, font, anchor):
+            if is_emoji:
+                img, _left, top, advance = sprite
+                tops.append(base + top)
+                bottoms.append(base + top + img.height)
+                right = x + advance
+            else:
+                box = self._inner.textbbox((x, xy[1]), part, font=font, anchor=anchor, **kw)
+                tops.append(box[1])
+                bottoms.append(box[3])
+                right = max(right, box[2])
+        return (xy[0], round(min(tops)), round(right), round(max(bottoms)))
+
+    def text(self, xy, text, font=None, fill=None, anchor=None, **kw):
+        if _emoji_runs(text) is None:
+            self._inner.text(xy, text, font=font, fill=fill, anchor=anchor, **kw)
+            return
+        from PIL import Image  # noqa: PLC0415
+
+        for is_emoji, part, x, base, sprite in self._walk(xy, text, font, anchor):
+            if not is_emoji:
+                self._inner.text((x, xy[1]), part, font=font, fill=fill, anchor=anchor, **kw)
+                continue
+            if self._mode == "skip":
+                continue
+            img, left, top, _advance = sprite
+            if self._mode == "silhouette":
+                rgba = tuple(fill) if isinstance(fill, tuple) else (0, 0, 0, 160)
+                shape = Image.new("RGBA", img.size, rgba[:3] + (0,))
+                alpha = img.getchannel("A").point(lambda a, s=rgba[3]: a * s // 255)
+                shape.putalpha(alpha)
+                img = shape
+            _composite_clipped(self._image, img, round(x + left), round(base + top))
+
+
+def _pillow_text_advance(draw, text: str, font) -> float:
+    if hasattr(draw, "textlength"):
+        return float(draw.textlength(text, font=font))
+    return float(font.getlength(text))
+
+
+def _authored_rows_pillow(
+    text: str, resolve_font, size: int, max_width: float, draw
+) -> tuple[object, int, list[str]]:
+    """Pillow/libass twin of Skia ``_authored_lines`` (KRI-826).
+
+    The creator's line breaks are hard breaks; a line that fits ``max_width`` stays
+    one row at the creator's size; a wider line soft-wraps at word boundaries; only a
+    single word still wider than ``max_width`` shrinks the whole text, never below
+    ``min(size, 24)``. ``resolve_font(px)`` returns the face at ``px`` (or None).
+    """
+    raw = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+
+    def width(font, line: str) -> int:
+        box = draw.textbbox((0, 0), line, font=font)
+        return box[2] - box[0]
+
+    def layout(font) -> tuple[list[str], int]:
+        rows: list[str] = []
+        for line in raw:
+            if not line or width(font, line) <= max_width:
+                rows.append(line)
+            else:
+                rows.extend(_wrap_text_to_lines(line, font, int(max_width), draw))
+        return rows, max((width(font, row) for row in rows if row), default=0)
+
+    font = resolve_font(size)
+    if font is None:
+        return None, size, raw
+    rows, widest = layout(font)
+    floor = min(size, 24)
+    while widest > max_width and size > floor:
+        smaller = max(floor, min(size - 1, int(size * 0.9)))
+        candidate = resolve_font(smaller)
+        if candidate is None:
+            break
+        font, size = candidate, smaller
+        rows, widest = layout(font)
+    return font, size, rows
 
 
 def _draw_text_png(
@@ -2635,6 +2888,10 @@ def _draw_text_png(
     draw = ImageDraw.Draw(img)
     if letter_spacing:
         draw = _SpacedDraw(draw, letter_spacing)
+    # KRI-826: inline emoji draw from the color emoji face, not as boxes.
+    inline_emoji = _emoji_runs(text) is not None
+    if inline_emoji:
+        draw = _EmojiDraw(draw, img, "skip")
 
     # Resolve font: pre-loaded > font_family > font_style
     # Track whether we own font resolution — only then do we shrink on overflow.
@@ -2658,6 +2915,28 @@ def _draw_text_png(
         if wrap_lines
         else text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     )
+    if not wrap_lines and own_font:
+        # KRI-826: the creator's own lines keep their breaks but stay inside the
+        # frame, the same rule as Skia `_authored_lines` / iOS `AuthoredTextFit`.
+        from app.pipeline.text_fit import authored_safe_width  # noqa: PLC0415
+
+        def _font_at(px: int):
+            if font_family:
+                found = _resolve_font_family(
+                    glyph_safe_family(font_family, text) or font_family, px
+                )
+                if found is not None:
+                    return found
+            return _load_styled_font(font_style, text_size, text_size_px=px)
+
+        fitted, size, lines = _authored_rows_pillow(
+            text,
+            _font_at,
+            size,
+            authored_safe_width(CANVAS_W, position_x_frac, text_anchor),
+            draw,
+        )
+        font = fitted or font
 
     # Safety: if a single word can't be word-wrapped to fit (no spaces, very
     # long URL), shrink the font until the widest line fits. Caps iterations
@@ -2759,6 +3038,9 @@ def _draw_text_png(
     if letter_spacing:
         shadow_draw = _SpacedDraw(shadow_draw, letter_spacing)
         fg_draw = _SpacedDraw(fg_draw, letter_spacing)
+    if inline_emoji:
+        shadow_draw = _EmojiDraw(shadow_draw, shadow_layer, "silhouette")
+        fg_draw = _EmojiDraw(fg_draw, fg_layer, "color")
 
     # Pre-compute emoji metrics so we can offset the FIRST line's x position
     # to keep emoji + line 1 visually centered as one block. Without this
@@ -2937,6 +3219,8 @@ def _draw_text_png(
         # can use them as the gradient's alpha channel.
         mask_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
         mask_draw = ImageDraw.Draw(mask_layer)
+        if inline_emoji:
+            mask_draw = _EmojiDraw(mask_draw, mask_layer, "skip")
         for i, ln in enumerate(visible_lines):
             if text_anchor == "left":
                 mx = anchor_x

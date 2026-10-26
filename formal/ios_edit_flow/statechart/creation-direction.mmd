@@ -1,0 +1,104 @@
+---
+title: "Approving Kria's plan (direction stage)"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+    direction TB
+
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:2645
+    state "Kria proposed a plan" as proposed
+
+    %% ---- Older projects (runtime v1): plan card with Create button ----
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1688
+    state "Plan card: Create this video<br/>(older projects)" as v1Card
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:2130
+    state "Sending your Create tap" as v1Sending
+    %% src/apps/ios/Kria/Features/CreationConfirmationStage.swift:27
+    state "Wait for the current render<br/>(same button works later)" as v1Wait
+    %% src/apps/ios/Kria/Features/CreationConfirmationStage.swift:30
+    state "This project changed.<br/>Review and try again" as v1Changed
+    %% src/apps/ios/Kria/Features/CreationConfirmationStage.swift:41
+    state "Degraded: server jargon shown<br/>as-is, + Refresh the direction" as v1RawReason
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1859
+    state "Kria re-plans with<br/>your current footage" as v1Replanning
+    %% src/apps/ios/Kria/Features/CreationConfirmationStage.swift:157
+    state "Speech check card<br/>(clean up / keep / skip)" as speechCheck
+
+    %% ---- Current projects (runtime v2): approval card ----
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1671
+    state "Approval card: Create this video" as v2Card
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:2555
+    state "Wait for footage to upload" as v2WaitUploads
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:2583
+    state "Recording your decision" as v2Deciding
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:2598
+    state "Speech check changed,<br/>same card refreshed" as v2SpeechRefresh
+    %% src/apps/api/app/kria/runtime.py:2535
+    state "Stuck: Kria couldn't record<br/>that decision (every tap)" as v2Loop
+    %% src/apps/api/app/kria/runtime.py:2426
+    state "Plan was for an old version,<br/>Kria cancelled it" as v2StaleCancelled
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:2521
+    state "Approval expired.<br/>Send a message for a new one" as v2Expired
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:2617
+    state "Video shape not offered,<br/>reason shown" as v2ShapeRefused
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:2625
+    state "You said no.<br/>Tell Kria what to change" as declined
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1948
+    state "Kria is thinking" as thinking
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1707
+    state "Video is being made" as rendering
+
+    [*] --> proposed
+    proposed --> v1Card : Older project
+    proposed --> v2Card : Current project
+
+    v1Card --> v1Sending : Tap Create
+    v1Sending --> rendering : Server accepts
+    v1Sending --> v1Wait : Old render still running
+    v1Sending --> v1Changed : Revision or plan moved
+    v1Sending --> v1RawReason : Other refusal (about 17)
+    v1Sending --> speechCheck : Speech check needed
+    v1Wait --> v1Sending : Tap Create again later
+    v1Changed --> v1Card : Refreshed card appears
+    v1RawReason --> v1Replanning : Tap Refresh the direction
+    v1Replanning --> v1Card : New plan, new hash
+    speechCheck --> v1Sending : Pick an option
+
+    v2Card --> v2WaitUploads : Tap Create, clips uploading
+    v2WaitUploads --> v2Card : Uploads finish
+    v2Card --> v2Deciding : Tap Create
+    v2Card --> v2Deciding : Tap No thanks
+    v2Card --> v2Expired : Timer ran out
+    v2Deciding --> rendering : Approved
+    v2Deciding --> declined : Declined
+    v2Deciding --> v2SpeechRefresh : Speech-cleanup 409
+    v2SpeechRefresh --> v2Card : Choose again
+    v2Deciding --> v2Card : Revision moved, retry works
+    v2Deciding --> v2Loop : Draft saved elsewhere (409)
+    v2Loop --> v2Loop : Send a message (queued, waits)
+    v2Loop --> v2Deciding : Tap Create again
+    v2Loop --> v2Expired : Waits for expiry
+    v2Loop --> declined : Tap No thanks
+    v2Deciding --> v2StaleCancelled : Target stale
+    v2Deciding --> v2ShapeRefused : Shape 422
+    v2ShapeRefused --> v2Card : Pick another shape
+    v2StaleCancelled --> thinking : Send a message
+    v2Expired --> thinking : Send a message
+    declined --> thinking : Send a message
+    thinking --> proposed : New plan
+    rendering --> [*]
+
+    classDef working fill:#e8f0fe,stroke:#4a6fa5,color:#1b2631
+    classDef yourturn fill:#e6f4ea,stroke:#3d7a4f,color:#1b2631
+    classDef done fill:#d5f5e3,stroke:#1e8449,color:#145a32
+    classDef stuck fill:#fde7e9,stroke:#c0392b,stroke-width:3px,color:#641e16
+    classDef degraded fill:#fef5e7,stroke:#b9770e,stroke-width:2px,color:#6e2c00
+    classDef failed fill:#f4f6f7,stroke:#566573,color:#1b2631
+
+    class proposed,v1Sending,v1Replanning,v2Deciding,thinking,rendering working
+    class v1Card,v1Wait,v1Changed,speechCheck,v2Card,v2WaitUploads,v2SpeechRefresh,v2Expired,declined,v2ShapeRefused,v2StaleCancelled yourturn
+    class v2Loop stuck
+    class v1RawReason degraded

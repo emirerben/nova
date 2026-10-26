@@ -19,6 +19,7 @@ from app.kria.brief import (
     apply_updates,
     bind_updates,
     parse_brief_updates,
+    start_fresh_updates,
 )
 from app.pipeline.prompt_loader import load_prompt
 
@@ -34,7 +35,19 @@ from app.pipeline.prompt_loader import load_prompt
 # v17 (KRI-814): shared brief section teaches the typed `delegates_all_choices` declaration.
 # v18 (KRI-814): earlier creator lines never read into the brief are read with the current one.
 # v20 combines delegation v18 with subtitle-semantics v19 in the shared brief.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-23-v20"
+# v21 (KRI-816): shared brief section teaches the typed `starts_fresh` declaration.
+# v22 (KRI-827): the shared brief section also records `keep_text_off` facts.
+# v21 (KRI-724): shared brief records `speech_remove` {quote, occurrence} and
+# `noise_reduction: "engine"`, on top of v20.
+# v21 (KRI-840): shared brief records `display_mode` ("fullscreen" / "pip") for a timed photo ask.
+# v21 (KRI-841): shared brief records a video added after the talk as `ending_clip` + `keep_audio`.
+# v21 (KRI-842): the shared brief records `clip_sound` (one clip's sound under / after a voice).
+# v21 (KRI-847): shared brief records a ceiling length as `duration_bound: "at_most"`.
+# v21 (KRI-849): shared brief records `ask_if_unclear` and the creator's `unclear_answer`.
+# v34 (KRI-881): main's v33 plus the shared brief section typing a research ask
+# (`facts.research`).
+# v35 (KRI-689): the shared brief section records a clip-speed ask as `facts.playback_rate`.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-25-v35"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
@@ -136,7 +149,13 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
     def parse(self, raw_text: str, input: BriefExtractionInput) -> BriefExtractionOutput:  # noqa: A002, ARG002
         try:
             data = json.loads(raw_text)
-            allowed = {"brief_updates", "request_scope", "clarification", "delegates_all_choices"}
+            allowed = {
+                "brief_updates",
+                "request_scope",
+                "clarification",
+                "delegates_all_choices",
+                "starts_fresh",
+            }
             if (
                 not isinstance(data, dict)
                 or not set(data) <= allowed
@@ -164,6 +183,7 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
                 if scope != "clarify" and clarification is not None:
                     raise ValueError("only clarify scope may include clarification")
             updates = parse_brief_updates(data["brief_updates"])
+            starts_fresh = data.get("starts_fresh") is True
             # Keep old direct callers compatible: only planner-supplied context
             # enables ledger validation.  The planner always supplies the field,
             # including an empty brief, so non-additive updates fail closed.
@@ -174,11 +194,14 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
                 # ledger here: apply_updates and the final persistence CAS must still
                 # reject genuinely stale work.
                 updates = list(bind_updates(input.current_brief, updates))
+                if starts_fresh:
+                    updates = list(start_fresh_updates(input.current_brief, updates))
                 apply_updates(input.current_brief or CreativeBrief(), updates, source_turn_id=None)
             return BriefExtractionOutput(
                 brief_updates=updates,
                 # KRI-814: a declaration beside stated requirements fails closed.
                 delegates_all_choices=data.get("delegates_all_choices") is True and not updates,
+                starts_fresh=starts_fresh,
                 request_scope=scope,
                 clarification=clarification,
             )

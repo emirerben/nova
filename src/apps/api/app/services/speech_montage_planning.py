@@ -194,11 +194,15 @@ def plan_speech_montage(
     run_planner: PlannerRunner,
     load_words: WordLoader,
     target_duration_s: float | None = None,
+    target_is_ceiling: bool = False,
     voice_media_ids: Collection[str] = (),
     required_source_ids: Sequence[str] = (),
     speech_required: bool = False,
 ) -> SpeechMontageResolution:
     """See the module docstring. Never raises for planner/transcription trouble.
+
+    ``target_is_ceiling`` (KRI-847, "at most 30 seconds"): a result shorter than the target
+    is not a shortfall, so the "shorter than the ~Ns you asked for" note is never added.
 
     ``voice_media_ids`` are the clips the creator's strategy already named as THE
     voice (``montage_audio.source_media_ids``). When one of them has usable speech
@@ -302,7 +306,12 @@ def plan_speech_montage(
     if not speech:
         return SpeechMontageResolution("needs_creator", question=NO_SPEECH_QUESTION)
     resolution = _ground(plan, speech_refs, others)
-    if voice_pinned and target_duration_s and resolution.status == "ready":
+    if (
+        voice_pinned
+        and target_duration_s
+        and not target_is_ceiling
+        and resolution.status == "ready"
+    ):
         total = sum(
             (s.source_end_s - s.source_start_s) if s.kind == "speech" else s.duration_s
             for s in resolution.sections

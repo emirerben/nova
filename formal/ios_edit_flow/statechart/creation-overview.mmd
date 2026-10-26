@@ -1,0 +1,114 @@
+---
+title: "Making a video on iPhone: the big picture"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+    direction TB
+
+    %% src/apps/ios/Kria/Features/SlidePostRouting.swift:64
+    state "Opening your project…" as opening
+    %% src/apps/ios/Kria/Features/SlidePostRouting.swift:96
+    state "Couldn't open this project<br/>(Try again)" as cantOpen
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1633
+    state "Loading formats" as loadingFormats
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1635
+    state "Formats didn't load<br/>(Retry card)" as formatsFailed
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1634
+    state "Pick a format<br/>Montage / Narrated / Talking / Slider" as pickFormat
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:2130
+    state "Saving your format choice" as savingFormat
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1640
+    state "Add your footage" as addFootage
+    %% src/apps/ios/Kria/Core/BackgroundUploads.swift:1370
+    state "Uploading clips" as uploading
+    %% src/apps/ios/Kria/Core/BackgroundUploads.swift:1390
+    state "Upload failed<br/>(Retry on the clip)" as uploadFailed
+    %% src/apps/ios/Kria/Core/BackgroundUploads.swift:1312
+    state "Stuck: upload neither running<br/>nor failed, Send stays locked" as uploadLimbo
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1372
+    state "Slider workspace<br/>(see creation-slider)" as slider
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1948
+    state "Kria is thinking<br/>about your message" as thinking
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:2029
+    state "Message bounced<br/>(text kept, send again)" as messageBounced
+    %% src/apps/ios/Kria/Core/Services.swift:571
+    state "Kria is preparing your clips" as preparing
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1798
+    state "Clip preparation failed<br/>(Retry preparing clips)" as prepFailed
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1669
+    state "Your turn: approve the plan<br/>(see creation-direction)" as direction
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1707
+    state "Video is being made<br/>(see creation-rendering)" as rendering
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1722
+    state "Ready, still working out<br/>what kind of project" as readyResolving
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1728
+    state "Your video is ready" as ready
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:2994
+    state "Degraded: planned video of an<br/>unknown style, + Add is dead" as unknownStyle
+    %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1786
+    state "Video wasn't made<br/>(see creation-rendering)" as failed
+
+    [*] --> pickFormat : New chat
+    [*] --> opening : Open older project
+    opening --> pickFormat : Format known, still a draft
+    opening --> ready : Format known, video done
+    opening --> slider : It is a slider post
+    opening --> cantOpen : 5 tries in a row fail
+    cantOpen --> opening : Tap Try again
+
+    pickFormat --> loadingFormats : Formats not loaded yet
+    loadingFormats --> pickFormat : Server lists formats
+    loadingFormats --> formatsFailed : All retries fail
+    formatsFailed --> loadingFormats : Tap Retry
+    pickFormat --> savingFormat : Tap a format
+    savingFormat --> addFootage : Saved (video formats)
+    savingFormat --> slider : Saved (Slider)
+    savingFormat --> pickFormat : Refused, reason shown
+
+    addFootage --> pickFormat : Tap Change format
+    addFootage --> uploading : Choose clips
+    uploading --> addFootage : All clips attached
+    uploading --> uploadFailed : Upload fails twice
+    uploadFailed --> uploading : Tap Retry
+    uploading --> uploadLimbo : App killed mid-retry
+    uploadLimbo --> uploadFailed : iOS reports the cancel
+    addFootage --> thinking : Send message or footage
+    addFootage --> messageBounced : Project changed elsewhere
+    messageBounced --> addFootage : Send again
+
+    thinking --> preparing : Kria starts on the clips
+    thinking --> direction : Kria proposes a plan
+    thinking --> addFootage : Kria replies or reports an error
+    preparing --> direction : Clips ready, plan proposed
+    preparing --> prepFailed : Preparation fails
+    prepFailed --> preparing : Tap Retry preparing clips
+
+    direction --> rendering : You approve
+    direction --> thinking : You ask for changes
+    rendering --> ready : Video finished
+    rendering --> failed : Render failed
+    failed --> direction : Retry approved edit
+    failed --> thinking : Tell Kria what to change
+    ready --> thinking : Ask for another version
+    ready --> direction : New plan proposed
+    ready --> readyResolving : Opened before details load
+    readyResolving --> ready : Project details arrive
+    ready --> unknownStyle : Style not in iPhone's list
+    ready --> [*]
+
+    classDef working fill:#e8f0fe,stroke:#4a6fa5,color:#1b2631
+    classDef yourturn fill:#e6f4ea,stroke:#3d7a4f,color:#1b2631
+    classDef done fill:#d5f5e3,stroke:#1e8449,color:#145a32
+    classDef stuck fill:#fde7e9,stroke:#c0392b,stroke-width:3px,color:#641e16
+    classDef degraded fill:#fef5e7,stroke:#b9770e,stroke-width:2px,color:#6e2c00
+    classDef failed fill:#f4f6f7,stroke:#566573,color:#1b2631
+
+    class opening,loadingFormats,savingFormat,uploading,thinking,preparing,rendering,readyResolving working
+    class pickFormat,addFootage,direction,slider,messageBounced yourturn
+    class ready done
+    class uploadLimbo stuck
+    class unknownStyle degraded
+    class cantOpen,formatsFailed,uploadFailed,prepFailed,failed failed

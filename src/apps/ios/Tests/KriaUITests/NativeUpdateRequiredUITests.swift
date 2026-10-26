@@ -26,7 +26,7 @@ import XCTest
 
         for (arguments, routeIdentifier) in routes {
             let app = launch(routeArguments: arguments)
-            XCTAssertTrue(app.staticTexts["This version of Kria is no longer supported. Update the app from the App Store, then reopen it."].exists)
+            XCTAssertTrue(app.staticTexts["This version of Kria is no longer supported. Get the update in TestFlight, then reopen Kria."].exists)
             XCTAssertFalse(app.descendants(matching: .any)[routeIdentifier].exists,
                            "The update requirement must replace the \(routeIdentifier) route")
             app.terminate()

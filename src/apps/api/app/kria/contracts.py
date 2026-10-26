@@ -63,12 +63,28 @@ class KriaTurnPlan(_KriaModel):
     song_range_question: SongRangeQuestion | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    # KRI-901: "mark the plate on one frame" before approval (`protected_targets.
+    # build_protected_region_question`). Same omit-when-unset rule.
+    protected_region_question: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: not value
+    )
+    # KRI-723: "put your moments in order and show me where each one is" (named moments of one
+    # take the clip record cannot place). Same omit-when-unset rule.
+    moment_order_question: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: not value
+    )
     # KRI-282: conflict-choice payload (options to tap). Same omit-when-unset rule.
     choice_question: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: not value)
     # KRI-738: tappable lengths for a "how short/long?" question. Plain text answers (the tap
     # sends the chip's text), unlike ``choice_question``. Same omit-when-unset rule.
     reply_options: list[str] | None = Field(
         default=None, max_length=4, exclude_if=lambda value: not value
+    )
+    # KRI-815: a footage-grounded voiceover script (or the honest "couldn't write it" record)
+    # with its record/import continuation; see `app.kria.voiceover_script`. Spoken words only:
+    # never overlay/caption text and never creator intent. Same omit-when-unset rule.
+    voiceover_script: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: not value
     )
 
     @field_validator("intents")

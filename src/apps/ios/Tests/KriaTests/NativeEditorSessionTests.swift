@@ -376,6 +376,31 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(levels.allSatisfy { $0 > 0 })
     }
 
+    /// KRI-821: a phone Voiceover (narrated) edit reopens Sounds > Original audio at the level its render (or
+    /// the creator's last Save) pinned, and its Save carries only `mix.original_level` (the server recompiles
+    /// `audio.original_volume`; the narration keeps its own level).
+    func testNarratedOriginalAudioReopensAtTheSavedLevelAndSavesOnlyThatLevel() async throws {
+        let (session, fake, _) = try await userSongSession(
+            mode: "background", caps: ["volume": true, "window": true, "remove": true],
+            originalAudio: true, savedOriginalLevel: 0
+        ) { variant in
+            variant["resolved_archetype"] = .string("narrated")
+            variant["source_audio_preserved"] = .bool(true)
+        }
+        XCTAssertTrue(session.hasOriginalAudioControl)
+        XCTAssertEqual(session.originalAudioLevel, 0, accuracy: 0.001, "a muted render reopens muted, not at full volume")
+        XCTAssertFalse(session.hasUnsavedChanges)
+
+        session.setOriginalAudioLevel(0.3)
+        XCTAssertTrue(session.isDirty(.mix))
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
+            sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: false, mix: true),
+            revisionNumber: 2, revisionHash: "h2", expectedDuration: nil)
+        await session.save()
+        let request = try XCTUnwrap(fake.lastRequest)
+        XCTAssertEqual(request.mix, ["original_level": .number(0.3)])
+    }
+
     /// A lip-sync song keeps its start (each take's offset depends on it): the start setter is a no-op that
     /// never dirties the edit, while volume and remove still work.
     func testLipSyncSongLocksStartButKeepsVolumeAndRemove() async throws {
@@ -499,8 +524,15 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.commitCount, count + 1)
         XCTAssertNil(fake.lastRequest?.userSong, "a retry does not resend the removal")
 
-        session.saveState = .conflict
-        await session.rebaseAfterConflict()
+        // A newer version refuses the next Save: the automatic reload and resend keep the removal folded.
+        fake.commitErrorQueue = [.conflict]
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-3",
+            sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false),
+            revisionNumber: 3, revisionHash: "h", expectedDuration: nil)
+        session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.5)
+        await session.save()
+        XCTAssertEqual(fake.commitCount, count + 3, "the refused save is resent once, automatically")
+        XCTAssertNil(fake.lastRequest?.userSong, "the automatic resend does not resend the removal")
         XCTAssertNil(session.document.userSong)
         XCTAssertFalse(session.hasUnsavedChanges)
         await session.retryRender()
@@ -2382,14 +2414,22 @@ final class NativeEditorSessionTests: XCTestCase {
         await session.synchronizePromptRevision()
         XCTAssertEqual(session.document, local)
         XCTAssertTrue(session.hasUnsavedChanges)
+        // KRI-935: a newer render loads by itself and the unsaved trim rides on top of it.
         fake.authoritativeVariant = Self.variant(duration: 2, generation: "g2")
         await session.synchronizePromptRevision()
-        XCTAssertEqual(session.document, local)
-        XCTAssertEqual(session.saveState, .conflict)
+        XCTAssertEqual(session.document.clips, local.clips)
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertEqual(session.saveState, .idle)
         XCTAssertEqual(fake.draftCallCount, 0)
+        session.undo()
+        XCTAssertFalse(session.hasUnsavedChanges, "one Undo drops the replayed edit, leaving the newest version")
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
     }
 
-    func testLegacyRefreshRejectsMissingOrUnknownSelectionWithoutLoadedTargetFallback() async throws {
+    /// S2-f: a legacy thread between jobs (no usable selection yet) is a normal moment. The sync
+    /// keeps the loaded edit, never mixes IDs, and shows nothing.
+    func testLegacyRefreshWithMissingOrUnknownSelectionIsANoOpWithoutLoadedTargetFallback() async throws {
         let jobID = UUID()
         let threadID = UUID()
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
@@ -2424,10 +2464,17 @@ final class NativeEditorSessionTests: XCTestCase {
             XCTAssertEqual(session.document, original)
             XCTAssertFalse(session.hasUnsavedChanges)
             XCTAssertEqual(fake.draftCallCount, 0)
-            guard case .refreshFailed = session.saveState else {
-                return XCTFail("Invalid selection must report a refresh failure")
-            }
+            XCTAssertEqual(session.saveState, .idle, "a selection that isn't there yet is not a failure")
+            XCTAssertEqual(session.refreshSync, .idle)
         }
+        // A reset legacy thread (no active job) is the same no-op.
+        fake.refreshedThread = try decoder.decode(CreationThread.self, from: Data(#"""
+        {"id":"\#(threadID.uuidString)","title":"Legacy","status":"active","revision":9,"runtime_version":1,
+         "state":{},"updated_at":"2026-09-09T08:00:00Z"}
+        """#.utf8))
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document, original)
+        XCTAssertEqual(session.saveState, .idle)
     }
 
     func testLegacyVisualRemovalRefreshKeepsSelectedRenderingVariant() async throws {
@@ -2542,63 +2589,70 @@ final class NativeEditorSessionTests: XCTestCase {
         await session.synchronizePromptRevision()
         XCTAssertEqual(session.document, afterSave)
         XCTAssertTrue(session.hasUnsavedChanges)
-        XCTAssertNotEqual(session.saveState, .conflict)
 
         fake.authoritativeVariant = Self.variant(duration: 1.4, generation: "g3")
         await session.synchronizePromptRevision()
-        XCTAssertEqual(session.saveState, .conflict)
-        await session.rebaseAfterConflict()
         let rebased = session.document
         XCTAssertTrue(session.hasUnsavedChanges)
-        XCTAssertEqual(rebased.revision.baseGeneration, "g3")
+        XCTAssertEqual(rebased.revision.baseGeneration, "g3", "the newest render loaded without a prompt")
+        XCTAssertEqual(rebased.clips, afterSave.clips, "with the unsaved trim kept on top")
         await session.synchronizePromptRevision()
         XCTAssertEqual(session.document, rebased)
-        XCTAssertNotEqual(session.saveState, .conflict)
         XCTAssertEqual(fake.draftCallCount, 0)
     }
 
-    func testPromptRefreshRecoveryClearsFailureForUnchangedDocument() async {
+    /// S2-b: a 503 during the refresh is a server hiccup. It never reaches the save banner, a quiet
+    /// hint appears only once it keeps failing, and the next good read clears it.
+    func testPromptRefreshServerFailureStaysOutOfTheSaveBannerAndClearsOnTheNextGoodRead() async {
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
             draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
             snapshotHash: "h", etag: "e", baseJobID: nil, baseGenerationID: nil,
             snapshot: [:], canUndo: false, createdAt: .now))
         let session = NativeEditorSession()
         await session.load(api: fake, threadID: UUID())
+        session.refreshRetryDelays = [.seconds(3600)]
         let baseline = session.document
         fake.draftError = .requestFailed(status: 503)
-        await session.synchronizePromptRevision()
-        guard case .refreshFailed = session.saveState else { return XCTFail("Expected refresh failure") }
-        // Repeated failures must retain the original state, not the last error.
-        await session.synchronizePromptRevision()
+        for attempt in 1...NativeEditorSession.reconnectingHintAfterFailures {
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.saveState, .idle, "a failed background read is not a save problem")
+            XCTAssertEqual(session.refreshSync, attempt < NativeEditorSession.reconnectingHintAfterFailures ? .idle : .reconnecting)
+        }
         fake.draftError = nil
         await session.synchronizePromptRevision()
         XCTAssertEqual(session.document, baseline)
         XCTAssertEqual(session.saveState, .idle)
+        XCTAssertEqual(session.refreshSync, .idle)
     }
 
-    func testPromptRefreshRecoveryPreservesUnrelatedSaveAndRenderFailures() async {
+    /// S2-i: every save/render recovery state keeps its banner and button through refresh failures
+    /// of every kind, and through the refresh recovering afterwards.
+    func testRefreshFailuresNeverReplaceASaveOrRenderRecoveryState() async {
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
             draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
             snapshotHash: "h", etag: "e", baseJobID: nil, baseGenerationID: nil,
             snapshot: [:], canUndo: false, createdAt: .now))
         let session = NativeEditorSession()
         await session.load(api: fake, threadID: UUID())
-        let failures: [NativeEditorSaveState] = [.failed("Save failed"), .renderRetryNeeded("Render failed")]
-        for failure in failures {
-            session.saveState = failure
-            fake.draftError = .requestFailed(status: 503)
-            await session.synchronizePromptRevision()
+        session.refreshRetryDelays = [.seconds(3600)]
+        let recoveries: [NativeEditorSaveState] = [
+            .renderRetryNeeded("Render failed"), .deviceRenderRetryNeeded("Device failed"),
+            .previewFailed("Preview slow"), .failed("Save failed"),
+        ]
+        let failures: [APIError] = [
+            .offline, .requestFailed(status: 503), .requestFailed(status: 429), .conflict,
+            .invalidResponse, .sessionExpired, .nativeUpdateRequired,
+        ]
+        for recovery in recoveries {
+            session.saveState = recovery
+            for failure in failures {
+                fake.draftError = failure
+                await session.synchronizePromptRevision()
+                XCTAssertEqual(session.saveState, recovery, "\(failure) must not hide \(recovery)")
+            }
             fake.draftError = nil
             await session.synchronizePromptRevision()
-            XCTAssertEqual(session.saveState, failure, "Restore the failure that preceded the refresh")
-
-            session.saveState = .idle
-            fake.draftError = .requestFailed(status: 503)
-            await session.synchronizePromptRevision()
-            session.saveState = failure
-            fake.draftError = nil
-            await session.synchronizePromptRevision()
-            XCTAssertEqual(session.saveState, failure, "Keep a newer save/render failure")
+            XCTAssertEqual(session.saveState, recovery, "a recovered refresh must not replace \(recovery) either")
         }
     }
 
@@ -4328,6 +4382,24 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(voiced.clips.map(\.trimIn), [1, 0])
     }
 
+    func testPhoneNarratedSelectedSourceAudioHydratesFinalBedGainOnly() {
+        let server = DraftSnapshot(draftID: "job", itemID: "item", variantKey: "v", draftRevision: 0,
+                                   snapshotHash: "", etag: "", baseJobID: UUID().uuidString,
+                                   baseGenerationID: "generation", snapshot: [:], canUndo: false, createdAt: .now)
+        var selected: [String: JSONValue] = [
+            "resolved_archetype": .string("narrated"), "render_destination": .string("device"),
+            "source_audio_media_ids": .array([.string("media-1")]),
+            "source_audio_bed_gain": .number(0.0875),
+            "voiceover_bed_level": .number(0.25),
+        ]
+        let selectedDocument = EditorDocument(snapshot: server.editorDraft(projectID: UUID(), authoritativeVariant: selected).serverSnapshot)
+        XCTAssertEqual(selectedDocument.mix["original_level"], .number(0.0875), "the final ducked gain, not the display level")
+
+        selected.removeValue(forKey: "source_audio_media_ids")
+        let legacyDocument = EditorDocument(snapshot: server.editorDraft(projectID: UUID(), authoritativeVariant: selected).serverSnapshot)
+        XCTAssertNil(legacyDocument.mix["original_level"], "an unselected narrated variant remains legacy-muted")
+    }
+
     func testAuthoritativeVariantReplacesAdvancedCapabilitiesAndRequiredMotionHash() {
         let snapshot: [String: JSONValue] = [
             "editor_capabilities": .object([
@@ -4559,13 +4631,19 @@ final class NativeEditorSessionTests: XCTestCase {
             id: threadID, title: "Draft", status: .draft, updatedAt: .now, posterURL: nil
         )
         let session = NativeEditorSession(project: project)
+        session.loadRetryDelays = [.milliseconds(1)]
 
         await session.load(project: project, api: fake)
+        // A 5xx first waits quietly behind the opening screen (L-c); only a lasting one shows.
+        XCTAssertEqual(session.loadState, .loading)
+        let deadline = ContinuousClock.now + .seconds(5)
+        while session.loadState == .loading, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
 
         XCTAssertEqual(
             session.saveState,
             .loadFailed("Kria hit a problem on its side. Your chat and footage are safe. Try again in a moment.")
         )
+        XCTAssertEqual(fake.draftCallCount, 1 + NativeEditorSession.loadTransientRetryLimit)
     }
 
     func testDraftLoadFailsWhenAuthoritativeVariantCannotBeFetched() async {
@@ -5037,7 +5115,8 @@ final class NativeEditorSessionTests: XCTestCase {
             XCTAssertEqual(job, jobID)
             XCTAssertEqual(variant, "variant")
             await MainActor.run { fake.deviceFetchCount += 1 }
-            throw APIError.requestFailed(status: 503)
+            // A 4xx the phone can't classify: a 503 now waits and retries on its own.
+            throw APIError.requestFailed(status: 400)
         }, factory: { _, _ in throw APIError.unsupported })
         let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 4))
         session.useDeviceRendering(renderSessions)
@@ -5057,6 +5136,96 @@ final class NativeEditorSessionTests: XCTestCase {
         await session.retryDeviceRender()
         XCTAssertEqual(fake.deviceFetchCount, 2, "A local preparation failure retries reconciliation without a server retry or another Save")
         XCTAssertEqual(fake.commitCount, 1)
+    }
+
+    /// Failure modes: an edit this iPhone declined (`unsupported_recipe`) or an outdated app put up
+    /// "Retry device render", and every retry re-pinned the same recipe into the same decline (a loop
+    /// with no way out). The banner must offer the conversation (or Update Kria), and the retry entry
+    /// point must refuse those reasons even when a stale banner calls it.
+    func testDeclinedEditOffersChatInsteadOfARetryThatLoops() async {
+        let threadID = UUID(), jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 4, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+        fake.phoneDestination = true
+        let request = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
+        let statusBox = SessionTestStatus(DeviceRenderStatusResponse(phase: "needs_attention", request: request, reasonCode: "unsupported_recipe"))
+        let retries = SessionTestCounter()
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let renderSessions = DeviceRenderSessions(fetch: { _, _ in
+            await MainActor.run { fake.deviceFetchCount += 1 }
+            return await statusBox.response
+        }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: SessionTestExport(), sources: SessionTestSources(), publisher: SessionTestPublisher())
+        }, retryFailure: { _, _, _ in
+            await retries.increment()
+            throw APIError.conflict(detail: ConflictDetail("This edit needs a change.", code: "requires_change"))
+        })
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 4))
+        session.useDeviceRendering(renderSessions)
+        await session.load(api: fake, threadID: threadID)
+        session.selectClip(session.draft.clips[0].id)
+        session.trimSelected(edge: .trailing, to: 1.5)
+        await session.save()
+        guard case .deviceRenderRetryNeeded = session.saveState else {
+            return XCTFail("setup: the declined render shows the device banner: \(session.saveState)")
+        }
+        XCTAssertEqual(session.deviceRenderNextStep, .reviewInChat)
+        XCTAssertEqual(NativeEditorSaveBanner.deviceTitle(.reviewInChat), "Saved — this edit needs a change")
+        let reads = fake.deviceFetchCount
+        await session.retryDeviceRender()
+        let retried = await retries.value
+        XCTAssertEqual(retried, 0, "no /retry for an edit only a change can fix")
+        XCTAssertEqual(fake.deviceFetchCount, reads, "no reconcile loop either")
+
+        await statusBox.set(DeviceRenderStatusResponse(phase: "needs_attention", request: request, reasonCode: "renderer_outdated"))
+        let key = DeviceRenderKey(projectID: threadID, jobID: jobID, variantID: "variant")
+        await renderSessions.reconcile(key, capabilities: PhoneRenderingCapabilities(enabled: true, recipeVersions: [], verifiedFeatures: []))
+        let outdated = await waitUntil(timeout: .seconds(5)) { session.deviceRenderNextStep == .updateApp }
+        XCTAssertTrue(outdated, "an outdated app is told to update: \(String(describing: renderSessions.presentations[key]))")
+        await session.retryDeviceRender()
+        let stillNone = await retries.value
+        XCTAssertEqual(stillNone, 0)
+    }
+
+    /// Failure mode: "Saved — iPhone render needs a retry" was stored once and stayed after the chat
+    /// poll (or a Resume in the render sheet) healed the render, so the banner and its retry button
+    /// sat over a render that was already fine. The banner must follow the live render.
+    func testDeviceRetryBannerClearsWhenTheRenderHealsElsewhere() async {
+        let threadID = UUID(), jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 4, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+        fake.phoneDestination = true
+        let statusBox = SessionTestStatus(DeviceRenderStatusResponse(phase: "published", request: deviceRenderRequest(jobID: jobID, revision: 1, digest: "a"), publishedGeneration: "published-g2"))
+        let failing = SessionTestFlag(true)
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let renderSessions = DeviceRenderSessions(fetch: { _, _ in
+            if await failing.value { throw APIError.requestFailed(status: 400) }
+            return await statusBox.response
+        }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: SessionTestExport(), sources: SessionTestSources(), publisher: SessionTestPublisher())
+        })
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 4))
+        session.useDeviceRendering(renderSessions)
+        await session.load(api: fake, threadID: threadID)
+        session.selectClip(session.draft.clips[0].id)
+        session.trimSelected(edge: .trailing, to: 1.5)
+        await session.save()
+        guard case .deviceRenderRetryNeeded = session.saveState else {
+            return XCTFail("setup: the failed preparation shows the device retry banner: \(session.saveState)")
+        }
+
+        // The chat poll reconciles the same key and the server answers normally now.
+        await failing.set(false)
+        let key = DeviceRenderKey(projectID: threadID, jobID: jobID, variantID: "variant")
+        await renderSessions.reconcile(key, capabilities: PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.map(\.rawValue)))
+        XCTAssertEqual(renderSessions.presentations[key]?.phase, .synced)
+        let cleared = await waitUntil(timeout: .seconds(5)) {
+            if case .deviceRenderRetryNeeded = session.saveState { return false }
+            return true
+        }
+        XCTAssertTrue(cleared, "the retry banner follows the healed render: \(session.saveState)")
+        XCTAssertEqual(session.saveState, .previewPending, "back to waiting for this save's video, not a false Saved")
+        XCTAssertEqual(fake.commitCount, 1, "healing never re-saves")
     }
 
     /// KRI-227: a save acknowledgement moves the document to the commit generation (`g2`) before the
@@ -5303,7 +5472,9 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.saveState, .previewPending)
     }
 
-    func testSaveConflictPreservesLocalDocumentSelectionAndUndo() async {
+    /// KRI-935: a Save the server keeps refusing as stale is resent once after loading the newest version, then
+    /// stops on an ordinary Save failure. Never a loop, never a "reload" prompt, and the edit is never lost.
+    func testPersistentSaveConflictRetriesOnceAndKeepsLocalDocumentSelectionAndUndo() async {
         let threadID = UUID()
         let clipID = UUID()
         let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["timeline_slots": .array([.object(["slot_id": .string(clipID.uuidString), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2)])])])])]
@@ -5321,14 +5492,18 @@ final class NativeEditorSessionTests: XCTestCase {
 
         await session.save()
 
-        XCTAssertEqual(session.saveState, .conflict)
-        XCTAssertEqual(session.document, editedDocument)
+        XCTAssertEqual(fake.commitCount, 2, "one automatic resend after reloading the newest version, no loop")
+        guard case .failed(let message) = session.saveState else { return XCTFail("expected a Save failure, got \(session.saveState)") }
+        XCTAssertFalse(message.localizedCaseInsensitiveContains("reopen"))
+        XCTAssertEqual(session.document.clips, editedDocument.clips, "the local trim is replayed on the newest version")
         XCTAssertEqual(session.selectedClipID, selected)
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertTrue(session.canUndo)
     }
 
-    func testConflictRebaseKeepsLocalSectionsOnLatestServerBaseline() async {
+    /// KRI-935: Save meets a newer version saved elsewhere. Without asking, the editor loads it, keeps the local
+    /// text on top, and sends the Save again against the new baseline.
+    func testSaveConflictLoadsLatestKeepsLocalSectionsAndResendsAutomatically() async {
         let threadID = UUID()
         let textID = UUID().uuidString
         let snapshot: [String: JSONValue] = [
@@ -5354,32 +5529,65 @@ final class NativeEditorSessionTests: XCTestCase {
         ]
         let fake = EditorCommitSpy(
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
-            authoritativeVariant: latestVariant.merging(["render_generation_id": .string("g1")]) { _, new in new },
-            commitError: .conflict
+            authoritativeVariant: latestVariant.merging(["render_generation_id": .string("g1")]) { _, new in new }
         )
         let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
         await session.load(api: fake, threadID: threadID)
         session.updateTextContent(id: textID, content: "My local edit")
 
-        await session.save()
-        XCTAssertEqual(session.saveState, .conflict)
-
+        // Someone else saved g2; the server refuses this Save once as stale.
         fake.authoritativeVariant = latestVariant
-        let sourceRefresh = expectation(description: "Conflict rebase resolves new generation sources")
-        fake.sourcePoolExpectation = sourceRefresh
-        await session.rebaseAfterConflict()
-        await fulfillment(of: [sourceRefresh], timeout: 3)
-        XCTAssertEqual(fake.sourcePoolCallCount, 2)
+        fake.commitErrorQueue = [.conflict]
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "g3", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
+        await session.save()
 
-        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertEqual(fake.commitCount, 2, "the Save is resent once, without the creator asking")
+        XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2", "against the newest version")
+        XCTAssertEqual(fake.lastRequest?.textElements?.first?.objectValue?["text"]?.stringValue, "My local edit")
         XCTAssertEqual(session.document.textElements.first?.text, "My local edit")
-        XCTAssertTrue(session.hasUnsavedChanges)
-        XCTAssertTrue(session.canUndo)
-        XCTAssertEqual(session.saveState, .idle)
-
-        session.undo()
-        XCTAssertEqual(session.document.textElements.first?.text, "Changed elsewhere")
         XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertEqual(session.saveState, .previewPending)
+    }
+
+    /// KRI-935: a preview whose source pool answers 409 ("a newer version exists") loads the newest version on
+    /// its own, keeps the unsaved edit, and rebuilds. A server that keeps answering 409 gets one reload per
+    /// generation, then a Retry that reloads again: never "close and reopen", never an endless "Preparing preview".
+    func testPreviewConflictLoadsNewestVersionOncePerGenerationThenRetryReloads() async throws {
+        let threadID = UUID(), jobID = UUID()
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+                snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "g1",
+                snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
+        fake.sourcePoolError = .conflict
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: threadID)
+
+        func settledFailure() async -> String? {
+            _ = await waitUntil(timeout: .seconds(5)) { if case .failed = session.sourcePreviewState { true } else { false } }
+            if case .failed(let message) = session.sourcePreviewState { return message }
+            return nil
+        }
+        let firstFailure = await settledFailure()
+        let first = try XCTUnwrap(firstFailure, "a persistent 409 must not leave the preview preparing")
+        XCTAssertEqual(fake.sourcePoolCallCount, 2, "the open reloads once on its own, then stops")
+        XCTAssertFalse(first.localizedCaseInsensitiveContains("reopen"))
+        XCTAssertFalse(first.localizedCaseInsensitiveContains("close"))
+
+        // The creator keeps editing; meanwhile a newer version (g2) lands on the server.
+        session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.5)
+        let local = session.document.clips
+        fake.authoritativeVariant = Self.variant(duration: 2, generation: "g2")
+        await session.retryPreview()
+        let secondFailure = await settledFailure()
+        XCTAssertNotNil(secondFailure, "Retry ends on the Retry card again, not an endless Preparing preview")
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2", "Retry loaded the newest version")
+        XCTAssertEqual(session.document.clips, local, "with the unsaved trim on top")
+        XCTAssertTrue(session.hasUnsavedChanges)
+        let calls = fake.sourcePoolCallCount
+        XCTAssertEqual(calls, 4, "Retry's build, then one rebuild on g2")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(fake.sourcePoolCallCount, calls, "no reload loop")
     }
 
     func testSaveRequestFailurePreservesLocalEdits() async {
@@ -6232,6 +6440,17 @@ private actor SessionTestPublisher: DeviceRenderPublishing {
     func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication { .published }
 }
 
+private actor SessionTestCounter {
+    private(set) var value = 0
+    func increment() { value += 1 }
+}
+
+private actor SessionTestFlag {
+    private(set) var value: Bool
+    init(_ value: Bool) { self.value = value }
+    func set(_ value: Bool) { self.value = value }
+}
+
 private actor SessionTestStatus {
     private(set) var response: DeviceRenderStatusResponse
     init(_ response: DeviceRenderStatusResponse) { self.response = response }
@@ -6251,6 +6470,10 @@ final class EditorCommitSpy: KriaAPIClient {
     let commitError: APIError?
     /// Any other error `editorCommit` should throw (e.g. a typed 422 `EditorSaveError`).
     var commitThrow: Error?
+    /// Thrown by the next commits, one per call, before `commitError` (a 409 once, then success).
+    var commitErrorQueue: [APIError] = []
+    /// What `editorSourcePool` throws instead of answering (e.g. a 409 for a newer version).
+    var sourcePoolError: APIError?
     var refreshedThread: CreationThread?
     private(set) var commitIsSuspended = false
     private var commitContinuation: CheckedContinuation<Void, Never>?
@@ -6293,6 +6516,16 @@ final class EditorCommitSpy: KriaAPIClient {
     var addClipResult: AddClipResult?
     var addClipCalls: [(jobID: UUID, gcsPath: String)] = []
     var uploadFileCalls: [(reservation: UploadReservation, fileURL: URL)] = []
+    /// Makes `creationCapabilities` fail (offline, 5xx) instead of answering.
+    var capabilitiesError: APIError?
+    var phoneRenderingCapabilities: PhoneRenderingCapabilities?
+    var capabilitiesCallCount = 0
+    /// One-shot answers for `editorVariant`, consumed in order before the fixed variant/error apply.
+    var editorVariantScript: [Result<[String: JSONValue], APIError>] = []
+    /// Per-job `editorVariants` answers (a re-plan's new job can have no ready variant yet).
+    var editorVariantsByJob: [UUID: [[String: JSONValue]]] = [:]
+    /// One-shot failures for `openJobInEditor`, consumed in order.
+    var openErrors: [APIError] = []
     init(draftSnapshot: DraftSnapshot, draftError: APIError? = nil, openReceipt: OpenInEditorResponse? = nil, authoritativeVariant: [String: JSONValue]? = nil, editorVariantError: APIError? = nil, commitResponse: EditorCommitResponse? = nil, commitError: APIError? = nil, refreshedThread: CreationThread? = nil, suspendNextCommit: Bool = false) {
         self.draftSnapshot = draftSnapshot
         self.draftError = draftError
@@ -6305,7 +6538,11 @@ final class EditorCommitSpy: KriaAPIClient {
         self.suspendNextCommit = suspendNextCommit
     }
     func projects() async throws -> [ProjectSummary] { throw APIError.unsupported }
-    func creationCapabilities() async throws -> CreationCapabilities { CreationCapabilities(formats: [], creationMode: creationMode) }
+    func creationCapabilities() async throws -> CreationCapabilities {
+        capabilitiesCallCount += 1
+        if let capabilitiesError { throw capabilitiesError }
+        return CreationCapabilities(formats: [], phoneRendering: phoneRenderingCapabilities, creationMode: creationMode)
+    }
     func project(threadID: UUID) async throws -> CreationThread {
         projectCallCount += 1
         guard let refreshedThread else { throw APIError.unsupported }
@@ -6328,6 +6565,7 @@ final class EditorCommitSpy: KriaAPIClient {
     func writeDraft(threadID: UUID, snapshot: [String: JSONValue], expectedRevision: Int, etag: String) async throws -> DraftSnapshot { throw APIError.unsupported }
     func openJobInEditor(jobID: UUID) async throws -> OpenInEditorResponse {
         openedJobID = jobID
+        if !openErrors.isEmpty { throw openErrors.removeFirst() }
         guard let openReceipt else { throw APIError.unsupported }
         return openReceipt
     }
@@ -6347,6 +6585,7 @@ final class EditorCommitSpy: KriaAPIClient {
             }
             editorVariantIsSuspended = false
         }
+        if !editorVariantScript.isEmpty { return try editorVariantScript.removeFirst().get() }
         if let editorVariantError { throw editorVariantError }
         return authoritativeVariant ?? ["editor_revision_number": phoneDestination ? .number(7) : .null, "render_destination": .string(phoneDestination ? "device" : "cloud"), "variant_id": .string(variantID), "render_generation_id": .string("generation-1"), "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false)]), "user_timeline": .object(["slots": .array([.object(["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(2), "removed": .bool(false)])])])]
     }
@@ -6391,6 +6630,7 @@ final class EditorCommitSpy: KriaAPIClient {
             }
             sourcePoolIsSuspended = false
         }
+        if let sourcePoolError { throw sourcePoolError }
         guard let sourcePoolResult else { throw APIError.unsupported }
         return sourcePoolResult
     }
@@ -6404,6 +6644,7 @@ final class EditorCommitSpy: KriaAPIClient {
     }
     func editorVariants(jobID: UUID) async throws -> [[String: JSONValue]] {
         editorVariantsCallCount += 1
+        if let scripted = editorVariantsByJob[jobID] { return scripted }
         return [authoritativeVariant ?? ["variant_id": .string("initial"), "render_status": .string("ready")]]
     }
     func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse {
@@ -6421,6 +6662,7 @@ final class EditorCommitSpy: KriaAPIClient {
             }
             commitIsSuspended = false
         }
+        if !commitErrorQueue.isEmpty { throw commitErrorQueue.removeFirst() }
         if let commitError { throw commitError }
         if let commitThrow { throw commitThrow }
         return commitResponse ?? EditorCommitResponse(ok: true, generation: "next", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: nil, revisionHash: nil, expectedDuration: nil)

@@ -379,6 +379,8 @@ def placed_media(strategy: CreativeStrategy) -> set[str]:
         placed.add(strategy.closing_media.visual_id)
         if strategy.closing_media.badge_visual_id:
             placed.add(strategy.closing_media.badge_visual_id)
+    if strategy.ending_clip is not None:
+        placed.add(strategy.ending_clip.media_id)  # KRI-841: the clip the edit ends on
     if strategy.montage_audio is not None:
         placed.update(strategy.montage_audio.source_media_ids)
     if strategy.montage_cadence is not None:

@@ -684,6 +684,45 @@ import KriaMediaEngine
         XCTAssertEqual(document.textElements.dropFirst().map(\.endS), [0.1, 0.4, 0.7, 1.0])
     }
 
+    /// Text behind people: the editor's "Behind subject" toggle used to refuse the whole preview
+    /// (`unsupportedLane`). It now compiles to the layer's `behindSubject` (every painter branch:
+    /// plain effect, typed phases, handwriting), the recipe derives the `behindSubject` capability,
+    /// and an element without the toggle keeps today's shape. A giant-title scene transition still refuses.
+    func testBehindSubjectCompilesToTheLayerFlagAndCapability() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 6,
+            trimIn: 0, trimOut: 6, sourceDuration: 6, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        func element(_ id: String, _ raw: [String: JSONValue]) -> EditorTextElement {
+            EditorTextElement(id: id, text: "Behind me", startS: 0, endS: 3, role: "generative_intro",
+                raw: ["size_px": .number(96), "font_family": .string("Inter")].merging(raw) { _, new in new })
+        }
+        let elements = [
+            element("plain-behind", ["effect": .string("fade-in"), "behind_subject": .bool(true)]),
+            element("phased-behind", ["animation_phases": .object(["entrance": .string("pop"), "exit": .string("fade")]), "behind_subject": .bool(true)]),
+            element("hand-behind", ["effect": .string("handwriting"), "behind_subject": .bool(true)]),
+            element("plain", ["effect": .string("fade-in"), "behind_subject": .bool(false)]),
+        ]
+        let items = elements.map { NativeEditorTimelineItem(selection: .init(kind: .text, id: $0.id), start: 0, end: 3) }
+        let recipe = try compiler.compile(document: EditorDocument(textElements: elements), clips: [clip], items: items, sources: [0: source]).recipe
+        XCTAssertEqual(recipe.textLayers.map(\.id), elements.map(\.id))
+        XCTAssertEqual(recipe.textLayers.map(\.behindSubject), [true, true, true, nil])
+        XCTAssertTrue(recipe.effectiveCapabilities.contains(.behindSubject))
+
+        let plainOnly = try compiler.compile(document: EditorDocument(textElements: [elements[3]]), clips: [clip],
+                                             items: [items[3]], sources: [0: source]).recipe
+        XCTAssertFalse(plainOnly.effectiveCapabilities.contains(.behindSubject))
+        XCTAssertFalse(String(decoding: try RecipeJSON.encoder().encode(plainOnly), as: UTF8.self).contains("behind_subject"))
+
+        let giant = element("giant", ["theme_transition": .object(["type": .string("giant-title-wipe")])])
+        XCTAssertThrowsError(try compiler.compile(document: EditorDocument(textElements: [giant]), clips: [clip],
+                                                  items: [NativeEditorTimelineItem(selection: .init(kind: .text, id: "giant"), start: 0, end: 3)],
+                                                  sources: [0: source])) { error in
+            XCTAssertEqual(error as? NativeEditorRenderError, .unsupportedLane("text scene compositing"))
+        }
+    }
+
     // KRI-569: lyric captions have no terminal punctuation; the server flags the last
     // word of each lyric line with `source_params.line_end`, and sentence mode must
     // break there instead of merging the whole song into one display. Words without
@@ -924,6 +963,48 @@ import KriaMediaEngine
         XCTAssertEqual(voice.volume, 1)
         XCTAssertEqual(program.recipe.tracks.filter { $0.kind == .audio }.count, 1, "Do not layer the music bed over the rendered voiceover mix twice")
         XCTAssertEqual(program.assetURLs["narration"], narration.url)
+    }
+
+    /// The server marks every rendered timeline slot when a creator selected
+    /// one source to remain audible under narration. The marker is a per-clip
+    /// pre-mix gain; the document's original level remains the one global gain
+    /// in AudioMixRecipe. Unmarked clips stay silent under narration.
+    func testNarratedSelectedSourceAudioUsesPerSlotGainOnceAndKeepsLegacySilent() throws {
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        func source(_ index: Int) -> ResolvedEditorSource {
+            ResolvedEditorSource(clipIndex: index, mediaID: "media-\(index)",
+                asset: MediaAsset(id: "media-\(index)", relativePath: "media-\(index).mp4", fingerprint: fingerprint, duration: 4),
+                url: URL(fileURLWithPath: "/media-\(index).mp4"))
+        }
+        let narration = ResolvedEditorSource(clipIndex: -1, mediaID: "voice", asset: MediaAsset(id: "voice", relativePath: "voice.m4a", fingerprint: fingerprint, duration: 4), url: URL(fileURLWithPath: "/voice.m4a"))
+        let clips = (0..<3).map { index in
+            EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: index, start: Double(index), end: Double(index + 1), trimIn: 0, trimOut: 1, sourceDuration: 4, slotID: "slot-\(index)")
+        }
+        var selected = EditorDocument(clips: [
+            .init(id: "slot-0", clipIndex: 0, inS: 0, durationS: 1, raw: ["source_audio_volume": .number(0)]),
+            .init(id: "slot-1", clipIndex: 1, inS: 0, durationS: 1, raw: ["source_audio_volume": .number(1)]),
+            .init(id: "slot-2", clipIndex: 2, inS: 0, durationS: 1),
+        ])
+        selected.mix["original_level"] = .number(0.35)
+        let selectedRecipe = try compiler.compile(document: selected, clips: clips, items: [],
+                                                   sources: [0: source(0), 1: source(1), 2: source(2)],
+                                                   audioSources: ["narration": narration]).recipe
+        let video = try XCTUnwrap(selectedRecipe.tracks.first { $0.kind == .video }?.clips)
+        XCTAssertEqual(video.map(\.volume), [0, 1, 0])
+        XCTAssertEqual(selectedRecipe.audio.originalVolume, 0.35, accuracy: 0.0001,
+                       "the global original-audio gain is applied once by the engine")
+        XCTAssertEqual(selectedRecipe.tracks.first { $0.id == "narration" }?.clips.first?.volume, 1)
+
+        // Absence is the compatibility gate for projects created before this
+        // feature. Narration keeps every camera clip silent.
+        let legacy = EditorDocument(clips: selected.clips.map { slot in
+            var slot = slot; slot.raw.removeValue(forKey: "source_audio_volume"); return slot
+        })
+        let legacyRecipe = try compiler.compile(document: legacy, clips: clips, items: [],
+                                                 sources: [0: source(0), 1: source(1), 2: source(2)],
+                                                 audioSources: ["narration": narration]).recipe
+        XCTAssertEqual(legacyRecipe.tracks.first { $0.kind == .video }?.clips.map(\.volume), [0, 0, 0])
     }
 
     func testFeasibleSourceOverrunKeepsThreeSecondClockAndAuthoredWindow() throws {
@@ -1202,12 +1283,20 @@ import KriaMediaEngine
         _ = try await LivePreviewComposition(recipe: program.recipe, assetURLs: program.assetURLs)
         let textID = try XCTUnwrap(session.document.textElements.first?.id)
         XCTAssertEqual(session.document.textElements.first?.raw["position"], .string("custom"))
-        for content in ["This entire sentence stays on one line even past the old width", "First\nSecond", "First\n\nThird", "First\n"] {
+        // KRI-826: the creator's lines stay hard breaks, but a line wider than the frame's safe width
+        // soft-wraps inside it (KRI-564 kept it on one line, running off both sides).
+        let long = "This entire sentence used to stay on one line even past the frame's own width"
+        for content in [long, "First\nSecond", "First\n\nThird", "First\n"] {
             session.updateTextContent(id: textID, content: content)
             XCTAssertEqual(session.document.textElements.first { $0.id == textID }?.raw["wrap_lines"], .bool(false))
             let edited = try compiler.compile(document: session.document, clips: session.timelineClips, items: session.timelineItems, sources: sources)
             let layer = try XCTUnwrap(edited.recipe.textLayers.first { $0.id == textID })
-            XCTAssertEqual(layer.runs.map(\.text), content.components(separatedBy: "\n").map { $0.isEmpty ? " " : $0 })
+            if content == long {
+                XCTAssertGreaterThan(layer.runs.count, 1)
+                XCTAssertEqual(layer.runs.map(\.text).joined(separator: " "), long)
+            } else {
+                XCTAssertEqual(layer.runs.map(\.text), content.components(separatedBy: "\n").map { $0.isEmpty ? " " : $0 })
+            }
             _ = try await LivePreviewComposition(recipe: edited.recipe, assetURLs: edited.assetURLs)
         }
         await session.prepareFixtureSourcePreview(url: url)

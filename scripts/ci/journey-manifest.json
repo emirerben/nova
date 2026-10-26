@@ -2,6 +2,22 @@
   "schema_version": 1,
   "journeys": [
     {
+      "id": "kri-826-creator-text-literal-fit",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_kri826_creator_text_literal.py tests/kria/test_kri804_label_text_reply.py tests/pipeline/test_authored_newlines.py tests/pipeline/test_text_overlay_skia.py tests/pipeline/test_overlay_verify.py",
+      "xctests": [
+        "KriaTests/CreatorTextFitTests/testTheCapKeepsWholeCharactersOnly",
+        "KriaTests/CreatorTextFitTests/testTypedTextRoundTripsThroughSaveAndReopenByteForByte",
+        "KriaTests/CreatorTextFitTests/testTheExportedSlideKeepsALongAuthoredLineInsideTheFrame"
+      ],
+      "paths": [
+        "src/apps/api/app/pipeline/text_fit.py",
+        "src/apps/api/tests/fixtures/kri826_authored_fit_rows.json",
+        "src/apps/api/tests/kria/test_kri826_creator_text_literal.py",
+        "src/apps/ios/Tests/KriaTests/CreatorTextFitTests.swift"
+      ]
+    },
+    {
       "id": "kri-384-library-ingest",
       "needs_native": false,
       "api_tests": "tests/integration/test_media_library_ingest.py tests/integration/test_media_library_analysis.py tests/integration/test_media_library_reuse.py tests/integration/test_media_library_original_upgrade.py tests/pipeline/test_library_transcription_cost.py tests/routes/test_media_assets.py tests/routes/test_media_library_attachments.py tests/services/test_media_library_source_verification.py tests/integration/test_media_library_backfill.py",
@@ -134,6 +150,7 @@
         "src/apps/api/app/pipeline/phone_guided_plan.py",
         "src/apps/api/app/pipeline/authored_timeline.py",
         "src/apps/api/app/agents/edit_copilot.py",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_reverse_order_en.json",
         "src/apps/api/app/kria/brief.py",
         "src/apps/api/app/kria/editor_receipts.py",
         "src/apps/api/app/kria/registry.py",
@@ -169,6 +186,7 @@
         "src/apps/api/app/agents/editor_ops_v2/overlays.py",
         "src/apps/api/prompts/edit_copilot_ops/overlay_cards.txt",
         "src/apps/api/prompts/edit_copilot_ops/timeline.txt",
+        "src/apps/api/prompts/edit_copilot_ops/audio.txt",
         "src/apps/api/app/schemas/text_composition.py",
         "src/apps/api/app/tasks/edit_proposal_build.py",
         "src/apps/api/app/tasks/content_plan_build.py",
@@ -253,6 +271,7 @@
         "src/apps/api/app/kria/brief_checks.py",
         "src/apps/api/app/services/choice_questions.py",
         "src/apps/api/app/kria/opening_cut_ask.py",
+        "src/apps/api/app/kria/footage_mute_ask.py",
         "src/apps/api/app/pipeline/phone_opening_cut.py",
         "src/apps/api/tests/fixtures/kri787_merope_t1_turns.json",
         "src/apps/api/tests/kria/test_kri787_merope_t1_replay.py",
@@ -262,7 +281,7 @@
     {
       "id": "slide-post-binding-recovery",
       "needs_native": true,
-      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/routes/test_slide_post_binding_save_postgres.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/routes/test_slide_post_chat_edit_route.py tests/evals/test_edit_copilot_evals.py",
+      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/routes/test_slide_post_binding_save_postgres.py tests/routes/test_slide_post_stable_target_postgres.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/routes/test_slide_post_chat_edit_route.py tests/evals/test_edit_copilot_evals.py",
       "xctests": [
         "KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave",
         "KriaTests/SlidePostFramingTests/testEncodingAlwaysWritesTheFramingKeySoAClearIsNeverMistakenForAnOlderApp",
@@ -307,6 +326,9 @@
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_legacy_seen_captions.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_legacy_seen_captions_tr.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_legacy_seen_ideas.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_reorder_then_text_on_moved.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_reorder_keep_cover.json",
+        "src/apps/api/tests/routes/test_slide_post_stable_target_postgres.py",
         "src/apps/api/tests/evals/test_edit_copilot_evals.py"
       ]
     },
@@ -582,6 +604,29 @@
       ]
     },
     {
+      "id": "kri-845-clip-detail-evidence",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri845_clip_detail_evidence.py tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/evals/test_clip_metadata_evals.py tests/evals/test_clip_request_resolver_evals.py tests/agents/test_clip_metadata.py tests/services/test_kri520_clip_intent_copy.py tests/pipeline/test_clip_cache.py tests/schemas/test_clip_intents.py",
+      "paths": [
+        "src/apps/api/app/agents/clip_metadata.py",
+        "src/apps/api/app/agents/clip_request_resolver.py",
+        "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
+        "src/apps/api/app/pipeline/clip_cache.py",
+        "src/apps/api/app/schemas/clip_intents.py",
+        "src/apps/api/app/schemas/clip_understanding.py",
+        "src/apps/api/app/services/clip_understanding.py",
+        "src/apps/api/app/services/creator_sessions.py",
+        "src/apps/api/prompts/analyze_clip.txt",
+        "src/apps/api/prompts/clip_request_resolver.txt",
+        "src/apps/api/tests/fixtures/agent_evals/clip_metadata/golden/kri845_cafe_tray_clip_props_actions_good.json",
+        "src/apps/api/tests/fixtures/agent_evals/clip_metadata/golden/kri845_fast_pan_blurry_table_good.json",
+        "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri845_cafe_look_alike_skip.json",
+        "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri845_dj_menus_and_blurry_table.json",
+        "src/apps/api/tests/fixtures/kri845_m1_clip_detail.json",
+        "src/apps/api/tests/kria/test_kri845_clip_detail_evidence.py"
+      ]
+    },
+    {
       "id": "kri-585-spoken-order",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri585_spoken_order_montage.py tests/pipeline/test_unified_montage_spoken_order.py tests/services/test_spoken_roles.py",
@@ -631,9 +676,10 @@
     {
       "id": "kri-689-clip-speed",
       "needs_native": true,
-      "api_tests": "tests/kria/test_kri689_clip_speed_ask.py tests/tasks/test_kri689_speed_review.py tests/tasks/test_unified_montage_dispatch.py tests/pipeline/test_phone_guided_speed.py tests/routes/test_authored_playback_speed.py tests/routes/test_phone_speed_safety.py tests/services/test_guided_speed_projection.py tests/agents/test_timeline_capability_context.py",
+      "api_tests": "tests/kria/test_kri689_clip_speed_ask.py tests/kria/test_kri689_chat_speed_spec.py tests/tasks/test_kri689_speed_review.py tests/tasks/test_unified_montage_dispatch.py tests/pipeline/test_phone_guided_speed.py tests/routes/test_authored_playback_speed.py tests/routes/test_phone_speed_safety.py tests/services/test_guided_speed_projection.py tests/agents/test_timeline_capability_context.py",
       "paths": [
         "src/apps/api/app/kria/speed_ask.py",
+        "src/apps/api/tests/kria/test_kri689_chat_speed_spec.py",
         "src/apps/api/app/pipeline/reframe.py",
         "src/apps/api/app/pipeline/phone_guided_plan.py",
         "src/apps/api/app/pipeline/phone_authored_timeline.py",
@@ -661,6 +707,14 @@
         "KriaTests/NativeEditorInteractionTests/testRemovedMarkedSpeedSlotDoesNotPutLegacySurvivorsOnFrameClock",
         "KriaTests/GuidedLabelRebaseVectorTests/testSourceBoundTextUsesMarkedThirtyFPSWindowAfterHalfFrameSpeedRetime",
         "KriaUITests/NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector"
+      ]
+    },
+    {
+      "id": "kri-824-photo-hold-authority",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri824_photo_hold_e2e.py tests/kria/test_kri824_authority_postgres.py tests/kria/test_kri775_merope_m2_replay.py",
+      "paths": [
+        "src/apps/api/app/kria/asset_holds.py"
       ]
     },
     {
@@ -701,16 +755,20 @@
     {
       "id": "kri-628-opening-cut",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_phone_opening_cut.py tests/pipeline/test_phone_take_window.py tests/kria/test_kri837_one_word_end_line.py",
+      "api_tests": "tests/pipeline/test_phone_opening_cut.py tests/pipeline/test_phone_take_window.py tests/kria/test_kri837_one_word_end_line.py tests/kria/test_kri844_take_line_ask.py tests/kria/test_kri844_dj_t2_cross_language_replay.py",
       "paths": [
         "src/apps/api/app/kria/opening_cut_ask.py",
+        "src/apps/api/app/kria/take_lines.py",
         "src/apps/api/app/pipeline/phone_opening_cut.py",
         "src/apps/api/app/services/spoken_quotes.py",
         "src/apps/api/app/services/speech_segments.py",
         "src/apps/api/app/cli/verify_take_window.py",
         "src/apps/api/tests/fixtures/kri790_merope_t1_take.json",
+        "src/apps/api/tests/fixtures/kri844_dj_t2_take.json",
         "src/apps/api/tests/pipeline/test_phone_take_window.py",
-        "src/apps/api/tests/kria/test_kri837_one_word_end_line.py"
+        "src/apps/api/tests/kria/test_kri837_one_word_end_line.py",
+        "src/apps/api/tests/kria/test_kri844_take_line_ask.py",
+        "src/apps/api/tests/kria/test_kri844_dj_t2_cross_language_replay.py"
       ]
     },
     {
@@ -748,12 +806,34 @@
       ]
     },
     {
+      "id": "kri-827-protected-text-regions",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_protected_object_text_e2e.py tests/tasks/test_kri827_protected_text_worker.py tests/kria/test_kri827_protected_targets.py tests/kria/test_kri827_protected_region_turn_postgres.py tests/kria/test_kri901_mark_before_approval_postgres.py",
+      "paths": [
+        "src/apps/api/app/kria/protected_targets.py",
+        "src/apps/api/app/pipeline/object_track.py",
+        "src/apps/api/app/pipeline/object_track_worker.py",
+        "src/apps/api/app/pipeline/phone_protected_text.py",
+        "src/apps/api/app/cli/verify_protected_text.py"
+      ]
+    },
+    {
       "id": "kri-719-talking-multi-clip",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_phone_talking_cutaways.py tests/tasks/test_phone_subtitled_narrated_dispatch.py",
       "paths": [
         "src/apps/api/app/pipeline/phone_talking_cutaways.py",
         "src/apps/api/tests/pipeline/test_phone_talking_cutaways.py"
+      ]
+    },
+    {
+      "id": "kri-841-talking-ending-clip",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri841_talking_ending_clip.py tests/kria/test_kri841_ending_clip_ask.py tests/pipeline/test_phone_subtitled_plan.py tests/services/test_phone_subtitled_editor.py tests/routes/test_admin_plan_item_phone_lanes.py",
+      "paths": [
+        "src/apps/api/app/pipeline/phone_subtitled_lanes.py",
+        "src/apps/api/tests/kria/test_kri841_ending_clip_ask.py",
+        "src/apps/api/tests/tasks/test_kri841_talking_ending_clip.py"
       ]
     },
     {
@@ -1048,12 +1128,28 @@
       ]
     },
     {
+      "id": "kri-722-prepared-execution",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_prepared_execution_postgres.py tests/kria/test_render_retry_postgres.py tests/kria/test_kri725_cloud_prepared_postgres.py tests/kria/test_prepared_coverage_guard.py tests/kria/test_kri881_reader_tolerance.py tests/kria/test_kri881_reader_tolerance_postgres.py",
+      "paths": [
+        "src/apps/api/app/kria/prepared_execution.py",
+        "src/apps/api/app/kria/prepared_coverage.py",
+        "src/apps/api/tests/kria/test_prepared_execution_postgres.py",
+        "src/apps/api/tests/kria/test_kri725_cloud_prepared_postgres.py",
+        "src/apps/api/tests/kria/test_prepared_coverage_guard.py",
+        "src/apps/api/tests/kria/test_kri881_reader_tolerance.py",
+        "src/apps/api/tests/kria/test_kri881_reader_tolerance_postgres.py",
+        "src/apps/api/tests/fixtures/kri881/prepared_research_binding.json"
+      ]
+    },
+    {
       "id": "troya-footage-research",
       "needs_native": true,
-      "api_tests": "tests/evals/request_following/test_troya_context_journey.py tests/evals/request_following/test_researched_text.py tests/services/test_kria_editor_clip_context.py",
+      "api_tests": "tests/evals/request_following/test_troya_context_journey.py tests/evals/request_following/test_researched_text.py tests/evals/request_following/test_kri816_talking_research.py tests/evals/request_following/test_kri816_historical_journey.py tests/evals/request_following/test_kri881_research_before_approval.py tests/services/test_kria_editor_clip_context.py",
       "xctests": [
         "KriaTests/NativeResearchSourcesTests/testSourcesSurviveDocumentSaveAndFlagChangedCopy",
-        "KriaTests/NativeResearchSourcesTests/testUnsafeSourceSchemesAndPrivateHostsCannotOpen"
+        "KriaTests/NativeResearchSourcesTests/testUnsafeSourceSchemesAndPrivateHostsCannotOpen",
+        "KriaTests/NativeResearchSourcesTests/testTalkingCitationMatchesSpeechBindingWithoutClips"
       ],
       "paths": [
         "src/apps/api/app/schemas/editorial_plan.py",
@@ -1063,6 +1159,12 @@
         "src/apps/api/app/services/kria_editor_ops_text.py",
         "src/apps/api/tests/evals/request_following/test_troya_context_journey.py",
         "src/apps/api/tests/evals/request_following/test_researched_text.py",
+        "src/apps/api/tests/evals/request_following/test_kri816_talking_research.py",
+        "src/apps/api/tests/evals/request_following/test_kri816_historical_journey.py",
+        "src/apps/api/tests/fixtures/kri816_troya_historical_journey_turn.json",
+        "src/apps/api/app/kria/research_preview.py",
+        "src/apps/api/tests/evals/request_following/test_kri881_research_before_approval.py",
+        "src/apps/api/app/services/phone_subtitled_editor.py",
         "src/apps/ios/Kria/Core/ResearchCitation.swift",
         "src/apps/ios/Kria/Features/NativeResearchSourcesView.swift",
         "src/apps/ios/Tests/KriaTests/NativeResearchSourcesTests.swift"
@@ -1352,6 +1454,25 @@
       ]
     },
     {
+      "id": "kri-849-unclear-word",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri849_dj_t1_unclear_word_replay.py tests/kria/test_kri849_unclear_word_postgres.py tests/agents/test_kri849_unclear_word_prompt.py tests/evals/test_main_creator_evals.py",
+      "paths": [
+        "src/apps/api/app/pipeline/caption_unclear.py",
+        "src/apps/api/app/kria/unclear_word_ask.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/fixtures/kri849_dj_t1/dj_t1.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri849_dj_t1_ask_if_unclear.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri849_dj_t1_unclear_answer_omit.json",
+        "src/apps/api/tests/kria/test_kri849_dj_t1_unclear_word_replay.py",
+        "src/apps/api/tests/agents/test_kri849_unclear_word_prompt.py",
+        "src/apps/api/tests/kria/test_kri849_unclear_word_postgres.py"
+      ]
+    },
+    {
       "id": "kri-802-question-batch",
       "needs_native": true,
       "api_tests": "tests/kria/test_kri802_question_batch.py tests/kria/test_kri802_question_batch_postgres.py",
@@ -1470,6 +1591,22 @@
       ]
     },
     {
+      "id": "voiceover-word-text-selected-audio",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_voiceover_requested_capabilities.py tests/pipeline/test_phone_narrated_spoken_text.py tests/tasks/test_phone_voiceover_requested_edits.py tests/routes/test_phone_voiceover_requested_edit_roundtrip.py tests/services/test_creator_render_contract.py",
+      "xctests": [
+        "KriaTests/NativeEditorRenderCompilerTests/testNarratedSelectedSourceAudioUsesPerSlotGainOnceAndKeepsLegacySilent",
+        "KriaTests/NativeEditorSessionTests/testPhoneNarratedSelectedSourceAudioHydratesFinalBedGainOnly"
+      ],
+      "paths": [
+        "src/apps/api/app/pipeline/phone_narrated_spoken_text.py",
+        "src/apps/api/tests/kria/test_voiceover_requested_capabilities.py",
+        "src/apps/api/tests/pipeline/test_phone_narrated_spoken_text.py",
+        "src/apps/api/tests/tasks/test_phone_voiceover_requested_edits.py",
+        "src/apps/api/tests/routes/test_phone_voiceover_requested_edit_roundtrip.py"
+      ]
+    },
+    {
       "id": "kri-839-beats-spoken-words",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri839_beats_spoken_words.py tests/tasks/test_subtitled_caption_language.py",
@@ -1477,6 +1614,21 @@
         "src/apps/api/app/tasks/generative_build.py",
         "src/apps/api/app/services/phone_reaction_grounding.py",
         "src/apps/api/tests/fixtures/kri839_cafe_t2/t2_01_words.json"
+      ]
+    },
+    {
+      "id": "kri-838-caption-language",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri838_caption_language_replay.py tests/pipeline/test_caption_translate.py tests/pipeline/test_caption_language_id.py tests/pipeline/test_caption_language.py tests/kria/test_kri838_caption_language_asks.py tests/tasks/test_subtitled_caption_language.py tests/tasks/test_narrated_caption_language.py",
+      "paths": [
+        "src/apps/api/app/pipeline/caption_translate.py",
+        "src/apps/api/app/pipeline/caption_language.py",
+        "src/apps/api/tests/fixtures/kri838_caption_language/README.md",
+        "src/apps/api/tests/fixtures/kri838_caption_language/caro_t2_auto_en_words.json",
+        "src/apps/api/tests/fixtures/kri838_caption_language/caro_t2_forced_tr_words.json",
+        "src/apps/api/tests/fixtures/kri838_caption_language/lucas_t3_auto_words.json",
+        "src/apps/api/tests/fixtures/kri838_caption_language/lucas_t3_forced_es_words.json",
+        "src/apps/api/tests/fixtures/kri838_caption_language/prompts.json"
       ]
     },
     {
@@ -1492,6 +1644,149 @@
         "src/apps/api/tests/tasks/test_render_worker_lifecycle.py",
         "src/apps/api/tests/tasks/test_render_worker_activity_sql.py",
         "src/apps/api/tests/test_render_worker_wake.py"
+      ]
+    },
+    {
+      "id": "kri-815-voiceover-script",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_kri815_voiceover_script_journey.py tests/evals/test_main_creator_evals.py tests/evals/test_voiceover_script_writer_evals.py",
+      "xctests": [
+        "KriaUITests/VoiceoverScriptCardUITests/testRecordWithThisScriptOpensTheVoiceoverStepWithTheScript",
+        "KriaUITests/VoiceoverScriptCardUITests/testWithoutTheCapabilityTheScriptIsReplyText"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/voiceover_script.py",
+        "src/apps/api/app/agents/voiceover_script_writer.py",
+        "src/apps/api/prompts/write_voiceover_script.txt",
+        "src/apps/api/prompts/main_creator.txt",
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/ios/Kria/Core/VoiceoverScript.swift",
+        "src/apps/ios/Kria/Features/VoiceoverScriptCard.swift",
+        "src/apps/ios/Tests/KriaUITests/VoiceoverScriptCardUITests.swift",
+        "src/apps/api/tests/kria/test_kri815_voiceover_script_journey.py",
+        "src/apps/api/tests/fixtures/agent_evals/voiceover_script_writer/golden/kri815_museum_needs_check.json",
+        "src/apps/api/tests/fixtures/agent_evals/main_creator/kri815_script_request.json"
+      ]
+    },
+    {
+      "id": "kri-889-narrated-named-cuts",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri889_narrated_named_cut_journey.py tests/pipeline/test_speech_cleanup_apply.py tests/services/test_guided_speech_cleanup.py tests/tasks/test_phone_subtitled_narrated_dispatch.py",
+      "xctests": [],
+      "paths": [
+        "src/apps/api/app/pipeline/speech_cleanup_apply.py",
+        "src/apps/api/app/services/guided_speech_cleanup.py",
+        "src/apps/api/app/services/device_narration_binding.py",
+        "src/apps/api/app/services/creator_execution_contract.py",
+        "src/apps/api/app/schemas/edit_proposal.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/tests/kria/test_kri889_narrated_named_cut_journey.py"
+      ]
+    },
+    {
+      "id": "kri-724-precise-speech-cuts",
+      "needs_native": true,
+      "api_tests": [
+        "tests/tasks/test_phone_explicit_speech_cut.py",
+        "tests/tasks/test_kri707_talking_spoken_text.py",
+        "tests/pipeline/test_explicit_speech_cut.py",
+        "tests/pipeline/test_explicit_speech_audio.py",
+        "tests/pipeline/test_speech_denoise.py",
+        "tests/services/test_processed_audio_asset.py",
+        "tests/kria/test_speech_cut_ask.py",
+        "tests/kria/test_noise_reduction_ask.py"
+      ],
+      "xctests": [
+        "KriaTests/NativeEditorSourcesTests/testExactSpeechCutsAndProcessedAudioUseFinishedPreview"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/speech_cut_ask.py",
+        "src/apps/api/app/kria/noise_reduction_ask.py",
+        "src/apps/api/app/kria/render_assets.py",
+        "src/apps/api/app/pipeline/explicit_speech_cut.py",
+        "src/apps/api/app/pipeline/explicit_speech_audio.py",
+        "src/apps/api/app/pipeline/phone_processed_audio.py",
+        "src/apps/api/app/pipeline/speech_denoise.py",
+        "src/apps/api/app/services/phone_noise_reduction.py",
+        "src/apps/api/tests/tasks/test_phone_explicit_speech_cut.py",
+        "src/apps/api/tests/services/test_processed_audio_asset.py",
+        "src/apps/api/app/pipeline/engine_noise_model.py"
+      ]
+    },
+    {
+      "id": "kri-843-mixed-language-talking",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_kri843_mixed_language_transcript.py tests/services/test_speech_cleanup_language_crosscheck.py tests/tasks/test_speech_cleanup_analysis.py",
+      "paths": [
+        "src/apps/api/app/services/mixed_language_transcript.py",
+        "src/apps/api/app/pipeline/speech_cleanup_analysis.py",
+        "src/apps/api/tests/fixtures/kri843_don_julio_t1_passes.json"
+      ]
+    },
+    {
+      "id": "kri-842-narrated-clip-sound",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri842_narrated_clip_sound.py tests/kria/test_kri842_clip_sound_checks.py tests/pipeline/test_kri842_clip_sound_plan.py tests/routes/test_kri842_clip_sound_save.py tests/pipeline/test_phone_narrated_plan.py tests/pipeline/test_phone_voiceover_cut.py tests/routes/test_phone_narrated_editor_commit.py",
+      "paths": [
+        "src/apps/api/app/kria/narrated_clip_sound_ask.py",
+        "src/apps/api/app/pipeline/phone_clip_sound.py",
+        "src/apps/api/tests/fixtures/kri842_cafe_n1_narrated.json",
+        "src/apps/api/tests/tasks/test_kri842_narrated_clip_sound.py",
+        "src/apps/api/tests/kria/test_kri842_clip_sound_checks.py",
+        "src/apps/api/tests/pipeline/test_kri842_clip_sound_plan.py",
+        "src/apps/api/tests/routes/test_kri842_clip_sound_save.py"
+      ]
+    },
+    {
+      "id": "kri-215-creative-copy-skills",
+      "needs_native": false,
+      "api_tests": "tests/evals/test_runtime_creative_skills.py tests/evals/test_platform_copy_evals.py tests/evals/test_intro_writer_evals.py tests/evals/test_sequence_quote_writer_evals.py tests/agents/test_intro_writer.py tests/agents/test_sequence_quote_writer.py tests/services/test_creator_sessions.py tests/kria/test_plan_snapshot_postgres.py",
+      "paths": [
+        "src/apps/api/app/agents/_skills.py",
+        "src/apps/api/app/agents/_writing_context.py",
+        "src/apps/api/app/agents/skills/",
+        "src/apps/api/app/agents/intro_writer.py",
+        "src/apps/api/app/agents/platform_copy.py",
+        "src/apps/api/app/agents/sequence_quote_writer.py",
+        "src/apps/api/app/pipeline/agents/copy_writer.py",
+        "src/apps/api/prompts/sequence_quote.txt",
+        "src/apps/api/prompts/write_intro_text.txt",
+        "src/apps/api/tests/evals/test_runtime_creative_skills.py",
+        "src/apps/api/tests/fixtures/creative_copy_review/"
+      ]
+    },
+    {
+      "id": "killer-phone-plan-repair",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_phone_plan_contract_repair.py tests/kria/test_phone_plan_failure_classes_postgres.py tests/kria/test_device_render_lifecycle_postgres.py",
+      "paths": [
+        "src/apps/api/app/pipeline/phone_plan_repair.py",
+        "src/apps/api/tests/tasks/test_phone_plan_contract_repair.py",
+        "src/apps/api/tests/kria/test_phone_plan_failure_classes_postgres.py",
+        "src/apps/api/tests/kria/test_device_render_lifecycle_postgres.py"
+      ]
+    },
+    {
+      "id": "kri-215-phone-editorial-skills",
+      "needs_native": false,
+      "api_tests": "tests/evals/test_phone_editorial_skills.py tests/evals/test_runtime_creative_skills.py tests/evals/test_main_creator_evals.py tests/evals/test_clip_request_resolver_evals.py tests/evals/test_speech_excerpt_planner_evals.py tests/evals/test_narrated_clip_alignment_evals.py tests/evals/test_slide_post_composer_evals.py tests/agents/test_main_creator_agent.py tests/agents/test_main_creator_user_song.py tests/agents/test_clip_request_resolver.py tests/services/test_phone_speech_montage_job.py tests/agents/test_narrated_clip_alignment.py tests/tasks/test_phone_voiceover_requested_edits.py tests/pipeline/test_phone_narrated_plan.py tests/services/test_kri520_clip_intent_copy.py tests/kria/test_kri841_ending_clip_ask.py tests/kria/test_kri845_clip_detail_evidence.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/kria/test_confirmed_title_inventory_postgres.py",
+      "paths": [
+        "src/apps/api/app/agents/_skills.py",
+        "src/apps/api/app/agents/skills/edit-story/",
+        "src/apps/api/app/agents/skills/meaningful-moment/",
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/agents/clip_request_resolver.py",
+        "src/apps/api/app/agents/speech_excerpt_planner.py",
+        "src/apps/api/app/agents/narrated_clip_alignment.py",
+        "src/apps/api/app/agents/slide_post_composer.py",
+        "src/apps/api/tests/evals/test_phone_editorial_skills.py",
+        "src/apps/api/tests/fixtures/phone_editorial_skills/",
+        "src/apps/api/tests/services/test_kri520_clip_intent_copy.py",
+        "src/apps/api/tests/kria/test_kri841_ending_clip_ask.py",
+        "src/apps/api/tests/kria/test_kri845_clip_detail_evidence.py",
+        "src/apps/api/tests/kria/test_kri807_unmatched_exclusion_picker.py",
+        "src/apps/api/tests/kria/test_confirmed_title_inventory_postgres.py"
       ]
     }
   ]

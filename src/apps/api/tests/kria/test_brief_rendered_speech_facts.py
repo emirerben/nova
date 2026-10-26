@@ -393,10 +393,58 @@ def test_the_t3_reasons_are_turkish_in_a_turkish_chat():
     )
 
 
+# English caption lines (authored test input). KRI-838: the review reads these, not the label.
+_ENGLISH_LINES = (
+    "Hi, I'm Carolina from Ecuador and this is the traditional dessert we make at home.",
+    "It's a waffle cookie with bread, blackberry jam, cheese and whipped cream.",
+    "That's it, thank you so much for watching.",
+)
+
+
 def test_captions_in_another_language_are_not_met():
-    receipt = _judged(_T3_R2, _t3_variant(caption_language="en"))
+    # KRI-838: this used to flip only the LABEL on Turkish lines ("en" over Turkish text) and
+    # expect "not Turkish" -- it pinned a label-only verdict. The lines are English now.
+    receipt = _judged(_T3_R2, _t3_variant(_ENGLISH_LINES, caption_language="en"))
     assert (receipt.status, receipt.verification) == ("partial", "checked")
     assert receipt.reason.startswith("The captions are in English, not Turkish.")
+
+
+def test_english_lines_under_a_turkish_label_are_not_met():
+    """The incident: whisper hinted to Turkish wrote English, the worker stamped "tr", and
+    the label-only check said "The captions are in Turkish." (met)."""
+    receipt = _judged(_T3_R2, _t3_variant(_ENGLISH_LINES, caption_language="tr"))
+    assert (receipt.status, receipt.verification) == ("partial", "checked")
+    assert receipt.reason.startswith("The captions are in English, not Turkish.")
+    token = bind_reply_language("tr")
+    try:
+        in_turkish = _judged(_T3_R2, _t3_variant(_ENGLISH_LINES, caption_language="tr"))
+    finally:
+        release_reply_language(token)
+    assert in_turkish.reason.startswith("Altyazılar Türkçe değil, İngilizce olarak çıktı.")
+
+
+def test_the_lines_outrank_a_stale_label():
+    """An editor hand-edit never restamps `caption_language`: Turkish lines are Turkish."""
+    receipt = _judged(_T3_R2, _t3_variant(caption_language="en"))
+    assert receipt.status == "met"
+    assert receipt.reason.startswith("The captions are in Turkish.")
+
+
+def test_the_creators_own_spellings_are_not_language_evidence():
+    # English lines whose only Spanish is the dish names the creator asked to keep.
+    req = BriefRequirement(
+        id="c",
+        kind="text",
+        scope="global",
+        description="Spanish subtitles; spelling: Oblea de la Casa, dulce de leche",
+    )
+    lines = (
+        "Hi, I'm Carolina and this is the Oblea de la Casa.",
+        "It's made with cheese, dulce de leche and whipped cream, and it's really good.",
+    )
+    receipt = _judged(req, _t3_variant(lines, caption_language="es"))
+    assert receipt.status == "partial"
+    assert "The captions are in English, not Spanish." in receipt.reason
 
 
 @pytest.mark.parametrize(
@@ -517,11 +565,21 @@ def test_a_spelling_ask_without_readable_names_stays_unchecked(description):
 
 
 def test_an_unknown_caption_language_stays_unchecked():
-    variant = _t3_variant()
+    # KRI-838: with the real Turkish lines the text itself answers (see the next test); the
+    # language stays unchecked only when there is neither a label nor enough text to read.
+    variant = _t3_variant(("Moda, Bahariye, Yeldeğirmeni, Kadıköy.",))
     del variant["caption_language"]
     receipt = _judged(_T3_R2, variant)
     assert receipt.verification == "unchecked"
     assert receipt.reason.startswith("I couldn't check which language the captions are in.")
+
+
+def test_no_label_but_clearly_turkish_lines_are_judged_on_the_lines():
+    variant = _t3_variant()
+    del variant["caption_language"]
+    receipt = _judged(_T3_R2, variant)
+    assert (receipt.status, receipt.verification) == ("met", "checked")
+    assert receipt.reason.startswith("The captions are in Turkish.")
 
 
 def test_a_render_with_no_captions_says_so():

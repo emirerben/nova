@@ -190,7 +190,49 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed:
         layer.effect, layer.animation_phases, giant_title=layer.giant_title is not None
     ):
         layer = layer.model_copy(update={"bend": bend})
+    if overlay.get("behind_subject"):
+        layer = _stamp_behind_subject(layer, layer_id=layer_id)
     return layer, font
+
+
+# The cloud lane's wording (`text_behind_subject_fallback` in generative_build.py) reused for
+# the phone: the text is still there, pasted on top instead of behind the person.
+BEHIND_SUBJECT_PLAIN_TEXT_NOTE = (
+    "Text behind people isn't available for this phone render yet, so it falls back to plain text."
+)
+
+
+def _stamp_behind_subject(layer, *, layer_id: str):
+    """Keep ``behind_subject`` on a phone text layer only when the device gate is open.
+
+    Open = `text_behind_subject_phone_supported` (kill switch on, ``behindSubject`` verified on
+    device and, inside an app request, a build that decodes the key) AND the layer has no
+    giant-title transition (its own compositing lane). Otherwise the flag is STRIPPED and the
+    layer compiles as plain text, byte-identical to a layer that never asked: a creator never
+    loses the text, only the occlusion, and the fallback is recorded for the job-debug view
+    (`text_behind_subject_phone_fallback`, `BEHIND_SUBJECT_PLAIN_TEXT_NOTE`).
+    """
+    import structlog  # noqa: PLC0415
+
+    from app.services.phone_rollout import text_behind_subject_phone_supported  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    reason = None
+    if layer.giant_title is not None:
+        reason = "giant_title"
+    elif not text_behind_subject_phone_supported():
+        reason = "phone_gate_closed"
+    if reason is None:
+        return layer.model_copy(update={"behind_subject": True})
+    structlog.get_logger(__name__).info(
+        "text_behind_subject_phone_fallback", layer_id=layer_id, reason=reason
+    )
+    record_pipeline_event(
+        "overlay",
+        "text_behind_subject_phone_fallback",
+        {"layer_id": layer_id, "reason": reason, "note": BEHIND_SUBJECT_PLAIN_TEXT_NOTE},
+    )
+    return layer
 
 
 def _compile_text_overlay_unbent(
@@ -312,12 +354,13 @@ def _compile_text_overlay(
         raise UnsupportedPortableText("dissolve requires its cloud overlay-index seed")
     # These fields invoke specialized drawing or timing outside the base line
     # painter. Accepting their base text would silently lose creator intent.
+    # `behind_subject` is no longer in this list: `compile_text_overlay` stamps it on the layer
+    # when the phone gate is open and strips it (plain text) otherwise.
     for key in (
         "emoji",
         "emoji_prefix",
         "karaoke_words",
         "theme_transition",
-        "behind_subject",
         "spans",
         "masonry_layer_origin_x_px",
     ):
@@ -638,7 +681,7 @@ def _compile_staggered_content(overlay, *, text, canvas, font, size, font_asset,
         (index, row)
         for index, line in enumerate(text.split("\n"))
         for row in (
-            [line]
+            cloud._authored_rows(line, font, max_width, spacing)
             if overlay.get("wrap_lines") is False
             else cloud._wrap_text_to_lines(line, font, max_width, spacing)
         )

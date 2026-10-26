@@ -1,0 +1,124 @@
+---
+title: "iOS editor: chat edits and the Review your video sheet"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+    direction TB
+
+    state "Chat edits while the editor is open" as ChatLane {
+        %% src/apps/ios/Kria/Features/NativeEditorSession.swift:1396 (document vs cleanDocument)
+        state "Editing your video<br/>(maybe unsaved edits)" as Editing
+        %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1977 and NativeEditorSession.swift:943
+        state "You ask Kria in chat,<br/>your unsaved state goes along" as SendWithState
+        %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1980 (legacy flush = save first)
+        state "Saving your edits first,<br/>then sending" as FlushSave
+        %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:1983
+        state "Message held: save or<br/>resolve editor changes" as SendBlocked
+        %% src/apps/api/app/routes/kria_runtime.py (draft head kind editor, never rendered)
+        state "Kria parks the edit in<br/>the draft (not rendered)" as DraftParked
+        %% src/apps/ios/Kria/Features/NativeEditorSession.swift:1709 (synchronizePromptRevision, 3 tries)
+        state "Editor picks up the chat edit" as Syncing
+        %% src/apps/ios/Kria/Features/NativeEditorSession.swift:1691 (applyStagedChatDocument)
+        state "Chat edit shown as unsaved<br/>(one Undo removes it)" as Staged
+        %% src/apps/ios/Kria/Features/NativeEditorSession.swift:1800 and :1823 (lane-by-lane merge)
+        state "Chat edit merged with yours<br/>lane by lane" as Merged
+        %% src/apps/ios/Kria/Features/NativeEditorSession.swift:1802 and :1835
+        state "A newer edit exists<br/>(chat and you, same lane)" as ChatConflict
+        %% src/apps/ios/Kria/Features/NativeEditorSession.swift:5785 (rebase reads variant, not the draft head)
+        state "Stuck: chat edit never shows,<br/>conflict returns on each sync" as ChatNeverShows
+        %% src/apps/ios/Kria/Core/Services.swift:2716 (draft base_generation != render_generation_id)
+        state "Chat edit silently dropped<br/>after your Save" as ChatDroppedBySave
+        %% src/apps/ios/Kria/Features/NativeEditorSession.swift:1638 and :2143 (load resets appliedChatDraftRevision)
+        state "Undone chat edit comes back<br/>after the editor reloads" as UndoneComesBack
+        %% src/apps/ios/Kria/Features/NativeEditorSession.swift:1774 (adoptActiveJobFromThread)
+        state "Kria rendered a new job,<br/>see save chart" as NewJob
+    }
+
+    state "Review your video sheet" as ReviewLane {
+        %% src/apps/ios/Kria/Core/ReviewPlanModel.swift:11 (phase reviewing)
+        state "Reviewing: read, flag, edit<br/>sections" as Reviewing
+        %% src/apps/ios/Kria/Core/ReviewPlanModel.swift:203 (phase submitting) and ChatWorkspaceView.swift:739
+        state "Sending your update" as Submitting
+        %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:775 (150 x 0.4s)
+        state "Waiting for Kria's approval,<br/>auto-approving it" as AutoApprove
+        %% src/apps/ios/Kria/Features/ChatWorkspaceView.swift:768 and :781 (turnID empty, newest approval wins)
+        state "Undo all may approve a<br/>different, newer approval" as WrongApproval
+        %% src/apps/ios/Kria/Core/ReviewPlanModel.swift:234
+        state "Kria declined, timed out<br/>or the plan moved" as SendFailed
+        %% src/apps/ios/Kria/Core/ReviewPlanModel.swift:224 and :253 (follow)
+        state "Updating your video" as Updating
+        %% src/apps/ios/Kria/Core/ReviewPlanModel.swift:265 (needs a different jobID) + tasks/kria_runtime.py:5276 (same Job)
+        state "Stuck: spinner up to 10 min,<br/>same-job update never counts" as SameJobStall
+        %% src/apps/ios/Kria/Core/ReviewPlanModel.swift:278
+        state "Taking longer than usual,<br/>keeps going in background" as GaveUp
+        %% src/apps/ios/Kria/Core/ReviewPlanModel.swift:273
+        state "Lost the connection" as LostConnection
+        %% src/apps/ios/Kria/Core/ReviewPlanModel.swift:261
+        state "The update was stopped" as Stopped
+        %% src/apps/ios/Kria/Core/ReviewPlanModel.swift:61 (showsUpdated)
+        state "Updated, with Undo" as Updated
+    }
+
+    [*] --> Editing
+    Editing --> SendWithState : send, editor-state turns on
+    Editing --> FlushSave : send, state too big or turns off
+    FlushSave --> SendWithState : save OK
+    FlushSave --> SendBlocked : save conflict or failed
+    SendBlocked --> Editing : fix in editor
+    SendWithState --> DraftParked : Kria plans editor ops
+    DraftParked --> Syncing : editor open or reopened
+    DraftParked --> NewJob : Kria re-planned a new job
+    Syncing --> Staged : nothing unsaved of yours
+    Syncing --> Merged : different lanes, or merge base found
+    Syncing --> ChatConflict : same lane changed by both
+    Syncing --> NewJob : draft points at another job
+    Staged --> Editing : Undo, chat edit removed
+    Staged --> Editing : Save, renders with generation G1
+    Merged --> Editing : keep editing, then Save
+    Editing --> UndoneComesBack : reopen triggers full reload
+    UndoneComesBack --> Staged : same draft staged again
+    ChatConflict --> ChatNeverShows : Reload latest and keep my edits
+    ChatNeverShows --> ChatConflict : next sync, same lanes
+    ChatNeverShows --> ChatDroppedBySave : you Save, G moves on
+    ChatDroppedBySave --> Editing : chat draft now stale
+
+    [*] --> Reviewing : open Review your video
+    Reviewing --> Submitting : Update video, scoped turn
+    Reviewing --> Submitting : Undo one section
+    Reviewing --> Submitting : Undo all (no turn id)
+    Submitting --> WrongApproval : other turn's approval lands first
+    WrongApproval --> Updating : wrong render approved
+    Submitting --> AutoApprove : turn accepted
+    Submitting --> SendFailed : 409 or offline
+    Submitting --> Reviewing : section undo queued nothing
+    AutoApprove --> Updating : approved, render queued
+    AutoApprove --> SendFailed : declined or 60s no card
+    SendFailed --> Reviewing : notice shown
+    Updating --> Updated : ready on a different job
+    Updating --> SameJobStall : ready but same job
+    SameJobStall --> GaveUp : 600s pass
+    Updating --> GaveUp : 600s pass
+    Updating --> LostConnection : 6 failed polls
+    Updating --> Stopped : render cancelled
+    Updating --> Reviewing : sheet dismissed, polling stops
+    GaveUp --> Reviewing : notice shown
+    LostConnection --> Reviewing : notice shown
+    Stopped --> Reviewing : notice shown
+    Updated --> Reviewing : flag again or undo
+
+    classDef working fill:#e8f0fe,stroke:#4a6fa5,color:#1b2631
+    classDef yourturn fill:#e6f4ea,stroke:#3d7a4f,color:#1b2631
+    classDef done fill:#d5f5e3,stroke:#1e8449,color:#145a32
+    classDef stuck fill:#fde7e9,stroke:#c0392b,stroke-width:3px,color:#641e16
+    classDef degraded fill:#fef5e7,stroke:#b9770e,stroke-width:2px,color:#6e2c00
+    classDef failed fill:#f4f6f7,stroke:#566573,color:#1b2631
+
+    class SendWithState,FlushSave,DraftParked,Syncing,NewJob,Submitting,AutoApprove,Updating working
+    class Editing,Staged,Merged,ChatConflict,SendBlocked,Reviewing,SendFailed,LostConnection yourturn
+    class Updated done
+    class ChatNeverShows,SameJobStall stuck
+    class ChatDroppedBySave,UndoneComesBack,WrongApproval,GaveUp degraded
+    class Stopped failed

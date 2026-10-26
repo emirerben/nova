@@ -72,7 +72,7 @@ def _brief() -> CreativeBrief:
     )
 
 
-def _fixture(*, capture: bool = True):
+def _fixture(*, capture: bool = True, analysis: dict[str, dict] | None = None):
     bindings = []
     assignments = []
     for i in range(CLIPS):
@@ -102,6 +102,7 @@ def _fixture(*, capture: bool = True):
                 "media_id": media_id,
                 "storage_generation": "7",
                 "duration_s": duration,
+                **({"analysis": analysis[media_id]} if analysis and media_id in analysis else {}),
                 **(
                     {
                         "capture": {
@@ -130,8 +131,13 @@ def _fixture(*, capture: bool = True):
 
 @pytest.fixture
 def harness(monkeypatch):
-    def build(*, brief: CreativeBrief | None = None, capture: bool = True):
-        bindings, assignments = _fixture(capture=capture)
+    def build(
+        *,
+        brief: CreativeBrief | None = None,
+        capture: bool = True,
+        analysis: dict[str, dict] | None = None,
+    ):
+        bindings, assignments = _fixture(capture=capture, analysis=analysis)
         user_id = uuid.uuid4()
         snapshot = {
             PHONE_SOURCES_FIELD: [b.model_dump(mode="json") for b in bindings],
@@ -1004,7 +1010,7 @@ def test_a_landscape_choice_pins_a_1920x1080_canvas_without_bars(harness):
     assert set(_guided_track_scales(job)) == {1.0}
 
 
-# --- KRI-470 PR-G: an unmet required order blocks a bound montage (never a silent success) ---
+# --- KRI-470 PR-G / KRI-129: an unmet required order renders with a note (never silent) ---
 
 
 def _bound_job(harness, *, extra_order_facts: dict):
@@ -1036,24 +1042,26 @@ def _bound_job(harness, *, extra_order_facts: dict):
     return job, copy.deepcopy(job.assembly_plan)
 
 
-def test_a_required_order_the_plan_cannot_follow_asks_before_simplifying(harness):
+def test_a_required_order_the_plan_cannot_follow_renders_and_says_so(harness):
+    """The creator approved this draft: it renders, and the note names the rule it missed."""
     job, snapshot = _bound_job(harness, extra_order_facts={})
 
-    with pytest.raises(UnsupportedPhonePlan) as caught:
-        gb._run_phone_unified_montage_job(
-            str(job.id), snapshot, job.all_candidates, ownership_epoch=3
-        )
+    planned = gb._run_phone_unified_montage_job(
+        str(job.id), snapshot, job.all_candidates, ownership_epoch=3
+    )
 
-    assert "Should I try again or simplify this request?" in str(caught.value)
-    assert "ordering rule" in str(caught.value)
-    recovery = job.assembly_plan["request_recovery"]
+    assert planned is not None and isinstance(planned["guided_edit"], dict)
+    assert "request_recovery" not in job.assembly_plan
+    record = planned["unified_montage"]
     failed = {
         row["requirement_id"]: row
-        for row in recovery["requirement_receipts"]
+        for row in record["requirement_receipts"]
         if row["verification"] == "checked" and row["status"] != "met"
     }
     assert failed["r5"]["status"] == "not_possible"
-    assert "guided_edit" not in job.assembly_plan  # nothing was published to render
+    assert len(record["repair_notes"]) == 1
+    assert record["repair_notes"][0] == failed["r5"]["reason"]
+    assert "Should I try again" not in record["repair_notes"][0]
 
 
 def test_an_optional_order_preference_the_plan_cannot_follow_does_not_block(harness):
@@ -1092,16 +1100,16 @@ def test_a_bound_job_without_capture_times_fails_the_required_filming_order(harn
         uuid.uuid4(), brief
     ).model_dump(mode="json")
 
-    with pytest.raises(UnsupportedPhonePlan):
-        gb._run_phone_unified_montage_job(
-            str(job.id), copy.deepcopy(job.assembly_plan), job.all_candidates, ownership_epoch=3
-        )
+    planned = gb._run_phone_unified_montage_job(
+        str(job.id), copy.deepcopy(job.assembly_plan), job.all_candidates, ownership_epoch=3
+    )
 
-    failed = job.assembly_plan["request_recovery"]["requirement_receipts"]
+    failed = planned["unified_montage"]["requirement_receipts"]
     assert [(row["requirement_id"], row["status"]) for row in failed] == [("r4", "not_possible")]
+    assert planned["unified_montage"]["repair_notes"] == [failed[0]["reason"]]
 
 
-# --- KRI-470: a requested title with no words blocks the render with a typed, askable decline ---
+# --- KRI-470 / KRI-129: a requested title with no words renders without one, and says how ---
 
 
 def _title_block_job(harness):
@@ -1131,37 +1139,33 @@ def _title_block_job(harness):
     return job, copy.deepcopy(job.assembly_plan)
 
 
-def test_a_title_with_no_words_blocks_with_a_typed_needs_choice_decline(harness):
-    from app.services.creator_render_contract import CreatorRenderContractError, decline_payload
+_NO_TITLE_NOTE = (
+    "I left the title off because you didn't give me its words. "
+    "Tell me what it should say and I'll add it."
+)
 
+
+def test_a_title_with_no_words_renders_without_one_and_says_how_to_add_it(harness):
     job, snapshot = _title_block_job(harness)
-    with pytest.raises(CreatorRenderContractError) as caught:
-        gb._run_phone_unified_montage_job(
-            str(job.id), snapshot, job.all_candidates, ownership_epoch=3
-        )
-    message = str(caught.value)
-    # No video exists: the copy says so, names what is missing and the way forward.
-    assert message.startswith("I couldn't make the video yet:")
-    assert "I didn't add a title" not in message
-    assert 'say "continue without a title"' in message
-    assert decline_payload(caught.value) == {
-        "decline_reason": "needs_choice",
-        "field_path": "opening_title",
-        "alternative": 'Tell me the words for the title, or say "continue without a title".',
-    }
-    assert job.assembly_plan["request_recovery"]["message"] == message
-    assert "guided_edit" not in job.assembly_plan  # nothing was published to render
+    planned = gb._run_phone_unified_montage_job(
+        str(job.id), snapshot, job.all_candidates, ownership_epoch=3
+    )
+    assert planned is not None and isinstance(planned["guided_edit"], dict)
+    assert "request_recovery" not in job.assembly_plan
+    assert planned["unified_montage"]["title"] is None
+    assert planned["unified_montage"]["repair_notes"] == [_NO_TITLE_NOTE]
 
 
-def test_the_dispatcher_persists_the_typed_title_decline(harness, monkeypatch):
+def test_the_dispatcher_renders_and_shows_the_title_note_with_the_video(harness, monkeypatch):
+    """Prod 7bb664fb end to end: the job reaches the phone and the note rides the variant."""
     job, _snapshot = _title_block_job(harness)
     failure = Mock(return_value=True)
     monkeypatch.setattr(gb, "_fail_job", failure)
     gb._run_generative_job(str(job.id))
-    assert failure.call_args.kwargs["failure_reason"] == "phone_plan_unsupported"
-    decline = failure.call_args.kwargs["decline"]
-    assert decline["decline_reason"] == "needs_choice" and decline["field_path"] == "opening_title"
-    assert decline["alternative"] in failure.call_args.args[1]
+    failure.assert_not_called()
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    assert variant["phone_repair_notes"] == [_NO_TITLE_NOTE]
 
 
 def test_a_title_with_words_does_not_block(harness):
@@ -1185,9 +1189,8 @@ def test_a_title_with_words_does_not_block(harness):
     assert planned is not None and planned["unified_montage"]["title"] == "Weekend away"
 
 
-def test_a_wordless_title_next_to_another_blocker_keeps_the_generic_ask_but_honest_copy(harness):
+def test_a_wordless_title_next_to_another_miss_gets_one_note_each(harness):
     from app.kria.brief_binding import BriefBinding
-    from app.services.creator_render_contract import CreatorRenderContractError
 
     brief = CreativeBrief(
         version=1,
@@ -1206,17 +1209,13 @@ def test_a_wordless_title_next_to_another_blocker_keeps_the_generic_ask_but_hone
     job.assembly_plan["creator_brief_binding"] = BriefBinding.create(
         uuid.uuid4(), brief
     ).model_dump(mode="json")
-    with pytest.raises(UnsupportedPhonePlan) as caught:
-        gb._run_phone_unified_montage_job(
-            str(job.id), copy.deepcopy(job.assembly_plan), job.all_candidates, ownership_epoch=3
-        )
-    message = str(caught.value)
-    assert not isinstance(caught.value, CreatorRenderContractError)  # two blockers: untyped
-    assert "I couldn't make the video yet" in message and "I didn't add a title" not in message
-    assert "stay in the order you attached them" in message
-    assert "Should I try again or simplify this request?" in message
-    # The title's own way forward is not lost behind the generic ask.
-    assert message.endswith('For the title, tell me the words or say "continue without a title".')
+    planned = gb._run_phone_unified_montage_job(
+        str(job.id), copy.deepcopy(job.assembly_plan), job.all_candidates, ownership_epoch=3
+    )
+    notes = planned["unified_montage"]["repair_notes"]
+    assert notes[0] == _NO_TITLE_NOTE
+    assert len(notes) == 2 and "stay in the order you attached them" in notes[1]
+    assert not any("Should I try again" in note for note in notes)
 
 
 def test_initial_creation_composes_full_request_before_pinning_phone_plan(harness, monkeypatch):
@@ -1272,7 +1271,9 @@ def test_initial_creation_composes_full_request_before_pinning_phone_plan(harnes
     ] == title.split()
 
 
-# --- KRI-689: a clip-speed ask the phone montage cannot honour is a "Couldn't", never a block ---
+# --- KRI-689: a clip-speed ask. Without a verified `variableSpeed` renderer (this harness's
+# default) it is an honest "Couldn't", never a block; with one, the rate rides the plan into the
+# phone recipe (the second group of tests below). ---
 
 
 def _speed_brief(description: str = "Speed the river shots up 2x") -> CreativeBrief:
@@ -1287,6 +1288,15 @@ def _speed_brief(description: str = "Speed the river shots up 2x") -> CreativeBr
                 facts={"key": "capture_time"},
             ),
             BriefRequirement(id="r5", kind="style", scope="global", description=description),
+            # A stated length keeps the cuts short (~1.4 s of 3.5-5 s clips), so a faster rate
+            # has footage to speed through; without it every cut shows its clip whole.
+            BriefRequirement(
+                id="r2",
+                kind="timing",
+                scope="global",
+                description="20 seconds",
+                facts={"duration_s": 20},
+            ),
         ],
     )
 
@@ -1342,7 +1352,127 @@ def test_a_pacing_ask_is_not_recorded_as_a_dropped_speed_ask(harness):
     assert "r5" not in receipts or receipts["r5"]["status"] != "not_possible"
 
 
-# --- KRI-765: a blocked render's recovery is written in the chat's language ---
+# With `variableSpeed` verified (production has it), the chat ask is planned: the rate lands on
+# the right cuts, rides `guided_story_execution_plan` into the device recipe, and the receipt
+# says which clips play at which rate (docs/reviews/kri-689-chat-speed-failure-modes.md).
+
+_RIVER = {"best_moments": [{"start_s": 0.4, "end_s": 2.4, "energy": 0.9,
+                            "description": "a ferry crossing the river at night"}]}  # fmt: skip
+
+
+def _speed_on(monkeypatch) -> None:
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        [*gb.settings.phone_render_verified_features, "variableSpeed"],
+    )
+
+
+def _dispatched(job, monkeypatch):
+    # After `harness(...)`, which pins the verified-feature list without `variableSpeed`.
+    _speed_on(monkeypatch)
+    gb._run_generative_job(str(job.id))
+    assert job.status == "awaiting_device"
+    plan = GuidedStoryExecutionPlan.model_validate(job.assembly_plan["guided_story_execution_plan"])
+    recipe = device_status(job, "guided_story").request.recipe
+    receipts = {
+        row["requirement_id"]: row
+        for row in job.assembly_plan["unified_montage"]["requirement_receipts"]
+    }
+    return plan, recipe, receipts
+
+
+def test_a_whole_edit_speed_ask_plays_every_clip_faster_on_the_phone(harness, monkeypatch):
+    _speed_on(monkeypatch)
+    baseline, *_ = harness(brief=_speed_brief("Fast pacing"))
+    gb._run_generative_job(str(baseline.id))
+    base_plan = GuidedStoryExecutionPlan.model_validate(
+        baseline.assembly_plan["guided_story_execution_plan"]
+    )
+    job, *_ = harness(brief=_speed_brief("Speed up all the clips 2x"))
+
+    plan, recipe, receipts = _dispatched(job, monkeypatch)
+
+    assert {m.media_id: m.playback_rate for m in plan.story_timeline} == {
+        m.media_id: 2.0 for m in plan.story_timeline
+    }
+    # C1: the timeline the labels and the total length hang on is unchanged.
+    assert [(m.output_start_s, m.output_end_s) for m in plan.story_timeline] == [
+        (m.output_start_s, m.output_end_s) for m in base_plan.story_timeline
+    ]
+    assert plan.resolved_duration_s == base_plan.resolved_duration_s
+    clips = {clip.id: clip for clip in recipe.tracks[0].clips}
+    for moment in plan.story_timeline:
+        assert clips[moment.moment_id].rate == 2.0
+        assert clips[moment.moment_id].source_duration == pytest.approx(
+            moment.source_end_s - moment.source_start_s, abs=1e-6
+        )
+    assert "variableSpeed" in recipe.required_capabilities
+    assert receipts["r5"]["status"] == "met"
+    assert receipts["r5"]["verification"] == "checked"
+    assert receipts["r5"]["reason"] == "Every video clip plays at 2x"
+    assert receipts["r4"]["status"] == "met"
+    (row,) = job.assembly_plan["unified_montage"]["clip_speeds"]
+    assert row["status"] == "applied" and row["grounding"] == "all_clips"
+
+
+def test_a_named_clip_is_the_only_one_that_changes_speed(harness, monkeypatch):
+    _speed_on(monkeypatch)
+    job, *_ = harness(
+        brief=_speed_brief("Speed the river shots up 2x"), analysis={"clip-3": _RIVER}
+    )
+
+    plan, recipe, receipts = _dispatched(job, monkeypatch)
+
+    rates = {moment.media_id: moment.playback_rate for moment in plan.story_timeline}
+    assert rates.pop("clip-3") == 2.0
+    # B1 negative control: no other clip picks up the rate.
+    assert set(rates.values()) == {None}
+    clips = {clip.id: clip for clip in recipe.tracks[0].clips}
+    river = next(m for m in plan.story_timeline if m.media_id == "clip-3")
+    assert clips[river.moment_id].rate == 2.0
+    assert all(clips[m.moment_id].rate == 1 for m in plan.story_timeline if m.media_id != "clip-3")
+    position = [m.media_id for m in plan.story_timeline].index("clip-3") + 1
+    assert receipts["r5"]["status"] == "met"
+    assert receipts["r5"]["reason"] == f"Clip {position} plays at 2x"
+    assert "request_recovery" not in job.assembly_plan
+
+
+def test_words_that_name_no_clip_are_the_creators_call_and_still_render(harness, monkeypatch):
+    from app.kria.brief_binding import BriefBinding
+
+    _speed_on(monkeypatch)
+    brief = _speed_brief("Speed the river shots up 2x")
+    job, *_ = harness(brief=brief)  # no clip analysis names a river
+    job.assembly_plan["creator_brief_binding"] = BriefBinding.create(
+        uuid.uuid4(), brief
+    ).model_dump(mode="json")
+
+    plan, recipe, receipts = _dispatched(job, monkeypatch)
+
+    assert all(moment.playback_rate is None for moment in plan.story_timeline)
+    assert "variableSpeed" not in recipe.required_capabilities
+    assert receipts["r5"]["status"] == "not_possible"
+    assert receipts["r5"]["reason"].startswith("I couldn't tell which clip you meant")
+    # KRI-129: the creator approved, so it renders and says what it could not do.
+    assert "request_recovery" not in job.assembly_plan
+    assert job.status == "awaiting_device"
+
+
+def test_a_turkish_whole_edit_ask_gets_a_turkish_receipt(harness, monkeypatch):
+    _speed_on(monkeypatch)
+    job, *_ = harness(brief=_speed_brief("Klipleri 2 kat hızlandır"))
+    job.assembly_plan["creator_reply_language"] = "tr"
+
+    plan, _recipe, receipts = _dispatched(job, monkeypatch)
+
+    assert {m.media_id: m.playback_rate for m in plan.story_timeline} == {
+        m.media_id: 2.0 for m in plan.story_timeline
+    }
+    assert receipts["r5"]["reason"] == "Her video klibi 2x hızda oynuyor"
+
+
+# --- KRI-765: a missed ask's note is written in the chat's language ---
 # A Turkish chat got "Your clips are in filming order, but these aren't where you asked:
 # M1_03 (last). Taslağın kaydedildi. ..." because the worker bound no language when it wrote
 # the receipt reason, and the chat can only re-word reasons that have no clip names in them.
@@ -1383,27 +1513,23 @@ def _unmet_sequence_job(harness, monkeypatch, *, language: str | None):
     return job
 
 
-def _blocked_recovery(job) -> tuple[str, list[dict]]:
-    with pytest.raises(UnsupportedPhonePlan) as caught:
-        gb._run_phone_unified_montage_job(
-            str(job.id),
-            copy.deepcopy(job.assembly_plan),
-            job.all_candidates,
-            ownership_epoch=3,
-        )
-    recovery = job.assembly_plan["request_recovery"]
-    assert recovery["message"] == str(caught.value)
-    return recovery["message"], recovery["requirement_receipts"]
-
-
-def test_a_turkish_chat_blocked_order_is_written_in_turkish_by_the_worker(harness, monkeypatch):
-    job = _unmet_sequence_job(harness, monkeypatch, language="tr")
-    message, receipts = _blocked_recovery(job)
-    assert message == (
-        "Klipler çekim sırasında, ama bunlar istediğin yerde değil: M1_03 (last). "
-        "Taslağın kaydedildi. Tekrar mı deneyeyim, yoksa isteği sadeleştireyim mi?"
+def _render_notes(job) -> tuple[list[str], list[dict]]:
+    planned = gb._run_phone_unified_montage_job(
+        str(job.id),
+        copy.deepcopy(job.assembly_plan),
+        job.all_candidates,
+        ownership_epoch=3,
     )
-    assert "filming order" not in message
+    assert planned is not None and isinstance(planned["guided_edit"], dict)
+    assert "request_recovery" not in job.assembly_plan
+    record = planned["unified_montage"]
+    return record["repair_notes"], record["requirement_receipts"]
+
+
+def test_a_turkish_chat_missed_order_is_written_in_turkish_by_the_worker(harness, monkeypatch):
+    job = _unmet_sequence_job(harness, monkeypatch, language="tr")
+    notes, receipts = _render_notes(job)
+    assert notes == ["Klipler çekim sırasında, ama bunlar istediğin yerde değil: M1_03 (last)."]
     # The stored receipt is Turkish too: the chat re-words nothing it cannot match.
     assert receipts[0]["reason"] == (
         "Klipler çekim sırasında, ama bunlar istediğin yerde değil: M1_03 (last)."
@@ -1411,13 +1537,12 @@ def test_a_turkish_chat_blocked_order_is_written_in_turkish_by_the_worker(harnes
 
 
 @pytest.mark.parametrize("language", [None, "en"])
-def test_an_english_or_unstamped_blocked_order_is_unchanged(harness, monkeypatch, language):
+def test_an_english_or_unstamped_missed_order_is_english(harness, monkeypatch, language):
     job = _unmet_sequence_job(harness, monkeypatch, language=language)
-    message, receipts = _blocked_recovery(job)
-    assert message == (
-        "Your clips are in filming order, but these aren't where you asked: M1_03 (last). "
-        "Your draft is saved. Should I try again or simplify this request?"
-    )
+    notes, receipts = _render_notes(job)
+    assert notes == [
+        "Your clips are in filming order, but these aren't where you asked: M1_03 (last)."
+    ]
     assert receipts[0]["reason"].startswith("Your clips are in filming order")
 
 
@@ -1425,11 +1550,11 @@ def test_the_worker_language_does_not_leak_into_the_next_task(harness, monkeypat
     from app.kria.reply_language import current_reply_language
 
     job = _unmet_sequence_job(harness, monkeypatch, language="tr")
-    _blocked_recovery(job)
+    _render_notes(job)
     assert current_reply_language() is None
 
 
-# --- KRI-778: the blocked render's message reads as sentences (café M2, jobs 417eecd4/50f67a06) ---
+# --- KRI-778: the missed asks read as sentences (café M2, jobs 417eecd4/50f67a06) ---
 # The chat card said: "some of the groups you named are not where you said This draft is about
 # 4.7s; you asked for 1s. This draft is about 4.7s; you asked for 14s. Your draft is saved. ..."
 # The M2 brief: one described order, a freeze ask the brief scoped globally with a 1 s length,
@@ -1494,16 +1619,15 @@ def _m2_job(harness, monkeypatch, *, language: str | None):
     return job
 
 
-def test_the_m2_block_message_is_whole_sentences_with_one_length(harness, monkeypatch):
+def test_the_m2_notes_are_whole_sentences_with_one_length(harness, monkeypatch):
     job = _m2_job(harness, monkeypatch, language=None)
-    message, receipts = _blocked_recovery(job)
-    assert message == (
+    notes, receipts = _render_notes(job)
+    assert " ".join(notes) == (
         "I couldn't place everything you listed in the order you gave. "
         "Caro's bye-bye wave (last) isn't where you asked. "
-        "This draft is about 4.7s; you asked for 14s. "
-        "Your draft is saved. Should I try again or simplify this request?"
+        "This draft is about 4.7s; you asked for 14s."
     )
-    # KRI-777 makes freeze an honest format limit; order/length still block.
+    # KRI-777 makes freeze an honest format limit; order/length are noted.
     checked_misses = {
         row["requirement_id"]: row["status"]
         for row in receipts
@@ -1512,12 +1636,11 @@ def test_the_m2_block_message_is_whole_sentences_with_one_length(harness, monkey
     assert checked_misses == {"r1": "partial", "r3": "not_possible", "r7": "partial"}
 
 
-def test_the_m2_block_message_reads_the_same_in_a_turkish_chat(harness, monkeypatch):
+def test_the_m2_notes_read_the_same_in_a_turkish_chat(harness, monkeypatch):
     job = _m2_job(harness, monkeypatch, language="tr")
-    message, _receipts = _blocked_recovery(job)
-    assert message == (
+    notes, _receipts = _render_notes(job)
+    assert " ".join(notes) == (
         "Saydığın her şeyi verdiğin sıraya yerleştiremedim. "
         "Caro's bye-bye wave (son) istediğin yerde değil. "
-        "Bu taslak yaklaşık 4.7 saniye; sen 14 saniye istedin. "
-        "Taslağın kaydedildi. Tekrar mı deneyeyim, yoksa isteği sadeleştireyim mi?"
+        "Bu taslak yaklaşık 4.7 saniye; sen 14 saniye istedin."
     )

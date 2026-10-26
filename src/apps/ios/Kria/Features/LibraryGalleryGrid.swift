@@ -66,14 +66,7 @@ struct LibraryGalleryGrid: View {
     }
 
     private var footer: some View {
-        HStack {
-            Text(limitMessage ?? "\(selection.count) of \(limit) selected · slide across to select")
-                .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                .accessibilityIdentifier("gallery-count")
-            Spacer()
-        }
-        .padding(.horizontal, 16).frame(minHeight: 44)
-        .background(.regularMaterial)
+        GalleryFooter(text: limitMessage ?? "\(selection.count) of \(limit) selected · slide across to select", identifier: "gallery-count")
     }
 
     private func load() {
@@ -109,31 +102,7 @@ struct LibraryGalleryGrid: View {
                 .aspectRatio(1, contentMode: .fit)
                 .overlay { GalleryThumbnail(asset: asset, loader: loader) }
                 .clipped()
-                .overlay(alignment: .bottomTrailing) {
-                    if asset.mediaType == .video {
-                        Text(Self.duration(asset.duration))
-                            .font(KriaFont.body(11).weight(.semibold)).foregroundStyle(Color.white)
-                            .padding(.horizontal, 5).padding(.vertical, 2)
-                            .background(KriaColor.ink.opacity(0.7), in: Capsule())
-                            .padding(4)
-                    }
-                }
-                .overlay(alignment: .topTrailing) {
-                    Group {
-                        if let number {
-                            Text("\(number)")
-                                .font(KriaFont.body(12).weight(.bold)).foregroundStyle(Color.white)
-                                .frame(minWidth: 22, minHeight: 22).padding(.horizontal, 2)
-                                .background(KriaColor.ink, in: Capsule())
-                        } else {
-                            Circle().stroke(Color.white.opacity(0.9), lineWidth: 1.5).frame(width: 22, height: 22)
-                                .background(Circle().fill(Color.black.opacity(0.15)))
-                        }
-                    }
-                    .padding(5)
-                }
-                .overlay { if number != nil { Rectangle().stroke(KriaColor.ink, lineWidth: 3) } }
-                .contentShape(Rectangle())
+                .modifier(GalleryTileChrome(number: number, duration: asset.mediaType == .video ? asset.duration : nil))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(asset.mediaType == .video ? "Video, \(Self.duration(asset.duration))" : "Photo")
@@ -142,10 +111,7 @@ struct LibraryGalleryGrid: View {
         .accessibilityIdentifier("gallery-tile-\(index)")
     }
 
-    static func duration(_ seconds: TimeInterval) -> String {
-        let total = Int(seconds.rounded())
-        return String(format: "%d:%02d", total / 60, total % 60)
-    }
+    static func duration(_ seconds: TimeInterval) -> String { GalleryTileChrome.duration(seconds) }
 }
 
 /// One thumbnail: opportunistic request (fast low-res first), network access on so iCloud-only assets still

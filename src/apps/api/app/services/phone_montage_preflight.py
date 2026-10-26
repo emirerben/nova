@@ -13,6 +13,9 @@ version?" before any approval card.
 What it judges, and why only that:
 
 - ``order`` and ``timing`` requirements: the deterministic plan alone decides them.
+- a clip-speed ask (KRI-689, `speed_ask.asks_clip_speed`): the plan grounds it to its cuts
+  (or says why it cannot), so its receipt is returned whatever its status and the draft reads
+  "Done: ... (clips 1 and 3 play at 2x)" or an honest "Couldn't" before the card.
 - never ``text``: the worker's two model steps (landmark names for per-clip labels, the
   creation-text lane) only write text and are skipped here, so a text verdict would be a
   guess. The render's own receipts still judge text.
@@ -53,12 +56,14 @@ def phone_montage_blockers(
     brief: CreativeBrief | None,
     strategy: Mapping[str, Any] | None,
     media_snapshot: Mapping[str, Any] | None,
+    client_protocol: int | None = None,
 ) -> list[RequirementReceipt]:
     """The receipts the phone montage worker would refuse this draft on ([] = none known).
 
     ``media_snapshot`` is the one approval will pin (``planned.media_snapshot``, with its
     length plan). ``db`` is only read, for the item's ready Visuals, and only when the
-    draft renders through the unified phone montage.
+    draft renders through the unified phone montage. ``client_protocol`` is the app build
+    that sent the message (KRI-898): the plan holds a freeze only for a build that plays it.
     """
     if not settings.kria_phone_montage_preflight_enabled:
         return []
@@ -74,6 +79,7 @@ def phone_montage_blockers(
             strategy=strategy,
             media_snapshot=media_snapshot,
             visuals=lambda: _ready_visuals(db, item=item, user_id=creator_id, strategy=strategy),
+            client_protocol=client_protocol,
         )
     except UnsupportedPhonePlan as exc:
         # The planner itself declined; the worker would too. Recorded, not (yet) surfaced.
@@ -103,28 +109,88 @@ def montage_blockers(
     strategy: Mapping[str, Any] | None,
     media_snapshot: Mapping[str, Any] | None,
     visuals: Sequence[Any] | Callable[[], Sequence[Any]],
+    client_protocol: int | None = None,
 ) -> list[RequirementReceipt] | None:
     """``None`` when this draft does not render through the unified phone montage, or
     nothing here can be judged; otherwise the checked ``order`` / ``timing`` receipts the
     worker would refuse on, in brief order, in the current reply language.
-
-    Mirrors the dispatch + worker inputs: the clips dispatch hands the worker (an explicit
-    selection, byte-identical uploads collapsed), their phone source receipts, the route the
-    job would be stamped with, and the approved length plan.
     """
     from app.kria.brief_checks import (  # noqa: PLC0415
         build_receipts,
-        defers_to_unified_montage,
         needs_creator_choice,
         plan_facts_from_unified_montage,
     )
-    from app.kria.duplicate_uploads import collapse_strategy, montage_record_fields  # noqa: PLC0415
+    from app.kria.duplicate_uploads import montage_record_fields  # noqa: PLC0415
+
+    # The worker only refuses a draft whose brief was bound at approval.
+    if brief is None or not settings.brief_binding_for(creator_id):
+        return None
+    from app.kria.speed_ask import asks_clip_speed  # noqa: PLC0415
+
+    judged: dict[str, BriefRequirement] = {
+        req.id: req for req in brief.live() if req.kind in PREFLIGHT_KINDS
+    }
+    # KRI-689: a clip-speed ask is settled by the same plan (which cuts, which rate, or why
+    # not). Its receipt is returned whatever its status, so the draft says "Done: ... (clips 1
+    # and 3 play at 2x)" or the honest "Couldn't" before the approval card.
+    speed_asks = {req.id for req in brief.live() if asks_clip_speed(req)}
+    if not judged and not speed_asks:
+        return None
+    planned = preflight_montage_plan(
+        creator_id=creator_id,
+        edit_format=edit_format,
+        brief=brief,
+        strategy=strategy,
+        media_snapshot=media_snapshot,
+        visuals=visuals,
+        client_protocol=client_protocol,
+    )
+    if planned is None:
+        return None
+    plan, aliases = planned
+    record = plan.record()
+    record.update(montage_record_fields(aliases))
+    receipts = build_receipts(
+        brief.live(), plan_facts_from_unified_montage(record), include_unchecked=True
+    )
+    return [
+        receipt
+        for receipt in receipts
+        if (receipt.requirement_id in judged and needs_creator_choice(receipt))
+        or (receipt.requirement_id in speed_asks and receipt.verification == "checked")
+    ]
+
+
+def preflight_montage_plan(
+    *,
+    creator_id: object,
+    edit_format: object,
+    brief: CreativeBrief | None,
+    strategy: Mapping[str, Any] | None,
+    media_snapshot: Mapping[str, Any] | None,
+    visuals: Sequence[Any] | Callable[[], Sequence[Any]],
+    client_protocol: int | None = None,
+) -> tuple[Any, dict] | None:
+    """The worker's own phone montage plan for a draft, before approval, or ``None`` when
+    the draft does not render through the unified phone montage.
+
+    Returns ``(UnifiedMontagePlan, duplicate aliases)``. Shared by the KRI-775 blockers and
+    the KRI-881 research preview, so both judge the one plan the worker will build.
+
+    Mirrors the dispatch + worker inputs: the clips dispatch hands the worker (an explicit
+    selection, byte-identical uploads collapsed), their phone source receipts, the route the
+    job would be stamped with, and the approved length plan. ``client_protocol`` is the app
+    build that sent the message (KRI-898): the plan holds a freeze only for a build that
+    plays it.
+    """
+    from app.kria.brief_checks import defers_to_unified_montage  # noqa: PLC0415
+    from app.kria.duplicate_uploads import collapse_strategy  # noqa: PLC0415
     from app.pipeline.unified_montage import brief_view  # noqa: PLC0415
     from app.services.creator_render_contract import (  # noqa: PLC0415
         PLAN_AUTHORITY_FIELD,
         build_render_contract,
     )
-    from app.services.length_planning import LENGTH_PLAN_VERSION  # noqa: PLC0415
+    from app.services.length_planning import supported_length_plan_version  # noqa: PLC0415
     from app.services.length_policy import creator_duration_s  # noqa: PLC0415
     from app.services.phone_destination import phone_drawable_visual_kinds  # noqa: PLC0415
     from app.services.phone_sources import bind_phone_sources  # noqa: PLC0415
@@ -144,13 +210,7 @@ def montage_blockers(
         _unified_montage_clips,
     )
 
-    # The worker only refuses a draft whose brief was bound at approval.
-    if brief is None or not settings.brief_binding_for(creator_id):
-        return None
-    judged: dict[str, BriefRequirement] = {
-        req.id: req for req in brief.live() if req.kind in PREFLIGHT_KINDS
-    }
-    if not judged or not isinstance(media_snapshot, Mapping):
+    if brief is None or not isinstance(media_snapshot, Mapping):
         return None
     strategy = dict(strategy or {})
     media = dict(media_snapshot)
@@ -169,7 +229,7 @@ def montage_blockers(
     envelope = media.get("length_plan")
     if envelope is not None and (
         not isinstance(envelope, Mapping)
-        or envelope.get("version") != LENGTH_PLAN_VERSION
+        or not supported_length_plan_version(envelope)
         or envelope.get("conflicts")
     ):
         # An open length choice is the gate's own question (KRI-476), never a second one.
@@ -202,6 +262,8 @@ def montage_blockers(
         "edit_format": edit_format,
         "creator_strategy": strategy,
         PLAN_AUTHORITY_FIELD: 1,
+        # KRI-898: the stamp dispatch writes for the approving build; here, the drafting one.
+        **({"creator_client_protocol": client_protocol} if client_protocol is not None else {}),
     }
     inputs = route_inputs_from_job(
         {"creator_brief_binding": {"media_snapshot": media}},
@@ -235,16 +297,7 @@ def montage_blockers(
         approved_length_plan=envelope,
         contract=contract,
     )
-    record = plan.record()
-    record.update(montage_record_fields(aliases))
-    receipts = build_receipts(
-        brief.live(), plan_facts_from_unified_montage(record), include_unchecked=True
-    )
-    return [
-        receipt
-        for receipt in receipts
-        if receipt.requirement_id in judged and needs_creator_choice(receipt)
-    ]
+    return plan, aliases
 
 
 def with_blocked_requirements(

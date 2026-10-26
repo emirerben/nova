@@ -111,11 +111,19 @@ enum NativeEditorRenderError: Error, Equatable {
         let requestedOriginalGain = document.mix["original_level"]?.numberValue ?? 1
         let originalGain = requestedOriginalGain.isFinite ? min(max(0, requestedOriginalGain), 1) : 1
         let hasExplicitOriginalGain = document.mix["original_level"] != nil
+        let activeSlots = document.clips.filter { !$0.removed }
+        // Voiceover renders normally silence every camera clip. A new server
+        // projection may opt one or more slots back in with this field: it is
+        // the clip-level half of the mix, while `originalGain` below remains
+        // the global creator-controlled bed gain. Its *presence* is the
+        // feature gate so older narrated documents stay byte-for-byte silent.
+        let hasExplicitNarratedSourceAudio = activeSlots.contains {
+            $0.raw["source_audio_volume"]?.numberValue != nil
+        }
         // The creator's song replaces the camera audio unless they explicitly turned the original
         // audio up (Sounds > Original audio): then the camera plays WITH the song at that level
         // (the song keeps its own level). An unset level, or an explicit 0, keeps the camera silent.
         let creatorHearsCameraWithSong = hasExplicitOriginalGain && originalGain > 0
-        let activeSlots = document.clips.filter { !$0.removed }
         func slot(for clip: EditorClip, index: Int) -> EditorTimelineSlot? {
             if let id = clip.slotID, let value = activeSlots.first(where: { $0.id == id }) { return value }
             return activeSlots.indices.contains(index) ? activeSlots[index] : nil
@@ -180,6 +188,26 @@ enum NativeEditorRenderError: Error, Equatable {
             }
             let authoredMovingDuration = max(0, authoredSlot?.durationS ?? outputDuration)
             var requestedRate = explicitRate ?? sourceSpan / authoredMovingDuration
+            // KRI-828: a creator's freeze frame. The slot's window plays at 1x and its last
+            // frame holds for `freeze_hold_s` (inside the slot's duration); never a slow rate
+            // derived from a source span shorter than the slot.
+            // `freeze_frame_s` is the frozen frame's source time, which editor trims never
+            // rewrite: a trim of the slot's end shortens the hold on the same frame and a
+            // trim of its start shortens the motion before it, exactly like the server's
+            // Save (`build_guided_segments`). A slot that no longer reaches that frame with
+            // room to move (the leading half of a split) plays with no hold.
+            var freezeHold = authoredSlot?.raw["freeze_hold_s"]?.numberValue ?? 0
+            if freezeHold > 0, let frame = authoredSlot?.raw["freeze_frame_s"]?.numberValue, frame.isFinite {
+                let motion = frame - sourceStart
+                let hold = ((authoredMovingDuration - motion) * 30).rounded() / 30
+                freezeHold = motion >= 0.1 - 0.000_001 && hold >= 1.0 / 30 - 0.000_001 ? hold : 0
+            }
+            let freezes = explicitRate == nil && freezeHold.isFinite && freezeHold > 0
+                && authoredMovingDuration - freezeHold > 0
+            if freezes {
+                requestedRate = 1
+                sourceSpan = authoredMovingDuration - freezeHold
+            }
             // Narration and legacy projections can intentionally carry a
             // shorter moving span plus a hold. Only an unchanged authored
             // source window uses the duration-preserving render projection.
@@ -187,7 +215,7 @@ enum NativeEditorRenderError: Error, Equatable {
                 && authoredSlot?.raw["source_end_s"] == nil
                 && abs(outputDuration - authoredMovingDuration) < 0.000_001
                 && abs(sourceStart - (authoredSlot?.inS ?? sourceStart)) < 0.000_001
-            if isAuthoredWindow, let authoredSlot,
+            if isAuthoredWindow, !freezes, let authoredSlot,
                let available = source.asset.duration ?? clip.sourceDuration {
                 let authoredRate = explicitRate ?? 1
                 let requestedSpan = authoredMovingDuration * authoredRate
@@ -213,7 +241,18 @@ enum NativeEditorRenderError: Error, Equatable {
             let holdDuration = max(0, outputDuration - movingDuration)
             let hasExplicitClipAudio = authoredSlot?.raw["muted"] != nil
             let sourceGain: Double = hasExplicitOriginalGain || hasExplicitClipAudio || sourceAudioPreserved ? 1 : 0
-            let cameraLevel: Double = clip.muted || authoredSlot?.raw["muted"] == .bool(true) || audioSources["narration"] != nil ? 0 : sourceGain
+            let narratedSourceLevel: Double
+            if audioSources["narration"] != nil, hasExplicitNarratedSourceAudio {
+                let requested = authoredSlot?.raw["source_audio_volume"]?.numberValue ?? 0
+                // Selected sources carry unit gains; clip-scoped sound may
+                // carry a fractional gain. Clamp rather than fail a preview;
+                // AudioMixRecipe.originalVolume applies the global
+                // original-audio gain exactly once after this value.
+                narratedSourceLevel = requested.isFinite ? min(max(0, requested), 1) : 0
+            } else {
+                narratedSourceLevel = audioSources["narration"] != nil ? 0 : sourceGain
+            }
+            let cameraLevel: Double = clip.muted || authoredSlot?.raw["muted"] == .bool(true) ? 0 : narratedSourceLevel
             cameraLevelWithoutSong.append(cameraLevel)
             video.append(TimelineClip(id: clip.slotID ?? clip.id.uuidString, sourceAssetID: id,
                 sourceStart: sourceStart, sourceDuration: consumedSourceDuration, timelineStart: clip.start,
@@ -579,9 +618,13 @@ enum NativeEditorRenderError: Error, Equatable {
             let font = try resolveFont(family)
             let fontID = try registerFont(font)
             let legacy = raw["effect"]?.stringValue ?? "none"
-            if raw["behind_subject"] == .bool(true) || raw["theme_transition"]?.objectValue != nil {
-                throw NativeEditorRenderError.unsupportedLane("text subject or scene compositing")
+            if raw["theme_transition"]?.objectValue != nil {
+                throw NativeEditorRenderError.unsupportedLane("text scene compositing")
             }
+            // Text behind people: compiled as the layer's `behindSubject`; the engine occludes it with a
+            // per-frame person mask (`NativeSubjectMatte`) and paints plain text whenever the mask is unsane.
+            // Whether this phone may RENDER it is the server's call (capability `behindSubject`, protocol 21).
+            let behindSubject: Bool? = raw["behind_subject"] == .bool(true) ? true : nil
             guard raw["animation_phases"] != nil || ["none", "static", "fade-in", "pop-in", "slide-in", "typewriter", "scale-up", "slide-up", "slide-down", "bounce", "dissolve-out", "stream-in", "smooth-type", "handwriting", "ink-reveal"].contains(legacy) else {
                 throw NativeEditorRenderError.unsupportedLane("text effect")
             }
@@ -617,16 +660,19 @@ enum NativeEditorRenderError: Error, Equatable {
                 bend: raw["bend"]?.numberValue ?? 0)
             let explicitPhases = raw["animation_phases"]?.objectValue != nil
             if legacy == "handwriting" && !explicitPhases {
-                text.append(try handwritingLayout.compile(id: element.id, text: displayText, start: item.start, end: item.end,
+                var handwriting = try handwritingLayout.compile(id: element.id, text: displayText, start: item.start, end: item.end,
                     style: style, canvas: canvas, motion: Self.normalizedMotion(effect: legacy, raw: raw["motion"]),
-                    lineSpacing: raw["line_spacing"]?.numberValue ?? 1.15))
+                    lineSpacing: raw["line_spacing"]?.numberValue ?? 1.15)
+                handwriting.behindSubject = behindSubject
+                text.append(handwriting)
                 continue
             }
-            let layout = try AuthoredTextLayout.compile(id: element.id, text: displayText,
+            var layout = try AuthoredTextLayout.compile(id: element.id, text: displayText,
                 start: item.start, end: item.end, style: style, fontURL: font, canvas: canvas,
                 phases: explicitPhases ? phases : nil,
                 legacyEffect: [.typewriter, .streamIn, .smoothType, .inkReveal].contains(PortableTextLayer.Effect(rawValue: legacy) ?? .none) ? PortableTextLayer.Effect(rawValue: legacy)! : .none,
                 motion: explicitPhases ? nil : try Self.normalizedMotion(effect: legacy, raw: raw["motion"]))
+            layout.behindSubject = behindSubject
             if explicitPhases || ["typewriter", "stream-in", "smooth-type", "ink-reveal"].contains(legacy) {
                 text.append(layout)
             } else {
@@ -638,7 +684,8 @@ enum NativeEditorRenderError: Error, Equatable {
                     dissolveSeed: legacy == "dissolve-out" ? UInt32(101 + (document.textElements.firstIndex(where: { $0.id == element.id }) ?? 0) * 37) : nil,
                     background: layout.background,
                     // `layout` was compiled as a plain effect; the real effect decides whether the arc survives.
-                    bend: PortableTextLayer.bendSupported(effect: legacyEffect) ? layout.bend : nil))
+                    bend: PortableTextLayer.bendSupported(effect: legacyEffect) ? layout.bend : nil,
+                    behindSubject: behindSubject))
             }
         }
         if !document.captionCues.isEmpty && document.captionMeta["enabled"] != .bool(false) {

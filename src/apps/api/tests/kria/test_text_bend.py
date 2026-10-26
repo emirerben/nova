@@ -511,7 +511,8 @@ async def test_device_render_poll_tells_an_old_build_to_update(monkeypatch) -> N
             env.job.id, SimpleNamespace(id=uuid.uuid4()), variant_id=env.variant_id, db=AsyncMock()
         )
     assert refused.value.status_code == 426
-    assert refused.value.detail == {"code": "client_update_required", "feature": "text_bend"}
+    assert refused.value.detail["code"] == "client_update_required"
+    assert refused.value.detail["feature"] == "text_bend"
 
 
 # --- (e) slide PUT, editor ops ----------------------------------------------------------

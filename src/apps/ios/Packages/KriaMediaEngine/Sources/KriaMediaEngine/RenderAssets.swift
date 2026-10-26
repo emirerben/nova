@@ -9,7 +9,8 @@ private struct AssetWireKey: CodingKey {
 
 func rejectUnknownAssetFields(_ decoder: Decoder, allowed: Set<String>) throws {
     let container = try decoder.container(keyedBy: AssetWireKey.self)
-    guard Set(container.allKeys.map(\.stringValue)).isSubset(of: allowed) else { throw RenderAssetError.invalidManifest }
+    // An unknown key is a newer manifest shape (this build is older than the server), not a bad value.
+    guard Set(container.allKeys.map(\.stringValue)).isSubset(of: allowed) else { throw RenderAssetError.newerManifest }
 }
 
 /// Recipe identities are independent of local paths and expiring download grants.
@@ -58,6 +59,9 @@ public struct RenderAssetReference: Codable, Equatable, Sendable {
         /// The server's song generation is an integer; it is carried here as its decimal
         /// string so identity comparisons stay uniform with the other pinned kinds.
         case song(planItemID: String, generation: String)
+        /// Server-made stationary-noise reduction for one immutable footage
+        /// source. The path stays server-private; device access uses a grant.
+        case processedAudio(jobID: String, variantID: String, renderGeneration: String, sourceMediaID: String, sourceGeneration: String, generation: String)
     }
     public let id: String
     public let fingerprint: RenderFingerprint
@@ -65,9 +69,9 @@ public struct RenderAssetReference: Codable, Equatable, Sendable {
     public init(id: String, fingerprint: RenderFingerprint, source: Source) {
         self.id = id; self.fingerprint = fingerprint; self.source = source
     }
-    private enum CodingKeys: String, CodingKey { case kind, id, fingerprint, mediaId, catalog, catalogId, generation, visualId, mediaKind, planItemId }
+    private enum CodingKeys: String, CodingKey { case kind, id, fingerprint, mediaId, catalog, catalogId, generation, visualId, mediaKind, planItemId, jobId, variantId, renderGeneration, sourceMediaId, sourceGeneration }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["kind", "id", "fingerprint", "mediaId", "catalog", "catalogId", "generation", "visualId", "mediaKind", "planItemId"])
+        try rejectUnknownAssetFields(decoder, allowed: ["kind", "id", "fingerprint", "mediaId", "catalog", "catalogId", "generation", "visualId", "mediaKind", "planItemId", "jobId", "variantId", "renderGeneration", "sourceMediaId", "sourceGeneration"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         fingerprint = try c.decode(RenderFingerprint.self, forKey: .fingerprint)
@@ -97,7 +101,10 @@ public struct RenderAssetReference: Codable, Equatable, Sendable {
             if let text = try? c.decode(String.self, forKey: .generation) { generation = text }
             else { generation = String(try c.decode(Int.self, forKey: .generation)) }
             source = .song(planItemID: try c.decode(String.self, forKey: .planItemId), generation: generation)
-        default: throw RenderAssetError.invalidManifest
+        case "processed_audio":
+            guard !c.contains(.mediaId), !c.contains(.catalog), !c.contains(.catalogId), !c.contains(.visualId), !c.contains(.mediaKind), !c.contains(.planItemId) else { throw RenderAssetError.invalidManifest }
+            source = .processedAudio(jobID: try c.decode(String.self, forKey: .jobId), variantID: try c.decode(String.self, forKey: .variantId), renderGeneration: try c.decode(String.self, forKey: .renderGeneration), sourceMediaID: try c.decode(String.self, forKey: .sourceMediaId), sourceGeneration: try c.decode(String.self, forKey: .sourceGeneration), generation: try c.decode(String.self, forKey: .generation))
+        default: throw RenderAssetError.newerManifest
         }
         try validate()
     }
@@ -123,6 +130,11 @@ public struct RenderAssetReference: Codable, Equatable, Sendable {
             // Re-emit the server's integer shape so a decoded manifest encodes back unchanged.
             if let number = Int(generation), String(number) == generation { try c.encode(number, forKey: .generation) }
             else { try c.encode(generation, forKey: .generation) }
+        case .processedAudio(let jobID, let variantID, let renderGeneration, let sourceMediaID, let sourceGeneration, let generation):
+            try c.encode("processed_audio", forKey: .kind); try c.encode(jobID, forKey: .jobId)
+            try c.encode(variantID, forKey: .variantId); try c.encode(renderGeneration, forKey: .renderGeneration)
+            try c.encode(sourceMediaID, forKey: .sourceMediaId); try c.encode(sourceGeneration, forKey: .sourceGeneration)
+            try c.encode(generation, forKey: .generation)
         }
     }
     public func validate() throws {
@@ -134,6 +146,7 @@ public struct RenderAssetReference: Codable, Equatable, Sendable {
         case .visual(let visualID, let generation, _): identifiers = [id, visualID, generation]
         case .voiceover(let planItemID, let generation): identifiers = [id, planItemID, generation]
         case .song(let planItemID, let generation): identifiers = [id, planItemID, generation]
+        case .processedAudio(let jobID, let variantID, let renderGeneration, let sourceMediaID, let sourceGeneration, let generation): identifiers = [id, jobID, variantID, renderGeneration, sourceMediaID, sourceGeneration, generation]
         }
         guard identifiers.allSatisfy({ !$0.isEmpty && $0.count <= 160 && $0.rangeOfCharacter(from: .whitespacesAndNewlines) == nil }) else {
             throw RenderAssetError.invalidManifest
@@ -154,6 +167,7 @@ public struct RenderAssetManifest: Codable, Equatable, Sendable {
         try validate()
     }
     public func validate(references: Set<String>? = nil) throws {
+        guard version <= 1 else { throw RenderAssetError.newerManifest }
         guard version == 1, assets.count <= 500, Set(assets.map(\.id)).count == assets.count else { throw RenderAssetError.invalidManifest }
         for (index, asset) in assets.enumerated() {
             try asset.validate()
@@ -167,6 +181,8 @@ public struct RenderAssetManifest: Codable, Equatable, Sendable {
 
 public enum RenderAssetError: Error, Equatable, Sendable {
     case invalidManifest, originalIdentityMismatch(String), missingLibraryAsset(String), changedLibraryAsset(String)
+    /// A manifest key, asset kind or version this build does not know: the server is newer.
+    case newerManifest
 }
 
 /// Content-addressed cache. Only explicitly authorized library and Visuals-pool
@@ -264,7 +280,7 @@ public struct PortableAssetResolver: Sendable {
             try Task.checkCancellation()
             switch asset.source {
             case .original(let mediaID): result[asset.id] = originalURLs[mediaID]
-            case .library, .visual, .voiceover, .song: result[asset.id] = try await library.resolve(asset)
+            case .library, .visual, .voiceover, .song, .processedAudio: result[asset.id] = try await library.resolve(asset)
             }
         }
         return result

@@ -30,6 +30,61 @@ path starts with new, explicitly consented analysis-proxy uploads.
 
 Rollback: set `PHONE_RENDERING_ENABLED=false`. This blocks new attempts while
 preserving published outputs and allowing already-reserved exports to finalize.
+A pinned recipe the phone has not started is held: `GET /device-render` keeps its
+real `awaiting_device` phase with `phone_rendering_paused: true` (a waiting state,
+never a synthetic `needs_attention` that `/retry` would refuse). Asset grants and
+new reservations answer 503 `problem.code: phone_rendering_paused` (the phone parks
+and retries; an attempt already reserved still finalizes), and a failure report under
+the hold is acknowledged as `paused` without failing the record, variant or Job.
+
+Phone render lifecycle (killer-screens train):
+- A user Stop (`cancelled_by_user`) is a resumable pause: the record keeps its
+  phase, the project keeps its label, no chat failure card; `GET` reports
+  `paused_by_user`, and `/device-render/retry` resumes the same identity. The
+  phone re-sends the Stop report until the server accepts it.
+- `/device-render/retry` re-delivers the pinned recipe directly, also for
+  chat-approved (runtime-v2) renders; `retry_requires_approval` is always false.
+- Phone-facing 409s carry `problem.code` beside the legacy `detail`:
+  `superseded` (with `active_job_id` when a newer Job owns the project),
+  `render_cancelled`, `editor_empty`, `contract_changed`, `requires_change`,
+  `requires_update`, `held_by_newer_build`, `published`, `not_awaiting_retry`,
+  `output_unverified`.
+- A contract refusal found on `GET` is persisted once (`contract_changed`).
+- A reaped render restarts on its own when a phone build reopens the project.
+- A recipe the phone declines is the creator's turn, never "needs attention":
+  `unsupported_recipe` shows "This edit needs a change" (chat), and `/retry`
+  answers `requires_change`. `renderer_outdated` shows "Update Kria" (TestFlight,
+  `KriaUpdateLink`) and "Review in chat"; the record stores
+  `declined_client_protocol` and `declined_gap` (`floor` when that build failed a
+  protocol gate of the recipe, else `renderer`). `/retry` from that build answers
+  `requires_update` unless the phone sends `renders_locally` (its renderer can
+  produce the recipe now). A `floor` decline is re-pinned on `GET` by a newer build
+  that passes every gate (`_client_update_detail` runs first; one that still fails
+  gets the 426); a `renderer` decline waits for the phone's own "Try again".
+- The device-render 426 names its request (`identity`, `phase`,
+  `minimum_client_protocol`) so the phone reports the right one.
+- **Release order: deploy the API (Fly) before the TestFlight build.** The phone sends
+  `renders_locally` only when true (an older API's `DeviceRetryBody` forbids extra keys
+  and answers 422), but `renders_locally`, the named 426, `held_by_newer_build` and
+  `declined_gap` only work once the API has them.
+- A `renderer_outdated` (or `device_unavailable`) record shows what this build's gate
+  says once it reports no version gap: "Ready to render on this iPhone"
+  (`renderable_now`), "This edit needs a change" for a missing capability, or the
+  cooling/storage wait; "Update Kria" only for a real version gap. "Ready on this
+  iPhone" only for a finished video of the record's own request.
+- Two devices: the GET records `max_reader_client_protocol` (kept across re-pins of
+  the same recipe); a `renderer_outdated` from an older build, or while the record
+  is syncing, answers 409 `held_by_newer_build` and fails nothing.
+- A phone that loses a verified capability after its export started (or finished)
+  lets it finish and uploads it; it declines (and tells the server) only otherwise.
+- Verification that could not run is requeued for the same bytes for up to
+  24h (`verification_unavailable` after that); a real rejection is
+  `output_check_failed`. A check whose record the fence moved past is closed as
+  `superseded` and never fails the newer attempt.
+- The phone waits on a running check with 2-30 s backoff for 15 min, then parks
+  the finished MP4 without re-uploading; parked renders resume on foreground.
+- A failure on an edit whose variant has an accepted output never relabels the
+  variant or Job.
 The pilot does not satisfy or remove the remaining KRI-29 release gates.
 
 ## Adding media to a saved guided edit (KRI-145)
@@ -506,6 +561,26 @@ recording. **Rollback:**
 `fly secrets set PHONE_NARRATED_RENDERING_ENABLED=false --app nova-video` +
 `fly machine restart <id>` (api + worker).
 
+**One clip's own sound (KRI-842).** The footage bed above is one gain for every
+clip. An `audio` requirement scoped `clip:<media id>` with `facts.clip_sound`
+(`under_voice` / `after_voice` plus the spoken `triggers`; read by
+`app.kria.narrated_clip_sound_ask`, taught by Main Creator v76 and Brief
+Extractor v21) moves the gain onto each clip's `volume` (`original_volume` 1.0):
+only the asked clips play under the voice, and the last clip is split into its
+voiced part (silent, cut to end in the pause before the line) plus a contiguous
+full-volume tail that starts where the voice ends
+(`app.pipeline.phone_clip_sound`; the line is grounded with
+`spoken_quotes.named_line_records`). What was built is `variant["clip_sound"]`,
+re-read from the pinned recipe by every editor Save (`reconcile_clip_sound`), and
+`brief_checks` judges the asks from it before approval and on the finished video;
+a clip-scoped ask with no recorded fact is never "met" by the global bed. No flag:
+without the fact the recipe is unchanged. No new capability or client protocol.
+A creator-confirmed length that the tail would break drops the tail instead of
+failing the render, and so does a compile the device refuses (tail first, then the
+gains: the asks say `render_refused`). The same facts on a voiceover edit the phone
+Voiceover compiler does not render (montage with a voiceover, cloud) get a plain
+"Couldn't" before approval and on the finished video.
+
 **Cleaned narration delivery (KRI-277).** Guided and narrated phone jobs pin a
 private `narration_binding` beside the device request. It binds the recipe's
 voiceover asset and fingerprint to the cleaned `NarrationTrack`, including its
@@ -653,6 +728,19 @@ three extra lanes on top of the unchanged speaker clip + captions:
   main video track with per-clip `volume=0` (muted), which sidesteps the five
   "exactly one clip" gates (capabilities `max_clips`, upload/register routes,
   `phone_format:subtitled`, `subtitled_clip_count_unsupported`, the compiler).
+  **KRI-841, an ending with its own sound.** "Add the X video at the very end with its own
+  sound" is the strategy's `ending_clip` (`{media_id, keep_audio}`), repaired at approval. The
+  worker plays it LAST on the main track at volume 1 -- a Visuals video through this lane
+  (`SubtitledEndingClip.volume`; the admin lane above never sets it, so it stays muted), or one of
+  the item's own clips (multi-clip Talking) as the final speaker -- and keeps it out of every
+  mid-talk placement (cards, full-screen sequence, beats, cutaways); it survives 2+ speakers.
+  `variants[i].phone_ending_clip` is the receipt, read back from the COMPILED recipe: `status`
+  `applied|dropped`, `reason` (`not_found`, `is_speaker`, `lane_request_ending_wins`,
+  `visual_videos_not_verified`, `audio_mix_not_verified`, `media_lanes_disabled`, `bind_failed`,
+  `over_length_limit`, ...), `has_audio` (the source has a sound track; None = unknown), `volume`,
+  `start_s`/`end_s`. The brief check reads it: a dropped ending is "Couldn't". An ending that would
+  break the creator's stated length ("under 30 s", a confirmed 25 s; the pin counts the 1.6 s brand
+  ending) is dropped, not the whole render: `check_recipe_duration` is the pin's own rule.
 
 **Lane failures never terminalize the job.** Visuals are bound per lane
 (`bind_phone_visual_assets`, gated by `stillImages` / `visualVideos` in
@@ -901,6 +989,24 @@ the photo corner, played from its first frame for its own length (capped at
 with "Videos can't pop up on your words in this edit yet…", and a video card
 that still reaches the bind step drops alone with beat reason
 `visual_is_video`. The closing shot and badge stay photo-only.
+
+**Full-screen beats (KRI-840).** "When I say Argentinian, show the grill photo
+full screen for a moment" is a beat with `display_mode: "fullscreen"` (default
+`"pip"`, omitted from every dump so stored strategies keep their bytes) and
+`hold_s` ~1.2. Where `media_overlays:fullscreen` holds (phone Talking,
+`PHONE_SUBTITLED_FULLSCREEN_OVERLAYS_ENABLED`), grounding
+(`allow_fullscreen=True`) builds a `display_mode="fullscreen"` card on the
+word: its own slot (a corner card never shortens it, two full-screen photos
+never overlap), no face/caption-safe corner, default hold 1.5 s. The recipe is
+the KRI-297 `subtitled-fullscreen` track, so the speaker's voice and the
+captions run unbroken. The even-slot `fullscreen_images` sequence slides its
+cutaways around beat windows (`fullscreen_occupied`). Elsewhere (Voiceover, flag
+off) manifest repair downgrades the beat to a corner card with a notice, and the
+receipts say so: `phone_beat_receipt.placed[].display_mode == "fullscreen"`
+only for a real cutaway; `brief_checks` compares the ask's recorded
+`facts["display_mode"]` with it, so a corner card is never reported as full
+screen. Rollback: `fly secrets set PHONE_SUBTITLED_FULLSCREEN_OVERLAYS_ENABLED=false`
++ restart api + worker (never roll the code back: stored strategies carry the field).
 
 **The creator's beats win their Visuals and windows; Phase 2 fills the
 rest (KRI-183).** Beats ground FIRST. Every beat card's media id (photos,
@@ -2480,7 +2586,7 @@ to `TALKING_MULTI_CLIP_MAX_CLIPS` (10) clips.
   No room: receipt `unplaced` with upload position, shown as chat render notes.
 - **v1 limits**: speech cleanup refused for any multi-clip Talking (KRI-720); with
   2+ speakers the KRI-174 lanes (cards, sounds, beats) and KRI-547 face fill are
-  skipped (`lanes_skipped`); cloud Talking still uses only the first clip, so keep
+  skipped (`lanes_skipped`; a KRI-841 Visuals ending still plays); cloud Talking still uses only the first clip, so keep
   the flag off until the cloud renderer lands (plans/027 phase 3).
 - **Receipt**: `variants[i].phone_talking_multi_clip` (speakers, cutaways, unplaced,
   per-clip roles); trace event `phone/talking_multi_clip_roles`.
@@ -2622,12 +2728,34 @@ word. No model or prompt is involved:
   if I find those lines") and the length line measures that part, not the whole
   take. After render: met only when every asked line was cut.
 
+- **A quote the take does not hold (KRI-844).** `ground_line` is same-language, so an
+  English quote of a Spanish take ("Here we have traditional Argentinian sauces" over
+  "Acá tenemos salsas tradicionales argentinas", Don Julio T2) is `not_found` and the
+  whole take used to ship. For a one-video phone Talking edit with timed speech, the
+  gate (`choice_questions._take_line`) now asks BEFORE approval which line of the
+  take to open on (`take_line_start`) and, once that is answered, which to end on
+  (`take_line_end`). Options are the take's own lines (`take_lines.take_lines`:
+  clause punctuation starts a line, and so does a Title-case word inside a run the
+  ASR left unpunctuated, so "Lucas Acá tenemos ..." is two lines), the ones most like
+  the quote when more than five, and a "none of these" answer. The pick is `ChoiceAnswer.value`; `answered_brief` copies it to
+  `facts.start_line_spoken` / `facts.end_line_spoken`, and `apply_take_window`
+  (`start_spoken` / `end_spoken`, draft estimate and worker alike) grounds it before
+  the quote. A pick is stored as the line plus the neighbouring words that make it name
+  one place in the take (grounding takes a text's first match, so a bare "Gracias" would
+  land inside "muchas gracias"); a line said twice is the first for a start, the last for
+  an end. Receipts keep the creator's quote (+ `spoken`). A found quote never asks;
+  "none of these" and a pick the worker's words don't hold leave today's honest
+  `not_found`. `length_vs_natural` still compares a length ask with the whole take,
+  not the part the lines keep.
+
 Gap: cleanup off with no checked preflight snapshot still reports `cleanup_off`.
 Verify on a real take (writes `report.json`, and with `--video` a `window.mp4` to
 watch): `cd src/apps/api && python -m app.cli.verify_take_window --take
 tests/fixtures/kri790_merope_t1_take.json --video <take.mp4>`.
 Tests: `tests/pipeline/test_phone_take_window.py`, `tests/pipeline/test_phone_opening_cut.py`,
-`tests/kria/test_kri837_one_word_end_line.py`.
+`tests/kria/test_kri837_one_word_end_line.py`,
+`tests/kria/test_kri844_take_line_ask.py`,
+`tests/kria/test_kri844_dj_t2_cross_language_replay.py` (fixture `kri844_dj_t2_take.json`).
 
 ### Text on a spoken word on phone Talking edits (KRI-707)
 
@@ -3289,3 +3417,84 @@ The app reads `capabilities.text_bend` (creation) and `editor_capabilities.text_
 `phone-simple-cut-v3` is a forward-only verifier policy. New v3 code accepts the pinned older supported verifier versions; an older server cannot interpret a newly pinned v3 policy and refuses it rather than publishing unchecked output. After v3 policies exist, rolling the API back below v3 can therefore leave those exports blocked. Do not downgrade the pin/minimum verifier or relabel an old report to recover them; preserve the attempt and restore a compatible server before the normal output-check retry.
 
 The existing Fly Deploy workflow checks all managed process groups, including stopped Machines, for one converged image digest before declaring deployment successful. That post-deploy check does not establish compatibility during a rolling deploy and does not make old binaries understand v3. Observe the actual merged revision's successful convergence separately; before that, KRI-832 remains pending. No source-only receipt or local replay proves production convergence or complete rollback compatibility.
+
+## Freeze frames (KRI-828)
+
+"Freeze the frame for one second on Atakan's bite" on a phone montage renders a real hold.
+
+- **Reading the ask.** `kria.freeze_ask.freeze_spec` needs the requirement to be a freeze ask
+  (`freeze_frame` fact or the creator's words) AND its approved words to read as one; a model
+  fact on other words ("hold on the sunset for 2 seconds") never freezes. Seconds: read from
+  the creator's own words (`_stated_seconds`, decimals included: "1.5 seconds", "1,5 saniye");
+  the model's typed `duration_s` is never read. Unstated => 1 s. A stated length outside
+  0.2-10 s holds the nearest bound and the receipt says `partial` with the asked number.
+- **Changing it in chat (KRI-899).** `freeze_ask.live_freezes` reads EVERY live freeze ask in
+  brief order. One that names a moment is its own freeze (a second moment holds too, on its own
+  cut). One that names no moment ("make the freeze 2 seconds instead", "make it longer",
+  "donmayı 2 saniye yap") changes the latest freeze: its seconds (anywhere in the words), or
+  x2 / x0.5 for longer / shorter. It needs no freeze word of its own when the model filed it
+  with the freeze fact (the earlier freeze is the corroboration), but a video-length ask ("make
+  the video 20 seconds") never takes over a freeze. Two asks grounded to the same analysed
+  moment hold it once, at the later ask's length (`_ground_freezes`). Every answered id gets the
+  same receipt; the draft defers exactly these ids (`planned_freeze_ids`). On a rendered edit
+  `brief.route_requirements` sends any freeze ask to the planner (re-plan + re-render): the
+  editor copilot has no freeze op.
+- **Where (KRI-900: never guessed).** The clip record knows a moment's interval, not the
+  instant of the action, so the frame comes from the creator. Before approval the gate asks
+  `freeze_frame` (`choice_questions._freeze_frame`): one matching moment => three frames inside
+  it ("Early / Middle / Late (57.7s)") + "No freeze"; several tied moments => the moments
+  themselves (middle frame) + "No freeze" (a "you choose" never picks a moment). Moments come
+  from `freeze_ask.match_moments` over the same clip record the worker reads. The answer lives
+  in server-owned `choice_answers` (option key `frame_<ms>_<clip>` / `moment_<ms>_<clip>` /
+  `no_freeze`); its digest is the moment set, so a hold-length correction is not re-asked.
+  `unified_montage._ground_freeze` then re-anchors the nearest cut of that clip to END on the
+  picked frame (`grounding: creator_frame | creator_moment | delegated_frame`). "No freeze"
+  supersedes the ask in the pinned brief. Unanswered after two asks => `needs_frame`: no hold,
+  receipt "I found that moment (57.0–59.8s into the clip) but not the exact frame ... Tell me
+  the second to freeze on". No match or an unanswered tie => `not_grounded`.
+- **Positions (KRI-900).** "freeze the last shot / final frame / at the end", "son sahne"
+  are positions (`FreezeSpec.position`), never moment names: the final cut holds its own last
+  frame (the video's last frame), nothing moves, nothing is asked (`grounding: cut_position`).
+  "First frame / at the start / ilk kare" cannot be held (a hold sits where a cut ends): no
+  hold, `needs_frame` + `position: first`, receipt asks for the second. "The last one" is the
+  latest freeze (a KRI-899 correction), never a cut; the same cut named twice is one freeze.
+  A photo cut is `not_grounded`. Words describing a moment ("his first bite") win over a
+  position. Vision action grounding (the instant of the bite) is still KRI-723.
+- **Typed seconds (KRI-900).** "freeze at 58.2 seconds", "58 seconds into the clip",
+  "klibin 58. saniyesinde" pin the frame (`FreezeSpec.frame_s`, scope `clip`); "2 seconds into
+  the video" / "videonun 2. saniyesinde" is edit time (scope `edit`, the cut playing then).
+  Never a hold length. A reply of only that corrects the latest freeze, keeps its hold, skips
+  the `freeze_frame` question and holds as `creator_frame` (`unified_montage._typed_frame`:
+  the matched moment's clip, else the named cut's clip, else the only video clip).
+- **Timing.** Without a creator length the hold adds its seconds on top of the moments. With
+  one (`target_s`), `_reserve_freeze_hold` takes the overshoot out of the ends of the other
+  plain video cuts, then (only as far as the 10 % length tolerance needs) out of the motion
+  before the frozen frame; photos, chosen windows and held spoken lines never shrink (M2:
+  "about 14 s" has room, so 6 x 2 s + photo + 1 s). `times_one_moment` keeps the 1 s from ever
+  becoming the video's length (KRI-777).
+- **Plan -> recipe.** `FastMontageCut.freeze_hold_s` -> `GuidedStoryMoment.freeze_hold_s`
+  (`duration_s` = source span + hold) -> phone recipe main-track clip at rate 1 with
+  `hold_duration` = hold (capability `freezeFrame`, never `editorMedia`). A transition on
+  either side is kept (the outgoing one dissolves out of the held frame). A freeze at another
+  speed or under a lip-sync song is refused (`UnsupportedPhonePlan`).
+- **Audio.** The clip's own sound plays under the moving part and is silent under the hold
+  (engine `Composition.swift`; cloud mixes the source window only). Music beds keep playing.
+- **Cloud.** `_render_moments` clones the last frame (`tpad=stop_mode=clone`) for the hold.
+- **Editor.** Revisions carry `freeze_hold_s` per segment and slot rows add `freeze_frame_s`
+  (the frozen frame). The frame never moves: trimming the slot's end shortens the hold,
+  trimming its start shortens the motion, a slot that no longer reaches the frame (leading half
+  of a split, a trim through the whole hold) plays with no hold. Server Save
+  (`build_guided_segments`) and the iOS preview (`NativeEditorRenderCompiler`) apply the same
+  rule; neither derives a slow rate for it. Dragging the held slot's end out lengthens the hold
+  (up to 10 s, the same bound as a chat ask).
+- **Receipt.** `met` only when the plan record's `freeze_frames[].status == "held"` (and, on a
+  finished video, its timeline still carries a hold); otherwise KRI-777's "Couldn't".
+- **Rollout (dark).** Planned only when `freezeFrame` is in `PHONE_RENDER_VERIFIED_FEATURES`
+  and, in an HTTP request, the build declares `X-Kria-Client-Protocol` >= 16
+  (`freeze_frame_min_client_protocol`). Order: ship the protocol-16 app build, verify preview +
+  exported MP4 on a physical device, then add `freezeFrame` to the Fly secret (api + worker).
+  Older builds cannot decode `freezeFrame` and fail such a recipe instead of dropping the hold.
+- Proof: `tests/kria/test_kri828_freeze_frame_m2.py` (M2 replay -> recipe, cloud MP4, editor
+  round trip), `tests/kria/test_kri899_freeze_length_changes.py` (chat corrections, second
+  freeze, router, editor end-drag), `KriaMediaEngineTests/FreezeFrameExportTests` (native
+  export).

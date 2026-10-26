@@ -195,6 +195,19 @@ final class NativeEditorSourcesTests: XCTestCase {
     /// KRI-719: a Talking edit with several videos plays its speakers back to
     /// back, in the receipt's order; footage clips in the pool are not
     /// speakers. A speaker missing from the pool falls back to the MP4.
+    func testExactSpeechCutsAndProcessedAudioUseFinishedPreview() {
+        var variant: [String: JSONValue] = ["resolved_archetype": .string("subtitled"),
+            "render_destination": .string("device")]
+        let document = EditorDocument(capabilities: ["timeline": .init(editable: false)], revision: .init(baseGeneration: "g"))
+        let pool = NativeEditorSourcePool(clips: [.init(clipIndex: 0, nativeSource: nil)], baseGeneration: "g")
+        variant["explicit_speech_cuts"] = .array([.object(["status": .string("applied")])])
+        XCTAssertNil(NativePhoneTalkingSource.sourceIndices(variant: variant, document: document, pool: pool, lanesEditable: true))
+        variant["explicit_speech_cuts"] = .array([.object(["status": .string("not_applied")])])
+        XCTAssertEqual(NativePhoneTalkingSource.sourceIndices(variant: variant, document: document, pool: pool, lanesEditable: true), [0])
+        variant["engine_noise_reduction"] = .object(["status": .string("applied")])
+        XCTAssertNil(NativePhoneTalkingSource.sourceIndices(variant: variant, document: document, pool: pool, lanesEditable: true))
+    }
+
     func testPhoneTalkingEditWithSeveralVideosPlaysEverySpeakerInOrder() throws {
         func source(_ id: String) -> NativeTimelineSource {
             NativeTimelineSource(mediaID: id, sourceURL: URL(string: "https://example.com/\(id).mov"), original: nil, localRequired: false)
@@ -315,7 +328,10 @@ final class NativeEditorSourcesTests: XCTestCase {
         let url = URL(string: "https://example.com/video.mp4?secret=token")!
         let error = NSError(domain: NSURLErrorDomain, code: -1, userInfo: [NSURLErrorFailingURLErrorKey: url])
         XCTAssertFalse(NativeEditorSession.sourcePreviewMessage(for: error).contains("token"))
-        XCTAssertTrue(NativeEditorSession.sourcePreviewMessage(for: APIError.conflict).contains("reopen"))
+        // KRI-935: a newer version is loaded for the creator; the copy never tells them to close and reopen.
+        let conflict = NativeEditorSession.sourcePreviewMessage(for: APIError.conflict)
+        XCTAssertFalse(conflict.localizedCaseInsensitiveContains("reopen"))
+        XCTAssertTrue(conflict.contains("Retry"))
     }
 
     func testUnusedUnavailableSourcesDoNotBlockPreparation() async throws {

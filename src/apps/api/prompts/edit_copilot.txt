@@ -513,7 +513,7 @@ Caption emphasis: each listed caption cue carries role (hook/context_shift/list_
 
 If a family is not listed in allowed_op_families, or its section is absent from CURRENT DRAFT, do not propose that family's ops. Redirect with the same copy below:
 
-- song swap, music removal, or music mix: "Music controls are available from the item page."
+- song swap, music removal, or music mix: "I can't change the music from chat for this edit."
 - captions or subtitles: "Select a caption cue in the editor timeline to edit it."
 - media overlays, stickers, images, or cutaways: "Visual overlays are edited in the overlay tools."
 - sound effects: "Sound effects are edited in the sound effects lane."

@@ -32,13 +32,13 @@ import re
 import subprocess
 import tempfile
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
 
-from app.schemas.edit_proposal import NarrationSpeechCleanup, NarrationTrack
+from app.schemas.edit_proposal import NarrationNamedCuts, NarrationSpeechCleanup, NarrationTrack
 
 SPEECH_CLEANUP_CHANGED = "speech_cleanup_changed"
 SPEECH_CLEANUP_UNAVAILABLE = "speech_cleanup_unavailable"
@@ -140,6 +140,96 @@ def derivative_path_ok(
     return path.startswith(prefix) and bool(_HASH_NAME_RE.fullmatch(path[len(prefix) :]))
 
 
+def named_cut_object_path(*, owner_id: object, item_id: object, sha256: str) -> str:
+    """Content-addressed name of a voiceover cut only around named lines (KRI-889).
+
+    Inside the item's speech-cleanup prefix, so voiceover removal, account deletion and
+    retention already cover it (`derivative_item_prefix`).
+    """
+
+    owner, item = (_canonical_uuid(v) for v in (owner_id, item_id))
+    if owner is None or item is None or not _SHA256_RE.fullmatch(sha256):
+        raise ValueError("invalid named cut derivative identity")
+    return f"users/{owner}/plan/{item}/speech-cleanup/named-cuts/{sha256[:32]}.wav"
+
+
+def named_cut_path_ok(path: object, *, owner_id: object, item_id: object) -> bool:
+    """Whether ``path`` is a named-cut voiceover this owner/item could have written."""
+
+    owner, item = (_canonical_uuid(v) for v in (owner_id, item_id))
+    if owner is None or item is None or not isinstance(path, str):
+        return False
+    prefix = f"users/{owner}/plan/{item}/speech-cleanup/named-cuts/"
+    return path.startswith(prefix) and bool(_HASH_NAME_RE.fullmatch(path[len(prefix) :]))
+
+
+def narration_named_cuts(narration: object) -> NarrationNamedCuts | None:
+    """Parse the KRI-889 named-cut provenance of a typed or JSON narration; raise if malformed."""
+
+    if narration is None:
+        return None
+    if isinstance(narration, NarrationTrack):
+        return narration.named_cuts
+    if not isinstance(narration, Mapping):
+        raise ValueError("narration must be a NarrationTrack or a mapping")
+    raw = narration.get("named_cuts")
+    return None if raw is None else NarrationNamedCuts.model_validate(raw)
+
+
+def is_cut_derivative(narration: object) -> bool:
+    """Whether a narration plays a server-cut derivative (cleanup and/or named cuts)."""
+
+    try:
+        return (
+            narration_speech_cleanup(narration) is not None
+            or narration_named_cuts(narration) is not None
+        )
+    except ValueError:
+        return True  # malformed provenance is never a plain raw voiceover
+
+
+def named_cut_provenance_ok(narration: object) -> bool:
+    """A named-cut-only derivative's record is self-consistent (KRI-889).
+
+    Its fingerprint must be the keep segments its ``removed`` spans leave of the whole
+    raw source, and its duration that length. With cleanup also applied the snapshot
+    binding (`require_guided_cleanup_binding`) proves the combined cut instead.
+    """
+
+    from app.pipeline.silence_cut import no_op_plan  # noqa: PLC0415
+    from app.pipeline.speech_cleanup_apply import (  # noqa: PLC0415
+        keep_segments_fingerprint,
+        plan_with_named_cuts,
+    )
+
+    try:
+        named = narration_named_cuts(narration)
+        cleanup = narration_speech_cleanup(narration)
+    except ValueError:
+        return False
+    if named is None:
+        return True
+    if cleanup is not None:
+        return named.cut_sha256 == cleanup.cut_sha256
+    plan = plan_with_named_cuts(no_op_plan(named.source_duration_s), named.removed)
+    duration = (
+        narration.duration_s
+        if isinstance(narration, NarrationTrack)
+        else float(narration.get("duration_s") or 0)  # type: ignore[union-attr]
+    )
+    return (
+        named.cut_sha256
+        == keep_segments_fingerprint(
+            storage_path=named.source_gcs_path,
+            generation=named.source_generation,
+            window_start_s=0.0,
+            window_end_s=named.source_duration_s,
+            keep_segments=plan.keep_segments,
+        )
+        and abs(sum(e - s for s, e in plan.keep_segments) - duration) <= DURATION_TOLERANCE_S
+    )
+
+
 def narration_speech_cleanup(narration: object) -> NarrationSpeechCleanup | None:
     """Parse the provenance of a typed or JSON narration; raise if malformed."""
 
@@ -162,7 +252,7 @@ def source_identity(narration: NarrationTrack | Mapping[str, Any]) -> tuple[str,
     """
 
     try:
-        provenance = narration_speech_cleanup(narration)
+        provenance = narration_speech_cleanup(narration) or narration_named_cuts(narration)
     except ValueError:
         return _EMPTY_IDENTITY
     if provenance is not None:
@@ -262,47 +352,22 @@ def _file_sha256(path: str) -> str:
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
-def build_cleaned_narration(
+def _cut_and_pin(
     raw: NarrationTrack,
-    payload: Mapping[str, Any],
     *,
-    owner_id: object,
-    item_id: object,
-) -> NarrationTrack:
-    """Apply the consented CutPlan to the raw voiceover and pin the result.
+    apply: Any,
+    expected_s: float,
+    object_path_for: Any,
+) -> tuple[str, str, float]:
+    """Download the raw generation, cut it with ``apply(src, dst)`` and pin the WAV.
 
-    Idempotent: the WAV is content-addressed and uploaded with a create-only
-    precondition, so a re-driven attempt resolves to the same object and
-    generation. Snapshot/plan disagreements raise ``speech_cleanup_changed``
-    (not retryable); storage and FFmpeg failures raise
-    ``speech_cleanup_unavailable`` (retryable).
+    Returns ``(object_path, generation, duration_s)``. A replaced raw recording or a cut
+    whose length differs from ``expected_s`` raises ``speech_cleanup_changed``; storage
+    and FFmpeg trouble raise ``speech_cleanup_unavailable``.
     """
 
     from app import storage  # noqa: PLC0415
-    from app.pipeline.speech_cleanup_apply import (  # noqa: PLC0415
-        SpeechCleanupAudioApplyError,
-        SpeechCleanupSnapshotError,
-        apply_speech_cleanup_to_audio,
-        cut_fingerprint,
-        hydrate_speech_cleanup_snapshot,
-    )
-
-    try:
-        snapshot = hydrate_speech_cleanup_snapshot(payload).require_source(
-            kind="voiceover",
-            storage_path=raw.gcs_path,
-            window_start_s=0.0,
-            window_duration_s=raw.duration_s,
-        )
-        if snapshot.generation != raw.generation:
-            raise SpeechCleanupSnapshotError("generation")
-        keep_segments = list(snapshot.cut_plan.keep_segments)
-        if not keep_segments:
-            raise SpeechCleanupSnapshotError("keep_segments")
-        cut_sha256 = cut_fingerprint(snapshot)
-    except SpeechCleanupSnapshotError as exc:
-        raise _changed() from exc
-    expected_s = sum(float(end_s) - float(start_s) for start_s, end_s in keep_segments)
+    from app.pipeline.speech_cleanup_apply import SpeechCleanupAudioApplyError  # noqa: PLC0415
 
     with tempfile.TemporaryDirectory(prefix="guided-speech-cleanup-") as tmpdir:
         source_local = os.path.join(tmpdir, f"source{Path(raw.gcs_path).suffix.lower() or '.m4a'}")
@@ -321,7 +386,7 @@ def build_cleaned_narration(
         except Exception as exc:  # noqa: BLE001
             raise _io_unavailable() from exc
         try:
-            apply_speech_cleanup_to_audio(snapshot, source_local, cleaned_local)
+            apply(source_local, cleaned_local)
         except SpeechCleanupAudioApplyError as exc:
             # The CutPlan was validated above, so a failed FFmpeg run (exit
             # code, OOM kill, full disk, timeout) is resource/I/O trouble.
@@ -329,18 +394,86 @@ def build_cleaned_narration(
         duration_s = _probe_duration_s(cleaned_local)
         if abs(duration_s - expected_s) > DURATION_TOLERANCE_S:
             raise _changed()
-        object_path = derivative_object_path(
-            owner_id=owner_id,
-            item_id=item_id,
-            analysis_id=snapshot.analysis_id,
-            sha256=_file_sha256(cleaned_local),
-        )
+        object_path = object_path_for(_file_sha256(cleaned_local))
         try:
             uploaded = storage.upload_local_file_immutable(
                 cleaned_local, object_path, DERIVATIVE_CONTENT_TYPE
             )
         except Exception as exc:  # noqa: BLE001
             raise _io_unavailable() from exc
+    return object_path, str(uploaded.generation), duration_s
+
+
+def build_cleaned_narration(
+    raw: NarrationTrack,
+    payload: Mapping[str, Any],
+    *,
+    owner_id: object,
+    item_id: object,
+    named_removals: Sequence[tuple[float, float]] = (),
+) -> NarrationTrack:
+    """Apply the consented CutPlan to the raw voiceover and pin the result.
+
+    Idempotent: the WAV is content-addressed and uploaded with a create-only
+    precondition, so a re-driven attempt resolves to the same object and
+    generation. Snapshot/plan disagreements raise ``speech_cleanup_changed``
+    (not retryable); storage and FFmpeg failures raise
+    ``speech_cleanup_unavailable`` (retryable).
+
+    ``named_removals`` (KRI-889) are the spans of lines the creator named, raw source
+    time, cut in the same pass: one file, one crossfade per splice, the words remapped
+    through the combined plan and its fingerprint recorded on both provenances. Empty:
+    exactly the plain cleanup derivative.
+    """
+
+    from app.pipeline.speech_cleanup_apply import (  # noqa: PLC0415
+        SpeechCleanupSnapshotError,
+        apply_keep_segments_to_audio,
+        apply_speech_cleanup_to_audio,
+        effective_cut_fingerprint,
+        hydrate_speech_cleanup_snapshot,
+        plan_with_named_cuts,
+    )
+
+    removed = [(float(start_s), float(end_s)) for start_s, end_s in named_removals]
+    try:
+        snapshot = hydrate_speech_cleanup_snapshot(payload).require_source(
+            kind="voiceover",
+            storage_path=raw.gcs_path,
+            window_start_s=0.0,
+            window_duration_s=raw.duration_s,
+        )
+        if snapshot.generation != raw.generation:
+            raise SpeechCleanupSnapshotError("generation")
+        plan = plan_with_named_cuts(snapshot.cut_plan, removed) if removed else snapshot.cut_plan
+        keep_segments = list(plan.keep_segments)
+        if not keep_segments:
+            raise SpeechCleanupSnapshotError("keep_segments")
+        cut_sha256 = effective_cut_fingerprint(snapshot, removed)
+    except SpeechCleanupSnapshotError as exc:
+        raise _changed() from exc
+    expected_s = sum(float(end_s) - float(start_s) for start_s, end_s in keep_segments)
+
+    def apply(source_local: str, cleaned_local: str) -> None:
+        if not removed:
+            apply_speech_cleanup_to_audio(snapshot, source_local, cleaned_local)
+            return
+        apply_keep_segments_to_audio(
+            keep_segments,
+            source_local,
+            cleaned_local,
+            window_start_s=snapshot.window_start_s,
+            window_end_s=snapshot.window_end_s,
+        )
+
+    object_path, generation, duration_s = _cut_and_pin(
+        raw,
+        apply=apply,
+        expected_s=expected_s,
+        object_path_for=lambda sha: derivative_object_path(
+            owner_id=owner_id, item_id=item_id, analysis_id=snapshot.analysis_id, sha256=sha
+        ),
+    )
 
     words = [
         {
@@ -349,14 +482,14 @@ def build_cleaned_narration(
             "end_s": word.end_s,
             "confidence": word.confidence,
         }
-        for word in snapshot.transcript(apply_cut=True).words
+        for word in snapshot.transcript(apply_cut=True, plan=plan).words
         if str(word.text or "").strip()
     ]
     try:
         return NarrationTrack.model_validate(
             {
                 "gcs_path": object_path,
-                "generation": str(uploaded.generation),
+                "generation": generation,
                 "duration_s": round(duration_s, 6),
                 "words": words,
                 "language": snapshot.analysis.language or "",
@@ -366,6 +499,105 @@ def build_cleaned_narration(
                     "source_gcs_path": raw.gcs_path,
                     "source_generation": raw.generation,
                     "source_duration_s": raw.duration_s,
+                    "cut_sha256": cut_sha256,
+                },
+                **(
+                    {
+                        "named_cuts": {
+                            "source_gcs_path": raw.gcs_path,
+                            "source_generation": raw.generation,
+                            "source_duration_s": raw.duration_s,
+                            "removed": removed,
+                            "cut_sha256": cut_sha256,
+                        }
+                    }
+                    if removed
+                    else {}
+                ),
+            }
+        )
+    except ValidationError as exc:
+        raise _changed() from exc
+
+
+def build_named_cut_narration(
+    raw: NarrationTrack,
+    words: Sequence[Any],
+    named_removals: Sequence[tuple[float, float]],
+    *,
+    language: str,
+    owner_id: object,
+    item_id: object,
+) -> NarrationTrack:
+    """Cut the lines a creator named out of the raw voiceover and pin the result (KRI-889).
+
+    Speech cleanup is off: only ``named_removals`` (raw source time) are cut, and
+    ``words`` (the raw recording's own timed words) are remapped through that cut with
+    nothing else dropped (no filler filtering: an explicit opt-out changes no words).
+    Same content-addressed, create-only pinning and error codes as
+    `build_cleaned_narration`.
+    """
+
+    from app.pipeline.silence_cut import no_op_plan, remap_words  # noqa: PLC0415
+    from app.pipeline.speech_cleanup_apply import (  # noqa: PLC0415
+        apply_keep_segments_to_audio,
+        keep_segments_fingerprint,
+        plan_with_named_cuts,
+    )
+
+    removed = [(float(start_s), float(end_s)) for start_s, end_s in named_removals]
+    if not removed:
+        raise ValueError("a named cut derivative needs at least one cut")
+    plan = plan_with_named_cuts(no_op_plan(raw.duration_s), removed)
+    keep_segments = list(plan.keep_segments)
+    if not keep_segments:
+        raise _changed()
+    expected_s = sum(end_s - start_s for start_s, end_s in keep_segments)
+    cut_sha256 = keep_segments_fingerprint(
+        storage_path=raw.gcs_path,
+        generation=raw.generation,
+        window_start_s=0.0,
+        window_end_s=raw.duration_s,
+        keep_segments=keep_segments,
+    )
+    object_path, generation, duration_s = _cut_and_pin(
+        raw,
+        apply=lambda source_local, cut_local: apply_keep_segments_to_audio(
+            keep_segments,
+            source_local,
+            cut_local,
+            window_start_s=0.0,
+            window_end_s=raw.duration_s,
+        ),
+        expected_s=expected_s,
+        object_path_for=lambda sha: named_cut_object_path(
+            owner_id=owner_id, item_id=item_id, sha256=sha
+        ),
+    )
+    remapped = [
+        {
+            "text": str(item["text"]).strip(),
+            "start_s": float(item["start_s"]),
+            "end_s": float(item["end_s"]),
+            "confidence": 1.0,
+        }
+        for item in remap_words(words, plan)
+        if str(item["text"] or "").strip()
+    ]
+    try:
+        return NarrationTrack.model_validate(
+            {
+                "gcs_path": object_path,
+                "generation": generation,
+                "duration_s": round(duration_s, 6),
+                "words": remapped,
+                "language": language or "",
+                "caption_style": raw.caption_style,
+                "named_cuts": {
+                    "source_gcs_path": raw.gcs_path,
+                    "source_generation": raw.generation,
+                    "source_duration_s": raw.duration_s,
+                    "removed": removed,
                     "cut_sha256": cut_sha256,
                 },
             }
@@ -465,7 +697,7 @@ def require_guided_cleanup_binding(
 
     from app.pipeline.speech_cleanup_apply import (  # noqa: PLC0415
         SpeechCleanupSnapshotError,
-        cut_fingerprint,
+        effective_cut_fingerprint,
         hydrate_job_speech_cleanup_snapshot,
     )
     from app.services.speech_cleanup import SpeechCleanupFailure  # noqa: PLC0415
@@ -473,6 +705,9 @@ def require_guided_cleanup_binding(
     plan = assembly_plan if isinstance(assembly_plan, Mapping) else {}
     try:
         provenance = narration_speech_cleanup(narration)
+        # KRI-889: a cleaned voiceover also cut around named lines is one file; its
+        # fingerprint covers both cuts. A named-cut-only file is no cleanup derivative.
+        named = narration_named_cuts(narration)
     except ValueError as exc:
         raise SpeechCleanupFailure("snapshot_mismatch", "invalid cleaned narration") from exc
     if plan.get("speech_cleanup_contract") != "required_v1":
@@ -494,7 +729,8 @@ def require_guided_cleanup_binding(
         or snapshot.analysis_id != provenance.analysis_id
         or snapshot.storage_path != provenance.source_gcs_path
         or snapshot.generation != provenance.source_generation
-        or cut_fingerprint(snapshot) != provenance.cut_sha256
+        or effective_cut_fingerprint(snapshot, named.removed if named is not None else ())
+        != provenance.cut_sha256
     ):
         raise SpeechCleanupFailure(
             "snapshot_mismatch", "cleaned narration differs from the Job snapshot"

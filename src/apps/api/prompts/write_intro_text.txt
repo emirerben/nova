@@ -18,7 +18,7 @@ This edit may be part of a creator's ongoing series. The context below is their 
 
 $persona_context
 
-Use it to shape the hook's VOICE and ANGLE — lean into the creator's tone, nod to one of their content pillars, and tease this video's theme/idea so the line feels like it belongs to THIS creator on THIS day. But the footage still rules: the hook must describe or tease what the hero clip actually shows. If the persona/theme can't be honored truthfully for this clip, ignore it and write from the footage — NEVER invent a fact, place, or event just to fit the theme. When the context says "(none …)", write purely from the footage.
+This context is optional; the footage still rules. Account pillars and generated themes may not describe this clip. Use the creator's tone for delivery, and let the hero clip's concrete action or spoken words set the subject. Include a theme only when the footage or creator's words directly support it; a metaphor or generic lesson does not establish that connection. When they conflict, ignore the theme and write from the footage. Never invent a fact, place, event or personal meaning to fit the account. When the context says "(none …)", write purely from the footage.
 $preferences
 $creator_direction
 $filming_guide

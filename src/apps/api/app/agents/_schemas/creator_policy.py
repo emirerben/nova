@@ -16,6 +16,7 @@ from app.agents._schemas.edit_format import (
 )
 from app.schemas.edit_proposal import (
     MontageAudioPlan,
+    binds_mixed_media_timing,
     turkish_narrowing_cue,
     turkish_stated_media_counts,
 )
@@ -207,7 +208,7 @@ def _requires_guided_voiceover(
     return bool(
         manifest.has_voiceover
         and strategy.execution_contract == GUIDED_VOICEOVER_EXECUTION_CONTRACT
-        and (strategy.mixed_media_timing is not None or strategy.media_scope == "all")
+        and (binds_mixed_media_timing(strategy.mixed_media_timing) or strategy.media_scope == "all")
     )
 
 
@@ -465,6 +466,12 @@ def effective_render_program(
                     phone_format_capability.reason
                     or "phone sources require a supported edit format"
                 )
+        if strategy.audio_strategy == "voiceover" and strategy.montage_audio is not None:
+            audio_cap = manifest.capabilities.get("phone_voiceover_source_audio")
+            if audio_cap is None or not audio_cap.available:
+                raise MixedMediaTimingUnavailableError(
+                    "Selected clip sound under narration needs a supported app and server release."
+                )
         source_ids: set[str] = set()
         if strategy.montage_cadence is not None:
             source_ids.update(strategy.montage_cadence.source_media_ids)
@@ -523,7 +530,7 @@ def effective_render_program(
                 (guided_voiceover.reason if guided_voiceover is not None else None)
                 or "guided_voiceover_v1 is unavailable here: leave execution_contract unset"
             )
-        if strategy.mixed_media_timing is not None and not model_boundary:
+        if binds_mixed_media_timing(strategy.mixed_media_timing) and not model_boundary:
             # Read from the creator's words, so the model cannot drop it: the planner's
             # policy check asks the creator instead of the parse failing every retry.
             raise MixedMediaTimingUnavailableError(
@@ -532,7 +539,7 @@ def effective_render_program(
     if (
         manifest.has_voiceover
         and not native_only
-        and (strategy.mixed_media_timing is not None or strategy.media_scope == "all")
+        and (binds_mixed_media_timing(strategy.mixed_media_timing) or strategy.media_scope == "all")
         and not guided_voiceover_requested
         and not (
             guided_voiceover is not None and guided_voiceover.reason_code == "disabled_by_setting"
@@ -661,9 +668,15 @@ def effective_render_program(
         strategy.mixed_media_timing is not None
         and {"image", "video"}.issubset({media.kind for media in manifest.media})
     )
-    if (mixed_media_timing_requires_specialist or montage_audio_requires_guided) and not (
-        guided and guided.available
-    ):
+    # KRI-825: a photos-only length ("every photo 1 second") prefers the guided specialist
+    # but is no photo-and-video contract to refuse over when it is unavailable.
+    if (
+        (
+            mixed_media_timing_requires_specialist
+            and binds_mixed_media_timing(strategy.mixed_media_timing)
+        )
+        or montage_audio_requires_guided
+    ) and not (guided and guided.available):
         reason = (
             "mixed-media timing requires the guided proposal capability"
             if mixed_media_timing_requires_specialist

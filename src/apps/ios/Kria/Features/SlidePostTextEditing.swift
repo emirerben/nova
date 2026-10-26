@@ -172,7 +172,7 @@ extension SlidePostTextElement {
     func updateTextContent(id: String, content: String) {
         guard canEdit(.text) else { return }
         // The server counts code points; refuse growth past 120 but never reject a shorter edit.
-        let capped = String(String.UnicodeScalarView(content.unicodeScalars.prefix(SlidePostTextElement.maxLength)))
+        let capped = SlidePostTextElement.clipped(content)
         mutate(id) { $0.text = capped; $0.extra[SlidePostTextElement.wrapLinesKey] = .bool(false) }
     }
     func updateTextTiming(id: String, startS: Double?, endS: Double?) {}

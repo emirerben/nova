@@ -3004,3 +3004,31 @@ token to `current_detector_policy` / bump `DETECTOR_VERSION` (retires `ready` an
 
 **Why:** KRI-520 added ~170 Turkish regex twins in a week. They drifted (the legacy fold broke English "TRY AGAIN"), missed paraphrases, and older layers kept overriding the model with English-only rules. A Turkish creator got the model's guess; an English creator got a deterministic fix.
 **Revisit if:** a third creator language arrives (the same rules apply; the fold and `say()` grow a language, not a twin per module).
+
+---
+
+## [2026-10-25] Idea forms: drop mislabelled ideas, keep single-form sets
+
+**Decision:** `content_plan.form` is validated server-side in `CameraRollStoriesAgent.parse`. An idea whose form lacks its evidence (guide < 3 distinct sources, factual_story without a selected fact) is dropped alone. Three surviving ideas with one form are kept and logged (`camera_roll_stories_single_form_set`); variety is a prompt rule only. `StoryContentPlan.version` stays 1; legacy = `form` absent.
+**Why:** A mislabelled idea is independently wrong and the others stay valid, so a subset is safe (the service already drops invalid ideas the same way). A first draft failed the whole response when three ideas shared a form, but the server cannot tell a lazy model from a creator who asked for "just the performance clips" or owns one clip (`atmosphere`/`review`/`performance` have no evidence need, so "footage supports several forms" is always true); that raised a 503 for obeying the request, and with `max_attempts=1` every repeat paid and failed again. Bumping `version` would make older iOS builds, which echo the plan back on wording edits, send a v2 plan without a form.
+**Revisit if:** the logged single-form rate is high, then prefer one bounded re-ask when the query is empty.
+
+**Rollback:** `STORY_IDEA_FORMS_ENABLED` (default `true`). `false` (Fly secret, api + worker, restart) = form neither required, validated nor stored on new ideas, and wording edits drop a stored form. An older API image cannot read stored `content_plan.form` (`extra="forbid"` => 500 on the saved-stories list), so before rolling the image back: flip the flag off, then strip stored forms with `UPDATE media_collection_stories SET story_json = story_json #- '{content_plan,form}'`. During a rolling deploy an old machine can 500 on a new row for minutes; ship the API before any iOS build that echoes `form`.
+
+---
+
+## [2026-10-25] Open questions: server-owned text, answer through the wording edit
+
+**Decision:** Unknowns live in `content_plan.open_questions`, not in `why_it_works` prose. Answer/skip state is written through the existing `correct_story` wording edit (a story revision), and `select_story` refuses with 409 `story_open_questions` until none is pending, but only for builds declaring `X-Kria-Client-Protocol` >= `OPEN_QUESTIONS_MIN_CLIENT_PROTOCOL` (22, the first iOS build with the question card). Older builds build the idea with its neutral copy. The client may change only `answer`/`dismissed` of known ids; an omitted list keeps the stored one. The prepared story (`PreparedCollectionStory.content_plan`, its digest, turn plan and planning diagnostics) carries no `open_questions`: answers are private creator text that nothing downstream reads.
+**Why:** Prose cannot gate anything. A separate answers store would need its own revisioning and approval binding, while a wording edit already invalidates stale approvals. Letting a missing list overwrite the stored one would let a build that predates the field silently clear the gate. Gating a build that cannot answer is a dead end, so the gate follows the protocol header like every other native-only step. A malformed or surplus question is trimmed by the agent instead of failing the response, since the idea itself is still valid.
+**Client gate:** questions are emitted, and the 409 enforced, only for builds sending `X-Kria-Client-Protocol` >= `OPEN_QUESTIONS_MIN_CLIENT_PROTOCOL` (22, the first build that renders them). Older builds get ideas without `open_questions` and select without the gate, so they never hit a 409 they cannot explain. Kill switch: `…=999` (api) + restart.
+**Rollout and rollback:** `form` and `open_questions` are new keys inside stored `story_json.content_plan`, which the previous image rejects (`extra="forbid"`). Deploy api and worker together (Fly Deploy). To roll back, set `CAMERA_ROLL_STORY_EXTRAS_ENABLED=false` first (api + worker, restart; new ideas are stored in the legacy shape and `select` stops gating), then strip the keys from existing rows (SQL in `docs/pipelines/media-library.md`), then redeploy the old image.
+**Revisit if:** answers should regenerate the proposed copy (today the creator edits the wording; the answer stays on the story row).
+
+---
+
+## [2026-10-25] Research topic suggestion is a regex prefill, never a search
+
+**Decision:** The server suggests a research topic with a no-model heuristic over the creator's query and clip descriptions and returns it as `suggested_research_topic`. The creator must confirm it into the existing topic field; only that field is sent to public search.
+**Why:** Searching on a guess from private media would break the invariant that public search sees only a topic the creator confirmed, and a model call per request would add cost to every idea request. A query-named place or landmark is trusted; a bare name in clips needs two clips (one clip is too often a person or brand). Lowercase places and names under four characters are missed on purpose: a miss only means the creator types the topic, a false positive would put a stranger's name in a search box.
+**Revisit if:** creators ignore the chip because it misses their places; then consider a gazetteer, not a model.

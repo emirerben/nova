@@ -264,7 +264,7 @@ final class KriaTests: XCTestCase {
         URLProtocolStub.handler = { request in
             XCTAssertEqual(request.httpMethod, "GET")
             XCTAssertEqual(request.url?.path, "/creation-threads/capabilities")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "14")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "22")
             return (200, Data(#"{"formats":[{"id":"montage","edit_format":"montage","max_clips":20},{"id":"narrated","edit_format":"narrated_planned","max_clips":20}]}"#.utf8))
         }
         let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
@@ -321,7 +321,7 @@ final class KriaTests: XCTestCase {
         }
         defer { NotificationCenter.default.removeObserver(observer) }
         URLProtocolStub.handler = { request in
-            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "14")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "22")
             return (426, Data(#"{"problem":{"code":"native_update_required","message":"Update Kria"}}"#.utf8))
         }
         let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
@@ -350,7 +350,7 @@ final class KriaTests: XCTestCase {
         let store = MemoryTokenStore(MobileSession(accessToken: "expired", refreshToken: "refresh", expiresIn: 1))
         URLProtocolStub.handler = { request in
             if request.url?.path == "/auth/mobile/refresh" {
-                XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "14")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "22")
                 return (426, Data(#"{"problem":{"code":"native_update_required","message":"Update Kria"}}"#.utf8))
             }
             return (401, Data())
@@ -499,7 +499,7 @@ final class KriaTests: XCTestCase {
 
     func testProjectUploadReservationAndAttachmentUseThreadContract() async throws {
         URLProtocolStub.handler = { request in
-            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "14")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "22")
             if request.url?.path.hasSuffix("/upload-urls") == true {
                 let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: Self.bodyData(request)) as? [String: Any])
                 let files = try XCTUnwrap(body["files"] as? [[String: Any]])
@@ -525,7 +525,7 @@ final class KriaTests: XCTestCase {
         let lock = NSLock()
         var projectCalls = 0
         URLProtocolStub.handler = { request in
-            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "14")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "22")
             if request.url?.path == "/auth/mobile/refresh" {
                 return (200, Data(#"{"access_token":"fresh","refresh_token":"refresh-2","token_type":"Bearer","expires_in":900,"user":{"id":"1","email":"creator@example.com","onboarding_status":"complete","linked_providers":[]}}"#.utf8))
             }
@@ -932,6 +932,39 @@ final class KriaTests: XCTestCase {
                 XCTAssertTrue(stale)
             }
         }
+    }
+
+    /// S2-c(i): a commit or device publish lands between the status read and the timeline read.
+    /// The pair is re-read instead of surfacing a conflict the creator can do nothing about.
+    func testGuidedStoryTimelineGenerationRaceRereadsInsteadOfConflicting() async throws {
+        var statusReads = 0
+        URLProtocolStub.handler = { request in
+            if request.url?.path.hasSuffix("/status") == true {
+                statusReads += 1
+                let generation = statusReads == 1 ? "g1" : "g2"
+                return (200, Data(#"{"variants":[{"variant_id":"initial","resolved_archetype":"guided_story","render_generation_id":"\#(generation)","editor_capabilities":{"timeline":true}}]}"#.utf8))
+            }
+            return (200, Data(#"{"base_generation":"g2","revision_number":3,"slots":[]}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+        let variant = try await api.editorVariant(jobID: PreviewFixtures.projectID, variantID: "initial")
+        XCTAssertEqual(variant["render_generation_id"], .string("g2"))
+        XCTAssertEqual(variant["editor_revision_number"], .number(3))
+        XCTAssertEqual(statusReads, 2)
+    }
+
+    /// S2-c(ii): a timeline-capable guided variant that never finished a render has no generation.
+    /// The server's baseline is "" then, and the editor must agree instead of conflicting forever.
+    func testGuidedStoryWithoutAnyGenerationMatchesTheServersEmptyBaseline() async throws {
+        URLProtocolStub.handler = { request in
+            if request.url?.path.hasSuffix("/status") == true {
+                return (200, Data(#"{"variants":[{"variant_id":"initial","resolved_archetype":"guided_story","render_generation_id":null,"render_finished_at":null,"editor_capabilities":{"timeline":true}}]}"#.utf8))
+            }
+            return (200, Data(#"{"base_generation":"","revision_number":1,"slots":[]}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+        let variant = try await api.editorVariant(jobID: PreviewFixtures.projectID, variantID: "initial")
+        XCTAssertEqual(variant["editor_revision_number"], .number(1))
     }
 
     func testOpenLibraryJobUsesIdempotentEditorPromotionRoute() async throws {

@@ -30,6 +30,7 @@ from app.pipeline.lipsync_montage import (
     resync_lipsync_moments,
 )
 from app.pipeline.phone_captions import caption_look_from_variant
+from app.pipeline.phone_clip_sound import reconcile_clip_sound
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
 from app.pipeline.phone_narrated_plan import (
     _EDITOR_LANE_TRACK_IDS,
@@ -76,6 +77,7 @@ from app.services.phone_editor_sources import (
 from app.services.phone_rollout import (
     SINGLE_WORD_CAPTIONS_STAMP,
     freehand_drawing_client_supported,
+    freeze_frame_client_supported,
     phone_guided_sfx_supported,
     phone_narrated_caption_edits_supported,
     phone_narrated_title_edits_supported,
@@ -83,6 +85,7 @@ from app.services.phone_rollout import (
     phone_subtitled_title_supported,
     phone_voiceover_editor_lanes_supported,
     phone_voiceover_editor_media_supported,
+    recipe_has_freeze_frame,
     recipe_has_single_word_text,
     single_word_text_client_supported,
     single_word_text_verified,
@@ -169,6 +172,10 @@ _VOICEOVER_FIT_SECTIONS = frozenset({"landscape_fit"})
 # pinned recipe's `drawing_layers` (`with_drawings`) on EVERY Save of every device
 # archetype, whichever sections it carries.
 _DRAWING_SECTIONS = frozenset({"drawings"})
+# KRI-821: ...and the footage's own sound level (Sounds > Original audio, `mix.original_level`
+# only), written onto the pinned recipe's `audio.original_volume` by `_apply_original_level`.
+# The narration and any music bed keep their pinned levels.
+_ORIGINAL_LEVEL_SECTIONS = frozenset({"mix"})
 
 
 def _resolved_landscape_fit(
@@ -353,6 +360,8 @@ def _relax_requirement(
             (staged.all_candidates or {}).get("creator_strategy") or {},
             rebound,
             mode=length_policy.check_mode,
+            # KRI-847: this rebind never changes the length, so a ceiling stays a ceiling.
+            duration_bound=length_policy.requested_duration_bound,
         )
     return True
 
@@ -522,6 +531,10 @@ def _rebind_editor_render_contract(
             (staged.all_candidates or {}).get("creator_strategy") or {},
             rebound,
             mode=length_policy.check_mode,
+            # KRI-847: a timeline Save names a concrete new length (exact); other saves keep it.
+            duration_bound=(
+                "exact" if "duration_s" in changes else length_policy.requested_duration_bound
+            ),
         )
 
 
@@ -554,6 +567,10 @@ def _compile_editor_commit(
         )
         variant["render_status"] = "awaiting_device"
         variant["duration_s"] = recipe.duration
+        if isinstance(variant.get("clip_sound"), dict):
+            variant["clip_sound"] = reconcile_clip_sound(
+                recipe, variant["clip_sound"], video_track_id="authored"
+            )
     elif is_phone_subtitled_editor_variant(variant):
         _compile_subtitled_editor_commit(
             staged,
@@ -715,6 +732,19 @@ def prepare_phone_editor_commit(
     `SoundEffect.audio_gcs_path` for the phone Talking effects a Save carries
     over without a known storage path (the caller's async catalog read,
     `generative_jobs._phone_subtitled_sfx_paths`; Save itself never queries)."""
+    from app.services.phone_voiceover_timeline import (  # noqa: PLC0415
+        require_phone_voiceover_source_audio_client,
+    )
+
+    before_variant = next(
+        (
+            row
+            for row in (job.assembly_plan or {}).get("variants", [])
+            if isinstance(row, dict) and row.get("variant_id") == variant_id
+        ),
+        None,
+    )
+    require_phone_voiceover_source_audio_client(before_variant)
     staged = _StagedJob(job)
     from app.services.finished_style_learning import learning_available, style_snapshot
 
@@ -841,6 +871,13 @@ def prepare_phone_editor_commit(
         # KRI-646: the recompiled recipe pins bent text (`textLayers[].bend`) that this app
         # build cannot decode or draw; nothing is committed.
         raise HTTPException(426, detail={"code": "client_update_required", "feature": "text_bend"})
+    if not freeze_frame_client_supported() and recipe_has_freeze_frame(
+        device_status(staged, variant_id).request.recipe
+    ):
+        # KRI-828: a held frame an older build cannot decode; nothing is committed.
+        raise HTTPException(
+            426, detail={"code": "client_update_required", "feature": "freeze_frame"}
+        )
     _settle_single_word_captions(staged, variant_id)
     job.assembly_plan = staged.assembly_plan
     job.status = staged.status
@@ -1192,6 +1229,51 @@ def _compile_subtitled_editor_commit(
         **({"speaker_position_x": speaker_position_x} if speaker_position_x is not None else {}),
     )
     recipe = with_drawings(recipe, variant.get("drawings"))
+    # A native same-source cut normally borrows 25 ms of removed audio to
+    # smooth pause cleanup. An explicit spoken-word removal must instead keep
+    # its source edges closed, including on a processed-audio derivative.
+    from app.pipeline.explicit_speech_audio import (  # noqa: PLC0415
+        protect_explicit_speech_cut_audio,
+    )
+    from app.pipeline.phone_processed_audio import (  # noqa: PLC0415
+        processed_audio_receipt_for,
+        replace_audio_with_processed_segments,
+    )
+
+    recipe = protect_explicit_speech_cut_audio(
+        recipe,
+        source_media_id=speaker.media_id,
+        cuts=variant.get("explicit_speech_cuts"),
+    )
+    # Noise reduction remains experimental: only restore its track when this
+    # exact immutable prior recipe already carried it. A receipt alone must
+    # never make an unrelated Save opt into a new audio treatment.
+    prior_has_processed_audio = any(
+        track.id == "processed-source-audio" for track in previous.recipe.tracks
+    )
+    if prior_has_processed_audio:
+        processed_receipts = {
+            binding.media_id: receipt
+            for binding in bindings
+            if (
+                receipt := processed_audio_receipt_for(
+                    assembly, variant_id=variant_id, source_media_id=binding.media_id
+                )
+            )
+            is not None
+        }
+        required_processed_sources = {
+            asset.source_media_id
+            for asset in previous.recipe.asset_manifest.assets
+            if asset.kind == "processed_audio"
+        }
+        if not required_processed_sources.issubset(processed_receipts):
+            raise ValueError(
+                "The saved noise-reduced audio is unavailable. Please regenerate this edit."
+            )
+        recipe = replace_audio_with_processed_segments(
+            recipe, receipts_by_source=processed_receipts
+        )
     duck_receipt = sfx_duck_receipt(lanes, recipe)
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(lanes.overlays or cutaways))
     request = make_device_request(
@@ -1215,9 +1297,51 @@ def _compile_subtitled_editor_commit(
             row["caption_cues"] = caption_cues
         if framing_receipt is not None:
             row[SPEAKER_FRAMING_FIELD] = framing_receipt
+        _restale_protected_text(
+            row,
+            speaker=speaker,
+            keep_segments=keep_segments,
+            landscape_fit=landscape_fit,
+            speaker_position_x=speaker_position_x,
+        )
         _persist_lane_state(
             row, lanes, labels, paths, caption_style=caption_style, duck_receipt=duck_receipt
         )
+
+
+def _restale_protected_text(
+    row: dict,
+    *,
+    speaker: Any,
+    keep_segments: list[tuple[float, float]] | None,
+    landscape_fit: str,
+    speaker_position_x: float | None,
+) -> None:
+    """KRI-827: a Save that changed the cut, the crop or the bars the protected-text
+    receipt was measured with marks it ``stale`` (the review then says the text was not
+    re-checked), so "no text on the plate" is never reported met from the first render's
+    numbers. Text / caption edits are caught by the receipt's own fingerprint."""
+    from app.kria.protected_targets import (  # noqa: PLC0415
+        PROTECTED_TEXT_FIELD,
+        protected_text_after_editor_save,
+    )
+    from app.pipeline.phone_recipe_shared import display_dims  # noqa: PLC0415
+
+    receipt = row.get(PROTECTED_TEXT_FIELD)
+    if not isinstance(receipt, Mapping):
+        return
+    try:
+        width, height = display_dims(speaker.original)
+        landscape = width > height
+        full = [(0.0, float(speaker.original.duration_s))]
+    except Exception:  # noqa: BLE001 - unknown geometry: compare what is known
+        landscape, full = True, []
+    row[PROTECTED_TEXT_FIELD] = protected_text_after_editor_save(
+        receipt,
+        keep_segments=keep_segments if keep_segments is not None else full,
+        landscape_fit=landscape_fit if landscape else None,
+        speaker_position_x=speaker_position_x,
+    )
 
 
 def _commit_voiceover_lanes(
@@ -1357,6 +1481,22 @@ def _voiceover_allows_editor_media(recipe: EditRecipeV2) -> bool:
     )
 
 
+def _apply_original_level(recipe: EditRecipeV2, variant: dict, prep: dict) -> EditRecipeV2:
+    """Play the footage's own sound at the creator's saved level (KRI-821).
+
+    Only ``audio.original_volume`` changes: the narration clip and a music bed are their
+    own audio-track clips and keep their pinned volumes. A music level is not a phone
+    Voiceover control, so a Save carrying one is refused rather than dropped.
+    """
+    if prep.get("mix_override") is not None:
+        raise ValueError("music level isn't supported on phone Voiceover edits yet")
+    level = variant.get("original_audio_level")
+    if isinstance(level, bool) or not isinstance(level, (int, float)):
+        raise ValueError("phone Voiceover original audio level is missing")
+    audio = recipe.audio.model_copy(update={"original_volume": max(0.0, min(1.0, float(level)))})
+    return recipe.model_copy(update={"audio": audio})
+
+
 def _compile_narrated_editor_commit(
     staged: Any,
     assembly: dict,
@@ -1388,6 +1528,7 @@ def _compile_narrated_editor_commit(
     cut_active = bool(active_sections & _VOICEOVER_CUT_SECTIONS)
     text_active = bool(active_sections & _NARRATED_TEXT_SECTIONS)
     drawings_active = bool(active_sections & _DRAWING_SECTIONS)
+    original_active = bool(active_sections & _ORIGINAL_LEVEL_SECTIONS)
     lanes_ok = phone_voiceover_editor_lanes_supported(require_client=False)
     media_ok = phone_voiceover_editor_media_supported(require_client=False)
     text_ok = phone_narrated_title_edits_supported(require_client=False)
@@ -1399,7 +1540,12 @@ def _compile_narrated_editor_commit(
         raise ValueError("phone Voiceover titles aren't editable yet")
     # A caption edit, or a Save with nothing else to do, is a caption Save.
     caption_save = bool(caption_active) or not (
-        lanes_active or media_active or cut_active or text_active or drawings_active
+        lanes_active
+        or media_active
+        or cut_active
+        or text_active
+        or drawings_active
+        or original_active
     )
     if caption_save and not phone_narrated_caption_edits_supported():
         raise ValueError("phone Narrated captions aren't editable yet")
@@ -1407,6 +1553,7 @@ def _compile_narrated_editor_commit(
     allowed = (
         _NARRATED_EDITOR_SECTIONS
         | _VOICEOVER_CUT_SECTIONS
+        | _ORIGINAL_LEVEL_SECTIONS
         | (_VOICEOVER_LANE_SECTIONS if lanes_ok else frozenset())
         | (_VOICEOVER_MEDIA_SECTIONS if media_ok else frozenset())
         | (_NARRATED_TEXT_SECTIONS if text_ok else frozenset())
@@ -1436,6 +1583,13 @@ def _compile_narrated_editor_commit(
         # document also sends are the caption lane's, not title text.
         title_elements = narrated_authored_text_elements(variant.get("text_elements") or [])
         recipe = replace_narrated_title(recipe, title_elements)
+    elif cut_active and variant.get("spoken_text_placement") is not None:
+        # Narration keeps its clock when footage moves. Re-project from canonical rows,
+        # so shortening then extending restores spoken text without stretching its hold.
+        recipe = replace_narrated_title(
+            recipe,
+            narrated_authored_text_elements(variant.get("narrated_title_text_elements") or []),
+        )
     if caption_save or cut_active:
         # A new cut re-bounds the captions to where the video now ends.
         caption_style = "word" if variant.get("voiceover_caption_style") == "word" else "sentence"
@@ -1461,6 +1615,8 @@ def _compile_narrated_editor_commit(
         recipe = _commit_voiceover_media(
             recipe, assembly=assembly, variant=variant, prep=prep, video_track_id="narrated"
         )
+    if original_active:
+        recipe = _apply_original_level(recipe, variant, prep)
     recipe = with_drawings(recipe, variant.get("drawings"))
     validate_phone_pilot_recipe(recipe, allow_editor_media=_voiceover_allows_editor_media(recipe))
     request = make_device_request(
@@ -1486,6 +1642,10 @@ def _compile_narrated_editor_commit(
             row["phone_beat_receipt"] = refresh_narrated_sequence_receipt(
                 recipe, row["phone_beat_receipt"]
             )
+        if isinstance(row.get("clip_sound"), dict):
+            # KRI-842: the receipt follows the recipe this Save pinned, never what the first
+            # render promised.
+            row["clip_sound"] = reconcile_clip_sound(recipe, row["clip_sound"])
         if caption_cues_overridden:
             row["caption_cues"] = caption_cues
         if text_active:
@@ -1536,7 +1696,11 @@ def _compile_voiceover_montage_editor_commit(
     cut_active = bool(active_sections & _VOICEOVER_CUT_SECTIONS)
     # KRI-589: a drawings-only Save touches no lane the sound-effect / Visuals rollout owns.
     # (An empty Save is not drawings-only: `set() <= x` is true, so it keeps its old gates.)
-    only_drawings = bool(active_sections) and active_sections <= _DRAWING_SECTIONS
+    # KRI-821: an Original-audio Save is the same kind of lane-free Save.
+    original_active = bool(active_sections & _ORIGINAL_LEVEL_SECTIONS)
+    only_drawings = bool(active_sections) and active_sections <= (
+        _DRAWING_SECTIONS | _ORIGINAL_LEVEL_SECTIONS
+    )
     if (
         (lanes_active or not cut_active)
         and not only_drawings
@@ -1552,6 +1716,7 @@ def _compile_voiceover_montage_editor_commit(
         - _VOICEOVER_CUT_SECTIONS
         - _VOICEOVER_FIT_SECTIONS
         - _DRAWING_SECTIONS
+        - _ORIGINAL_LEVEL_SECTIONS
     )
     if unsupported_sections:
         name = sorted(unsupported_sections)[0]
@@ -1595,6 +1760,8 @@ def _compile_voiceover_montage_editor_commit(
         recipe = _commit_voiceover_media(
             recipe, assembly=assembly, variant=variant, prep=prep, video_track_id="montage"
         )
+    if original_active:
+        recipe = _apply_original_level(recipe, variant, prep)
     recipe = with_drawings(recipe, variant.get("drawings"))
     validate_phone_pilot_recipe(recipe, allow_editor_media=_voiceover_allows_editor_media(recipe))
     request = make_device_request(
