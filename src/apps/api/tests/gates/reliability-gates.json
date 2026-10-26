@@ -3121,6 +3121,57 @@
         "Don Julio M1 iPhone re-send after deploy: reply names the suggested song and says tango only if its labels say tango"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-950-tap-keeps-checked-list",
+      "tickets": [
+        "KRI-950",
+        "KRI-946"
+      ],
+      "symptom": "Don Julio walk-in M2 round 2: the creator only tapped the clip picker, the clip-intent planner was asked again from scratch, its new answer wrote the photo text \"Ojo de bife 🥩\" as a label whose quote missed the text (creator_text_not_source_backed), and the salvage held all six good rows to ask \"I couldn't safely verify 'label: the ribeye photo'. Please restate just those\".",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-950",
+      "paths": [
+        "src/apps/api/app/agents/clip_intent_planner.py",
+        "src/apps/api/app/kria/contracts.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/routes/admin_creation_threads.py",
+        "src/apps/api/app/services/clip_intent_planning.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri950_tap_keeps_checked_list.py",
+        "tests/kria/test_kri950_tap_keeps_checked_list_postgres.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Scratch Postgres: a real picker turn (submit, worker, persist) keeps the list in creator_agent_turns.plan_json and not in the chat event; the tap's turn finds the asking turn and reads it back. Thread 545F53A9 rounds 1-2: the real M2 prompt, the video + photo, round 1's intent_stats as the planner and resolver answers, round 2's rejected row rebuilt from its diagnostics (kept=6, creator_text_not_source_backed, preview 'label: the ribeye photo'); real Main Creator parse, _plan_from_creator_output, clip-intent parse, picker build and selection fold behind a provider-transport fake. Red on main 831781faa: the tap turn calls the planner again and replies with the prod text byte for byte; green: no second planner call, the queue lands on the tapped video and 'Ojo de bife 🥩' on the photo (creator_text grounding).",
+        "live_model": "Not run; no paid calls. The fix removes a planner call on tap-only turns and adds none.",
+        "native_output": "n/a: server-only planner change; the iPhone shows the same picker and draft cards.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "Skip (none of these) still reuses the list",
+        "a second picker in a row: turn 3's tap reuses what turn 2 kept",
+        "Turkish chat tap stand-in",
+        "a server-written event (render ready, review) after the tap",
+        "typed correction after the picker: re-plans",
+        "words changed between question and answer (re-send): re-plans",
+        "tap riding with a choice card, moment order or mark answer: re-plans",
+        "question asked before this deploy (no saved list): re-plans as today",
+        "broken / unknown-version saved list: ignored, re-plans",
+        "list never in the chat event; admin view shows ids and ops only; plans without a picker unchanged",
+        "parser safety net: quote stops before the quoted text in the same sentence (repaired); other emoji, capitals, paraphrase, text from another sentence or another quoted instruction (still asked); emoji presentation selector added or dropped (prints the creator's form)"
+      ],
+      "neighbours_gap": [
+        "The legacy v1 creator-agent route (routes/creator_agent.py) still re-plans on every turn; the iPhone uses runtime v2.",
+        "The exact model answer of prod round 2 is not stored (sensitive agent); the rejected row is rebuilt from its diagnostics and preview."
+      ],
+      "follow_ups": [
+        "KRI-947/948/949 before the M2 iPhone re-send can reach a draft"
+      ],
+      "red_control": "verified"
     }
   ]
 }

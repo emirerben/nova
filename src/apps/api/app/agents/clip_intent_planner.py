@@ -162,6 +162,9 @@ _POSITION_LAST = re.compile(
 # gidelim\" dediğimiz iskele klibi``). Both sides of the provenance check are
 # normalised the same way, so a creator who literally typed ``\"`` still matches.
 _JSON_ESCAPES = re.compile(r'\\(["\\])')  # kri667: strips JSON escapes, reads no meaning
+# KRI-950: emoji presentation selectors ("☕" vs "☕️"). Invisible, and models add or drop them
+# when copying, so provenance ignores them; the printed text keeps the creator's own form.
+_VARIATION_SELECTORS = re.compile("[\ufe0e\ufe0f]")  # kri667: invisible marks, reads no meaning
 
 
 def _norm(value: str) -> str:
@@ -175,6 +178,7 @@ def _norm(value: str) -> str:
     """
     value = unicodedata.normalize("NFKC", _sanitize_text(value)).translate(_QUOTE_TABLE)
     value = _JSON_ESCAPES.sub(r"\1", value)
+    value = _VARIATION_SELECTORS.sub("", value)
     return " ".join(value.split())
 
 
@@ -342,6 +346,44 @@ def _sentence_naming(attribute: str, sources: tuple[str, ...]) -> str | None:
             if sentence and words <= set(re.findall(r"\w+", sentence.casefold())):
                 return sentence[:600]
     return None
+
+
+def _quote_with_text(quote: str, text: str, sources: tuple[str, ...]) -> str | None:
+    """The creator span joining a quote to the quoted text it stopped short of (KRI-950).
+
+    Flash quotes "show the ribeye photo full screen" and leaves out ``with the text "Ojo de
+    bife 🥩"`` that ends the same sentence. Only for text the creator put in quotation marks,
+    in the same sentence, with no other quoted text between the two: "Label the butcher
+    "Asado" and the cook "Parrilla"" never hands the butcher the cook's words. ``quote`` and
+    ``text`` are ``_norm``-ed.
+    """
+    marked = f'"{text}"'
+    for source in sources:
+        for sentence in _SENTENCE_SPLIT.split(source):
+            at_quote, at_text = sentence.find(quote), sentence.find(marked)
+            if at_quote < 0 or at_text < 0:
+                continue
+            start, end = min(at_quote, at_text), max(at_quote + len(quote), at_text + len(marked))
+            first, second = sorted([(at_quote, len(quote)), (at_text, len(marked))])
+            if '"' in sentence[first[0] + first[1] : second[0]] or end - start > 600:
+                continue
+            return sentence[start:end]
+    return None
+
+
+def _creator_form(text: str, input: ClipIntentPlannerInput) -> str:  # noqa: A002
+    """``text`` as the creator typed it, when it differs only by emoji presentation selectors."""
+    sources = (input.creator_request, input.latest_user_message or "")
+    if not any(_VARIATION_SELECTORS.search(value) for value in (text, *sources)):
+        return text
+    bare = _VARIATION_SELECTORS.sub("", text)
+    # The creator's exact spelling of a text the fence already verified.
+    marks = "[\ufe0e\ufe0f]?"
+    pattern = re.compile("".join(re.escape(c) + marks for c in bare))  # kri667: spelling only
+    for source in sources:
+        if match := pattern.search(source):
+            return match.group(0)
+    return text
 
 
 def _unstitched_quote(quote: str, creator_text: str | None, sources: tuple[str, ...]) -> str | None:
@@ -1340,11 +1382,17 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             )
         if intent.creator_text is not None:
             text = _norm(intent.creator_text)
+            if text not in quote and (repaired := _quote_with_text(quote, text, sources)):
+                intent = intent.model_copy(update={"source_quote": repaired})
+                quote = repaired
             if text not in quote or not any(text in source for source in sources):
                 raise _IntentRejected(
                     "creator_text_not_source_backed",
                     "creator_text must be exact creator words inside source_quote",
                 )
+            creator_form = _creator_form(intent.creator_text, input)
+            if creator_form != intent.creator_text:
+                intent = intent.model_copy(update={"creator_text": creator_form})
         if intent.order_by is not None and not input.clip_facts:
             # The flag-off prompt never teaches `order_by`, so a stray one behaves as if the
             # field did not exist: dropped without retrying the model for nothing.
