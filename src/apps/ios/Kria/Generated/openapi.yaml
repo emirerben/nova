@@ -1584,6 +1584,11 @@
             "default": false,
             "title": "Voiceover Script Cards",
             "type": "boolean"
+          },
+          "wrong_fact_feedback": {
+            "default": false,
+            "title": "Wrong Fact Feedback",
+            "type": "boolean"
           }
         },
         "required": [

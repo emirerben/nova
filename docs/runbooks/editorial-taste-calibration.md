@@ -95,6 +95,19 @@ GET/PUT/DELETE routes manage confirmed projects/rules; POST `/feedback` records
 A judgment does not build a project or authorize rendering. Project notes remain
 contextual; they never silently become standing rules.
 
+The `wrong_facts` reason (researched ideas only) is actionable, not just context: the
+next research run for the same topic drops every fact that repeats the wording the creator
+saw on that idea (best-effort word-overlap match, so light rewording is caught; a
+claim reworded beyond recognition can still return), before `CameraRollStoriesAgent`
+sees the evidence. Source URLs are deliberately not excluded: correct facts share them
+and grounding redirect URLs are unstable. Fact ids restart at `fact-0` on each search,
+so identity is the stored wording, read from the feedback row's `proposal` (no column). The exclusion joins the
+proposal cache key, so the same request re-searches and re-reviews. Forget, pause and the
+feature gate empty it; if every fact found was rejected the request fails closed (503).
+Clients show the choice only when `/creation-threads/capabilities` returns
+`wrong_fact_feedback: true`; an older server would 422 the whole judgment. Rollback is a
+normal deploy revert (capability disappears, old rows are inert).
+
 PUT requires `expected_revision`, a stable `idempotency_key`, owned `project_ids`,
 `rules`, optional `project_notes` (at most 1,500 characters per project),
 `confirmed: true` and `enabled`. Project notes preserve full contextual feedback;

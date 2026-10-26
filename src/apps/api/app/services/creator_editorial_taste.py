@@ -399,13 +399,52 @@ async def record_feedback(db, owner, body):
     return {"id": str(row.id), "recorded": True, "requires_render_approval": True}
 
 
-async def generation_context(db, owner, query):
+async def active_version(db, owner):
     if not settings.creator_editorial_taste_for(owner):
-        return ""
+        return None
     # Fetch a fresh flag: an auth object or a previous identity-map value may be stale.
     paused = await db.scalar(select(User.creator_memory_enabled).where(User.id == owner))
     version = await latest(db, owner)
     if not paused or version is None or not version.payload.get("enabled"):
+        return None
+    return version
+
+
+async def rejected_research(db, owner, topic):
+    """Fact wording the creator called wrong on an earlier idea about this topic.
+
+    Fact ids restart at fact-0 on every search, so identity is the stored wording,
+    matched loosely (`is_same_claim`). Source URLs are not used: correct facts share
+    them. Forget, pause and the feature gate all empty the result.
+    """
+    if not topic or await active_version(db, owner) is None:
+        return None
+    wanted = " ".join(topic.casefold().split())
+    rows = (
+        await db.scalars(
+            select(CreatorIdeaFeedback)
+            .where(
+                CreatorIdeaFeedback.user_id == owner,
+                CreatorIdeaFeedback.reasons.contains(["wrong_facts"]),
+            )
+            .order_by(CreatorIdeaFeedback.created_at.desc(), CreatorIdeaFeedback.id)
+            .limit(50)
+        )
+    ).all()
+    texts = set()
+    for row in rows:
+        research = ((row.proposal or {}).get("idea") or {}).get("research") or {}
+        if " ".join(str(research.get("topic", "")).casefold().split()) != wanted:
+            continue
+        for fact in (research.get("evidence") or {}).get("facts", []):
+            if fact.get("text"):
+                texts.add(fact["text"])
+    return {"fact_texts": sorted(texts)} if texts else None
+
+
+async def generation_context(db, owner, query):
+    version = await active_version(db, owner)
+    if version is None:
         return ""
     rows = await sources(db, owner, version)
     corpus = {

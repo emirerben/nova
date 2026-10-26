@@ -13,6 +13,7 @@ from app.agents.camera_roll_stories import (
     CameraRollStoriesInput,
     CameraRollStoriesOutput,
 )
+from app.schemas.research import is_same_claim
 from app.services.researched_text import (
     GroundedGeminiClient,
     GroundedResearchAgent,
@@ -20,6 +21,17 @@ from app.services.researched_text import (
     ResearchUnavailable,
     primary_evidence,
 )
+
+
+def without_rejected(evidence, rejected):
+    # Wording only: source URLs are shared across correct facts and often unstable
+    # redirect tokens, so banning them would drop good facts and brick the topic.
+    facts = [f for f in evidence.facts if not is_same_claim(f.text, rejected["fact_texts"])]
+    if not facts:
+        raise ResearchUnavailable(
+            "Every fact found was one you marked wrong. Try a more specific topic."
+        )
+    return evidence.model_copy(update={"facts": facts})
 
 
 def story_content_digest(title, content_plan, moment_ids):
@@ -263,13 +275,15 @@ def research_spec_identity():
     ]
 
 
-def research_story_ideas(input, topic, *, ctx):  # noqa: A002
+def research_story_ideas(input, topic, *, ctx, rejected=None):  # noqa: A002
     # Topic is a separate current creator input, not inferred from private media,
     # memory or query text. Public search sees no other part of the request.
     request = ResearchRequest(topic=topic, request_quote=topic)
     request.authorize(topic)
     ctx = replace(ctx, thought_summary_callback=None)
     evidence = primary_evidence(GroundedResearchAgent(GroundedGeminiClient()).run(request, ctx=ctx))
+    if rejected:
+        evidence = without_rejected(evidence, rejected)
     researched = input.model_copy(update={"public_research": evidence, "research_topic": topic})
     ideas = CameraRollStoriesAgent(default_client()).run(researched, ctx=ctx)
     if ideas.stories:

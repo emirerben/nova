@@ -183,6 +183,7 @@ async def generate_stories(db, owner, identifier, body):
     )
     spec = CameraRollStoriesAgent.spec
     research_topic = getattr(body, "research_topic", None)
+    rejected = await creator_editorial_taste.rejected_research(db, owner, research_topic)
     digest = hashlib.sha256(
         json.dumps(
             [
@@ -191,7 +192,9 @@ async def generate_stories(db, owner, identifier, body):
                 [value.evidence.get("index_spec") for value in candidates],
                 body.expected_revision,
                 body.allow_partial_analysis,
-                [research_topic, research_spec_identity()] if research_topic else None,
+                [research_topic, research_spec_identity(), *([rejected] if rejected else [])]
+                if research_topic
+                else None,
             ],
             sort_keys=True,
         ).encode()
@@ -217,6 +220,7 @@ async def generate_stories(db, owner, identifier, body):
                 else CameraRollStoriesAgent(default_client()).run,
                 input,
                 *([research_topic] if research_topic else []),
+                **({"rejected": rejected} if rejected else {}),
                 ctx=collection_run_context(
                     creator_id=str(owner),
                     request_id=f"collection-stories:{digest}:{claim.attempt_token}",
@@ -244,7 +248,9 @@ async def generate_stories(db, owner, identifier, body):
     # Serialize the final check with pause, Forget, profile changes and feedback.
     # Never hold this lock across a provider call.
     await creator_editorial_taste.lock_owner(db, owner)
-    if taste != await creator_editorial_taste.generation_context(db, owner, taste_query):
+    if taste != await creator_editorial_taste.generation_context(
+        db, owner, taste_query
+    ) or rejected != await creator_editorial_taste.rejected_research(db, owner, research_topic):
         raise HTTPException(409, "Personalization changed; request ideas again")
     fresh = await candidate_evidence(db, owner, identifier, body.expected_revision, body.query)
     require_requested_coverage(fresh, body)
